@@ -1,12 +1,17 @@
+use crate::hash_map::HashMap;
+use anyhow::anyhow;
 use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::character::complete::alphanumeric1;
 use nom::character::complete::{newline, space0, space1, u64};
 use nom::combinator::map_res;
+
 use nom::combinator::{all_consuming, value};
 use nom::multi::{length_count, many0, many_m_n, separated_list0};
 use nom::sequence::pair;
 use nom::sequence::{delimited, terminated, tuple};
+use std::any;
+use std::collections::hash_map;
 use std::convert::TryFrom;
 
 const BIT_DEC_CIRCUIT: &[u8] = include_bytes!("mp_spdz/10-bitdec.txt");
@@ -107,8 +112,50 @@ impl<'l> TryFrom<&'l [u8]> for Circuit<'l> {
     }
 }
 
+struct ShamirSharing {}
+
+fn bit_generation() -> ShamirSharing {
+    unimplemented!()
+}
+
+fn bitdec10() -> Result<(), anyhow::Error> {
+    let circuit = Circuit::try_from(BIT_DEC_CIRCUIT)?;
+
+    println!("LALAL");
+
+    let mut secret_memory: HashMap<&str, ShamirSharing> = HashMap::new();
+
+    for op in circuit.operations {
+        use Operator::*;
+        match op.operator {
+            Bit => {
+                let out_register = *op.operands.get(0).unwrap();
+                let b = bit_generation();
+                secret_memory.insert(out_register, b);
+                println!("Out register: {:?}", out_register);
+                // ok_or(Err(anyhow!("Wrong index buddy")))?;
+
+                // let y_wire = *op.input_wires.get(1).unwrap();
+                // let x = wires.get(x_wire).unwrap().clone().unwrap();
+                // let y = wires.get(y_wire).unwrap().clone().unwrap();
+
+                // let z = plc.xor(sess, &x, &y);
+                // let z_wire = *op.output_wires.first().unwrap();
+                // *wires.get_mut(z_wire).unwrap() = Some(z);
+            }
+            AddS => {
+                unimplemented!()
+            }
+            LdSI => continue,
+            _ => {
+                unimplemented!()
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() {
-    let circuit = Circuit::try_from(BIT_DEC_CIRCUIT).unwrap();
     // println!("{:?}", circuit.unwrap().operations);
 }
 
@@ -119,5 +166,10 @@ mod tests {
     fn test_parse_mpspdz() {
         let circuit = Circuit::try_from(BIT_DEC_CIRCUIT).unwrap();
         assert_eq!(circuit.operations.len(), 1138);
+    }
+
+    #[test]
+    fn test_execution() {
+        bitdec10().unwrap()
     }
 }
