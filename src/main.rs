@@ -29,23 +29,23 @@ pub type Register = usize;
 
 #[derive(Clone, Debug)]
 pub(crate) enum Operator {
+    AddCI,
+    AddS,
+    AddM,
     Bit,
     BitDecInt,
+    ConvModp,
+    ConvInt,
+    LdI,
+    LdSI,
     MulSI,
     MulS,
     MulCI,
     MulM,
-    AddCI,
-    AddS,
-    AddM,
-    LdSI,
-    LdI,
-    SubS,
-    ShrCI,
-    ConvModp,
-    ConvInt,
     Open,
     PrintRegPlain,
+    SubS,
+    ShrCI,
 }
 
 fn parse_circuit(bytes: &[u8]) -> Res<&[u8], Circuit> {
@@ -76,20 +76,20 @@ fn parse_operator(line: &[u8]) -> Res<&[u8], Operator> {
         value(Operator::AddS, tag("adds")),
         value(Operator::AddCI, tag("addci")),
         value(Operator::AddM, tag("addm")),
-        value(Operator::SubS, tag("subs")),
+        value(Operator::BitDecInt, tag("bitdecint")),
+        value(Operator::Bit, tag("bit")),
+        value(Operator::ConvModp, tag("convmodp")),
+        value(Operator::ConvInt, tag("convint")),
+        value(Operator::LdSI, tag("ldsi")),
+        value(Operator::LdI, tag("ldi")),
         value(Operator::MulSI, tag("mulsi")),
         value(Operator::MulS, tag("muls")),
         value(Operator::MulCI, tag("mulci")),
         value(Operator::MulM, tag("mulm")),
-        value(Operator::LdSI, tag("ldsi")),
-        value(Operator::LdI, tag("ldi")),
-        value(Operator::ShrCI, tag("shrci")),
         value(Operator::Open, tag("asm_open")),
-        value(Operator::ConvModp, tag("convmodp")),
-        value(Operator::BitDecInt, tag("bitdecint")),
-        value(Operator::Bit, tag("bit")),
-        value(Operator::ConvInt, tag("convint")),
         value(Operator::PrintRegPlain, tag("print_reg_plain")),
+        value(Operator::SubS, tag("subs")),
+        value(Operator::ShrCI, tag("shrci")),
     ))(line)
 }
 
@@ -108,19 +108,16 @@ impl<'l> TryFrom<&'l [u8]> for Circuit<'l> {
 }
 
 fn main() {
-    let _circuit = Circuit::try_from(BIT_DEC_CIRCUIT);
-    if _circuit.is_err() {
-        println!("it didn't work, keep trying!");
-        // println!("{:?}", _circuit);
-        return;
-    }
-    // println!("{:?}", _circuit.unwrap().operations);
+    let circuit = Circuit::try_from(BIT_DEC_CIRCUIT).unwrap();
+    // println!("{:?}", circuit.unwrap().operations);
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     fn test_parse_mpspdz() {
-//         let _circuit = Circuit::try_from(BIT_DEC_CIRCUIT).unwrap();
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_parse_mpspdz() {
+        let circuit = Circuit::try_from(BIT_DEC_CIRCUIT).unwrap();
+        assert_eq!(circuit.operations.len(), 1138);
+    }
+}
