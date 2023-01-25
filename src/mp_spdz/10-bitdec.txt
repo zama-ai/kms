@@ -1,4 +1,10 @@
-# bitdec-0--0
+# cdsnjakcndsajk
+# cdsnjakcndsajk
+# cdsnjakcndsajk
+# cdsnjakcndsajk
+# cdsnjakcndsajk
+# cdsnjakcndsajk
+# cdsnjakcndsajk
 ldsi s6, 10 # 0
 bit s129 # 1
 bit s127 # 2
@@ -1137,12 +1143,3 @@ print_reg_plain c3 # 1134
 print_reg_plain c2 # 1135
 print_reg_plain c1 # 1136
 print_reg_plain c0 # 1137
-use 0, 2, 64 # 1138
-use 0, 0, 321 # 1139
-reqbl -64 # 1140
-# bitdec-0-memory-usage-1
-ldmc c0, 8191 # 1141
-gldmc cg0, 8191 # 1142
-ldmint ci0, 8191 # 1143
-ldms s0, 8191 # 1144
-gldms sg0, 8191 # 1145
