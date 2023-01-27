@@ -1,13 +1,7 @@
-use std::collections::hash_map;
-use std::convert::TryFrom;
 use std::ops::{Add, Mul, Sub};
-use std::str::FromStr;
 
-use aes_prng::AesRng;
-use rand::SeedableRng;
-
-pub(crate) struct ShamirSharing {
-    pub(crate) share: u64,
+pub struct ShamirSharing {
+    pub share: u64,
 }
 
 impl ShamirSharing {
