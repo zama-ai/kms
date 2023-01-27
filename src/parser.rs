@@ -70,6 +70,7 @@ fn parse_operation(line: &[u8]) -> Res<&[u8], Operation> {
     Ok((line, Operation { operator, operands }))
 }
 
+// these must be ordered such that no previous operator is a prefix of a later operator, e.g., bit must be after bitdecint in the list!
 fn parse_operator(line: &[u8]) -> Res<&[u8], Operator> {
     alt((
         value(Operator::AddS, tag("adds")),

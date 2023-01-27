@@ -207,22 +207,22 @@ pub fn execute_bitdec_circuit(
                 let n_regs = usize::from_str(
                     *op.operands
                         .get(0)
-                        .ok_or(anyhow!("Wrong index in BitDecInt"))?,
+                        .ok_or(anyhow!("Wrong index in MulS"))?,
                 )?;
 
                 for i in 0..n_regs / 3 {
                     let r0 = *op
                         .operands
                         .get(3 * i + 1)
-                        .ok_or(anyhow!("Wrong index 1 in BitDecInt"))?;
+                        .ok_or(anyhow!("Wrong index r0: {} in MulS", 3 * i + 1))?;
                     let r1 = *op
                         .operands
                         .get(3 * i + 2)
-                        .ok_or(anyhow!("Wrong index 1 in BitDecInt"))?;
+                        .ok_or(anyhow!("Wrong index r1: {} in MulS", 3 * i + 2))?;
                     let r2 = *op
                         .operands
                         .get(3 * i + 3)
-                        .ok_or(anyhow!("Wrong index 1 in BitDecInt"))?;
+                        .ok_or(anyhow!("Wrong index r2: {} in MulS", 3 * i + 3))?;
 
                     let s1 = mem
                         .get_sp(r1)
@@ -325,6 +325,10 @@ mod tests {
     #[case(
         18446744073709551615,
         vec![1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    )]
+    #[case(
+        0,
+        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
     )]
     fn test_execution(#[case] x: u64, #[case] expected: Vec<u64>) {
         let circuit = Circuit::try_from(crate::parser::BIT_DEC_CIRCUIT).unwrap();
