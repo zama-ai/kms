@@ -21,15 +21,14 @@ use std::ops::{Add, Mul, Sub};
 
 type Res<T, U> = nom::IResult<T, U, nom::error::Error<T>>;
 
-const BIT_DEC_CIRCUIT: &[u8] = include_bytes!("mp_spdz/10-bitdec.txt");
+const BIT_DEC_CIRCUIT: &[u8] = include_bytes!("mp_spdz/bitdec.txt");
 
-#[derive(Debug)]
-#[allow(dead_code)] // Not all the fields are used by our code, but we still want to have access to them.
+#[derive(Clone, Debug)]
 pub(crate) struct Circuit<'l> {
     operations: Vec<Operation<'l>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Operation<'l> {
     operator: Operator,
     operands: Vec<&'l str>,
@@ -159,9 +158,18 @@ impl<'l> Memory<'l> {
     }
 }
 
-fn parse_bitdec_circuit() -> Result<Vec<u64>, anyhow::Error> {
-    let circuit = Circuit::try_from(BIT_DEC_CIRCUIT)?;
+fn load_secret(secret: ShamirSharing, mem: &mut Memory) {
+    let input_register = "s6";
+    mem.write_sp(input_register, secret);
+}
+
+fn execute_bitdec_circuit(
+    secret: ShamirSharing,
+    circuit: Circuit,
+) -> Result<Vec<u64>, anyhow::Error> {
     let mut mem = Memory::new();
+    // initialize memory with secret
+    load_secret(secret, &mut mem);
 
     let seed = AesRng::generate_random_seed();
     let mut rng = AesRng::from_seed(seed);
@@ -405,20 +413,32 @@ fn parse_bitdec_circuit() -> Result<Vec<u64>, anyhow::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rstest::rstest;
+    use std::num::Wrapping;
+
     #[test]
     fn test_parse_mpspdz() {
         let circuit = Circuit::try_from(BIT_DEC_CIRCUIT).unwrap();
-        assert_eq!(circuit.operations.len(), 1138);
+        assert_eq!(circuit.operations.len(), 1137);
     }
 
-    #[test]
-    fn test_execution() {
-        let v1 = parse_bitdec_circuit().unwrap();
-        let mut v2 = vec![0_u64; 64];
-        v2[0] = 0;
-        v2[1] = 1;
-        v2[2] = 0;
-        v2[3] = 1;
-        assert_eq!(v1, v2);
+    #[rstest]
+    #[case(
+        10,
+        vec![0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    )]
+    #[case(
+        32132198412,
+        vec![0,0,1,1,0,0,0,0,0,0,0,0,1,1,1,0,0,1,0,1,1,1,0,0,1,1,0,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+    )]
+    #[case(
+        18446744073709551615,
+        vec![1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    )]
+    fn test_execution(#[case] x: u64, #[case] expected: Vec<u64>) {
+        let circuit = Circuit::try_from(BIT_DEC_CIRCUIT).unwrap();
+        let shared_x = ShamirSharing { share: x };
+        let v = execute_bitdec_circuit(shared_x, circuit.clone()).unwrap();
+        assert_eq!(v, expected);
     }
 }

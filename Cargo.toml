@@ -10,3 +10,6 @@ aes-prng = "~0.2"
 anyhow = "~1.0"
 nom = "7.1.3"
 rand = { version = "~0.8", features = ["std", "std_rng"] }
+
+[dev-dependencies]
+rstest = "~0.16"

@@ -1,11 +1,8 @@
-# cdsnjakcndsajk
-# cdsnjakcndsajk
-# cdsnjakcndsajk
-# cdsnjakcndsajk
-# cdsnjakcndsajk
-# cdsnjakcndsajk
-# cdsnjakcndsajk
-ldsi s6, 10 # 0
+# s6
+# is
+# the
+# input
+# register
 bit s129 # 1
 bit s127 # 2
 bit s126 # 3
