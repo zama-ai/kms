@@ -7,6 +7,6 @@ fn main() -> Result<(), anyhow::Error> {
     let x = 10;
     let shared_x = ShamirSharing { share: x };
     let v = execute_bitdec_circuit(shared_x, circuit.clone())?;
-    println!("bit_dec = {:?}", v);
+    println!("bit_dec = {v:?}");
     Ok(())
 }

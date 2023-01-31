@@ -61,6 +61,8 @@ fn load_secret(secret: ShamirSharing, mem: &mut Memory) {
     mem.write_sp(input_register, secret);
 }
 
+// allow clippy to use get(0) instead of first()
+#[allow(clippy::get_first)]
 pub fn execute_bitdec_circuit(
     secret: ShamirSharing,
     circuit: Circuit,
@@ -77,9 +79,9 @@ pub fn execute_bitdec_circuit(
         use crate::parser::Operator::*;
         match op.operator {
             AddCI => {
-                let out_register = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = *op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let ci = u64::from_str(*op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
+                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
+                let ci = u64::from_str(op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
 
                 let c1 = mem
                     .get_cp(r1)
@@ -87,9 +89,9 @@ pub fn execute_bitdec_circuit(
                 mem.write_cp(out_register, c1 + ci);
             }
             AddM => {
-                let r0 = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = *op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let r2 = *op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?;
+                let r0 = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
+                let r2 = op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?;
 
                 let s = mem
                     .get_sp(r1)
@@ -101,9 +103,9 @@ pub fn execute_bitdec_circuit(
                 mem.write_sp(r0, s.add(c));
             }
             AddS => {
-                let out_register = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = *op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let r2 = *op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?;
+                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
+                let r2 = op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?;
 
                 let s1 = mem
                     .get_sp(r1)
@@ -115,13 +117,13 @@ pub fn execute_bitdec_circuit(
                 mem.write_sp(out_register, s1.add(s2));
             }
             Bit => {
-                let out_register = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
                 let b = bit_generation(&mut rng);
                 mem.write_sp(out_register, b);
             }
             BitDecInt => {
                 let n_regs = usize::from_str(
-                    *op.operands
+                    op.operands
                         .get(0)
                         .ok_or(anyhow!("Wrong index in BitDecInt"))?,
                 )?;
@@ -144,18 +146,18 @@ pub fn execute_bitdec_circuit(
                 }
             }
             ConvInt => {
-                let dest = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let source = *op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
+                let dest = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let source = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
                 let ci = *mem
                     .get_ci(source)
                     .ok_or(anyhow!("Couldn't find register {source}"))?;
                 mem.write_cp(dest, ci as u64);
             }
             ConvModp => {
-                let r0 = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = *op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
+                let r0 = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
                 let bit_length =
-                    usize::from_str(*op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
+                    usize::from_str(op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
 
                 let cp1 = *mem
                     .get_cp(r1)
@@ -168,21 +170,21 @@ pub fn execute_bitdec_circuit(
                 }
             }
             LdI => {
-                let out_register = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
                 let to_load =
-                    u64::from_str(*op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?)?;
+                    u64::from_str(op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?)?;
                 mem.write_cp(out_register, to_load);
             }
             LdSI => {
-                let out_register = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
                 let to_load =
-                    u64::from_str(*op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?)?;
+                    u64::from_str(op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?)?;
                 mem.write_sp(out_register, ShamirSharing { share: to_load });
             }
             MulM => {
-                let out_register = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = *op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let r2 = *op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?;
+                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
+                let r2 = op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?;
 
                 let s1 = mem
                     .get_sp(r1)
@@ -194,9 +196,9 @@ pub fn execute_bitdec_circuit(
                 mem.write_sp(out_register, s1.mul(*c));
             }
             MulCI => {
-                let out_register = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = *op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let ci = u64::from_str(*op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
+                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
+                let ci = u64::from_str(op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
 
                 let c1 = mem
                     .get_cp(r1)
@@ -204,11 +206,8 @@ pub fn execute_bitdec_circuit(
                 mem.write_cp(out_register, c1 * ci);
             }
             MulS => {
-                let n_regs = usize::from_str(
-                    *op.operands
-                        .get(0)
-                        .ok_or(anyhow!("Wrong index in MulS"))?,
-                )?;
+                let n_regs =
+                    usize::from_str(op.operands.get(0).ok_or(anyhow!("Wrong index in MulS"))?)?;
 
                 for i in 0..n_regs / 3 {
                     let r0 = *op
@@ -236,9 +235,9 @@ pub fn execute_bitdec_circuit(
                 }
             }
             MulSI => {
-                let out_register = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let s1 = *op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let ci = u64::from_str(*op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
+                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let s1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
+                let ci = u64::from_str(op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
 
                 let s1 = mem
                     .get_sp(s1)
@@ -247,16 +246,16 @@ pub fn execute_bitdec_circuit(
             }
             Open => {
                 let n_regs =
-                    usize::from_str(*op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?)?;
+                    usize::from_str(op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?)?;
                 let _check = bool::from_str(
-                    &*op.operands
+                    &op.operands
                         .get(1)
                         .ok_or(anyhow!("Wrong index buddy"))?
                         .to_lowercase(),
                 )?;
 
                 for i in 1..(n_regs + 1) / 2 {
-                    let r0 = *op.operands.get(2 * i).ok_or(anyhow!("Wrong index buddy"))?;
+                    let r0 = op.operands.get(2 * i).ok_or(anyhow!("Wrong index buddy"))?;
                     let r1 = *op
                         .operands
                         .get(2 * i + 1)
@@ -270,9 +269,9 @@ pub fn execute_bitdec_circuit(
                 }
             }
             SubS => {
-                let out_register = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = *op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let r2 = *op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?;
+                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
+                let r2 = op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?;
 
                 let s1 = mem
                     .get_sp(r1)
@@ -284,9 +283,9 @@ pub fn execute_bitdec_circuit(
                 mem.write_sp(out_register, s1 - s2);
             }
             ShrCI => {
-                let r0 = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = *op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let ci = usize::from_str(*op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
+                let r0 = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
+                let ci = usize::from_str(op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
 
                 let c1 = mem
                     .get_cp(r1)
@@ -295,7 +294,7 @@ pub fn execute_bitdec_circuit(
                 mem.write_cp(r0, c1 << ci);
             }
             PrintRegPlain => {
-                let r0 = *op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let r0 = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
                 let c = mem
                     .get_cp(r0)
                     .ok_or(anyhow!("Couldn't find register {r0}"))?;
