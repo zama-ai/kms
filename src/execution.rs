@@ -79,7 +79,7 @@ pub fn execute_bitdec_circuit(
         use crate::parser::Operator::*;
         match op.operator {
             AddCI => {
-                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let out_register = op.operands.first().ok_or(anyhow!("Wrong index buddy"))?;
                 let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
                 let ci = u64::from_str(op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
 
