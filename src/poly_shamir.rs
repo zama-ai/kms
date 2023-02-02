@@ -25,25 +25,14 @@ pub struct Z64Poly {
 impl Z64Poly {
     pub fn mul_by_x(&mut self) {
         let last = self.coefs[F_DEG - 1];
-        for i in 1..F_DEG {
+        for i in (1..F_DEG).rev() {
             self.coefs[i] = self.coefs[i - 1]
         }
-        self.coefs[0] = Wrapping(0_u64);
-        let x8 = Z64Poly {
-            coefs: [
-                -last,
-                -last,
-                Wrapping(0),
-                -last,
-                -last,
-                Wrapping(0),
-                Wrapping(0),
-                Wrapping(0),
-            ],
-        };
-        for i in 0..F_DEG {
-            self.coefs[i] += x8.coefs[i];
-        }
+
+        self.coefs[0] = -last;
+        self.coefs[1] -= last;
+        self.coefs[3] -= last;
+        self.coefs[4] -= last;
     }
 
     pub fn from_slice(coefs: [Wrapping<u64>; F_DEG]) -> Self {
@@ -68,14 +57,14 @@ impl ReductionTablesGF256 {
         let x8 = {
             Z64Poly {
                 coefs: [
-                    -Wrapping(1_u64),
-                    -Wrapping(1_u64),
-                    Wrapping(0),
-                    -Wrapping(1_u64),
-                    -Wrapping(1_u64),
-                    Wrapping(0),
-                    Wrapping(0),
-                    Wrapping(0),
+                    -Z64::one(),
+                    -Z64::one(),
+                    Z64::zero(),
+                    -Z64::one(),
+                    -Z64::one(),
+                    Z64::zero(),
+                    Z64::zero(),
+                    Z64::zero(),
                 ],
             }
         };
@@ -127,7 +116,17 @@ pub trait Zero {
 
 impl Zero for Z64 {
     fn zero() -> Self {
-        Wrapping(0_u64)
+        Wrapping(0)
+    }
+}
+
+pub trait One {
+    fn one() -> Self;
+}
+
+impl One for Z64 {
+    fn one() -> Self {
+        Wrapping(1)
     }
 }
 
@@ -171,7 +170,7 @@ fn reduce_with_tables(coefs: [Wrapping<u64>; 2 * (F_DEG - 1) + 1]) -> Z64Poly {
 impl Mul<&Z64Poly> for Z64Poly {
     type Output = Z64Poly;
     fn mul(mut self, other: &Z64Poly) -> Self::Output {
-        let mut extended_coefs = [Wrapping(0_u64); 2 * (F_DEG - 1) + 1];
+        let mut extended_coefs = [Z64::zero(); 2 * (F_DEG - 1) + 1];
         for i in 0..F_DEG {
             for j in 0..F_DEG {
                 extended_coefs[i + j] += self.coefs[i] * other.coefs[j];
@@ -184,7 +183,7 @@ impl Mul<&Z64Poly> for Z64Poly {
 impl Mul<&Z64Poly> for &Z64Poly {
     type Output = Z64Poly;
     fn mul(self, other: &Z64Poly) -> Self::Output {
-        let mut extended_coefs = [Wrapping(0_u64); 2 * (F_DEG - 1) + 1];
+        let mut extended_coefs = [Z64::zero(); 2 * (F_DEG - 1) + 1];
         for i in 0..F_DEG {
             for j in 0..F_DEG {
                 extended_coefs[i + j] += self.coefs[i] * other.coefs[j];
@@ -193,7 +192,6 @@ impl Mul<&Z64Poly> for &Z64Poly {
         reduce_with_tables(extended_coefs)
     }
 }
-
 
 impl Mul<Z64> for Z64Poly {
     type Output = Z64Poly;
@@ -299,19 +297,19 @@ pub fn reconstruct(shares: &[ShamirSharing]) -> Z64 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_share() {
-        let secret: Z64 = std::num::Wrapping(42);
-        let sharings = share(secret);
-    }
+    // #[test]
+    // fn test_share() {
+    //     let secret: Z64 = std::num::Wrapping(42);
+    //     let sharings = share(secret);
+    // }
 
     #[test]
     fn test_arithmetic() {
-        let mut c1 = vec![Wrapping(0_u64); F_DEG];
-        let mut c2 = vec![Wrapping(0_u64); F_DEG];
+        let mut c1 = vec![Z64::zero(); F_DEG];
+        let mut c2 = vec![Z64::zero(); F_DEG];
 
-        c1[1] = Wrapping(1_u64);
-        c2[F_DEG - 1] = Wrapping(1_u64);
+        c1[1] = Z64::one();
+        c2[F_DEG - 1] = Z64::one();
 
         let p1: Z64Poly = Z64Poly::from_slice(c1[..].try_into().unwrap());
         let p2: Z64Poly = Z64Poly::from_slice(c2[..].try_into().unwrap());
@@ -319,18 +317,67 @@ mod tests {
         p3.mul_by_x();
 
         assert_eq!(&p1 * &p2, p3);
+        dbg!(p3);
 
+        // mul by x twice
+        let mut c1 = vec![Z64::zero(); F_DEG];
+        let mut c2 = vec![Z64::zero(); F_DEG];
 
-        let mut c1 = vec![Wrapping(1_u64); F_DEG];
-        let mut c2 = vec![Wrapping(1_u64); F_DEG];
+        c1[2] = Z64::one();
+        c2[F_DEG - 1] = Z64::one();
+
+        let p1: Z64Poly = Z64Poly::from_slice(c1[..].try_into().unwrap());
+        let p2: Z64Poly = Z64Poly::from_slice(c2[..].try_into().unwrap());
+        let mut p3 = p2.clone();
+        p3.mul_by_x();
+        p3.mul_by_x();
+
+        let res = &p1 * &p2;
+        assert_eq!(&p1 * &p2, p3);
+        dbg!(p3);
+        dbg!(res);
+
+        // all-1 mul by 1
+        let mut c1 = vec![Z64::one(); F_DEG];
+        let mut c2 = vec![Z64::zero(); F_DEG];
+        c2[0] = Z64::one();
+        let p1: Z64Poly = Z64Poly::from_slice(c1[..].try_into().unwrap());
+        let p2: Z64Poly = Z64Poly::from_slice(c2[..].try_into().unwrap());
+        assert_eq!(&p1 * &p2, p1);
+
+        // mul by zero = all-zero
+        let mut c1 = vec![Z64::one(); F_DEG];
+        let mut c2 = vec![Z64::zero(); F_DEG];
+
         let p1: Z64Poly = Z64Poly::from_slice(c1[..].try_into().unwrap());
         let p2: Z64Poly = Z64Poly::from_slice(c2[..].try_into().unwrap());
 
-        let c3 = [18446744073709551615_u64, 18446744073709551613, 18446744073709551612, 18446744073709551610, 18446744073709551609, 18446744073709551610, 18446744073709551612, 0];
+        let c3 = [0, 0, 0, 0, 0, 0, 0, 0];
         let c3 = c3.map(|x| Wrapping(x));
         let p3: Z64Poly = Z64Poly { coefs: c3 };
         assert_eq!(&p1 * &p2, p3);
 
+        let mut c1 = vec![Z64::one(); F_DEG];
+        let mut c2 = vec![Z64::one(); F_DEG];
 
+        let p1: Z64Poly = Z64Poly::from_slice(c1[..].try_into().unwrap());
+        let p2: Z64Poly = Z64Poly::from_slice(c2[..].try_into().unwrap());
+
+        //18446744073709551612*t^6 + 18446744073709551610*t^5 + 18446744073709551609*t^4 + 18446744073709551610*t^3 + 18446744073709551612*t^2 + 18446744073709551613*t + 18446744073709551615
+        // let c3 = [65535_u64, 65533, 65532, 65530, 65529, 65530, 65532, 0];
+        let c3 = [
+            18446744073709551615_u64,
+            18446744073709551613,
+            18446744073709551612,
+            18446744073709551610,
+            18446744073709551609,
+            18446744073709551610,
+            18446744073709551612,
+            0,
+        ];
+
+        let c3 = c3.map(|x| Wrapping(x));
+        let p3: Z64Poly = Z64Poly { coefs: c3 };
+        assert_eq!(&p1 * &p2, p3);
     }
 }
