@@ -4,12 +4,15 @@ use std::iter::Sum;
 use std::num::Wrapping;
 use std::ops::{Add, Mul};
 
+use crate::lifted_inverses::LAGRANGE_POLYS;
+
 pub type Z64 = Wrapping<u64>;
 
 pub const T: usize = 5; // Shamir reconstruction threshold
 pub const N: usize = 9; // Number of Shamir parties
 pub const F_DEG: usize = 8; // degree of irreducible polynomial F = x8 + x4 + x3 + x + 1
 
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub struct ShamirSharing {
     pub share: Z64Poly,
 }
@@ -17,7 +20,7 @@ pub struct ShamirSharing {
 /// Represents Z_{2^64}[X]/F with implicit F = x8 + x4 + x3 + x + 1
 ///
 /// Comes with fixed evaluation points lifted from GF(2^8)
-#[derive(Clone, Default, PartialEq, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub struct Z64Poly {
     coefs: [Z64; F_DEG],
 }
@@ -37,6 +40,13 @@ impl Z64Poly {
 
     pub fn from_slice(coefs: [Wrapping<u64>; F_DEG]) -> Self {
         Z64Poly { coefs }
+    }
+
+    pub fn from_vec(coefs: Vec<Wrapping<u64>>) -> Self {
+        assert_eq!(coefs.len(), 8);
+        Z64Poly {
+            coefs: coefs.try_into().unwrap(),
+        }
     }
 }
 
@@ -211,8 +221,29 @@ impl Mul<Z64> for &Z64Poly {
     }
 }
 
+#[derive(Clone, Default, PartialEq, Debug)]
 pub struct ShamirPolynomial<R> {
     coefs: Vec<R>,
+}
+
+impl<R> ShamirPolynomial<R> {
+    pub fn from_vec_poly(coefs: Vec<R>) -> Self {
+        ShamirPolynomial { coefs }
+    }
+}
+
+impl<R> ShamirPolynomial<R>
+where
+    R: Zero + std::cmp::PartialEq,
+{
+    pub fn degree(&self) -> usize {
+        for (d, coefs) in self.coefs.iter().enumerate().rev() {
+            if coefs != &R::zero() {
+                return d;
+            }
+        }
+        0
+    }
 }
 
 impl<R> ShamirPolynomial<R>
@@ -238,6 +269,45 @@ where
             res = res * point + coef;
         }
         res
+    }
+}
+
+impl<'l, 'r> Mul<&'r Z64Poly> for &'l ShamirPolynomial<Z64Poly> {
+    type Output = ShamirPolynomial<Z64Poly>;
+    fn mul(self, other: &'r Z64Poly) -> ShamirPolynomial<Z64Poly> {
+        let coefs: Vec<Z64Poly> = self.coefs.iter().map(|c| c * other).collect();
+        ShamirPolynomial { coefs }
+    }
+}
+
+impl<'l, 'r> Add<&'r ShamirPolynomial<Z64Poly>> for &'l ShamirPolynomial<Z64Poly>
+where
+    &'l Z64Poly: Add<&'r Z64Poly, Output = Z64Poly>,
+{
+    type Output = ShamirPolynomial<Z64Poly>;
+    fn add(self, other: &'r ShamirPolynomial<Z64Poly>) -> Self::Output {
+        assert_eq!(self.coefs.len(), other.coefs.len());
+        let mut coefs = Vec::new();
+        for i in 0..self.coefs.len() {
+            coefs.push(self.coefs[i] + other.coefs[i]);
+        }
+        ShamirPolynomial { coefs }
+    }
+}
+
+impl<R> Add<ShamirPolynomial<R>> for ShamirPolynomial<R>
+where
+    R: Add<R, Output = R>,
+    R: Clone,
+{
+    type Output = ShamirPolynomial<R>;
+    fn add(self, other: ShamirPolynomial<R>) -> Self::Output {
+        assert_eq!(self.coefs.len(), other.coefs.len());
+        let mut coefs = Vec::new();
+        for i in 0..self.coefs.len() {
+            coefs.push(self.coefs[i].clone() + other.coefs[i].clone());
+        }
+        ShamirPolynomial { coefs }
     }
 }
 
@@ -275,12 +345,11 @@ pub fn embed(x: usize) -> Z64Poly {
 
 /// a share for party i is G(encode(i)) where
 /// G(X) = a_0 + a_1 * X + ... + a_{t-1} * X^{t-1}
-/// a_i \in Z_{2^64}/F(X) = G; F(X) = GF(2^8)
+/// a_i \in Z_{2^64}/F(X) = G; deg(F) = 8
 pub fn share(secret: Z64) -> Vec<Z64Poly> {
     let embedded_secret = Z64Poly::from_scalar(secret);
     let poly = ShamirPolynomial::sample_random(embedded_secret, T);
-
-    let shares: Vec<_> = (0..N)
+    let shares: Vec<_> = (0..N + 1)
         .map(|xi| {
             let embedded_xi: Z64Poly = embed(xi);
             poly.eval(&embedded_xi)
@@ -302,18 +371,22 @@ impl Sum<Z64Poly> for Z64Poly {
     }
 }
 
-pub fn reconstruct(shares: &[ShamirSharing]) -> Z64 {
-    let lagrange_constants: Vec<Z64Poly> = todo!(); // TODO precompute these
-    assert_eq!(shares.len(), lagrange_constants.len());
+pub fn reconstruct(shares: &[(usize, ShamirSharing)]) -> Z64 {
+    let lagrange_polys = &LAGRANGE_POLYS; // TODO precompute these
 
-    let embedded_secret: Z64Poly = shares
+    let partial_polys: Vec<ShamirPolynomial<Z64Poly>> = shares
         .iter()
-        .zip(lagrange_constants.iter())
-        .map(|(share, lagrange)| &share.share * lagrange)
-        .sum();
+        .map(|(party_id, share)| &lagrange_polys[party_id - 1] * &share.share)
+        .collect();
 
-    let secret = embedded_secret.to_scalar();
-    secret
+    let mut f = partial_polys[0].clone();
+    for i in 1..partial_polys.len() {
+        f = f.clone() + partial_polys[i].clone();
+    }
+    assert_eq!(f.degree(), T);
+
+    let f_zero = f.eval(&Z64Poly::zero());
+    f_zero.to_scalar()
 }
 
 #[cfg(test)]
@@ -322,8 +395,20 @@ mod tests {
 
     #[test]
     fn test_share() {
-        let secret: Z64 = std::num::Wrapping(42);
-        let _sharings = share(secret);
+        let secret: Z64 = std::num::Wrapping(100);
+        let sharings = share(secret);
+        let recon_data: Vec<(usize, ShamirSharing)> = (1..N + 1)
+            .map(|party_id| {
+                (
+                    party_id,
+                    ShamirSharing {
+                        share: sharings[party_id],
+                    },
+                )
+            })
+            .collect();
+        let recon = reconstruct(&recon_data);
+        assert_eq!(recon, std::num::Wrapping(100));
     }
 
     #[test]
