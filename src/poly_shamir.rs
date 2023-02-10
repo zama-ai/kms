@@ -86,7 +86,7 @@ impl ReductionTablesGF256 {
         tables.push(x8);
 
         for i in 1..F_DEG {
-            let mut last = tables[i - 1].clone();
+            let mut last = tables[i - 1];
             last.mul_by_x();
             tables.push(last);
         }
@@ -113,8 +113,8 @@ impl Sample for Z64 {
 impl Sample for Z64Poly {
     fn sample() -> Self {
         let mut coefs = [Z64::zero(); F_DEG];
-        for i in 0..F_DEG {
-            coefs[i] = Z64::sample();
+        for coef in coefs.iter_mut() {
+            *coef = Z64::sample();
         }
         Z64Poly { coefs }
     }
@@ -169,9 +169,9 @@ impl Add<&Z64Poly> for Z64Poly {
 
 fn reduce_with_tables(coefs: [Wrapping<u64>; 2 * (F_DEG - 1) + 1]) -> Z64Poly {
     let mut res = Z64Poly::from_slice(coefs[0..F_DEG].try_into().unwrap());
-    for i in F_DEG..2 * (F_DEG - 1) + 1 {
+    for (i, coef) in coefs.iter().enumerate().skip(F_DEG) {
         for j in 0..F_DEG {
-            res.coefs[j] += REDUCTION_TABLES.entry(i, j) * &coefs[i];
+            res.coefs[j] += REDUCTION_TABLES.entry(i, j) * coef;
         }
     }
     res
@@ -362,8 +362,8 @@ impl Sum<Z64Poly> for Z64Poly {
     fn sum<I: Iterator<Item = Z64Poly>>(iter: I) -> Self {
         let mut coefs = [Z64::zero(); F_DEG];
         for poly in iter {
-            for i in 0..F_DEG {
-                coefs[i] += poly.coefs[i];
+            for (i, coef) in coefs.iter_mut().enumerate() {
+                *coef += poly.coefs[i];
             }
         }
         // implicit mod reduction on `coefs`
@@ -380,8 +380,8 @@ pub fn reconstruct(shares: &[(usize, ShamirSharing)]) -> Z64 {
         .collect();
 
     let mut f = partial_polys[0].clone();
-    for i in 1..partial_polys.len() {
-        f = f.clone() + partial_polys[i].clone();
+    for poly in partial_polys.iter().skip(1) {
+        f = f.clone() + poly.clone();
     }
     assert_eq!(f.degree(), T);
 
@@ -437,7 +437,7 @@ mod tests {
                 Z64::one(),
             ],
         };
-        let mut p3 = p2.clone();
+        let mut p3 = p2;
         p3.mul_by_x();
 
         assert_eq!(&p1 * &p2, p3);
@@ -468,7 +468,7 @@ mod tests {
                 Z64::one(),
             ],
         };
-        let mut p3 = p2.clone();
+        let mut p3 = p2;
         p3.mul_by_x();
         p3.mul_by_x();
 

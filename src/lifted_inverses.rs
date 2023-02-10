@@ -844,7 +844,7 @@ lazy_static! {
                 .iter()
                 .map(|inner| {
                     let coefs: Vec<Wrapping<u64>> =
-                        inner.iter().map(|entry| Wrapping(entry.clone())).collect();
+                        inner.iter().map(|entry| Wrapping(*entry)).collect();
                     Z64Poly::from_vec(coefs)
                 })
                 .collect();
