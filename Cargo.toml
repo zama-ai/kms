@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 aes-prng = "~0.2"
 anyhow = "~1.0"
+lazy_static = "~1.4"
 nom = "7.1.3"
 rand = { version = "~0.8", features = ["std", "std_rng"] }
 
