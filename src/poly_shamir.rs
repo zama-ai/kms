@@ -1,10 +1,10 @@
-use lazy_static::lazy_static;
 use rand::Rng;
 use std::iter::Sum;
 use std::num::Wrapping;
 use std::ops::{Add, Mul};
 
 use crate::lifted_inverses::LAGRANGE_POLYS;
+use crate::ring_constants::REDUCTION_TABLES;
 
 pub type Z64 = Wrapping<u64>;
 
@@ -22,7 +22,7 @@ pub struct ShamirSharing {
 /// Comes with fixed evaluation points lifted from GF(2^8)
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 pub struct Z64Poly {
-    coefs: [Z64; F_DEG],
+    pub coefs: [Z64; F_DEG],
 }
 
 impl Z64Poly {
@@ -48,53 +48,9 @@ impl Z64Poly {
             coefs: coefs.try_into().unwrap(),
         }
     }
-}
 
-/// Precomputes reductions of x^8, x^9, ...x^14 to help us in reducing polynomials faster
-pub struct ReductionTablesGF256 {
-    pub reduced: Vec<Z64Poly>,
-}
-
-lazy_static! {
-    pub static ref REDUCTION_TABLES: ReductionTablesGF256 = ReductionTablesGF256::new();
-}
-
-impl Default for ReductionTablesGF256 {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl ReductionTablesGF256 {
-    pub fn new() -> Self {
-        let mut tables = Vec::new();
-
-        // x^8 = -1 - x - x^3 - x^4
-        let x8 = {
-            Z64Poly {
-                coefs: [
-                    -Z64::one(),
-                    -Z64::one(),
-                    Z64::zero(),
-                    -Z64::one(),
-                    -Z64::one(),
-                    Z64::zero(),
-                    Z64::zero(),
-                    Z64::zero(),
-                ],
-            }
-        };
-        tables.push(x8);
-
-        for i in 1..F_DEG {
-            let mut last = tables[i - 1];
-            last.mul_by_x();
-            tables.push(last);
-        }
-        Self { reduced: tables }
-    }
-
-    fn entry(&self, deg: usize, idx_coef: usize) -> &Wrapping<u64> {
-        &self.reduced[deg - F_DEG].coefs[idx_coef]
+    pub fn at(&self, index: usize) -> &Z64 {
+        &self.coefs[index]
     }
 }
 
