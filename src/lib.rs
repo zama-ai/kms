@@ -1,4 +1,5 @@
 pub mod execution;
+pub mod gf256;
 pub mod lifted_inverses;
 pub mod parser;
 pub mod poly_shamir;

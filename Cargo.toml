@@ -8,9 +8,16 @@ edition = "2021"
 [dependencies]
 aes-prng = "~0.2"
 anyhow = "~1.0"
+g2p = "1.0.1"
 lazy_static = "~1.4"
 nom = "7.1.3"
 rand = { version = "~0.8", features = ["std", "std_rng"] }
 
 [dev-dependencies]
+criterion = { version="0.4" }
 rstest = "~0.16"
+
+
+[[bench]]
+name = "decoding"
+harness = false
