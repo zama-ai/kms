@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Bencher, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use distributed_decryption::gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing, GF256};
 
@@ -30,7 +30,7 @@ fn bench_decode(c: &mut Criterion) {
                 .collect();
 
             b.iter(|| {
-                let secret_poly = error_correction(shares.clone(), threshold, 0).unwrap();
+                let secret_poly = error_correction(&shares, threshold, 0).unwrap();
                 assert_eq!(secret_poly, f);
             });
         });
