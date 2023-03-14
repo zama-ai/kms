@@ -1,15 +1,14 @@
-use rand::Rng;
 use std::iter::Sum;
 use std::num::Wrapping;
-use std::ops::{Add, Mul};
+use std::ops::{Add, Mul, Sub};
 
-use crate::lifted_inverses::LAGRANGE_POLYS;
+use crate::gf256::{error_correction, GF256};
+use crate::gf256::{ShamirZ2Poly, ShamirZ2Sharing};
 use crate::ring_constants::REDUCTION_TABLES;
 
-pub type Z64 = Wrapping<u64>;
+use rand::RngCore;
 
-pub const T: usize = 5; // Shamir reconstruction threshold
-pub const N: usize = 9; // Number of Shamir parties
+pub type Z64 = Wrapping<u64>;
 pub const F_DEG: usize = 8; // degree of irreducible polynomial F = x8 + x4 + x3 + x + 1
 
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
@@ -52,25 +51,64 @@ impl Z64Poly {
     pub fn at(&self, index: usize) -> &Z64 {
         &self.coefs[index]
     }
+
+    pub fn bit_compose(&self, idx_bit: usize) -> GF256 {
+        let x: u8 = self
+            .coefs
+            .iter()
+            .enumerate()
+            .fold(0_u8, |acc, (i, element)| {
+                let shifted_entry = ((element.0 >> idx_bit & 1) as u8) << i;
+                acc + shifted_entry
+            });
+        GF256::from(x)
+    }
+
+    pub fn multiple_pow2(&self, exp: usize) -> bool {
+        assert!(exp <= 64);
+        if exp == 64 {
+            return self.is_zero();
+        }
+        let bit_checks: Vec<_> = self
+            .coefs
+            .iter()
+            .filter_map(|c| {
+                let bit = c & ((Z64::one() << exp) - Z64::one());
+                match bit {
+                    Wrapping(0_u64) => None,
+                    _ => Some(bit),
+                }
+            })
+            .collect();
+
+        matches!(bit_checks.len(), 0)
+    }
+
+    pub fn is_zero(&self) -> bool {
+        for c in self.coefs.iter() {
+            if c != &Wrapping(0_u64) {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 pub trait Sample {
-    fn sample() -> Self;
+    fn sample<R: RngCore>(rng: &mut R) -> Self;
 }
 
 impl Sample for Z64 {
-    fn sample() -> Self {
-        // TODO(Dragos) we need to make this more efficient, grabbing rng from a mutable reference
-        let mut rng = rand::thread_rng();
-        Wrapping(rng.gen::<u64>())
+    fn sample<R: RngCore>(rng: &mut R) -> Self {
+        Wrapping(rng.next_u64())
     }
 }
 
 impl Sample for Z64Poly {
-    fn sample() -> Self {
+    fn sample<R: RngCore>(rng: &mut R) -> Self {
         let mut coefs = [Z64::zero(); F_DEG];
         for coef in coefs.iter_mut() {
-            *coef = Z64::sample();
+            *coef = Z64::sample(rng);
         }
         Z64Poly { coefs }
     }
@@ -103,11 +141,29 @@ impl Zero for Z64Poly {
     }
 }
 
+impl One for Z64Poly {
+    fn one() -> Self {
+        let mut coefs = [Z64::zero(); F_DEG];
+        coefs[0] = Z64::one();
+        Z64Poly { coefs }
+    }
+}
+
 impl Add<Z64Poly> for Z64Poly {
     type Output = Z64Poly;
     fn add(mut self, other: Z64Poly) -> Self::Output {
         for i in 0..F_DEG {
             self.coefs[i] += other.coefs[i];
+        }
+        Z64Poly { coefs: self.coefs }
+    }
+}
+
+impl Sub<Z64Poly> for Z64Poly {
+    type Output = Z64Poly;
+    fn sub(mut self, other: Z64Poly) -> Self::Output {
+        for i in 0..F_DEG {
+            self.coefs[i] -= other.coefs[i];
         }
         Z64Poly { coefs: self.coefs }
     }
@@ -179,7 +235,7 @@ impl Mul<Z64> for &Z64Poly {
 
 #[derive(Clone, Default, PartialEq, Debug)]
 pub struct ShamirPolynomial<R> {
-    coefs: Vec<R>,
+    pub coefs: Vec<R>,
 }
 
 impl<R> ShamirPolynomial<R> {
@@ -204,10 +260,35 @@ where
 
 impl<R> ShamirPolynomial<R>
 where
-    R: Sample,
+    R: Zero,
 {
-    pub fn sample_random(zero_coef: R, degree: usize) -> Self {
-        let mut coefs: Vec<_> = (0..degree).map(|_| R::sample()).collect();
+    pub fn zeros(n: usize) -> Self {
+        let mut coefs: Vec<R> = Vec::with_capacity(n);
+        for _i in 0..n {
+            coefs.push(R::zero());
+        }
+        ShamirPolynomial { coefs }
+    }
+}
+
+impl<R> Zero for ShamirPolynomial<R>
+where
+    R: Zero,
+{
+    fn zero() -> Self {
+        let coefs = vec![R::zero()];
+        ShamirPolynomial { coefs }
+    }
+}
+
+impl<R> ShamirPolynomial<R>
+where
+    R: Sample,
+    R: Zero,
+    R: One,
+{
+    pub fn sample_random<U: RngCore>(rng: &mut U, zero_coef: R, degree: usize) -> Self {
+        let mut coefs: Vec<_> = (0..degree).map(|_| R::sample(rng)).collect();
         coefs.insert(0, zero_coef);
         ShamirPolynomial { coefs }
     }
@@ -254,16 +335,35 @@ where
 impl<R> Add<ShamirPolynomial<R>> for ShamirPolynomial<R>
 where
     R: Add<R, Output = R>,
-    R: Clone,
+    R: Zero,
+    R: Copy,
 {
     type Output = ShamirPolynomial<R>;
     fn add(self, other: ShamirPolynomial<R>) -> Self::Output {
-        assert_eq!(self.coefs.len(), other.coefs.len());
-        let mut coefs = Vec::new();
-        for i in 0..self.coefs.len() {
-            coefs.push(self.coefs[i].clone() + other.coefs[i].clone());
+        let max_len = usize::max(self.coefs.len(), other.coefs.len());
+
+        let mut coefs: Vec<R> = Vec::with_capacity(max_len);
+        for _i in 0..max_len {
+            coefs.push(R::zero());
+        }
+        for (i, item) in coefs.iter_mut().enumerate() {
+            if i < self.coefs.len() {
+                *item = *item + self.coefs[i];
+            }
+            if i < other.coefs.len() {
+                *item = *item + other.coefs[i];
+            }
         }
         ShamirPolynomial { coefs }
+    }
+}
+
+impl Sub<ShamirSharing> for ShamirSharing {
+    type Output = ShamirSharing;
+    fn sub(self, other: ShamirSharing) -> Self::Output {
+        ShamirSharing {
+            share: self.share - other.share,
+        }
     }
 }
 
@@ -283,7 +383,7 @@ impl Z64Poly {
 /// embed party index to Z64Poly
 /// This is done by taking the bitwise representation of the index and map each bit to each coefficient
 /// For eg, suppose x = sum(2^i * x_i); Then Z64Poly = (x_0, ..., x_7) where x_i \in Z64
-pub fn embed(x: usize) -> Z64Poly {
+pub fn embed(x: usize) -> Result<Z64Poly, anyhow::Error> {
     let bits: Vec<_> = (0..F_DEG)
         .map(|i| {
             let b = (x >> i) & 1;
@@ -294,24 +394,30 @@ pub fn embed(x: usize) -> Z64Poly {
             }
         })
         .collect();
-    Z64Poly {
-        coefs: bits.try_into().unwrap(),
-    }
+
+    let coefs: [Z64; F_DEG] = bits.as_slice().try_into()?;
+
+    Ok(Z64Poly { coefs })
 }
 
 /// a share for party i is G(encode(i)) where
 /// G(X) = a_0 + a_1 * X + ... + a_{t-1} * X^{t-1}
 /// a_i \in Z_{2^64}/F(X) = G; deg(F) = 8
-pub fn share(secret: Z64) -> Vec<Z64Poly> {
+pub fn share<R: RngCore>(
+    rng: &mut R,
+    secret: Z64,
+    num_parties: usize,
+    threshold: usize,
+) -> Result<Vec<Z64Poly>, anyhow::Error> {
     let embedded_secret = Z64Poly::from_scalar(secret);
-    let poly = ShamirPolynomial::sample_random(embedded_secret, T);
-    let shares: Vec<_> = (0..N + 1)
+    let poly = ShamirPolynomial::sample_random(rng, embedded_secret, threshold);
+    let shares: Vec<Z64Poly> = (0..num_parties + 1)
         .map(|xi| {
-            let embedded_xi: Z64Poly = embed(xi);
-            poly.eval(&embedded_xi)
+            let embedded_xi = embed(xi)?;
+            Ok(poly.eval(&embedded_xi))
         })
-        .collect();
-    shares
+        .collect::<Result<Vec<_>, anyhow::Error>>()?;
+    Ok(shares)
 }
 
 impl Sum<Z64Poly> for Z64Poly {
@@ -327,33 +433,121 @@ impl Sum<Z64Poly> for Z64Poly {
     }
 }
 
-pub fn reconstruct(shares: &[(usize, ShamirSharing)]) -> Z64 {
-    let lagrange_polys = &LAGRANGE_POLYS; // TODO precompute these
+pub fn reconstruct(
+    shares: &[(usize, ShamirSharing)],
+    threshold: usize,
+) -> Result<Z64, anyhow::Error> {
+    let recon = decode(shares, threshold, 0)?;
+    let f_zero = recon.eval(&Z64Poly::zero());
+    Ok(f_zero.to_scalar())
+}
 
-    let partial_polys: Vec<ShamirPolynomial<Z64Poly>> = shares
-        .iter()
-        .map(|(party_id, share)| &lagrange_polys[party_id - 1] * &share.share)
+fn bit_lift(x: GF256, pos: usize) -> Z64Poly {
+    let c8: u8 = x.into();
+    let shifted_coefs: Vec<_> = (0..F_DEG)
+        .map(|i| Wrapping(((c8 >> i) & 1) as u64) << pos)
         .collect();
+    Z64Poly::from_vec(shifted_coefs)
+}
 
-    let mut f = partial_polys[0].clone();
-    for poly in partial_polys.iter().skip(1) {
-        f = f.clone() + poly.clone();
+fn shamir_bit_lift(x: &ShamirZ2Poly, pos: usize) -> ShamirPolynomial<Z64Poly> {
+    let coefs_64: Vec<Z64Poly> = x
+        .coefs
+        .iter()
+        .map(|coef_2| bit_lift(*coef_2, pos))
+        .collect();
+    ShamirPolynomial { coefs: coefs_64 }
+}
+
+pub fn decode(
+    shares: &[(usize, ShamirSharing)],
+    threshold: usize,
+    max_error_count: usize,
+) -> Result<ShamirPolynomial<Z64Poly>, anyhow::Error> {
+    // threshold is the degree of the shamir polynomial
+
+    // TODO(Dragos) this should be a trait associated to ShamirSharing
+    let ring_size: usize = 64;
+
+    let mut y: Vec<_> = shares.iter().map(|(_, sharing)| *sharing).collect();
+    let parties: Vec<_> = shares.iter().map(|(party_id, _)| *party_id).collect();
+
+    let mut ring_polys = Vec::new();
+
+    for bit_idx in 0..ring_size {
+        let z: Vec<ShamirZ2Sharing> = parties
+            .iter()
+            .zip(y.iter())
+            .map(|(party_id, sh)| ShamirZ2Sharing {
+                share: sh.share.bit_compose(bit_idx),
+                party_id: *party_id as u8,
+            })
+            .collect();
+
+        // apply error correction on z
+        // fi(X) = a0 + ... a_t * X^t where a0 is the secret bit corresponding to position i
+        let fi_mod2 = error_correction(&z, threshold, max_error_count)?;
+        let fi = shamir_bit_lift(&fi_mod2, bit_idx);
+
+        // compute fi(\gamma_1) ..., fi(\gamma_n) \in GF(256)
+        let ring_eval: Vec<Z64Poly> = parties
+            .iter()
+            .map(|party_id| {
+                let embedded_xi: Z64Poly = embed(*party_id)?;
+                Ok(fi.eval(&embedded_xi))
+            })
+            .collect::<Result<Vec<_>, anyhow::Error>>()?;
+
+        ring_polys.push(fi);
+
+        // remove LSBs computed from error correction in GF(256)
+        for (j, item) in y.iter_mut().enumerate() {
+            *item = *item
+                - ShamirSharing {
+                    share: ring_eval[j],
+                }
+        }
+
+        // check that LSBs were removed correctly
+        let _errs: Vec<_> = y
+            .iter()
+            .map(|yj| {
+                // see if yj is divisible by 2^{i+1}
+                // different (and more expensive) check if we want to check divisibility by 2^{64} due to overflow
+                // bitwise operation to check that 2^{i+1} | yj
+                yj.share.multiple_pow2(bit_idx + 1)
+            })
+            .collect();
+        // println!("errs: {:?}", _errs);
     }
-    assert_eq!(f.degree(), T);
 
-    let f_zero = f.eval(&Z64Poly::zero());
-    f_zero.to_scalar()
+    let result = ring_polys
+        .into_iter()
+        .fold(ShamirPolynomial::<Z64Poly>::zero(), |acc, x| acc + x);
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
+    use rstest::rstest;
+    use std::num::Wrapping;
 
-    #[test]
-    fn test_share() {
-        let secret: Z64 = std::num::Wrapping(100);
-        let sharings = share(secret);
-        let recon_data: Vec<(usize, ShamirSharing)> = (1..N + 1)
+    #[rstest]
+    #[case(Wrapping(0))]
+    #[case(Wrapping(1))]
+    #[case(Wrapping(10))]
+    #[case(Wrapping(3213214))]
+    #[case(Wrapping(18446744073709551615))]
+    fn test_share(#[case] secret: Wrapping<u64>) {
+        let threshold: usize = 5;
+        let num_parties = 9;
+
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
+        let sharings = share(&mut rng, secret, num_parties, threshold).unwrap();
+        let recon_data: Vec<(usize, ShamirSharing)> = (1..num_parties + 1)
             .map(|party_id| {
                 (
                     party_id,
@@ -363,8 +557,131 @@ mod tests {
                 )
             })
             .collect();
-        let recon = reconstruct(&recon_data);
-        assert_eq!(recon, std::num::Wrapping(100));
+        let recon = reconstruct(&recon_data, threshold).unwrap();
+        assert_eq!(recon, secret);
+    }
+
+    #[rstest]
+    #[case(1, 1, Wrapping(100))]
+    #[case(2, 0, Wrapping(100))]
+    #[case(8, 10, Wrapping(100))]
+    fn test_ring_error_correction(
+        #[case] t: usize,
+        #[case] max_err: usize,
+        #[case] secret: Wrapping<u64>,
+    ) {
+        let n = (t + 1) + 2 * max_err;
+
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
+        let sharings = share(&mut rng, secret, n, t).unwrap();
+        // t+1 to reconstruct a degree t polynomial
+        // for each error we need to add in 2 honest shares to reconstruct
+        let mut shares: Vec<(usize, ShamirSharing)> = (1..n + 1)
+            .map(|party_id| {
+                (
+                    party_id,
+                    ShamirSharing {
+                        share: sharings[party_id],
+                    },
+                )
+            })
+            .collect();
+
+        for item in shares.iter_mut().take(max_err) {
+            item.1.share = Z64Poly::sample(&mut rng);
+        }
+
+        let recon = decode(&shares, t, max_err);
+        let f_zero = recon
+            .expect("Unable to correct. Too many errors.")
+            .eval(&Z64Poly::zero());
+        assert_eq!(f_zero.to_scalar(), secret);
+    }
+
+    #[test]
+    fn test_ring_max_error_correction() {
+        let t: usize = 4;
+        let max_err: usize = 3;
+        let n = (t + 1) + 4 * max_err;
+
+        let secret: Wrapping<u64> = Wrapping(1000);
+        let mut rng = ChaCha12Rng::seed_from_u64(0);
+
+        let sharings = share(&mut rng, secret, n, t).unwrap();
+        // t+1 to reconstruct a degree t polynomial
+        // for each error we need to add in 2 honest shares to reconstruct
+        let mut shares: Vec<(usize, ShamirSharing)> = (1..n + 1)
+            .map(|party_id| {
+                (
+                    party_id,
+                    ShamirSharing {
+                        share: sharings[party_id],
+                    },
+                )
+            })
+            .collect();
+
+        shares[0].1.share = Z64Poly::sample(&mut rng);
+        shares[1].1.share = Z64Poly::sample(&mut rng);
+
+        let recon = decode(&shares, t, 1);
+        let _ =
+            recon.expect_err("Unable to correct. Too many errors given a smaller max_err_count");
+    }
+
+    #[test]
+    fn test_bitwise_slice() {
+        let s = ShamirSharing {
+            share: Z64Poly {
+                coefs: [
+                    Wrapping(310_u64),
+                    Wrapping(210_u64),
+                    Wrapping(210_u64),
+                    Wrapping(210_u64),
+                    Wrapping(210_u64),
+                    Wrapping(210_u64),
+                    Wrapping(210_u64),
+                    Wrapping(210_u64),
+                ],
+            },
+        };
+        let b = s.share.bit_compose(1);
+        assert_eq!(b, GF256::from(255));
+    }
+
+    #[test]
+    fn test_multiple_pow2() {
+        let mut s = ShamirSharing {
+            share: Z64Poly {
+                coefs: [
+                    Wrapping(310_u64),
+                    Wrapping(210_u64),
+                    Wrapping(210_u64),
+                    Wrapping(210_u64),
+                    Wrapping(210_u64),
+                    Wrapping(210_u64),
+                    Wrapping(210_u64),
+                    Wrapping(210_u64),
+                ],
+            },
+        };
+
+        assert!(s.share.multiple_pow2(0));
+        assert!(s.share.multiple_pow2(1));
+        assert!(!s.share.multiple_pow2(5));
+
+        s.share.coefs[0] = Wrapping(7);
+        assert!(s.share.multiple_pow2(0));
+        assert!(!s.share.multiple_pow2(1));
+        assert!(!s.share.multiple_pow2(5));
+
+        s.share.coefs = [Wrapping(64_u64); F_DEG];
+        assert!(s.share.multiple_pow2(0));
+        assert!(s.share.multiple_pow2(1));
+        assert!(s.share.multiple_pow2(5));
+        assert!(s.share.multiple_pow2(6));
+        assert!(!s.share.multiple_pow2(7));
+        assert!(!s.share.multiple_pow2(23));
     }
 
     #[test]
