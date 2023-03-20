@@ -8,10 +8,18 @@ use crate::ring_constants::REDUCTION_TABLES;
 
 use rand::RngCore;
 
+use serde::{Deserialize, Serialize};
+
 pub type Z64 = Wrapping<u64>;
 pub const F_DEG: usize = 8; // degree of irreducible polynomial F = x8 + x4 + x3 + x + 1
 
-#[derive(Clone, Copy, Default, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
+pub enum Value {
+    Share64(ShamirSharing),
+    Ring64(Wrapping<u64>),
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq, Debug)]
 pub struct ShamirSharing {
     pub share: Z64Poly,
 }
@@ -19,7 +27,7 @@ pub struct ShamirSharing {
 /// Represents Z_{2^64}[X]/F with implicit F = x8 + x4 + x3 + x + 1
 ///
 /// Comes with fixed evaluation points lifted from GF(2^8)
-#[derive(Clone, Copy, Default, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq, Debug)]
 pub struct Z64Poly {
     pub coefs: [Z64; F_DEG],
 }

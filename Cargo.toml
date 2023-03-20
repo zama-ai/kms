@@ -8,11 +8,22 @@ edition = "2021"
 [dependencies]
 aes-prng = "~0.2"
 anyhow = "~1.0"
+async_cell = "~0.2"
+async-trait = "~0.1"
+blake3 = { version = "~1.3", features = ["std"] }
+dashmap = "~5"
+derive_more = "~0.99"
 g2p = "1.0.1"
 lazy_static = "~1.4"
 nom = "7.1.3"
 rand = { version = "~0.8", features = ["std", "std_rng"] }
 rstest = "~0.16"
+serde = { version = "~1.0", features = ["derive", "rc"] }
+static_assertions = "~1.1"
+tokio = { version = "~1.26", features = ["full"] }
+tracing = { version = "~0.1", features = ["log"] }
+tracing-test = "0.2"
+
 
 [dev-dependencies]
 criterion = { version="0.4" }

@@ -1,5 +1,6 @@
 use std::ops::{Add, Mul, Sub};
 
+#[derive(PartialEq, Clone, Debug)]
 pub struct ShamirSharing {
     pub share: u64,
 }

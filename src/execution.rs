@@ -6,8 +6,21 @@ use std::collections::hash_map;
 use std::str::FromStr;
 
 use crate::parser::Circuit;
+use derive_more::Display;
 use rand::SeedableRng;
 use std::ops::{Add, Mul};
+
+use serde::{Deserialize, Serialize};
+
+/// Runtime identity of player.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Serialize, Deserialize)]
+pub struct Identity(pub u64);
+
+impl From<u64> for Identity {
+    fn from(s: u64) -> Self {
+        Identity(s)
+    }
+}
 
 fn bit_generation(rng: &mut AesRng) -> ShamirSharing {
     // this can act as a trusted dealer
