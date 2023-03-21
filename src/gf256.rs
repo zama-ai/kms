@@ -317,7 +317,7 @@ pub fn error_correction(
     shares: &[ShamirZ2Sharing],
     threshold: usize,
     max_error_count: usize,
-) -> Result<ShamirZ2Poly, anyhow::Error> {
+) -> anyhow::Result<ShamirZ2Poly> {
     let xs: Vec<GF256> = shares.iter().map(|s| GF256::from(s.party_id)).collect();
     let ys: Vec<GF256> = shares.iter().map(|s| s.share).collect();
 

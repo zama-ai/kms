@@ -1,16 +1,14 @@
-use crate::shamir::ShamirSharing;
-use aes_prng::AesRng;
-use anyhow::anyhow;
-use hash_map::HashMap;
-use std::collections::hash_map;
-use std::str::FromStr;
-
 use crate::parser::Circuit;
+use crate::poly_shamir::{Sharing, Z64};
+use anyhow::anyhow;
 use derive_more::Display;
-use rand::SeedableRng;
-use std::ops::{Add, Mul};
-
+use hash_map::HashMap;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map;
+use std::num::Wrapping;
+use std::ops::{Add, Mul, Sub};
+use std::str::FromStr;
 
 /// Runtime identity of player.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Serialize, Deserialize)]
@@ -22,20 +20,13 @@ impl From<u64> for Identity {
     }
 }
 
-fn bit_generation(rng: &mut AesRng) -> ShamirSharing {
-    // this can act as a trusted dealer
-    ShamirSharing {
-        share: rng.get_bit() as u64,
-    }
-}
-
-struct Memory<'l> {
-    sp: HashMap<&'l str, ShamirSharing>,
+pub struct Memory<'l, T> {
+    sp: HashMap<&'l str, T>,
     ci: HashMap<&'l str, i64>,
     cp: HashMap<&'l str, u64>,
 }
 
-impl<'l> Memory<'l> {
+impl<'l, T> Memory<'l, T> {
     fn new() -> Self {
         Memory {
             sp: HashMap::new(),
@@ -44,11 +35,11 @@ impl<'l> Memory<'l> {
         }
     }
 
-    fn write_sp(&mut self, reg: &'l str, b: ShamirSharing) {
+    fn write_sp(&mut self, reg: &'l str, b: T) {
         self.sp.insert(reg, b);
     }
 
-    fn get_sp(&self, reg: &'l str) -> Option<&ShamirSharing> {
+    fn get_sp(&self, reg: &'l str) -> Option<&T> {
         self.sp.get(reg)
     }
 
@@ -69,112 +60,211 @@ impl<'l> Memory<'l> {
     }
 }
 
-fn load_secret(secret: ShamirSharing, mem: &mut Memory) {
-    let input_register = "s6";
-    mem.write_sp(input_register, secret);
+pub trait Session<T, R: rand::RngCore> {
+    fn mul(&mut self, x: &T, y: &T) -> T;
+    fn reveal(&self, share: &T) -> Z64;
+    fn bit_generation(&mut self) -> T;
+    fn initialize_mem_with_secret(&self, mem: &mut Memory<T>);
 }
 
-// allow clippy to use get(0) instead of first()
-#[allow(clippy::get_first)]
-pub fn execute_bitdec_circuit(
-    secret: ShamirSharing,
-    circuit: Circuit,
-) -> Result<Vec<u64>, anyhow::Error> {
-    let mut mem = Memory::new();
-    // initialize memory with secret
-    load_secret(secret, &mut mem);
+/// Local session without network interaction
+pub struct LocalSession<T, R: rand::RngCore> {
+    secret: T,
+    num_parties: usize,
+    threshold: usize,
+    rng: R,
+}
 
-    let seed = AesRng::generate_random_seed();
-    let mut rng = AesRng::from_seed(seed);
+impl<T, R> Session<T, R> for LocalSession<T, R>
+where
+    for<'l> &'l T: Mul<&'l T, Output = T>,
+    T: Sharing + Clone,
+    R: rand::RngCore,
+{
+    /// TODO this currently reconstructs and does a plain-text multiplication
+    fn mul(&mut self, x: &T, y: &T) -> T {
+        let xp = x.reveal(self.threshold);
+        let yp = y.reveal(self.threshold);
+
+        T::share_from_z64(&mut self.rng, xp * yp, self.num_parties, self.threshold)
+    }
+
+    fn initialize_mem_with_secret(&self, mem: &mut Memory<T>) {
+        let input_register = "s6";
+        mem.write_sp(input_register, self.secret.clone());
+    }
+
+    fn reveal(&self, share: &T) -> Z64 {
+        share.reveal(self.threshold)
+    }
+
+    fn bit_generation(&mut self) -> T {
+        let bit = self.rng.next_u64() % 2;
+        T::share_from_z64(
+            &mut self.rng,
+            Wrapping(bit),
+            self.num_parties,
+            self.threshold,
+        )
+    }
+}
+
+#[allow(dead_code)] // TODO remove
+struct DistributedSession {
+    // TODO add networking functions here
+}
+
+pub fn execute_circuit<T, S, R>(mut session: S, circuit: &Circuit) -> anyhow::Result<Vec<u64>>
+where
+    S: Session<T, R>,
+    T: Clone,
+    R: RngCore,
+    for<'l> &'l T: Add<&'l T, Output = T>,
+    for<'l> &'l T: Sub<&'l T, Output = T>,
+    for<'l> &'l T: Add<u64, Output = T>,
+    for<'l> &'l T: Mul<u64, Output = T>,
+{
+    let mut mem: Memory<T> = Memory::new();
+
+    // initialize memory with secret
+    session.initialize_mem_with_secret(&mut mem);
+
     let mut outputs = Vec::new();
 
-    for op in circuit.operations {
+    #[allow(clippy::get_first)]
+    for op in circuit.operations.iter() {
         use crate::parser::Operator::*;
         match op.operator {
             AddCI => {
-                let out_register = op.operands.first().ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let ci = u64::from_str(op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
+                let out_register = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let r1 = op
+                    .operands
+                    .get(1)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let ci = u64::from_str(
+                    op.operands
+                        .get(2)
+                        .ok_or_else(|| anyhow!("Wrong index buddy"))?,
+                )?;
 
                 let c1 = mem
                     .get_cp(r1)
-                    .ok_or(anyhow!("Couldn't find register {r1}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r1}"))?;
                 mem.write_cp(out_register, c1 + ci);
             }
             AddM => {
-                let r0 = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let r2 = op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?;
+                let r0 = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let r1 = op
+                    .operands
+                    .get(1)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let r2 = op
+                    .operands
+                    .get(2)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
 
                 let s = mem
                     .get_sp(r1)
-                    .ok_or(anyhow!("Couldn't find register {r1}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r1}"))?;
                 let c = *mem
                     .get_cp(r2)
-                    .ok_or(anyhow!("Couldn't find register {r2}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r2}"))?;
 
-                mem.write_sp(r0, s.add(c));
+                mem.write_sp(r0, s + c);
             }
             AddS => {
-                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let r2 = op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?;
+                let out_register = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let r1 = op
+                    .operands
+                    .get(1)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let r2 = op
+                    .operands
+                    .get(2)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
 
                 let s1 = mem
                     .get_sp(r1)
-                    .ok_or(anyhow!("Couldn't find register {r1}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r1}"))?;
                 let s2 = mem
                     .get_sp(r2)
-                    .ok_or(anyhow!("Couldn't find register {r2}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r2}"))?;
 
-                mem.write_sp(out_register, s1.add(s2));
+                mem.write_sp(out_register, s1 + s2);
             }
             Bit => {
-                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let b = bit_generation(&mut rng);
+                let out_register = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let b = session.bit_generation();
                 mem.write_sp(out_register, b);
             }
             BitDecInt => {
                 let n_regs = usize::from_str(
                     op.operands
                         .get(0)
-                        .ok_or(anyhow!("Wrong index in BitDecInt"))?,
+                        .ok_or_else(|| anyhow!("Wrong index in BitDecInt"))?,
                 )?;
 
                 let r0 = *op
                     .operands
                     .get(1)
-                    .ok_or(anyhow!("Wrong index 1 in BitDecInt"))?;
+                    .ok_or_else(|| anyhow!("Wrong index 1 in BitDecInt"))?;
                 let source = *mem
                     .get_ci(r0)
-                    .ok_or(anyhow!("Couldn't find register {r0}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r0}"))?;
 
                 for i in 0..n_regs - 1 {
                     let index = i + 2;
                     let dest = *op
                         .operands
                         .get(index)
-                        .ok_or(anyhow!("Wrong index buddy, got {index}"))?;
+                        .ok_or_else(|| anyhow!("Wrong index buddy, got {index}"))?;
                     mem.write_ci(dest, (source >> i) & 1);
                 }
             }
             ConvInt => {
-                let dest = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let source = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
+                let dest = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let source = op
+                    .operands
+                    .get(1)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
                 let ci = *mem
                     .get_ci(source)
-                    .ok_or(anyhow!("Couldn't find register {source}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {source}"))?;
                 mem.write_cp(dest, ci as u64);
             }
             ConvModp => {
-                let r0 = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let bit_length =
-                    usize::from_str(op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
+                let r0 = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let r1 = op
+                    .operands
+                    .get(1)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let bit_length = usize::from_str(
+                    op.operands
+                        .get(2)
+                        .ok_or_else(|| anyhow!("Wrong index buddy"))?,
+                )?;
 
                 let cp1 = *mem
                     .get_cp(r1)
-                    .ok_or(anyhow!("Couldn't find register {r1}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r1}"))?;
 
                 if bit_length == 0 {
                     mem.write_ci(r0, cp1 as i64);
@@ -183,134 +273,202 @@ pub fn execute_bitdec_circuit(
                 }
             }
             LdI => {
-                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let to_load =
-                    u64::from_str(op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?)?;
+                let out_register = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let to_load = u64::from_str(
+                    op.operands
+                        .get(1)
+                        .ok_or_else(|| anyhow!("Wrong index buddy"))?,
+                )?;
                 mem.write_cp(out_register, to_load);
             }
             LdSI => {
-                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let to_load =
-                    u64::from_str(op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?)?;
-                mem.write_sp(out_register, ShamirSharing { share: to_load });
+                // let out_register = op.operands.get(0).ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                // let to_load =
+                //     u64::from_str(op.operands.get(1).ok_or_else(|| anyhow!("Wrong index buddy"))?)?;
+                // mem.write_sp(out_register, ShamirU64Sharing { share: to_load });
+                todo!();
             }
             MulM => {
-                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let r2 = op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?;
+                let out_register = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let r1 = op
+                    .operands
+                    .get(1)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let r2 = op
+                    .operands
+                    .get(2)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
 
                 let s1 = mem
                     .get_sp(r1)
-                    .ok_or(anyhow!("Couldn't find register {r1}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r1}"))?;
                 let c = mem
                     .get_cp(r2)
-                    .ok_or(anyhow!("Couldn't find register {r2}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r2}"))?;
 
-                mem.write_sp(out_register, s1.mul(*c));
+                mem.write_sp(out_register, s1 * *c);
             }
             MulCI => {
-                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let ci = u64::from_str(op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
+                let out_register = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let r1 = op
+                    .operands
+                    .get(1)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let ci = u64::from_str(
+                    op.operands
+                        .get(2)
+                        .ok_or_else(|| anyhow!("Wrong index buddy"))?,
+                )?;
 
                 let c1 = mem
                     .get_cp(r1)
-                    .ok_or(anyhow!("Couldn't find register {r1}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r1}"))?;
                 mem.write_cp(out_register, c1 * ci);
             }
             MulS => {
-                let n_regs =
-                    usize::from_str(op.operands.get(0).ok_or(anyhow!("Wrong index in MulS"))?)?;
+                let n_regs = usize::from_str(
+                    op.operands
+                        .get(0)
+                        .ok_or_else(|| anyhow!("Wrong index in MulS"))?,
+                )?;
 
                 for i in 0..n_regs / 3 {
                     let r0 = *op
                         .operands
                         .get(3 * i + 1)
-                        .ok_or(anyhow!("Wrong index r0: {} in MulS", 3 * i + 1))?;
+                        .ok_or_else(|| anyhow!("Wrong index r0: {} in MulS", 3 * i + 1))?;
                     let r1 = *op
                         .operands
                         .get(3 * i + 2)
-                        .ok_or(anyhow!("Wrong index r1: {} in MulS", 3 * i + 2))?;
+                        .ok_or_else(|| anyhow!("Wrong index r1: {} in MulS", 3 * i + 2))?;
                     let r2 = *op
                         .operands
                         .get(3 * i + 3)
-                        .ok_or(anyhow!("Wrong index r2: {} in MulS", 3 * i + 3))?;
+                        .ok_or_else(|| anyhow!("Wrong index r2: {} in MulS", 3 * i + 3))?;
 
                     let s1 = mem
                         .get_sp(r1)
-                        .ok_or(anyhow!("Couldn't find register {r1}"))?;
+                        .ok_or_else(|| anyhow!("Couldn't find register {r1}"))?;
 
                     let s2 = mem
                         .get_sp(r2)
-                        .ok_or(anyhow!("Couldn't find register {r2}"))?;
+                        .ok_or_else(|| anyhow!("Couldn't find register {r2}"))?;
 
-                    mem.write_sp(r0, s1.mul(s2));
+                    // temporary call before actual mul is implemented. Needs sharing parameters for now.
+                    mem.write_sp(r0, session.mul(s1, s2));
                 }
             }
             MulSI => {
-                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let s1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let ci = u64::from_str(op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
+                let out_register = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let s1 = op
+                    .operands
+                    .get(1)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let ci = u64::from_str(
+                    op.operands
+                        .get(2)
+                        .ok_or_else(|| anyhow!("Wrong index buddy"))?,
+                )?;
 
                 let s1 = mem
                     .get_sp(s1)
-                    .ok_or(anyhow!("Couldn't find register {s1}"))?;
-                mem.write_sp(out_register, s1.mul(ci));
+                    .ok_or_else(|| anyhow!("Couldn't find register {s1}"))?;
+                mem.write_sp(out_register, s1 * ci);
             }
             Open => {
-                let n_regs =
-                    usize::from_str(op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?)?;
+                let n_regs = usize::from_str(
+                    op.operands
+                        .get(0)
+                        .ok_or_else(|| anyhow!("Wrong index buddy"))?,
+                )?;
                 let _check = bool::from_str(
                     &op.operands
                         .get(1)
-                        .ok_or(anyhow!("Wrong index buddy"))?
+                        .ok_or_else(|| anyhow!("Wrong index buddy"))?
                         .to_lowercase(),
                 )?;
 
                 for i in 1..(n_regs + 1) / 2 {
-                    let r0 = op.operands.get(2 * i).ok_or(anyhow!("Wrong index buddy"))?;
+                    let r0 = op
+                        .operands
+                        .get(2 * i)
+                        .ok_or_else(|| anyhow!("Wrong index buddy"))?;
                     let r1 = *op
                         .operands
                         .get(2 * i + 1)
-                        .ok_or(anyhow!("Wrong index buddy"))?;
+                        .ok_or_else(|| anyhow!("Wrong index buddy"))?;
 
                     let s = mem
                         .get_sp(r1)
-                        .ok_or(anyhow!("Couldn't find register {r1}"))?;
+                        .ok_or_else(|| anyhow!("Couldn't find register {r1}"))?;
 
-                    mem.write_cp(r0, s.reveal());
+                    mem.write_cp(r0, session.reveal(s).0);
                 }
             }
             SubS => {
-                let out_register = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let r2 = op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?;
+                let out_register = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let r1 = op
+                    .operands
+                    .get(1)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let r2 = op
+                    .operands
+                    .get(2)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
 
                 let s1 = mem
                     .get_sp(r1)
-                    .ok_or(anyhow!("Couldn't find register {r1}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r1}"))?;
                 let s2 = mem
                     .get_sp(r2)
-                    .ok_or(anyhow!("Couldn't find register {r2}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r2}"))?;
 
                 mem.write_sp(out_register, s1 - s2);
             }
             ShrCI => {
-                let r0 = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
-                let r1 = op.operands.get(1).ok_or(anyhow!("Wrong index buddy"))?;
-                let ci = usize::from_str(op.operands.get(2).ok_or(anyhow!("Wrong index buddy"))?)?;
+                let r0 = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let r1 = op
+                    .operands
+                    .get(1)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                let ci = usize::from_str(
+                    op.operands
+                        .get(2)
+                        .ok_or_else(|| anyhow!("Wrong index buddy"))?,
+                )?;
 
                 let c1 = mem
                     .get_cp(r1)
-                    .ok_or(anyhow!("Couldn't find register {r1}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r1}"))?;
 
                 mem.write_cp(r0, c1 << ci);
             }
             PrintRegPlain => {
-                let r0 = op.operands.get(0).ok_or(anyhow!("Wrong index buddy"))?;
+                let r0 = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
                 let c = mem
                     .get_cp(r0)
-                    .ok_or(anyhow!("Couldn't find register {r0}"))?;
+                    .ok_or_else(|| anyhow!("Couldn't find register {r0}"))?;
                 // print!("{:?}", c);
                 // convert prints to outputs for testing purposes
                 outputs.push(*c);
@@ -323,6 +481,8 @@ pub fn execute_bitdec_circuit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ring64::Ring64;
+    use rand::SeedableRng;
     use rstest::rstest;
 
     #[rstest]
@@ -344,8 +504,30 @@ mod tests {
     )]
     fn test_execution(#[case] x: u64, #[case] expected: Vec<u64>) {
         let circuit = Circuit::try_from(crate::parser::BIT_DEC_CIRCUIT).unwrap();
-        let shared_x = ShamirSharing { share: x };
-        let v = execute_bitdec_circuit(shared_x, circuit.clone()).unwrap();
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(234);
+        let shamir_sharings =
+            crate::poly_shamir::share(&mut rng, std::num::Wrapping(x), 9, 5).unwrap();
+
+        let sess = LocalSession {
+            secret: shamir_sharings,
+            num_parties: 9,
+            threshold: 5,
+            rng: rand_chacha::ChaCha12Rng::seed_from_u64(100),
+        };
+
+        let v = execute_circuit(sess, &circuit).unwrap();
+        assert_eq!(v, expected);
+
+        let single_u64_share = Ring64 { value: x };
+
+        let sess = LocalSession {
+            secret: single_u64_share,
+            num_parties: 9,
+            threshold: 5,
+            rng: rand_chacha::ChaCha12Rng::seed_from_u64(200),
+        };
+
+        let v = execute_circuit(sess, &circuit).unwrap();
         assert_eq!(v, expected);
     }
 }

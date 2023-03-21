@@ -12,14 +12,14 @@ pub struct LocalNetworking {
 
 #[async_trait]
 impl Networking for LocalNetworking {
-    async fn send(&self, val: &Value, _receiver: &Identity) -> Result<(), anyhow::Error> {
+    async fn send(&self, val: &Value, _receiver: &Identity) -> anyhow::Result<()> {
         tracing::debug!("Async sending; sid:{}", self.session_id);
         let cell = self.store.clone();
         cell.set(val.clone());
         Ok(())
     }
 
-    async fn receive(&self, _sender: &Identity) -> Result<Value, anyhow::Error> {
+    async fn receive(&self, _sender: &Identity) -> anyhow::Result<Value> {
         tracing::debug!("Async receiving; sid:{}", self.session_id);
         let cell = self.store.clone();
         let val = cell.get().await;

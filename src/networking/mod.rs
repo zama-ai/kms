@@ -13,7 +13,7 @@ pub mod local;
 /// for asynchronous (blocking) execution.
 #[async_trait]
 pub trait Networking {
-    async fn send(&self, value: &Value, receiver: &Identity) -> Result<(), anyhow::Error>;
+    async fn send(&self, value: &Value, receiver: &Identity) -> anyhow::Result<()>;
 
-    async fn receive(&self, sender: &Identity) -> Result<Value, anyhow::Error>;
+    async fn receive(&self, sender: &Identity) -> anyhow::Result<Value>;
 }
