@@ -1,9 +1,7 @@
-use crate::poly_shamir::{Sharing, Z64};
 use rand::RngCore;
-use std::{
-    num::Wrapping,
-    ops::{Add, Mul, Sub},
-};
+use std::ops::{Add, Mul, Sub};
+
+use crate::poly_shamir::Sharing;
 
 /// This struct is used for single-party plaintext evaluation of a circuit
 #[derive(Debug, Clone)]
@@ -12,17 +10,17 @@ pub struct Ring64 {
 }
 
 impl Sharing for Ring64 {
-    fn reveal(&self, _threshold: usize) -> Z64 {
-        Wrapping(self.value)
+    fn reveal(&self, _threshold: usize) -> u64 {
+        self.value
     }
 
-    fn share_from_z64<R: RngCore>(
+    fn share<R: RngCore>(
         _rng: &mut R,
-        secret: Z64,
+        secret: u64,
         _num_parties: usize,
         _threshold: usize,
     ) -> Ring64 {
-        Ring64 { value: secret.0 }
+        Ring64 { value: secret }
     }
 }
 

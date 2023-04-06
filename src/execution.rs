@@ -86,7 +86,7 @@ where
         let xp = x.reveal(self.threshold);
         let yp = y.reveal(self.threshold);
 
-        T::share_from_z64(&mut self.rng, xp * yp, self.num_parties, self.threshold)
+        T::share(&mut self.rng, xp * yp, self.num_parties, self.threshold)
     }
 
     fn initialize_mem_with_secret(&self, mem: &mut Memory<T>) {
@@ -95,17 +95,12 @@ where
     }
 
     fn reveal(&self, share: &T) -> Z64 {
-        share.reveal(self.threshold)
+        Wrapping(share.reveal(self.threshold))
     }
 
     fn bit_generation(&mut self) -> T {
         let bit = self.rng.next_u64() % 2;
-        T::share_from_z64(
-            &mut self.rng,
-            Wrapping(bit),
-            self.num_parties,
-            self.threshold,
-        )
+        T::share(&mut self.rng, bit, self.num_parties, self.threshold)
     }
 }
 
@@ -132,7 +127,7 @@ where
     let mut outputs = Vec::new();
 
     #[allow(clippy::get_first)]
-    for op in circuit.operations.iter() {
+    for op in &circuit.operations {
         use crate::parser::Operator::*;
         match op.operator {
             AddCI => {
@@ -481,53 +476,65 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::poly_shamir::Z128;
     use crate::ring64::Ring64;
+    use paste::paste;
     use rand::SeedableRng;
+    use rand_chacha::ChaCha12Rng;
     use rstest::rstest;
 
-    #[rstest]
-    #[case(
-        10,
-        vec![0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    )]
-    #[case(
-        32132198412,
-        vec![0,0,1,1,0,0,0,0,0,0,0,0,1,1,1,0,0,1,0,1,1,1,0,0,1,1,0,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    )]
-    #[case(
-        18446744073709551615,
-        vec![1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-    )]
-    #[case(
-        0,
-        vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    )]
-    fn test_execution(#[case] x: u64, #[case] expected: Vec<u64>) {
-        let circuit = Circuit::try_from(crate::parser::BIT_DEC_CIRCUIT).unwrap();
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(234);
-        let shamir_sharings =
-            crate::poly_shamir::share(&mut rng, std::num::Wrapping(x), 9, 5).unwrap();
+    macro_rules! exection_test {
+        ($z:ty) => {
+            paste! {
+                #[rstest]
+            #[case(
+                10,
+                vec![0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            )]
+            #[case(
+                32132198412,
+                vec![0,0,1,1,0,0,0,0,0,0,0,0,1,1,1,0,0,1,0,1,1,1,0,0,1,1,0,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            )]
+            #[case(
+                18446744073709551615,
+                vec![1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+            )]
+            #[case(
+                0,
+                vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            )]
+            fn [<test_execution_ $z:lower>](#[case] x: u64, #[case] expected: Vec<u64>) {
+                let circuit = Circuit::try_from(crate::parser::BIT_DEC_CIRCUIT).unwrap();
+                let mut rng = ChaCha12Rng::seed_from_u64(234);
+                let shamir_sharings =
+                    crate::poly_shamir::ZPoly::<$z>::share(&mut rng, Wrapping(x.into()), 9, 5).unwrap();
 
-        let sess = LocalSession {
-            secret: shamir_sharings,
-            num_parties: 9,
-            threshold: 5,
-            rng: rand_chacha::ChaCha12Rng::seed_from_u64(100),
+                let sess = LocalSession {
+                    secret: shamir_sharings,
+                    num_parties: 9,
+                    threshold: 5,
+                    rng: ChaCha12Rng::seed_from_u64(100),
+                };
+
+                let v = execute_circuit(sess, &circuit).unwrap();
+                assert_eq!(v, expected);
+
+                let single_u64_share = Ring64 { value: x };
+
+                let sess = LocalSession {
+                    secret: single_u64_share,
+                    num_parties: 9,
+                    threshold: 5,
+                    rng: ChaCha12Rng::seed_from_u64(200),
+                };
+
+                let v = execute_circuit(sess, &circuit).unwrap();
+                assert_eq!(v, expected);
+            }
+            }
         };
-
-        let v = execute_circuit(sess, &circuit).unwrap();
-        assert_eq!(v, expected);
-
-        let single_u64_share = Ring64 { value: x };
-
-        let sess = LocalSession {
-            secret: single_u64_share,
-            num_parties: 9,
-            threshold: 5,
-            rng: rand_chacha::ChaCha12Rng::seed_from_u64(200),
-        };
-
-        let v = execute_circuit(sess, &circuit).unwrap();
-        assert_eq!(v, expected);
     }
+
+    exection_test!(Z128);
+    exection_test!(Z64);
 }

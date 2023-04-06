@@ -1,13 +1,18 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use distributed_decryption::{
+    gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing, GF256},
+    poly_shamir::{ZPoly, Zero, Z128, Z64},
+};
+use rand::SeedableRng;
+use rand_chacha::ChaCha12Rng;
+use std::num::Wrapping;
 
-use distributed_decryption::gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing, GF256};
-
-fn bench_decode(c: &mut Criterion) {
+fn bench_decode_z2(c: &mut Criterion) {
     let degrees = vec![2_usize, 4, 8, 16, 32, 64];
-    let mut group = c.benchmark_group("decode");
+    let mut group = c.benchmark_group("decode_z2");
 
     for degree in &degrees {
-        group.bench_function(BenchmarkId::new("degree", degree), |b| {
+        group.bench_function(BenchmarkId::new("decode", degree), |b| {
             let threshold = *degree;
 
             let mut coefs: Vec<GF256> = Vec::new();
@@ -37,5 +42,53 @@ fn bench_decode(c: &mut Criterion) {
     }
 }
 
-criterion_group!(decode, bench_decode);
+fn bench_decode_z128(c: &mut Criterion) {
+    // params are (num_parties, threshold, max_errors)
+    let params = vec![(4, 1, 0), (10, 3, 0), (10, 3, 2), (40, 13, 0)];
+    let mut group = c.benchmark_group("decode_z128");
+
+    for p in &params {
+        let (num_parties, threshold, max_err) = *p;
+        let p_str = format!("n:{num_parties} t:{threshold} e:{max_err}");
+        assert!(num_parties >= (threshold + 1) + 2 * max_err);
+
+        group.bench_function(BenchmarkId::new("decode", p_str), |b| {
+            let mut rng = ChaCha12Rng::seed_from_u64(0);
+            let secret: Z128 = Wrapping(23425);
+            let sharings = ZPoly::<Z128>::share(&mut rng, secret, num_parties, threshold).unwrap();
+
+            b.iter(|| {
+                let recon = ZPoly::<Z128>::decode(&sharings, threshold, max_err).unwrap();
+                let f_zero = recon.eval(&ZPoly::ZERO);
+                assert_eq!(f_zero.to_scalar().unwrap(), secret);
+            });
+        });
+    }
+}
+
+fn bench_decode_z64(c: &mut Criterion) {
+    // params are (num_parties, threshold, max_errors)
+    let params = vec![(4, 1, 0), (10, 3, 0), (10, 3, 2), (40, 13, 0)];
+    let mut group = c.benchmark_group("decode_z64");
+
+    for p in &params {
+        let (num_parties, threshold, max_err) = *p;
+        let p_str = format!("n:{num_parties} t:{threshold} e:{max_err}");
+        assert!(num_parties >= (threshold + 1) + 2 * max_err);
+
+        group.bench_function(BenchmarkId::new("decode", p_str), |b| {
+            let mut rng = ChaCha12Rng::seed_from_u64(0);
+            let secret: Z64 = Wrapping(23425);
+            let sharings = ZPoly::<Z64>::share(&mut rng, secret, num_parties, threshold).unwrap();
+
+            b.iter(|| {
+                let recon = ZPoly::<Z64>::decode(&sharings, threshold, max_err).unwrap();
+                let f_zero = recon.eval(&ZPoly::ZERO);
+                assert_eq!(f_zero.to_scalar().unwrap(), secret);
+            });
+        });
+    }
+}
+
+criterion_group!(decode, bench_decode_z2, bench_decode_z128, bench_decode_z64);
 criterion_main!(decode);

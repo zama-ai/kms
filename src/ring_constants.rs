@@ -1,124 +1,128 @@
-use crate::poly_shamir::Z64Poly;
-use crate::poly_shamir::F_DEG;
-use std::num::Wrapping;
+use crate::poly_shamir::{One, ZConsts, ZPoly, Zero, F_DEG};
 
 /// Precomputes reductions of x^8, x^9, ...x^14 to help us in reducing polynomials faster
-pub struct ReductionTablesGF256 {
-    pub reduced: [Z64Poly; 8],
+pub struct ReductionTablesGF256<Z> {
+    pub reduced: [ZPoly<Z>; 8],
 }
 
-pub const REDUCTION_TABLES: ReductionTablesGF256 = ReductionTablesGF256::new();
-
-impl Default for ReductionTablesGF256 {
+impl<Z> Default for ReductionTablesGF256<Z>
+where
+    Z: ZConsts + One + Zero,
+{
     fn default() -> Self {
         Self::new()
     }
 }
-impl ReductionTablesGF256 {
+
+impl<Z> ReductionTablesGF256<Z>
+where
+    Z: ZConsts + One + Zero,
+{
     pub const fn new() -> Self {
         Self {
             reduced: [
-                Z64Poly {
+                ZPoly {
                     coefs: [
-                        Wrapping(18446744073709551615),
-                        Wrapping(18446744073709551615),
-                        Wrapping(0),
-                        Wrapping(18446744073709551615),
-                        Wrapping(18446744073709551615),
-                        Wrapping(0),
-                        Wrapping(0),
-                        Wrapping(0),
+                        Z::MAX,
+                        Z::MAX,
+                        Z::ZERO,
+                        Z::MAX,
+                        Z::MAX,
+                        Z::ZERO,
+                        Z::ZERO,
+                        Z::ZERO,
                     ],
                 },
-                Z64Poly {
+                ZPoly {
                     coefs: [
-                        Wrapping(0),
-                        Wrapping(18446744073709551615),
-                        Wrapping(18446744073709551615),
-                        Wrapping(0),
-                        Wrapping(18446744073709551615),
-                        Wrapping(18446744073709551615),
-                        Wrapping(0),
-                        Wrapping(0),
+                        Z::ZERO,
+                        Z::MAX,
+                        Z::MAX,
+                        Z::ZERO,
+                        Z::MAX,
+                        Z::MAX,
+                        Z::ZERO,
+                        Z::ZERO,
                     ],
                 },
-                Z64Poly {
+                ZPoly {
                     coefs: [
-                        Wrapping(0),
-                        Wrapping(0),
-                        Wrapping(18446744073709551615),
-                        Wrapping(18446744073709551615),
-                        Wrapping(0),
-                        Wrapping(18446744073709551615),
-                        Wrapping(18446744073709551615),
-                        Wrapping(0),
+                        Z::ZERO,
+                        Z::ZERO,
+                        Z::MAX,
+                        Z::MAX,
+                        Z::ZERO,
+                        Z::MAX,
+                        Z::MAX,
+                        Z::ZERO,
                     ],
                 },
-                Z64Poly {
+                ZPoly {
                     coefs: [
-                        Wrapping(0),
-                        Wrapping(0),
-                        Wrapping(0),
-                        Wrapping(18446744073709551615),
-                        Wrapping(18446744073709551615),
-                        Wrapping(0),
-                        Wrapping(18446744073709551615),
-                        Wrapping(18446744073709551615),
+                        Z::ZERO,
+                        Z::ZERO,
+                        Z::ZERO,
+                        Z::MAX,
+                        Z::MAX,
+                        Z::ZERO,
+                        Z::MAX,
+                        Z::MAX,
                     ],
                 },
-                Z64Poly {
+                ZPoly {
                     coefs: [
-                        Wrapping(1),
-                        Wrapping(1),
-                        Wrapping(0),
-                        Wrapping(1),
-                        Wrapping(0),
-                        Wrapping(18446744073709551615),
-                        Wrapping(0),
-                        Wrapping(18446744073709551615),
+                        Z::ONE,
+                        Z::ONE,
+                        Z::ZERO,
+                        Z::ONE,
+                        Z::ZERO,
+                        Z::MAX,
+                        Z::ZERO,
+                        Z::MAX,
                     ],
                 },
-                Z64Poly {
+                ZPoly {
                     coefs: [
-                        Wrapping(1),
-                        Wrapping(2),
-                        Wrapping(1),
-                        Wrapping(1),
-                        Wrapping(2),
-                        Wrapping(0),
-                        Wrapping(18446744073709551615),
-                        Wrapping(0),
+                        Z::ONE,
+                        Z::TWO,
+                        Z::ONE,
+                        Z::ONE,
+                        Z::TWO,
+                        Z::ZERO,
+                        Z::MAX,
+                        Z::ZERO,
                     ],
                 },
-                Z64Poly {
+                ZPoly {
                     coefs: [
-                        Wrapping(0),
-                        Wrapping(1),
-                        Wrapping(2),
-                        Wrapping(1),
-                        Wrapping(1),
-                        Wrapping(2),
-                        Wrapping(0),
-                        Wrapping(18446744073709551615),
+                        Z::ZERO,
+                        Z::ONE,
+                        Z::TWO,
+                        Z::ONE,
+                        Z::ONE,
+                        Z::TWO,
+                        Z::ZERO,
+                        Z::MAX,
                     ],
                 },
-                Z64Poly {
+                ZPoly {
                     coefs: [
-                        Wrapping(1),
-                        Wrapping(1),
-                        Wrapping(1),
-                        Wrapping(3),
-                        Wrapping(2),
-                        Wrapping(1),
-                        Wrapping(2),
-                        Wrapping(0),
+                        Z::ONE,
+                        Z::ONE,
+                        Z::ONE,
+                        Z::THREE,
+                        Z::TWO,
+                        Z::ONE,
+                        Z::TWO,
+                        Z::ZERO,
                     ],
                 },
             ],
         }
     }
 
-    pub fn entry(&self, deg: usize, idx_coef: usize) -> &Wrapping<u64> {
+    #[inline(always)]
+    pub fn entry(&self, deg: usize, idx_coef: usize) -> &Z {
         &self.reduced[deg - F_DEG].coefs[idx_coef]
     }
 }
