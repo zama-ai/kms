@@ -5,6 +5,7 @@ pub mod gf256;
 mod grpc;
 pub mod networking;
 pub mod parser;
+pub mod poly;
 pub mod poly_shamir;
 pub mod ring64;
 pub mod ring_constants;
