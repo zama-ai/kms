@@ -1,0 +1,43 @@
+use derive_more::Display;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+/// Role/party number of a player.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Serialize, Deserialize)]
+pub struct Role(pub u64);
+
+impl From<u64> for Role {
+    fn from(s: u64) -> Self {
+        Role(s)
+    }
+}
+
+impl Role {
+    pub fn player_no(&self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Runtime identity of player.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Serialize, Deserialize)]
+pub struct Identity(pub String);
+
+impl From<&str> for Identity {
+    fn from(s: &str) -> Self {
+        Identity(s.to_string())
+    }
+}
+
+impl From<&String> for Identity {
+    fn from(s: &String) -> Self {
+        Identity(s.clone())
+    }
+}
+
+impl From<String> for Identity {
+    fn from(s: String) -> Self {
+        Identity(s)
+    }
+}
+
+pub type RoleAssignment = HashMap<Role, Identity>;

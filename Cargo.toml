@@ -10,19 +10,34 @@ aes-prng = "~0.2"
 anyhow = "~1.0"
 async_cell = "~0.2"
 async-trait = "~0.1"
+backoff = { version = "~0.4", features = ["tokio"] }
+bincode = "~1.3"
 blake3 = { version = "~1.3", features = ["std"] }
+clap = { version = "~4", features = ["derive", "env"] }
+concurrent-queue = "2.1.0"
+rand_chacha = "~0.3"
 dashmap = "~5"
 derive_more = "~0.99"
+futures = "~0.3"
 g2p = "1.0.1"
 lazy_static = "~1.4"
 nom = "7.1.3"
+prost = "0.11"
 paste = "1.0.12"
 rand = { version = "~0.8", features = ["std", "std_rng"] }
 serde = { version = "~1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
 static_assertions = "~1.1"
-tokio = { version = "~1.26", features = ["full"] }
+tokio = { version = "~1.26", features = ["full", "sync"] }
+toml = "~0.5"
 tracing = { version = "~0.1", features = ["log"] }
+tracing-subscriber = { version = "~0.3.16", features = ["env-filter"] }
 tracing-test = "0.2"
+tonic = { version = "~0.8", features = ["tls"] }
+x509-parser = "~0.14"
+
+[build-dependencies]
+tonic-build = "~0.8"
 
 
 [dev-dependencies]
@@ -31,6 +46,14 @@ proptest = "~1.1"
 rand_chacha = "~0.3"
 rstest = "~0.16"
 
+
+[[bin]]
+name = "flamin"
+path = "src/bin/flamingo/flamin.rs"
+
+[[bin]]
+name = "flamingo"
+path = "src/bin/flamingo/flamingo.rs"
 
 [[bench]]
 name = "decoding"

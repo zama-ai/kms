@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package ddec_networking;
+
+service gnetworking {
+    rpc SendValue(SendValueRequest) returns(SendValueResponse) {}
+}
+
+message SendValueRequest {
+    bytes tagged_value = 1;
+}
+
+message SendValueResponse {}

@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package ddec_choreography;
+
+service Choreography {
+    rpc LaunchComputation(LaunchComputationRequest) returns(LaunchComputationResponse);
+}
+
+message LaunchComputationRequest {
+    bytes session_id = 1;
+    bytes role_assignment = 2;
+    bytes computation = 3;
+    bytes threshold = 4;
+}
+
+message LaunchComputationResponse {}

@@ -18,8 +18,11 @@ pub type Z128 = Wrapping<u128>;
 /// a collection of shares
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 pub enum Value {
-    Share64(ZPoly<Z64>),
-    Ring64(Wrapping<u64>),
+    IndexedShare64((usize, ZPoly<Z64>)),
+    IndexedShare128((usize, ZPoly<Z128>)),
+    Ring64(Z64),
+    Ring128(Z128),
+    U64(u64),
 }
 
 /// this trait is currently used only for 64 bit circuit execution
@@ -59,6 +62,65 @@ pub trait Ring {
 
 pub trait ReductionTable<Z> {
     const REDUCTION_TABLES: ReductionTablesGF256<Z>;
+}
+
+pub fn err_reconstruct(
+    shares: &Vec<Value>,
+    threshold: usize,
+    max_error_count: usize,
+) -> anyhow::Result<Value> {
+    if shares.is_empty() {
+        return Err(anyhow!("Input to reconstruction is empty"));
+    }
+    match shares[0] {
+        Value::IndexedShare64(_) => {
+            let stripped_shares: Vec<_> = shares
+                .iter()
+                .filter_map(|v| match v {
+                    Value::IndexedShare64((i, s)) => Some((*i, *s)),
+                    _ => None,
+                })
+                .collect();
+            if stripped_shares.len() != shares.len() {
+                Err(anyhow!(
+                    "Mixed types when reconstructing, expected to be Ring64"
+                ))
+            } else {
+                Ok(Value::Ring64(ZPoly::<Z64>::err_reconstruct(
+                    &ShamirGSharings {
+                        shares: stripped_shares,
+                    },
+                    threshold,
+                    max_error_count,
+                )?))
+            }
+        }
+        Value::IndexedShare128(_) => {
+            let stripped_shares: Vec<_> = shares
+                .iter()
+                .filter_map(|v| match v {
+                    Value::IndexedShare128((i, s)) => Some((*i, *s)),
+                    _ => None,
+                })
+                .collect();
+            if stripped_shares.len() != shares.len() {
+                Err(anyhow!(
+                    "Mixed types when reconstructing, expected to be Ring128"
+                ))
+            } else {
+                Ok(Value::Ring128(ZPoly::<Z128>::err_reconstruct(
+                    &ShamirGSharings {
+                        shares: stripped_shares,
+                    },
+                    threshold,
+                    max_error_count,
+                )?))
+            }
+        }
+        _ => Err(anyhow!(
+            "Cannot reconstruct when types are not indexed shares"
+        )),
+    }
 }
 
 /// Represents an element Z_{2^bitlen}[X]/F with implicit F = x8 + x4 + x3 + x + 1
@@ -395,6 +457,12 @@ where
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
 pub struct ShamirGSharings<Z> {
     pub shares: Vec<(usize, ZPoly<Z>)>,
+}
+
+impl<Z> ShamirGSharings<Z> {
+    pub fn new() -> Self {
+        ShamirGSharings { shares: Vec::new() }
+    }
 }
 
 macro_rules! impl_share_type {
@@ -753,7 +821,15 @@ macro_rules! impl_share_type {
                 shares: &ShamirGSharings<$z>,
                 threshold: usize,
             ) -> anyhow::Result<$z> {
-                let recon = ZPoly::<$z>::decode(shares, threshold, 0)?;
+                Self::err_reconstruct(shares, threshold, 0)
+            }
+
+            pub fn err_reconstruct(
+                shares: &ShamirGSharings<$z>,
+                threshold: usize,
+                max_error_count: usize,
+            ) -> anyhow::Result<$z> {
+                let recon = Self::decode(shares, threshold, max_error_count)?;
                 let f_zero = recon.eval(&ZPoly::ZERO);
                 f_zero.to_scalar()
             }

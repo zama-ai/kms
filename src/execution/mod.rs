@@ -1,24 +1,15 @@
 use crate::parser::Circuit;
 use crate::poly_shamir::{Sharing, Z64};
 use anyhow::anyhow;
-use derive_more::Display;
 use hash_map::HashMap;
 use rand::RngCore;
-use serde::{Deserialize, Serialize};
 use std::collections::hash_map;
 use std::num::Wrapping;
 use std::ops::{Add, Mul, Sub};
 use std::str::FromStr;
 
-/// Runtime identity of player.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Serialize, Deserialize)]
-pub struct Identity(pub u64);
-
-impl From<u64> for Identity {
-    fn from(s: u64) -> Self {
-        Identity(s)
-    }
-}
+pub mod distributed;
+pub mod player;
 
 pub struct Memory<'l, T> {
     sp: HashMap<&'l str, T>,
@@ -64,7 +55,7 @@ pub trait Session<T, R: rand::RngCore> {
     fn mul(&mut self, x: &T, y: &T) -> T;
     fn reveal(&self, share: &T) -> Z64;
     fn bit_generation(&mut self) -> T;
-    fn initialize_mem_with_secret(&self, mem: &mut Memory<T>);
+    fn secret(&self) -> T;
 }
 
 /// Local session without network interaction
@@ -89,9 +80,8 @@ where
         T::share(&mut self.rng, xp * yp, self.num_parties, self.threshold)
     }
 
-    fn initialize_mem_with_secret(&self, mem: &mut Memory<T>) {
-        let input_register = "s6";
-        mem.write_sp(input_register, self.secret.clone());
+    fn secret(&self) -> T {
+        self.secret.clone()
     }
 
     fn reveal(&self, share: &T) -> Z64 {
@@ -102,11 +92,6 @@ where
         let bit = self.rng.next_u64() % 2;
         T::share(&mut self.rng, bit, self.num_parties, self.threshold)
     }
-}
-
-#[allow(dead_code)] // TODO remove
-struct DistributedSession {
-    // TODO add networking functions here
 }
 
 pub fn execute_circuit<T, S, R>(mut session: S, circuit: &Circuit) -> anyhow::Result<Vec<u64>>
@@ -122,7 +107,7 @@ where
     let mut mem: Memory<T> = Memory::new();
 
     // initialize memory with secret
-    session.initialize_mem_with_secret(&mut mem);
+    mem.write_sp(circuit.input_wires[0].as_str(), session.secret());
 
     let mut outputs = Vec::new();
 
@@ -211,21 +196,21 @@ where
                         .ok_or_else(|| anyhow!("Wrong index in BitDecInt"))?,
                 )?;
 
-                let r0 = *op
+                let r0 = op
                     .operands
                     .get(1)
                     .ok_or_else(|| anyhow!("Wrong index 1 in BitDecInt"))?;
                 let source = *mem
-                    .get_ci(r0)
+                    .get_ci(r0.as_str())
                     .ok_or_else(|| anyhow!("Couldn't find register {r0}"))?;
 
                 for i in 0..n_regs - 1 {
                     let index = i + 2;
-                    let dest = *op
+                    let dest = op
                         .operands
                         .get(index)
                         .ok_or_else(|| anyhow!("Wrong index buddy, got {index}"))?;
-                    mem.write_ci(dest, (source >> i) & 1);
+                    mem.write_ci(dest.as_str(), (source >> i) & 1);
                 }
             }
             ConvInt => {
@@ -280,10 +265,6 @@ where
                 mem.write_cp(out_register, to_load);
             }
             LdSI => {
-                // let out_register = op.operands.get(0).ok_or_else(|| anyhow!("Wrong index buddy"))?;
-                // let to_load =
-                //     u64::from_str(op.operands.get(1).ok_or_else(|| anyhow!("Wrong index buddy"))?)?;
-                // mem.write_sp(out_register, ShamirU64Sharing { share: to_load });
                 todo!();
             }
             MulM => {
@@ -337,29 +318,29 @@ where
                 )?;
 
                 for i in 0..n_regs / 3 {
-                    let r0 = *op
+                    let r0 = op
                         .operands
                         .get(3 * i + 1)
                         .ok_or_else(|| anyhow!("Wrong index r0: {} in MulS", 3 * i + 1))?;
-                    let r1 = *op
+                    let r1 = op
                         .operands
                         .get(3 * i + 2)
                         .ok_or_else(|| anyhow!("Wrong index r1: {} in MulS", 3 * i + 2))?;
-                    let r2 = *op
+                    let r2 = op
                         .operands
                         .get(3 * i + 3)
                         .ok_or_else(|| anyhow!("Wrong index r2: {} in MulS", 3 * i + 3))?;
 
                     let s1 = mem
-                        .get_sp(r1)
+                        .get_sp(r1.as_str())
                         .ok_or_else(|| anyhow!("Couldn't find register {r1}"))?;
 
                     let s2 = mem
-                        .get_sp(r2)
+                        .get_sp(r2.as_str())
                         .ok_or_else(|| anyhow!("Couldn't find register {r2}"))?;
 
                     // temporary call before actual mul is implemented. Needs sharing parameters for now.
-                    mem.write_sp(r0, session.mul(s1, s2));
+                    mem.write_sp(r0.as_str(), session.mul(s1, s2));
                 }
             }
             MulSI => {
@@ -400,13 +381,13 @@ where
                         .operands
                         .get(2 * i)
                         .ok_or_else(|| anyhow!("Wrong index buddy"))?;
-                    let r1 = *op
+                    let r1 = op
                         .operands
                         .get(2 * i + 1)
                         .ok_or_else(|| anyhow!("Wrong index buddy"))?;
 
                     let s = mem
-                        .get_sp(r1)
+                        .get_sp(r1.as_str())
                         .ok_or_else(|| anyhow!("Couldn't find register {r1}"))?;
 
                     mem.write_cp(r0, session.reveal(s).0);
@@ -468,6 +449,7 @@ where
                 // convert prints to outputs for testing purposes
                 outputs.push(*c);
             }
+            _ => unimplemented!(),
         }
     }
     Ok(outputs)

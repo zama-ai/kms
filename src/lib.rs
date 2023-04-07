@@ -1,6 +1,8 @@
+pub mod choreography;
 pub mod computation;
 pub mod execution;
 pub mod gf256;
+mod grpc;
 pub mod networking;
 pub mod parser;
 pub mod poly_shamir;
