@@ -1,9 +1,7 @@
+use crate::circuit::Circuit;
 use crate::computation::SessionId;
 use crate::execution::distributed::NetworkingImpl;
-use crate::execution::player::Identity;
-use crate::execution::player::Role;
-use crate::execution::player::RoleAssignment;
-use crate::parser::Circuit;
+use crate::execution::player::{Identity, Role, RoleAssignment};
 use serde::Deserialize;
 use std::path::Path;
 use std::str::FromStr;

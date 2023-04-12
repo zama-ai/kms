@@ -1,4 +1,4 @@
-use crate::parser::Circuit;
+use crate::circuit::{Circuit, Operator};
 use anyhow::anyhow;
 use hash_map::HashMap;
 use rand::RngCore;
@@ -80,7 +80,7 @@ where
 
     #[allow(clippy::get_first)]
     for op in &circuit.operations {
-        use crate::parser::Operator::*;
+        use Operator::*;
         match op.operator {
             AddCI => {
                 let out_register = op

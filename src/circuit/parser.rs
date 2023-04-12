@@ -7,47 +7,10 @@ use nom::combinator::{all_consuming, value};
 use nom::multi::{many0, separated_list0};
 use nom::sequence::delimited;
 use nom::sequence::pair;
-use serde::{Deserialize, Serialize};
+
+use super::{Circuit, Operation, Operator};
 
 type Res<T, U> = nom::IResult<T, U, nom::error::Error<T>>;
-
-pub const BIT_DEC_CIRCUIT: &[u8] = include_bytes!("mp_spdz/bitdec.txt");
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Circuit {
-    pub operations: Vec<Operation>,
-    pub input_wires: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Operation {
-    pub operator: Operator,
-    pub operands: Vec<String>,
-}
-
-pub type Register = usize;
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum Operator {
-    AddCI,
-    AddM,
-    AddS,
-    Bit,
-    BitDecInt,
-    ConvInt,
-    ConvModp,
-    LdI,
-    LdCI,
-    LdSI,
-    MulCI,
-    MulM,
-    MulS,
-    MulSI,
-    Open,
-    PrintRegPlain,
-    ShrCI,
-    SubS,
-}
 
 fn parse_circuit(bytes: &[u8]) -> Res<&[u8], Circuit> {
     let (bytes, _) = many0(pair(parse_comment, newline))(bytes)?;
@@ -115,16 +78,5 @@ impl TryFrom<&[u8]> for Circuit {
         parse_circuit(bytes)
             .map_err(|e| anyhow::anyhow!("Unexpected error during parsing {}", e))
             .map(|res| res.1)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_mpspdz() {
-        let circuit = Circuit::try_from(BIT_DEC_CIRCUIT).unwrap();
-        assert_eq!(circuit.operations.len(), 1137);
     }
 }

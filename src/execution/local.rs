@@ -62,10 +62,8 @@ impl Sharing for Z64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Z128, Z64};
-    // use crate::ring64::Ring64;
     use crate::execution::execute_circuit;
-    use crate::parser::Circuit;
+    use crate::{Z128, Z64};
     use paste::paste;
     use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;
@@ -92,7 +90,6 @@ mod tests {
                 vec![0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
             )]
             fn [<test_execution_ $z:lower>](#[case] x: u64, #[case] expected: Vec<u64>) {
-                let circuit = Circuit::try_from(crate::parser::BIT_DEC_CIRCUIT).unwrap();
                 let mut rng = ChaCha12Rng::seed_from_u64(234);
                 let shamir_sharings =
                     crate::shamir::ShamirGSharings::<$z>::share(&mut rng, Wrapping(x.into()), 9, 5).unwrap();
@@ -104,7 +101,7 @@ mod tests {
                     rng: ChaCha12Rng::seed_from_u64(100),
                 };
 
-                let v = execute_circuit(sess, &circuit).unwrap();
+                let v = execute_circuit(sess, &crate::circuit::BIT_DEC_CIRCUIT).unwrap();
                 assert_eq!(v, expected.iter().map(|x| Wrapping(*x)).collect::<Vec<_>>());
 
                 // let single_u64_share = Ring64 { value: x };
@@ -117,7 +114,7 @@ mod tests {
                     rng: ChaCha12Rng::seed_from_u64(200),
                 };
 
-                let v = execute_circuit(sess, &circuit).unwrap();
+                let v = execute_circuit(sess, &crate::circuit::BIT_DEC_CIRCUIT).unwrap();
                 assert_eq!(v, expected.iter().map(|x| Wrapping(*x)).collect::<Vec<_>>());
             }
             }

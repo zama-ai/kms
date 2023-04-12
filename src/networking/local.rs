@@ -10,7 +10,6 @@ use tokio::sync::mpsc::*;
 ///
 /// This implementation is intended for local development/testing purposes
 /// only. It simply stores all values in a hashmap without any actual networking.
-
 pub struct LocalNetworking {
     pub session_id: SessionId,
     pub send_channels: DashMap<Identity, Arc<UnboundedSender<Value>>>,

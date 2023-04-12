@@ -1,7 +1,7 @@
+use crate::circuit::{Circuit, Operator};
 use crate::computation::SessionId;
 use crate::execution::player::{Identity, Role};
 use crate::networking::Networking;
-use crate::parser::Circuit;
 use crate::shamir::ShamirGSharings;
 use crate::value::{err_reconstruct, Value};
 use crate::{Z128, Z64};
@@ -229,7 +229,7 @@ pub async fn execute_small_circuit<R: RngCore>(
     };
     #[allow(clippy::get_first)]
     for op in circuit.operations.iter() {
-        use crate::parser::Operator::*;
+        use Operator::*;
         match op.operator {
             LdSI => {
                 let r0 = op
@@ -303,9 +303,8 @@ pub async fn execute_small_circuit<R: RngCore>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::circuit::Operation;
     use crate::networking::local::LocalNetworking;
-    use crate::parser::Operation;
-    use crate::parser::*;
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use tracing_test::traced_test;

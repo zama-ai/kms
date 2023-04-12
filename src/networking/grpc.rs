@@ -14,19 +14,18 @@ use crate::execution::player::Identity;
 use crate::networking::constants;
 use crate::networking::Networking;
 use crate::value::Value;
+use anyhow::anyhow;
+use async_trait::async_trait;
 use backoff::future::retry;
 use backoff::ExponentialBackoff;
 use dashmap::mapref::one::RefMut;
+use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::*;
 use tonic::codegen::http::Uri;
 use tonic::transport::Channel;
-
-use anyhow::anyhow;
-use async_trait::async_trait;
-use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 
 #[derive(Default)]
 pub struct GrpcNetworkingManager {
@@ -214,7 +213,7 @@ impl Gnetworking for NetworkingImpl {
         &self,
         request: tonic::Request<SendValueRequest>,
     ) -> std::result::Result<tonic::Response<SendValueResponse>, tonic::Status> {
-        let sender = crate::grpc::extract_sender(&request)
+        let sender = extract_sender(&request)
             .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e))?
             .map(Identity::from);
 
@@ -240,6 +239,37 @@ impl Gnetworking for NetworkingImpl {
         // );
 
         Ok(tonic::Response::new(SendValueResponse::default()))
+    }
+}
+
+fn extract_sender<T>(request: &tonic::Request<T>) -> Result<Option<String>, String> {
+    match request.peer_certs() {
+        None => Ok(None),
+        Some(certs) => {
+            if certs.len() != 1 {
+                return Err(format!(
+                    "cannot extract identity from certificate chain of length {:?}",
+                    certs.len()
+                ));
+            }
+
+            let (_rem, cert) =
+                x509_parser::parse_x509_certificate(certs[0].as_ref()).map_err(|err| {
+                    format!("failed to parse X509 certificate: {:?}", err.to_string())
+                })?;
+
+            let cns: Vec<_> = cert
+                .subject()
+                .iter_common_name()
+                .map(|attr| attr.as_str().map_err(|err| err.to_string()))
+                .collect::<Result<_, _>>()?;
+
+            if let Some(cn) = cns.first() {
+                Ok(Some(cn.to_string()))
+            } else {
+                Err("certificate common name was empty".to_string())
+            }
+        }
     }
 }
 

@@ -2,12 +2,11 @@ use rand::RngCore;
 use std::num::Wrapping;
 
 pub mod choreography;
+pub mod circuit;
 pub mod computation;
 pub mod execution;
 pub mod gf256;
-mod grpc;
 pub mod networking;
-pub mod parser;
 pub mod poly;
 pub mod residue_poly;
 pub mod shamir;
