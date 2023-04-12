@@ -13,7 +13,7 @@ use crate::computation::SessionId;
 use crate::execution::player::Identity;
 use crate::networking::constants;
 use crate::networking::Networking;
-use crate::poly_shamir::Value;
+use crate::value::Value;
 use backoff::future::retry;
 use backoff::ExponentialBackoff;
 use dashmap::mapref::one::RefMut;

@@ -2,8 +2,9 @@ use crate::computation::SessionId;
 use crate::execution::player::{Identity, Role};
 use crate::networking::Networking;
 use crate::parser::Circuit;
-use crate::poly_shamir::Value;
-use crate::poly_shamir::*;
+use crate::shamir::ShamirGSharings;
+use crate::value::{err_reconstruct, Value};
+use crate::{Z128, Z64};
 use anyhow::anyhow;
 use rand::RngCore;
 use std::collections::HashMap;
@@ -126,7 +127,8 @@ pub async fn robust_input<R: RngCore>(
 
         let (shamir_sharings, identities): (Vec<Value>, Vec<&Identity>) = match si {
             Value::Ring64(s64) => {
-                let sharings = ZPoly::<Z64>::share(rng, s64, num_parties, threshold as usize)?;
+                let sharings =
+                    ShamirGSharings::<Z64>::share(rng, s64, num_parties, threshold as usize)?;
                 let values: Vec<_> = sharings
                     .shares
                     .iter()
@@ -145,7 +147,8 @@ pub async fn robust_input<R: RngCore>(
                 (values, identities)
             }
             Value::Ring128(s128) => {
-                let sharings = ZPoly::<Z128>::share(rng, s128, num_parties, threshold as usize)?;
+                let sharings =
+                    ShamirGSharings::<Z128>::share(rng, s128, num_parties, threshold as usize)?;
                 let values: Vec<_> = sharings
                     .shares
                     .iter()

@@ -15,7 +15,7 @@ use crate::execution::distributed::DistributedSession;
 use crate::execution::player::Identity;
 use crate::execution::player::Role;
 use crate::parser::Circuit;
-use crate::poly_shamir::Value;
+use crate::value::Value;
 use aes_prng::AesRng;
 use async_cell::sync::AsyncCell;
 use async_trait::async_trait;

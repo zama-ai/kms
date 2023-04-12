@@ -1,7 +1,9 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
     gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing, GF256},
-    poly_shamir::{ZPoly, Zero, Z128, Z64},
+    residue_poly::ResiduePoly,
+    shamir::ShamirGSharings,
+    Zero, Z128, Z64,
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
@@ -55,11 +57,12 @@ fn bench_decode_z128(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("decode", p_str), |b| {
             let mut rng = ChaCha12Rng::seed_from_u64(0);
             let secret: Z128 = Wrapping(23425);
-            let sharings = ZPoly::<Z128>::share(&mut rng, secret, num_parties, threshold).unwrap();
+            let sharings =
+                ShamirGSharings::<Z128>::share(&mut rng, secret, num_parties, threshold).unwrap();
 
             b.iter(|| {
-                let recon = ZPoly::<Z128>::decode(&sharings, threshold, max_err).unwrap();
-                let f_zero = recon.eval(&ZPoly::ZERO);
+                let recon = sharings.decode(threshold, max_err).unwrap();
+                let f_zero = recon.eval(&ResiduePoly::ZERO);
                 assert_eq!(f_zero.to_scalar().unwrap(), secret);
             });
         });
@@ -79,11 +82,12 @@ fn bench_decode_z64(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("decode", p_str), |b| {
             let mut rng = ChaCha12Rng::seed_from_u64(0);
             let secret: Z64 = Wrapping(23425);
-            let sharings = ZPoly::<Z64>::share(&mut rng, secret, num_parties, threshold).unwrap();
+            let sharings =
+                ShamirGSharings::<Z64>::share(&mut rng, secret, num_parties, threshold).unwrap();
 
             b.iter(|| {
-                let recon = ZPoly::<Z64>::decode(&sharings, threshold, max_err).unwrap();
-                let f_zero = recon.eval(&ZPoly::ZERO);
+                let recon = sharings.decode(threshold, max_err).unwrap();
+                let f_zero = recon.eval(&ResiduePoly::ZERO);
                 assert_eq!(f_zero.to_scalar().unwrap(), secret);
             });
         });

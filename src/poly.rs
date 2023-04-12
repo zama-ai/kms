@@ -1,22 +1,31 @@
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
+use rand::RngCore;
+
+use crate::{One, Sample, Zero};
+
 pub trait Field
 where
     Self: Sized,
     Self: Copy,
     Self: PartialEq,
+    Self: Zero + One,
     Self: Add<Self, Output = Self> + AddAssign<Self>,
     Self: Sub<Self, Output = Self> + SubAssign<Self>,
     Self: Mul<Self, Output = Self> + MulAssign<Self>,
     Self: Div<Self, Output = Self> + DivAssign<Self>,
 {
-    const ZERO: Self; // TODO replace with Zero trait?
-    const ONE: Self; // TODO replace with One trait?
 }
 
 #[derive(Clone, Default, Debug)]
-pub struct Poly<F: Field> {
+pub struct Poly<F> {
     pub coefs: Vec<F>,
+}
+
+impl<R> Poly<R> {
+    pub fn from_coefs(coefs: Vec<R>) -> Self {
+        Poly { coefs }
+    }
 }
 
 impl<F: Field> PartialEq for Poly<F> {
@@ -41,7 +50,13 @@ impl<F: Field> PartialEq for Poly<F> {
     }
 }
 
-impl<F: Field> Poly<F> {
+impl<F> Poly<F>
+where
+    F: Zero,
+    F: Copy,
+    F: Mul<F, Output = F>,
+    F: Add<F, Output = F>,
+{
     pub fn eval(&self, point: &F) -> F {
         let mut res = F::ZERO;
         for coef in self.coefs.iter().rev() {
@@ -49,7 +64,14 @@ impl<F: Field> Poly<F> {
         }
         res
     }
+}
 
+impl<F> Poly<F>
+where
+    F: Zero,
+    F: PartialEq,
+    F: Copy,
+{
     pub fn deg(&self) -> usize {
         for (i, item) in self.coefs.iter().enumerate().rev() {
             if item != &F::ZERO {
@@ -80,12 +102,6 @@ impl<F: Field> Poly<F> {
         }
     }
 
-    pub fn one() -> Self {
-        Poly {
-            coefs: vec![F::ONE],
-        }
-    }
-
     fn highest_coefficient(&self) -> F {
         for c in self.coefs.iter().rev() {
             if c != &F::ZERO {
@@ -103,6 +119,31 @@ impl<F: Field> Poly<F> {
                 break;
             }
         }
+    }
+}
+
+impl<F> Poly<F>
+where
+    F: One,
+    F: PartialEq,
+    F: Copy,
+{
+    pub fn one() -> Self {
+        Poly {
+            coefs: vec![F::ONE],
+        }
+    }
+}
+
+impl<F> Poly<F>
+where
+    F: Sample,
+    F: Zero + One,
+{
+    pub fn sample_random<U: RngCore>(rng: &mut U, zero_coef: F, degree: usize) -> Self {
+        let mut coefs: Vec<_> = (0..degree).map(|_| F::sample(rng)).collect();
+        coefs.insert(0, zero_coef);
+        Poly { coefs }
     }
 }
 
@@ -124,7 +165,13 @@ impl<F: Field> Add<&Poly<F>> for &Poly<F> {
     }
 }
 
-impl<F: Field> Add<Poly<F>> for Poly<F> {
+impl<F> Add<Poly<F>> for Poly<F>
+where
+    F: Add<F, Output = F>,
+    F: PartialEq,
+    F: Copy,
+    F: Zero,
+{
     type Output = Poly<F>;
     fn add(self, other: Poly<F>) -> Self::Output {
         let (mut longest, shortest) = if self.coefs.len() >= other.coefs.len() {
@@ -133,7 +180,7 @@ impl<F: Field> Add<Poly<F>> for Poly<F> {
             (other, self)
         };
         for i in 0..shortest.coefs.len() {
-            longest.coefs[i] += shortest.coefs[i];
+            longest.coefs[i] = longest.coefs[i] + shortest.coefs[i];
         }
         longest.compress();
         longest

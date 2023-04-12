@@ -2,7 +2,7 @@
 
 use crate::computation::SessionId;
 use crate::execution::player::Identity;
-use crate::poly_shamir::Value;
+use crate::value::Value;
 use async_trait::async_trait;
 
 pub mod constants;

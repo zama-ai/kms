@@ -1,4 +1,7 @@
-use crate::poly::{gao_decoding, Field, Poly};
+use crate::{
+    poly::{gao_decoding, Field, Poly},
+    One, Zero,
+};
 use anyhow::anyhow;
 use g2p::{g2p, GaloisField};
 
@@ -14,10 +17,15 @@ pub struct ShamirZ2Sharing {
     pub party_id: u8,
 }
 
-impl Field for GF256 {
+impl Zero for GF256 {
     const ZERO: Self = <GF256 as GaloisField>::ZERO;
+}
+
+impl One for GF256 {
     const ONE: Self = <GF256 as GaloisField>::ONE;
 }
+
+impl Field for GF256 {}
 
 pub type ShamirZ2Poly = Poly<GF256>;
 
