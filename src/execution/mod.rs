@@ -10,6 +10,7 @@ use std::str::FromStr;
 pub mod distributed;
 pub mod local;
 pub mod player;
+pub mod prep;
 
 pub struct Memory<'l, T> {
     sp: HashMap<&'l str, T>,

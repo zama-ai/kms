@@ -6,6 +6,7 @@ pub mod circuit;
 pub mod computation;
 pub mod execution;
 pub mod gf256;
+pub mod lwe;
 pub mod networking;
 pub mod poly;
 pub mod residue_poly;

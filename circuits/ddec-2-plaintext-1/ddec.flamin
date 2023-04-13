@@ -1,0 +1,4 @@
+dist_prep s0, 7, 42, 2443 # 1
+asm_open 3, False, c0, s0 # 2
+shrci c1, c0, 121 # 4
+print_reg_plain c1 # 3

@@ -24,6 +24,7 @@ pub enum Operator {
     BitDecInt,
     ConvInt,
     ConvModp,
+    DistPrep,
     LdI,
     LdCI,
     LdSI,

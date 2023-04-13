@@ -58,6 +58,7 @@ fn parse_operator(line: &[u8]) -> Res<&[u8], Operator> {
         value(Operator::Bit, tag("bit")),
         value(Operator::ConvModp, tag("convmodp")),
         value(Operator::ConvInt, tag("convint")),
+        value(Operator::DistPrep, tag("dist_prep")),
         value(Operator::LdSI, tag("ldsi")),
         value(Operator::LdI, tag("ldi")),
         value(Operator::LdCI, tag("ldci")),
