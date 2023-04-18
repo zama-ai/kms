@@ -3,7 +3,6 @@ use crate::residue_poly::ResiduePoly;
 use crate::Sample;
 use crate::Z128;
 use crate::{One, Zero};
-use aes_prng::AesRng;
 use ndarray::{Array1, Array2};
 use rand::RngCore;
 use std::num::Wrapping;
@@ -101,8 +100,8 @@ pub struct Ciphertext {
     pub b: Array1<Z128>,
 }
 
-pub fn keygen(
-    rng: &mut AesRng,
+pub fn keygen<R: RngCore>(
+    rng: &mut R,
     ell: usize,
     player_id: usize,
     threshold: usize,

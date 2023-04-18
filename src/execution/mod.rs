@@ -11,6 +11,16 @@ pub mod distributed;
 pub mod local;
 pub mod player;
 pub mod prep;
+pub mod prss;
+
+/// log_2 of parameter Bd, computed from values in the paper
+const LOG_BD: u64 = 72;
+
+/// parameter pow, taken from the paper
+const POW: u64 = 47;
+
+/// log_2 of nominator of Bd1
+const LOG_BD1_NOM: u32 = (((1_u128 << POW) - 1) * (1_u128 << LOG_BD)).ilog2();
 
 pub struct Memory<'l, T> {
     sp: HashMap<&'l str, T>,

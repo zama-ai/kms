@@ -34,6 +34,7 @@ pub enum Operator {
     MulSI,
     Open,
     PrintRegPlain,
+    PrssPrep,
     ShrCI,
     SubS,
 }

@@ -1,10 +1,33 @@
+use crate::execution::prss::PRSS;
+use crate::execution::{LOG_BD, POW};
 use crate::lwe::{gen_player_share, keygen};
 use crate::residue_poly::ResiduePoly;
 use crate::value::Value;
 use crate::{Zero, Z128};
 use aes_prng::AesRng;
-use rand::SeedableRng;
+use rand::{RngCore, SeedableRng};
 use std::num::Wrapping;
+
+fn prepare_ct<R: RngCore>(
+    mut rng: &mut R,
+    big_ell: usize,
+    message: u8,
+    player_id: usize,
+    threshold: usize,
+) -> anyhow::Result<ResiduePoly<Z128>> {
+    // generate secret key share and pk
+    let (sk_share, pk) = keygen(rng, big_ell, player_id, threshold)?;
+
+    // compute encryption of message
+    let offset = std::num::Wrapping(1_u128 << 121);
+    let ct = pk.encrypt(&mut rng, offset, message);
+
+    let a_time_s = (0..big_ell).fold(ResiduePoly::<Z128>::ZERO, |acc, column| {
+        acc + (sk_share.s[column] * ct.a[column])
+    });
+    // b - a*s
+    Ok(a_time_s * Wrapping(u128::MAX) + ct.b[0])
+}
 
 pub(crate) fn ddec_prep(
     seed: u64,
@@ -16,25 +39,10 @@ pub(crate) fn ddec_prep(
     // initialize rng to compute keygen, encryption and secret shared bits
     let mut rng = AesRng::seed_from_u64(seed);
 
-    // generate secret key share and pk
-    let (sk_share, pk) = keygen(&mut rng, big_ell, player_id, threshold)?;
-
-    // compute encryption of message
-    let offset = std::num::Wrapping(1_u128 << 121);
-    let ct = pk.encrypt(&mut rng, offset, message);
-
-    let a_time_s = (0..big_ell).fold(ResiduePoly::<Z128>::ZERO, |acc, column| {
-        acc + (sk_share.s[column] * ct.a[column])
-    });
-    // b - a*s
-    let partial_dec = a_time_s * Wrapping(u128::MAX) + ct.b[0];
-
-    // noise bounds taken from paper
-    let log_bd = 70_usize;
-    let pow = 47_usize;
+    let partial_dec = prepare_ct(&mut rng, big_ell, message, player_id, threshold)?;
 
     // sample shared bits
-    let b = log_bd + pow;
+    let b = (LOG_BD + POW) as usize;
     let shared_bits: Vec<_> = (0..b)
         .map(|_| {
             let bit_share = gen_player_share(&mut rng, Wrapping(0), threshold, player_id)?;
@@ -45,6 +53,29 @@ pub(crate) fn ddec_prep(
     let composed_bits = (0..b).fold(ResiduePoly::<Z128>::ZERO, |acc, index| {
         acc + shared_bits[index] * (Wrapping(1_u128) << index)
     });
+    Ok(Value::IndexedShare128((
+        player_id,
+        partial_dec + composed_bits,
+    )))
+}
+
+pub(crate) fn prss_prep(
+    seed: u64,
+    big_ell: usize,
+    message: u8,
+    player_id: usize,
+    threshold: usize,
+    num_parties: usize,
+) -> anyhow::Result<Value> {
+    // initialize rng to compute keygen, encryption and secret shared bits
+    let mut rng = AesRng::seed_from_u64(seed);
+
+    let partial_dec = prepare_ct(&mut rng, big_ell, message, player_id, threshold)?;
+
+    // PRSS
+    let mut prss = PRSS::init(num_parties, threshold, &mut rng);
+    let composed_bits = prss.next(player_id);
+
     Ok(Value::IndexedShare128((
         player_id,
         partial_dec + composed_bits,
@@ -67,6 +98,29 @@ mod tests {
 
         let preps: Vec<_> = (1..5)
             .map(|player_id| ddec_prep(seed, big_ell, message, player_id, threshold).unwrap())
+            .collect();
+        let rec = err_reconstruct(&preps, threshold, 0).unwrap();
+        match rec {
+            Value::Ring128(value) => {
+                assert_eq!(value >> 121, Wrapping(message as u128));
+            }
+            _ => unimplemented!(),
+        }
+    }
+
+    #[traced_test]
+    #[test]
+    fn test_prssprep() {
+        let seed = 42_u64;
+        let big_ell = 10;
+        let message = 5;
+        let threshold = 1;
+        let num_parties = 4;
+
+        let preps: Vec<_> = (1..num_parties + 1)
+            .map(|player_id| {
+                prss_prep(seed, big_ell, message, player_id, threshold, num_parties).unwrap()
+            })
             .collect();
         let rec = err_reconstruct(&preps, threshold, 0).unwrap();
         match rec {

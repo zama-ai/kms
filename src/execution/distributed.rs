@@ -365,6 +365,44 @@ pub async fn execute_small_circuit<R: RngCore>(
                 tracing::debug!("finished generating prep: {:?}", s);
                 env.insert(dest, s);
             }
+            PrssPrep => {
+                // this instruction does steps 1-3 from dist dec paper
+                // computes a sharing of b - a * s + E
+                // where dim(a) = L, E = sum(shared_bits)
+                let dest = op
+                    .operands
+                    .get(0)
+                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+
+                let message = u8::from_str(
+                    op.operands
+                        .get(1)
+                        .ok_or_else(|| anyhow!("Couldn't retrieve message"))?,
+                )?;
+
+                let prep_seed = u64::from_str(
+                    op.operands
+                        .get(2)
+                        .ok_or_else(|| anyhow!("Couldn't retrieve seed"))?,
+                )?;
+
+                let big_ell = usize::from_str(
+                    op.operands
+                        .get(3)
+                        .ok_or_else(|| anyhow!("Couldn't retrieve L (lwe dimension"))?,
+                )?;
+
+                let s = crate::execution::prep::prss_prep(
+                    prep_seed,
+                    big_ell,
+                    message,
+                    own_role.player_no(),
+                    session.threshold as usize,
+                    session.role_assignments.len(),
+                )?;
+                tracing::debug!("finished generating prep: {:?}", s);
+                env.insert(dest, s);
+            }
             _ => todo!(),
         }
     }
