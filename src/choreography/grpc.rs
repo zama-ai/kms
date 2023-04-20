@@ -94,6 +94,13 @@ impl Choreography for GrpcChoreography {
                     )
                 })?;
 
+                let threshold: u8 = bincode::deserialize(&request.threshold).map_err(|_e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        "failed to parse threshold".to_string(),
+                    )
+                })?;
+
                 let role_assignments: HashMap<Role, Identity> =
                     bincode::deserialize(&request.role_assignment).map_err(|_e| {
                         tonic::Status::new(
@@ -101,13 +108,6 @@ impl Choreography for GrpcChoreography {
                             "failed to parse role assignment".to_string(),
                         )
                     })?;
-
-                let threshold: u8 = bincode::deserialize(&request.threshold).map_err(|_e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        "failed to parse threshold".to_string(),
-                    )
-                })?;
 
                 let own_identity = self.own_identity.clone();
                 let networking = (self.networking_strategy)(session_id.clone());
@@ -125,7 +125,7 @@ impl Choreography for GrpcChoreography {
 
                 tokio::spawn(async move {
                     let mut rng = AesRng::from_random_seed();
-                    let outputs =
+                    let (outputs, init_time) =
                         execute_small_circuit(&session, &computation, &own_identity, &mut rng)
                             .await
                             .unwrap();
@@ -144,11 +144,11 @@ impl Choreography for GrpcChoreography {
                     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
                     result_cell.set(ComputationOutputs {
                         outputs: results,
-                        elapsed_time: Some(elapsed_time),
+                        elapsed_time: Some(elapsed_time - init_time),
                     });
                     tracing::info!(
-                        "Result were computed in {:?} microseconds",
-                        elapsed_time.as_micros()
+                        "Online time was {:?} microseconds",
+                        (elapsed_time - init_time).as_micros()
                     );
                 });
 

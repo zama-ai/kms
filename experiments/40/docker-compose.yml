@@ -1,0 +1,569 @@
+version: '3'
+
+services:
+  p1:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50001:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "1"
+      - "-n"
+      - "40"
+    environment:
+      - RUST_LOG=info
+
+  p2:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50002:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "2"
+      - "-n"
+      - "40"
+
+  p3:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50003:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "3"
+      - "-n"
+      - "40"
+
+  p4:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50004:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "4"
+      - "-n"
+      - "40"
+
+  p5:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50005:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "5"
+      - "-n"
+      - "40"
+
+  p6:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50006:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "6"
+      - "-n"
+      - "40"
+
+  p7:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50007:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "7"
+      - "-n"
+      - "40"
+
+  p8:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50008:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "8"
+      - "-n"
+      - "40"
+
+  p9:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50009:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "9"
+      - "-n"
+      - "40"
+
+  p10:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50010:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "10"
+      - "-n"
+      - "40"
+
+  p11:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50011:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "11"
+      - "-n"
+      - "40"
+
+  p12:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50012:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "12"
+      - "-n"
+      - "40"
+
+  p13:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50013:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "13"
+      - "-n"
+      - "40"
+
+  p14:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50014:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "14"
+      - "-n"
+      - "40"
+
+  p15:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50015:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "15"
+      - "-n"
+      - "40"
+
+  p16:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50016:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "16"
+      - "-n"
+      - "40"
+
+  p17:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50017:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "17"
+      - "-n"
+      - "40"
+
+  p18:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50018:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "18"
+      - "-n"
+      - "40"
+
+  p19:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50019:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "19"
+      - "-n"
+      - "40"
+
+  p20:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50020:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "20"
+      - "-n"
+      - "40"
+
+  p21:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50021:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "21"
+      - "-n"
+      - "40"
+
+  p22:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50022:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "22"
+      - "-n"
+      - "40"
+
+  p23:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50023:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "23"
+      - "-n"
+      - "40"
+
+  p24:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50024:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "24"
+      - "-n"
+      - "40"
+
+  p25:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50025:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "25"
+      - "-n"
+      - "40"
+
+  p26:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50026:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "26"
+      - "-n"
+      - "40"
+
+  p27:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50027:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "27"
+      - "-n"
+      - "40"
+
+  p28:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50028:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "28"
+      - "-n"
+      - "40"
+
+  p29:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50029:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "29"
+      - "-n"
+      - "40"
+
+  p30:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50030:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "30"
+      - "-n"
+      - "40"
+
+  p31:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50031:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "31"
+      - "-n"
+      - "40"
+
+  p32:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50032:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "32"
+      - "-n"
+      - "40"
+
+  p33:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50033:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "33"
+      - "-n"
+      - "40"
+
+  p34:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50034:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "34"
+      - "-n"
+      - "40"
+
+  p35:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50035:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "35"
+      - "-n"
+      - "40"
+
+  p36:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50036:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "36"
+      - "-n"
+      - "40"
+
+  p37:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50037:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "37"
+      - "-n"
+      - "40"
+
+  p38:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50038:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "38"
+      - "-n"
+      - "40"
+
+  p39:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50039:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "39"
+      - "-n"
+      - "40"
+
+  p40:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50040:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "40"
+      - "-n"
+      - "40"
+
+  choreo:
+    image: ddec:latest
+    depends_on:
+      - p1
+      - p2
+      - p3
+      - p4
+      - p5
+      - p6
+      - p7
+      - p8
+      - p9
+      - p10
+      - p11
+      - p12
+      - p13
+      - p14
+      - p15
+      - p16
+      - p17
+      - p18
+      - p19
+      - p20
+      - p21
+      - p22
+      - p23
+      - p24
+      - p25
+      - p26
+      - p27
+      - p28
+      - p29
+      - p30
+      - p31
+      - p32
+      - p33
+      - p34
+      - p35
+      - p36
+      - p37
+      - p38
+      - p39
+      - p40
+    entrypoint: ["sh", "-c", "mobygo --session-id 1 -n 40 -t 13 --circuit-path ./circuits/ddec-2-plaintext-1/ddec.flamin &&  tail -f /dev/null"]

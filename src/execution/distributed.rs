@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::num::Wrapping;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::task::JoinSet;
 
 pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
@@ -205,9 +206,10 @@ pub async fn execute_small_circuit<R: RngCore>(
     circuit: &Circuit,
     own_identity: &Identity,
     rng: &mut R,
-) -> anyhow::Result<Vec<Value>> {
+) -> anyhow::Result<(Vec<Value>, Duration)> {
     let mut env: HashMap<&String, Value> = HashMap::new();
     let mut outputs = Vec::new();
+    let mut init_time = Duration::ZERO;
 
     let own_role: Vec<&Role> = session
         .role_assignments
@@ -355,13 +357,14 @@ pub async fn execute_small_circuit<R: RngCore>(
                         .ok_or_else(|| anyhow!("Couldn't retrieve L (lwe dimension"))?,
                 )?;
 
-                let s = crate::execution::prep::ddec_prep(
+                let (s, init_t) = crate::execution::prep::ddec_prep(
                     prep_seed,
                     big_ell,
                     message,
                     own_role.player_no(),
                     session.threshold as usize,
                 )?;
+                init_time = init_t;
                 tracing::debug!("finished generating prep: {:?}", s);
                 env.insert(dest, s);
             }
@@ -392,7 +395,7 @@ pub async fn execute_small_circuit<R: RngCore>(
                         .ok_or_else(|| anyhow!("Couldn't retrieve L (lwe dimension"))?,
                 )?;
 
-                let s = crate::execution::prep::prss_prep(
+                let (s, init_t) = crate::execution::prep::prss_prep(
                     prep_seed,
                     big_ell,
                     message,
@@ -400,13 +403,14 @@ pub async fn execute_small_circuit<R: RngCore>(
                     session.threshold as usize,
                     session.role_assignments.len(),
                 )?;
+                init_time = init_t;
                 tracing::debug!("finished generating prep: {:?}", s);
                 env.insert(dest, s);
             }
             _ => todo!(),
         }
     }
-    Ok(outputs)
+    Ok((outputs, init_time))
 }
 
 #[cfg(test)]
@@ -452,7 +456,7 @@ mod tests {
         };
 
         let mut rng = AesRng::seed_from_u64(0);
-        let out = execute_small_circuit(
+        let (out, _init_time) = execute_small_circuit(
             &session,
             &circuit,
             &Identity("localhost:5000".to_string()),
@@ -505,7 +509,7 @@ mod tests {
         };
 
         let mut rng = AesRng::seed_from_u64(0);
-        let out = execute_small_circuit(
+        let (out, _init_time) = execute_small_circuit(
             &session,
             &circuit,
             &Identity("localhost:5000".to_string()),
@@ -559,7 +563,7 @@ mod tests {
         };
 
         let mut rng = AesRng::seed_from_u64(0);
-        let out = execute_small_circuit(
+        let (out, _init_time) = execute_small_circuit(
             &session,
             &circuit,
             &Identity("localhost:5000".to_string()),

@@ -58,6 +58,15 @@ path = "src/bin/flamingo/flamin.rs"
 name = "flamingo"
 path = "src/bin/flamingo/flamingo.rs"
 
+[[bin]]
+name = "moby"
+path = "src/bin/moby/moby.rs"
+
+[[bin]]
+name = "mobygo"
+path = "src/bin/moby/mobygo.rs"
+
+
 [[bench]]
 name = "decoding"
 harness = false

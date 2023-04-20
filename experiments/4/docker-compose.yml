@@ -1,0 +1,65 @@
+version: '3'
+
+services:
+  p1:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "1"
+      - "-n"
+      - "4"
+    ports:
+      - 50001:50000
+    environment:
+      - RUST_LOG=info
+
+  p2:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "2"
+      - "-n"
+      - "4"
+    ports:
+      - 50002:50000
+
+  p3:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "3"
+      - "-n"
+      - "4"
+    ports:
+      - 50003:50000
+
+  p4:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - 50004:50000
+    entrypoint:
+      - "moby"
+      - "-p"
+      - "4"
+      - "-n"
+      - "4"
+
+  choreo:
+    image: ddec:latest
+    depends_on:
+      - p1
+      - p2
+      - p3
+      - p4
+    entrypoint: ["sh", "-c", "mobygo --session-id 1 -n 4 -t 1 --circuit-path ./circuits/ddec-2-plaintext-1/ddec.flamin &&  tail -f /dev/null"]

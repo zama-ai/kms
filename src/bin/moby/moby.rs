@@ -1,31 +1,23 @@
 use clap::Parser;
 use distributed_decryption::choreography::grpc::GrpcChoreography;
 use distributed_decryption::execution::player::Identity;
+use distributed_decryption::execution::player::{Role, RoleAssignment};
 use distributed_decryption::networking::grpc::GrpcNetworkingManager;
-use std::path::PathBuf;
 use tonic::transport::Server;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 #[derive(Debug, Parser, Clone)]
 pub struct Opt {
-    #[structopt(long)]
-    identity: String,
-
-    #[structopt(long)]
+    #[structopt(short)]
     player_no: u64,
-
-    #[structopt(env, long, default_value = "50000")]
-    /// Port to use for gRPC server
-    port: u16,
 
     #[structopt(env, long, default_value = "./examples")]
     /// Directory to read sessions from
     sessions: String,
 
-    #[structopt(env, long, default_value = "./examples")]
-    /// Directory to read flamin endpoints
-    static_config: PathBuf,
+    #[structopt(env, short, default_value = "10")]
+    n_parties: u64,
 }
 
 fn init_tracer() {
@@ -42,12 +34,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracer();
     tracing::info!("starting up");
     let opt = Opt::parse();
-
-    let own_identity = Identity::from(opt.identity);
+    let port = 50000;
 
     let networking = GrpcNetworkingManager::without_tls();
-
     let networking_server = networking.new_server();
+
+    let docker_static_endpoints: RoleAssignment = (1..opt.n_parties + 1)
+        .map(|party_id| {
+            let role = Role::from(party_id);
+            let identity = Identity::from(&format!("p{party_id}:{port}"));
+            (role, identity)
+        })
+        .collect();
+
+    let own_identity = docker_static_endpoints
+        .get(&Role::from(opt.player_no))
+        .unwrap()
+        .clone();
+
     let choreography = GrpcChoreography::new(
         own_identity,
         Box::new(move |session_id| networking.new_session(session_id)),
@@ -59,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(networking_server)
         .add_service(choreography.into_server());
 
-    let addr = format!("0.0.0.0:{}", &opt.port).parse()?;
+    let addr = format!("0.0.0.0:{}", &port).parse()?;
 
     tracing::info!("created server...");
 
