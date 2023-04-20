@@ -2,9 +2,10 @@ use crate::circuit::{Circuit, Operator};
 use crate::computation::SessionId;
 use crate::execution::player::{Identity, Role};
 use crate::networking::Networking;
+use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
 use crate::value::{err_reconstruct, Value};
-use crate::{Z128, Z64};
+use crate::{One, Z128, Z64};
 use anyhow::anyhow;
 use rand::RngCore;
 use std::collections::HashMap;
@@ -78,7 +79,7 @@ pub async fn robust_open_to(
                     }
                 }
             } else if 3 * t < num_parties {
-                for max_error in 0..t {
+                for max_error in 0..t + 1 {
                     if collected_sharings.len() > 2 * t + max_error {
                         if let Ok(opened) = err_reconstruct(&collected_sharings, t, max_error) {
                             tracing::debug!(
@@ -262,9 +263,9 @@ pub async fn execute_small_circuit<R: RngCore>(
                     .get(3)
                     .ok_or_else(|| anyhow!("Wrong index buddy"))?;
 
-                let own_share = env.get(s0).ok_or(anyhow!(
-                    "Couldn't retrieve secret register index for opening"
-                ))?;
+                let own_share = env.get(s0).ok_or_else(|| {
+                    anyhow!("Couldn't retrieve secret register index for opening")
+                })?;
 
                 let opened = robust_open_to(session, own_share, &own_role, 1).await?;
                 if let Some(val) = opened {
@@ -365,11 +366,11 @@ pub async fn execute_small_circuit<R: RngCore>(
                     session.threshold as usize,
                 )?;
                 init_time = init_t;
-                tracing::debug!("finished generating prep: {:?}", s);
+                tracing::debug!("finished generating proto 2 prep: {:?}", s);
                 env.insert(dest, s);
             }
             PrssPrep => {
-                // this instruction does steps 1-3 from dist dec paper
+                // this instruction does PRSS.Init() and steps 1-2 from dist dec paper
                 // computes a sharing of b - a * s + E
                 // where dim(a) = L, E = sum(shared_bits)
                 let dest = op
@@ -404,8 +405,36 @@ pub async fn execute_small_circuit<R: RngCore>(
                     session.role_assignments.len(),
                 )?;
                 init_time = init_t;
-                tracing::debug!("finished generating prep: {:?}", s);
+                tracing::debug!("finished generating PRSS prep: {:?}", s);
                 env.insert(dest, s);
+            }
+            FaultyThreshold => {
+                // all parties up to (including) t manipulate their share
+                // (to simulate a faulty/malicious party in benchmarking)
+                let party_id = own_role.player_no();
+                if party_id <= session.threshold as usize {
+                    let dest = op
+                        .operands
+                        .get(0)
+                        .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+
+                    let correct_share_value = env
+                        .get(dest)
+                        .ok_or_else(|| anyhow!("Couldn't retrieve party share to modify"))?;
+
+                    // increase value of existing share by 1
+                    if let Value::IndexedShare128(share) = correct_share_value {
+                        tracing::debug!("I'm party {} and I will send bollocks!", party_id);
+                        env.insert(
+                            dest,
+                            Value::IndexedShare128((share.0, share.1 + ResiduePoly::ONE)),
+                        );
+                    } else {
+                        return Err(anyhow!(
+                            "Other type than IndexShare128 found in threshold_fault"
+                        ));
+                    }
+                }
             }
             _ => todo!(),
         }

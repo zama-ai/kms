@@ -22,6 +22,7 @@ pub enum Operator {
     AddS,
     Bit,
     BitDecInt,
+    FaultyThreshold,
     ConvInt,
     ConvModp,
     DistPrep,
