@@ -6,7 +6,7 @@ use std::hash::Hash;
 pub const TAG_BYTES: usize = 128 / 8;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SessionId(u128);
+pub struct SessionId(pub u128);
 
 impl std::fmt::Display for SessionId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {

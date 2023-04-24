@@ -13,4 +13,6 @@ message LaunchComputationRequest {
     bytes threshold = 4;
 }
 
-message LaunchComputationResponse {}
+message LaunchComputationResponse {
+    uint32 online_time = 1;
+}

@@ -32,7 +32,7 @@ fn init_tracer() {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracer();
-    tracing::info!("starting up");
+    tracing::info!("starting up moby");
     let opt = Opt::parse();
     let port = 50000;
 
@@ -65,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr = format!("0.0.0.0:{}", &port).parse()?;
 
-    tracing::info!("created server...");
+    tracing::info!("created moby server...");
 
     let res = router.serve(addr).await;
     if let Err(e) = res {

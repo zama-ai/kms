@@ -32,7 +32,7 @@ use tonic::transport::ClientTlsConfig;
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 pub struct ComputationOutputs {
     pub outputs: Vec<Value>,
-    pub elapsed_time: Option<Duration>,
+    pub online_time: Option<Duration>,
 }
 
 type ResultStores = DashMap<SessionId, Arc<AsyncCell<ComputationOutputs>>>;
@@ -76,13 +76,15 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
+        let sid = session_id.0;
+
         match self.result_stores.entry(session_id.clone()) {
             Entry::Occupied(_) => Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "session id exists already or inconsistent metric and result map".to_string(),
             )),
             Entry::Vacant(result_stores_entry) => {
-                tracing::debug!("I've  launched a new computation");
+                tracing::debug!("I've launched a new computation");
 
                 let result_cell = AsyncCell::shared();
                 result_stores_entry.insert(result_cell);
@@ -134,7 +136,7 @@ impl Choreography for GrpcChoreography {
                     for output_value in outputs {
                         results.push(output_value);
                     }
-                    tracing::info!("Results ready, {:?}", results);
+                    tracing::info!("Results for session {:?} ready: {:?}", sid, results);
 
                     let result_cell = result_stores
                         .get(&session_id)
@@ -144,7 +146,7 @@ impl Choreography for GrpcChoreography {
                     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
                     result_cell.set(ComputationOutputs {
                         outputs: results,
-                        elapsed_time: Some(elapsed_time - init_time),
+                        online_time: Some(elapsed_time - init_time),
                     });
                     tracing::info!(
                         "Online time was {:?} microseconds",
@@ -152,7 +154,18 @@ impl Choreography for GrpcChoreography {
                     );
                 });
 
-                Ok(tonic::Response::new(LaunchComputationResponse::default()))
+                let result_stores = Arc::clone(&self.result_stores);
+                let cell: dashmap::mapref::one::Ref<SessionId, Arc<AsyncCell<ComputationOutputs>>> =
+                    result_stores
+                        .get(&SessionId::from(sid))
+                        .expect("did not find session");
+
+                let res = cell.get().await;
+
+                // return online time in microseconds
+                return Ok(tonic::Response::new(LaunchComputationResponse {
+                    online_time: res.online_time.unwrap().as_micros() as u32,
+                }));
             }
         }
     }
@@ -193,13 +206,16 @@ impl FlamingoRuntime {
         session_id: &SessionId,
         computation: &Circuit,
         threshold: u8,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<HashMap<Role, u32>, Box<dyn std::error::Error>> {
         let session_id = bincode::serialize(session_id)?;
         let computation = bincode::serialize(computation)?;
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let threshold = bincode::serialize(&threshold)?;
 
-        for channel in self.channels.values() {
+        // store online time for each role
+        let mut online_times: HashMap<Role, u32> = HashMap::new();
+
+        for (role, channel) in &self.channels {
             let mut client = ChoreographyClient::new(channel.clone());
 
             let request = LaunchComputationRequest {
@@ -210,10 +226,13 @@ impl FlamingoRuntime {
             };
 
             tracing::debug!("launching the computation to {:?}", channel);
-            let _response = client.launch_computation(request).await?;
-            tracing::debug!("finished launching the computation to {:?}", channel);
+            let response = client.launch_computation(request).await?;
+
+            let lcr: LaunchComputationResponse = response.into_inner();
+            online_times.insert(role.clone(), lcr.online_time);
+            tracing::debug!("received computation timing from {:?}", channel);
         }
 
-        Ok(())
+        Ok(online_times)
     }
 }
