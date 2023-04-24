@@ -1,6 +1,6 @@
 //! Networking traits and implementations.
 
-use crate::computation::SessionId;
+use crate::computation::{RendezvousKey, SessionId};
 use crate::execution::player::Identity;
 use crate::value::Value;
 use async_trait::async_trait;
@@ -19,7 +19,14 @@ pub trait Networking {
         &self,
         value: &Value,
         receiver: &Identity,
+        rendezvous_key: &RendezvousKey,
         session_id: &SessionId,
     ) -> anyhow::Result<()>;
-    async fn receive(&self, sender: &Identity, session_id: &SessionId) -> anyhow::Result<Value>;
+
+    async fn receive(
+        &self,
+        sender: &Identity,
+        rendezvous_key: &RendezvousKey,
+        session_id: &SessionId,
+    ) -> anyhow::Result<Value>;
 }

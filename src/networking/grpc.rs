@@ -9,44 +9,39 @@ pub(crate) mod gen {
 use self::gen::gnetworking_client::GnetworkingClient;
 use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
-use crate::computation::SessionId;
+use crate::computation::{RendezvousKey, SessionId};
 use crate::execution::player::Identity;
 use crate::networking::constants;
 use crate::networking::Networking;
 use crate::value::Value;
 use anyhow::anyhow;
+use async_cell::sync::AsyncCell;
 use async_trait::async_trait;
 use backoff::future::retry;
 use backoff::ExponentialBackoff;
-use dashmap::mapref::one::RefMut;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::*;
 use tonic::codegen::http::Uri;
 use tonic::transport::Channel;
 
 #[derive(Default)]
 pub struct GrpcNetworkingManager {
     channels: Arc<Channels>,
-    own_send_channels: Arc<SessionSendStores>,
-    own_recv_channels: Arc<SessionRecvStores>,
+    stores: Arc<SessionStores>,
 }
 
 impl GrpcNetworkingManager {
     pub fn new_server(&self) -> GnetworkingServer<impl Gnetworking> {
         GnetworkingServer::new(NetworkingImpl {
-            send_stores: Arc::clone(&self.own_send_channels),
-            recv_stores: Arc::clone(&self.own_recv_channels),
+            stores: Arc::clone(&self.stores),
         })
     }
 
     pub fn without_tls() -> Self {
         GrpcNetworkingManager {
             channels: Default::default(),
-            own_send_channels: Default::default(),
-            own_recv_channels: Default::default(),
+            stores: Default::default(),
         }
     }
 
@@ -54,8 +49,7 @@ impl GrpcNetworkingManager {
         Arc::new(GrpcNetworking {
             session_id,
             channels: Arc::clone(&self.channels),
-            send_channels: Arc::clone(&self.own_send_channels),
-            recv_channels: Arc::clone(&self.own_recv_channels),
+            stores: Arc::clone(&self.stores),
         })
     }
 }
@@ -63,8 +57,7 @@ impl GrpcNetworkingManager {
 pub struct GrpcNetworking {
     session_id: SessionId,
     channels: Arc<Channels>,
-    send_channels: Arc<SessionSendStores>,
-    recv_channels: Arc<SessionRecvStores>,
+    stores: Arc<SessionStores>,
 }
 
 impl GrpcNetworking {
@@ -94,6 +87,7 @@ impl Networking for GrpcNetworking {
         &self,
         val: &Value,
         receiver: &Identity,
+        rendezvous_key: &RendezvousKey,
         _session_id: &SessionId,
     ) -> anyhow::Result<(), anyhow::Error> {
         retry(
@@ -107,6 +101,7 @@ impl Networking for GrpcNetworking {
                 let tagged_value = TaggedValue {
                     session_id: self.session_id.clone(),
                     value: val.clone(),
+                    rendezvous_key: rendezvous_key.clone(),
                 };
                 let bytes = bincode::serialize(&tagged_value)
                     .map_err(|e| anyhow!("networking error: {:?}", e.to_string()))?;
@@ -131,13 +126,14 @@ impl Networking for GrpcNetworking {
         .await
     }
 
-    async fn receive(&self, sender: &Identity, session_id: &SessionId) -> anyhow::Result<Value> {
-        let mut cell = cell_receive(&self.send_channels, &self.recv_channels, session_id);
-        let (actual_sender, value) = cell
-            .value_mut()
-            .recv()
-            .await
-            .ok_or(anyhow!("Couldn't receive data from local channel"))?;
+    async fn receive(
+        &self,
+        sender: &Identity,
+        rendezvous_key: &RendezvousKey,
+        session_id: &SessionId,
+    ) -> anyhow::Result<Value> {
+        let cell = cell(&self.stores, session_id.clone(), rendezvous_key.clone());
+        let (actual_sender, value) = cell.take().await;
 
         match actual_sender {
             Some(actual_sender) => {
@@ -161,49 +157,32 @@ impl Networking for GrpcNetworking {
 }
 
 type AuthValue = (Option<Identity>, Value);
-type SessionSendStores = DashMap<SessionId, Arc<UnboundedSender<AuthValue>>>;
-type SessionRecvStores = DashMap<SessionId, UnboundedReceiver<AuthValue>>;
+type SessionStore = DashMap<RendezvousKey, Arc<AsyncCell<AuthValue>>>;
+type SessionStores = DashMap<SessionId, Arc<SessionStore>>;
 type Channels = DashMap<Identity, Channel>;
 
 #[derive(Default)]
 struct NetworkingImpl {
-    pub send_stores: Arc<SessionSendStores>,
-    pub recv_stores: Arc<SessionRecvStores>,
+    pub stores: Arc<SessionStores>,
 }
 
-fn cell_send(
-    send_channels: &Arc<SessionSendStores>,
-    recv_channels: &Arc<SessionRecvStores>,
-    session_id: &SessionId,
-) -> Arc<UnboundedSender<AuthValue>> {
-    let cell = send_channels
-        .entry(session_id.clone())
-        .or_insert_with(|| {
-            let (tx, rx) = mpsc::unbounded_channel::<AuthValue>();
-            recv_channels.insert(session_id.clone(), rx);
-            tracing::debug!(
-                "I have created a new channel pair for session: {:?} inside sending",
-                session_id
-            );
-            Arc::new(tx)
-        })
+fn cell(
+    stores: &Arc<SessionStores>,
+    session_id: SessionId,
+    rendezvous_key: RendezvousKey,
+) -> Arc<AsyncCell<AuthValue>> {
+    let session_store = stores
+        .entry(session_id)
+        .or_insert_with(Arc::default)
+        .value()
         .clone();
-    cell
-}
-fn cell_receive<'a>(
-    send_channels: &'a Arc<SessionSendStores>,
-    recv_channels: &'a Arc<SessionRecvStores>,
-    session_id: &SessionId,
-) -> RefMut<'a, SessionId, UnboundedReceiver<AuthValue>> {
-    let cell = recv_channels.entry(session_id.clone()).or_insert_with(|| {
-        let (tx, rx) = mpsc::unbounded_channel::<AuthValue>();
-        send_channels.insert(session_id.clone(), Arc::new(tx));
-        tracing::debug!(
-            "I have created a new channel pair for session: {:?}, inside receiving",
-            session_id
-        );
-        rx
-    });
+
+    let cell = session_store
+        .entry(rendezvous_key)
+        .or_insert_with(AsyncCell::shared)
+        .value()
+        .clone();
+
     cell
 }
 
@@ -223,20 +202,13 @@ impl Gnetworking for NetworkingImpl {
                 tonic::Status::new(tonic::Code::Aborted, "failed to parse value".to_string())
             })?;
 
-        let cell = cell_send(
-            &self.send_stores,
-            &self.recv_stores,
-            &tagged_value.session_id,
+        let cell = cell(
+            &self.stores,
+            tagged_value.session_id,
+            tagged_value.rendezvous_key,
         );
 
-        let _ = cell.send((sender, tagged_value.value));
-
-        // TODO(Dragos) why does this end up in a deadlock?
-        // tracing::info!(
-        //     "I have sent the message to local queue: {:?} {:?}",
-        //     &self.send_stores,
-        //     &self.recv_stores
-        // );
+        cell.set((sender, tagged_value.value));
 
         Ok(tonic::Response::new(SendValueResponse::default()))
     }
@@ -276,5 +248,6 @@ fn extract_sender<T>(request: &tonic::Request<T>) -> Result<Option<String>, Stri
 #[derive(Serialize, Deserialize)]
 struct TaggedValue {
     session_id: SessionId,
+    rendezvous_key: RendezvousKey,
     value: Value,
 }

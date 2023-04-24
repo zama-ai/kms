@@ -1,5 +1,5 @@
 use crate::circuit::{Circuit, Operator};
-use crate::computation::SessionId;
+use crate::computation::{RendezvousKey, SessionId};
 use crate::execution::player::{Identity, Role};
 use crate::networking::Networking;
 use crate::residue_poly::ResiduePoly;
@@ -56,7 +56,10 @@ pub async fn robust_open_to(
             if role != &other_role {
                 let networking = Arc::clone(&session.networking);
                 let session_id = session.session_id.clone();
-                set.spawn(async move { networking.receive(&identity, &session_id).await });
+                let rdv_key: RendezvousKey = format!("rdv-0-{other_role}").try_into()?;
+                set.spawn(
+                    async move { networking.receive(&identity, &rdv_key, &session_id).await },
+                );
             }
         }
 
@@ -106,9 +109,12 @@ pub async fn robust_open_to(
         let networking = Arc::clone(&session.networking);
         let share = share.clone();
         let session_id = session.session_id.clone();
+        let rdv_key: RendezvousKey = format!("rdv-0-{role}").try_into()?;
 
         tokio::spawn(async move {
-            let _ = networking.send(&share, &receiver, &session_id).await;
+            let _ = networking
+                .send(&share, &receiver, &rdv_key, &session_id)
+                .await;
         })
         .await?;
         Ok(None)
@@ -127,7 +133,7 @@ pub async fn robust_input<R: RngCore>(
         let si = value.clone().unwrap();
         let num_parties = session.role_assignments.len();
 
-        let (shamir_sharings, identities): (Vec<Value>, Vec<&Identity>) = match si {
+        let (shamir_sharings, roles): (Vec<Value>, Vec<Role>) = match si {
             Value::Ring64(s64) => {
                 let sharings =
                     ShamirGSharings::<Z64>::share(rng, s64, num_parties, threshold as usize)?;
@@ -136,17 +142,12 @@ pub async fn robust_input<R: RngCore>(
                     .iter()
                     .map(|x| Value::IndexedShare64(*x))
                     .collect();
-                let identities: Vec<_> = sharings
+                let roles: Vec<_> = sharings
                     .shares
                     .iter()
-                    .map(|(party_id, _)| {
-                        session
-                            .role_assignments
-                            .get(&Role(*party_id as u64))
-                            .ok_or(anyhow!("couldn't get identity for role {party_id}"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                (values, identities)
+                    .map(|(party_id, _)| Role(*party_id as u64))
+                    .collect();
+                (values, roles)
             }
             Value::Ring128(s128) => {
                 let sharings =
@@ -156,17 +157,12 @@ pub async fn robust_input<R: RngCore>(
                     .iter()
                     .map(|x| Value::IndexedShare128(*x))
                     .collect();
-                let identities: Vec<_> = sharings
+                let roles: Vec<_> = sharings
                     .shares
                     .iter()
-                    .map(|(party_id, _)| {
-                        session
-                            .role_assignments
-                            .get(&Role(*party_id as u64))
-                            .ok_or(anyhow!("couldn't get identity for role {party_id}"))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                (values, identities)
+                    .map(|(party_id, _)| Role(*party_id as u64))
+                    .collect();
+                (values, roles)
             }
             _ => {
                 return Err(anyhow!(
@@ -176,14 +172,22 @@ pub async fn robust_input<R: RngCore>(
         };
 
         let mut set = JoinSet::new();
-        for (indexed_share, identity) in shamir_sharings.iter().zip(identities).skip(1) {
+        for (indexed_share, to_send_role) in shamir_sharings.iter().zip(roles).skip(1) {
+            let identity = session
+                .role_assignments
+                .get(&to_send_role)
+                .ok_or(anyhow!("couldn't get identity for role {to_send_role}"))?
+                .clone();
+
             let networking = Arc::clone(&session.networking);
             let session_id = session.session_id.clone();
             let share = indexed_share.clone();
-            let identity = identity.clone();
 
+            let rdv_key: RendezvousKey = format!("rdv-0-{to_send_role}").try_into()?;
             set.spawn(async move {
-                let _ = networking.send(&share, &identity, &session_id).await;
+                let _ = networking
+                    .send(&share, &identity, &rdv_key, &session_id)
+                    .await;
             });
         }
         while (set.join_next().await).is_some() {}
@@ -196,8 +200,10 @@ pub async fn robust_input<R: RngCore>(
             .clone();
         let networking = Arc::clone(&session.networking);
         let session_id = session.session_id.clone();
+        let rdv_key: RendezvousKey = format!("rdv-0-{role}").try_into()?;
         let data: Value =
-            tokio::spawn(async move { networking.receive(&receiver, &session_id).await }).await??;
+            tokio::spawn(async move { networking.receive(&receiver, &rdv_key, &session_id).await })
+                .await??;
         Ok(data)
     }
 }
@@ -463,8 +469,7 @@ mod tests {
         let session_id = SessionId::from(1);
         let networking = Arc::new(LocalNetworking {
             session_id: session_id.clone(),
-            recv_channels: Default::default(),
-            send_channels: Default::default(),
+            store: Default::default(),
         });
         let threshold = 1;
 
@@ -496,6 +501,7 @@ mod tests {
         assert_eq!(out[0], Value::U64(100));
     }
 
+    #[traced_test]
     #[tokio::test]
     async fn test_open_secret_large_t() {
         let role_assignments = HashMap::from([
@@ -507,8 +513,7 @@ mod tests {
         let session_id = SessionId::from(1);
         let networking = Arc::new(LocalNetworking {
             session_id: session_id.clone(),
-            recv_channels: Default::default(),
-            send_channels: Default::default(),
+            store: Default::default(),
         });
         let threshold = 1;
 
@@ -561,8 +566,7 @@ mod tests {
         let session_id = SessionId::from(1);
         let networking = Arc::new(LocalNetworking {
             session_id: session_id.clone(),
-            recv_channels: Default::default(),
-            send_channels: Default::default(),
+            store: Default::default(),
         });
         let threshold = 1;
 
