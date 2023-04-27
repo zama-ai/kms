@@ -62,4 +62,4 @@ services:
       - p2
       - p3
       - p4
-    entrypoint: ["sh", "-c", "mobygo --session-id 1 -n 4 -t 1 --circuit-path ./circuits/ddec-2-plaintext-1/ddec.flamin &&  tail -f /dev/null"]
+    entrypoint: ["sh", "-c", "mobygo -n 4 launch --session-id 1 -t 1 --circuit-path ./circuits/ddec-2-plaintext-1/ddec.flamin &&  tail -f /dev/null"]

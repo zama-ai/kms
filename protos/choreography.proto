@@ -4,6 +4,7 @@ package ddec_choreography;
 
 service Choreography {
     rpc LaunchComputation(LaunchComputationRequest) returns(LaunchComputationResponse);
+    rpc RetrieveResults(RetrieveResultsRequest) returns(RetrieveResultsResponse);
 }
 
 message LaunchComputationRequest {
@@ -13,6 +14,12 @@ message LaunchComputationRequest {
     bytes threshold = 4;
 }
 
-message LaunchComputationResponse {
-    uint32 online_time = 1;
+message LaunchComputationResponse {}
+
+message RetrieveResultsRequest {
+    bytes session_id = 1;
+}
+
+message RetrieveResultsResponse {
+    bytes values = 1;
 }

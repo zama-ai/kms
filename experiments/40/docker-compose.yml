@@ -566,4 +566,4 @@ services:
       - p38
       - p39
       - p40
-    entrypoint: ["sh", "-c", "mobygo --session-id 1 -n 40 -t 13 --circuit-path ./circuits/ddec-2-plaintext-1/ddec.flamin &&  tail -f /dev/null"]
+    entrypoint: ["sh", "-c", "mobygo -n 40 launch --session-id 1 -t 13 --circuit-path ./circuits/ddec-2-plaintext-1/ddec.flamin &&  tail -f /dev/null"]

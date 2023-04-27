@@ -9,6 +9,8 @@ use self::gen::choreography_client::ChoreographyClient;
 use self::gen::choreography_server::{Choreography, ChoreographyServer};
 use self::gen::{LaunchComputationRequest, LaunchComputationResponse};
 use super::NetworkingStrategy;
+use crate::choreography::grpc::gen::RetrieveResultsRequest;
+use crate::choreography::grpc::gen::RetrieveResultsResponse;
 use crate::circuit::Circuit;
 use crate::computation::SessionId;
 use crate::execution::distributed::execute_small_circuit;
@@ -31,8 +33,14 @@ use tonic::transport::ClientTlsConfig;
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 pub struct ComputationOutputs {
-    pub outputs: Vec<Value>,
-    pub online_time: Option<Duration>,
+    pub outputs: HashMap<String, Vec<Value>>,
+    pub elapsed_time: Option<Duration>,
+}
+
+#[derive(Debug)]
+pub struct GrpcOutputs {
+    pub outputs: HashMap<String, Vec<Value>>,
+    pub elapsed_time: Option<HashMap<Role, Duration>>,
 }
 
 type ResultStores = DashMap<SessionId, Arc<AsyncCell<ComputationOutputs>>>;
@@ -75,8 +83,6 @@ impl Choreography for GrpcChoreography {
                 "failed to parse session id".to_string(),
             )
         })?;
-
-        let sid = session_id.0;
 
         match self.result_stores.entry(session_id.clone()) {
             Entry::Occupied(_) => Err(tonic::Status::new(
@@ -127,16 +133,15 @@ impl Choreography for GrpcChoreography {
 
                 tokio::spawn(async move {
                     let mut rng = AesRng::from_random_seed();
+                    // maximum one output per party
+                    let mut results = HashMap::with_capacity(1);
                     let (outputs, init_time) =
                         execute_small_circuit(&session, &computation, &own_identity, &mut rng)
                             .await
                             .unwrap();
 
-                    let mut results = Vec::with_capacity(outputs.len());
-                    for output_value in outputs {
-                        results.push(output_value);
-                    }
-                    tracing::info!("Results for session {:?} ready: {:?}", sid, results);
+                    tracing::info!("Results session {:?} ready: {:?}", session_id, outputs);
+                    results.insert(format!("{session_id}"), outputs);
 
                     let result_cell = result_stores
                         .get(&session_id)
@@ -146,27 +151,42 @@ impl Choreography for GrpcChoreography {
                     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
                     result_cell.set(ComputationOutputs {
                         outputs: results,
-                        online_time: Some(elapsed_time - init_time),
+                        elapsed_time: Some(elapsed_time - init_time),
                     });
                     tracing::info!(
                         "Online time was {:?} microseconds",
                         (elapsed_time - init_time).as_micros()
                     );
                 });
-
-                let result_stores = Arc::clone(&self.result_stores);
-                let cell: dashmap::mapref::one::Ref<SessionId, Arc<AsyncCell<ComputationOutputs>>> =
-                    result_stores
-                        .get(&SessionId::from(sid))
-                        .expect("did not find session");
-
-                let res = cell.get().await;
-
-                // return online time in microseconds
-                return Ok(tonic::Response::new(LaunchComputationResponse {
-                    online_time: res.online_time.unwrap().as_micros() as u32,
-                }));
+                Ok(tonic::Response::new(LaunchComputationResponse::default()))
             }
+        }
+    }
+
+    async fn retrieve_results(
+        &self,
+        request: tonic::Request<RetrieveResultsRequest>,
+    ) -> Result<tonic::Response<RetrieveResultsResponse>, tonic::Status> {
+        let request = request.into_inner();
+
+        let session_id = bincode::deserialize::<SessionId>(&request.session_id).map_err(|_e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                "failed to parse session id".to_string(),
+            )
+        })?;
+
+        match self.result_stores.get(&session_id) {
+            Some(results) => {
+                let results = results.value().get().await;
+                let values = bincode::serialize(&results).expect("failed to serialize results");
+
+                Ok(tonic::Response::new(RetrieveResultsResponse { values }))
+            }
+            None => Err(tonic::Status::new(
+                tonic::Code::NotFound,
+                "unknown session id".to_string(),
+            )),
         }
     }
 }
@@ -206,16 +226,13 @@ impl FlamingoRuntime {
         session_id: &SessionId,
         computation: &Circuit,
         threshold: u8,
-    ) -> Result<HashMap<Role, u32>, Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let session_id = bincode::serialize(session_id)?;
         let computation = bincode::serialize(computation)?;
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let threshold = bincode::serialize(&threshold)?;
 
-        // store online time for each role
-        let mut online_times: HashMap<Role, u32> = HashMap::new();
-
-        for (role, channel) in &self.channels {
+        for channel in self.channels.values() {
             let mut client = ChoreographyClient::new(channel.clone());
 
             let request = LaunchComputationRequest {
@@ -226,13 +243,52 @@ impl FlamingoRuntime {
             };
 
             tracing::debug!("launching the computation to {:?}", channel);
-            let response = client.launch_computation(request).await?;
-
-            let lcr: LaunchComputationResponse = response.into_inner();
-            online_times.insert(role.clone(), lcr.online_time);
-            tracing::debug!("received computation timing from {:?}", channel);
+            let _response = client.launch_computation(request).await?;
         }
 
-        Ok(online_times)
+        Ok(())
+    }
+
+    pub async fn retrieve_results(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<GrpcOutputs, Box<dyn std::error::Error>> {
+        let session_id = bincode::serialize(&session_id)?;
+
+        let mut combined_outputs = HashMap::new();
+        let mut combined_stats = HashMap::new();
+
+        for (role, channel) in self.channels.iter() {
+            let mut client = ChoreographyClient::new(channel.clone());
+
+            let request = RetrieveResultsRequest {
+                session_id: session_id.clone(),
+            };
+
+            let response = client.retrieve_results(request).await?;
+
+            let ComputationOutputs {
+                outputs,
+                elapsed_time,
+            } = bincode::deserialize::<ComputationOutputs>(&response.get_ref().values)?;
+
+            combined_outputs.extend(outputs);
+
+            if let Some(time) = elapsed_time {
+                combined_stats.insert(role.clone(), time);
+            }
+        }
+
+        if combined_stats.is_empty() {
+            Ok(GrpcOutputs {
+                outputs: combined_outputs,
+                elapsed_time: None,
+            })
+        } else {
+            Ok(GrpcOutputs {
+                outputs: combined_outputs,
+                elapsed_time: Some(combined_stats),
+            })
+        }
     }
 }

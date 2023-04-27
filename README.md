@@ -6,8 +6,17 @@ To run a 10 party benchmark for distributed decryption on a local network run th
 
 ```sh
 docker build -t ddec .
-cd benchmarks/10
+cd experiments/10
 docker compose up
+```
+
+By default the docker images run a distributed decryption with session id equal
+to 1. To collect statistics about timings on different parties run the
+following:
+
+```sh
+docker exec -it 10-choreo-1 bash
+RUST_LOG=info mobygo -n 4 results --session-id 1
 ```
 
 To simulate a certain network connection on all containers run the following (replace `wan.sh` with the desired network below):
