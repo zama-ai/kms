@@ -1,11 +1,10 @@
-//! gRPC-based choreography.
+//! gRPC-based networking.
 
-pub(crate) mod gen {
+mod gen {
     #![allow(clippy::derive_partial_eq_without_eq)]
     tonic::include_proto!("ddec_networking");
 }
 
-// use self::gen::networking_client::NetworkingClient;
 use self::gen::gnetworking_client::GnetworkingClient;
 use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
@@ -45,9 +44,8 @@ impl GrpcNetworkingManager {
         }
     }
 
-    pub fn new_session(&self, session_id: SessionId) -> Arc<impl Networking> {
+    pub fn new_session(&self, _session_id: SessionId) -> Arc<impl Networking> {
         Arc::new(GrpcNetworking {
-            session_id,
             channels: Arc::clone(&self.channels),
             stores: Arc::clone(&self.stores),
         })
@@ -55,7 +53,6 @@ impl GrpcNetworkingManager {
 }
 
 pub struct GrpcNetworking {
-    session_id: SessionId,
     channels: Arc<Channels>,
     stores: Arc<SessionStores>,
 }
@@ -85,10 +82,10 @@ impl GrpcNetworking {
 impl Networking for GrpcNetworking {
     async fn send(
         &self,
-        val: &Value,
+        value: Value,
         receiver: &Identity,
         rendezvous_key: &RendezvousKey,
-        _session_id: &SessionId,
+        session_id: &SessionId,
     ) -> anyhow::Result<(), anyhow::Error> {
         retry(
             ExponentialBackoff {
@@ -99,9 +96,9 @@ impl Networking for GrpcNetworking {
             },
             || async {
                 let tagged_value = TaggedValue {
-                    session_id: self.session_id.clone(),
-                    value: val.clone(),
+                    value: value.clone(),
                     rendezvous_key: rendezvous_key.clone(),
+                    session_id: session_id.clone(),
                 };
                 let bytes = bincode::serialize(&tagged_value)
                     .map_err(|e| anyhow!("networking error: {:?}", e.to_string()))?;
@@ -112,9 +109,9 @@ impl Networking for GrpcNetworking {
                 let mut client = GnetworkingClient::new(channel);
                 tracing::debug!(
                     "Sending '{:?}' to {:?}, session_id {:?}",
-                    val,
+                    value,
                     receiver,
-                    self.session_id
+                    session_id
                 );
                 let _response = client
                     .send_value(request)

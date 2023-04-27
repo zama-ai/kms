@@ -9,15 +9,12 @@ pub mod constants;
 pub mod grpc;
 pub mod local;
 
-/// Requirements for asynchronous networking.
-///
-/// An implementation of this trait must be provided when using DDec
-/// for asynchronous (blocking) execution.
+/// Requirements for networking interface.
 #[async_trait]
 pub trait Networking {
     async fn send(
         &self,
-        value: &Value,
+        value: Value,
         receiver: &Identity,
         rendezvous_key: &RendezvousKey,
         session_id: &SessionId,

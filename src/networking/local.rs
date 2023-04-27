@@ -2,34 +2,31 @@ use super::*;
 use dashmap::DashMap;
 use std::sync::Arc;
 
-/// A simple implementation of asynchronous networking for local execution.
+/// A simple implementation of networking for local execution.
 ///
 /// This implementation is intended for local development/testing purposes
 /// only. It simply stores all values in a hashmap without any actual networking.
+#[derive(Default)]
 pub struct LocalNetworking {
-    pub session_id: SessionId,
-    pub store: DashMap<String, Arc<async_cell::sync::AsyncCell<Value>>>,
+    store: DashMap<String, Arc<async_cell::sync::AsyncCell<Value>>>,
 }
 
 #[async_trait]
 impl Networking for LocalNetworking {
     async fn send(
         &self,
-        val: &Value,
+        val: Value,
         _receiver: &Identity,
         rendezvous_key: &RendezvousKey,
         session_id: &SessionId,
     ) -> anyhow::Result<()> {
         tracing::debug!("Async sending; rdv:'{rendezvous_key}' sid:{session_id}");
         let key = format!("{session_id}/{rendezvous_key}");
-        let cell = self
-            .store
+        self.store
             .entry(key)
             .or_insert_with(async_cell::sync::AsyncCell::shared)
             .value()
-            .clone();
-
-        cell.set(val.clone());
+            .set(val);
         Ok(())
     }
 
@@ -47,7 +44,8 @@ impl Networking for LocalNetworking {
             .or_insert_with(async_cell::sync::AsyncCell::shared)
             .value()
             .clone();
-
+        // note that a deadlock might happen without this split between getting
+        // the cell and awaiting the value
         let val = cell.get().await;
         Ok(val)
     }
@@ -57,17 +55,13 @@ impl Networking for LocalNetworking {
 mod tests {
     use super::*;
     use std::num::Wrapping;
+    use std::sync::Arc;
     use tracing_test::traced_test;
 
     #[tokio::test]
     #[traced_test]
     async fn test_async_networking() {
-        use std::sync::Arc;
-
-        let net = Arc::new(LocalNetworking {
-            session_id: 123_u128.into(),
-            store: Default::default(),
-        });
+        let net = Arc::new(LocalNetworking::default());
 
         let net1 = Arc::clone(&net);
         let task1 = tokio::spawn(async move {
@@ -82,7 +76,7 @@ mod tests {
         let task2 = tokio::spawn(async move {
             let alice = "alice".into();
             let value = Value::Ring64(Wrapping::<u64>(1234));
-            net2.send(&value, &alice, &"rdv".try_into().unwrap(), &123_u128.into())
+            net2.send(value, &alice, &"rdv".try_into().unwrap(), &123_u128.into())
                 .await
         });
 

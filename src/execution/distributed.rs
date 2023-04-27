@@ -113,7 +113,7 @@ pub async fn robust_open_to(
 
         tokio::spawn(async move {
             let _ = networking
-                .send(&share, &receiver, &rdv_key, &session_id)
+                .send(share, &receiver, &rdv_key, &session_id)
                 .await;
         })
         .await?;
@@ -186,7 +186,7 @@ pub async fn robust_input<R: RngCore>(
             let rdv_key: RendezvousKey = format!("rdv-0-{to_send_role}").try_into()?;
             set.spawn(async move {
                 let _ = networking
-                    .send(&share, &identity, &rdv_key, &session_id)
+                    .send(share, &identity, &rdv_key, &session_id)
                     .await;
             });
         }
@@ -467,10 +467,7 @@ mod tests {
             (Role(4), Identity("localhost:5003".to_string())),
         ]);
         let session_id = SessionId::from(1);
-        let networking = Arc::new(LocalNetworking {
-            session_id: session_id.clone(),
-            store: Default::default(),
-        });
+        let networking = Arc::new(LocalNetworking::default());
         let threshold = 1;
 
         let session = DistributedSession::new(session_id, role_assignments, networking, threshold);
@@ -511,10 +508,7 @@ mod tests {
             (Role(4), Identity("localhost:5003".to_string())),
         ]);
         let session_id = SessionId::from(1);
-        let networking = Arc::new(LocalNetworking {
-            session_id: session_id.clone(),
-            store: Default::default(),
-        });
+        let networking = Arc::new(LocalNetworking::default());
         let threshold = 1;
 
         let session = DistributedSession::new(session_id, role_assignments, networking, threshold);
@@ -564,10 +558,7 @@ mod tests {
             (Role(5), Identity("localhost:5004".to_string())),
         ]);
         let session_id = SessionId::from(1);
-        let networking = Arc::new(LocalNetworking {
-            session_id: session_id.clone(),
-            store: Default::default(),
-        });
+        let networking = Arc::new(LocalNetworking::default());
         let threshold = 1;
 
         let session = DistributedSession::new(session_id, role_assignments, networking, threshold);
