@@ -40,7 +40,7 @@ pub struct ComputationOutputs {
 #[derive(Debug)]
 pub struct GrpcOutputs {
     pub outputs: HashMap<String, Vec<Value>>,
-    pub elapsed_time: Option<HashMap<Role, Duration>>,
+    pub elapsed_times: Option<HashMap<Role, Vec<Duration>>>,
 }
 
 type ResultStores = DashMap<SessionId, Arc<AsyncCell<ComputationOutputs>>>;
@@ -176,31 +176,43 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
-        match self.result_stores.get(&session_id) {
-            Some(results) => {
-                let results = results.value().get().await;
-                let values = bincode::serialize(&results).expect("failed to serialize results");
+        let session_range = request.session_range;
 
-                Ok(tonic::Response::new(RetrieveResultsResponse { values }))
+        let mut results: Vec<ComputationOutputs> = Vec::with_capacity(session_range as usize);
+
+        for i in 0..session_range {
+            match self
+                .result_stores
+                .get(&SessionId::from(session_id.0 + i as u128))
+            {
+                Some(res) => {
+                    let res = res.value().get().await;
+                    results.push(res);
+                }
+                None => {
+                    return Err(tonic::Status::new(
+                        tonic::Code::NotFound,
+                        "unknown session id".to_string(),
+                    ))
+                }
             }
-            None => Err(tonic::Status::new(
-                tonic::Code::NotFound,
-                "unknown session id".to_string(),
-            )),
         }
+
+        let values = bincode::serialize(&results).expect("failed to serialize results");
+        Ok(tonic::Response::new(RetrieveResultsResponse { values }))
     }
 }
 
-pub struct FlamingoRuntime {
+pub struct ChoreoRuntime {
     role_assignments: HashMap<Role, Identity>,
     channels: HashMap<Role, Channel>,
 }
 
-impl FlamingoRuntime {
+impl ChoreoRuntime {
     pub fn new(
         role_assignments: HashMap<Role, Identity>,
         tls_config: Option<ClientTlsConfig>,
-    ) -> Result<FlamingoRuntime, Box<dyn std::error::Error>> {
+    ) -> Result<ChoreoRuntime, Box<dyn std::error::Error>> {
         let channels = role_assignments
             .iter()
             .map(|(role, identity)| {
@@ -215,7 +227,7 @@ impl FlamingoRuntime {
             })
             .collect::<Result<_, Box<dyn std::error::Error>>>()?;
 
-        Ok(FlamingoRuntime {
+        Ok(ChoreoRuntime {
             role_assignments,
             channels,
         })
@@ -252,6 +264,7 @@ impl FlamingoRuntime {
     pub async fn retrieve_results(
         &self,
         session_id: &SessionId,
+        session_range: u32,
     ) -> Result<GrpcOutputs, Box<dyn std::error::Error>> {
         let session_id = bincode::serialize(&session_id)?;
 
@@ -263,31 +276,32 @@ impl FlamingoRuntime {
 
             let request = RetrieveResultsRequest {
                 session_id: session_id.clone(),
+                session_range,
             };
 
             let response = client.retrieve_results(request).await?;
 
-            let ComputationOutputs {
-                outputs,
-                elapsed_time,
-            } = bincode::deserialize::<ComputationOutputs>(&response.get_ref().values)?;
+            for co in bincode::deserialize::<Vec<ComputationOutputs>>(&response.get_ref().values)? {
+                combined_outputs.extend(co.outputs);
 
-            combined_outputs.extend(outputs);
-
-            if let Some(time) = elapsed_time {
-                combined_stats.insert(role.clone(), time);
+                if let Some(time) = co.elapsed_time {
+                    combined_stats
+                        .entry(role.clone())
+                        .or_insert_with(Vec::new)
+                        .push(time);
+                }
             }
         }
 
         if combined_stats.is_empty() {
             Ok(GrpcOutputs {
                 outputs: combined_outputs,
-                elapsed_time: None,
+                elapsed_times: None,
             })
         } else {
             Ok(GrpcOutputs {
                 outputs: combined_outputs,
-                elapsed_time: Some(combined_stats),
+                elapsed_times: Some(combined_stats),
             })
         }
     }

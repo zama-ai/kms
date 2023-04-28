@@ -18,6 +18,7 @@ message LaunchComputationResponse {}
 
 message RetrieveResultsRequest {
     bytes session_id = 1;
+    uint32 session_range = 2;
 }
 
 message RetrieveResultsResponse {

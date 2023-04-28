@@ -1,7 +1,7 @@
 //! CLI tool for interacting with a group of flamins
 
 use clap::Parser;
-use distributed_decryption::choreography::grpc::FlamingoRuntime;
+use distributed_decryption::choreography::grpc::ChoreoRuntime;
 use distributed_decryption::choreography::parse_session_config_file_with_computation;
 use distributed_decryption::computation::SessionId;
 use std::path::PathBuf;
@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (role_assignments, computation, threshold) =
         parse_session_config_file_with_computation(&args.session_config)?;
-    let runtime = FlamingoRuntime::new(role_assignments, tls_config)?;
+    let runtime = ChoreoRuntime::new(role_assignments, tls_config)?;
     let session_id = SessionId::from(args.session_id);
 
     tracing::debug!("launching flamingo with: {:?}", &computation);

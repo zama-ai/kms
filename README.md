@@ -33,7 +33,7 @@ The following networks are simulated using `tc`:
 | --- | --- | --- | --- |
 | None  | `off.sh`  | none  | no limit  |
 | WAN  | `wan.sh`  | 50 ms  | 100 Mbit/s  |
-| 1 Gbps LAN  | `lan1.sh`  | 0.5ms  | 1 Gbit/s  |
-| 10 Gbps LAN  | `lan1.sh`  | 0.5ms  | 10 Gbit/s  |
+| 1 Gbps LAN  | `lan1.sh`  | 0.5 ms  | 1 Gbit/s  |
+| 10 Gbps LAN  | `lan10.sh`  | 0.5 ms  | 10 Gbit/s  |
 
 Note that ping RTT will be 2x the latency from the table, when the network config is set on all nodes.
