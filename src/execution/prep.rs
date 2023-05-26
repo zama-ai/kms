@@ -59,7 +59,7 @@ pub(crate) fn ddec_prep(
 
     // sample shared bits
     let b = (LOG_BD + POW) as usize;
-    let shared_bits: Vec<_> = (0..b)
+    let shared_bits: Vec<_> = (0..2 * b)
         .map(|_| {
             let bit_share = gen_player_share(&mut rng, Wrapping(0), threshold, player_id)?;
             Ok::<_, anyhow::Error>(bit_share)
@@ -67,8 +67,9 @@ pub(crate) fn ddec_prep(
         .collect::<anyhow::Result<Vec<_>, _>>()?;
 
     let composed_bits = (0..b).fold(ResiduePoly::<Z128>::ZERO, |acc, index| {
-        acc + shared_bits[index] * (Wrapping(1_u128) << index)
+        acc + (shared_bits[index] + shared_bits[b + index]) * (Wrapping(1_u128) << index)
     });
+
     Ok((
         Value::IndexedShare128((player_id, partial_dec + composed_bits)),
         elapsed_time,
