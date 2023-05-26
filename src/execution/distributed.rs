@@ -1,13 +1,16 @@
 use crate::circuit::{Circuit, Operator};
-use crate::computation::{RendezvousKey, SessionId};
-use crate::execution::player::{Identity, Role};
+use crate::computation::SessionId;
+use crate::execution::player::{Identity, Role, RoleAssignment};
+use crate::networking::local::{LocalNetworking, LocalNetworkingProducer};
 use crate::networking::Networking;
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
 use crate::value::{err_reconstruct, Value};
 use crate::{One, Z128, Z64};
+use aes_prng::AesRng;
 use anyhow::anyhow;
 use rand::RngCore;
+use rand::SeedableRng;
 use std::collections::HashMap;
 use std::num::Wrapping;
 use std::str::FromStr;
@@ -41,6 +44,77 @@ impl DistributedSession {
     }
 }
 
+pub struct DistributedTestRuntime {
+    identities: Vec<Identity>,
+    threshold: u8,
+}
+
+impl DistributedTestRuntime {
+    pub fn new(identities: Vec<Identity>, threshold: u8) -> Self {
+        DistributedTestRuntime {
+            identities,
+            threshold,
+        }
+    }
+
+    pub fn evaluate_circuit(
+        &self,
+        circuit: &Circuit,
+    ) -> anyhow::Result<HashMap<Identity, Vec<Value>>> {
+        // TODO(Dragos) replaced this with a random sid
+        let session_id = SessionId(1);
+
+        let rt = tokio::runtime::Runtime::new()?;
+        let _guard = rt.enter();
+
+        let role_assignments: RoleAssignment = self
+            .identities
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(role_id, identity)| (Role(role_id as u64 + 1), identity))
+            .collect();
+
+        let net_producer = LocalNetworkingProducer::from_ids(&self.identities);
+        let user_nets: Vec<Arc<LocalNetworking>> = self
+            .identities
+            .iter()
+            .map(|user_identity| {
+                let net = net_producer.user_net(user_identity.clone());
+                Arc::new(net)
+            })
+            .collect();
+
+        let mut set = JoinSet::new();
+        for (index_id, identity) in self.identities.clone().into_iter().enumerate() {
+            let session_id = session_id.clone();
+            let role_assignments = role_assignments.clone();
+            let net = Arc::clone(&user_nets[index_id]);
+            let circuit = circuit.clone();
+            let threshold = self.threshold;
+            set.spawn(async move {
+                let mut rng = AesRng::seed_from_u64(0);
+                let session = DistributedSession::new(session_id, role_assignments, net, threshold);
+                let (out, _init_time) =
+                    execute_small_circuit(&session, &circuit, &identity, &mut rng)
+                        .await
+                        .unwrap();
+                (identity, out)
+            });
+        }
+
+        let results = rt.block_on(async {
+            let mut results = HashMap::new();
+            while let Some(v) = set.join_next().await {
+                let (identity, val) = v.unwrap();
+                results.insert(identity, val);
+            }
+            results
+        });
+        Ok(results)
+    }
+}
+
 pub async fn robust_open_to(
     session: &DistributedSession,
     share: &Value,
@@ -48,18 +122,23 @@ pub async fn robust_open_to(
     player_open: usize,
 ) -> anyhow::Result<Option<Value>> {
     if role.player_no() == player_open {
+        session.networking.increase_round_counter().await?;
         let mut collected_sharings = Vec::new();
         collected_sharings.push(share.clone());
 
         let mut set = JoinSet::new();
-        for (other_role, identity) in session.role_assignments.clone() {
+        for (other_role, _identity) in session.role_assignments.clone() {
             if role != &other_role {
                 let networking = Arc::clone(&session.networking);
                 let session_id = session.session_id.clone();
-                let rdv_key: RendezvousKey = format!("rdv-0-{other_role}").try_into()?;
-                set.spawn(
-                    async move { networking.receive(&identity, &rdv_key, &session_id).await },
-                );
+
+                let sender = session
+                    .role_assignments
+                    .get(&other_role)
+                    .ok_or(anyhow!("couldn't get identity for role {role}"))?
+                    .clone();
+
+                set.spawn(async move { networking.receive(&sender, &session_id).await });
             }
         }
 
@@ -72,14 +151,13 @@ pub async fn robust_open_to(
 
             if 4 * t < num_parties {
                 if collected_sharings.len() > 3 * t {
-                    if let Ok(opened) = err_reconstruct(&collected_sharings, t, 0) {
-                        tracing::debug!(
-                            "managed to reconstruct with given {:?} shares",
-                            collected_sharings.len()
-                        );
-                        set.abort_all();
-                        return Ok(Some(opened));
-                    }
+                    let opened = err_reconstruct(&collected_sharings, t, 0)?;
+                    tracing::debug!(
+                        "managed to reconstruct with given {:?} shares",
+                        collected_sharings.len()
+                    );
+                    set.shutdown().await;
+                    return Ok(Some(opened));
                 }
             } else if 3 * t < num_parties {
                 for max_error in 0..t + 1 {
@@ -90,7 +168,7 @@ pub async fn robust_open_to(
                                 max_error,
                                 collected_sharings.len()
                             );
-                            set.abort_all();
+                            set.shutdown().await;
                             return Ok(Some(opened));
                         }
                     }
@@ -106,15 +184,13 @@ pub async fn robust_open_to(
                 "Couldn't get identity for role {player_open} in opening"
             ))?
             .clone();
+
         let networking = Arc::clone(&session.networking);
         let share = share.clone();
         let session_id = session.session_id.clone();
-        let rdv_key: RendezvousKey = format!("rdv-0-{role}").try_into()?;
 
         tokio::spawn(async move {
-            let _ = networking
-                .send(share, &receiver, &rdv_key, &session_id)
-                .await;
+            let _ = networking.send(share, &receiver, &session_id).await;
         })
         .await?;
         Ok(None)
@@ -130,7 +206,16 @@ pub async fn robust_input<R: RngCore>(
 ) -> anyhow::Result<Value> {
     if role.player_no() == player_input {
         let threshold = session.threshold;
-        let si = value.clone().unwrap();
+        let si = {
+            match value {
+                Some(v) => v.clone(),
+                None => {
+                    return Err(anyhow!(
+                        "Expected Some(v) as an input argument for the input player, got None"
+                    ))
+                }
+            }
+        };
         let num_parties = session.role_assignments.len();
 
         let (shamir_sharings, roles): (Vec<Value>, Vec<Role>) = match si {
@@ -170,10 +255,9 @@ pub async fn robust_input<R: RngCore>(
                 ));
             }
         };
-
         let mut set = JoinSet::new();
         for (indexed_share, to_send_role) in shamir_sharings.iter().zip(roles).skip(1) {
-            let identity = session
+            let receiver = session
                 .role_assignments
                 .get(&to_send_role)
                 .ok_or(anyhow!("couldn't get identity for role {to_send_role}"))?
@@ -183,27 +267,24 @@ pub async fn robust_input<R: RngCore>(
             let session_id = session.session_id.clone();
             let share = indexed_share.clone();
 
-            let rdv_key: RendezvousKey = format!("rdv-0-{to_send_role}").try_into()?;
             set.spawn(async move {
-                let _ = networking
-                    .send(share, &identity, &rdv_key, &session_id)
-                    .await;
+                let _ = networking.send(share, &receiver, &session_id).await;
             });
         }
         while (set.join_next().await).is_some() {}
         Ok(shamir_sharings[0].clone())
     } else {
-        let receiver = session
+        session.networking.increase_round_counter().await?;
+        let sender = session
             .role_assignments
             .get(&Role(player_input as u64))
             .ok_or(anyhow!("couldn't get identity for role {player_input}"))?
             .clone();
+
         let networking = Arc::clone(&session.networking);
         let session_id = session.session_id.clone();
-        let rdv_key: RendezvousKey = format!("rdv-0-{role}").try_into()?;
         let data: Value =
-            tokio::spawn(async move { networking.receive(&receiver, &rdv_key, &session_id).await })
-                .await??;
+            tokio::spawn(async move { networking.receive(&sender, &session_id).await }).await??;
         Ok(data)
     }
 }
@@ -272,7 +353,6 @@ pub async fn execute_small_circuit<R: RngCore>(
                 let own_share = env.get(s0).ok_or_else(|| {
                     anyhow!("Couldn't retrieve secret register index for opening")
                 })?;
-
                 let opened = robust_open_to(session, own_share, &own_role, 1).await?;
                 if let Some(val) = opened {
                     env.insert(c0, val);
@@ -452,26 +532,11 @@ pub async fn execute_small_circuit<R: RngCore>(
 mod tests {
     use super::*;
     use crate::circuit::Operation;
-    use crate::networking::local::LocalNetworking;
-    use aes_prng::AesRng;
-    use rand::SeedableRng;
     use tracing_test::traced_test;
 
-    #[tokio::test]
     #[traced_test]
-    async fn test_load_ci_circuit() {
-        let role_assignments = HashMap::from([
-            (Role(1), Identity("localhost:5000".to_string())),
-            (Role(2), Identity("localhost:5001".to_string())),
-            (Role(3), Identity("localhost:5002".to_string())),
-            (Role(4), Identity("localhost:5003".to_string())),
-        ]);
-        let session_id = SessionId::from(1);
-        let networking = Arc::new(LocalNetworking::default());
-        let threshold = 1;
-
-        let session = DistributedSession::new(session_id, role_assignments, networking, threshold);
-
+    #[test]
+    fn test_load_ci_circuit() {
         let circuit = Circuit {
             operations: vec![
                 Operation {
@@ -483,36 +548,25 @@ mod tests {
                     operands: vec![String::from("c0")],
                 },
             ],
-            input_wires: vec![String::from("c0")],
+            input_wires: vec![],
         };
+        let identities = vec![
+            Identity("localhost:5000".to_string()),
+            Identity("localhost:5001".to_string()),
+            Identity("localhost:5002".to_string()),
+            Identity("localhost:5003".to_string()),
+        ];
+        let threshold = 1;
 
-        let mut rng = AesRng::seed_from_u64(0);
-        let (out, _init_time) = execute_small_circuit(
-            &session,
-            &circuit,
-            &Identity("localhost:5000".to_string()),
-            &mut rng,
-        )
-        .await
-        .unwrap();
+        let runtime = DistributedTestRuntime::new(identities, threshold);
+        let results = runtime.evaluate_circuit(&circuit).unwrap();
+        let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::U64(100));
     }
 
     #[traced_test]
-    #[tokio::test]
-    async fn test_open_secret_large_t() {
-        let role_assignments = HashMap::from([
-            (Role(1), Identity("localhost:5000".to_string())),
-            (Role(2), Identity("localhost:5001".to_string())),
-            (Role(3), Identity("localhost:5002".to_string())),
-            (Role(4), Identity("localhost:5003".to_string())),
-        ]);
-        let session_id = SessionId::from(1);
-        let networking = Arc::new(LocalNetworking::default());
-        let threshold = 1;
-
-        let session = DistributedSession::new(session_id, role_assignments, networking, threshold);
-
+    #[test]
+    fn test_open_secret_large_t() {
         let circuit = Circuit {
             operations: vec![
                 Operation {
@@ -533,36 +587,25 @@ mod tests {
                     operands: vec![String::from("c0")],
                 },
             ],
-            input_wires: vec![String::from("c0")],
+            input_wires: vec![],
         };
+        let identities = vec![
+            Identity("localhost:5000".to_string()),
+            Identity("localhost:5001".to_string()),
+            Identity("localhost:5002".to_string()),
+            Identity("localhost:5003".to_string()),
+            Identity("localhost:5004".to_string()),
+        ];
+        let threshold = 1;
 
-        let mut rng = AesRng::seed_from_u64(0);
-        let (out, _init_time) = execute_small_circuit(
-            &session,
-            &circuit,
-            &Identity("localhost:5000".to_string()),
-            &mut rng,
-        )
-        .await
-        .unwrap();
+        let runtime = DistributedTestRuntime::new(identities, threshold);
+        let results = runtime.evaluate_circuit(&circuit).unwrap();
+        let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));
     }
 
-    #[tokio::test]
-    async fn test_open_secret_small_t() {
-        let role_assignments = HashMap::from([
-            (Role(1), Identity("localhost:5000".to_string())),
-            (Role(2), Identity("localhost:5001".to_string())),
-            (Role(3), Identity("localhost:5002".to_string())),
-            (Role(4), Identity("localhost:5003".to_string())),
-            (Role(5), Identity("localhost:5004".to_string())),
-        ]);
-        let session_id = SessionId::from(1);
-        let networking = Arc::new(LocalNetworking::default());
-        let threshold = 1;
-
-        let session = DistributedSession::new(session_id, role_assignments, networking, threshold);
-
+    #[test]
+    fn test_open_secret_small_t() {
         let circuit = Circuit {
             operations: vec![
                 Operation {
@@ -583,18 +626,99 @@ mod tests {
                     operands: vec![String::from("c0")],
                 },
             ],
-            input_wires: vec![String::from("c0")],
+            input_wires: vec![],
         };
-
-        let mut rng = AesRng::seed_from_u64(0);
-        let (out, _init_time) = execute_small_circuit(
-            &session,
-            &circuit,
-            &Identity("localhost:5000".to_string()),
-            &mut rng,
-        )
-        .await
-        .unwrap();
+        let identities = vec![
+            Identity("localhost:5000".to_string()),
+            Identity("localhost:5001".to_string()),
+            Identity("localhost:5002".to_string()),
+            Identity("localhost:5003".to_string()),
+            Identity("localhost:5004".to_string()),
+            Identity("localhost:5005".to_string()),
+        ];
+        let threshold = 1;
+        let runtime = DistributedTestRuntime::new(identities, threshold);
+        let results = runtime.evaluate_circuit(&circuit).unwrap();
+        let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));
+    }
+
+    #[test]
+    fn test_multiple_opens() {
+        let circuit: Circuit = Circuit {
+            operations: vec![
+                Operation {
+                    operator: Operator::LdSI,
+                    operands: vec![String::from("s0"), String::from("100")],
+                },
+                Operation {
+                    operator: Operator::LdSI,
+                    operands: vec![String::from("s1"), String::from("101")],
+                },
+                Operation {
+                    operator: Operator::LdSI,
+                    operands: vec![String::from("s2"), String::from("102")],
+                },
+                Operation {
+                    operator: Operator::Open,
+                    operands: vec![
+                        String::from("1"),
+                        String::from("false"),
+                        String::from("c0"),
+                        String::from("s0"),
+                    ],
+                },
+                Operation {
+                    operator: Operator::Open,
+                    operands: vec![
+                        String::from("1"),
+                        String::from("false"),
+                        String::from("c1"),
+                        String::from("s1"),
+                    ],
+                },
+                Operation {
+                    operator: Operator::Open,
+                    operands: vec![
+                        String::from("1"),
+                        String::from("false"),
+                        String::from("c2"),
+                        String::from("s2"),
+                    ],
+                },
+                Operation {
+                    operator: Operator::PrintRegPlain,
+                    operands: vec![String::from("c0")],
+                },
+                Operation {
+                    operator: Operator::PrintRegPlain,
+                    operands: vec![String::from("c1")],
+                },
+                Operation {
+                    operator: Operator::PrintRegPlain,
+                    operands: vec![String::from("c2")],
+                },
+            ],
+            input_wires: vec![],
+        };
+        let identities = vec![
+            Identity("localhost:5000".to_string()),
+            Identity("localhost:5001".to_string()),
+            Identity("localhost:5002".to_string()),
+            Identity("localhost:5003".to_string()),
+            Identity("localhost:5004".to_string()),
+            Identity("localhost:5005".to_string()),
+            Identity("localhost:5006".to_string()),
+            Identity("localhost:5007".to_string()),
+            Identity("localhost:5008".to_string()),
+            Identity("localhost:5009".to_string()),
+        ];
+        let threshold = 1;
+        let runtime = DistributedTestRuntime::new(identities, threshold);
+        let results = runtime.evaluate_circuit(&circuit).unwrap();
+        let out = &results[&Identity("localhost:5000".to_string())];
+        assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));
+        assert_eq!(out[1], Value::Ring128(std::num::Wrapping(101)));
+        assert_eq!(out[2], Value::Ring128(std::num::Wrapping(102)));
     }
 }

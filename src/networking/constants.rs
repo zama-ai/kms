@@ -2,6 +2,9 @@
 use lazy_static::lazy_static;
 use std::time::Duration;
 
+/// The default incoming messages limit per player
+pub(crate) const MESSAGE_LIMIT: usize = 5;
+
 /// The default multiplier to determine the next interval between retries
 pub(crate) const MULTIPLIER: f64 = 1.1;
 

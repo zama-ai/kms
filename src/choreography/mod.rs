@@ -8,7 +8,8 @@ use std::str::FromStr;
 
 pub mod grpc;
 
-pub type NetworkingStrategy = Box<dyn Fn(SessionId) -> NetworkingImpl + Send + Sync>;
+pub type NetworkingStrategy =
+    Box<dyn Fn(SessionId, RoleAssignment) -> NetworkingImpl + Send + Sync>;
 
 #[derive(Debug, Deserialize)]
 pub struct SessionConfig {

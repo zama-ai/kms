@@ -49,10 +49,6 @@ pub enum Commands {
 
         #[clap(short)]
         threshold: u8,
-
-        #[clap(long, default_value_t = 1)]
-        /// benchmark iterations
-        iterations: u128,
     },
     /// Retrieve results of computation from cluster (blocking)
     Results {
@@ -88,7 +84,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             certs: _certs,
             identity: _identity,
             threshold,
-            iterations,
         } => {
             let runtime = ChoreoRuntime::new(docker_role_assignments, tls_config)?;
             let threshold = threshold;
@@ -98,7 +93,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tracing::info!(
                 "launching moby with: {:?} and {} iterations",
                 &computation,
-                iterations
+                &session_range,
             );
 
             // run iterations of benchmarks in a row

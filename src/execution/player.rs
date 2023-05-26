@@ -22,6 +22,12 @@ impl Role {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Serialize, Deserialize)]
 pub struct Identity(pub String);
 
+impl Default for Identity {
+    fn default() -> Self {
+        Identity("test_id".to_string())
+    }
+}
+
 impl From<&str> for Identity {
     fn from(s: &str) -> Self {
         Identity(s.to_string())

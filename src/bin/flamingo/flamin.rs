@@ -12,9 +12,6 @@ pub struct Opt {
     #[structopt(long)]
     identity: String,
 
-    #[structopt(long)]
-    player_no: u64,
-
     #[structopt(env, long, default_value = "50000")]
     /// Port to use for gRPC server
     port: u16,
@@ -45,12 +42,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let own_identity = Identity::from(opt.identity);
 
-    let networking = GrpcNetworkingManager::without_tls();
+    let networking = GrpcNetworkingManager::without_tls(own_identity.clone());
 
     let networking_server = networking.new_server();
     let choreography = GrpcChoreography::new(
         own_identity,
-        Box::new(move |session_id| networking.new_session(session_id)),
+        Box::new(move |session_id, roles| networking.new_session(session_id, roles)),
     );
 
     let mut server = Server::builder();

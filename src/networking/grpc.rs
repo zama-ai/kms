@@ -8,58 +8,80 @@ mod gen {
 use self::gen::gnetworking_client::GnetworkingClient;
 use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
-use crate::computation::{RendezvousKey, SessionId};
-use crate::execution::player::Identity;
+use crate::computation::SessionId;
+use crate::execution::player::{Identity, RoleAssignment};
 use crate::networking::constants;
 use crate::networking::Networking;
 use crate::value::Value;
 use anyhow::anyhow;
-use async_cell::sync::AsyncCell;
 use async_trait::async_trait;
 use backoff::future::retry;
 use backoff::ExponentialBackoff;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::sync::Mutex;
 use tonic::codegen::http::Uri;
 use tonic::transport::Channel;
 
-#[derive(Default)]
+use super::constants::MESSAGE_LIMIT;
+
 pub struct GrpcNetworkingManager {
     channels: Arc<Channels>,
-    stores: Arc<SessionStores>,
+    message_queues: Arc<MessageQueueStores>,
+    owner: Identity,
 }
 
 impl GrpcNetworkingManager {
     pub fn new_server(&self) -> GnetworkingServer<impl Gnetworking> {
         GnetworkingServer::new(NetworkingImpl {
-            stores: Arc::clone(&self.stores),
+            message_queues: Arc::clone(&self.message_queues),
         })
     }
 
-    pub fn without_tls() -> Self {
+    pub fn without_tls(owner: Identity) -> Self {
         GrpcNetworkingManager {
             channels: Default::default(),
-            stores: Default::default(),
+            message_queues: Default::default(),
+            owner,
         }
     }
 
-    pub fn new_session(&self, _session_id: SessionId) -> Arc<impl Networking> {
+    pub fn new_session(
+        &self,
+        session_id: SessionId,
+        roles: RoleAssignment,
+    ) -> Arc<impl Networking> {
+        let messsage_store = DashMap::new();
+        for (_role, identity) in roles {
+            let (tx, rx) = async_channel::bounded(MESSAGE_LIMIT);
+            messsage_store.insert(identity, (Arc::new(tx), Arc::new(rx)));
+        }
+        self.message_queues
+            .insert(session_id.clone(), Arc::new(messsage_store));
         Arc::new(GrpcNetworking {
+            session_id,
             channels: Arc::clone(&self.channels),
-            stores: Arc::clone(&self.stores),
+            message_queues: Arc::clone(&self.message_queues),
+            network_round: Arc::new(Mutex::new(0)),
+            send_counter: DashMap::new(),
+            owner: self.owner.clone(),
         })
     }
 }
 
 pub struct GrpcNetworking {
+    session_id: SessionId,
     channels: Arc<Channels>,
-    stores: Arc<SessionStores>,
+    message_queues: Arc<MessageQueueStores>,
+    network_round: Arc<Mutex<usize>>,
+    send_counter: DashMap<Identity, usize>,
+    owner: Identity,
 }
 
 impl GrpcNetworking {
     fn channel(&self, receiver: &Identity) -> anyhow::Result<Channel> {
-        let channel = self
+        let channel: Channel = self
             .channels
             .entry(receiver.clone())
             .or_try_insert_with(|| {
@@ -84,8 +106,7 @@ impl Networking for GrpcNetworking {
         &self,
         value: Value,
         receiver: &Identity,
-        rendezvous_key: &RendezvousKey,
-        session_id: &SessionId,
+        _session_id: &SessionId,
     ) -> anyhow::Result<(), anyhow::Error> {
         retry(
             ExponentialBackoff {
@@ -95,11 +116,19 @@ impl Networking for GrpcNetworking {
                 ..Default::default()
             },
             || async {
+                let ctr = *self
+                    .send_counter
+                    .entry(receiver.clone())
+                    .or_insert_with(|| 1)
+                    .value();
+
                 let tagged_value = TaggedValue {
                     value: value.clone(),
-                    rendezvous_key: rendezvous_key.clone(),
-                    session_id: session_id.clone(),
+                    sender: self.owner.clone(),
+                    session_id: self.session_id.clone(),
+                    net_send_counter: ctr,
                 };
+
                 let bytes = bincode::serialize(&tagged_value)
                     .map_err(|e| anyhow!("networking error: {:?}", e.to_string()))?;
                 let request = SendValueRequest {
@@ -111,76 +140,87 @@ impl Networking for GrpcNetworking {
                     "Sending '{:?}' to {:?}, session_id {:?}",
                     value,
                     receiver,
-                    session_id
+                    self.session_id
                 );
                 let _response = client
                     .send_value(request)
                     .await
                     .map_err(|e| anyhow!("networking error: {:?}", e.to_string()))?;
+
+                self.send_counter.insert(receiver.clone(), ctr + 1);
                 Ok(())
             },
         )
         .await
     }
 
-    async fn receive(
-        &self,
-        sender: &Identity,
-        rendezvous_key: &RendezvousKey,
-        session_id: &SessionId,
-    ) -> anyhow::Result<Value> {
-        let cell = cell(&self.stores, session_id.clone(), rendezvous_key.clone());
-        let (actual_sender, value) = cell.take().await;
-
-        match actual_sender {
-            Some(actual_sender) => {
-                if *sender != actual_sender {
-                    Err(anyhow!(
-                        "wrong sender: expected {:?} but got {:?}",
-                        sender,
-                        actual_sender
-                    ))
-                } else {
-                    tracing::debug!("Received '{:?}' from {}", value, sender);
-                    Ok(value)
-                }
-            }
-            None => {
-                tracing::debug!("Received '{:?}' from {}", value, sender);
-                Ok(value)
-            }
+    async fn receive(&self, sender: &Identity, _session_id: &SessionId) -> anyhow::Result<Value> {
+        if !self.message_queues.contains_key(&self.session_id) {
+            return Err(anyhow!(
+                "Did not have session id key for message storage inside receive call"
+            ));
         }
+
+        let session_store = self
+            .message_queues
+            .get(&self.session_id)
+            .ok_or(anyhow!("couldn't retrieve channels from store"))?;
+
+        let channels = session_store.get(sender).ok_or(anyhow!(
+            "couldn't retrieve session store from message stores"
+        ))?;
+        let (_, rx) = channels.value();
+
+        tracing::debug!("Waiting to receive from {:?}", sender);
+
+        let network_round: usize = *self
+            .network_round
+            .lock()
+            .map_err(|e| anyhow!(format!("Locking error: {:?}", e.to_string())))?;
+
+        let mut local_packet = rx.recv().await?;
+
+        // drop old messages
+        while local_packet.round_counter < network_round {
+            tracing::debug!("Dropped value: {:?}", local_packet);
+            local_packet = rx.recv().await?;
+        }
+
+        Ok(local_packet.value)
+    }
+
+    async fn increase_round_counter(&self) -> anyhow::Result<()> {
+        if let Ok(mut net_round) = self.network_round.lock() {
+            *net_round += 1;
+            tracing::debug!("changed network round to: {:?}", *net_round);
+        } else {
+            return Err(anyhow!("Couldn't lock mutex"));
+        }
+        Ok(())
     }
 }
 
-type AuthValue = (Option<Identity>, Value);
-type SessionStore = DashMap<RendezvousKey, Arc<AsyncCell<AuthValue>>>;
-type SessionStores = DashMap<SessionId, Arc<SessionStore>>;
+// we need a counter for each value sent over the local queues
+// so that messages that haven't been pickup up using receive() calls will get dropped
+#[derive(Debug)]
+struct NetworkValue {
+    pub value: Value,
+    pub round_counter: usize,
+}
+
 type Channels = DashMap<Identity, Channel>;
+type MessageQueueStore = DashMap<
+    Identity,
+    (
+        Arc<async_channel::Sender<NetworkValue>>,
+        Arc<async_channel::Receiver<NetworkValue>>,
+    ),
+>;
+type MessageQueueStores = DashMap<SessionId, Arc<MessageQueueStore>>;
 
 #[derive(Default)]
 struct NetworkingImpl {
-    pub stores: Arc<SessionStores>,
-}
-
-fn cell(
-    stores: &Arc<SessionStores>,
-    session_id: SessionId,
-    rendezvous_key: RendezvousKey,
-) -> Arc<AsyncCell<AuthValue>> {
-    let session_store = stores
-        .entry(session_id)
-        .or_insert_with(Arc::default)
-        .value()
-        .clone();
-
-    let cell = session_store
-        .entry(rendezvous_key)
-        .or_insert_with(AsyncCell::shared)
-        .value()
-        .clone();
-
-    cell
+    pub message_queues: Arc<MessageQueueStores>,
 }
 
 #[async_trait]
@@ -189,7 +229,7 @@ impl Gnetworking for NetworkingImpl {
         &self,
         request: tonic::Request<SendValueRequest>,
     ) -> std::result::Result<tonic::Response<SendValueResponse>, tonic::Status> {
-        let sender = extract_sender(&request)
+        let tls_sender = extract_sender(&request)
             .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e))?
             .map(Identity::from);
 
@@ -199,15 +239,48 @@ impl Gnetworking for NetworkingImpl {
                 tonic::Status::new(tonic::Code::Aborted, "failed to parse value".to_string())
             })?;
 
-        let cell = cell(
-            &self.stores,
-            tagged_value.session_id,
-            tagged_value.rendezvous_key,
-        );
+        if let Some(sender) = tls_sender {
+            if tagged_value.sender != sender {
+                return Err(tonic::Status::new(
+                    tonic::Code::Unauthenticated,
+                    format!(
+                        "wrong sender: expected {:?} but got {:?}",
+                        tagged_value.sender, sender
+                    ),
+                ));
+            }
+        }
 
-        cell.set((sender, tagged_value.value));
+        if self.message_queues.contains_key(&tagged_value.session_id) {
+            let session_store = self
+                .message_queues
+                .get(&tagged_value.session_id)
+                .ok_or(anyhow!(
+                    "couldn't retrieve session store from message stores"
+                ))
+                .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?;
 
-        Ok(tonic::Response::new(SendValueResponse::default()))
+            let channels = session_store
+                .get(&tagged_value.sender)
+                .ok_or(anyhow!("couldn't retrieve channels from session store"))
+                .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?;
+
+            let (tx, _) = channels.value();
+
+            let _ = tx
+                .send(NetworkValue {
+                    value: tagged_value.value,
+                    round_counter: tagged_value.net_send_counter,
+                })
+                .await;
+
+            Ok(tonic::Response::new(SendValueResponse::default()))
+        } else {
+            Err(tonic::Status::new(
+                tonic::Code::NotFound,
+                "unknown session id".to_string(),
+            ))
+        }
     }
 }
 
@@ -245,6 +318,7 @@ fn extract_sender<T>(request: &tonic::Request<T>) -> Result<Option<String>, Stri
 #[derive(Serialize, Deserialize)]
 struct TaggedValue {
     session_id: SessionId,
-    rendezvous_key: RendezvousKey,
+    sender: Identity,
     value: Value,
+    net_send_counter: usize,
 }

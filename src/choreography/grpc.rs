@@ -118,7 +118,8 @@ impl Choreography for GrpcChoreography {
                     })?;
 
                 let own_identity = self.own_identity.clone();
-                let networking = (self.networking_strategy)(session_id.clone());
+                let networking =
+                    (self.networking_strategy)(session_id.clone(), role_assignments.clone());
 
                 tracing::info!("own identity: {:?}", own_identity);
 

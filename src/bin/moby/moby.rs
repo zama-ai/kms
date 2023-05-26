@@ -36,9 +36,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opt = Opt::parse();
     let port = 50000;
 
-    let networking = GrpcNetworkingManager::without_tls();
-    let networking_server = networking.new_server();
-
     let docker_static_endpoints: RoleAssignment = (1..opt.n_parties + 1)
         .map(|party_id| {
             let role = Role::from(party_id);
@@ -52,9 +49,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap()
         .clone();
 
+    let networking = GrpcNetworkingManager::without_tls(own_identity.clone());
+    let networking_server = networking.new_server();
+
     let choreography = GrpcChoreography::new(
         own_identity,
-        Box::new(move |session_id| networking.new_session(session_id)),
+        Box::new(move |session_id, roles| networking.new_session(session_id, roles)),
     );
 
     let mut server = Server::builder();

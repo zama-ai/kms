@@ -85,7 +85,11 @@ where
     let mut mem: Memory<T> = Memory::new();
 
     // initialize memory with secret
-    mem.write_sp(circuit.input_wires[0].as_str(), session.secret());
+    if circuit.input_wires.len() == 1 {
+        mem.write_sp(circuit.input_wires[0].as_str(), session.secret());
+    } else {
+        return Err(anyhow!("Circuit did not contain secret input wire"));
+    }
 
     let mut outputs = Vec::new();
 
