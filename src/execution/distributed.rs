@@ -1,6 +1,7 @@
 use crate::circuit::{Circuit, Operator};
 use crate::computation::SessionId;
 use crate::execution::player::{Identity, Role, RoleAssignment};
+use crate::execution::prss::PRSSState;
 use crate::networking::local::{LocalNetworking, LocalNetworkingProducer};
 use crate::networking::Networking;
 use crate::residue_poly::ResiduePoly;
@@ -18,6 +19,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinSet;
 
+use super::prss::PRSSSetup;
+
 pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
 
 #[derive(Clone)]
@@ -26,6 +29,7 @@ pub struct DistributedSession {
     pub role_assignments: HashMap<Role, Identity>,
     pub networking: NetworkingImpl,
     pub threshold: u8,
+    prss_state: Option<PRSSState>,
 }
 
 impl DistributedSession {
@@ -34,12 +38,14 @@ impl DistributedSession {
         role_assignments: HashMap<Role, Identity>,
         networking: NetworkingImpl,
         threshold: u8,
+        prss_setup: Option<PRSSSetup>,
     ) -> Self {
         DistributedSession {
             session_id,
             role_assignments,
             networking,
             threshold,
+            prss_state: prss_setup.map(|x| x.new_session(session_id)),
         }
     }
 }
@@ -47,13 +53,15 @@ impl DistributedSession {
 pub struct DistributedTestRuntime {
     identities: Vec<Identity>,
     threshold: u8,
+    prss_setup: Option<PRSSSetup>,
 }
 
 impl DistributedTestRuntime {
-    pub fn new(identities: Vec<Identity>, threshold: u8) -> Self {
+    pub fn new(identities: Vec<Identity>, threshold: u8, prss_setup: Option<PRSSSetup>) -> Self {
         DistributedTestRuntime {
             identities,
             threshold,
+            prss_setup,
         }
     }
 
@@ -87,16 +95,22 @@ impl DistributedTestRuntime {
 
         let mut set = JoinSet::new();
         for (index_id, identity) in self.identities.clone().into_iter().enumerate() {
-            let session_id = session_id.clone();
             let role_assignments = role_assignments.clone();
             let net = Arc::clone(&user_nets[index_id]);
             let circuit = circuit.clone();
             let threshold = self.threshold;
+            let prss_setup = self.prss_setup.clone();
             set.spawn(async move {
                 let mut rng = AesRng::seed_from_u64(0);
-                let session = DistributedSession::new(session_id, role_assignments, net, threshold);
+                let mut session = DistributedSession::new(
+                    session_id,
+                    role_assignments,
+                    net,
+                    threshold,
+                    prss_setup,
+                );
                 let (out, _init_time) =
-                    execute_small_circuit(&session, &circuit, &identity, &mut rng)
+                    execute_small_circuit(&mut session, &circuit, &identity, &mut rng)
                         .await
                         .unwrap();
                 (identity, out)
@@ -130,7 +144,7 @@ pub async fn robust_open_to(
         for (other_role, _identity) in session.role_assignments.clone() {
             if role != &other_role {
                 let networking = Arc::clone(&session.networking);
-                let session_id = session.session_id.clone();
+                let session_id = session.session_id;
 
                 let sender = session
                     .role_assignments
@@ -187,7 +201,7 @@ pub async fn robust_open_to(
 
         let networking = Arc::clone(&session.networking);
         let share = share.clone();
-        let session_id = session.session_id.clone();
+        let session_id = session.session_id;
 
         tokio::spawn(async move {
             let _ = networking.send(share, &receiver, &session_id).await;
@@ -264,7 +278,7 @@ pub async fn robust_input<R: RngCore>(
                 .clone();
 
             let networking = Arc::clone(&session.networking);
-            let session_id = session.session_id.clone();
+            let session_id = session.session_id;
             let share = indexed_share.clone();
 
             set.spawn(async move {
@@ -282,7 +296,7 @@ pub async fn robust_input<R: RngCore>(
             .clone();
 
         let networking = Arc::clone(&session.networking);
-        let session_id = session.session_id.clone();
+        let session_id = session.session_id;
         let data: Value =
             tokio::spawn(async move { networking.receive(&sender, &session_id).await }).await??;
         Ok(data)
@@ -290,7 +304,7 @@ pub async fn robust_input<R: RngCore>(
 }
 
 pub async fn execute_small_circuit<R: RngCore>(
-    session: &DistributedSession,
+    session: &mut DistributedSession,
     circuit: &Circuit,
     own_identity: &Identity,
     rng: &mut R,
@@ -482,13 +496,18 @@ pub async fn execute_small_circuit<R: RngCore>(
                         .ok_or_else(|| anyhow!("Couldn't retrieve L (lwe dimension"))?,
                 )?;
 
+                let prss_state = session
+                    .prss_state
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("PRSS_State not initialized"))?;
+
                 let (s, init_t) = crate::execution::prep::prss_prep(
                     prep_seed,
                     big_ell,
                     message,
                     own_role.player_no(),
                     session.threshold as usize,
-                    session.role_assignments.len(),
+                    prss_state,
                 )?;
                 init_time = init_t;
                 tracing::debug!("finished generating PRSS prep: {:?}", s);
@@ -558,7 +577,7 @@ mod tests {
         ];
         let threshold = 1;
 
-        let runtime = DistributedTestRuntime::new(identities, threshold);
+        let runtime = DistributedTestRuntime::new(identities, threshold, None);
         let results = runtime.evaluate_circuit(&circuit).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::U64(100));
@@ -598,7 +617,7 @@ mod tests {
         ];
         let threshold = 1;
 
-        let runtime = DistributedTestRuntime::new(identities, threshold);
+        let runtime = DistributedTestRuntime::new(identities, threshold, None);
         let results = runtime.evaluate_circuit(&circuit).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));
@@ -637,7 +656,7 @@ mod tests {
             Identity("localhost:5005".to_string()),
         ];
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities, threshold);
+        let runtime = DistributedTestRuntime::new(identities, threshold, None);
         let results = runtime.evaluate_circuit(&circuit).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));
@@ -714,7 +733,7 @@ mod tests {
             Identity("localhost:5009".to_string()),
         ];
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities, threshold);
+        let runtime = DistributedTestRuntime::new(identities, threshold, None);
         let results = runtime.evaluate_circuit(&circuit).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));

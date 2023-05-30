@@ -1,4 +1,4 @@
-use crate::execution::prss::PRSS;
+use super::prss::PRSSState;
 use crate::execution::{LOG_BD, POW};
 use crate::lwe::{gen_player_share, keygen, Ciphertext};
 use crate::residue_poly::ResiduePoly;
@@ -82,7 +82,7 @@ pub(crate) fn prss_prep(
     message: u8,
     player_id: usize,
     threshold: usize,
-    num_parties: usize,
+    prss_state: &mut PRSSState,
 ) -> anyhow::Result<(Value, Duration)> {
     // initialize rng to compute keygen, encryption and secret shared bits
     let mut rng = AesRng::seed_from_u64(seed);
@@ -90,14 +90,13 @@ pub(crate) fn prss_prep(
     let init_start_timer = Instant::now();
 
     let (sk_share, ct) = prepare_key_and_ct(&mut rng, big_ell, message, player_id, threshold)?;
-    let mut prss = PRSS::init(num_parties, threshold, &mut rng);
 
     let init_stop_timer = Instant::now();
     let elapsed_time = init_stop_timer.duration_since(init_start_timer);
-    tracing::info!("Init time was {:?} microseconds", elapsed_time.as_micros());
+    tracing::info!("Init time was {:?} us", elapsed_time.as_micros());
 
     let partial_dec = partial_decrypt(sk_share, ct, big_ell)?;
-    let composed_bits = prss.next(player_id);
+    let composed_bits = prss_state.next(player_id)?;
 
     Ok((
         Value::IndexedShare128((player_id, partial_dec + composed_bits)),
@@ -108,7 +107,8 @@ pub(crate) fn prss_prep(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::err_reconstruct;
+    use crate::execution::prss::PRSSSetup;
+    use crate::{computation::SessionId, value::err_reconstruct};
     use tracing_test::traced_test;
 
     #[traced_test]
@@ -143,10 +143,16 @@ mod tests {
         let message = 5;
         let threshold = 1;
         let num_parties = 4;
+        let sid = SessionId::from(12345);
 
-        let preps: Vec<_> = (1..num_parties + 1)
+        let preps: Vec<_> = (1..=num_parties)
             .map(|player_id| {
-                prss_prep(seed, big_ell, message, player_id, threshold, num_parties)
+                //each player has their own prss state inside their session.
+                let mut rng = AesRng::seed_from_u64(444);
+                let prss_setup = PRSSSetup::epoch_init(num_parties, threshold, &mut rng);
+                let mut state = prss_setup.new_session(sid);
+
+                prss_prep(seed, big_ell, message, player_id, threshold, &mut state)
                     .unwrap()
                     .0
             })

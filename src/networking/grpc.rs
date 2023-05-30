@@ -58,7 +58,7 @@ impl GrpcNetworkingManager {
             messsage_store.insert(identity, (Arc::new(tx), Arc::new(rx)));
         }
         self.message_queues
-            .insert(session_id.clone(), Arc::new(messsage_store));
+            .insert(session_id, Arc::new(messsage_store));
         Arc::new(GrpcNetworking {
             session_id,
             channels: Arc::clone(&self.channels),
@@ -125,7 +125,7 @@ impl Networking for GrpcNetworking {
                 let tagged_value = TaggedValue {
                     value: value.clone(),
                     sender: self.owner.clone(),
-                    session_id: self.session_id.clone(),
+                    session_id: self.session_id,
                     net_send_counter: ctr,
                 };
 

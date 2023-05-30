@@ -37,7 +37,7 @@ pub enum Commands {
 
         #[clap(long, default_value_t = 1)]
         /// Session range to use
-        session_range: u128,
+        session_range: u32,
 
         #[clap(long)]
         /// Directory to read certificates from
@@ -98,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // run iterations of benchmarks in a row
             for i in 0..session_range {
-                let session_id = SessionId::from(session_id + i);
+                let session_id = SessionId::from(session_id + i as u128);
                 runtime
                     .launch_computation(&session_id, &computation, threshold)
                     .await?;

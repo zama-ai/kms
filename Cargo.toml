@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+aes = "0.8.2"
 aes-prng = "~0.2"
 anyhow = "~1.0"
 async-channel = "~1.8"
@@ -74,4 +75,8 @@ path = "src/bin/moby/mobygo.rs"
 
 [[bench]]
 name = "decoding"
+harness = false
+
+[[bench]]
+name = "prss"
 harness = false

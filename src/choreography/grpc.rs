@@ -17,6 +17,7 @@ use crate::execution::distributed::execute_small_circuit;
 use crate::execution::distributed::DistributedSession;
 use crate::execution::player::Identity;
 use crate::execution::player::Role;
+use crate::execution::prss::PRSSSetup;
 use crate::value::Value;
 use aes_prng::AesRng;
 use async_cell::sync::AsyncCell;
@@ -84,7 +85,7 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
-        match self.result_stores.entry(session_id.clone()) {
+        match self.result_stores.entry(session_id) {
             Entry::Occupied(_) => Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "session id exists already or inconsistent metric and result map".to_string(),
@@ -118,17 +119,33 @@ impl Choreography for GrpcChoreography {
                     })?;
 
                 let own_identity = self.own_identity.clone();
-                let networking =
-                    (self.networking_strategy)(session_id.clone(), role_assignments.clone());
+                let networking = (self.networking_strategy)(session_id, role_assignments.clone());
 
                 tracing::info!("own identity: {:?}", own_identity);
 
-                let session = DistributedSession::new(
-                    session_id.clone(),
+                // initialize PRSS (this will happen in init phase eventually)
+                let mut prss_rng = AesRng::from_random_seed();
+                let num_parties = role_assignments.len();
+
+                // TODO remove if/else when PRSS is generic
+                let prss_setup = if num_parties == 4 && threshold == 1 {
+                    Some(PRSSSetup::epoch_init(
+                        role_assignments.len(),
+                        threshold as usize,
+                        &mut prss_rng,
+                    ))
+                } else {
+                    None
+                };
+
+                let mut session = DistributedSession::new(
+                    session_id,
                     role_assignments,
                     Arc::clone(&networking),
                     threshold,
+                    prss_setup,
                 );
+
                 let execution_start_timer = Instant::now();
                 let result_stores = Arc::clone(&self.result_stores);
 
@@ -137,7 +154,7 @@ impl Choreography for GrpcChoreography {
                     // maximum one output per party
                     let mut results = HashMap::with_capacity(1);
                     let (outputs, init_time) =
-                        execute_small_circuit(&session, &computation, &own_identity, &mut rng)
+                        execute_small_circuit(&mut session, &computation, &own_identity, &mut rng)
                             .await
                             .unwrap();
 
