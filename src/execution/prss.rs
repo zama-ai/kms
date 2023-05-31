@@ -1,6 +1,6 @@
 use crate::{
-    computation::SessionId, execution::LOG_BD1_NOM, residue_poly::ResiduePoly, One, Ring, ZConsts,
-    Zero, Z128,
+    computation::SessionId, execution::constants::LOG_BD1_NOM, residue_poly::ResiduePoly, One,
+    Ring, ZConsts, Zero, Z128,
 };
 use blake3::Hasher;
 use byteorder::{BigEndian, ReadBytesExt};

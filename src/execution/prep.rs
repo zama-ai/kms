@@ -1,5 +1,5 @@
 use super::prss::PRSSState;
-use crate::execution::{LOG_BD, POW};
+use crate::execution::constants::{LOG_BD, POW};
 use crate::lwe::{gen_player_share, keygen, Ciphertext};
 use crate::residue_poly::ResiduePoly;
 use crate::value::Value;
