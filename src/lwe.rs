@@ -12,7 +12,7 @@ pub fn gen_player_share<R: RngCore, Z>(
     rng: &mut R,
     secret: Z,
     threshold: usize,
-    player_no: usize,
+    party_id: usize,
 ) -> anyhow::Result<ResiduePoly<Z>>
 where
     Z: Zero + One,
@@ -23,7 +23,7 @@ where
 {
     let embedded_secret = ResiduePoly::from_scalar(secret);
     let poly = Poly::sample_random(rng, embedded_secret, threshold);
-    let share = poly.eval(&ResiduePoly::embed(player_no)?);
+    let share = poly.eval(&ResiduePoly::embed(party_id)?);
     Ok(share)
 }
 

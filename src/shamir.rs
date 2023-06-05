@@ -1,42 +1,11 @@
 use crate::gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing};
 use crate::poly::Poly;
 use crate::residue_poly::ResiduePoly;
-use crate::{Sharing, Zero, Z128, Z64};
+use crate::{Zero, Z128, Z64};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::num::Wrapping;
 use std::ops::{Add, Mul, Sub};
-
-impl Sharing for ShamirGSharings<Z64> {
-    fn share<R: RngCore>(
-        rng: &mut R,
-        secret: Z64,
-        num_parties: usize,
-        threshold: usize,
-    ) -> ShamirGSharings<Z64> {
-        ShamirGSharings::<Z64>::share(rng, secret, num_parties, threshold).unwrap()
-    }
-
-    fn reveal(&self, threshold: usize) -> Z64 {
-        self.reconstruct(threshold).unwrap()
-    }
-}
-
-impl Sharing for ShamirGSharings<Z128> {
-    fn share<R: RngCore>(
-        rng: &mut R,
-        secret: Z64,
-        num_parties: usize,
-        threshold: usize,
-    ) -> ShamirGSharings<Z128> {
-        ShamirGSharings::<Z128>::share(rng, Wrapping(secret.0 as u128), num_parties, threshold)
-            .unwrap()
-    }
-
-    fn reveal(&self, threshold: usize) -> Z64 {
-        Wrapping(self.reconstruct(threshold).unwrap().0 as u64)
-    }
-}
 
 /// This data structure holds a collection of party_ids and their corresponding Shamir shares (each a ResiduePoly<Z>)
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
@@ -178,7 +147,7 @@ macro_rules! impl_share_type {
         impl ShamirGSharings<$z> {
             /// a share for party i is G(encode(i)) where
             /// G(X) = a_0 + a_1 * X + ... + a_{t-1} * X^{t-1}
-            /// a_i \in Z_{2^64}/F(X) = G; deg(F) = 8
+            /// a_i \in Z_{2^K}/F(X) = G; deg(F) = 8
             pub fn share<R: RngCore>(
                 rng: &mut R,
                 secret: $z,
@@ -187,7 +156,7 @@ macro_rules! impl_share_type {
             ) -> anyhow::Result<ShamirGSharings<$z>> {
                 let embedded_secret = ResiduePoly::from_scalar(secret);
                 let poly = Poly::sample_random(rng, embedded_secret, threshold);
-                let shares: Vec<_> = (1..num_parties + 1)
+                let shares: Vec<_> = (1..=num_parties)
                     .map(|xi| {
                         let embedded_xi = ResiduePoly::embed(xi)?;
                         Ok((xi, poly.eval(&embedded_xi)))

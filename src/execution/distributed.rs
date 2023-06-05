@@ -110,7 +110,7 @@ impl DistributedTestRuntime {
                     prss_setup,
                 );
                 let (out, _init_time) =
-                    execute_small_circuit(&mut session, &circuit, &identity, &mut rng)
+                    run_circuit_operations_debug(&mut session, &circuit, &identity, &mut rng)
                         .await
                         .unwrap();
                 (identity, out)
@@ -135,7 +135,7 @@ pub async fn robust_open_to(
     role: &Role,
     player_open: usize,
 ) -> anyhow::Result<Option<Value>> {
-    if role.player_no() == player_open {
+    if role.party_id() == player_open {
         session.networking.increase_round_counter().await?;
         let mut collected_sharings = Vec::new();
         collected_sharings.push(share.clone());
@@ -174,7 +174,7 @@ pub async fn robust_open_to(
                     return Ok(Some(opened));
                 }
             } else if 3 * t < num_parties {
-                for max_error in 0..t + 1 {
+                for max_error in 0..=t {
                     if collected_sharings.len() > 2 * t + max_error {
                         if let Ok(opened) = err_reconstruct(&collected_sharings, t, max_error) {
                             tracing::debug!(
@@ -218,7 +218,7 @@ pub async fn robust_input<R: RngCore>(
     role: &Role,
     player_input: usize,
 ) -> anyhow::Result<Value> {
-    if role.player_no() == player_input {
+    if role.party_id() == player_input {
         let threshold = session.threshold;
         let si = {
             match value {
@@ -303,7 +303,10 @@ pub async fn robust_input<R: RngCore>(
     }
 }
 
-pub async fn execute_small_circuit<R: RngCore>(
+/// run selected circuit operations
+/// this will be replaced by separate endpoints for individual functions in the future
+/// TODO(Daniel) remove this from production builds
+pub async fn run_circuit_operations_debug<R: RngCore>(
     session: &mut DistributedSession,
     circuit: &Circuit,
     own_identity: &Identity,
@@ -346,7 +349,7 @@ pub async fn execute_small_circuit<R: RngCore>(
                         .ok_or_else(|| anyhow!("Wrong index buddy"))?,
                 )?);
 
-                let secret = match own_role.player_no() {
+                let secret = match own_role.party_id() {
                     1 => Some(Value::Ring128(si)),
                     _ => None,
                 };
@@ -385,7 +388,7 @@ pub async fn execute_small_circuit<R: RngCore>(
                 env.insert(r0, ci);
             }
             PrintRegPlain => {
-                if own_role.player_no() == 1 {
+                if own_role.party_id() == 1 {
                     let r0 = op
                         .operands
                         .get(0)
@@ -398,7 +401,7 @@ pub async fn execute_small_circuit<R: RngCore>(
                 }
             }
             ShrCI => {
-                if own_role.player_no() == 1 {
+                if own_role.party_id() == 1 {
                     let dest = op
                         .operands
                         .get(0)
@@ -432,7 +435,7 @@ pub async fn execute_small_circuit<R: RngCore>(
                 }
             }
             DistPrep => {
-                // this instruction does steps 1-3 from dist dec paper
+                // this instruction does steps 1-3 from dist dec paper, proto 2
                 // computes a sharing of b - a * s + E
                 // where dim(a) = L, E = sum(shared_bits)
                 let dest = op
@@ -462,7 +465,7 @@ pub async fn execute_small_circuit<R: RngCore>(
                     prep_seed,
                     big_ell,
                     message,
-                    own_role.player_no(),
+                    own_role.party_id(),
                     session.threshold as usize,
                 )?;
                 init_time = init_t;
@@ -470,7 +473,7 @@ pub async fn execute_small_circuit<R: RngCore>(
                 env.insert(dest, s);
             }
             PrssPrep => {
-                // this instruction does PRSS.Init() and steps 1-2 from dist dec paper
+                // this instruction calls PRSS.next() in steps 1-2 from dist dec paper, proto 1
                 // computes a sharing of b - a * s + E
                 // where dim(a) = L, E = sum(shared_bits)
                 let dest = op
@@ -505,7 +508,7 @@ pub async fn execute_small_circuit<R: RngCore>(
                     prep_seed,
                     big_ell,
                     message,
-                    own_role.player_no(),
+                    own_role.party_id(),
                     session.threshold as usize,
                     prss_state,
                 )?;
@@ -516,7 +519,7 @@ pub async fn execute_small_circuit<R: RngCore>(
             FaultyThreshold => {
                 // all parties up to (including) t manipulate their share
                 // (to simulate a faulty/malicious party in benchmarking)
-                let party_id = own_role.player_no();
+                let party_id = own_role.party_id();
                 if party_id <= session.threshold as usize {
                     let dest = op
                         .operands

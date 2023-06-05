@@ -304,7 +304,7 @@ fn quo_rem<F: Field>(a: Poly<F>, b: &Poly<F>) -> (Poly<F>, Poly<F>) {
     let mut r = a;
 
     if a_len >= b_len {
-        for i in (0..(a_len - b_len + 1)).rev() {
+        for i in (0..=(a_len - b_len)).rev() {
             q.coefs[i] = r.coefs[i + b_len - 1] * t;
             for j in 0..b_len {
                 r.coefs[i + j] -= q.coefs[i] * b.coefs[j];

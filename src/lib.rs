@@ -72,9 +72,3 @@ pub type Z128 = Wrapping<u128>;
 
 ring_impl!(Z64, u64, 64);
 ring_impl!(Z128, u128, 128);
-
-/// this trait is currently used only for 64 bit circuit execution
-pub trait Sharing {
-    fn share<R: RngCore>(rng: &mut R, secret: Z64, num_parties: usize, threshold: usize) -> Self;
-    fn reveal(&self, threshold: usize) -> Z64;
-}

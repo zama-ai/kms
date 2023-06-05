@@ -37,23 +37,23 @@ regex = { version = "1", features = ["unicode-case"] }
 serde = { version = "~1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 static_assertions = "~1.1"
-tokio = { version = "~1.26", features = ["full", "sync"] }
-toml = "~0.5"
+tokio = { version = "~1.28", features = ["full", "sync"] }
+toml = "~0.7"
 tracing = { version = "~0.1", features = ["log"] }
 tracing-subscriber = { version = "~0.3.16", features = ["env-filter"] }
 tracing-test = "0.2"
-tonic = { version = "~0.8", features = ["tls"] }
-x509-parser = "~0.14"
+tonic = { version = "~0.9", features = ["tls"] }
+x509-parser = "~0.15"
 
 [build-dependencies]
-tonic-build = "~0.8"
+tonic-build = "~0.9"
 
 
 [dev-dependencies]
-criterion = { version="0.4" }
-proptest = "~1.1"
+criterion = { version="0.5" }
+proptest = "~1.2"
 rand_chacha = "~0.3"
-rstest = "~0.16"
+rstest = "~0.17"
 
 
 [[bin]]

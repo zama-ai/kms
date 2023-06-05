@@ -10,13 +10,19 @@ use tracing_subscriber::util::SubscriberInitExt;
 #[derive(Debug, Parser, Clone)]
 pub struct Opt {
     #[structopt(short)]
+    /// Player ID of this party
     player_no: u64,
+
+    #[structopt(env, long, default_value = "50000")]
+    /// Port to use for gRPC server, Moby in docker uses 50000 as dafault and is mapped via docker compose
+    port: u16,
 
     #[structopt(env, long, default_value = "./examples")]
     /// Directory to read sessions from
     sessions: String,
 
     #[structopt(env, short, default_value = "10")]
+    /// Total number of parties in the moby cluster
     n_parties: u64,
 }
 
@@ -32,14 +38,13 @@ fn init_tracer() {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracer();
-    tracing::info!("starting up moby");
+    tracing::info!("Starting up moby...");
     let opt = Opt::parse();
-    let port = 50000;
 
-    let docker_static_endpoints: RoleAssignment = (1..opt.n_parties + 1)
+    let docker_static_endpoints: RoleAssignment = (1..=opt.n_parties)
         .map(|party_id| {
             let role = Role::from(party_id);
-            let identity = Identity::from(&format!("p{party_id}:{port}"));
+            let identity = Identity::from(&format!("p{party_id}:{}", opt.port));
             (role, identity)
         })
         .collect();
@@ -63,9 +68,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(networking_server)
         .add_service(choreography.into_server());
 
-    let addr = format!("0.0.0.0:{}", &port).parse()?;
+    let addr = format!("0.0.0.0:{}", &opt.port).parse()?;
 
-    tracing::info!("created moby server...");
+    tracing::info!(
+        "Sucessfully created moby server with party id {}.",
+        opt.player_no
+    );
 
     let res = router.serve(addr).await;
     if let Err(e) = res {

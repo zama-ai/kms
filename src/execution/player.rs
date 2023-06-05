@@ -2,7 +2,7 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Role/party number of a player.
+/// Role/party ID of a player.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Serialize, Deserialize)]
 pub struct Role(pub u64);
 
@@ -13,7 +13,7 @@ impl From<u64> for Role {
 }
 
 impl Role {
-    pub fn player_no(&self) -> usize {
+    pub fn party_id(&self) -> usize {
         self.0 as usize
     }
 }

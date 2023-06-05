@@ -13,7 +13,7 @@ use crate::choreography::grpc::gen::RetrieveResultsRequest;
 use crate::choreography::grpc::gen::RetrieveResultsResponse;
 use crate::circuit::Circuit;
 use crate::computation::SessionId;
-use crate::execution::distributed::execute_small_circuit;
+use crate::execution::distributed::run_circuit_operations_debug;
 use crate::execution::distributed::DistributedSession;
 use crate::execution::player::Identity;
 use crate::execution::player::Role;
@@ -153,10 +153,14 @@ impl Choreography for GrpcChoreography {
                     let mut rng = AesRng::from_random_seed();
                     // maximum one output per party
                     let mut results = HashMap::with_capacity(1);
-                    let (outputs, init_time) =
-                        execute_small_circuit(&mut session, &computation, &own_identity, &mut rng)
-                            .await
-                            .unwrap();
+                    let (outputs, init_time) = run_circuit_operations_debug(
+                        &mut session,
+                        &computation,
+                        &own_identity,
+                        &mut rng,
+                    )
+                    .await
+                    .unwrap();
 
                     tracing::info!("Results session {:?} ready: {:?}", session_id, outputs);
                     results.insert(format!("{session_id}"), outputs);

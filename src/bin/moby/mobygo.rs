@@ -25,14 +25,14 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Launch computation on cluster (non-blocking)
+    /// Launch computation on cluster of mobys (non-blocking)
     Launch {
         /// Circuit path to use
         #[clap(long)]
         circuit_path: String,
 
         #[clap(long)]
-        /// Session id to use
+        /// Session id to use for the computation
         session_id: u128,
 
         #[clap(long, default_value_t = 1)]
@@ -48,15 +48,17 @@ pub enum Commands {
         identity: Option<String>,
 
         #[clap(short)]
+        /// Threshold (max. number of dishonest parties)
         threshold: u8,
     },
-    /// Retrieve results of computation from cluster (blocking)
+    /// Retrieve one or many results of computation from cluster of mobys
     Results {
         #[clap(long)]
-        /// Session id to use
+        /// (Initial) Session id to query
         session_id: u128,
 
         #[clap(long, default_value_t = 1)]
+        /// Number of consecutive session results to query
         session_range: u32,
     },
 }
@@ -68,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tls_config = None;
     let port = args.port;
 
-    let docker_role_assignments: RoleAssignment = (1..args.n_parties + 1)
+    let docker_role_assignments: RoleAssignment = (1..=args.n_parties)
         .map(|party_id| {
             let role = Role::from(party_id);
             let identity = Identity::from(&format!("p{party_id}:{port}"));
@@ -91,12 +93,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let computation = Circuit::try_from(&comp_bytes[..]).unwrap();
 
             tracing::info!(
-                "launching moby with: {:?} and {} iterations",
+                "Launching mobygo: computation: {:?}, session: {}, iterations: {}, parties: {}, threshold: {}",
                 &computation,
-                &session_range,
+                session_id,
+                session_range,
+                args.n_parties,
+                threshold,
             );
 
-            // run iterations of benchmarks in a row
+            // run multiple iterations of benchmarks in a row
             for i in 0..session_range {
                 let session_id = SessionId::from(session_id + i as u128);
                 runtime
@@ -113,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let session_id = SessionId::from(session_id);
             let results = runtime.retrieve_results(&session_id, session_range).await?;
 
-            // collect results as microseconds and convert to milliseconds
+            // collect results as microseconds for precision and convert to milliseconds for readability
             if let Some(elapsed_times) = results.elapsed_times {
                 for (role, p_online_times) in elapsed_times {
                     let micros = Array1::from_vec(
@@ -125,7 +130,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     // print results als milliseconds
                     tracing::info!(
-                            "Party {role}: Online times of {} iterations in milliseconds: Mean: {:.2} - Median {:.2} - Min: {:.2} - Max: {:.2} - StdDev: {:.2};",
+                            "Party {role}: Online times of {} iterations in milliseconds: Mean: {:.2} - Median: {:.2} - Min: {:.2} - Max: {:.2} - StdDev: {:.2};",
                             session_range,
                             micros.mean().unwrap(),
                             *micros.mapv(|x| (x * 1000.0) as u128).quantile_axis_mut(

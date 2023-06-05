@@ -18,7 +18,7 @@ fn bench_decode_z2(c: &mut Criterion) {
             let threshold = *degree;
 
             let mut coefs: Vec<GF256> = Vec::new();
-            for i in 0..threshold + 1 {
+            for i in 0..=threshold {
                 coefs.push(GF256::from(i as u8));
             }
 
