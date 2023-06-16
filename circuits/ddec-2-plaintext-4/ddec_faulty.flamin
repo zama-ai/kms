@@ -1,5 +1,5 @@
-dist_prep s0, 7, 42, 2594 # 1
+dist_prep s0, 42 # 1
 faulty_threshold s0 # 2
 asm_open 3, False, c0, s0 # 3
-shrci c1, c0, 121 # 4
+shrci c1, c0, 123 # 4
 print_reg_plain c1 # 5

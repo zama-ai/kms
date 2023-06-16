@@ -1,5 +1,5 @@
 [computation]
-path = "./circuits/ddec-2-plaintext-7/ddec.flamin"
+path = "./circuits/ddec-2-plaintext-4/ddec.flamin"
 
 [security]
 threshold = 1

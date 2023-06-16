@@ -1,16 +1,23 @@
 //! CLI tool for interacting with a group of mobys
+use aes_prng::AesRng;
+use anyhow::anyhow;
 use clap::{Parser, Subcommand};
-use distributed_decryption::choreography::grpc::ChoreoRuntime;
+use distributed_decryption::choreography::choreographer::ChoreoRuntime;
 use distributed_decryption::circuit::Circuit;
 use distributed_decryption::computation::SessionId;
-use distributed_decryption::execution::player::Identity;
-use distributed_decryption::execution::player::Role;
-use distributed_decryption::execution::player::RoleAssignment;
+use distributed_decryption::execution::distributed::DecryptionMode;
+use distributed_decryption::execution::distributed::SetupMode;
+use distributed_decryption::execution::party::Identity;
+use distributed_decryption::execution::party::Role;
+use distributed_decryption::execution::party::RoleAssignment;
+use distributed_decryption::lwe::PublicKey;
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
+use rand::RngCore;
+use rand::SeedableRng;
 
 #[derive(Parser, Debug)]
-#[clap(name = "cometctl")]
+#[clap(name = "mobygo")]
 #[clap(about = "A simple CLI tool for interacting with a Moby cluster")]
 pub struct Cli {
     #[clap(subcommand)]
@@ -19,25 +26,53 @@ pub struct Cli {
     #[clap(short)]
     n_parties: u64,
 
-    #[structopt(env, long, default_value = "50000")]
+    #[structopt(env, long, default_value_t = 50000)]
     port: u16,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Launch computation on cluster of mobys (non-blocking)
+    /// Launch circuit computation on cluster of mobys (non-blocking)
     Launch {
         /// Circuit path to use
         #[clap(long)]
         circuit_path: String,
 
-        #[clap(long)]
-        /// Session id to use for the computation
-        session_id: u128,
-
         #[clap(long, default_value_t = 1)]
         /// Session range to use
         session_range: u32,
+
+        #[clap(short)]
+        /// Threshold (max. number of dishonest parties)
+        threshold: u8,
+
+        #[clap(short, default_value_t = 1)]
+        /// Message to encrypt
+        message: u8,
+
+        #[clap(long, default_value = "pk.bin")]
+        /// Filename of the public key
+        pubkey: String,
+    },
+    /// Decrypt on cluster of mobys (non-blocking)
+    Decrypt {
+        #[clap(short, long)]
+        /// Threshold (max. number of dishonest parties)
+        threshold: u8,
+
+        #[clap(short, long, default_value_t = 2)]
+        /// decryption protocol: 1: PRSS, 2: Proto2
+        protocol: u8,
+
+        #[clap(long, default_value = "pk.bin")]
+        /// Filename of the public key
+        pubkey: String,
+    },
+    /// Initialize the moby workers with a key share and a PRSS setup
+    Init {
+        #[clap(long, default_value_t = 1)]
+        /// Key epoch id to use
+        epoch: u128,
 
         #[clap(long)]
         /// Directory to read certificates from
@@ -47,9 +82,25 @@ pub enum Commands {
         /// Own identity; `certs` must be specified
         identity: Option<String>,
 
-        #[clap(short)]
+        #[clap(short, long)]
         /// Threshold (max. number of dishonest parties)
         threshold: u8,
+
+        #[clap(long, default_value_t = 10)]
+        /// L (big LWE key dimension)
+        ell: u32,
+
+        #[clap(long, default_value_t = 4)]
+        /// maximum plaintext bit length
+        plaintext_bits: u8,
+
+        #[clap(long, default_value = "pk.bin")]
+        /// Filename of the public key
+        pubkey: String,
+
+        #[clap(short, long, default_value_t = 1)]
+        /// Initialize decryption protocols: 1: All Protocols, 2: Only Proto2, No PRSS
+        protocol: u8,
     },
     /// Retrieve one or many results of computation from cluster of mobys
     Results {
@@ -62,10 +113,13 @@ pub enum Commands {
         session_range: u32,
     },
 }
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
     tracing_subscriber::fmt::init();
+
+    let mut rng = AesRng::seed_from_u64(0);
 
     let tls_config = None;
     let port = args.port;
@@ -81,11 +135,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         Commands::Launch {
             circuit_path,
-            session_id,
             session_range,
-            certs: _certs,
-            identity: _identity,
             threshold,
+            message,
+            pubkey,
         } => {
             let runtime = ChoreoRuntime::new(docker_role_assignments, tls_config)?;
             let threshold = threshold;
@@ -93,21 +146,95 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let computation = Circuit::try_from(&comp_bytes[..]).unwrap();
 
             tracing::info!(
-                "Launching mobygo: computation: {:?}, session: {}, iterations: {}, parties: {}, threshold: {}",
+                "Launching mobygo: computation: {:?}, iterations: {}, parties: {}, threshold: {}",
                 &computation,
-                session_id,
                 session_range,
                 args.n_parties,
                 threshold,
             );
 
+            // read pk from file (Init must have been called before)
+            let pk_serialized = std::fs::read(pubkey.as_str())?;
+            let pk: PublicKey = bincode::deserialize(&pk_serialized)?;
+
+            let ct = pk.encrypt(&mut rng, message);
+
             // run multiple iterations of benchmarks in a row
-            for i in 0..session_range {
-                let session_id = SessionId::from(session_id + i as u128);
-                runtime
-                    .launch_computation(&session_id, &computation, threshold)
-                    .await?;
+            for _i in 0..session_range {
+                if let Ok(sid) = runtime
+                    .initiate_launch_computation_debug(&computation, threshold, &ct)
+                    .await
+                {
+                    tracing::info!("Session id: {:?}", sid);
+                }
             }
+        }
+        Commands::Init {
+            epoch,
+            certs: _certs,
+            identity: _identity,
+            threshold,
+            ell,
+            plaintext_bits,
+            pubkey,
+            protocol,
+        } => {
+            let runtime = ChoreoRuntime::new(docker_role_assignments, tls_config)?;
+
+            let setup_mode = match protocol {
+                1 => Ok(SetupMode::AllProtos),
+                2 => Ok(SetupMode::NoPrss),
+                _ => Err(anyhow! {"Invalid SetupMode"}),
+            }?;
+
+            // keys can be set once per epoch (currently stored in a SessionID)
+            let pk = runtime
+                .initiate_keygen(
+                    &SessionId::from(epoch),
+                    threshold,
+                    ell,
+                    plaintext_bits,
+                    rng.next_u64(),
+                    setup_mode,
+                )
+                .await?;
+
+            // write received pk to file
+            let serialized_pk = bincode::serialize(&pk)?;
+            std::fs::write(pubkey.as_str(), serialized_pk)?;
+        }
+        Commands::Decrypt {
+            threshold,
+            protocol,
+            pubkey,
+        } => {
+            let runtime = ChoreoRuntime::new(docker_role_assignments, tls_config)?;
+
+            tracing::info!(
+                "Launching mobygo decryption: parties: {}, threshold: {}",
+                args.n_parties,
+                threshold,
+            );
+
+            let message = 5;
+
+            // read pk from file (Init must have been called before)
+            let pk_serialized = std::fs::read(pubkey.as_str())?;
+            let pk: PublicKey = bincode::deserialize(&pk_serialized)?;
+
+            let ct = pk.encrypt(&mut rng, message);
+
+            let mode = match protocol {
+                1 => Ok(DecryptionMode::PRSSDecrypt),
+                2 => Ok(DecryptionMode::Proto2Decrypt),
+                _ => Err(anyhow!("Decryption mode not supported!")),
+            }?;
+
+            let session_id = runtime
+                .initiate_threshold_decryption(&mode, threshold, &ct)
+                .await?;
+
+            tracing::info!("Session id: {:?}", session_id);
         }
         Commands::Results {
             session_id,
@@ -115,8 +242,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let runtime = ChoreoRuntime::new(docker_role_assignments, tls_config)?;
 
-            let session_id = SessionId::from(session_id);
-            let results = runtime.retrieve_results(&session_id, session_range).await?;
+            let session_id_obj = SessionId::from(session_id);
+            let results = runtime
+                .initiate_retrieve_results(&session_id_obj, session_range)
+                .await?;
 
             // collect results as microseconds for precision and convert to milliseconds for readability
             if let Some(elapsed_times) = results.elapsed_times {
@@ -144,8 +273,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         );
                 }
             }
+
+            tracing::info!("Decryption Results: {:?}", results.outputs);
         }
-    }
+    };
 
     Ok(())
 }

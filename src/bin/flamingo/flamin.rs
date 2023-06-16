@@ -1,8 +1,7 @@
 use clap::Parser;
 use distributed_decryption::choreography::grpc::GrpcChoreography;
-use distributed_decryption::execution::player::Identity;
+use distributed_decryption::execution::party::Identity;
 use distributed_decryption::networking::grpc::GrpcNetworkingManager;
-use std::path::PathBuf;
 use tonic::transport::Server;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -15,14 +14,6 @@ pub struct Opt {
     #[structopt(env, long, default_value = "50000")]
     /// Port to use for gRPC server
     port: u16,
-
-    #[structopt(env, long, default_value = "./examples")]
-    /// Directory to read sessions from
-    sessions: String,
-
-    #[structopt(env, long, default_value = "./examples")]
-    /// Directory to read flamin endpoints
-    static_config: PathBuf,
 }
 
 fn init_tracer() {
@@ -37,7 +28,7 @@ fn init_tracer() {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_tracer();
-    tracing::info!("starting up");
+    tracing::info!("flamin starting up");
     let opt = Opt::parse();
 
     let own_identity = Identity::from(opt.identity);
@@ -58,7 +49,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr = format!("0.0.0.0:{}", &opt.port).parse()?;
 
-    tracing::info!("created server...");
+    tracing::info!("created flamin server...");
 
     let res = router.serve(addr).await;
     if let Err(e) = res {

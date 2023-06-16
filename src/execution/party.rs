@@ -2,7 +2,7 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Role/party ID of a player.
+/// Role/party ID of a party.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Serialize, Deserialize)]
 pub struct Role(pub u64);
 
@@ -18,7 +18,7 @@ impl Role {
     }
 }
 
-/// Runtime identity of player.
+/// Runtime identity of party.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Display, Serialize, Deserialize)]
 pub struct Identity(pub String);
 

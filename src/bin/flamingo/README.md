@@ -26,7 +26,6 @@ flamin \
 flamin \
     --identity localhost:50003
     --port 50003
-
 ```
 
 and then launch a session from the root directory using the following:

@@ -1,7 +1,7 @@
 use clap::Parser;
 use distributed_decryption::choreography::grpc::GrpcChoreography;
-use distributed_decryption::execution::player::Identity;
-use distributed_decryption::execution::player::{Role, RoleAssignment};
+use distributed_decryption::execution::party::Identity;
+use distributed_decryption::execution::party::{Role, RoleAssignment};
 use distributed_decryption::networking::grpc::GrpcNetworkingManager;
 use tonic::transport::Server;
 use tracing_subscriber::layer::SubscriberExt;
@@ -10,16 +10,12 @@ use tracing_subscriber::util::SubscriberInitExt;
 #[derive(Debug, Parser, Clone)]
 pub struct Opt {
     #[structopt(short)]
-    /// Player ID of this party
-    player_no: u64,
+    /// Party ID (1...=n)
+    party_id: u64,
 
     #[structopt(env, long, default_value = "50000")]
     /// Port to use for gRPC server, Moby in docker uses 50000 as dafault and is mapped via docker compose
     port: u16,
-
-    #[structopt(env, long, default_value = "./examples")]
-    /// Directory to read sessions from
-    sessions: String,
 
     #[structopt(env, short, default_value = "10")]
     /// Total number of parties in the moby cluster
@@ -50,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     let own_identity = docker_static_endpoints
-        .get(&Role::from(opt.player_no))
+        .get(&Role::from(opt.party_id))
         .unwrap()
         .clone();
 
@@ -72,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(
         "Sucessfully created moby server with party id {}.",
-        opt.player_no
+        opt.party_id
     );
 
     let res = router.serve(addr).await;

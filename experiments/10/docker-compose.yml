@@ -128,4 +128,6 @@ services:
       - p9
       - p10
 
-    entrypoint: ["sh", "-c", "mobygo -n 10 launch --session-id 1 -t 3 --circuit-path ./circuits/ddec-2-plaintext-1/ddec.flamin &&  tail -f /dev/null"]
+    entrypoint: ["sh", "-c", "mobygo -n 10 init -t 3 &&\
+      mobygo -n 10 launch --session-id 1 -t 3 --circuit-path ./circuits/ddec-2-plaintext-1/ddec.flamin &&\
+      tail -f /dev/null"]

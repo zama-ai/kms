@@ -1,27 +1,42 @@
+use super::prss::PRSSSetup;
 use crate::circuit::{Circuit, Operator};
 use crate::computation::SessionId;
-use crate::execution::player::{Identity, Role, RoleAssignment};
+use crate::execution::constants::INPUT_PARTY_ID;
+use crate::execution::party::{Identity, Role, RoleAssignment};
 use crate::execution::prss::PRSSState;
+use crate::lwe::{keygen, Ciphertext, PublicKey, SecretKey, SecretKeyShare};
 use crate::networking::local::{LocalNetworking, LocalNetworkingProducer};
 use crate::networking::Networking;
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
-use crate::value::{err_reconstruct, Value};
+use crate::value::{err_reconstruct, NetworkValue, Value};
 use crate::{One, Z128, Z64};
 use aes_prng::AesRng;
 use anyhow::anyhow;
+use derive_more::Display;
+use ndarray::Array1;
 use rand::RngCore;
 use rand::SeedableRng;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::num::Wrapping;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::task::JoinSet;
 
-use super::prss::PRSSSetup;
-
 pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
+
+#[derive(Clone, Serialize, Deserialize, Display)]
+pub enum DecryptionMode {
+    PRSSDecrypt,
+    Proto2Decrypt,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Display)]
+pub enum SetupMode {
+    AllProtos,
+    NoPrss,
+}
 
 #[derive(Clone)]
 pub struct DistributedSession {
@@ -48,26 +63,62 @@ impl DistributedSession {
             prss_state: prss_setup.map(|x| x.new_session(session_id)),
         }
     }
+
+    /// return Role for given Identity in this session
+    pub fn get_role_from(&self, own_identity: &Identity) -> anyhow::Result<Role> {
+        let own_role: Vec<&Role> = self
+            .role_assignments
+            .iter()
+            .filter_map(|(role, identity)| {
+                if identity == own_identity {
+                    Some(role)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let own_role = {
+            match own_role.len() {
+                1 => Ok(own_role[0].clone()),
+                _ => Err(anyhow!(
+                    "Unknown or ambiguous role for identity {:?}",
+                    own_identity
+                )),
+            }?
+        };
+
+        Ok(own_role)
+    }
 }
 
 pub struct DistributedTestRuntime {
     identities: Vec<Identity>,
     threshold: u8,
     prss_setup: Option<PRSSSetup>,
+    keyshares: Option<Vec<SecretKeyShare>>,
 }
 
 impl DistributedTestRuntime {
-    pub fn new(identities: Vec<Identity>, threshold: u8, prss_setup: Option<PRSSSetup>) -> Self {
+    pub fn new(
+        identities: Vec<Identity>,
+        threshold: u8,
+        prss_setup: Option<PRSSSetup>,
+        keyshares: Option<Vec<SecretKeyShare>>,
+    ) -> Self {
         DistributedTestRuntime {
             identities,
             threshold,
             prss_setup,
+            keyshares,
         }
     }
 
+    /// test the circuit evaluation
     pub fn evaluate_circuit(
         &self,
         circuit: &Circuit,
+        ct: Option<Ciphertext>,
     ) -> anyhow::Result<HashMap<Identity, Vec<Value>>> {
         // TODO(Dragos) replaced this with a random sid
         let session_id = SessionId(1);
@@ -100,6 +151,11 @@ impl DistributedTestRuntime {
             let circuit = circuit.clone();
             let threshold = self.threshold;
             let prss_setup = self.prss_setup.clone();
+
+            let party_keyshare = self.keyshares.clone().map(|ks| ks[index_id].clone());
+
+            let ct = ct.clone();
+
             set.spawn(async move {
                 let mut rng = AesRng::seed_from_u64(0);
                 let mut session = DistributedSession::new(
@@ -109,10 +165,96 @@ impl DistributedTestRuntime {
                     threshold,
                     prss_setup,
                 );
-                let (out, _init_time) =
-                    run_circuit_operations_debug(&mut session, &circuit, &identity, &mut rng)
-                        .await
-                        .unwrap();
+                let out = run_circuit_operations_debug(
+                    &mut session,
+                    &identity,
+                    &circuit,
+                    party_keyshare,
+                    ct,
+                    &mut rng,
+                )
+                .await
+                .unwrap();
+                (identity, out)
+            });
+        }
+
+        let results = rt.block_on(async {
+            let mut results = HashMap::new();
+            while let Some(v) = set.join_next().await {
+                let (identity, val) = v.unwrap();
+                results.insert(identity, val);
+            }
+            results
+        });
+        Ok(results)
+    }
+
+    /// test the threshold decryption
+    pub fn threshold_decrypt(
+        &self,
+        ct: Ciphertext,
+        mode: DecryptionMode,
+    ) -> anyhow::Result<HashMap<Identity, Vec<Value>>> {
+        // TODO(Dragos) replaced this with a random sid
+        let session_id = SessionId(2);
+
+        let rt = tokio::runtime::Runtime::new()?;
+        let _guard = rt.enter();
+
+        let role_assignments: RoleAssignment = self
+            .identities
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(role_id, identity)| (Role(role_id as u64 + 1), identity))
+            .collect();
+
+        let net_producer = LocalNetworkingProducer::from_ids(&self.identities);
+        let user_nets: Vec<Arc<LocalNetworking>> = self
+            .identities
+            .iter()
+            .map(|user_identity| {
+                let net = net_producer.user_net(user_identity.clone());
+                Arc::new(net)
+            })
+            .collect();
+
+        let mut set = JoinSet::new();
+        for (index_id, identity) in self.identities.clone().into_iter().enumerate() {
+            let role_assignments = role_assignments.clone();
+            let net = Arc::clone(&user_nets[index_id]);
+            let threshold = self.threshold;
+            let prss_setup = self.prss_setup.clone();
+
+            let party_keyshare = self
+                .keyshares
+                .clone()
+                .map(|ks| ks[index_id].clone())
+                .ok_or_else(|| anyhow!("key share not set"))?;
+
+            let ct = ct.clone();
+            let mode = mode.clone();
+
+            set.spawn(async move {
+                let mut rng = AesRng::seed_from_u64(0);
+                let mut session = DistributedSession::new(
+                    session_id,
+                    role_assignments,
+                    net,
+                    threshold,
+                    prss_setup,
+                );
+                let out = run_decryption(
+                    &mut session,
+                    &identity,
+                    party_keyshare,
+                    ct,
+                    mode,
+                    rng.next_u64(),
+                )
+                .await
+                .unwrap();
                 (identity, out)
             });
         }
@@ -133,9 +275,9 @@ pub async fn robust_open_to(
     session: &DistributedSession,
     share: &Value,
     role: &Role,
-    player_open: usize,
+    output_party_id: usize,
 ) -> anyhow::Result<Option<Value>> {
-    if role.party_id() == player_open {
+    if role.party_id() == output_party_id {
         session.networking.increase_round_counter().await?;
         let mut collected_sharings = Vec::new();
         collected_sharings.push(share.clone());
@@ -157,7 +299,13 @@ pub async fn robust_open_to(
         }
 
         while let Some(v) = set.join_next().await {
-            let share = v??;
+            let rcv_val = v??;
+
+            let share = match rcv_val {
+                NetworkValue::RingValue(rv) => rv,
+                _ => Err(anyhow!("I have received sth different from a ring value!"))?,
+            };
+
             collected_sharings.push(share);
 
             let num_parties = session.role_assignments.len();
@@ -193,9 +341,9 @@ pub async fn robust_open_to(
     } else {
         let receiver = session
             .role_assignments
-            .get(&Role(player_open as u64))
+            .get(&Role(output_party_id as u64))
             .ok_or(anyhow!(
-                "Couldn't get identity for role {player_open} in opening"
+                "Couldn't get identity for role {output_party_id} in opening"
             ))?
             .clone();
 
@@ -204,7 +352,9 @@ pub async fn robust_open_to(
         let session_id = session.session_id;
 
         tokio::spawn(async move {
-            let _ = networking.send(share, &receiver, &session_id).await;
+            let _ = networking
+                .send(NetworkValue::RingValue(share), &receiver, &session_id)
+                .await;
         })
         .await?;
         Ok(None)
@@ -216,16 +366,16 @@ pub async fn robust_input<R: RngCore>(
     session: &DistributedSession,
     value: &Option<Value>,
     role: &Role,
-    player_input: usize,
+    input_party_id: usize,
 ) -> anyhow::Result<Value> {
-    if role.party_id() == player_input {
+    if role.party_id() == input_party_id {
         let threshold = session.threshold;
         let si = {
             match value {
                 Some(v) => v.clone(),
                 None => {
                     return Err(anyhow!(
-                        "Expected Some(v) as an input argument for the input player, got None"
+                        "Expected Some(v) as an input argument for the input party, got None"
                     ))
                 }
             }
@@ -282,7 +432,9 @@ pub async fn robust_input<R: RngCore>(
             let share = indexed_share.clone();
 
             set.spawn(async move {
-                let _ = networking.send(share, &receiver, &session_id).await;
+                let _ = networking
+                    .send(NetworkValue::RingValue(share), &receiver, &session_id)
+                    .await;
             });
         }
         while (set.join_next().await).is_some() {}
@@ -291,15 +443,70 @@ pub async fn robust_input<R: RngCore>(
         session.networking.increase_round_counter().await?;
         let sender = session
             .role_assignments
-            .get(&Role(player_input as u64))
-            .ok_or(anyhow!("couldn't get identity for role {player_input}"))?
+            .get(&Role(input_party_id as u64))
+            .ok_or(anyhow!("couldn't get identity for role {input_party_id}"))?
             .clone();
 
         let networking = Arc::clone(&session.networking);
         let session_id = session.session_id;
-        let data: Value =
+        let data =
             tokio::spawn(async move { networking.receive(&sender, &session_id).await }).await??;
+
+        let data = match data {
+            NetworkValue::RingValue(rv) => rv,
+            _ => Err(anyhow!("I have received sth different from a ring value!"))?,
+        };
+
         Ok(data)
+    }
+}
+
+pub async fn transfer_pk(
+    session: &DistributedSession,
+    pubkey: &PublicKey,
+    role: &Role,
+    input_party_id: usize,
+) -> anyhow::Result<PublicKey> {
+    if role.party_id() == input_party_id {
+        let num_parties = session.role_assignments.len();
+        let pkval = NetworkValue::PubKey(pubkey.clone());
+
+        let mut set = JoinSet::new();
+        for to_send_role in 1..=num_parties {
+            if to_send_role != input_party_id {
+                let identity = session
+                    .role_assignments
+                    .get(&Role(to_send_role as u64))
+                    .ok_or(anyhow!("couldn't get identity for role {to_send_role}"))?
+                    .clone();
+
+                let networking = Arc::clone(&session.networking);
+                let session_id = session.session_id;
+                let send_pk = pkval.clone();
+
+                set.spawn(async move {
+                    let _ = networking.send(send_pk, &identity, &session_id).await;
+                });
+            }
+        }
+        while (set.join_next().await).is_some() {}
+        Ok(pubkey.clone())
+    } else {
+        let receiver = session
+            .role_assignments
+            .get(&Role(input_party_id as u64))
+            .ok_or(anyhow!("couldn't get identity for role {input_party_id}"))?
+            .clone();
+        let networking = Arc::clone(&session.networking);
+        let session_id = session.session_id;
+        let data: NetworkValue =
+            tokio::spawn(async move { networking.receive(&receiver, &session_id).await }).await??;
+
+        let pk = match data {
+            NetworkValue::PubKey(pk) => pk,
+            _ => Err(anyhow!("I have received sth different from a public key!"))?,
+        };
+        Ok(pk)
     }
 }
 
@@ -308,32 +515,17 @@ pub async fn robust_input<R: RngCore>(
 /// TODO(Daniel) remove this from production builds
 pub async fn run_circuit_operations_debug<R: RngCore>(
     session: &mut DistributedSession,
-    circuit: &Circuit,
     own_identity: &Identity,
+    circuit: &Circuit,
+    keyshares: Option<SecretKeyShare>,
+    ct: Option<Ciphertext>,
     rng: &mut R,
-) -> anyhow::Result<(Vec<Value>, Duration)> {
+) -> anyhow::Result<Vec<Value>> {
     let mut env: HashMap<&String, Value> = HashMap::new();
     let mut outputs = Vec::new();
-    let mut init_time = Duration::ZERO;
 
-    let own_role: Vec<&Role> = session
-        .role_assignments
-        .iter()
-        .filter_map(|(role, identity)| {
-            if identity == own_identity {
-                Some(role)
-            } else {
-                None
-            }
-        })
-        .collect();
+    let own_role = session.get_role_from(own_identity)?;
 
-    let own_role = {
-        match own_role.len() {
-            1 => Ok(own_role[0].clone()),
-            _ => Err(anyhow!("Cannot continue circuit execution if current party has a number of roles equal to {:?}", own_role.len()))
-        }?
-    };
     #[allow(clippy::get_first)]
     for op in circuit.operations.iter() {
         use Operator::*;
@@ -388,7 +580,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 env.insert(r0, ci);
             }
             PrintRegPlain => {
-                if own_role.party_id() == 1 {
+                if own_role.party_id() == INPUT_PARTY_ID {
                     let r0 = op
                         .operands
                         .get(0)
@@ -401,7 +593,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 }
             }
             ShrCI => {
-                if own_role.party_id() == 1 {
+                if own_role.party_id() == INPUT_PARTY_ID {
                     let dest = op
                         .operands
                         .get(0)
@@ -412,7 +604,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                         .get(1)
                         .ok_or_else(|| anyhow!("Wrong index buddy"))?;
 
-                    let source = env
+                    let source_val = env
                         .get(&source.to_string())
                         .ok_or_else(|| anyhow!("Couldn't find register {source}"))?
                         .clone();
@@ -423,7 +615,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                             .ok_or_else(|| anyhow!("Wrong index buddy"))?,
                     )?;
 
-                    match source {
+                    match source_val {
                         Value::Ring128(v) => {
                             env.insert(dest, Value::Ring128(v >> offset));
                         }
@@ -443,32 +635,25 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                     .get(0)
                     .ok_or_else(|| anyhow!("Wrong index buddy"))?;
 
-                let message = u8::from_str(
-                    op.operands
-                        .get(1)
-                        .ok_or_else(|| anyhow!("Couldn't retrieve message"))?,
-                )?;
-
                 let prep_seed = u64::from_str(
                     op.operands
-                        .get(2)
+                        .get(1)
                         .ok_or_else(|| anyhow!("Couldn't retrieve seed"))?,
                 )?;
 
-                let big_ell = usize::from_str(
-                    op.operands
-                        .get(3)
-                        .ok_or_else(|| anyhow!("Couldn't retrieve L (lwe dimension"))?,
-                )?;
+                let ciphertext = ct
+                    .clone()
+                    .ok_or_else(|| anyhow!("no ciphertext found to decrypt"))?;
 
-                let (s, init_t) = crate::execution::prep::ddec_prep(
+                let s = crate::execution::prep::ddec_prep(
                     prep_seed,
-                    big_ell,
-                    message,
                     own_role.party_id(),
                     session.threshold as usize,
+                    keyshares
+                        .clone()
+                        .ok_or_else(|| anyhow!("Key share not set"))?,
+                    &ciphertext,
                 )?;
-                init_time = init_t;
                 tracing::debug!("finished generating proto 2 prep: {:?}", s);
                 env.insert(dest, s);
             }
@@ -481,46 +666,30 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                     .get(0)
                     .ok_or_else(|| anyhow!("Wrong index buddy"))?;
 
-                let message = u8::from_str(
-                    op.operands
-                        .get(1)
-                        .ok_or_else(|| anyhow!("Couldn't retrieve message"))?,
-                )?;
-
-                let prep_seed = u64::from_str(
-                    op.operands
-                        .get(2)
-                        .ok_or_else(|| anyhow!("Couldn't retrieve seed"))?,
-                )?;
-
-                let big_ell = usize::from_str(
-                    op.operands
-                        .get(3)
-                        .ok_or_else(|| anyhow!("Couldn't retrieve L (lwe dimension"))?,
-                )?;
-
                 let prss_state = session
                     .prss_state
                     .as_mut()
                     .ok_or_else(|| anyhow!("PRSS_State not initialized"))?;
 
-                let (s, init_t) = crate::execution::prep::prss_prep(
-                    prep_seed,
-                    big_ell,
-                    message,
+                let ciphertext = ct
+                    .clone()
+                    .ok_or_else(|| anyhow!("no ciphertext found to decrypt"))?;
+
+                let s = crate::execution::prep::prss_prep(
                     own_role.party_id(),
-                    session.threshold as usize,
                     prss_state,
+                    keyshares
+                        .clone()
+                        .ok_or_else(|| anyhow!("Key share not set"))?,
+                    &ciphertext,
                 )?;
-                init_time = init_t;
                 tracing::debug!("finished generating PRSS prep: {:?}", s);
                 env.insert(dest, s);
             }
             FaultyThreshold => {
                 // all parties up to (including) t manipulate their share
                 // (to simulate a faulty/malicious party in benchmarking)
-                let party_id = own_role.party_id();
-                if party_id <= session.threshold as usize {
+                if own_role.party_id() <= session.threshold as usize {
                     let dest = op
                         .operands
                         .get(0)
@@ -532,7 +701,10 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
 
                     // increase value of existing share by 1
                     if let Value::IndexedShare128(share) = correct_share_value {
-                        tracing::debug!("I'm party {} and I will send bollocks!", party_id);
+                        tracing::debug!(
+                            "I'm party {} and I will send bollocks!",
+                            own_role.party_id()
+                        );
                         env.insert(
                             dest,
                             Value::IndexedShare128((share.0, share.1 + ResiduePoly::ONE)),
@@ -547,7 +719,123 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
             _ => todo!(),
         }
     }
-    Ok((outputs, init_time))
+    Ok(outputs)
+}
+
+/// run decryption
+pub async fn run_decryption(
+    session: &mut DistributedSession,
+    own_identity: &Identity,
+    keyshares: SecretKeyShare,
+    ciphertext: Ciphertext,
+    mode: DecryptionMode,
+    seed: u64,
+) -> anyhow::Result<Vec<Value>> {
+    let mut outputs = Vec::new();
+
+    let own_role = session.get_role_from(own_identity)?;
+
+    let plaintext_bits = keyshares.plaintext_bits;
+
+    let res = match mode {
+        DecryptionMode::PRSSDecrypt => {
+            let prss_state = session
+                .prss_state
+                .as_mut()
+                .ok_or_else(|| anyhow!("PRSS_State not initialized"))?;
+
+            crate::execution::prep::prss_prep(
+                own_role.party_id(),
+                prss_state,
+                keyshares,
+                &ciphertext,
+            )?
+        }
+        DecryptionMode::Proto2Decrypt => crate::execution::prep::ddec_prep(
+            seed,
+            own_role.party_id(),
+            session.threshold as usize,
+            keyshares,
+            &ciphertext,
+        )?,
+    };
+
+    let opened = robust_open_to(session, &res, &own_role, 1).await?;
+
+    if own_role.party_id() == INPUT_PARTY_ID {
+        // shift
+        let c = match opened {
+            Some(Value::Ring128(v)) => Value::Ring128(v >> (127 - plaintext_bits) as usize),
+            Some(Value::Ring64(v)) => Value::Ring64(v >> (63 - plaintext_bits) as usize),
+            _ => {
+                return Err(anyhow!(
+                    "Right shift not possible - wrong opened value type"
+                ))
+            }
+        };
+
+        outputs.push(c);
+    }
+
+    Ok(outputs)
+}
+
+pub async fn initialize_key_material<R: RngCore>(
+    session: &DistributedSession,
+    own_identity: &Identity,
+    rng: &mut R,
+    setup_mode: SetupMode,
+    big_ell: u32,
+    plaintext_bits: u8,
+    seed: u64,
+) -> anyhow::Result<(SecretKeyShare, PublicKey, Option<PRSSSetup>)> {
+    let own_role = session.get_role_from(own_identity)?;
+
+    // initialize PRSS
+    let num_parties = session.role_assignments.len();
+    let mut prss_rng = AesRng::seed_from_u64(seed); // use a fixed seed until we have implemented AgreeRandom
+
+    // TODO remove party/threshold from if condition when PRSS is generic and independent of (n,t)
+    let prss_setup =
+        if setup_mode == SetupMode::AllProtos && num_parties == 4 && session.threshold == 1 {
+            Some(PRSSSetup::epoch_init(
+                num_parties,
+                session.threshold as usize,
+                &mut prss_rng,
+            ))
+        } else {
+            None
+        };
+
+    let mut sk: SecretKey = SecretKey::default(); // keys must be initialized for all parties
+    let mut pk: PublicKey = PublicKey::default();
+
+    if own_role.party_id() == INPUT_PARTY_ID {
+        (sk, pk) = keygen(rng, big_ell, plaintext_bits);
+    }
+
+    let mut key_shares = Vec::new();
+    // iterate through sk and share each element
+    for i in 0..big_ell as usize {
+        let secret = match own_role.party_id() {
+            1 => Some(Value::Ring128(sk.s[i])),
+            _ => None,
+        };
+        let share: Value = robust_input(rng, session, &secret, &own_role, 1).await?; //TODO(Daniel) batch this for all big_ell
+
+        if let Value::IndexedShare128((_id, s)) = share {
+            key_shares.push(s);
+        }
+    }
+
+    let transferred_pk = transfer_pk(session, &pk, &own_role, 1).await?;
+
+    let shared_sk = SecretKeyShare {
+        s: Array1::from_vec(key_shares),
+        plaintext_bits,
+    };
+
+    Ok((shared_sk, transferred_pk, prss_setup))
 }
 
 #[cfg(test)]
@@ -580,8 +868,8 @@ mod tests {
         ];
         let threshold = 1;
 
-        let runtime = DistributedTestRuntime::new(identities, threshold, None);
-        let results = runtime.evaluate_circuit(&circuit).unwrap();
+        let runtime = DistributedTestRuntime::new(identities, threshold, None, None);
+        let results = runtime.evaluate_circuit(&circuit, None).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::U64(100));
     }
@@ -620,8 +908,8 @@ mod tests {
         ];
         let threshold = 1;
 
-        let runtime = DistributedTestRuntime::new(identities, threshold, None);
-        let results = runtime.evaluate_circuit(&circuit).unwrap();
+        let runtime = DistributedTestRuntime::new(identities, threshold, None, None);
+        let results = runtime.evaluate_circuit(&circuit, None).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));
     }
@@ -659,8 +947,8 @@ mod tests {
             Identity("localhost:5005".to_string()),
         ];
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities, threshold, None);
-        let results = runtime.evaluate_circuit(&circuit).unwrap();
+        let runtime = DistributedTestRuntime::new(identities, threshold, None, None);
+        let results = runtime.evaluate_circuit(&circuit, None).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));
     }
@@ -736,8 +1024,8 @@ mod tests {
             Identity("localhost:5009".to_string()),
         ];
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities, threshold, None);
-        let results = runtime.evaluate_circuit(&circuit).unwrap();
+        let runtime = DistributedTestRuntime::new(identities, threshold, None, None);
+        let results = runtime.evaluate_circuit(&circuit, None).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));
         assert_eq!(out[1], Value::Ring128(std::num::Wrapping(101)));

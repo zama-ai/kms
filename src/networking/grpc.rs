@@ -9,10 +9,10 @@ use self::gen::gnetworking_client::GnetworkingClient;
 use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
 use crate::computation::SessionId;
-use crate::execution::player::{Identity, RoleAssignment};
+use crate::execution::party::{Identity, RoleAssignment};
 use crate::networking::constants;
 use crate::networking::Networking;
-use crate::value::Value;
+use crate::value::NetworkValue;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use backoff::future::retry;
@@ -52,13 +52,13 @@ impl GrpcNetworkingManager {
         session_id: SessionId,
         roles: RoleAssignment,
     ) -> Arc<impl Networking> {
-        let messsage_store = DashMap::new();
+        let message_store = DashMap::new();
         for (_role, identity) in roles {
             let (tx, rx) = async_channel::bounded(MESSAGE_LIMIT);
-            messsage_store.insert(identity, (Arc::new(tx), Arc::new(rx)));
+            message_store.insert(identity, (Arc::new(tx), Arc::new(rx)));
         }
         self.message_queues
-            .insert(session_id, Arc::new(messsage_store));
+            .insert(session_id, Arc::new(message_store));
         Arc::new(GrpcNetworking {
             session_id,
             channels: Arc::clone(&self.channels),
@@ -104,7 +104,7 @@ impl GrpcNetworking {
 impl Networking for GrpcNetworking {
     async fn send(
         &self,
-        value: Value,
+        value: NetworkValue,
         receiver: &Identity,
         _session_id: &SessionId,
     ) -> anyhow::Result<(), anyhow::Error> {
@@ -154,7 +154,11 @@ impl Networking for GrpcNetworking {
         .await
     }
 
-    async fn receive(&self, sender: &Identity, _session_id: &SessionId) -> anyhow::Result<Value> {
+    async fn receive(
+        &self,
+        sender: &Identity,
+        _session_id: &SessionId,
+    ) -> anyhow::Result<NetworkValue> {
         if !self.message_queues.contains_key(&self.session_id) {
             return Err(anyhow!(
                 "Did not have session id key for message storage inside receive call"
@@ -203,8 +207,8 @@ impl Networking for GrpcNetworking {
 // we need a counter for each value sent over the local queues
 // so that messages that haven't been pickup up using receive() calls will get dropped
 #[derive(Debug)]
-struct NetworkValue {
-    pub value: Value,
+struct NetworkRoundValue {
+    pub value: NetworkValue,
     pub round_counter: usize,
 }
 
@@ -212,8 +216,8 @@ type Channels = DashMap<Identity, Channel>;
 type MessageQueueStore = DashMap<
     Identity,
     (
-        Arc<async_channel::Sender<NetworkValue>>,
-        Arc<async_channel::Receiver<NetworkValue>>,
+        Arc<async_channel::Sender<NetworkRoundValue>>,
+        Arc<async_channel::Receiver<NetworkRoundValue>>,
     ),
 >;
 type MessageQueueStores = DashMap<SessionId, Arc<MessageQueueStore>>;
@@ -268,7 +272,7 @@ impl Gnetworking for NetworkingImpl {
             let (tx, _) = channels.value();
 
             let _ = tx
-                .send(NetworkValue {
+                .send(NetworkRoundValue {
                     value: tagged_value.value,
                     round_counter: tagged_value.net_send_counter,
                 })
@@ -319,6 +323,6 @@ fn extract_sender<T>(request: &tonic::Request<T>) -> Result<Option<String>, Stri
 struct TaggedValue {
     session_id: SessionId,
     sender: Identity,
-    value: Value,
+    value: NetworkValue,
     net_send_counter: usize,
 }

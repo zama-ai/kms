@@ -3,18 +3,34 @@ syntax = "proto3";
 package ddec_choreography;
 
 service Choreography {
-    rpc LaunchComputation(LaunchComputationRequest) returns(LaunchComputationResponse);
+    rpc LaunchComputationDebug(LaunchComputationRequest) returns(LaunchComputationResponse);
     rpc RetrieveResults(RetrieveResultsRequest) returns(RetrieveResultsResponse);
+    rpc Keygen(KeygenRequest) returns(KeygenResponse);
+    rpc RetrievePubkey(PubkeyRequest) returns(PubkeyResponse);
+    rpc ThresholdDecrypt(DecryptionRequest) returns(DecryptionResponse);
 }
 
 message LaunchComputationRequest {
-    bytes session_id = 1;
-    bytes role_assignment = 2;
-    bytes computation = 3;
-    bytes threshold = 4;
+    bytes role_assignment = 1;
+    bytes computation = 2;
+    bytes threshold = 3;
+    bytes ciphertext = 4;
 }
 
-message LaunchComputationResponse {}
+message LaunchComputationResponse {
+    bytes session_id = 1;
+}
+
+message DecryptionRequest {
+    bytes role_assignment = 1;
+    bytes mode = 2;
+    bytes threshold = 3;
+    bytes ciphertext = 4;
+}
+
+message DecryptionResponse {
+    bytes session_id = 1;
+}
 
 message RetrieveResultsRequest {
     bytes session_id = 1;
@@ -23,4 +39,24 @@ message RetrieveResultsRequest {
 
 message RetrieveResultsResponse {
     bytes values = 1;
+}
+
+message KeygenRequest {
+    bytes epoch_id = 1;
+    bytes role_assignment = 2;
+    bytes threshold = 3;
+    uint32 big_ell = 4;
+    uint32 plaintext_bits = 5;
+    uint64 seed = 6;
+    bytes setup_mode = 7;
+}
+
+message KeygenResponse {}
+
+message PubkeyRequest {
+    bytes epoch_id = 1;
+}
+
+message PubkeyResponse {
+    bytes pubkey = 1;
 }

@@ -1,4 +1,4 @@
-prss_prep s0, 5, 23425, 2481 # 1
+prss_prep s0 # 1
 asm_open 3, False, c0, s0 # 2
-shrci c1, c0, 121 # 3
+shrci c1, c0, 123 # 3
 print_reg_plain c1 # 4

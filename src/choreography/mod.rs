@@ -1,11 +1,12 @@
 use crate::circuit::Circuit;
 use crate::computation::SessionId;
 use crate::execution::distributed::NetworkingImpl;
-use crate::execution::player::{Identity, Role, RoleAssignment};
+use crate::execution::party::{Identity, Role, RoleAssignment};
 use serde::Deserialize;
 use std::path::Path;
 use std::str::FromStr;
 
+pub mod choreographer;
 pub mod grpc;
 
 pub type NetworkingStrategy =

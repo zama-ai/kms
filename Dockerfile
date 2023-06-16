@@ -1,4 +1,4 @@
-FROM rust:1.69
+FROM rust:1.70
 
 RUN apt update && \
     apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils

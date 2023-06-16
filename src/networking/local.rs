@@ -86,7 +86,7 @@ type SimulatedPairwiseChannels = Arc<
 impl Networking for LocalNetworking {
     async fn send(
         &self,
-        val: Value,
+        val: NetworkValue,
         receiver: &Identity,
         _session_id: &SessionId,
     ) -> anyhow::Result<(), anyhow::Error> {
@@ -115,7 +115,11 @@ impl Networking for LocalNetworking {
         Ok(())
     }
 
-    async fn receive(&self, sender: &Identity, _session_id: &SessionId) -> anyhow::Result<Value> {
+    async fn receive(
+        &self,
+        sender: &Identity,
+        _session_id: &SessionId,
+    ) -> anyhow::Result<NetworkValue> {
         tracing::debug!(
             "Async receiving; owner: {0}, receive_from: {sender}",
             self.owner
@@ -165,12 +169,14 @@ impl Networking for LocalNetworking {
 
 #[derive(Debug, Clone)]
 struct LocalTaggedValue {
-    value: Value,
+    value: NetworkValue,
     send_counter: usize,
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::value::Value;
+
     use super::*;
     use std::num::Wrapping;
     use tracing_test::traced_test;
@@ -186,11 +192,14 @@ mod tests {
 
         let task1 = tokio::spawn(async move {
             let recv = net_bob.receive(&"alice".into(), &123_u128.into()).await;
-            assert_eq!(recv.unwrap(), Value::Ring64(Wrapping::<u64>(1234)));
+            assert_eq!(
+                recv.unwrap(),
+                NetworkValue::RingValue(Value::Ring64(Wrapping::<u64>(1234)))
+            );
         });
 
         let task2 = tokio::spawn(async move {
-            let value = Value::Ring64(Wrapping::<u64>(1234));
+            let value = NetworkValue::RingValue(Value::Ring64(Wrapping::<u64>(1234)));
             net_alice.send(value, &"bob".into(), &123_u128.into()).await
         });
 

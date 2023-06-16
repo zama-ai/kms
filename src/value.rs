@@ -1,3 +1,4 @@
+use crate::lwe::PublicKey;
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
 use crate::{Z128, Z64};
@@ -12,6 +13,13 @@ pub enum Value {
     Ring64(Z64),
     Ring128(Z128),
     U64(u64),
+}
+
+/// a value that is sent via network
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
+pub enum NetworkValue {
+    PubKey(PublicKey),
+    RingValue(Value),
 }
 
 pub fn err_reconstruct(

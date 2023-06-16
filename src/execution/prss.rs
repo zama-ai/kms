@@ -303,7 +303,11 @@ mod tests {
     use super::*;
     use crate::{
         circuit::{Circuit, Operation, Operator},
-        execution::{distributed::DistributedTestRuntime, player::Identity},
+        execution::{
+            distributed::{DecryptionMode, DistributedTestRuntime},
+            party::Identity,
+        },
+        lwe::keygen_all_party_shares,
         shamir::ShamirGSharings,
         value::Value,
     };
@@ -357,10 +361,10 @@ mod tests {
         let recon = e_shares.reconstruct(threshold).unwrap();
 
         tracing::debug!("reconstructed prss value: {}", recon.0);
-        tracing::debug!("bitsize of reconstruced value: {}", recon.0.ilog2());
+        tracing::debug!("bitsize of reconstructed value: {}", recon.0.ilog2());
         tracing::debug!("maximum allowed bitsize: {}", LOG_BD1_NOM);
 
-        // check that reconstruced PRSS random output E has limited bit length
+        // check that reconstructed PRSS random output E has limited bit length
         // must be at most (2^pow-1) * Bd bits (which is the nominator of Bd1)
         assert!(recon.0.ilog2() < LOG_BD1_NOM);
 
@@ -393,12 +397,7 @@ mod tests {
             operations: vec![
                 Operation {
                     operator: Operator::PrssPrep,
-                    operands: vec![
-                        String::from("s0"),
-                        String::from("2"),
-                        String::from("234"),
-                        String::from("2500"),
-                    ],
+                    operands: vec![String::from("s0"), String::from("234")],
                 },
                 Operation {
                     operator: Operator::Open,
@@ -411,7 +410,7 @@ mod tests {
                 },
                 Operation {
                     operator: Operator::ShrCI,
-                    operands: vec![String::from("c1"), String::from("c0"), String::from("121")],
+                    operands: vec![String::from("c1"), String::from("c0"), String::from("123")],
                 },
                 Operation {
                     operator: Operator::PrintRegPlain,
@@ -429,13 +428,34 @@ mod tests {
         let threshold = 1;
         let num_parties = 4;
         let mut rng = AesRng::seed_from_u64(423);
+        let msg = 9;
+        let plaintext_bits = 4;
+        let ell = 10;
 
         let prss_setup = Some(PRSSSetup::epoch_init(num_parties, threshold, &mut rng));
 
-        let runtime = DistributedTestRuntime::new(identities, threshold as u8, prss_setup);
-        let results = runtime.evaluate_circuit(&circuit).unwrap();
-        let out = &results[&Identity("localhost:5000".to_string())];
-        assert_eq!(out[0], Value::Ring128(std::num::Wrapping(2)));
+        // generate keys
+        let (key_shares, pk) =
+            keygen_all_party_shares(&mut rng, ell, plaintext_bits, num_parties, threshold).unwrap();
+        let ct = pk.encrypt(&mut rng, msg);
+
+        let runtime =
+            DistributedTestRuntime::new(identities, threshold as u8, prss_setup, Some(key_shares));
+
+        // test PRSS with circuit evaluation
+        let results_circ = runtime
+            .evaluate_circuit(&circuit, Some(ct.clone()))
+            .unwrap();
+        let out_circ = &results_circ[&Identity("localhost:5000".to_string())];
+
+        // test PRSS with decryption endpoint
+        let results_dec = runtime
+            .threshold_decrypt(ct, DecryptionMode::PRSSDecrypt)
+            .unwrap();
+        let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
+
+        assert_eq!(out_circ[0], Value::Ring128(std::num::Wrapping(msg as u128)));
+        assert_eq!(out_dec[0], Value::Ring128(std::num::Wrapping(msg as u128)));
     }
 
     #[rstest]
@@ -447,7 +467,6 @@ mod tests {
         let num_parties = 4;
         let threshold = 1;
 
-        // Session ID 0 used in encryption is the same as the first value of the AesRng, so we can compare the two in this test
         let sid = SessionId::from(23425);
 
         let mut rng = AesRng::seed_from_u64(54321);
