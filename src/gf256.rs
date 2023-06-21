@@ -1,5 +1,5 @@
 use crate::{
-    poly::{gao_decoding, Field, Poly},
+    poly::{gao_decoding, Field, Poly, Ring},
     One, Zero,
 };
 use anyhow::anyhow;
@@ -25,6 +25,9 @@ impl One for GF256 {
     const ONE: Self = <GF256 as GaloisField>::ONE;
 }
 
+impl Ring for GF256 {
+    const EL_BIT_LENGTH: usize = 8;
+}
 impl Field for GF256 {}
 
 pub type ShamirZ2Poly = Poly<GF256>;

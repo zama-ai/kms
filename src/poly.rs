@@ -4,7 +4,7 @@ use rand::RngCore;
 
 use crate::{One, Sample, Zero};
 
-pub trait Field
+pub trait Ring
 where
     Self: Sized,
     Self: Copy,
@@ -13,7 +13,13 @@ where
     Self: Add<Self, Output = Self> + AddAssign<Self>,
     Self: Sub<Self, Output = Self> + SubAssign<Self>,
     Self: Mul<Self, Output = Self> + MulAssign<Self>,
-    Self: Div<Self, Output = Self> + DivAssign<Self>,
+{
+    const EL_BIT_LENGTH: usize;
+}
+
+pub trait Field
+where
+    Self: Ring + Div<Self, Output = Self> + DivAssign<Self>,
 {
 }
 
@@ -28,7 +34,7 @@ impl<R> Poly<R> {
     }
 }
 
-impl<F: Field> PartialEq for Poly<F> {
+impl<R: Ring> PartialEq for Poly<R> {
     fn eq(&self, other: &Self) -> bool {
         let common_len = usize::min(self.coefs.len(), other.coefs.len());
         for i in 0..common_len {
@@ -42,7 +48,7 @@ impl<F: Field> PartialEq for Poly<F> {
             &other.coefs
         };
         for coef in longest.iter().skip(common_len) {
-            if coef != &F::ZERO {
+            if coef != &R::ZERO {
                 return false;
             }
         }
@@ -147,9 +153,9 @@ where
     }
 }
 
-impl<F: Field> Add<&Poly<F>> for &Poly<F> {
-    type Output = Poly<F>;
-    fn add(self, other: &Poly<F>) -> Self::Output {
+impl<R: Ring> Add<&Poly<R>> for &Poly<R> {
+    type Output = Poly<R>;
+    fn add(self, other: &Poly<R>) -> Self::Output {
         let max_len = usize::max(self.coefs.len(), other.coefs.len());
         let mut res = Poly::zeros(max_len);
         for i in 0..max_len {
@@ -187,9 +193,9 @@ where
     }
 }
 
-impl<F: Field> Mul<Poly<F>> for Poly<F> {
-    type Output = Poly<F>;
-    fn mul(self, other: Poly<F>) -> Self::Output {
+impl<R: Ring> Mul<Poly<R>> for Poly<R> {
+    type Output = Poly<R>;
+    fn mul(self, other: Poly<R>) -> Self::Output {
         let mut extended = Poly::zeros(self.coefs.len() + other.coefs.len() - 1);
         for (i, xi) in self.coefs.iter().enumerate() {
             for (j, xj) in other.coefs.iter().enumerate() {
@@ -201,9 +207,9 @@ impl<F: Field> Mul<Poly<F>> for Poly<F> {
     }
 }
 
-impl<F: Field> Mul<&Poly<F>> for &Poly<F> {
-    type Output = Poly<F>;
-    fn mul(self, other: &Poly<F>) -> Self::Output {
+impl<R: Ring> Mul<&Poly<R>> for &Poly<R> {
+    type Output = Poly<R>;
+    fn mul(self, other: &Poly<R>) -> Self::Output {
         let mut extended = Poly::zeros(self.coefs.len() + other.coefs.len() - 1);
         for (i, xi) in self.coefs.iter().enumerate() {
             for (j, xj) in other.coefs.iter().enumerate() {
@@ -215,9 +221,9 @@ impl<F: Field> Mul<&Poly<F>> for &Poly<F> {
     }
 }
 
-impl<F: Field> Mul<Poly<F>> for &Poly<F> {
-    type Output = Poly<F>;
-    fn mul(self, other: Poly<F>) -> Self::Output {
+impl<R: Ring> Mul<Poly<R>> for &Poly<R> {
+    type Output = Poly<R>;
+    fn mul(self, other: Poly<R>) -> Self::Output {
         // TODO we could reuse other
         let mut extended = Poly::zeros(self.coefs.len() + other.coefs.len() - 1);
         for (i, xi) in self.coefs.iter().enumerate() {
@@ -230,9 +236,9 @@ impl<F: Field> Mul<Poly<F>> for &Poly<F> {
     }
 }
 
-impl<F: Field> Mul<&F> for &Poly<F> {
-    type Output = Poly<F>;
-    fn mul(self, other: &F) -> Self::Output {
+impl<R: Ring> Mul<&R> for &Poly<R> {
+    type Output = Poly<R>;
+    fn mul(self, other: &R) -> Self::Output {
         let mut res = Poly::zeros(self.coefs.len());
         for (i, xi) in self.coefs.iter().enumerate() {
             res.coefs[i] = *xi * *other;
@@ -242,9 +248,9 @@ impl<F: Field> Mul<&F> for &Poly<F> {
     }
 }
 
-impl<F: Field> Mul<&F> for Poly<F> {
-    type Output = Poly<F>;
-    fn mul(mut self, other: &F) -> Self::Output {
+impl<R: Ring> Mul<&R> for Poly<R> {
+    type Output = Poly<R>;
+    fn mul(mut self, other: &R) -> Self::Output {
         for i in 0..self.coefs.len() {
             self.coefs[i] *= *other;
         }

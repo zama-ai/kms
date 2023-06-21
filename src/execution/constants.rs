@@ -1,5 +1,5 @@
 /// log_2 of parameter Bd, computed from values in the paper
-pub(crate) const LOG_BD: u64 = 75;
+pub(crate) const LOG_BD: u64 = 74;
 
 /// parameter pow, taken from the paper
 pub(crate) const POW: u64 = 47;
@@ -9,3 +9,6 @@ pub(crate) const LOG_BD1_NOM: u32 = (((1_u128 << POW) - 1) * (1_u128 << LOG_BD))
 
 /// the party ID of the party doing the reconstruction
 pub(crate) const INPUT_PARTY_ID: usize = 1;
+
+/// maximum number of PRSS party sets (n choose t) before the precomputation aborts
+pub(crate) const PRSS_SIZE_MAX: usize = 8192;

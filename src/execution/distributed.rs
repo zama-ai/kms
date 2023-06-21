@@ -795,17 +795,15 @@ pub async fn initialize_key_material<R: RngCore>(
     let num_parties = session.role_assignments.len();
     let mut prss_rng = AesRng::seed_from_u64(seed); // use a fixed seed until we have implemented AgreeRandom
 
-    // TODO remove party/threshold from if condition when PRSS is generic and independent of (n,t)
-    let prss_setup =
-        if setup_mode == SetupMode::AllProtos && num_parties == 4 && session.threshold == 1 {
-            Some(PRSSSetup::epoch_init(
-                num_parties,
-                session.threshold as usize,
-                &mut prss_rng,
-            ))
-        } else {
-            None
-        };
+    let prss_setup = if setup_mode == SetupMode::AllProtos {
+        Some(PRSSSetup::epoch_init(
+            num_parties,
+            session.threshold as usize,
+            &mut prss_rng,
+        )?)
+    } else {
+        None
+    };
 
     let mut sk: SecretKey = SecretKey::default(); // keys must be initialized for all parties
     let mut pk: PublicKey = PublicKey::default();

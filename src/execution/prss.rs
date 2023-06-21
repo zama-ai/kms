@@ -1,184 +1,18 @@
 use crate::{
-    computation::SessionId, execution::constants::LOG_BD1_NOM, residue_poly::ResiduePoly, One,
-    Ring, ZConsts, Zero, Z128,
+    computation::SessionId,
+    execution::constants::LOG_BD1_NOM,
+    poly::{Poly, Ring},
+    residue_poly::ResiduePoly,
+    One, Zero, Z128,
 };
+use anyhow::anyhow;
 use blake3::Hasher;
 use byteorder::{BigEndian, ReadBytesExt};
 use itertools::Itertools;
 use rand::RngCore;
 use std::num::Wrapping;
 
-/// precomputed points on poly f_A for n=4 and t=1
-const PRECOMP_POINTS_4_1: [[[Z128; 8]; 4]; 4] = [
-    [
-        [
-            Z128::ZERO,
-            Z128::ONE,
-            Z128::ZERO,
-            Wrapping(u128::MAX),
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ONE,
-            Wrapping(u128::MAX),
-        ],
-        [
-            Z128::TWO,
-            Z128::ZERO,
-            Z128::ONE,
-            Z128::ONE,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ONE,
-        ],
-        [
-            Z128::ONE,
-            Z128::ONE,
-            Z128::ONE,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ONE,
-            Z128::ZERO,
-        ],
-        [
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-        ],
-    ],
-    [
-        [
-            Z128::ONE,
-            Z128::ONE,
-            Wrapping(u128::MAX),
-            Z128::TWO,
-            Wrapping(u128::MAX),
-            Z128::ONE,
-            Wrapping(u128::MAX),
-            Z128::ONE,
-        ],
-        [
-            Z128::ZERO,
-            Wrapping(u128::MAX),
-            Z128::ONE,
-            Wrapping(u128::MAX - 1),
-            Z128::ONE,
-            Wrapping(u128::MAX),
-            Z128::ONE,
-            Wrapping(u128::MAX),
-        ],
-        [
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-        ],
-        [
-            Z128::TWO,
-            Z128::ZERO,
-            Wrapping(u128::MAX),
-            Z128::TWO,
-            Wrapping(u128::MAX),
-            Z128::ONE,
-            Wrapping(u128::MAX),
-            Z128::ONE,
-        ],
-    ],
-    [
-        [
-            Z128::TWO,
-            Z128::ZERO,
-            Z128::ONE,
-            Z128::ONE,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ONE,
-        ],
-        [
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-        ],
-        [
-            Z128::ONE,
-            Z128::ZERO,
-            Z128::ONE,
-            Z128::ONE,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ONE,
-        ],
-        [
-            Z128::ONE,
-            Wrapping(u128::MAX),
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-        ],
-    ],
-    [
-        [
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-        ],
-        [
-            Z128::ONE,
-            Wrapping(u128::MAX),
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-        ],
-        [
-            Z128::ZERO,
-            Wrapping(u128::MAX),
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-        ],
-        [
-            Z128::ONE,
-            Z128::ZERO,
-            Wrapping(u128::MAX),
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-            Z128::ZERO,
-        ],
-    ],
-];
+use super::constants::PRSS_SIZE_MAX;
 
 fn create_sets(n: usize, t: usize) -> Vec<Vec<usize>> {
     (1..=n).combinations(n - t).collect()
@@ -196,8 +30,10 @@ struct PrssSet {
 pub struct PRSSSetup {
     /// the logarithm of n choose t (num_parties choose threshold)
     log_n_choose_t: u32,
-    /// all possible subsets of n-t parties and their shared PRG
+    /// all possible subsets of n-t parties (A) and their shared PRG
     sets: Vec<PrssSet>,
+    /// points on the f_A polynomials for the sets of parties in A
+    f_a_points: Vec<Vec<ResiduePoly<Z128>>>,
 }
 
 /// PRSS state for use within a given session.
@@ -231,9 +67,69 @@ fn psi(
     let mut res = [0_u128; 1];
     psi_out.read_u128_into::<BigEndian>(&mut res)?;
 
-    let u = res[0] >> (Z128::RING_SIZE as u32 - LOG_BD1_NOM + log_n_choose_t);
+    let u = res[0] >> (Z128::EL_BIT_LENGTH as u32 - LOG_BD1_NOM + log_n_choose_t);
 
     Ok(Wrapping(u))
+}
+
+/// computes the points on the polys f_A for all parties in the sets A
+/// f_A is one at 0, and zero at the party indices not in set A
+fn compute_f_a_points(
+    num_parties: usize,
+    threshold: usize,
+) -> anyhow::Result<Vec<Vec<ResiduePoly<Z128>>>> {
+    if num_integer::binomial(num_parties, threshold) > PRSS_SIZE_MAX {
+        return Err(anyhow!("PRSS set size is too large!"));
+    }
+
+    // compute lifted and inverted gamma values once
+    let mut inv_coefs = (1..=num_parties)
+        .map(ResiduePoly::<Z128>::lift_and_invert)
+        .collect::<Result<Vec<_>, _>>()?;
+    inv_coefs.insert(0, ResiduePoly::<Z128>::ZERO);
+
+    // embed party IDs once
+    let parties: Vec<_> = (0..=num_parties)
+        .map(ResiduePoly::<Z128>::embed)
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // compute additive inverse of embedded party IDs
+    let neg_parties: Vec<_> = (0..=num_parties)
+        .map(|p| Poly::from_coefs(vec![ResiduePoly::<Z128>::ZERO - parties[p]]))
+        .collect::<Vec<_>>();
+
+    // the combinations of party IDs *not* in the sets A
+    let mut combinations = (1..=num_parties)
+        .combinations(threshold)
+        .collect::<Vec<_>>();
+    // reverse the list of party IDs, so the order matches with the combinations of parties *in* the sets A in create_sets()
+    combinations.reverse();
+
+    // polynomial x
+    let x: Poly<ResiduePoly<std::num::Wrapping<u128>>> =
+        Poly::from_coefs(vec![ResiduePoly::<Z128>::ZERO, ResiduePoly::<Z128>::ONE]);
+
+    let mut sets = Vec::new();
+
+    for c in &combinations {
+        // compute poly for this combination of parties
+        // poly will be of degree T, zero at the points p in c, and one at 0
+        let mut poly = Poly::from_coefs(vec![ResiduePoly::<Z128>::ONE]);
+        for p in c {
+            poly = poly
+                * (x.clone() + neg_parties[*p].clone())
+                * Poly::from_coefs(vec![inv_coefs[*p]]);
+        }
+
+        // check that poly is 1 at position 0
+        debug_assert_eq!(ResiduePoly::<Z128>::ONE, poly.eval(&parties[0]));
+
+        // evaluate the poly at the party indices gamma
+        let set: Vec<_> = (1..=num_parties).map(|p| poly.eval(&parties[p])).collect();
+
+        sets.push(set);
+    }
+    Ok(sets)
 }
 
 impl PRSSState {
@@ -252,8 +148,8 @@ impl PRSSState {
                     self.counter,
                     self.prss_setup.log_n_choose_t,
                 )?;
-                let f_a = ResiduePoly::<Z128>::from_slice(PRECOMP_POINTS_4_1[idx][party_id - 1]);
-                res = res + f_a * psi;
+                let f_a = self.prss_setup.f_a_points[idx][party_id - 1];
+                res += f_a * psi;
             }
         }
 
@@ -265,11 +161,14 @@ impl PRSSState {
 
 impl PRSSSetup {
     /// PRSS Init that is called once at the beginning of an epoch
-    pub fn epoch_init<R: RngCore>(num_parties: usize, threshold: usize, rng: &mut R) -> Self {
-        // we are currently limited to 4 parties and threshold 1 for the PRSS due to pre-computed points for these params
-        assert_eq!(num_parties, 4);
-        assert_eq!(threshold, 1);
-        let log_n_choose_t = num_integer::binomial(num_parties, threshold).ilog2();
+    pub fn epoch_init<R: RngCore>(
+        num_parties: usize,
+        threshold: usize,
+        rng: &mut R,
+    ) -> anyhow::Result<Self> {
+        let log_n_choose_t = num_integer::binomial(num_parties, threshold)
+            .next_power_of_two()
+            .ilog2();
 
         let sets = create_sets(num_parties, threshold)
             .into_iter()
@@ -283,10 +182,13 @@ impl PRSSSetup {
             })
             .collect();
 
-        PRSSSetup {
+        let points = compute_f_a_points(num_parties, threshold)?;
+
+        Ok(PRSSSetup {
             log_n_choose_t,
             sets,
-        }
+            f_a_points: points,
+        })
     }
 
     pub fn new_session(&self, sid: SessionId) -> PRSSState {
@@ -328,15 +230,15 @@ mod tests {
     #[case([23_u8; 16])]
     #[case(AesRng::generate_random_seed())]
     fn test_prss_no_network(#[case] seed: [u8; 16]) {
-        let num_parties = 4;
-        let threshold = 1;
-        let log_n_choose_t = 2;
+        let num_parties = 10;
+        let threshold = 3;
+        let n_choose_t: usize = num_integer::binomial(num_parties, threshold);
+        let log_n_choose_t = n_choose_t.next_power_of_two().ilog2();
 
-        // Session ID 0 used in encryption is the same as the first value of the AesRng, so we can compare the two in this test
         let sid = SessionId::from(23);
 
         let mut rng = AesRng::from_seed(seed);
-        let prss_setup = PRSSSetup::epoch_init(num_parties, threshold, &mut rng);
+        let prss_setup = PRSSSetup::epoch_init(num_parties, threshold, &mut rng).unwrap();
 
         let shares = (1..=num_parties)
             .map(|p| {
@@ -371,7 +273,7 @@ mod tests {
         // check that E is the sum of all r_A values
         let mut rng = AesRng::from_seed(seed);
         let mut plain_e = Z128::ZERO;
-        for _ in 0..num_parties {
+        for _ in 0..num_integer::binomial(num_parties, threshold) {
             let mut key = [0u8; 16];
             rng.fill_bytes(&mut key);
 
@@ -383,7 +285,7 @@ mod tests {
             let mut res = [0_u128; 1];
             psi_out.read_u128_into::<BigEndian>(&mut res).unwrap();
 
-            let u = res[0] >> (Z128::RING_SIZE as u32 - LOG_BD1_NOM + log_n_choose_t);
+            let u = res[0] >> (Z128::EL_BIT_LENGTH as u32 - LOG_BD1_NOM + log_n_choose_t);
 
             plain_e += u;
         }
@@ -424,15 +326,21 @@ mod tests {
             Identity("localhost:5001".to_string()),
             Identity("localhost:5002".to_string()),
             Identity("localhost:5003".to_string()),
+            Identity("localhost:5004".to_string()),
+            Identity("localhost:5005".to_string()),
+            Identity("localhost:5006".to_string()),
+            Identity("localhost:5007".to_string()),
+            Identity("localhost:5008".to_string()),
+            Identity("localhost:5009".to_string()),
         ];
-        let threshold = 1;
-        let num_parties = 4;
+        let threshold = 3;
+        let num_parties = 10;
         let mut rng = AesRng::seed_from_u64(423);
         let msg = 9;
         let plaintext_bits = 4;
         let ell = 10;
 
-        let prss_setup = Some(PRSSSetup::epoch_init(num_parties, threshold, &mut rng));
+        let prss_setup = Some(PRSSSetup::epoch_init(num_parties, threshold, &mut rng).unwrap());
 
         // generate keys
         let (key_shares, pk) =
@@ -470,7 +378,7 @@ mod tests {
         let sid = SessionId::from(23425);
 
         let mut rng = AesRng::seed_from_u64(54321);
-        let prss = PRSSSetup::epoch_init(num_parties, threshold, &mut rng);
+        let prss = PRSSSetup::epoch_init(num_parties, threshold, &mut rng).unwrap();
 
         let mut state = prss.new_session(sid);
 
@@ -486,5 +394,67 @@ mod tests {
 
         // prss state session ID must have stayed the same
         assert_eq!(state.session_id, sid.0);
+    }
+
+    #[rstest]
+    #[case(4, 1)]
+    #[case(10, 3)]
+    /// check that points computed on f_A are well-formed
+    fn test_prss_fa_poly(#[case] num_parties: usize, #[case] threshold: usize) {
+        let mut rng = AesRng::seed_from_u64(5);
+        let prss = PRSSSetup::epoch_init(num_parties, threshold, &mut rng).unwrap();
+
+        let mut combinations = (1..=num_parties)
+            .combinations(threshold)
+            .collect::<Vec<_>>();
+        combinations.reverse();
+
+        for (idx, c) in combinations.iter().enumerate() {
+            for p in 1..=num_parties {
+                let point = prss.f_a_points[idx][p - 1];
+                if c.contains(&p) {
+                    assert_eq!(point, ResiduePoly::<Z128>::ZERO)
+                } else {
+                    assert_ne!(point, ResiduePoly::<Z128>::ZERO)
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "PRSS set size is too large!")]
+    fn test_prss_too_large() {
+        let mut rng = AesRng::seed_from_u64(1);
+        let _prss = PRSSSetup::epoch_init(22, 7, &mut rng).unwrap();
+    }
+
+    #[test]
+    // check that the combinations of party ID in A and not in A add up to all party IDs and that the indices match when reversing one list
+    fn test_matching_combinations() {
+        let num_parties = 10;
+        let threshold = 3;
+
+        // the combinations of party IDs *in* the sets A
+        let sets = create_sets(num_parties, threshold);
+
+        // the combinations of party IDs *not* in the sets A
+        let mut combinations = (1..=num_parties)
+            .combinations(threshold)
+            .collect::<Vec<_>>();
+        // reverse the list of party IDs, so the order matches with the combinations of parties *in* the sets A in create_sets()
+        combinations.reverse();
+
+        // the list of all party IDs 1..=N in order
+        let all_parties = (1..=num_parties).collect_vec();
+
+        for (idx, c) in combinations.iter().enumerate() {
+            // merge both sets of party IDs
+            let mut merge = [sets[idx].clone(), c.clone()].concat();
+
+            // sort the list, so we can check for equality with all_parites
+            merge.sort();
+
+            assert_eq!(merge, all_parties);
+        }
     }
 }

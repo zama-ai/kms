@@ -1,8 +1,10 @@
 use crate::gf256::GF256;
+use crate::poly::Ring;
 use crate::{One, Sample, ZConsts, Zero, Z128, Z64};
 use anyhow::anyhow;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use std::ops::MulAssign;
 use std::{
     fmt::Display,
     iter::Sum,
@@ -19,6 +21,14 @@ pub const F_DEG: usize = 8; // degree of irreducible polynomial F = x8 + x4 + x3
 #[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq, Debug)]
 pub struct ResiduePoly<Z> {
     pub coefs: [Z; F_DEG], // TODO(Daniel) can this be a slice instead of an array?
+}
+
+impl<Z> Ring for ResiduePoly<Z>
+where
+    Z: Ring + ZConsts,
+    ResiduePoly<Z>: ReductionTable<Z>,
+{
+    const EL_BIT_LENGTH: usize = Z::EL_BIT_LENGTH;
 }
 
 impl<Z> ResiduePoly<Z> {
@@ -123,6 +133,26 @@ impl<Z: One + Zero + Copy> One for ResiduePoly<Z> {
     };
 }
 
+impl<Z: One + Zero + ZConsts + Copy> ZConsts for ResiduePoly<Z> {
+    const TWO: Self = {
+        let mut coefs = [Z::ZERO; F_DEG];
+        coefs[0] = Z::TWO;
+        ResiduePoly { coefs }
+    };
+
+    const THREE: Self = {
+        let mut coefs = [Z::ZERO; F_DEG];
+        coefs[0] = Z::THREE;
+        ResiduePoly { coefs }
+    };
+
+    const MAX: Self = {
+        let mut coefs = [Z::ZERO; F_DEG];
+        coefs[0] = Z::MAX;
+        ResiduePoly { coefs }
+    };
+}
+
 impl<Z: Zero + Copy + AddAssign> Sum<ResiduePoly<Z>> for ResiduePoly<Z> {
     fn sum<I: Iterator<Item = ResiduePoly<Z>>>(iter: I) -> Self {
         let mut coefs = [Z::ZERO; F_DEG];
@@ -150,6 +180,17 @@ where
     }
 }
 
+impl<Z> AddAssign<ResiduePoly<Z>> for ResiduePoly<Z>
+where
+    Z: AddAssign + Copy,
+{
+    fn add_assign(&mut self, other: ResiduePoly<Z>) {
+        for i in 0..F_DEG {
+            self.coefs[i] += other.coefs[i];
+        }
+    }
+}
+
 impl<Z> Sub<ResiduePoly<Z>> for ResiduePoly<Z>
 where
     Z: Copy,
@@ -161,6 +202,17 @@ where
             self.coefs[i] -= other.coefs[i];
         }
         ResiduePoly { coefs: self.coefs }
+    }
+}
+
+impl<Z> SubAssign<ResiduePoly<Z>> for ResiduePoly<Z>
+where
+    Z: SubAssign + Copy,
+{
+    fn sub_assign(&mut self, other: ResiduePoly<Z>) {
+        for i in 0..F_DEG {
+            self.coefs[i] -= other.coefs[i];
+        }
     }
 }
 
@@ -322,6 +374,32 @@ where
             }
         }
         ResiduePoly::reduce_with_tables(extended_coefs)
+    }
+}
+
+impl<Z> MulAssign<ResiduePoly<Z>> for ResiduePoly<Z>
+where
+    Z: Zero,
+    Z: Mul<Z, Output = Z>,
+    Z: AddAssign<Z>,
+
+    // TODO(Morten) clean up below; move into trait?
+    ResiduePoly<Z>: ReductionTable<Z>,
+    Z: ZConsts + One + Zero,
+    Z: Copy,
+    Z: Mul<Z, Output = Z>,
+    Z: AddAssign<Z>,
+    for<'l> [Z; 8]: TryFrom<&'l [Z]>,
+    for<'l> <[Z; 8] as TryFrom<&'l [Z]>>::Error: std::fmt::Debug,
+{
+    fn mul_assign(&mut self, other: ResiduePoly<Z>) {
+        let mut extended_coefs = [Z::ZERO; 2 * (F_DEG - 1) + 1];
+        for i in 0..F_DEG {
+            for j in 0..F_DEG {
+                extended_coefs[i + j] += self.coefs[i] * other.coefs[j];
+            }
+        }
+        self.coefs = ResiduePoly::reduce_with_tables(extended_coefs).coefs;
     }
 }
 
@@ -521,10 +599,30 @@ macro_rules! impl_share_type {
                 GF256::from(x)
             }
 
+            /// invert and lift an Integer to the large Ring
+            pub fn lift_and_invert(p: usize) -> anyhow::Result<ResiduePoly<$z>> {
+                if p == 0 {
+                    return Err(anyhow!("Party ID must be at least 1"));
+                }
+
+                let gamma = ResiduePoly::<$z>::ZERO - ResiduePoly::embed(p)?;
+                let alpha_k = gamma.bit_compose(0);
+                let ainv = GF256::from(1) / alpha_k;
+                let mut x0 = ResiduePoly::embed(ainv.0 as usize)?;
+
+                // compute Newton-Raphson iterations
+                for _ in 0..<$z>::EL_BIT_LENGTH.ilog2() {
+                    x0 *= ResiduePoly::TWO - gamma * x0;
+                }
+
+                debug_assert_eq!(x0 * gamma, ResiduePoly::ONE);
+
+                Ok(x0)
+            }
+
             pub fn multiple_pow2(&self, exp: usize) -> bool {
-                use crate::Ring;
-                assert!(exp <= <$z>::RING_SIZE);
-                if exp == <$z>::RING_SIZE {
+                assert!(exp <= <$z>::EL_BIT_LENGTH);
+                if exp == <$z>::EL_BIT_LENGTH {
                     return self.is_zero();
                 }
                 let bit_checks: Vec<_> = self
@@ -781,6 +879,18 @@ mod tests {
                     ],
                 };
                 assert_eq!(&p1 * &p2, p3);
+
+                // check assign operations
+                let mut p4 = ResiduePoly::<$z>::ONE;
+                p4 *= p1;
+                assert_eq!(&p1, &p4);
+
+                let mut p5 = ResiduePoly::<$z>::ONE;
+                p5 += p5;
+                assert_eq!(p5, ResiduePoly::TWO);
+
+                p5 -= p5;
+                assert_eq!(p5, ResiduePoly::ZERO);
             }
 
             }

@@ -1,3 +1,4 @@
+use crate::poly::Ring;
 use rand::RngCore;
 use std::num::Wrapping;
 
@@ -29,10 +30,6 @@ pub trait ZConsts {
     const MAX: Self;
 }
 
-pub trait Ring {
-    const RING_SIZE: usize;
-}
-
 /// Sample random element(s)
 pub trait Sample {
     fn sample<R: RngCore>(rng: &mut R) -> Self;
@@ -41,21 +38,17 @@ pub trait Sample {
 macro_rules! ring_impl {
     ($z:ty, $u:ty, $l:expr) => {
         impl Zero for $z {
-            const ZERO: $z = Wrapping(0);
+            const ZERO: Self = Wrapping(0);
         }
 
         impl One for $z {
-            const ONE: $z = Wrapping(1);
+            const ONE: Self = Wrapping(1);
         }
 
         impl ZConsts for $z {
-            const TWO: $z = Wrapping(2);
-            const THREE: $z = Wrapping(3);
-            const MAX: $z = Wrapping(<$u>::MAX);
-        }
-
-        impl Ring for $z {
-            const RING_SIZE: usize = $l;
+            const TWO: Self = Wrapping(2);
+            const THREE: Self = Wrapping(3);
+            const MAX: Self = Wrapping(<$u>::MAX);
         }
 
         impl Sample for $z {
@@ -63,6 +56,10 @@ macro_rules! ring_impl {
                 use rand::Rng;
                 rng.gen::<$z>()
             }
+        }
+
+        impl Ring for $z {
+            const EL_BIT_LENGTH: usize = $l;
         }
     };
 }

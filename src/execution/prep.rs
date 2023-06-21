@@ -125,7 +125,7 @@ mod tests {
             .map(|party_id| {
                 //each party has their own prss state inside their session.
                 let mut rng = AesRng::seed_from_u64(444);
-                let prss_setup = PRSSSetup::epoch_init(num_parties, threshold, &mut rng);
+                let prss_setup = PRSSSetup::epoch_init(num_parties, threshold, &mut rng).unwrap();
                 let mut state = prss_setup.new_session(sid);
                 let (sks, pk) = keygen_single_party_share(
                     &mut rng,

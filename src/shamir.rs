@@ -1,5 +1,5 @@
 use crate::gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing};
-use crate::poly::Poly;
+use crate::poly::{Poly, Ring};
 use crate::residue_poly::ResiduePoly;
 use crate::{Zero, Z128, Z64};
 use rand::RngCore;
@@ -186,8 +186,7 @@ macro_rules! impl_share_type {
                 max_error_count: usize,
             ) -> anyhow::Result<Poly<ResiduePoly<$z>>> {
                 // threshold is the degree of the shamir polynomial
-
-                let ring_size: usize = <$z as crate::Ring>::RING_SIZE;
+                let ring_size: usize = <$z>::EL_BIT_LENGTH;
 
                 let mut y: Vec<_> = self.shares.iter().map(|x| x.1).collect();
                 let parties: Vec<_> = self.shares.iter().map(|x| x.0).collect();
@@ -221,7 +220,7 @@ macro_rules! impl_share_type {
 
                     // remove LSBs computed from error correction in GF(256)
                     for (j, item) in y.iter_mut().enumerate() {
-                        *item = *item - ring_eval[j];
+                        *item -= ring_eval[j];
                     }
 
                     // check that LSBs were removed correctly
