@@ -709,6 +709,32 @@ mod tests {
             }
 
             #[test]
+            fn [<test_bit_compose_ $z:lower>]() {
+                let mut input: ResiduePoly<$z> = ResiduePoly::ZERO;
+                // Set the constant term to 3
+                input.coefs[0] = Wrapping(3);
+                let mut res = ResiduePoly::<$z>::bit_compose(&input, 0);
+                // 3 mod 2 = 1, since it is the constant term, it will be the least significant bit
+                // i.e. 1 = 0b00000001
+                assert_eq!(1, res.0);
+
+                input = ResiduePoly::ZERO;
+                // Set degree 1 term to 100
+                input.coefs[1] = Wrapping(100);
+                res = ResiduePoly::<$z>::bit_compose(&input, 0);
+                // 100 mod 2 = 0
+                assert_eq!(0, res.0);
+
+                input = ResiduePoly::ZERO;
+                // Set degree 2 term to 1000000009
+                input.coefs[2] = Wrapping(1000000009);
+                res = ResiduePoly::<$z>::bit_compose(&input, 0);
+                // 1000000009 mod 2 = 1, since it is the degree 2 term, it will be the third bit that gets set to 1, and hence the result is 2^2=2^(3-1) because of 0-indexing
+                // i.e. x^2 = 0b00000100
+                assert_eq!(4, res.0);
+            }
+
+            #[test]
             fn [<test_multiple_pow2_ $z:lower>]() {
                 let mut s: ResiduePoly<$z> = ResiduePoly {
                     coefs: [
@@ -898,4 +924,39 @@ mod tests {
     }
     tests_poly_shamir!(Z64, u64);
     tests_poly_shamir!(Z128, u128);
+
+    #[test]
+    fn embed_sunshine() {
+        let mut input: usize;
+        let mut reference = ResiduePoly::ZERO;
+        let mut res: ResiduePoly<Z128>;
+
+        // Set the polynomial to 1+x, i.e. 0b00000011 = 3
+        input = 3;
+        reference.coefs[0] = Wrapping(1);
+        reference.coefs[1] = Wrapping(1);
+        res = ResiduePoly::embed(input).unwrap();
+        assert_eq!(reference, res);
+
+        // Set the polynomial to x^2+x^5+x^6, i.e. 0b01100100 = 100
+        input = 100;
+        reference = ResiduePoly::ZERO;
+        reference.coefs[0] = Wrapping(0);
+        reference.coefs[1] = Wrapping(0);
+        reference.coefs[2] = Wrapping(1);
+        reference.coefs[3] = Wrapping(0);
+        reference.coefs[4] = Wrapping(0);
+        reference.coefs[5] = Wrapping(1);
+        reference.coefs[6] = Wrapping(1);
+        reference.coefs[7] = Wrapping(0);
+        res = ResiduePoly::embed(input).unwrap();
+        assert_eq!(reference, res);
+
+        // Set the polynomial to x^7, i.e. 0b10000000 = 128
+        input = 128;
+        reference = ResiduePoly::ZERO;
+        reference.coefs[7] = Wrapping(1);
+        res = ResiduePoly::embed(input).unwrap();
+        assert_eq!(reference, res);
+    }
 }
