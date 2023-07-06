@@ -28,7 +28,7 @@ jobs:
       run: cargo clippy --all-targets -- -D warnings --no-deps
 
     - name: Build tests.
-      run: cargo test --no-run
+      run: cargo test --no-run --verbose --features tfhe/x86_64
 
     - name: Run tests.
-      run: cargo test
+      run: cargo test --verbose --features tfhe/x86_64
