@@ -108,6 +108,11 @@ impl Networking for GrpcNetworking {
         receiver: &Identity,
         _session_id: &SessionId,
     ) -> anyhow::Result<(), anyhow::Error> {
+        let ctr = *self
+            .send_counter
+            .entry(receiver.clone())
+            .or_insert_with(|| 1)
+            .value();
         retry(
             ExponentialBackoff {
                 max_elapsed_time: *constants::MAX_ELAPSED_TIME,
@@ -116,12 +121,6 @@ impl Networking for GrpcNetworking {
                 ..Default::default()
             },
             || async {
-                let ctr = *self
-                    .send_counter
-                    .entry(receiver.clone())
-                    .or_insert_with(|| 1)
-                    .value();
-
                 let tagged_value = TaggedValue {
                     value: value.clone(),
                     sender: self.owner.clone(),
