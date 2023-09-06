@@ -51,7 +51,7 @@ mod tests {
         let f = ShamirZ2Poly {
             coefs: vec![GF256::from(25), GF256::from(1), GF256::from(1)],
         };
-        let party_ids = vec![1_u8, 2, 3, 4, 5, 6];
+        let party_ids = [1_u8, 2, 3, 4, 5, 6];
 
         let mut shares: Vec<_> = party_ids
             .iter()
