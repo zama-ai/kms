@@ -69,9 +69,11 @@ fn parse_operator(line: &[u8]) -> Res<&[u8], Operator> {
         value(Operator::MulM, tag("mulm")),
         value(Operator::Open, tag("asm_open")),
         value(Operator::PrintRegPlain, tag("print_reg_plain")),
-        value(Operator::PrssPrep, tag("prss_prep")),
-        value(Operator::SubS, tag("subs")),
-        value(Operator::ShrCI, tag("shrci")),
+        alt((
+            value(Operator::PrssPrep, tag("prss_prep")),
+            value(Operator::SubS, tag("subs")),
+            value(Operator::ShrCI, tag("shrci")),
+        )),
     ))(line)
 }
 

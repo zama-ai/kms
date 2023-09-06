@@ -146,6 +146,7 @@ impl Choreography for GrpcChoreography {
                     Arc::clone(&networking),
                     threshold,
                     setup_info.prss_setup,
+                    own_identity.clone(),
                 );
 
                 let execution_start_timer = Instant::now();
@@ -265,6 +266,7 @@ impl Choreography for GrpcChoreography {
                     Arc::clone(&networking),
                     threshold,
                     setup_info.prss_setup,
+                    own_identity.clone(),
                 );
 
                 let execution_start_timer = Instant::now();
@@ -411,6 +413,7 @@ impl Choreography for GrpcChoreography {
                     Arc::clone(&networking),
                     threshold,
                     None,
+                    own_identity.clone(),
                 );
 
                 let setup_store = Arc::clone(&self.setup_store);

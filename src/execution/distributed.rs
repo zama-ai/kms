@@ -45,6 +45,7 @@ pub struct DistributedSession {
     pub networking: NetworkingImpl,
     pub threshold: u8,
     prss_state: Option<PRSSState>,
+    pub own_identity: Identity,
 }
 
 impl DistributedSession {
@@ -54,12 +55,14 @@ impl DistributedSession {
         networking: NetworkingImpl,
         threshold: u8,
         prss_setup: Option<PRSSSetup>,
+        own_identity: Identity,
     ) -> Self {
         DistributedSession {
             session_id,
             role_assignments,
             networking,
             threshold,
+            own_identity,
             prss_state: prss_setup.map(|x| x.new_session(session_id)),
         }
     }
@@ -93,10 +96,12 @@ impl DistributedSession {
 }
 
 pub struct DistributedTestRuntime {
-    identities: Vec<Identity>,
+    pub identities: Vec<Identity>,
     threshold: u8,
     prss_setup: Option<PRSSSetup>,
     keyshares: Option<Vec<SecretKeyShare>>,
+    pub user_nets: Vec<Arc<LocalNetworking>>,
+    pub role_assignments: RoleAssignment,
 }
 
 impl DistributedTestRuntime {
@@ -106,12 +111,51 @@ impl DistributedTestRuntime {
         prss_setup: Option<PRSSSetup>,
         keyshares: Option<Vec<SecretKeyShare>>,
     ) -> Self {
+        let role_assignments: RoleAssignment = identities
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(role_id, identity)| (Role(role_id as u64 + 1), identity))
+            .collect();
+
+        let net_producer = LocalNetworkingProducer::from_ids(&identities);
+        let user_nets: Vec<Arc<LocalNetworking>> = identities
+            .iter()
+            .map(|user_identity| {
+                let net = net_producer.user_net(user_identity.clone());
+                Arc::new(net)
+            })
+            .collect();
+
         DistributedTestRuntime {
             identities,
             threshold,
             prss_setup,
             keyshares,
+            user_nets,
+            role_assignments,
         }
+    }
+
+    pub fn session_for_player(
+        &self,
+        session_id: SessionId,
+        player_id: usize,
+    ) -> DistributedSession {
+        let role_assignments = self.role_assignments.clone();
+        let net = Arc::clone(&self.user_nets[player_id]);
+        let prss_setup = None;
+        let own_role = Role(player_id as u64 + 1);
+        let identity = self.role_assignments[&own_role].clone();
+
+        DistributedSession::new(
+            session_id,
+            role_assignments,
+            net,
+            self.threshold,
+            prss_setup,
+            identity,
+        )
     }
 
     /// test the circuit evaluation
@@ -126,28 +170,10 @@ impl DistributedTestRuntime {
         let rt = tokio::runtime::Runtime::new()?;
         let _guard = rt.enter();
 
-        let role_assignments: RoleAssignment = self
-            .identities
-            .clone()
-            .into_iter()
-            .enumerate()
-            .map(|(role_id, identity)| (Role(role_id as u64 + 1), identity))
-            .collect();
-
-        let net_producer = LocalNetworkingProducer::from_ids(&self.identities);
-        let user_nets: Vec<Arc<LocalNetworking>> = self
-            .identities
-            .iter()
-            .map(|user_identity| {
-                let net = net_producer.user_net(user_identity.clone());
-                Arc::new(net)
-            })
-            .collect();
-
         let mut set = JoinSet::new();
         for (index_id, identity) in self.identities.clone().into_iter().enumerate() {
-            let role_assignments = role_assignments.clone();
-            let net = Arc::clone(&user_nets[index_id]);
+            let role_assignments = self.role_assignments.clone();
+            let net = Arc::clone(&self.user_nets[index_id]);
             let circuit = circuit.clone();
             let threshold = self.threshold;
             let prss_setup = self.prss_setup.clone();
@@ -164,6 +190,7 @@ impl DistributedTestRuntime {
                     net,
                     threshold,
                     prss_setup,
+                    identity.clone(),
                 );
                 let out = run_circuit_operations_debug(
                     &mut session,
@@ -182,8 +209,11 @@ impl DistributedTestRuntime {
         let results = rt.block_on(async {
             let mut results = HashMap::new();
             while let Some(v) = set.join_next().await {
-                let (identity, val) = v.unwrap();
-                results.insert(identity, val);
+                if let Err(e) = v {
+                    tracing::debug!("Got error: {:?}", e);
+                } else if let Ok((identity, val)) = v {
+                    results.insert(identity, val);
+                }
             }
             results
         });
@@ -202,28 +232,10 @@ impl DistributedTestRuntime {
         let rt = tokio::runtime::Runtime::new()?;
         let _guard = rt.enter();
 
-        let role_assignments: RoleAssignment = self
-            .identities
-            .clone()
-            .into_iter()
-            .enumerate()
-            .map(|(role_id, identity)| (Role(role_id as u64 + 1), identity))
-            .collect();
-
-        let net_producer = LocalNetworkingProducer::from_ids(&self.identities);
-        let user_nets: Vec<Arc<LocalNetworking>> = self
-            .identities
-            .iter()
-            .map(|user_identity| {
-                let net = net_producer.user_net(user_identity.clone());
-                Arc::new(net)
-            })
-            .collect();
-
         let mut set = JoinSet::new();
         for (index_id, identity) in self.identities.clone().into_iter().enumerate() {
-            let role_assignments = role_assignments.clone();
-            let net = Arc::clone(&user_nets[index_id]);
+            let role_assignments = self.role_assignments.clone();
+            let net = Arc::clone(&self.user_nets[index_id]);
             let threshold = self.threshold;
             let prss_setup = self.prss_setup.clone();
 
@@ -244,6 +256,7 @@ impl DistributedTestRuntime {
                     net,
                     threshold,
                     prss_setup,
+                    identity.clone(),
                 );
                 let out = run_decryption(
                     &mut session,
@@ -277,8 +290,8 @@ pub async fn robust_open_to(
     role: &Role,
     output_party_id: usize,
 ) -> anyhow::Result<Option<Value>> {
+    session.networking.increase_round_counter().await?;
     if role.party_id() == output_party_id {
-        session.networking.increase_round_counter().await?;
         let mut collected_sharings = Vec::new();
         collected_sharings.push(share.clone());
 
@@ -368,6 +381,7 @@ pub async fn robust_input<R: RngCore>(
     role: &Role,
     input_party_id: usize,
 ) -> anyhow::Result<Value> {
+    session.networking.increase_round_counter().await?;
     if role.party_id() == input_party_id {
         let threshold = session.threshold;
         let si = {
@@ -440,7 +454,6 @@ pub async fn robust_input<R: RngCore>(
         while (set.join_next().await).is_some() {}
         Ok(shamir_sharings[0].clone())
     } else {
-        session.networking.increase_round_counter().await?;
         let sender = session
             .role_assignments
             .get(&Role(input_party_id as u64))

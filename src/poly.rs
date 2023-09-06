@@ -3,6 +3,7 @@ use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use rand::RngCore;
 
 use crate::{One, Sample, Zero};
+use anyhow::anyhow;
 
 pub trait Ring
 where
@@ -375,7 +376,7 @@ pub fn gao_decoding<F: Field>(
     values: &Vec<F>,
     k: usize,
     max_error_count: usize,
-) -> Option<Poly<F>> {
+) -> anyhow::Result<Poly<F>> {
     // in the literature we find (n, k, d) codes
     // this means that n is the number of points xi for which we have some values yi
     // yi ~= G(xi))
@@ -406,9 +407,9 @@ pub fn gao_decoding<F: Field>(
 
     let (h, rem) = q1 / &q0;
     if rem.is_zero() && h.deg() < k && q0.deg() <= max_error_count {
-        Some(h)
+        Ok(h)
     } else {
-        None
+        Err(anyhow!("Gao decoding checks failed"))
     }
 }
 

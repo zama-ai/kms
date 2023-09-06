@@ -64,7 +64,6 @@ impl GrpcNetworkingManager {
             channels: Arc::clone(&self.channels),
             message_queues: Arc::clone(&self.message_queues),
             network_round: Arc::new(Mutex::new(0)),
-            send_counter: DashMap::new(),
             owner: self.owner.clone(),
         })
     }
@@ -75,7 +74,6 @@ pub struct GrpcNetworking {
     channels: Arc<Channels>,
     message_queues: Arc<MessageQueueStores>,
     network_round: Arc<Mutex<usize>>,
-    send_counter: DashMap<Identity, usize>,
     owner: Identity,
 }
 
@@ -108,11 +106,11 @@ impl Networking for GrpcNetworking {
         receiver: &Identity,
         _session_id: &SessionId,
     ) -> anyhow::Result<(), anyhow::Error> {
-        let ctr = *self
-            .send_counter
-            .entry(receiver.clone())
-            .or_insert_with(|| 1)
-            .value();
+        let ctr: usize = *self
+            .network_round
+            .lock()
+            .map_err(|e| anyhow!(format!("Locking error: {:?}", e.to_string())))?;
+
         retry(
             ExponentialBackoff {
                 max_elapsed_time: *constants::MAX_ELAPSED_TIME,
@@ -125,7 +123,7 @@ impl Networking for GrpcNetworking {
                     value: value.clone(),
                     sender: self.owner.clone(),
                     session_id: self.session_id,
-                    net_send_counter: ctr,
+                    round_counter: ctr,
                 };
 
                 let bytes = bincode::serialize(&tagged_value)
@@ -146,7 +144,6 @@ impl Networking for GrpcNetworking {
                     .await
                     .map_err(|e| anyhow!("networking error: {:?}", e.to_string()))?;
 
-                self.send_counter.insert(receiver.clone(), ctr + 1);
                 Ok(())
             },
         )
@@ -273,7 +270,7 @@ impl Gnetworking for NetworkingImpl {
             let _ = tx
                 .send(NetworkRoundValue {
                     value: tagged_value.value,
-                    round_counter: tagged_value.net_send_counter,
+                    round_counter: tagged_value.round_counter,
                 })
                 .await;
 
@@ -323,5 +320,5 @@ struct TaggedValue {
     session_id: SessionId,
     sender: Identity,
     value: NetworkValue,
-    net_send_counter: usize,
+    round_counter: usize,
 }

@@ -2,7 +2,6 @@ use crate::{
     poly::{gao_decoding, Field, Poly, Ring},
     One, Zero,
 };
-use anyhow::anyhow;
 use g2p::{g2p, GaloisField};
 
 g2p!(
@@ -40,13 +39,7 @@ pub fn error_correction(
     let xs: Vec<GF256> = shares.iter().map(|s| GF256::from(s.party_id)).collect();
     let ys: Vec<GF256> = shares.iter().map(|s| s.share).collect();
 
-    if let Some(polynomial) = gao_decoding(&xs, &ys, threshold + 1, max_error_count) {
-        Ok(polynomial)
-    } else {
-        Err(anyhow!(format!(
-            "Cannot recover polynomial in GF(256) with threshold {threshold} and max_error_count: {max_error_count}"
-        )))
-    }
+    gao_decoding(&xs, &ys, threshold + 1, max_error_count)
 }
 
 #[cfg(test)]

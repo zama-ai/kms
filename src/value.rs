@@ -1,12 +1,14 @@
+use crate::execution::party::Role;
 use crate::lwe::PublicKey;
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
 use crate::{Z128, Z64};
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// a collection of shares
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
 pub enum Value {
     IndexedShare64((usize, ResiduePoly<Z64>)),
     IndexedShare128((usize, ResiduePoly<Z128>)),
@@ -20,6 +22,9 @@ pub enum Value {
 pub enum NetworkValue {
     PubKey(PublicKey),
     RingValue(Value),
+    Send(Value),
+    EchoBatch(HashMap<Role, Value>),
+    VoteBatch(HashMap<Role, Value>),
 }
 
 pub fn err_reconstruct(

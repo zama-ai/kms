@@ -14,4 +14,7 @@ lazy_static! {
 
     /// The default maximum elapsed time before giving up on retrying
     pub(crate) static ref MAX_ELAPSED_TIME: Option<Duration> = Some(Duration::from_secs(5 * 60));
+
+    /// maximum number of seconds that a party waits for a broadcasted message
+    pub(crate) static ref BCAST_TIMEOUT: Duration = Duration::from_secs(5);
 }

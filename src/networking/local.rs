@@ -98,21 +98,25 @@ impl Networking for LocalNetworking {
             .value()
             .clone();
 
-        let ctr = *self
-            .send_counter
-            .entry(receiver.clone())
-            .or_insert_with(|| 1)
-            .value();
-
-        let tagged_value = LocalTaggedValue {
-            send_counter: ctr,
-            value: val,
+        let net_round = {
+            match self.network_round.lock() {
+                Ok(net_round) => *net_round,
+                _ => panic!(),
+            }
         };
 
-        self.send_counter.insert(receiver.clone(), ctr + 1);
+        let tagged_value = LocalTaggedValue {
+            send_counter: net_round,
+            value: val,
+        };
+        tracing::debug!(
+            "async sender: owner: {:?} receiver: {:?}, value: {:?}",
+            self.owner,
+            receiver,
+            tagged_value
+        );
 
-        let _ = tx.send(tagged_value).await;
-        Ok(())
+        tx.send(tagged_value).await.map_err(|e| e.into())
     }
 
     async fn receive(
@@ -120,11 +124,6 @@ impl Networking for LocalNetworking {
         sender: &Identity,
         _session_id: &SessionId,
     ) -> anyhow::Result<NetworkValue> {
-        tracing::debug!(
-            "Async receiving; owner: {0}, receive_from: {sender}",
-            self.owner
-        );
-
         let (_, rx) = self
             .pairwise_channels
             .get(&(sender.clone(), self.owner.clone()))
@@ -142,10 +141,11 @@ impl Networking for LocalNetworking {
             .map_err(|e| anyhow!(format!("Locking error: {:?}", e.to_string())))?;
 
         tracing::debug!(
-            "async receiving: owner: {:?}, network_round = {:?}, tagged value ctr = {:?}",
+            "async receiving: owner: {:?} sender: {:?}, network_round = {:?}, tagged value ctr = {:?}",
             self.owner,
+            sender,
             network_round,
-            tagged_value.send_counter
+            tagged_value
         );
 
         while tagged_value.send_counter < network_round {
@@ -159,7 +159,11 @@ impl Networking for LocalNetworking {
     async fn increase_round_counter(&self) -> anyhow::Result<()> {
         if let Ok(mut net_round) = self.network_round.lock() {
             *net_round += 1;
-            tracing::debug!("changed network round to: {:?}", *net_round);
+            tracing::debug!(
+                "changed network round to: {:?} on party :{:?}",
+                *net_round,
+                self.owner
+            );
         } else {
             return Err(anyhow!("Couldn't lock mutex"));
         }
