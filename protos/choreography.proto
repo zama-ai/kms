@@ -45,10 +45,9 @@ message KeygenRequest {
     bytes epoch_id = 1;
     bytes role_assignment = 2;
     bytes threshold = 3;
-    uint32 big_ell = 4;
-    uint32 plaintext_bits = 5;
-    uint64 seed = 6;
-    bytes setup_mode = 7;
+    bytes params = 4;
+    uint64 seed = 5;
+    bytes setup_mode = 6;
 }
 
 message KeygenResponse {}

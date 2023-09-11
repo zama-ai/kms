@@ -1,4 +1,5 @@
 use crate::choreography::grpc::ComputationOutputs;
+use crate::lwe::ThresholdLWEParameters;
 use crate::{
     choreography::grpc::gen::{
         choreography_client::ChoreographyClient, DecryptionRequest, KeygenRequest,
@@ -11,7 +12,7 @@ use crate::{
         distributed::{DecryptionMode, SetupMode},
         party::{Identity, Role},
     },
-    lwe::{Ciphertext, PublicKey},
+    lwe::{Ciphertext64, PublicKey},
     value::Value,
 };
 use std::{collections::HashMap, time::Duration};
@@ -57,8 +58,8 @@ impl ChoreoRuntime {
         &self,
         computation: &Circuit,
         threshold: u8,
-        ct: &Ciphertext,
-    ) -> Result<SessionId, Box<dyn std::error::Error>> {
+        ct: &Ciphertext64,
+    ) -> anyhow::Result<SessionId> {
         let computation = bincode::serialize(computation)?;
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let threshold = bincode::serialize(&threshold)?;
@@ -78,15 +79,15 @@ impl ChoreoRuntime {
             let _response = client.launch_computation_debug(request).await?;
         }
 
-        Ok(SessionId::new(ct))
+        SessionId::new(ct)
     }
 
     pub async fn initiate_threshold_decryption(
         &self,
         mode: &DecryptionMode,
         threshold: u8,
-        ct: &Ciphertext,
-    ) -> Result<SessionId, Box<dyn std::error::Error>> {
+        ct: &Ciphertext64,
+    ) -> anyhow::Result<SessionId> {
         let mode_s = bincode::serialize(mode)?;
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let threshold = bincode::serialize(&threshold)?;
@@ -110,7 +111,7 @@ impl ChoreoRuntime {
             let _response = client.threshold_decrypt(request).await?;
         }
 
-        Ok(SessionId::new(ct))
+        SessionId::new(ct)
     }
 
     pub async fn initiate_retrieve_results(
@@ -165,14 +166,14 @@ impl ChoreoRuntime {
         &self,
         epoch_id: &SessionId,
         threshold: u8,
-        big_ell: u32,
-        plaintext_bits: u8,
+        params: ThresholdLWEParameters,
         seed: u64,
         setup_mode: SetupMode,
     ) -> Result<PublicKey, Box<dyn std::error::Error>> {
         let epoch_id = bincode::serialize(epoch_id)?;
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let threshold = bincode::serialize(&threshold)?;
+        let params = bincode::serialize(&params)?;
         let setup_mode = bincode::serialize(&setup_mode)?;
 
         for channel in self.channels.values() {
@@ -182,10 +183,9 @@ impl ChoreoRuntime {
                 epoch_id: epoch_id.clone(),
                 role_assignment: role_assignment.clone(),
                 threshold: threshold.clone(),
-                big_ell,
-                setup_mode: setup_mode.clone(),
-                plaintext_bits: plaintext_bits.into(),
+                params: params.clone(),
                 seed, // use an externally supplied seed until we have implemented, e.g. AgreeRandom
+                setup_mode: setup_mode.clone(),
             };
 
             tracing::debug!("launching keygen to {:?}", channel);

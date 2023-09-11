@@ -7,12 +7,14 @@ pub mod choreography;
 pub mod circuit;
 pub mod computation;
 pub mod execution;
+pub mod file_handling;
 pub mod gf256;
 pub mod lwe;
 pub mod networking;
 pub mod poly;
 pub mod residue_poly;
 pub mod shamir;
+pub mod tests;
 pub mod value;
 
 pub use tokio;

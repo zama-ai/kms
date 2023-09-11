@@ -20,14 +20,20 @@ use crate::execution::distributed::{
 use crate::execution::distributed::{run_decryption, DistributedSession};
 use crate::execution::party::Identity;
 use crate::execution::party::Role;
+use crate::execution::prep::to_large_ciphertext_block;
 use crate::execution::prss::PRSSSetup;
-use crate::lwe::{Ciphertext, PublicKey, SecretKeyShare};
+use crate::execution::random::get_rng;
+use crate::file_handling::read_as_json;
+use crate::lwe::{
+    gen_key_set, Ciphertext64, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters,
+};
 use crate::value::Value;
 use aes_prng::AesRng;
 use async_cell::sync::AsyncCell;
 use async_trait::async_trait;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -54,7 +60,7 @@ pub struct GrpcChoreography {
     result_stores: Arc<ResultStores>,
     networking_strategy: NetworkingStrategy,
     setup_store: Arc<SetupStore>,
-    pubkey_store: Arc<Mutex<PublicKey>>,
+    pubkey_store: Arc<Mutex<PubConKeyPair>>,
     setup_epoch_id: AsyncCell<SessionId>,
 }
 
@@ -63,13 +69,18 @@ impl GrpcChoreography {
         own_identity: Identity,
         networking_strategy: NetworkingStrategy,
     ) -> GrpcChoreography {
+        let default_params: ThresholdLWEParameters =
+            read_as_json("parameters/default_params.json".to_string()).unwrap();
         GrpcChoreography {
             own_identity,
             result_stores: Arc::new(ResultStores::default()),
             networking_strategy,
             setup_store: Arc::new(SetupStore::default()),
             setup_epoch_id: AsyncCell::default(),
-            pubkey_store: Arc::new(Mutex::new(PublicKey::default())),
+            pubkey_store: Arc::new(Mutex::new(PubConKeyPair::new(gen_key_set(
+                default_params,
+                &mut get_rng(),
+            )))),
         }
     }
 
@@ -86,8 +97,8 @@ impl Choreography for GrpcChoreography {
     ) -> Result<tonic::Response<LaunchComputationResponse>, tonic::Status> {
         tracing::info!("Launching computation");
         let request = request.into_inner();
-        let ct: Ciphertext =
-            bincode::deserialize::<Ciphertext>(&request.ciphertext).map_err(|_e| {
+        let ct: Ciphertext64 =
+            bincode::deserialize::<Ciphertext64>(&request.ciphertext).map_err(|_e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     "failed to parse ciphertext".to_string(),
@@ -115,7 +126,12 @@ impl Choreography for GrpcChoreography {
                 )
             })?;
 
-        let session_id = SessionId::new(&ct);
+        let session_id = SessionId::new(&ct).map_err(|_e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                "failed to construct session ID".to_string(),
+            )
+        })?;
         let setup_epoch_id = &self.setup_epoch_id.try_get();
 
         match (self.result_stores.entry(session_id), setup_epoch_id) {
@@ -151,6 +167,12 @@ impl Choreography for GrpcChoreography {
 
                 let execution_start_timer = Instant::now();
                 let result_stores = Arc::clone(&self.result_stores);
+                let pks = Arc::clone(&self.pubkey_store);
+                let pkl = pks.lock().unwrap().clone();
+                let ct_large = ct
+                    .iter()
+                    .map(|ct_block| to_large_ciphertext_block(&pkl.ck, ct_block))
+                    .collect_vec();
 
                 tokio::spawn(async move {
                     let mut rng = AesRng::from_random_seed();
@@ -160,8 +182,8 @@ impl Choreography for GrpcChoreography {
                         &mut session,
                         &own_identity,
                         &computation,
-                        Some(setup_info.secret_key_share),
-                        Some(ct),
+                        Some(&setup_info.secret_key_share),
+                        Some(&ct_large),
                         &mut rng,
                     )
                     .await
@@ -205,7 +227,7 @@ impl Choreography for GrpcChoreography {
         tracing::info!("Launching Decryption");
         let request = request.into_inner();
 
-        let ct = bincode::deserialize::<Ciphertext>(&request.ciphertext).map_err(|_e| {
+        let ct = bincode::deserialize::<Ciphertext64>(&request.ciphertext).map_err(|_e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
                 "failed to parse ciphertext".to_string(),
@@ -234,7 +256,12 @@ impl Choreography for GrpcChoreography {
                 )
             })?;
 
-        let session_id = SessionId::new(&ct);
+        let session_id = SessionId::new(&ct).map_err(|_e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                "failed to construct session ID".to_string(),
+            )
+        })?;
         let setup_epoch_id = &self.setup_epoch_id.try_get();
 
         match (self.result_stores.entry(session_id), setup_epoch_id) {
@@ -271,14 +298,20 @@ impl Choreography for GrpcChoreography {
 
                 let execution_start_timer = Instant::now();
                 let result_stores = Arc::clone(&self.result_stores);
+                let pks = Arc::clone(&self.pubkey_store);
+                let pkl = pks.lock().unwrap().clone();
+                let ct_large = ct
+                    .iter()
+                    .map(|ct_block| to_large_ciphertext_block(&pkl.ck, ct_block))
+                    .collect_vec();
 
                 tokio::spawn(async move {
                     let mut results = HashMap::with_capacity(1);
                     let outputs = run_decryption(
                         &mut session,
                         &own_identity,
-                        setup_info.secret_key_share,
-                        ct,
+                        &setup_info.secret_key_share,
+                        ct_large,
                         mode,
                         setup_info.seed,
                     )
@@ -373,6 +406,14 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
+        let params: ThresholdLWEParameters =
+            bincode::deserialize(&request.params).map_err(|_e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    "failed to parse parameters".to_string(),
+                )
+            })?;
+
         let setup_mode: SetupMode = bincode::deserialize(&request.setup_mode).map_err(|_e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
@@ -420,15 +461,12 @@ impl Choreography for GrpcChoreography {
                 let pks = Arc::clone(&self.pubkey_store);
 
                 tokio::spawn(async move {
-                    let mut rng = AesRng::from_random_seed();
-
                     let (sk, pk, prss_setup) = initialize_key_material(
                         &session,
                         &own_identity,
-                        &mut rng,
+                        &mut get_rng(),
                         setup_mode,
-                        request.big_ell,
-                        request.plaintext_bits as u8,
+                        params,
                         request.seed,
                     )
                     .await

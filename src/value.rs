@@ -1,7 +1,6 @@
-use crate::execution::party::Role;
-use crate::lwe::PublicKey;
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
+use crate::{execution::party::Role, lwe::PubConKeyPair};
 use crate::{Z128, Z64};
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
@@ -20,7 +19,7 @@ pub enum Value {
 /// a value that is sent via network
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 pub enum NetworkValue {
-    PubKey(PublicKey),
+    PubKey(Box<PubConKeyPair>),
     RingValue(Value),
     Send(Value),
     EchoBatch(HashMap<Role, Value>),
@@ -83,5 +82,49 @@ pub fn err_reconstruct(
         _ => Err(anyhow!(
             "Cannot reconstruct when types are not indexed shares"
         )),
+    }
+}
+#[cfg(test)]
+mod tests {
+    use crate::{
+        execution::party::Identity,
+        file_handling::read_element,
+        lwe::{KeySet, PubConKeyPair},
+        networking::{local::LocalNetworkingProducer, Networking},
+        tests::test_data_setup::tests::TEST_KEY_PATH,
+    };
+
+    use super::*;
+    use tracing_test::traced_test;
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_box_sending() {
+        let keys: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let pck = PubConKeyPair::new(keys);
+        let value = NetworkValue::PubKey(Box::new(pck.clone()));
+
+        let identities: Vec<Identity> = vec!["alice".into(), "bob".into()];
+        let net_producer = LocalNetworkingProducer::from_ids(&identities);
+
+        let net_alice = net_producer.user_net("alice".into());
+        let net_bob = net_producer.user_net("bob".into());
+
+        let task1 = tokio::spawn(async move {
+            let recv = net_bob.receive(&"alice".into(), &123_u128.into()).await;
+            let received_key = match recv {
+                Ok(NetworkValue::PubKey(key)) => key,
+                _ => panic!(),
+            };
+            assert_eq!(received_key.pk, pck.pk);
+            assert_eq!(received_key.ck, pck.ck);
+        });
+
+        let task2 =
+            tokio::spawn(
+                async move { net_alice.send(value, &"bob".into(), &123_u128.into()).await },
+            );
+
+        let _ = tokio::try_join!(task1, task2).unwrap();
     }
 }

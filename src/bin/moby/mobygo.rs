@@ -10,7 +10,9 @@ use distributed_decryption::execution::distributed::SetupMode;
 use distributed_decryption::execution::party::Identity;
 use distributed_decryption::execution::party::Role;
 use distributed_decryption::execution::party::RoleAssignment;
+use distributed_decryption::file_handling::read_as_json;
 use distributed_decryption::lwe::PublicKey;
+use distributed_decryption::lwe::ThresholdLWEParameters;
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
 use rand::RngCore;
@@ -86,14 +88,6 @@ pub enum Commands {
         /// Threshold (max. number of dishonest parties)
         threshold: u8,
 
-        #[clap(long, default_value_t = 10)]
-        /// L (big LWE key dimension)
-        ell: u32,
-
-        #[clap(long, default_value_t = 4)]
-        /// maximum plaintext bit length
-        plaintext_bits: u8,
-
         #[clap(long, default_value = "pk.bin")]
         /// Filename of the public key
         pubkey: String,
@@ -120,7 +114,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     let mut rng = AesRng::seed_from_u64(0);
-
     let tls_config = None;
     let port = args.port;
 
@@ -141,7 +134,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             pubkey,
         } => {
             let runtime = ChoreoRuntime::new(docker_role_assignments, tls_config)?;
-            let threshold = threshold;
             let comp_bytes = std::fs::read(&circuit_path)?;
             let computation = Circuit::try_from(&comp_bytes[..]).unwrap();
 
@@ -174,8 +166,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             certs: _certs,
             identity: _identity,
             threshold,
-            ell,
-            plaintext_bits,
             pubkey,
             protocol,
         } => {
@@ -187,13 +177,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 _ => Err(anyhow! {"Invalid SetupMode"}),
             }?;
 
+            let default_params: ThresholdLWEParameters =
+                read_as_json("temp/default_params.json".to_string())?;
+
             // keys can be set once per epoch (currently stored in a SessionID)
+            // TODO so far we only use the default parameters
             let pk = runtime
                 .initiate_keygen(
                     &SessionId::from(epoch),
                     threshold,
-                    ell,
-                    plaintext_bits,
+                    default_params,
                     rng.next_u64(),
                     setup_mode,
                 )
@@ -216,7 +209,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 threshold,
             );
 
-            let message = 5;
+            let message: u8 = 5;
 
             // read pk from file (Init must have been called before)
             let pk_serialized = std::fs::read(pubkey.as_str())?;

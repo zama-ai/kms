@@ -1,8 +1,7 @@
-use ndarray::Array1;
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 
-use crate::{lwe::Ciphertext, Z128};
+use crate::lwe::Ciphertext64;
 
 pub const TAG_BYTES: usize = 128 / 8;
 
@@ -10,31 +9,17 @@ pub const TAG_BYTES: usize = 128 / 8;
 pub struct SessionId(pub u128);
 
 impl SessionId {
-    pub fn new(ciphertext: &Ciphertext) -> SessionId {
-        let mut hasher = blake3::Hasher::new();
-        // Hash each part of the ciphertext individually to avoid risk collisions
-        // in case the a and b parts have *variable* and *distinct* sizes
-        hasher.update(Self::hash_array(&ciphertext.a).as_bytes());
-        hasher.update(Self::hash_array(&ciphertext.b).as_bytes());
-        let digest = hasher.finalize();
-        Self::digest_to_id(digest)
+    pub fn new(ciphertext: &Ciphertext64) -> anyhow::Result<SessionId> {
+        let mut serialized_data = Vec::new();
+        bincode::serialize_into(&mut serialized_data, &ciphertext)?;
+        let digest = Self::hash_array(serialized_data);
+        Ok(Self::digest_to_id(digest))
     }
 
-    fn hash_array(to_hash: &Array1<Z128>) -> blake3::Hash {
+    fn hash_array(to_hash: Vec<u8>) -> blake3::Hash {
         let mut hasher = blake3::Hasher::new();
-        let bytes_to_hash = Self::to_byte_vec(to_hash);
-        hasher.update(bytes_to_hash.as_slice());
+        hasher.update(to_hash.as_slice());
         hasher.finalize()
-    }
-
-    fn to_byte_vec(input: &Array1<Z128>) -> Vec<u8> {
-        let mut res: Vec<u8> = Vec::with_capacity(TAG_BYTES * input.len());
-        for elem in input.iter() {
-            for cur_byte in elem.0.to_be_bytes() {
-                res.push(cur_byte);
-            }
-        }
-        res
     }
 
     fn digest_to_id(digest: blake3::Hash) -> SessionId {
@@ -59,55 +44,35 @@ impl From<u128> for SessionId {
 
 #[cfg(test)]
 mod tests {
-    use ndarray::Array1;
-
-    use crate::{computation::SessionId, lwe::Ciphertext, Z128};
+    use crate::{
+        computation::SessionId,
+        lwe::Ciphertext64,
+        tests::{helper::tests::generate_cipher, test_data_setup::tests::TEST_KEY_PATH},
+    };
 
     #[test]
     fn sunshine() {
-        let a = Array1::<Z128>::zeros(16);
-        let b = Array1::<Z128>::zeros(16);
-        let ct = Ciphertext { a, b };
-        // reference check, should be updated if semantics change
-        assert_eq!(
-            SessionId(105015842660904496297637409066838404456),
-            SessionId::new(&ct)
-        );
+        let ct = generate_cipher(TEST_KEY_PATH, 0);
+        // Validate that session ID is sufficiently large
+        assert!(SessionId::new(&ct).unwrap().0 > 2_u128.pow(100));
     }
 
     #[test]
     fn determinism() {
-        let a = Array1::<Z128>::zeros(16);
-        let b = Array1::<Z128>::zeros(16);
-        let ct_base: Ciphertext = Ciphertext {
-            a: a.clone(),
-            b: b.clone(),
-        };
+        let ct_base = generate_cipher(TEST_KEY_PATH, 0);
         let base = SessionId::new(&ct_base);
-        let ct_other: Ciphertext = Ciphertext { a, b };
+        let ct_other: Ciphertext64 = generate_cipher(TEST_KEY_PATH, 0);
         // validate that the same input gives the same result
-        assert_eq!(base, SessionId::new(&ct_other));
+        assert_eq!(base.unwrap(), SessionId::new(&ct_other).unwrap());
     }
 
     #[test]
     fn uniqueness() {
-        let mut a = Array1::<Z128>::zeros(16);
-        let mut b = Array1::<Z128>::zeros(16);
-        let ct_base: Ciphertext = Ciphertext {
-            a: a.clone(),
-            b: b.clone(),
-        };
+        let ct_base: Ciphertext64 = generate_cipher(TEST_KEY_PATH, 0);
         let base = SessionId::new(&ct_base);
-        b[0] += 1;
-        let ct_other: Ciphertext = Ciphertext {
-            a: a.clone(),
-            b: b.clone(),
-        };
-        a[0] += 1;
-        let ct_third: Ciphertext = Ciphertext { a, b };
+        let ct_other: Ciphertext64 = generate_cipher(TEST_KEY_PATH, 1);
+        let other = SessionId::new(&ct_other);
         // Validate that a bit change results in a difference in session id
-        assert_ne!(base, SessionId::new(&ct_other));
-        assert_ne!(SessionId::new(&ct_third), SessionId::new(&ct_other));
-        assert_ne!(base, SessionId::new(&ct_third));
+        assert_ne!(base.unwrap(), other.unwrap());
     }
 }

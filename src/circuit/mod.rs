@@ -37,6 +37,7 @@ pub enum Operator {
     PrintRegPlain,
     PrssPrep,
     ShrCI,
+    ShrCIRound,
     SubS,
 }
 

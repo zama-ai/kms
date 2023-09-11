@@ -52,12 +52,7 @@ pub struct PRSSState {
 struct PrfKey([u8; 16]);
 
 /// Function Psi that generates bounded randomness
-fn psi(
-    psi_prf_key: &mut PrfKey,
-    sid: u128,
-    ctr: u128,
-    log_n_choose_t: u32,
-) -> anyhow::Result<Z128> {
+fn psi(psi_prf_key: &PrfKey, sid: u128, ctr: u128, log_n_choose_t: u32) -> anyhow::Result<Z128> {
     let keyvec = [psi_prf_key.0, sid.to_le_bytes()].concat();
     let key = <&[u8; 32]>::try_from(keyvec.as_slice())?;
 
@@ -143,7 +138,7 @@ impl PRSSState {
         for (idx, set) in self.prss_setup.sets.iter_mut().enumerate() {
             if set.parties.contains(&party_id) {
                 let psi = psi(
-                    &mut set.random_agreed_key,
+                    &set.random_agreed_key,
                     self.session_id,
                     self.counter,
                     self.prss_setup.log_n_choose_t,
@@ -208,9 +203,12 @@ mod tests {
         execution::{
             distributed::{DecryptionMode, DistributedTestRuntime},
             party::Identity,
+            prep::to_large_ciphertext,
         },
-        lwe::keygen_all_party_shares,
+        file_handling::read_element,
+        lwe::{keygen_all_party_shares, KeySet},
         shamir::ShamirGSharings,
+        tests::test_data_setup::tests::TEST_KEY_PATH,
         value::Value,
     };
     use aes_prng::AesRng;
@@ -295,28 +293,41 @@ mod tests {
 
     #[test]
     fn test_prss_distributed_local() {
+        let threshold = 3;
+        let num_parties = 10;
+        let mut rng = AesRng::seed_from_u64(423);
+        let msg: u8 = 21;
+        let keys: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
         let circuit = Circuit {
             operations: vec![
                 Operation {
                     operator: Operator::PrssPrep,
-                    operands: vec![String::from("s0"), String::from("234")],
+                    operands: vec![String::from("s0")], // Preprocess random value and store in register s0
                 },
                 Operation {
                     operator: Operator::Open,
                     operands: vec![
-                        String::from("3"),
-                        String::from("false"),
-                        String::from("c0"),
-                        String::from("s0"),
+                        String::from("3"),     // Ignored
+                        String::from("false"), // Ignored
+                        String::from("c0"),    // Register we store in
+                        String::from("s0"),    // Register we read
                     ],
                 },
                 Operation {
-                    operator: Operator::ShrCI,
-                    operands: vec![String::from("c1"), String::from("c0"), String::from("123")],
+                    operator: Operator::ShrCI, // Right shift
+                    operands: vec![String::from("c1"), String::from("c0"), String::from("123")], // Stores the result in c1, reads from c0, and shifts it 123=127-2*2
                 },
                 Operation {
-                    operator: Operator::PrintRegPlain,
-                    operands: vec![String::from("c1")],
+                    operator: Operator::PrintRegPlain, // Output the value
+                    operands: vec![
+                        String::from("c1"), // From index c1
+                        keys.pk
+                            .threshold_lwe_parameters
+                            .input_cipher_parameters
+                            .usable_message_modulus_log
+                            .0
+                            .to_string(), // Bits in message
+                    ],
                 },
             ],
             input_wires: vec![],
@@ -333,37 +344,31 @@ mod tests {
             Identity("localhost:5008".to_string()),
             Identity("localhost:5009".to_string()),
         ];
-        let threshold = 3;
-        let num_parties = 10;
-        let mut rng = AesRng::seed_from_u64(423);
-        let msg = 9;
-        let plaintext_bits = 4;
-        let ell = 10;
 
         let prss_setup = Some(PRSSSetup::epoch_init(num_parties, threshold, &mut rng).unwrap());
 
         // generate keys
-        let (key_shares, pk) =
-            keygen_all_party_shares(&mut rng, ell, plaintext_bits, num_parties, threshold).unwrap();
-        let ct = pk.encrypt(&mut rng, msg);
+        let key_shares = keygen_all_party_shares(&keys, &mut rng, num_parties, threshold).unwrap();
+        let ct = keys.pk.encrypt(&mut rng, msg);
+        let large_ct = to_large_ciphertext(&keys.ck, &ct);
 
         let runtime =
             DistributedTestRuntime::new(identities, threshold as u8, prss_setup, Some(key_shares));
 
         // test PRSS with circuit evaluation
         let results_circ = runtime
-            .evaluate_circuit(&circuit, Some(ct.clone()))
+            .evaluate_circuit(&circuit, Some(large_ct.clone()))
             .unwrap();
         let out_circ = &results_circ[&Identity("localhost:5000".to_string())];
 
         // test PRSS with decryption endpoint
         let results_dec = runtime
-            .threshold_decrypt(ct, DecryptionMode::PRSSDecrypt)
+            .threshold_decrypt(large_ct, DecryptionMode::PRSSDecrypt)
             .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
-        assert_eq!(out_circ[0], Value::Ring128(std::num::Wrapping(msg as u128)));
         assert_eq!(out_dec[0], Value::Ring128(std::num::Wrapping(msg as u128)));
+        assert_eq!(out_circ[0], Value::Ring128(std::num::Wrapping(msg as u128)));
     }
 
     #[rstest]

@@ -11,12 +11,17 @@ env:
 
 jobs:
   build:
-
+    strategy:
+      fail-fast: false
+      
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v3
     - uses: Swatinem/rust-cache@v2
+    
+    - name: Setup usage of private repo
+      run: git config --global url."https://${{ secrets.CONCRETE_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
 
     - name: Install build dependencies.
       run: sudo apt install -y make protobuf-compiler

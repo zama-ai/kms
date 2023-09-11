@@ -5,6 +5,9 @@ use clap::Parser;
 use distributed_decryption::choreography::parse_session_config_file_with_computation;
 use distributed_decryption::computation::SessionId;
 use distributed_decryption::execution::distributed::DecryptionMode;
+use distributed_decryption::execution::random::get_rng;
+use distributed_decryption::file_handling::read_as_json;
+use distributed_decryption::lwe::ThresholdLWEParameters;
 use distributed_decryption::{
     choreography::choreographer::ChoreoRuntime, execution::distributed::SetupMode,
 };
@@ -34,7 +37,7 @@ pub struct Cli {
 
     #[clap(long, default_value_t = 5)]
     /// message to encrypt
-    msg: u8,
+    msg: u64,
 
     #[clap(long, default_value_t = 4)]
     /// message to encrypt
@@ -77,20 +80,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?
     } else {
         // set keys. this can be done once per epoch
+        // TODO allow for non-default parameters
+        let default_params: ThresholdLWEParameters =
+            read_as_json("parameters/default_params.json".to_string())?;
         runtime
             .initiate_keygen(
                 &SessionId::from(args.epoch),
                 threshold,
-                args.ell,
-                args.plaintext_bits,
+                default_params,
                 rng.next_u64(),
                 SetupMode::AllProtos,
             )
             .await?
     };
-    let ct = pk.encrypt(&mut rng, args.msg);
-    let session_id: SessionId = SessionId::new(&ct);
-    // run multiple iterations of benchmarks in a row
+    let ct = pk.encrypt::<u64, _>(&mut get_rng(), args.msg);
+    let session_id = SessionId::new(&ct)?;
     for _i in 0..args.session_range {
         runtime
             .initiate_threshold_decryption(&DecryptionMode::PRSSDecrypt, threshold, &ct)
