@@ -5,6 +5,7 @@
 **/.eggs/
 **/build/
 **/dist/
+**/temp/
 
 **/.vscode
 **/.DS_Store

@@ -72,6 +72,10 @@ impl DistributedSession {
         }
     }
 
+    pub fn get_amount_of_parties(&self) -> usize {
+        self.role_assignments.len()
+    }
+
     /// return Role for given Identity in this session
     pub fn get_role_from(&self, own_identity: &Identity) -> anyhow::Result<Role> {
         let own_role: Vec<&Role> = self
@@ -326,7 +330,7 @@ pub async fn robust_open_to(
 
             collected_sharings.push(share);
 
-            let num_parties = session.role_assignments.len();
+            let num_parties = session.get_amount_of_parties();
             let t = session.threshold as usize;
 
             if 4 * t < num_parties {
@@ -399,7 +403,7 @@ pub async fn robust_input<R: RngCore>(
                 }
             }
         };
-        let num_parties = session.role_assignments.len();
+        let num_parties = session.get_amount_of_parties();
 
         let (shamir_sharings, roles): (Vec<Value>, Vec<Role>) = match si {
             Value::Ring64(s64) => {
@@ -505,7 +509,7 @@ pub async fn transfer_pk(
     input_party_id: usize,
 ) -> anyhow::Result<PubConKeyPair> {
     if role.party_id() == input_party_id {
-        let num_parties = session.role_assignments.len();
+        let num_parties = session.get_amount_of_parties();
         let pkval = NetworkValue::PubKey(Box::new(pubkey.clone()));
 
         let mut set = JoinSet::new();
@@ -994,7 +998,7 @@ pub async fn initialize_key_material<R: RngCore>(
     let own_role = session.get_role_from(own_identity)?;
 
     // initialize PRSS
-    let num_parties = session.role_assignments.len();
+    let num_parties = session.get_amount_of_parties();
     let mut prss_rng = AesRng::seed_from_u64(seed); // use a fixed seed until we have implemented AgreeRandom
 
     let prss_setup = if setup_mode == SetupMode::AllProtos {

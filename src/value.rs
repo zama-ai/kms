@@ -1,6 +1,8 @@
+use crate::execution::dispute::DisputePayload;
+use crate::execution::party::Role;
+use crate::lwe::PubConKeyPair;
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
-use crate::{execution::party::Role, lwe::PubConKeyPair};
 use crate::{Z128, Z64};
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
@@ -16,14 +18,27 @@ pub enum Value {
     U64(u64),
 }
 
+/// Captures network values which can (and sometimes should) be broadcast
+#[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
+pub enum BroadcastValue {
+    RingValue(Value),
+    AddDispute(DisputePayload),
+}
+
+impl From<Value> for BroadcastValue {
+    fn from(value: Value) -> Self {
+        BroadcastValue::RingValue(value)
+    }
+}
+
 /// a value that is sent via network
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 pub enum NetworkValue {
     PubKey(Box<PubConKeyPair>),
     RingValue(Value),
-    Send(Value),
-    EchoBatch(HashMap<Role, Value>),
-    VoteBatch(HashMap<Role, Value>),
+    Send(BroadcastValue),
+    EchoBatch(HashMap<Role, BroadcastValue>),
+    VoteBatch(HashMap<Role, BroadcastValue>),
 }
 
 pub fn err_reconstruct(
