@@ -13,7 +13,7 @@ fn bench_prss(c: &mut Criterion) {
     let sid = SessionId::from(42);
 
     let mut rng = AesRng::from_entropy();
-    let prss = PRSSSetup::epoch_init(num_parties, threshold, &mut rng).unwrap();
+    let prss = PRSSSetup::party_epoch_init(num_parties, threshold, &mut rng, 1).unwrap();
 
     let mut state = prss.new_session(sid);
 

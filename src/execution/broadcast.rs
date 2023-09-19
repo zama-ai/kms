@@ -414,7 +414,7 @@ pub async fn broadcast_with_corruption(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::distributed::DistributedTestRuntime;
+    use crate::execution::distributed::{DistributedTestRuntime, SetupMode};
     use crate::execution::party::Identity;
     use crate::{computation::SessionId, value::Value};
     use std::num::Wrapping;
@@ -443,7 +443,8 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold, None, None);
+        let runtime =
+            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -574,7 +575,7 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities, threshold, None, None);
+        let runtime = DistributedTestRuntime::new(identities, threshold, None, SetupMode::NoPrss);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -630,7 +631,8 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold, None, None);
+        let runtime =
+            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();

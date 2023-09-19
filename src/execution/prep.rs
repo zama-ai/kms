@@ -251,7 +251,7 @@ where
 mod tests {
     use super::*;
     use crate::circuit::{Circuit, Operation, Operator};
-    use crate::execution::distributed::{DecryptionMode, DistributedTestRuntime};
+    use crate::execution::distributed::{DecryptionMode, DistributedTestRuntime, SetupMode};
     use crate::execution::party::Identity;
     use crate::execution::prss::PRSSSetup;
     use crate::execution::random::get_rng;
@@ -343,7 +343,9 @@ mod tests {
             .map(|party_id| {
                 //each party has their own prss state inside their session.
                 let mut rng = AesRng::seed_from_u64(444);
-                let prss_setup = PRSSSetup::epoch_init(num_parties, threshold, &mut rng).unwrap();
+                let prss_setup =
+                    PRSSSetup::party_epoch_init(num_parties, threshold, &mut rng, party_id)
+                        .unwrap();
                 let mut state = prss_setup.new_session(sid);
                 let sks =
                     keygen_single_party_share(&keyset, &mut rng, party_id, threshold).unwrap();
@@ -411,7 +413,6 @@ mod tests {
             Identity("localhost:5009".to_string()),
         ];
 
-        let prss_setup = None;
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
         let key_shares =
@@ -419,8 +420,12 @@ mod tests {
         let ct = keyset.pk.encrypt_w_bitlimit(&mut rng, msg, 2);
         let large_ct = to_large_ciphertext(&keyset.ck, &ct);
 
-        let runtime =
-            DistributedTestRuntime::new(identities, threshold as u8, prss_setup, Some(key_shares));
+        let runtime = DistributedTestRuntime::new(
+            identities,
+            threshold as u8,
+            Some(key_shares),
+            SetupMode::NoPrss,
+        );
 
         // test DDec2 with circuit evaluation
         let results_circ = runtime

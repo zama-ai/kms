@@ -107,7 +107,7 @@ impl DistributedSession {
 pub struct DistributedTestRuntime {
     pub identities: Vec<Identity>,
     threshold: u8,
-    prss_setup: Option<PRSSSetup>,
+    prss_setups: Vec<Option<PRSSSetup>>,
     keyshares: Option<Vec<SecretKeyShare>>,
     pub user_nets: Vec<Arc<LocalNetworking>>,
     pub role_assignments: RoleAssignment,
@@ -117,8 +117,8 @@ impl DistributedTestRuntime {
     pub fn new(
         identities: Vec<Identity>,
         threshold: u8,
-        prss_setup: Option<PRSSSetup>,
         keyshares: Option<Vec<SecretKeyShare>>,
+        setup_mode: SetupMode,
     ) -> Self {
         let role_assignments: RoleAssignment = identities
             .clone()
@@ -126,6 +126,28 @@ impl DistributedTestRuntime {
             .enumerate()
             .map(|(role_id, identity)| (Role(role_id as u64 + 1), identity))
             .collect();
+
+        let prss_setups: Vec<Option<PRSSSetup>> = match setup_mode {
+            SetupMode::AllProtos => {
+                let mut prss_rng = AesRng::seed_from_u64(2023);
+
+                identities
+                    .clone()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(role_id, _identity)| {
+                        PRSSSetup::party_epoch_init(
+                            role_assignments.len(),
+                            threshold as usize,
+                            &mut prss_rng,
+                            role_id + 1,
+                        )
+                        .ok()
+                    })
+                    .collect()
+            }
+            _ => vec![None; identities.len()],
+        };
 
         let net_producer = LocalNetworkingProducer::from_ids(&identities);
         let user_nets: Vec<Arc<LocalNetworking>> = identities
@@ -139,7 +161,7 @@ impl DistributedTestRuntime {
         DistributedTestRuntime {
             identities,
             threshold,
-            prss_setup,
+            prss_setups,
             keyshares,
             user_nets,
             role_assignments,
@@ -185,7 +207,7 @@ impl DistributedTestRuntime {
             let net = Arc::clone(&self.user_nets[index_id]);
             let circuit = circuit.clone();
             let threshold = self.threshold;
-            let prss_setup = self.prss_setup.clone();
+            let prss_setup = self.prss_setups[index_id].clone();
 
             let party_keyshare = self.keyshares.clone().map(|ks| ks[index_id].clone());
 
@@ -246,7 +268,7 @@ impl DistributedTestRuntime {
             let role_assignments = self.role_assignments.clone();
             let net = Arc::clone(&self.user_nets[index_id]);
             let threshold = self.threshold;
-            let prss_setup = self.prss_setup.clone();
+            let prss_setup = self.prss_setups[index_id].clone();
 
             let party_keyshare = self
                 .keyshares
@@ -866,7 +888,10 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                             .get(i)
                             .ok_or_else(|| anyhow!("Wrong index in ciphertext"))?,
                     )?;
-                    tracing::debug!("finished generating proto 2 prep: {:?}", partial_decryption);
+                    tracing::debug!(
+                        "finished generating PRSS proto prep: {:?}",
+                        partial_decryption
+                    );
                     partial_decrypted_blocks.push(partial_decryption);
                 }
                 env.insert(dest, partial_decrypted_blocks);
@@ -1002,10 +1027,11 @@ pub async fn initialize_key_material<R: RngCore>(
     let mut prss_rng = AesRng::seed_from_u64(seed); // use a fixed seed until we have implemented AgreeRandom
 
     let prss_setup = if setup_mode == SetupMode::AllProtos {
-        Some(PRSSSetup::epoch_init(
+        Some(PRSSSetup::party_epoch_init(
             num_parties,
             session.threshold as usize,
             &mut prss_rng,
+            own_role.party_id(),
         )?)
     } else {
         None
@@ -1080,7 +1106,7 @@ mod tests {
         ];
         let threshold = 1;
 
-        let runtime = DistributedTestRuntime::new(identities, threshold, None, None);
+        let runtime = DistributedTestRuntime::new(identities, threshold, None, SetupMode::NoPrss);
         let results = runtime.evaluate_circuit(&circuit, None).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(Wrapping(100)));
@@ -1128,7 +1154,7 @@ mod tests {
         ];
         let threshold = 1;
 
-        let runtime = DistributedTestRuntime::new(identities, threshold, None, None);
+        let runtime = DistributedTestRuntime::new(identities, threshold, None, SetupMode::NoPrss);
         let results = runtime.evaluate_circuit(&circuit, None).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));
@@ -1175,7 +1201,7 @@ mod tests {
             Identity("localhost:5005".to_string()),
         ];
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities, threshold, None, None);
+        let runtime = DistributedTestRuntime::new(identities, threshold, None, SetupMode::NoPrss);
         let results = runtime.evaluate_circuit(&circuit, None).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(msg as u128)));
@@ -1273,7 +1299,7 @@ mod tests {
             Identity("localhost:5009".to_string()),
         ];
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities, threshold, None, None);
+        let runtime = DistributedTestRuntime::new(identities, threshold, None, SetupMode::NoPrss);
         let results = runtime.evaluate_circuit(&circuit, None).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));

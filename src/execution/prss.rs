@@ -69,14 +69,10 @@ fn psi(psi_prf_key: &PrfKey, sid: u128, ctr: u128, log_n_choose_t: u32) -> anyho
 
 /// computes the points on the polys f_A for all parties in the sets A
 /// f_A is one at 0, and zero at the party indices not in set A
-fn compute_f_a_points(
+fn party_compute_f_a_points(
+    partysets: &Vec<PrssSet>,
     num_parties: usize,
-    threshold: usize,
 ) -> anyhow::Result<Vec<Vec<ResiduePoly<Z128>>>> {
-    if num_integer::binomial(num_parties, threshold) > PRSS_SIZE_MAX {
-        return Err(anyhow!("PRSS set size is too large!"));
-    }
-
     // compute lifted and inverted gamma values once
     let mut inv_coefs = (1..=num_parties)
         .map(ResiduePoly::<Z128>::lift_and_invert)
@@ -93,36 +89,34 @@ fn compute_f_a_points(
         .map(|p| Poly::from_coefs(vec![ResiduePoly::<Z128>::ZERO - parties[p]]))
         .collect::<Vec<_>>();
 
-    // the combinations of party IDs *not* in the sets A
-    let mut combinations = (1..=num_parties)
-        .combinations(threshold)
-        .collect::<Vec<_>>();
-    // reverse the list of party IDs, so the order matches with the combinations of parties *in* the sets A in create_sets()
-    combinations.reverse();
-
-    // polynomial x
+    // polynomial f(x) = x
     let x: Poly<ResiduePoly<std::num::Wrapping<u128>>> =
         Poly::from_coefs(vec![ResiduePoly::<Z128>::ZERO, ResiduePoly::<Z128>::ONE]);
 
     let mut sets = Vec::new();
 
-    for c in &combinations {
+    // iterate through the A sets
+    for s in partysets {
         // compute poly for this combination of parties
-        // poly will be of degree T, zero at the points p in c, and one at 0
+        // poly will be of degree T, zero at the points p not in s, and one at 0
         let mut poly = Poly::from_coefs(vec![ResiduePoly::<Z128>::ONE]);
-        for p in c {
-            poly = poly
-                * (x.clone() + neg_parties[*p].clone())
-                * Poly::from_coefs(vec![inv_coefs[*p]]);
+        for p in 1..=num_parties {
+            if !&s.parties.contains(&p) {
+                poly = poly
+                    * (x.clone() + neg_parties[p].clone())
+                    * Poly::from_coefs(vec![inv_coefs[p]]);
+            }
         }
 
         // check that poly is 1 at position 0
         debug_assert_eq!(ResiduePoly::<Z128>::ONE, poly.eval(&parties[0]));
+        // check that poly is of degree t
+        debug_assert_eq!(num_parties - partysets[0].parties.len(), poly.deg());
 
         // evaluate the poly at the party indices gamma
-        let set: Vec<_> = (1..=num_parties).map(|p| poly.eval(&parties[p])).collect();
+        let points: Vec<_> = (1..=num_parties).map(|p| poly.eval(&parties[p])).collect();
 
-        sets.push(set);
+        sets.push(points);
     }
     Ok(sets)
 }
@@ -145,6 +139,8 @@ impl PRSSState {
                 )?;
                 let f_a = self.prss_setup.f_a_points[idx][party_id - 1];
                 res += f_a * psi;
+            } else {
+                return Err(anyhow!("Called prss.next() with party ID {party_id} that is not in a precomputed set of parties!"));
             }
         }
 
@@ -155,21 +151,37 @@ impl PRSSState {
 }
 
 impl PRSSSetup {
-    /// PRSS Init that is called once at the beginning of an epoch
-    pub fn epoch_init<R: RngCore>(
+    pub fn party_epoch_init<R: RngCore>(
         num_parties: usize,
         threshold: usize,
-        rng: &mut R,
+        _rng: &mut R, //TODO
+        party_id: usize,
     ) -> anyhow::Result<Self> {
-        let log_n_choose_t = num_integer::binomial(num_parties, threshold)
-            .next_power_of_two()
-            .ilog2();
+        let binom_nt = num_integer::binomial(num_parties, threshold);
+
+        if binom_nt > PRSS_SIZE_MAX {
+            return Err(anyhow!("PRSS set size is too large!"));
+        }
+
+        let log_n_choose_t = binom_nt.next_power_of_two().ilog2();
 
         let sets = create_sets(num_parties, threshold)
             .into_iter()
+            .filter(|aset| aset.contains(&party_id))
             .map(|aset| {
                 let mut r_a = [0u8; 16];
-                rng.fill_bytes(&mut r_a);
+
+                // hash party IDs as dummy value
+                let mut bytes: Vec<u8> = Vec::new();
+                for &p in &aset {
+                    bytes.extend_from_slice(&p.to_le_bytes());
+                }
+
+                let mut hasher = Hasher::new();
+                hasher.update(&bytes);
+                let mut or = hasher.finalize_xof();
+                or.fill(&mut r_a);
+
                 PrssSet {
                     parties: aset,
                     random_agreed_key: PrfKey(r_a),
@@ -177,7 +189,9 @@ impl PRSSSetup {
             })
             .collect();
 
-        let points = compute_f_a_points(num_parties, threshold)?;
+        tracing::debug!("epoch init: {:?}", sets);
+
+        let points = party_compute_f_a_points(&sets, num_parties)?;
 
         Ok(PRSSSetup {
             log_n_choose_t,
@@ -201,7 +215,7 @@ mod tests {
     use crate::{
         circuit::{Circuit, Operation, Operator},
         execution::{
-            distributed::{DecryptionMode, DistributedTestRuntime},
+            distributed::{DecryptionMode, DistributedTestRuntime, SetupMode},
             party::Identity,
             prep::to_large_ciphertext,
         },
@@ -227,19 +241,19 @@ mod tests {
     #[rstest]
     #[case([23_u8; 16])]
     #[case(AesRng::generate_random_seed())]
-    fn test_prss_no_network(#[case] seed: [u8; 16]) {
+    fn test_prss_no_network_bound(#[case] seed: [u8; 16]) {
         let num_parties = 10;
         let threshold = 3;
-        let n_choose_t: usize = num_integer::binomial(num_parties, threshold);
-        let log_n_choose_t = n_choose_t.next_power_of_two().ilog2();
 
         let sid = SessionId::from(23);
 
         let mut rng = AesRng::from_seed(seed);
-        let prss_setup = PRSSSetup::epoch_init(num_parties, threshold, &mut rng).unwrap();
 
         let shares = (1..=num_parties)
             .map(|p| {
+                let prss_setup =
+                    PRSSSetup::party_epoch_init(num_parties, threshold, &mut rng, p).unwrap();
+
                 let mut state = prss_setup.new_session(sid);
 
                 assert_eq!(state.counter, 0);
@@ -267,28 +281,6 @@ mod tests {
         // check that reconstructed PRSS random output E has limited bit length
         // must be at most (2^pow-1) * Bd bits (which is the nominator of Bd1)
         assert!(recon.0.ilog2() < LOG_BD1_NOM);
-
-        // check that E is the sum of all r_A values
-        let mut rng = AesRng::from_seed(seed);
-        let mut plain_e = Z128::ZERO;
-        for _ in 0..num_integer::binomial(num_parties, threshold) {
-            let mut key = [0u8; 16];
-            rng.fill_bytes(&mut key);
-
-            let k: [u8; 32] = [key, sid.0.to_le_bytes()].concat().try_into().unwrap();
-
-            let mut prf = Hasher::new_keyed(&k);
-            prf.update(&0_u128.to_le_bytes());
-            let mut psi_out = prf.finalize_xof();
-            let mut res = [0_u128; 1];
-            psi_out.read_u128_into::<BigEndian>(&mut res).unwrap();
-
-            let u = res[0] >> (Z128::EL_BIT_LENGTH as u32 - LOG_BD1_NOM + log_n_choose_t);
-
-            plain_e += u;
-        }
-
-        assert_eq!(plain_e, recon);
     }
 
     #[test]
@@ -345,15 +337,17 @@ mod tests {
             Identity("localhost:5009".to_string()),
         ];
 
-        let prss_setup = Some(PRSSSetup::epoch_init(num_parties, threshold, &mut rng).unwrap());
-
         // generate keys
         let key_shares = keygen_all_party_shares(&keys, &mut rng, num_parties, threshold).unwrap();
         let ct = keys.pk.encrypt(&mut rng, msg);
         let large_ct = to_large_ciphertext(&keys.ck, &ct);
 
-        let runtime =
-            DistributedTestRuntime::new(identities, threshold as u8, prss_setup, Some(key_shares));
+        let runtime = DistributedTestRuntime::new(
+            identities,
+            threshold as u8,
+            Some(key_shares),
+            SetupMode::AllProtos,
+        );
 
         // test PRSS with circuit evaluation
         let results_circ = runtime
@@ -383,7 +377,7 @@ mod tests {
         let sid = SessionId::from(23425);
 
         let mut rng = AesRng::seed_from_u64(54321);
-        let prss = PRSSSetup::epoch_init(num_parties, threshold, &mut rng).unwrap();
+        let prss = PRSSSetup::party_epoch_init(num_parties, threshold, &mut rng, 1).unwrap();
 
         let mut state = prss.new_session(sid);
 
@@ -407,20 +401,15 @@ mod tests {
     /// check that points computed on f_A are well-formed
     fn test_prss_fa_poly(#[case] num_parties: usize, #[case] threshold: usize) {
         let mut rng = AesRng::seed_from_u64(5);
-        let prss = PRSSSetup::epoch_init(num_parties, threshold, &mut rng).unwrap();
+        let prss = PRSSSetup::party_epoch_init(num_parties, threshold, &mut rng, 1).unwrap();
 
-        let mut combinations = (1..=num_parties)
-            .combinations(threshold)
-            .collect::<Vec<_>>();
-        combinations.reverse();
-
-        for (idx, c) in combinations.iter().enumerate() {
+        for (idx, set) in prss.sets.iter().enumerate() {
             for p in 1..=num_parties {
                 let point = prss.f_a_points[idx][p - 1];
-                if c.contains(&p) {
-                    assert_eq!(point, ResiduePoly::<Z128>::ZERO)
-                } else {
+                if set.parties.contains(&p) {
                     assert_ne!(point, ResiduePoly::<Z128>::ZERO)
+                } else {
+                    assert_eq!(point, ResiduePoly::<Z128>::ZERO)
                 }
             }
         }
@@ -430,7 +419,7 @@ mod tests {
     #[should_panic(expected = "PRSS set size is too large!")]
     fn test_prss_too_large() {
         let mut rng = AesRng::seed_from_u64(1);
-        let _prss = PRSSSetup::epoch_init(22, 7, &mut rng).unwrap();
+        let _prss = PRSSSetup::party_epoch_init(22, 7, &mut rng, 1).unwrap();
     }
 
     #[test]
