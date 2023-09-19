@@ -110,7 +110,8 @@ pub(crate) fn from_expanded_msg<Scalar: UnsignedInteger + AsPrimitive<u128>>(
     //compute the rounding bit
     let rounding = (raw_plaintext.as_() & rounding_bit) << 1;
 
-    Wrapping((raw_plaintext.as_().wrapping_add(rounding)) >> delta_bits)
+    let msg = (raw_plaintext.as_().wrapping_add(rounding)) >> delta_bits;
+    Wrapping(msg % (1 << message_mod_bits))
 }
 
 /// Map a real message, of a few bits, to the encryption domain, by applying the appropriate shift, delta
@@ -606,12 +607,18 @@ mod tests {
     #[traced_test]
     #[rstest]
     #[case(0)]
+    #[case(1)]
+    #[case(2)]
+    #[case(3)]
+    #[case(4)]
     #[case(7)]
     #[case(15)]
+    #[case(16)]
     fn check_cipher_mapping(#[case] msg: u64) {
         let cipher_domain: Plaintext<u64> = to_expanded_msg(msg, 4);
         let plain_domain = from_expanded_msg(cipher_domain.0, 4);
-        assert_eq!(plain_domain.0, msg as u128);
+        // Compare with the message, taken modulo the message domain size
+        assert_eq!(plain_domain.0, (msg as u128) % (1 << 4));
     }
 
     #[traced_test]
