@@ -1,5 +1,5 @@
 use crate::execution::party::Role;
-use crate::networking::constants::BCAST_TIMEOUT;
+use crate::networking::constants::NETWORK_TIMEOUT;
 use crate::value::NetworkValue;
 use crate::{execution::distributed::DistributedSession, value::BroadcastValue};
 use anyhow::anyhow;
@@ -64,7 +64,7 @@ where
                     .map_or_else(|e| Err(e), |x| match_network_value_fn(x, &identity));
                 (sender, stripped_message)
             };
-            jobs.spawn(timeout(*BCAST_TIMEOUT, task));
+            jobs.spawn(timeout(*NETWORK_TIMEOUT, task));
         }
     }
     Ok(())

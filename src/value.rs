@@ -13,6 +13,8 @@ use std::collections::HashMap;
 pub enum Value {
     IndexedShare64((usize, ResiduePoly<Z64>)),
     IndexedShare128((usize, ResiduePoly<Z128>)),
+    Poly64(ResiduePoly<Z64>),
+    Poly128(ResiduePoly<Z128>),
     Ring64(Z64),
     Ring128(Z128),
     U64(u64),
@@ -39,6 +41,7 @@ pub enum NetworkValue {
     Send(BroadcastValue),
     EchoBatch(HashMap<Role, BroadcastValue>),
     VoteBatch(HashMap<Role, BroadcastValue>),
+    Bot,
 }
 
 pub fn err_reconstruct(

@@ -72,6 +72,13 @@ impl DistributedSession {
         }
     }
 
+    pub fn get_identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
+        match self.role_assignments.get(role) {
+            Some(identity) => Ok(identity.clone()),
+            None => Err(anyhow!("Role {} does not exist", role.0)),
+        }
+    }
+
     pub fn get_amount_of_parties(&self) -> usize {
         self.role_assignments.len()
     }
@@ -585,6 +592,8 @@ fn combine(bits_in_block: u32, decryptions: Vec<Value>) -> anyhow::Result<u128> 
             Value::Ring128(value) => value.0,
             Value::Ring64(value) => value.0 as u128,
             Value::U64(value) => value as u128,
+            Value::Poly64(value) => value.coefs[0].0 as u128,
+            Value::Poly128(value) => value.coefs[0].0,
         };
         if !recomposer.add_unmasked(value) {
             // End of T::BITS reached no need to try more
