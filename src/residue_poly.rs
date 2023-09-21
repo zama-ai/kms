@@ -301,15 +301,8 @@ where
     Z: Zero,
     Z: Mul<Z, Output = Z>,
     Z: AddAssign<Z>,
-
-    // TODO(Morten) clean up below; move into trait?
-    ResiduePoly<Z>: ReductionTable<Z>,
-    Z: ZConsts + One + Zero,
     Z: Copy,
-    Z: Mul<Z, Output = Z>,
-    Z: AddAssign<Z>,
-    for<'l> [Z; 8]: TryFrom<&'l [Z]>,
-    for<'l> <[Z; 8] as TryFrom<&'l [Z]>>::Error: std::fmt::Debug,
+    ResiduePoly<Z>: LutMulReduction<Z>,
 {
     type Output = ResiduePoly<Z>;
     fn mul(self, other: ResiduePoly<Z>) -> Self::Output {
@@ -319,7 +312,7 @@ where
                 extended_coefs[i + j] += self.coefs[i] * other.coefs[j];
             }
         }
-        ResiduePoly::reduce_with_tables(extended_coefs)
+        ResiduePoly::reduce_mul(extended_coefs)
     }
 }
 
@@ -328,15 +321,8 @@ where
     Z: Zero,
     Z: Mul<Z, Output = Z>,
     Z: AddAssign<Z>,
-
-    // TODO(Morten) clean up below; move into trait?
-    ResiduePoly<Z>: ReductionTable<Z>,
-    Z: ZConsts + One + Zero,
     Z: Copy,
-    Z: Mul<Z, Output = Z>,
-    Z: AddAssign<Z>,
-    for<'l> [Z; 8]: TryFrom<&'l [Z]>,
-    for<'l> <[Z; 8] as TryFrom<&'l [Z]>>::Error: std::fmt::Debug,
+    ResiduePoly<Z>: LutMulReduction<Z>,
 {
     type Output = ResiduePoly<Z>;
     fn mul(self, other: &ResiduePoly<Z>) -> Self::Output {
@@ -346,7 +332,7 @@ where
                 extended_coefs[i + j] += self.coefs[i] * other.coefs[j];
             }
         }
-        ResiduePoly::reduce_with_tables(extended_coefs)
+        ResiduePoly::reduce_mul(extended_coefs)
     }
 }
 
@@ -355,15 +341,8 @@ where
     Z: Zero,
     Z: Mul<Z, Output = Z>,
     Z: AddAssign<Z>,
-
-    // TODO(Morten) clean up below; move into trait?
-    ResiduePoly<Z>: ReductionTable<Z>,
-    Z: ZConsts + One + Zero,
     Z: Copy,
-    Z: Mul<Z, Output = Z>,
-    Z: AddAssign<Z>,
-    for<'l> [Z; 8]: TryFrom<&'l [Z]>,
-    for<'l> <[Z; 8] as TryFrom<&'l [Z]>>::Error: std::fmt::Debug,
+    ResiduePoly<Z>: LutMulReduction<Z>,
 {
     type Output = ResiduePoly<Z>;
     fn mul(self, other: &ResiduePoly<Z>) -> Self::Output {
@@ -373,7 +352,7 @@ where
                 extended_coefs[i + j] += self.coefs[i] * other.coefs[j];
             }
         }
-        ResiduePoly::reduce_with_tables(extended_coefs)
+        ResiduePoly::reduce_mul(extended_coefs)
     }
 }
 
@@ -382,15 +361,8 @@ where
     Z: Zero,
     Z: Mul<Z, Output = Z>,
     Z: AddAssign<Z>,
-
-    // TODO(Morten) clean up below; move into trait?
-    ResiduePoly<Z>: ReductionTable<Z>,
-    Z: ZConsts + One + Zero,
     Z: Copy,
-    Z: Mul<Z, Output = Z>,
-    Z: AddAssign<Z>,
-    for<'l> [Z; 8]: TryFrom<&'l [Z]>,
-    for<'l> <[Z; 8] as TryFrom<&'l [Z]>>::Error: std::fmt::Debug,
+    ResiduePoly<Z>: LutMulReduction<Z>,
 {
     fn mul_assign(&mut self, other: ResiduePoly<Z>) {
         let mut extended_coefs = [Z::ZERO; 2 * (F_DEG - 1) + 1];
@@ -399,11 +371,14 @@ where
                 extended_coefs[i + j] += self.coefs[i] * other.coefs[j];
             }
         }
-        self.coefs = ResiduePoly::reduce_with_tables(extended_coefs).coefs;
+        self.coefs = ResiduePoly::reduce_mul(extended_coefs).coefs;
     }
 }
+pub trait LutMulReduction<Z> {
+    fn reduce_mul(coefs: [Z; 2 * (F_DEG - 1) + 1]) -> Self;
+}
 
-impl<Z> ResiduePoly<Z>
+impl<Z> LutMulReduction<Z> for ResiduePoly<Z>
 where
     ResiduePoly<Z>: ReductionTable<Z>,
     Z: ZConsts + One + Zero,
@@ -413,11 +388,11 @@ where
     for<'l> [Z; 8]: TryFrom<&'l [Z]>,
     for<'l> <[Z; 8] as TryFrom<&'l [Z]>>::Error: std::fmt::Debug,
 {
-    fn reduce_with_tables(coefs: [Z; 2 * (F_DEG - 1) + 1]) -> ResiduePoly<Z> {
+    fn reduce_mul(coefs: [Z; 2 * (F_DEG - 1) + 1]) -> ResiduePoly<Z> {
         let mut res = ResiduePoly::<Z>::from_slice(coefs[0..F_DEG].try_into().unwrap());
         for (i, coef) in coefs.iter().enumerate().skip(F_DEG) {
             for j in 0..F_DEG {
-                res.coefs[j] += *ResiduePoly::REDUCTION_TABLES.entry(i, j) * *coef;
+                res.coefs[j] += *ResiduePoly::<Z>::REDUCTION_TABLES.entry(i, j) * *coef;
             }
         }
         res

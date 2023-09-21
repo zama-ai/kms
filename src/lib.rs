@@ -16,8 +16,8 @@ pub mod residue_poly;
 pub mod shamir;
 pub mod tests;
 pub mod value;
-
 pub use tokio;
+pub mod algebra;
 
 pub trait Zero {
     const ZERO: Self;
