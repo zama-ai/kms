@@ -10,20 +10,20 @@ aes = "0.8.2"
 aes-prng = "~0.2"
 aligned-vec = "~0.5"
 anyhow = "~1.0"
-async-channel = "~1.8"
+async-channel = "~1.9"
 async-trait = "~0.1"
 async_cell = "~0.2"
 backoff = { version = "~0.4", features = ["tokio"] }
 bincode = "~1.3"
 byteorder = "~1.4"
-blake3 = { version = "~1.3", features = ["std"] }
+blake3 = { version = "~1.4", features = ["std"] }
 clap = { version = "~4", features = ["derive", "env"] }
 concurrent-queue = "2.1.0"
 dashmap = "~5"
 derive_more = "~0.99"
 futures = "~0.3"
 g2p = "1.0.1"
-itertools = "0.10"
+itertools = "0.11"
 lazy_static = "~1.4"
 ndarray = { version = "~0.15", features = ["serde"] }
 ndarray-stats = "~0.5"
@@ -31,7 +31,7 @@ noisy_float = "0.2.0"
 nom = "7.1.3"
 num-integer = "0.1.45"
 num-traits = "0.2"
-prost = "0.11"
+prost = "0.12"
 paste = "1.0.12"
 rand = { version = "~0.8", features = ["std", "std_rng"] }
 rand_chacha = "~0.3"
@@ -39,19 +39,19 @@ regex = { version = "1", features = ["unicode-case"] }
 serde = { version = "~1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 static_assertions = "~1.1"
-# TODO this should be updated at some point so we don't use a specific weird branch 
+# TODO this should be updated at some point so we don't use a specific weird branch
 # Ensure that "# ~/.gitconfig \n [credential] \n helper = store" is added to .gitconfig
 tfhe = { git = "ssh://git@github.com/zama-ai/tfhe-rs-internal.git", branch = "noise_gap_exp", features = ["boolean", "shortint", "integer"]}
-tokio = { version = "~1.28", features = ["full", "sync"] }
-toml = "~0.7" 
+tokio = { version = "~1.32", features = ["full", "sync"] }
+toml = "~0.8"
 tracing = { version = "~0.1", features = ["log"] }
 tracing-subscriber = { version = "~0.3.16", features = ["env-filter"] }
 tracing-test = "0.2"
-tonic = { version = "~0.9", features = ["tls"] }
+tonic = { version = "~0.10", features = ["tls"] }
 x509-parser = "~0.15"
 
 [build-dependencies]
-tonic-build = "~0.9"
+tonic-build = "~0.10"
 
 
 [dev-dependencies]
@@ -59,7 +59,7 @@ criterion = { version="0.5" }
 ctor = "~0.2"
 proptest = "~1.2"
 rand_chacha = "~0.3"
-rstest = "~0.17"
+rstest = "~0.18"
 
 
 [[bin]]
