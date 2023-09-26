@@ -12,17 +12,20 @@ use super::{dispute::Dispute, party::Role};
 
 /// Helper function to check that senders and receivers make sense, returns [false] if they don't and adds a log.
 /// Returns true if everything is fine.
-/// By not making sense, we mean that the party it either the same as the currently executing party or that the
-/// currently executing party is in conflict with the receiver or the receiver is corrupt
-fn check_roles(receiver: &Role, dispute: &Dispute) -> anyhow::Result<bool> {
+/// By not making sense, we mean that the party is either the same as the currently executing party or that the
+/// currently executing party is in conflict with the sendder/receiver, or the sender/receiver is corrupt
+fn check_roles(communicating_with: &Role, dispute: &Dispute) -> anyhow::Result<bool> {
     // Ensure we don't send to ourself
-    if receiver == &dispute.my_role {
-        tracing::info!("You are trying to send data to yourself.");
+    if communicating_with == &dispute.my_role {
+        tracing::info!("You are trying to communicate with yourself.");
         return Ok(false);
     }
     // Ensure we don't send to corrupt parties, but log it
-    if dispute.corrupt_roles.contains(receiver) {
-        tracing::warn!("You are sending data to a corrupt party: {:?}", receiver);
+    if dispute.corrupt_roles.contains(communicating_with) {
+        tracing::warn!(
+            "You are communicating with a corrupt party: {:?}",
+            communicating_with
+        );
         return Ok(false);
     }
     // Ensure we don't send to disputed parties
@@ -30,11 +33,11 @@ fn check_roles(receiver: &Role, dispute: &Dispute) -> anyhow::Result<bool> {
     if dispute
         .disputed_roles
         .get(&dispute.my_role)?
-        .contains(receiver)
+        .contains(communicating_with)
     {
         tracing::info!(
-            "You are trying to send data to a disputed party: {:?}",
-            receiver
+            "You are communicating with a disputed party: {:?}",
+            communicating_with
         );
         return Ok(false);
     }
@@ -141,7 +144,7 @@ pub async fn exchange_values(
     let roles = values_to_send.keys().cloned().collect_vec();
     let received_values = receive_from_parties(&roles, dispute).await?;
     let mut res = HashMap::with_capacity(received_values.len());
-    let disputed_parties = Vec::new();
+    let mut disputed_parties = Vec::new();
     for (sender_role, sender_data) in received_values {
         // If we know the party had been malicious (by sending wrong types of information) then we add them to the dispute set
         match sender_data {
@@ -150,6 +153,7 @@ pub async fn exchange_values(
                     "Party {:?} did not send any information as expected",
                     sender_role
                 );
+                disputed_parties.push(sender_role.clone());
                 let _ = res.insert(sender_role.clone(), default_value.clone());
             }
             val => {
@@ -397,7 +401,6 @@ mod tests {
         }
     }
 
-    #[traced_test]
     #[test]
     fn party_does_not_reply() {
         let identities = vec![
@@ -407,8 +410,8 @@ mod tests {
             Identity("localhost:5003".to_string()),
             Identity("localhost:5004".to_string()),
         ];
+        let parties = identities.len();
         let threshold = 3;
-        let dispute_set = DisputeSet::new(identities.len());
         let non_sending_party = Role(1);
 
         let test_runtime =
@@ -422,7 +425,7 @@ mod tests {
             // Only `non_sending_party` is not executing
             if party_no + 1 != non_sending_party.0 as usize {
                 // Make messages of the sending party's role number
-                let msgs = (1..=identities.len())
+                let msgs = (1..=parties)
                     .map(|i| {
                         (
                             Role(i as u64),
@@ -432,18 +435,16 @@ mod tests {
                     .collect();
                 let own_role = Role::from(party_no as u64 + 1);
                 let session = test_runtime.session_for_player(session_id, party_no);
-                let internal_dispute_roles = dispute_set.clone();
                 set.spawn(async move {
                     let mut dispute = Dispute {
                         session,
                         my_role: own_role.clone(),
                         corrupt_roles: HashSet::new(),
-                        disputed_roles: internal_dispute_roles,
+                        disputed_roles: DisputeSet::new(parties),
                     };
-                    (
-                        own_role.clone(),
-                        exchange_values(&msgs, NetworkValue::Bot, &mut dispute).await,
-                    )
+                    let exchanged_values =
+                        exchange_values(&msgs, NetworkValue::Bot, &mut dispute).await;
+                    (dispute.clone(), exchanged_values)
                 });
             }
         }
@@ -457,11 +458,27 @@ mod tests {
             results
         });
 
-        // Recover the shares shared by for each of the parties and validate that they reconstruct to the shared msg
-        for (cur_role, cur_data) in results {
-            if cur_role != non_sending_party {
-                // If `cur_role` is an honest party then check what we received
+        for (cur_dispute, cur_data) in results {
+            if cur_dispute.my_role != non_sending_party {
+                // If the current role is an honest party then check what we received
                 assert!(cur_data.is_ok());
+                // Check that the non-sending party is in the dispute set
+                assert_eq!(
+                    1,
+                    cur_dispute
+                        .disputed_roles
+                        .get(&cur_dispute.my_role)
+                        .unwrap()
+                        .len()
+                );
+                assert!(cur_dispute
+                    .disputed_roles
+                    .get(&cur_dispute.my_role)
+                    .unwrap()
+                    .contains(&non_sending_party));
+                // And has also been added to the set of corrupt parties (since none of the parties received anything)
+                assert_eq!(1, cur_dispute.corrupt_roles.len());
+                assert!(cur_dispute.corrupt_roles.contains(&non_sending_party));
                 for (sender_role, sender_val) in cur_data.unwrap() {
                     // Check the shares for all the honest parties with the `non_sending_party` (i.e. party 1) is Bot
                     if sender_role == non_sending_party {
