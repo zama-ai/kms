@@ -175,7 +175,7 @@ where
         let powers_array_x = Array::from(compute_powers(alpha_x, self.degree)).into_dyn();
         let powers_array_y = Array::from(compute_powers(alpha_y, self.degree)).into_dyn();
 
-        let lhs = self.coefs.matmul(&powers_array_x)?;
+        let lhs = powers_array_x.matmul(&self.coefs)?;
         let res = lhs.matmul(&powers_array_y)?;
         Ok(res[0])
     }
@@ -752,5 +752,17 @@ mod tests {
             ],
         };
         assert_eq!(res, expected_result);
+    }
+
+    #[test]
+    fn test_full_eval() {
+        let (bpoly, point) = poly_setup();
+        let point_x = point;
+        let point_y = point_x + point_x;
+        let res = bpoly.full_evaluation(point_x, point_y).unwrap();
+
+        let expected_res = bpoly.partial_x_evaluation(point_x).unwrap().eval(&point_y);
+
+        assert_eq!(res, expected_res);
     }
 }
