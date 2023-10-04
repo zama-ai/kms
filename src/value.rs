@@ -3,10 +3,11 @@ use crate::execution::party::Role;
 use crate::lwe::PubConKeyPair;
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
+use crate::sharing::vss::ValueOrPoly;
 use crate::{Z128, Z64};
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// a collection of shares
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
@@ -25,6 +26,9 @@ pub enum Value {
 pub enum BroadcastValue {
     RingValue(Value),
     AddDispute(DisputePayload),
+    Round2VSS(Vec<crate::sharing::vss::VerificationValues>),
+    Round3VSS(BTreeMap<(usize, Role, Role), ResiduePoly<Z128>>),
+    Round4VSS(BTreeMap<(usize, Role), ValueOrPoly>),
 }
 
 impl From<Value> for BroadcastValue {
@@ -42,6 +46,7 @@ pub enum NetworkValue {
     EchoBatch(HashMap<Role, BroadcastValue>),
     VoteBatch(HashMap<Role, BroadcastValue>),
     Bot,
+    Round1VSS(crate::sharing::vss::ExchangedDataRound1),
 }
 
 pub fn err_reconstruct(

@@ -1,6 +1,7 @@
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
 use crate::{One, Sample, Zero};
 use anyhow::anyhow;
@@ -24,7 +25,7 @@ where
 {
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Hash, Clone, Default, Debug)]
 pub struct Poly<F> {
     pub coefs: Vec<F>,
 }
@@ -56,6 +57,8 @@ impl<R: Ring> PartialEq for Poly<R> {
         true
     }
 }
+
+impl<R: Ring> Eq for Poly<R> {}
 
 impl<F> Poly<F>
 where

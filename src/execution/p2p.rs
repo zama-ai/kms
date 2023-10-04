@@ -8,7 +8,7 @@ use tokio::{
 
 use crate::{networking::constants::NETWORK_TIMEOUT, value::NetworkValue};
 
-use super::{dispute::Dispute, party::Role};
+use super::{dispute::Dispute, distributed::DistributedSession, party::Role};
 
 /// Helper function to check that senders and receivers make sense, returns [false] if they don't and adds a log.
 /// Returns true if everything is fine.
@@ -77,6 +77,29 @@ fn internal_send_to_parties(
             }));
         }
     }
+    Ok(())
+}
+
+/// Send specific values to specific parties.
+/// Each party is supposed to receive a specfic value, mapped to their role in `values_to_send`.
+pub async fn send_distinct_to_parties(
+    session: &DistributedSession,
+    sender: &Role,
+    values_to_send: HashMap<&Role, NetworkValue>,
+) -> anyhow::Result<()> {
+    let mut send_jobs = JoinSet::new();
+    for (other_role, other_identity) in session.role_assignments.iter() {
+        let networking = Arc::clone(&session.networking);
+        let session_id = session.session_id;
+        let other_id = other_identity.clone();
+        let msg = values_to_send[other_role].clone();
+        if sender != other_role {
+            send_jobs.spawn(async move {
+                let _ = networking.send(msg, &other_id, &session_id).await;
+            });
+        }
+    }
+    while (send_jobs.join_next().await).is_some() {}
     Ok(())
 }
 

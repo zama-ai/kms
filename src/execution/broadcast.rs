@@ -34,7 +34,7 @@ pub async fn send_to_all(session: &DistributedSession, sender: &Role, msg: Netwo
 /// On the receiving end, a party processes a message of a single type from the {Send, Echo, Vote} options
 /// and errors out if message is of a different form. This is helpful so that we can peel the message
 /// from the inside enum.
-fn generic_receive_from_all_senders<V>(
+pub fn generic_receive_from_all_senders<V>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &DistributedSession,
     receiver: &Role,
@@ -70,7 +70,7 @@ where
     Ok(())
 }
 
-fn generic_receive_from_all<V>(
+pub fn generic_receive_from_all<V>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &DistributedSession,
     receiver: &Role,

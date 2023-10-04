@@ -16,6 +16,12 @@ impl Role {
     pub fn party_id(&self) -> usize {
         self.0 as usize
     }
+    pub fn zero_index(&self) -> usize {
+        self.0 as usize - 1
+    }
+    pub fn from_zero(s: usize) -> Self {
+        Role(s as u64 + 1)
+    }
 }
 
 /// Runtime identity of party.
