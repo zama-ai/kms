@@ -1,5 +1,7 @@
+use crate::commitment::{Commitment, Opening};
 use crate::execution::dispute::DisputePayload;
 use crate::execution::party::Role;
+use crate::execution::prss::PrfKey;
 use crate::lwe::PubConKeyPair;
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
@@ -31,6 +33,13 @@ pub enum BroadcastValue {
     Round4VSS(BTreeMap<(usize, Role), ValueOrPoly>),
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
+
+pub enum AgreeRandomValue {
+    CommitmentValue(Vec<Commitment>),
+    KeyOpenValue(Vec<(PrfKey, Opening)>),
+}
+
 impl From<Value> for BroadcastValue {
     fn from(value: Value) -> Self {
         BroadcastValue::RingValue(value)
@@ -45,6 +54,7 @@ pub enum NetworkValue {
     Send(BroadcastValue),
     EchoBatch(HashMap<Role, BroadcastValue>),
     VoteBatch(HashMap<Role, BroadcastValue>),
+    AgreeRandom(AgreeRandomValue),
     Bot,
     Round1VSS(crate::sharing::vss::ExchangedDataRound1),
 }

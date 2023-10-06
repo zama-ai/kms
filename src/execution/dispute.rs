@@ -140,7 +140,7 @@ mod tests {
         computation::SessionId,
         execution::{
             dispute::{Dispute, DisputeSet},
-            distributed::{DistributedSession, DistributedTestRuntime, SetupMode},
+            distributed::{DistributedSession, DistributedTestRuntime},
             party::{Identity, Role},
         },
         networking::local::LocalNetworkingProducer,
@@ -175,8 +175,7 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -238,8 +237,7 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -346,8 +344,7 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();

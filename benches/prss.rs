@@ -1,7 +1,9 @@
-use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use distributed_decryption::{computation::SessionId, execution::prss::PRSSSetup};
-use rand::SeedableRng;
+use distributed_decryption::{
+    computation::SessionId,
+    execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
+    tests::helper::get_dummy_session_party_id,
+};
 
 fn bench_prss(c: &mut Criterion) {
     let sizes = vec![1_usize, 100, 10000];
@@ -12,10 +14,17 @@ fn bench_prss(c: &mut Criterion) {
 
     let sid = SessionId::from(42);
 
-    let mut rng = AesRng::from_entropy();
-    let prss = PRSSSetup::party_epoch_init(num_parties, threshold, &mut rng, 1).unwrap();
+    let sess = get_dummy_session_party_id(num_parties, threshold, 1);
 
-    let mut state = prss.new_session(sid);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+    let prss = rt
+        .block_on(async {
+            PRSSSetup::party_epoch_init_sess::<DummyAgreeRandom>(sess, 123, 1).await
+        })
+        .unwrap();
+
+    let mut state = prss.new_prss_session_state(sid);
 
     for size in &sizes {
         group.bench_function(BenchmarkId::new("prss_next", size), |b| {

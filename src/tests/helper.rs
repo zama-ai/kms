@@ -1,13 +1,50 @@
+use std::{collections::HashMap, sync::Arc};
+
+use crate::{
+    computation::SessionId,
+    execution::{
+        distributed::DistributedSession,
+        party::{Identity, Role},
+    },
+    networking::local::LocalNetworkingProducer,
+};
+
+// returns a dummy session for a single party for testing/benchmark, given n and t and the party_id.
+pub fn get_dummy_session_party_id(
+    num_parties: usize,
+    threshold: u8,
+    party_id: usize,
+) -> DistributedSession {
+    let mut role_assignment = HashMap::new();
+    assert!(party_id > 0);
+    let my_id = Identity(format!("localhost:{}", 5000 + party_id - 1));
+
+    for p in 0..num_parties {
+        let id = Identity(format!("localhost:{}", 5000 + p));
+        role_assignment.insert(Role((p + 1) as u64), id.clone());
+    }
+
+    let net_producer = LocalNetworkingProducer::from_ids(&[my_id.clone()]);
+    DistributedSession::new(
+        SessionId(1),
+        role_assignment,
+        Arc::new(net_producer.user_net(my_id.clone())),
+        threshold,
+        None,
+        my_id.clone(),
+    )
+}
+
 #[cfg(test)]
 pub mod tests {
-    use aes_prng::AesRng;
-    use rand::SeedableRng;
 
     use crate::{
         file_handling::read_element,
         lwe::{gen_key_set, Ciphertext64, KeySet, ThresholdLWEParameters},
         tests::test_data_setup::tests::{DEFAULT_SEED, TEST_KEY_PATH},
     };
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
 
     // Deterministic key generation
     pub fn generate_keys(params: ThresholdLWEParameters) -> KeySet {

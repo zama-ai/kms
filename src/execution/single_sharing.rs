@@ -175,7 +175,7 @@ mod tests {
         computation::SessionId,
         execution::{
             dispute::{Dispute, DisputeSet},
-            distributed::{DistributedSession, DistributedTestRuntime, SetupMode},
+            distributed::{DistributedSession, DistributedTestRuntime},
             party::{Identity, Role},
             single_sharing::interpolate_poly_w_punctures,
         },
@@ -245,8 +245,7 @@ mod tests {
         ];
         let threshold = 1;
 
-        let test_runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -330,8 +329,7 @@ mod tests {
             dispute_roles.add(&Role(i), &dispute_party).unwrap();
         }
 
-        let test_runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();

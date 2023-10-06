@@ -5,6 +5,7 @@ use std::num::Wrapping;
 pub mod bit_generation;
 pub mod choreography;
 pub mod circuit;
+pub mod commitment;
 pub mod computation;
 pub mod execution;
 pub mod file_handling;

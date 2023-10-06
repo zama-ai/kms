@@ -751,7 +751,6 @@ mod tests {
     use crate::algebra::bivariate::BivariateEval;
     use crate::algebra::bivariate::BivariateResiduePoly;
     use crate::computation::SessionId;
-    use crate::execution::distributed::{DistributedSession, SetupMode};
     use crate::execution::party::Role;
     use crate::execution::{distributed::DistributedTestRuntime, party::Identity};
     use crate::poly::Poly;
@@ -784,8 +783,7 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -843,8 +841,7 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -956,8 +953,7 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1014,8 +1010,7 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1130,8 +1125,7 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1210,8 +1204,7 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1299,8 +1292,7 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1381,8 +1373,7 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();

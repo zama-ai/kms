@@ -212,7 +212,7 @@ mod tests {
         computation::SessionId,
         execution::{
             dispute::{Dispute, DisputeSet},
-            distributed::{DistributedSession, DistributedTestRuntime, SetupMode},
+            distributed::{DistributedSession, DistributedTestRuntime},
             p2p::{check_roles, exchange_values},
             party::{Identity, Role},
         },
@@ -285,8 +285,7 @@ mod tests {
         ];
         let threshold = 1;
 
-        let test_runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -361,8 +360,7 @@ mod tests {
             dispute_set.add(&Role(i), &dispute_party).unwrap();
         }
 
-        let test_runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -437,8 +435,7 @@ mod tests {
         let threshold = 3;
         let non_sending_party = Role(1);
 
-        let test_runtime =
-            DistributedTestRuntime::new(identities.clone(), threshold, None, SetupMode::NoPrss);
+        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();

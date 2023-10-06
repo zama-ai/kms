@@ -1,3 +1,4 @@
+pub mod agree_random;
 pub mod broadcast;
 pub mod constants;
 pub mod dispute;

@@ -1,3 +1,4 @@
+use super::agree_random::{AgreeRandom, DummyAgreeRandom};
 use super::prss::PRSSSetup;
 use crate::circuit::{Circuit, Operator};
 use crate::computation::SessionId;
@@ -68,7 +69,7 @@ impl DistributedSession {
             networking,
             threshold,
             own_identity,
-            prss_state: prss_setup.map(|x| x.new_session(session_id)),
+            prss_state: prss_setup.map(|x| x.new_prss_session_state(session_id)),
         }
     }
 
@@ -114,47 +115,20 @@ impl DistributedSession {
 pub struct DistributedTestRuntime {
     pub identities: Vec<Identity>,
     threshold: u8,
-    prss_setups: Vec<Option<PRSSSetup>>,
+    prss_setups: Option<HashMap<usize, PRSSSetup>>,
     keyshares: Option<Vec<SecretKeyShare>>,
     pub user_nets: Vec<Arc<LocalNetworking>>,
     pub role_assignments: RoleAssignment,
 }
 
 impl DistributedTestRuntime {
-    pub fn new(
-        identities: Vec<Identity>,
-        threshold: u8,
-        keyshares: Option<Vec<SecretKeyShare>>,
-        setup_mode: SetupMode,
-    ) -> Self {
+    pub fn new(identities: Vec<Identity>, threshold: u8) -> Self {
         let role_assignments: RoleAssignment = identities
             .clone()
             .into_iter()
             .enumerate()
             .map(|(role_id, identity)| (Role(role_id as u64 + 1), identity))
             .collect();
-
-        let prss_setups: Vec<Option<PRSSSetup>> = match setup_mode {
-            SetupMode::AllProtos => {
-                let mut prss_rng = AesRng::seed_from_u64(2023);
-
-                identities
-                    .clone()
-                    .into_iter()
-                    .enumerate()
-                    .map(|(role_id, _identity)| {
-                        PRSSSetup::party_epoch_init(
-                            role_assignments.len(),
-                            threshold as usize,
-                            &mut prss_rng,
-                            role_id + 1,
-                        )
-                        .ok()
-                    })
-                    .collect()
-            }
-            _ => vec![None; identities.len()],
-        };
 
         let net_producer = LocalNetworkingProducer::from_ids(&identities);
         let user_nets: Vec<Arc<LocalNetworking>> = identities
@@ -165,14 +139,42 @@ impl DistributedTestRuntime {
             })
             .collect();
 
+        let prss_setups = None;
+
         DistributedTestRuntime {
             identities,
             threshold,
             prss_setups,
-            keyshares,
+            keyshares: None,
             user_nets,
             role_assignments,
         }
+    }
+
+    // store keyshares if you want to test sth related to them
+    pub fn setup_keys(&mut self, keyshares: Vec<SecretKeyShare>) {
+        self.keyshares = Some(keyshares);
+    }
+
+    // store prss setups if you want to test sth related to them
+    pub fn setup_prss(&mut self, setups: Option<HashMap<usize, PRSSSetup>>) {
+        self.prss_setups = setups;
+    }
+
+    pub fn session_for_prss(&self, player_id: usize) -> DistributedSession {
+        let role_assignments = self.role_assignments.clone();
+        let net = Arc::clone(&self.user_nets[player_id]);
+        let own_role = Role(player_id as u64 + 1);
+        let identity = self.role_assignments[&own_role].clone();
+
+        DistributedSession::new(
+            SessionId(u128::MAX),
+            role_assignments,
+            net,
+            self.threshold,
+            None,
+            identity,
+        )
     }
 
     pub fn session_for_player(
@@ -182,7 +184,12 @@ impl DistributedTestRuntime {
     ) -> DistributedSession {
         let role_assignments = self.role_assignments.clone();
         let net = Arc::clone(&self.user_nets[player_id]);
-        let prss_setup = None;
+
+        let prss_setup = self
+            .prss_setups
+            .as_ref()
+            .map(|per_party| per_party[&player_id].clone());
+
         let own_role = Role(player_id as u64 + 1);
         let identity = self.role_assignments[&own_role].clone();
 
@@ -214,14 +221,18 @@ impl DistributedTestRuntime {
             let net = Arc::clone(&self.user_nets[index_id]);
             let circuit = circuit.clone();
             let threshold = self.threshold;
-            let prss_setup = self.prss_setups[index_id].clone();
+
+            let prss_setup = self
+                .prss_setups
+                .as_ref()
+                .map(|per_party| per_party[&index_id].clone());
 
             let party_keyshare = self.keyshares.clone().map(|ks| ks[index_id].clone());
 
             let ct: Option<Ciphertext128> = ct.clone();
 
             set.spawn(async move {
-                let mut rng = AesRng::seed_from_u64(0);
+                let mut rng = AesRng::seed_from_u64(0); //TODO: This is only for testing, but do we want the ability to pass in RNGs from the outside?
                 let mut session = DistributedSession::new(
                     session_id,
                     role_assignments,
@@ -275,7 +286,11 @@ impl DistributedTestRuntime {
             let role_assignments = self.role_assignments.clone();
             let net = Arc::clone(&self.user_nets[index_id]);
             let threshold = self.threshold;
-            let prss_setup = self.prss_setups[index_id].clone();
+
+            let prss_setup = self
+                .prss_setups
+                .as_ref()
+                .map(|per_party| per_party[&index_id].clone());
 
             let party_keyshare = self
                 .keyshares
@@ -287,7 +302,7 @@ impl DistributedTestRuntime {
             let mode = mode.clone();
 
             set.spawn(async move {
-                let mut rng = AesRng::seed_from_u64(0);
+                let mut rng = AesRng::seed_from_u64(0); //TODO: This is only for testing, but do we want the ability to pass in RNGs from the outside?
                 let mut session = DistributedSession::new(
                     session_id,
                     role_assignments,
@@ -320,6 +335,38 @@ impl DistributedTestRuntime {
         });
         Ok(results)
     }
+}
+
+// async helper function that creates the prss setups
+pub async fn setup_prss_sess<A: AgreeRandom + Send>(
+    sessions: Vec<DistributedSession>,
+    seed: u64,
+) -> Option<HashMap<usize, PRSSSetup>> {
+    let mut jobs = JoinSet::new();
+
+    for (role_idx, sess) in sessions.iter().enumerate() {
+        let ss = sess.clone();
+
+        jobs.spawn(async move {
+            let epoc =
+                PRSSSetup::party_epoch_init_sess::<A>(ss, seed + role_idx as u64, role_idx + 1)
+                    .await;
+            (role_idx, epoc)
+        });
+    }
+
+    let mut hm: HashMap<usize, PRSSSetup> = HashMap::new();
+
+    for _ in &sessions {
+        while let Some(v) = jobs.join_next().await {
+            let vv = v.unwrap();
+            let data = vv.1.ok().unwrap();
+            let role = vv.0;
+            hm.insert(role, data);
+        }
+    }
+
+    Some(hm)
 }
 
 pub async fn robust_open_to(
@@ -1031,17 +1078,15 @@ pub async fn initialize_key_material<R: RngCore>(
 ) -> anyhow::Result<(SecretKeyShare, PubConKeyPair, Option<PRSSSetup>)> {
     let own_role = session.get_role_from(own_identity)?;
 
-    // initialize PRSS
-    let num_parties = session.get_amount_of_parties();
-    let mut prss_rng = AesRng::seed_from_u64(seed); // use a fixed seed until we have implemented AgreeRandom
-
     let prss_setup = if setup_mode == SetupMode::AllProtos {
-        Some(PRSSSetup::party_epoch_init(
-            num_parties,
-            session.threshold as usize,
-            &mut prss_rng,
-            own_role.party_id(),
-        )?)
+        Some(
+            PRSSSetup::party_epoch_init_sess::<DummyAgreeRandom>(
+                session.clone(),
+                seed,
+                own_role.party_id(),
+            )
+            .await?,
+        )
     } else {
         None
     };
@@ -1115,7 +1160,7 @@ mod tests {
         ];
         let threshold = 1;
 
-        let runtime = DistributedTestRuntime::new(identities, threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities, threshold);
         let results = runtime.evaluate_circuit(&circuit, None).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(Wrapping(100)));
@@ -1163,7 +1208,7 @@ mod tests {
         ];
         let threshold = 1;
 
-        let runtime = DistributedTestRuntime::new(identities, threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities, threshold);
         let results = runtime.evaluate_circuit(&circuit, None).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));
@@ -1210,7 +1255,7 @@ mod tests {
             Identity("localhost:5005".to_string()),
         ];
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities, threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities, threshold);
         let results = runtime.evaluate_circuit(&circuit, None).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(msg as u128)));
@@ -1308,7 +1353,7 @@ mod tests {
             Identity("localhost:5009".to_string()),
         ];
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities, threshold, None, SetupMode::NoPrss);
+        let runtime = DistributedTestRuntime::new(identities, threshold);
         let results = runtime.evaluate_circuit(&circuit, None).unwrap();
         let out = &results[&Identity("localhost:5000".to_string())];
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));

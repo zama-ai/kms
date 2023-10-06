@@ -53,8 +53,6 @@ use tfhe::shortint::prelude::PolynomialSize;
 use tfhe::shortint::prelude::StandardDev;
 use tfhe::shortint::MessageModulus;
 
-pub const SEED_BYTES: usize = 32;
-
 // Copied from tfhe-rs lwe_noise_gap_programmable_bootstrapping since it is only speicfied in their test code
 #[derive(Serialize, Copy, Clone, Deserialize, Debug, PartialEq)]
 pub struct CiphertextParameters<S>
