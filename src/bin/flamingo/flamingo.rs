@@ -1,19 +1,15 @@
 //! CLI tool for interacting with a group of flamins
-
-use aes_prng::AesRng;
 use clap::Parser;
-use distributed_decryption::choreography::parse_session_config_file_with_computation;
-use distributed_decryption::computation::SessionId;
-use distributed_decryption::execution::distributed::DecryptionMode;
 use distributed_decryption::execution::random::get_rng;
 use distributed_decryption::file_handling::read_as_json;
 use distributed_decryption::lwe::ThresholdLWEParameters;
 use distributed_decryption::{
-    choreography::choreographer::ChoreoRuntime, execution::distributed::SetupMode,
+    choreography::{choreographer::ChoreoRuntime, parse_session_config_file_with_computation},
+    execution::session::DecryptionMode,
 };
+use distributed_decryption::{computation::SessionId, execution::session::SetupMode};
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
-use rand::{RngCore, SeedableRng};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -62,9 +58,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
     tracing_subscriber::fmt::init();
 
-    // use entropy here, so we get different cts (and thus different SIDs) for consecutive call
-    let mut rng = AesRng::from_entropy();
-
     let tls_config = None;
 
     let (role_assignments, computation, threshold) =
@@ -88,7 +81,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &SessionId::from(args.epoch),
                 threshold,
                 default_params,
-                rng.next_u64(),
                 SetupMode::AllProtos,
             )
             .await?

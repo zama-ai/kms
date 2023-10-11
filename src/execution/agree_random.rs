@@ -1,9 +1,8 @@
 use super::{
-    dispute::Dispute,
-    distributed::DistributedSession,
     p2p::{receive_from_parties, send_to_parties},
     party::Role,
-    prss::{create_sets, PrfKey},
+    session::{BaseSession, BaseSessionHandles, ParameterHandles},
+    small_execution::prss::{create_sets, PrfKey},
 };
 use crate::{
     commitment::{commit, KEY_BYTE_LEN},
@@ -13,18 +12,17 @@ use crate::{
     commitment::{verify, Commitment, Opening},
     value::AgreeRandomValue,
 };
-use aes_prng::AesRng;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use blake3::Hasher;
 use itertools::Itertools;
-use rand::{RngCore, SeedableRng};
+use rand::RngCore;
 use std::collections::HashMap;
 
 #[async_trait]
 pub trait AgreeRandom {
     /// agree on a random value, as seen from a single party's view (determined by the session)
-    async fn agree_random(session: &DistributedSession, seed: u64) -> anyhow::Result<Vec<PrfKey>>;
+    async fn agree_random(session: &mut BaseSession) -> anyhow::Result<Vec<PrfKey>>;
 }
 
 pub struct RealAgreeRandom {}
@@ -158,31 +156,26 @@ fn compute_and_verify(
 
 #[async_trait]
 impl AgreeRandom for RealAgreeRandom {
-    async fn agree_random(
-        session: &DistributedSession,
-        seed: u64, // TODO remove seed once we have the RNG inside the session.
-    ) -> anyhow::Result<Vec<PrfKey>> {
-        let num_parties = session.role_assignments.len();
-        let party_id = session.get_role_from(&session.own_identity)?.0 as usize;
+    async fn agree_random(session: &mut BaseSession) -> anyhow::Result<Vec<PrfKey>> {
+        let num_parties = session.amount_of_parties();
+        let party_id = session.my_role()?.0 as usize;
 
         // compute dummy randomness for all the subsets in which this party_id is a member
-        let mut party_sets: Vec<Vec<usize>> = create_sets(num_parties, session.threshold as usize)
-            .into_iter()
-            .filter(|aset| aset.contains(&party_id))
-            .collect();
+        let mut party_sets: Vec<Vec<usize>> =
+            create_sets(num_parties, session.threshold() as usize)
+                .into_iter()
+                .filter(|aset: &Vec<usize>| aset.contains(&party_id))
+                .collect();
 
         let mut s = [0u8; KEY_BYTE_LEN];
-        let mut rng = AesRng::seed_from_u64(seed); // TODO replace this by passing a RNG from the outside (or using the session RNG, once available in PR #168)
-
-        let dispute = Dispute::new(session)?;
 
         let mut keys_opens: Vec<Vec<(PrfKey, Opening)>> = vec![Vec::new(); num_parties];
         let mut coms: Vec<Vec<Commitment>> = vec![Vec::new(); num_parties];
 
         // compute randomness s and commit to it, hold on to all values in vectors
         for set in &party_sets {
-            rng.fill_bytes(&mut s);
-            let (c, o) = commit(&s, &mut rng);
+            session.rng().fill_bytes(&mut s);
+            let (c, o) = commit(&s, &mut session.rng());
             for p in set {
                 keys_opens[p - 1].push((PrfKey(s), o));
                 coms[p - 1].push(c);
@@ -201,16 +194,16 @@ impl AgreeRandom for RealAgreeRandom {
                 );
             }
         }
-        send_to_parties(&coms_to_send, &dispute).await?;
+        send_to_parties(&coms_to_send, session).await?;
 
         // receive commitments from other parties
         let receive_from_roles = coms_to_send.keys().cloned().collect_vec();
-        let received_coms = receive_from_parties(&receive_from_roles, &dispute).await?;
+        let received_coms = receive_from_parties(&receive_from_roles, session).await?;
 
         let mut rcv_coms = check_and_unpack_coms(&received_coms, num_parties)?;
 
         // 2nd round: openings and randomness
-        session.networking.increase_round_counter().await?;
+        session.network().increase_round_counter().await?;
 
         // send keys and openings to all other parties. Each party gets the values for _all_ sets that they are member of at once to avoid multiple comm rounds
         let mut key_open_to_send: HashMap<Role, NetworkValue> = HashMap::new();
@@ -224,10 +217,10 @@ impl AgreeRandom for RealAgreeRandom {
                 );
             }
         }
-        send_to_parties(&key_open_to_send, &dispute).await?;
+        send_to_parties(&key_open_to_send, session).await?;
 
         // receive keys and opensings from other parties
-        let received_keys = receive_from_parties(&receive_from_roles, &dispute).await?;
+        let received_keys = receive_from_parties(&receive_from_roles, session).await?;
 
         let mut rcv_keys_opens = check_and_unpack_keys(&received_keys, num_parties)?;
 
@@ -247,12 +240,12 @@ pub struct DummyAgreeRandom {}
 
 #[async_trait]
 impl AgreeRandom for DummyAgreeRandom {
-    async fn agree_random(session: &DistributedSession, _seed: u64) -> anyhow::Result<Vec<PrfKey>> {
-        let num_parties = session.role_assignments.len();
-        let party_id = session.get_role_from(&session.own_identity)?.0 as usize;
+    async fn agree_random(session: &mut BaseSession) -> anyhow::Result<Vec<PrfKey>> {
+        let num_parties = session.amount_of_parties();
+        let party_id = session.my_role()?.0 as usize;
 
         // compute dummy randomness for all the subsets in which this party_id is a member
-        let party_sets: Vec<Vec<usize>> = create_sets(num_parties, session.threshold as usize)
+        let party_sets: Vec<Vec<usize>> = create_sets(num_parties, session.threshold() as usize)
             .into_iter()
             .filter(|aset| aset.contains(&party_id))
             .collect();
@@ -296,17 +289,19 @@ mod tests {
     };
     use crate::{
         commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN},
+        computation::SessionId,
         execution::{
             agree_random::check_and_unpack_keys,
-            distributed::{DistributedSession, DistributedTestRuntime},
-            party::{Identity, Role},
-            prss::{create_sets, PrfKey},
+            distributed::DistributedTestRuntime,
+            party::Role,
+            session::{SmallSession, ToBaseSession},
+            small_execution::prss::{create_sets, PrfKey},
         },
-        tests::helper::get_dummy_session_party_id,
+        tests::helper::tests::get_small_session_for_parties,
         value::{AgreeRandomValue, NetworkValue},
     };
-    use aes_prng::{AesRng, SEED_SIZE};
-    use rand::{RngCore, SeedableRng};
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
     use rstest::rstest;
     use std::collections::{HashMap, VecDeque};
     use tokio::task::JoinSet;
@@ -354,11 +349,13 @@ mod tests {
         let mut allkeys: Vec<VecDeque<PrfKey>> = Vec::new();
 
         for p in 1..=num_parties {
-            let sess = get_dummy_session_party_id(num_parties, threshold, p);
+            let sess = get_small_session_for_parties(num_parties, threshold, Role(p as u64));
 
             let _guard = rt.enter();
             let keys = rt
-                .block_on(async { DummyAgreeRandom::agree_random(&sess, 0).await })
+                .block_on(async {
+                    DummyAgreeRandom::agree_random(&mut sess.to_base_session()).await
+                })
                 .unwrap();
 
             let vd = VecDeque::from(keys);
@@ -381,31 +378,23 @@ mod tests {
     }
 
     #[rstest]
-    #[case([42_u8; SEED_SIZE])]
-    #[case(AesRng::generate_random_seed())]
-    fn test_real_agree_random(#[case] seed: [u8; SEED_SIZE]) {
+    #[case(ChaCha20Rng::from_seed([42_u8; 32]))]
+    #[case(ChaCha20Rng::from_entropy())]
+    fn test_real_agree_random(#[case] rng: ChaCha20Rng) {
         let num_parties = 7;
         let threshold = 2;
-
-        let mut rng = AesRng::from_seed(seed);
-
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-            Identity("localhost:5004".to_string()),
-            Identity("localhost:5005".to_string()),
-            Identity("localhost:5006".to_string()),
-        ];
-
+        let identities = crate::tests::helper::tests::generate_identities(num_parties);
         assert_eq!(identities.len(), num_parties);
 
         let runtime = DistributedTestRuntime::new(identities, threshold as u8);
 
         // create sessions for each prss party
-        let sessions: Vec<DistributedSession> = (0..num_parties)
-            .map(|p| runtime.session_for_prss(p))
+        let sessions: Vec<SmallSession> = (0..num_parties)
+            .map(|p| {
+                runtime
+                    .small_session_for_player(SessionId(u128::MAX), p, Some(rng.clone()))
+                    .unwrap()
+            })
             .collect();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -415,10 +404,9 @@ mod tests {
 
         for (role_idx, sess) in sessions.iter().enumerate() {
             let ss = sess.clone();
-            let seed = rng.next_u64();
 
             jobs.spawn(async move {
-                let keys = RealAgreeRandom::agree_random(&ss, seed).await;
+                let keys = RealAgreeRandom::agree_random(&mut ss.to_base_session()).await;
                 let vd = VecDeque::from(keys.unwrap());
                 (role_idx, vd)
             });
@@ -461,25 +449,24 @@ mod tests {
         let num_parties = 7;
         let threshold = 2;
 
-        let mut rng = AesRng::seed_from_u64(239874);
-
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-            Identity("localhost:5004".to_string()),
-            Identity("localhost:5005".to_string()),
-            Identity("localhost:5006".to_string()),
-        ];
+        let identities = crate::tests::helper::tests::generate_identities(num_parties);
 
         assert_eq!(identities.len(), num_parties);
 
         let runtime = DistributedTestRuntime::new(identities, threshold as u8);
 
         // create sessions for each prss party, except party 0, which does not respond in this case
-        let sessions: Vec<DistributedSession> = (1..num_parties)
-            .map(|p| runtime.session_for_prss(p))
+        let sessions: Vec<SmallSession> = (1..num_parties)
+            .map(|p| {
+                let num = p as u8;
+                runtime
+                    .small_session_for_player(
+                        SessionId(u128::MAX),
+                        p,
+                        Some(ChaCha20Rng::from_seed([num; 32])),
+                    )
+                    .unwrap()
+            })
             .collect();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -489,9 +476,10 @@ mod tests {
 
         for sess in sessions.iter() {
             let ss = sess.clone();
-            let seed = rng.next_u64();
 
-            jobs.spawn(async move { RealAgreeRandom::agree_random(&ss, seed).await });
+            jobs.spawn(
+                async move { RealAgreeRandom::agree_random(&mut ss.to_base_session()).await },
+            );
         }
 
         rt.block_on(async {

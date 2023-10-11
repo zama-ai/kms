@@ -1,17 +1,19 @@
-use super::distributed::DistributedSession;
 use crate::{
     computation::SessionId,
-    execution::{agree_random::AgreeRandom, constants::LOG_BD1_NOM, constants::PRSS_SIZE_MAX},
+    execution::{
+        agree_random::AgreeRandom,
+        constants::LOG_BD1_NOM,
+        constants::PRSS_SIZE_MAX,
+        session::{ParameterHandles, SmallSession, ToBaseSession},
+    },
     poly::{Poly, Ring},
     residue_poly::ResiduePoly,
     One, Zero, Z128,
 };
-use aes_prng::AesRng;
 use anyhow::anyhow;
 use blake3::Hasher;
 use byteorder::{BigEndian, ReadBytesExt};
 use itertools::Itertools;
-use rand::{RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::num::Wrapping;
 
@@ -151,12 +153,11 @@ impl PRSSState {
 
 impl PRSSSetup {
     pub async fn party_epoch_init_sess<A: AgreeRandom + Send>(
-        session: DistributedSession,
-        seed: u64,
+        session: &SmallSession,
         party_id: usize,
     ) -> anyhow::Result<Self> {
-        let num_parties = session.role_assignments.len();
-        let binom_nt = num_integer::binomial(num_parties, session.threshold as usize);
+        let num_parties = session.amount_of_parties();
+        let binom_nt = num_integer::binomial(num_parties, session.threshold() as usize);
 
         if binom_nt > PRSS_SIZE_MAX {
             return Err(anyhow!("PRSS set size is too large!"));
@@ -165,18 +166,14 @@ impl PRSSSetup {
         let log_n_choose_t = binom_nt.next_power_of_two().ilog2();
 
         // create all the subsets A that contain the party id
-        let party_sets: Vec<Vec<usize>> = create_sets(num_parties, session.threshold as usize)
+        let party_sets: Vec<Vec<usize>> = create_sets(num_parties, session.threshold() as usize)
             .into_iter()
             .filter(|aset| aset.contains(&party_id))
             .collect();
 
         let mut all_prss_sets: Vec<PrssSet> = Vec::new();
 
-        // TODO use RNG from Session, once PR #168 is merged
-        let mut rng = AesRng::seed_from_u64(seed);
-
-        let seed = rng.next_u64();
-        let ars = A::agree_random(&session, seed)
+        let ars = A::agree_random(&mut session.to_base_session())
             .await
             .expect("AgreeRandom failed!");
 
@@ -213,26 +210,30 @@ mod tests {
         circuit::{Circuit, Operation, Operator},
         execution::{
             agree_random::{DummyAgreeRandom, RealAgreeRandom},
-            distributed::{setup_prss_sess, DecryptionMode, DistributedTestRuntime},
-            party::Identity,
-            prep::to_large_ciphertext,
+            distributed::{setup_prss_sess, DistributedTestRuntime},
+            party::{Identity, Role},
+            session::DecryptionMode,
+            small_execution::prep::to_large_ciphertext,
         },
         file_handling::read_element,
         lwe::{keygen_all_party_shares, KeySet},
         shamir::ShamirGSharings,
-        tests::{helper::get_dummy_session_party_id, test_data_setup::tests::TEST_KEY_PATH},
+        tests::{
+            helper::tests::{generate_identities, get_small_session_for_parties},
+            test_data_setup::tests::TEST_KEY_PATH,
+        },
         value::Value,
     };
-    use aes_prng::{AesRng, SEED_SIZE};
+    use aes_prng::AesRng;
     use rand::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
     use rstest::rstest;
 
     impl PRSSSetup {
         // initializes the epoch for a single party (without actual networking)
-        pub fn testing_party_epoch_init<R: RngCore>(
+        pub fn testing_party_epoch_init(
             num_parties: usize,
             threshold: usize,
-            rng: &mut R,
             party_id: usize,
         ) -> anyhow::Result<Self> {
             let binom_nt = num_integer::binomial(num_parties, threshold);
@@ -248,12 +249,16 @@ mod tests {
                 .filter(|aset| aset.contains(&party_id))
                 .collect::<Vec<_>>();
 
-            let sess = get_dummy_session_party_id(num_parties, threshold as u8, party_id);
+            let sess = get_small_session_for_parties(
+                num_parties,
+                threshold as u8,
+                Role::from(party_id as u64),
+            );
             let rt = tokio::runtime::Runtime::new().unwrap();
             let _guard = rt.enter();
             let random_agreed_keys = rt
                 .block_on(async {
-                    DummyAgreeRandom::agree_random(&sess.clone(), rng.next_u64()).await
+                    DummyAgreeRandom::agree_random(&mut sess.to_base_session()).await
                 })
                 .unwrap();
 
@@ -288,21 +293,16 @@ mod tests {
     }
 
     #[rstest]
-    #[case([23_u8; SEED_SIZE])]
-    #[case(AesRng::generate_random_seed())]
-    fn test_prss_no_network_bound(#[case] seed: [u8; SEED_SIZE]) {
+    fn test_prss_no_network_bound() {
         let num_parties = 10;
         let threshold = 3;
 
         let sid = SessionId::from(23);
 
-        let mut rng = AesRng::from_seed(seed);
-
         let shares = (1..=num_parties)
             .map(|p| {
                 let prss_setup =
-                    PRSSSetup::testing_party_epoch_init(num_parties, threshold, &mut rng, p)
-                        .unwrap();
+                    PRSSSetup::testing_party_epoch_init(num_parties, threshold, p).unwrap();
 
                 let mut state = prss_setup.new_prss_session_state(sid);
 
@@ -337,6 +337,7 @@ mod tests {
     fn test_prss_distributed_local_sess() {
         let threshold = 2;
         let num_parties = 7;
+        // RNG for keys
         let mut rng = AesRng::seed_from_u64(69);
         let msg: u8 = 3;
         let keys: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
@@ -374,15 +375,7 @@ mod tests {
             ],
             input_wires: vec![],
         };
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-            Identity("localhost:5004".to_string()),
-            Identity("localhost:5005".to_string()),
-            Identity("localhost:5006".to_string()),
-        ];
+        let identities = generate_identities(num_parties);
 
         // generate keys
         let key_shares = keygen_all_party_shares(&keys, &mut rng, num_parties, threshold).unwrap();
@@ -393,17 +386,26 @@ mod tests {
 
         runtime.setup_keys(key_shares);
 
+        let mut seed = [0_u8; 32];
         // create sessions for each prss party
-        let sessions: Vec<DistributedSession> = (0..num_parties)
-            .map(|p| runtime.session_for_prss(p))
+        let sessions: Vec<SmallSession> = (0..num_parties)
+            .map(|p| {
+                seed[0] = p as u8;
+                runtime
+                    .small_session_for_player(
+                        SessionId(u128::MAX),
+                        p,
+                        Some(ChaCha20Rng::from_seed(seed)),
+                    )
+                    .unwrap()
+            })
             .collect();
 
         // Test with real dummy AgreeRandom
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
-        let prss_setups = rt.block_on(async {
-            setup_prss_sess::<RealAgreeRandom>(sessions.clone(), rng.next_u64()).await
-        });
+        let prss_setups =
+            rt.block_on(async { setup_prss_sess::<RealAgreeRandom>(sessions.clone()).await });
 
         runtime.setup_prss(prss_setups);
 
@@ -424,9 +426,8 @@ mod tests {
 
         // Test with real AgreeRandom
         let _guard = rt.enter();
-        let prss_setups = rt.block_on(async {
-            setup_prss_sess::<DummyAgreeRandom>(sessions, rng.next_u64()).await
-        });
+        let prss_setups =
+            rt.block_on(async { setup_prss_sess::<DummyAgreeRandom>(sessions).await });
 
         runtime.setup_prss(prss_setups);
 
@@ -457,9 +458,7 @@ mod tests {
 
         let sid = SessionId::from(23425);
 
-        let mut rng = AesRng::seed_from_u64(54321);
-        let prss =
-            PRSSSetup::testing_party_epoch_init(num_parties, threshold, &mut rng, 1).unwrap();
+        let prss = PRSSSetup::testing_party_epoch_init(num_parties, threshold, 1).unwrap();
 
         let mut state = prss.new_prss_session_state(sid);
 
@@ -482,9 +481,7 @@ mod tests {
     #[case(10, 3)]
     /// check that points computed on f_A are well-formed
     fn test_prss_fa_poly(#[case] num_parties: usize, #[case] threshold: usize) {
-        let mut rng = AesRng::seed_from_u64(5);
-        let prss =
-            PRSSSetup::testing_party_epoch_init(num_parties, threshold, &mut rng, 1).unwrap();
+        let prss = PRSSSetup::testing_party_epoch_init(num_parties, threshold, 1).unwrap();
 
         for set in prss.sets.iter() {
             for p in 1..=num_parties {
@@ -501,8 +498,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "PRSS set size is too large!")]
     fn test_prss_too_large() {
-        let mut rng = AesRng::seed_from_u64(1);
-        let _prss = PRSSSetup::testing_party_epoch_init(22, 7, &mut rng, 1).unwrap();
+        let _prss = PRSSSetup::testing_party_epoch_init(22, 7, 1).unwrap();
     }
 
     #[test]

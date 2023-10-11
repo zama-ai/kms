@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
-use super::{dispute::Dispute, p2p::exchange_values, party::Role};
 use crate::{
+    execution::{
+        p2p::exchange_values,
+        party::Role,
+        session::{LargeSession, LargeSessionHandles},
+    },
     poly::Poly,
     residue_poly::ResiduePoly,
     value::{NetworkValue, Value},
@@ -10,6 +14,7 @@ use crate::{
 use anyhow::anyhow;
 use rand::RngCore;
 
+#[allow(dead_code)]
 pub enum ShareableInput {
     Ring(Z128),
     PolyRing(ResiduePoly<Z128>),
@@ -17,21 +22,22 @@ pub enum ShareableInput {
 
 /// Secret shares a value `input` with the other parties while handling disputes.
 /// That is, in case of malicious behaviour detected by a party they will be added to dispute
-pub async fn share_w_dispute<R: RngCore>(
-    rng: &mut R,
+// TODO remove this dead code annotation once the code using shareDispute gets implemented
+#[allow(dead_code)]
+pub async fn share_w_dispute(
     num_parties: usize,
     degree: usize,
     input: ShareableInput,
-    dispute: &mut Dispute,
+    session: &mut LargeSession,
 ) -> anyhow::Result<HashMap<Role, ResiduePoly<Z128>>> {
     let secret_input = match input {
         ShareableInput::PolyRing(val) => val,
         ShareableInput::Ring(val) => ResiduePoly::from_scalar(val),
     };
-    let polypoints = if dispute.disputed_roles.get(&dispute.my_role)?.is_empty() {
+    let polypoints = if session.my_disputes()?.is_empty() {
         // Happy case when there are no disputes
         // construct a random polynomial
-        let poly = Poly::sample_random(rng, secret_input, degree);
+        let poly = Poly::sample_random(session.rng(), secret_input, degree);
         // embed party IDs as invertable x-points on the polynomial
         let x_coords: Vec<_> = (0..=num_parties)
             .map(ResiduePoly::<Z128>::embed)
@@ -42,16 +48,21 @@ pub async fn share_w_dispute<R: RngCore>(
         // Pessimistic case
         tracing::info!(
             "Doing secret sharing with {:?} parties being in dispute",
-            dispute.disputed_roles.get(&dispute.my_role)?.len()
+            session.my_disputes()?.len()
         );
-        let dispute_ids = dispute
-            .disputed_roles
-            .get(&dispute.my_role)?
+        let dispute_ids = session
+            .my_disputes()?
             .iter()
             .map(|id| id.0 as usize)
             .collect();
 
-        interpolate_poly_w_punctures(rng, num_parties, degree, dispute_ids, secret_input)?
+        interpolate_poly_w_punctures(
+            session.rng(),
+            num_parties,
+            degree,
+            dispute_ids,
+            secret_input,
+        )?
     };
     let polypoint_map: HashMap<Role, NetworkValue> = polypoints
         .iter()
@@ -66,7 +77,7 @@ pub async fn share_w_dispute<R: RngCore>(
     let exchanged_vals = exchange_values(
         &polypoint_map,
         NetworkValue::RingValue(Value::Poly128(ResiduePoly::ZERO)),
-        dispute,
+        session,
     )
     .await?;
     let mut res = HashMap::new();
@@ -77,14 +88,14 @@ pub async fn share_w_dispute<R: RngCore>(
             res.insert(cur_role, val);
         } else {
             // We can assume no value from `cur_role` is already in `exchanged_vals` since we only launched one task for each party so we can insert without checking the result
-            disputed_parties.push(cur_role.clone());
+            disputed_parties.push(cur_role);
             // And remove it from the result
             res.remove(&cur_role);
             // And insert the default value instead
-            res.insert(cur_role.clone(), ResiduePoly::ZERO);
+            res.insert(cur_role, ResiduePoly::ZERO);
         }
     }
-    dispute.add_dispute(&disputed_parties).await?;
+    session.add_dispute(&disputed_parties).await?;
     Ok(res)
 }
 
@@ -160,68 +171,40 @@ pub fn evaluate_w_zero_roots(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{HashMap, HashSet},
-        num::Wrapping,
-        sync::Arc,
-    };
+    use std::{collections::HashSet, num::Wrapping};
 
     use rand::SeedableRng;
-    use rand_chacha::ChaCha12Rng;
+    use rand_chacha::{ChaCha12Rng, ChaCha20Rng};
     use tokio::task::JoinSet;
     use tracing_test::traced_test;
 
     use crate::{
         computation::SessionId,
         execution::{
-            dispute::{Dispute, DisputeSet},
-            distributed::{DistributedSession, DistributedTestRuntime},
-            party::{Identity, Role},
-            single_sharing::interpolate_poly_w_punctures,
+            distributed::DistributedTestRuntime,
+            large_execution::share_dispute::interpolate_poly_w_punctures,
+            party::Role,
+            session::{DisputeSet, LargeSession},
         },
-        networking::local::LocalNetworkingProducer,
         poly::Poly,
         residue_poly::ResiduePoly,
         shamir::ShamirGSharings,
+        tests::helper::tests::{generate_identities, get_large_session},
         Zero, Z128,
     };
 
     use super::{evaluate_w_zero_roots, share_w_dispute, ShareableInput};
 
-    // TODO should be refactrored, will be done in issue 131
-    /// Return a session to be used with a single party, with role 1
-    fn get_dummy_session() -> DistributedSession {
-        let mut role_assignment = HashMap::new();
-        let id = Identity("localhost:5000".to_string());
-        role_assignment.insert(Role(1), id.clone());
-        let net_producer = LocalNetworkingProducer::from_ids(&[id.clone()]);
-        DistributedSession::new(
-            SessionId(1),
-            role_assignment,
-            Arc::new(net_producer.user_net(id.clone())),
-            1,
-            None,
-            id.clone(),
-        )
-    }
-
     #[traced_test]
     #[test]
     fn optimistic_share() {
         let msg = Wrapping(42);
-        let mut dispute = Dispute {
-            session: get_dummy_session(),
-            my_role: Role(1),
-            corrupt_roles: HashSet::new(),
-            disputed_roles: DisputeSet::new(1),
-        };
-        let mut rng = rand::thread_rng();
+        let mut session = get_large_session();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         rt.block_on(async {
-            let share =
-                share_w_dispute(&mut rng, 1, 0, ShareableInput::Ring(msg), &mut dispute).await;
+            let share = share_w_dispute(1, 0, ShareableInput::Ring(msg), &mut session).await;
 
             assert!(share.is_ok());
             // Since we only have one party we assume the result is just a constant which is exactly the message given as input
@@ -237,12 +220,7 @@ mod tests {
     #[test]
     fn optimistic_share_multiple_parties() {
         let msg = Wrapping(42);
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-        ];
+        let identities = generate_identities(4);
         let threshold = 1;
 
         let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
@@ -255,24 +233,18 @@ mod tests {
         for (party_no, _id) in identities.iter().cloned().enumerate() {
             let num_parties = identities.len();
             let own_role = Role::from(party_no as u64 + 1);
-            let session = test_runtime.session_for_player(session_id, party_no);
-
+            let mut session = test_runtime
+                .large_session_for_player(session_id, party_no)
+                .unwrap();
             set.spawn(async move {
-                let mut dispute = Dispute {
-                    session,
-                    my_role: own_role.clone(),
-                    corrupt_roles: HashSet::new(),
-                    disputed_roles: DisputeSet::new(num_parties),
-                };
-                let mut rng = ChaCha12Rng::seed_from_u64(party_no as u64);
+                session.rng = ChaCha20Rng::seed_from_u64(party_no as u64);
                 (
-                    own_role.clone(),
+                    own_role,
                     share_w_dispute(
-                        &mut rng,
                         num_parties,
                         threshold.into(),
                         ShareableInput::Ring(msg),
-                        &mut dispute,
+                        &mut session,
                     )
                     .await,
                 )
@@ -314,13 +286,7 @@ mod tests {
     #[test]
     fn test_sharing_with_dispute() {
         let msg = Wrapping(42);
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-            Identity("localhost:5004".to_string()),
-        ];
+        let identities = generate_identities(5);
         let threshold = 3;
         let mut dispute_roles = DisputeSet::new(identities.len());
         let dispute_party = Role(1);
@@ -338,24 +304,26 @@ mod tests {
         for (party_no, _id) in identities.iter().cloned().enumerate() {
             let num_parties = identities.len();
             let own_role = Role::from(party_no as u64 + 1);
-            let session = test_runtime.session_for_player(session_id, party_no);
+            let mut session = test_runtime
+                .large_session_for_player(session_id, party_no)
+                .unwrap();
             let internal_dispute_roles = dispute_roles.clone();
             set.spawn(async move {
-                let mut dispute = Dispute {
-                    session,
-                    my_role: own_role.clone(),
+                session.rng = ChaCha20Rng::seed_from_u64(party_no as u64);
+                let mut session = LargeSession {
+                    parameters: session.parameters,
+                    network: session.network,
+                    rng: ChaCha20Rng::seed_from_u64(42),
                     corrupt_roles: HashSet::new(),
                     disputed_roles: internal_dispute_roles,
                 };
-                let mut rng = ChaCha12Rng::seed_from_u64(party_no as u64);
                 (
-                    own_role.clone(),
+                    own_role,
                     share_w_dispute(
-                        &mut rng,
                         num_parties,
                         threshold.into(),
                         ShareableInput::Ring(msg),
-                        &mut dispute,
+                        &mut session,
                     )
                     .await,
                 )
@@ -388,7 +356,7 @@ mod tests {
                         .unwrap()
                         .get(&Role(received_from_role))
                         .unwrap();
-                    // Check the shares for all the honest parties with the dispute party (i.e. party 1) is 0
+                    // Check the shares for all the honest parties with the disputed party (i.e. party 1) is 0
                     if received_from_role == dispute_party.0 {
                         assert_eq!(ResiduePoly::ZERO, *shared_val);
                     } else {

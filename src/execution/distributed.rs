@@ -1,28 +1,34 @@
-use super::agree_random::{AgreeRandom, DummyAgreeRandom};
-use super::prss::PRSSSetup;
-use crate::circuit::{Circuit, Operator};
-use crate::computation::SessionId;
-use crate::execution::constants::INPUT_PARTY_ID;
+use super::{
+    agree_random::{AgreeRandom, DummyAgreeRandom},
+    session::{
+        BaseSession, BaseSessionHandles, DecryptionMode, LargeSession, ParameterHandles,
+        SessionParameters, SetupMode, SmallSession,
+    },
+    small_execution::prss::PRSSSetup,
+};
 use crate::execution::party::{Identity, Role, RoleAssignment};
-use crate::execution::prss::PRSSState;
+use crate::execution::{constants::INPUT_PARTY_ID, session::ToBaseSession};
 use crate::lwe::{
     from_expanded_msg, gen_key_set, Ciphertext128, PubConKeyPair, SecretKeyShare,
     ThresholdLWEParameters,
 };
 use crate::networking::local::{LocalNetworking, LocalNetworkingProducer};
-use crate::networking::Networking;
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
 use crate::value::{err_reconstruct, NetworkValue, Value};
+use crate::{
+    circuit::{Circuit, Operator},
+    execution::small_execution::prep::ddec_prep,
+};
+use crate::{computation::SessionId, execution::small_execution::prep::prss_prep};
 use crate::{One, Z128, Z64};
 use aes_prng::AesRng;
 use anyhow::anyhow;
-use derive_more::Display;
 use ndarray::Array1;
 use num_integer::div_ceil;
 use rand::RngCore;
 use rand::SeedableRng;
-use serde::{Deserialize, Serialize};
+use rand_chacha::ChaCha20Rng;
 use std::collections::HashMap;
 use std::num::Wrapping;
 use std::str::FromStr;
@@ -30,88 +36,8 @@ use std::sync::Arc;
 use tfhe::integer::block_decomposition::{BlockDecomposer, BlockRecomposer};
 use tokio::task::JoinSet;
 
-pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
-
-#[derive(Clone, Serialize, Deserialize, Display)]
-pub enum DecryptionMode {
-    PRSSDecrypt,
-    Proto2Decrypt,
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, Display)]
-pub enum SetupMode {
-    AllProtos,
-    NoPrss,
-}
-
-#[derive(Clone)]
-pub struct DistributedSession {
-    pub session_id: SessionId,
-    pub role_assignments: HashMap<Role, Identity>,
-    pub networking: NetworkingImpl,
-    pub threshold: u8,
-    prss_state: Option<PRSSState>,
-    pub own_identity: Identity,
-}
-
-impl DistributedSession {
-    pub fn new(
-        session_id: SessionId,
-        role_assignments: HashMap<Role, Identity>,
-        networking: NetworkingImpl,
-        threshold: u8,
-        prss_setup: Option<PRSSSetup>,
-        own_identity: Identity,
-    ) -> Self {
-        DistributedSession {
-            session_id,
-            role_assignments,
-            networking,
-            threshold,
-            own_identity,
-            prss_state: prss_setup.map(|x| x.new_prss_session_state(session_id)),
-        }
-    }
-
-    pub fn get_identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
-        match self.role_assignments.get(role) {
-            Some(identity) => Ok(identity.clone()),
-            None => Err(anyhow!("Role {} does not exist", role.0)),
-        }
-    }
-
-    pub fn get_amount_of_parties(&self) -> usize {
-        self.role_assignments.len()
-    }
-
-    /// return Role for given Identity in this session
-    pub fn get_role_from(&self, own_identity: &Identity) -> anyhow::Result<Role> {
-        let own_role: Vec<&Role> = self
-            .role_assignments
-            .iter()
-            .filter_map(|(role, identity)| {
-                if identity == own_identity {
-                    Some(role)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let own_role = {
-            match own_role.len() {
-                1 => Ok(own_role[0].clone()),
-                _ => Err(anyhow!(
-                    "Unknown or ambiguous role for identity {:?}",
-                    own_identity
-                )),
-            }?
-        };
-
-        Ok(own_role)
-    }
-}
-
+// TODO The name and use of unwrap hints that this is a struct only to be used for testing, but it is laos used in production, e.g. in grpc.rs
+// Unsafe and test code should not be mixed with production code. See issue 173
 pub struct DistributedTestRuntime {
     pub identities: Vec<Identity>,
     threshold: u8,
@@ -161,27 +87,12 @@ impl DistributedTestRuntime {
         self.prss_setups = setups;
     }
 
-    pub fn session_for_prss(&self, player_id: usize) -> DistributedSession {
-        let role_assignments = self.role_assignments.clone();
-        let net = Arc::clone(&self.user_nets[player_id]);
-        let own_role = Role(player_id as u64 + 1);
-        let identity = self.role_assignments[&own_role].clone();
-
-        DistributedSession::new(
-            SessionId(u128::MAX),
-            role_assignments,
-            net,
-            self.threshold,
-            None,
-            identity,
-        )
-    }
-
-    pub fn session_for_player(
+    pub fn small_session_for_player(
         &self,
         session_id: SessionId,
         player_id: usize,
-    ) -> DistributedSession {
+        rng: Option<ChaCha20Rng>,
+    ) -> anyhow::Result<SmallSession> {
         let role_assignments = self.role_assignments.clone();
         let net = Arc::clone(&self.user_nets[player_id]);
 
@@ -193,14 +104,29 @@ impl DistributedTestRuntime {
         let own_role = Role(player_id as u64 + 1);
         let identity = self.role_assignments[&own_role].clone();
 
-        DistributedSession::new(
+        SmallSession::new(
             session_id,
             role_assignments,
             net,
             self.threshold,
             prss_setup,
             identity,
+            rng,
         )
+    }
+
+    pub fn large_session_for_player(
+        &self,
+        session_id: SessionId,
+        player_id: usize,
+    ) -> anyhow::Result<LargeSession> {
+        let role_assignments = self.role_assignments.clone();
+        let net = Arc::clone(&self.user_nets[player_id]);
+        let own_role = Role(player_id as u64 + 1);
+        let identity = self.role_assignments[&own_role].clone();
+        let parameters =
+            SessionParameters::new(self.threshold, session_id, identity, role_assignments)?;
+        LargeSession::new(parameters, net)
     }
 
     /// test the circuit evaluation
@@ -232,22 +158,22 @@ impl DistributedTestRuntime {
             let ct: Option<Ciphertext128> = ct.clone();
 
             set.spawn(async move {
-                let mut rng = AesRng::seed_from_u64(0); //TODO: This is only for testing, but do we want the ability to pass in RNGs from the outside?
-                let mut session = DistributedSession::new(
-                    session_id,
-                    role_assignments,
-                    net,
-                    threshold,
-                    prss_setup,
-                    identity.clone(),
-                );
-                let out = run_circuit_operations_debug(
+                let mut session = SmallSession {
+                    parameters: SessionParameters {
+                        threshold,
+                        session_id,
+                        own_identity: identity.clone(),
+                        role_assignments,
+                    },
+                    network: net,
+                    rng: ChaCha20Rng::from_seed([0_u8; 32]),
+                    prss_state: prss_setup.map(|x| x.new_prss_session_state(session_id)),
+                };
+                let out = run_circuit_operations_debug::<ChaCha20Rng>(
                     &mut session,
-                    &identity,
                     &circuit,
                     party_keyshare.as_ref(),
                     ct.as_ref(),
-                    &mut rng,
                 )
                 .await
                 .unwrap();
@@ -301,26 +227,21 @@ impl DistributedTestRuntime {
             let ct = ct.clone();
             let mode = mode.clone();
 
+            // TODO currently things only work with the static seed rng
             set.spawn(async move {
-                let mut rng = AesRng::seed_from_u64(0); //TODO: This is only for testing, but do we want the ability to pass in RNGs from the outside?
-                let mut session = DistributedSession::new(
+                let mut session = SmallSession::new(
                     session_id,
                     role_assignments,
                     net,
                     threshold,
                     prss_setup,
                     identity.clone(),
-                );
-                let out = run_decryption(
-                    &mut session,
-                    &identity,
-                    &party_keyshare,
-                    ct,
-                    mode,
-                    rng.next_u64(),
+                    Some(ChaCha20Rng::seed_from_u64(0)),
                 )
-                .await
                 .unwrap();
+                let out = run_decryption(&mut session, &party_keyshare, ct, mode)
+                    .await
+                    .unwrap();
                 (identity, out)
             });
         }
@@ -339,8 +260,7 @@ impl DistributedTestRuntime {
 
 // async helper function that creates the prss setups
 pub async fn setup_prss_sess<A: AgreeRandom + Send>(
-    sessions: Vec<DistributedSession>,
-    seed: u64,
+    sessions: Vec<SmallSession>,
 ) -> Option<HashMap<usize, PRSSSetup>> {
     let mut jobs = JoinSet::new();
 
@@ -348,9 +268,7 @@ pub async fn setup_prss_sess<A: AgreeRandom + Send>(
         let ss = sess.clone();
 
         jobs.spawn(async move {
-            let epoc =
-                PRSSSetup::party_epoch_init_sess::<A>(ss, seed + role_idx as u64, role_idx + 1)
-                    .await;
+            let epoc = PRSSSetup::party_epoch_init_sess::<A>(&ss.clone(), role_idx + 1).await;
             (role_idx, epoc)
         });
     }
@@ -370,27 +288,23 @@ pub async fn setup_prss_sess<A: AgreeRandom + Send>(
 }
 
 pub async fn robust_open_to(
-    session: &DistributedSession,
+    session: &BaseSession,
     share: &Value,
     role: &Role,
     output_party_id: usize,
 ) -> anyhow::Result<Option<Value>> {
-    session.networking.increase_round_counter().await?;
+    session.network().increase_round_counter().await?;
     if role.party_id() == output_party_id {
         let mut collected_sharings = Vec::new();
         collected_sharings.push(share.clone());
 
         let mut set = JoinSet::new();
-        for (other_role, _identity) in session.role_assignments.clone() {
+        for (other_role, _identity) in session.parameters.role_assignments.clone() {
             if role != &other_role {
                 let networking = Arc::clone(&session.networking);
-                let session_id = session.session_id;
+                let session_id = session.session_id();
 
-                let sender = session
-                    .role_assignments
-                    .get(&other_role)
-                    .ok_or(anyhow!("couldn't get identity for role {role}"))?
-                    .clone();
+                let sender = session.identity_from(&other_role)?;
 
                 set.spawn(async move { networking.receive(&sender, &session_id).await });
             }
@@ -406,8 +320,8 @@ pub async fn robust_open_to(
 
             collected_sharings.push(share);
 
-            let num_parties = session.get_amount_of_parties();
-            let t = session.threshold as usize;
+            let num_parties = session.amount_of_parties();
+            let t = session.threshold() as usize;
 
             if 4 * t < num_parties {
                 if collected_sharings.len() > 3 * t {
@@ -437,17 +351,11 @@ pub async fn robust_open_to(
         }
         Err(anyhow!("Could not reconstruct the sharing"))
     } else {
-        let receiver = session
-            .role_assignments
-            .get(&Role(output_party_id as u64))
-            .ok_or(anyhow!(
-                "Couldn't get identity for role {output_party_id} in opening"
-            ))?
-            .clone();
+        let receiver = session.identity_from(&Role(output_party_id as u64))?;
 
         let networking = Arc::clone(&session.networking);
         let share = share.clone();
-        let session_id = session.session_id;
+        let session_id = session.session_id();
 
         tokio::spawn(async move {
             let _ = networking
@@ -460,15 +368,14 @@ pub async fn robust_open_to(
 }
 
 pub async fn robust_input<R: RngCore>(
-    rng: &mut R,
-    session: &DistributedSession,
+    session: &mut BaseSession,
     value: &Option<Value>,
     role: &Role,
     input_party_id: usize,
 ) -> anyhow::Result<Value> {
-    session.networking.increase_round_counter().await?;
+    session.network().increase_round_counter().await?;
     if role.party_id() == input_party_id {
-        let threshold = session.threshold;
+        let threshold = session.threshold();
         let si = {
             match value {
                 Some(v) => v.clone(),
@@ -479,12 +386,16 @@ pub async fn robust_input<R: RngCore>(
                 }
             }
         };
-        let num_parties = session.get_amount_of_parties();
+        let num_parties = session.amount_of_parties();
 
         let (shamir_sharings, roles): (Vec<Value>, Vec<Role>) = match si {
             Value::Ring64(s64) => {
-                let sharings =
-                    ShamirGSharings::<Z64>::share(rng, s64, num_parties, threshold as usize)?;
+                let sharings = ShamirGSharings::<Z64>::share(
+                    session.rng(),
+                    s64,
+                    num_parties,
+                    threshold as usize,
+                )?;
                 let values: Vec<_> = sharings
                     .shares
                     .iter()
@@ -498,8 +409,12 @@ pub async fn robust_input<R: RngCore>(
                 (values, roles)
             }
             Value::Ring128(s128) => {
-                let sharings =
-                    ShamirGSharings::<Z128>::share(rng, s128, num_parties, threshold as usize)?;
+                let sharings = ShamirGSharings::<Z128>::share(
+                    session.rng(),
+                    s128,
+                    num_parties,
+                    threshold as usize,
+                )?;
                 let values: Vec<_> = sharings
                     .shares
                     .iter()
@@ -514,7 +429,7 @@ pub async fn robust_input<R: RngCore>(
             }
             Value::U64(s64) => {
                 let sharings = ShamirGSharings::<Z64>::share(
-                    rng,
+                    session.rng(),
                     Wrapping(s64),
                     num_parties,
                     threshold as usize,
@@ -539,14 +454,10 @@ pub async fn robust_input<R: RngCore>(
         };
         let mut set = JoinSet::new();
         for (indexed_share, to_send_role) in shamir_sharings.iter().zip(roles).skip(1) {
-            let receiver = session
-                .role_assignments
-                .get(&to_send_role)
-                .ok_or(anyhow!("couldn't get identity for role {to_send_role}"))?
-                .clone();
+            let receiver = session.identity_from(&to_send_role)?;
 
-            let networking = Arc::clone(&session.networking);
-            let session_id = session.session_id;
+            let networking = Arc::clone(session.network());
+            let session_id = session.session_id();
             let share = indexed_share.clone();
 
             set.spawn(async move {
@@ -558,14 +469,10 @@ pub async fn robust_input<R: RngCore>(
         while (set.join_next().await).is_some() {}
         Ok(shamir_sharings[0].clone())
     } else {
-        let sender = session
-            .role_assignments
-            .get(&Role(input_party_id as u64))
-            .ok_or(anyhow!("couldn't get identity for role {input_party_id}"))?
-            .clone();
+        let sender = session.identity_from(&Role(input_party_id as u64))?;
 
-        let networking = Arc::clone(&session.networking);
-        let session_id = session.session_id;
+        let networking = Arc::clone(session.network());
+        let session_id = session.session_id();
         let data =
             tokio::spawn(async move { networking.receive(&sender, &session_id).await }).await??;
 
@@ -579,26 +486,22 @@ pub async fn robust_input<R: RngCore>(
 }
 
 pub async fn transfer_pk(
-    session: &DistributedSession,
+    session: &BaseSession,
     pubkey: &PubConKeyPair,
     role: &Role,
     input_party_id: usize,
 ) -> anyhow::Result<PubConKeyPair> {
     if role.party_id() == input_party_id {
-        let num_parties = session.get_amount_of_parties();
+        let num_parties = session.amount_of_parties();
         let pkval = NetworkValue::PubKey(Box::new(pubkey.clone()));
 
         let mut set = JoinSet::new();
         for to_send_role in 1..=num_parties {
             if to_send_role != input_party_id {
-                let identity = session
-                    .role_assignments
-                    .get(&Role(to_send_role as u64))
-                    .ok_or(anyhow!("couldn't get identity for role {to_send_role}"))?
-                    .clone();
+                let identity = session.identity_from(&Role(to_send_role as u64))?;
 
-                let networking = Arc::clone(&session.networking);
-                let session_id = session.session_id;
+                let networking = Arc::clone(session.network());
+                let session_id = session.session_id();
                 let send_pk = pkval.clone();
 
                 set.spawn(async move {
@@ -609,13 +512,9 @@ pub async fn transfer_pk(
         while (set.join_next().await).is_some() {}
         Ok(pubkey.clone())
     } else {
-        let receiver = session
-            .role_assignments
-            .get(&Role(input_party_id as u64))
-            .ok_or(anyhow!("couldn't get identity for role {input_party_id}"))?
-            .clone();
-        let networking = Arc::clone(&session.networking);
-        let session_id = session.session_id;
+        let receiver = session.identity_from(&Role(input_party_id as u64))?;
+        let networking = Arc::clone(session.network());
+        let session_id = session.session_id();
         let data: NetworkValue =
             tokio::spawn(async move { networking.receive(&receiver, &session_id).await }).await??;
 
@@ -655,18 +554,16 @@ fn combine(bits_in_block: u32, decryptions: Vec<Value>) -> anyhow::Result<u128> 
 /// this will be replaced by separate endpoints for individual functions in the future
 /// TODO(Daniel) remove this from production builds
 pub async fn run_circuit_operations_debug<R: RngCore>(
-    session: &mut DistributedSession,
-    own_identity: &Identity,
+    session: &mut SmallSession,
     circuit: &Circuit,
     keyshares: Option<&SecretKeyShare>,
     ct: Option<&Ciphertext128>,
-    rng: &mut R,
 ) -> anyhow::Result<Vec<Value>> {
     // env holds a map from a variable to a list of ciphertext, or partial decrypted ciphertexts or decrypted value (depending on the circuit evaluation calls executed)
     let mut env: HashMap<&String, Vec<Value>> = HashMap::new();
     let mut outputs = Vec::new();
 
-    let own_role = session.get_role_from(own_identity)?;
+    let own_role = session.my_role()?;
 
     #[allow(clippy::get_first)]
     for op in circuit.operations.iter() {
@@ -703,14 +600,20 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 if own_role.party_id() == 1 {
                     let decomposer = BlockDecomposer::new(si, bits_in_block);
                     for block in decomposer.iter_as::<u64>().take(amount_of_blocks as usize) {
-                        let sharing: Value =
-                            robust_input(rng, session, &Some(Value::U64(block)), &own_role, 1)
-                                .await?;
+                        let sharing: Value = robust_input::<R>(
+                            &mut session.to_base_session(),
+                            &Some(Value::U64(block)),
+                            &own_role,
+                            1,
+                        )
+                        .await?;
                         sharings.push(sharing);
                     }
                 } else {
                     for _ in 1..=amount_of_blocks {
-                        let sharing = robust_input(rng, session, &None, &own_role, 1).await?;
+                        let sharing =
+                            robust_input::<R>(&mut session.to_base_session(), &None, &own_role, 1)
+                                .await?;
                         sharings.push(sharing);
                     }
                 }
@@ -737,7 +640,10 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 let mut opened = Vec::new();
                 for current_share in own_share {
                     // TODO is this the behaviour we want here?
-                    if let Some(val) = robust_open_to(session, current_share, &own_role, 1).await? {
+                    if let Some(val) =
+                        robust_open_to(&session.to_base_session(), current_share, &own_role, 1)
+                            .await?
+                    {
                         opened.push(val);
                     }
                 }
@@ -886,22 +792,23 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                     .operands
                     .get(0)
                     .ok_or_else(|| anyhow!("Wrong index buddy"))?;
-
+                // TODO @Daniel should we replace this with a prfkey from SetupInfo or direct call to agree_random?
                 let prep_seed = u64::from_str(
                     op.operands
                         .get(1)
                         .ok_or_else(|| anyhow!("Couldn't retrieve seed"))?,
                 )?;
+                let mut rng = AesRng::seed_from_u64(prep_seed);
                 let ciphertext = ct.ok_or_else(|| anyhow!("no ciphertext found to decrypt"))?;
                 let existing_keyshare =
                     keyshares.ok_or_else(|| anyhow!("Key share not set during dist prep"))?;
                 let mut block_shares = Vec::with_capacity(ciphertext.len());
                 for i in 0..ciphertext.len() {
                     // current_block in ciphertext {
-                    let block_share = crate::execution::prep::ddec_prep(
-                        prep_seed,
+                    let block_share = ddec_prep(
+                        &mut rng,
                         own_role.party_id(),
-                        session.threshold as usize,
+                        session.threshold() as usize,
                         existing_keyshare,
                         ciphertext
                             .get(i)
@@ -936,7 +843,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 let mut partial_decrypted_blocks = Vec::with_capacity(ciphertext.len());
                 for i in 0..ciphertext.len() {
                     // current_block in ciphertext {
-                    let partial_decryption = crate::execution::prep::prss_prep(
+                    let partial_decryption = prss_prep(
                         own_role.party_id(),
                         prss_state,
                         existing_keyshare,
@@ -955,7 +862,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
             FaultyThreshold => {
                 // all parties up to (including) t manipulate their share
                 // (to simulate a faulty/malicious party in benchmarking)
-                if own_role.party_id() <= session.threshold as usize {
+                if own_role.party_id() <= session.threshold() as usize {
                     let dest = op
                         .operands
                         .get(0)
@@ -993,16 +900,14 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
 
 /// run decryption
 pub async fn run_decryption(
-    session: &mut DistributedSession,
-    own_identity: &Identity,
+    session: &mut SmallSession,
     keyshares: &SecretKeyShare,
     ciphertext: Ciphertext128,
     mode: DecryptionMode,
-    seed: u64,
 ) -> anyhow::Result<Vec<Value>> {
     let mut outputs = Vec::new();
-
-    let own_role = session.get_role_from(own_identity)?;
+    let threshold = session.threshold() as usize;
+    let own_role = session.my_role()?;
 
     let mut partial_decrypted = Vec::with_capacity(ciphertext.len());
     for current_ct_block in ciphertext {
@@ -1013,23 +918,23 @@ pub async fn run_decryption(
                     .as_mut()
                     .ok_or_else(|| anyhow!("PRSS_State not initialized"))?;
 
-                crate::execution::prep::prss_prep(
+                prss_prep(
                     own_role.party_id(),
                     prss_state,
                     keyshares,
                     &current_ct_block,
                 )?
             }
-            DecryptionMode::Proto2Decrypt => crate::execution::prep::ddec_prep(
-                seed,
+            DecryptionMode::Proto2Decrypt => ddec_prep(
+                session.rng(),
                 own_role.party_id(),
-                session.threshold as usize,
+                threshold,
                 keyshares,
                 &current_ct_block,
             )?,
         };
 
-        let opened = robust_open_to(session, &res, &own_role, 1).await?;
+        let opened = robust_open_to(&session.to_base_session(), &res, &own_role, 1).await?;
 
         if own_role.party_id() == INPUT_PARTY_ID {
             let message_mod_bits = keyshares
@@ -1068,30 +973,23 @@ pub async fn run_decryption(
     Ok(outputs)
 }
 
-pub async fn initialize_key_material<R: RngCore>(
-    session: &DistributedSession,
-    own_identity: &Identity,
-    rng: &mut R,
+pub async fn initialize_key_material(
+    session: &mut SmallSession,
     setup_mode: SetupMode,
     params: ThresholdLWEParameters,
-    seed: u64,
 ) -> anyhow::Result<(SecretKeyShare, PubConKeyPair, Option<PRSSSetup>)> {
-    let own_role = session.get_role_from(own_identity)?;
+    let own_role = session.my_role()?;
 
     let prss_setup = if setup_mode == SetupMode::AllProtos {
         Some(
-            PRSSSetup::party_epoch_init_sess::<DummyAgreeRandom>(
-                session.clone(),
-                seed,
-                own_role.party_id(),
-            )
-            .await?,
+            PRSSSetup::party_epoch_init_sess::<DummyAgreeRandom>(session, own_role.party_id())
+                .await?,
         )
     } else {
         None
     };
 
-    let keyset = gen_key_set(params, rng);
+    let keyset = gen_key_set(params, &mut session.rng());
 
     let sk_container = keyset.sk.lwe_secret_key_128.into_container();
     let mut key_shares = Vec::new();
@@ -1101,7 +999,9 @@ pub async fn initialize_key_material<R: RngCore>(
             1 => Some(Value::Ring128(Wrapping(cur))),
             _ => None,
         };
-        let share: Value = robust_input(rng, session, &secret, &own_role, 1).await?; //TODO(Daniel) batch this for all big_ell
+        let share: Value =
+            robust_input::<ChaCha20Rng>(&mut session.to_base_session(), &secret, &own_role, 1)
+                .await?; //TODO(Daniel) batch this for all big_ell
 
         if let Value::IndexedShare128((_id, s)) = share {
             key_shares.push(s);
@@ -1111,7 +1011,7 @@ pub async fn initialize_key_material<R: RngCore>(
         pk: keyset.pk,
         ck: keyset.ck,
     };
-    let transferred_pk = transfer_pk(session, &pubcon, &own_role, 1).await?;
+    let transferred_pk = transfer_pk(&session.to_base_session(), &pubcon, &own_role, 1).await?;
 
     let shared_sk = SecretKeyShare {
         input_key_share: Array1::from_vec(key_shares),
@@ -1125,8 +1025,9 @@ pub async fn initialize_key_material<R: RngCore>(
 mod tests {
     use super::*;
     use crate::{
-        circuit::Operation, file_handling::read_as_json,
-        tests::test_data_setup::tests::DEFAULT_PARAM_PATH,
+        circuit::Operation,
+        file_handling::read_as_json,
+        tests::{helper::tests::generate_identities, test_data_setup::tests::DEFAULT_PARAM_PATH},
     };
     use tracing_test::traced_test;
 
@@ -1152,12 +1053,7 @@ mod tests {
             ],
             input_wires: vec![],
         };
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-        ];
+        let identities = generate_identities(4);
         let threshold = 1;
 
         let runtime = DistributedTestRuntime::new(identities, threshold);
@@ -1199,13 +1095,7 @@ mod tests {
             ],
             input_wires: vec![],
         };
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-            Identity("localhost:5004".to_string()),
-        ];
+        let identities = generate_identities(4);
         let threshold = 1;
 
         let runtime = DistributedTestRuntime::new(identities, threshold);
@@ -1246,14 +1136,7 @@ mod tests {
             ],
             input_wires: vec![],
         };
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-            Identity("localhost:5004".to_string()),
-            Identity("localhost:5005".to_string()),
-        ];
+        let identities = generate_identities(6);
         let threshold = 1;
         let runtime = DistributedTestRuntime::new(identities, threshold);
         let results = runtime.evaluate_circuit(&circuit, None).unwrap();
@@ -1340,18 +1223,7 @@ mod tests {
             ],
             input_wires: vec![],
         };
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-            Identity("localhost:5004".to_string()),
-            Identity("localhost:5005".to_string()),
-            Identity("localhost:5006".to_string()),
-            Identity("localhost:5007".to_string()),
-            Identity("localhost:5008".to_string()),
-            Identity("localhost:5009".to_string()),
-        ];
+        let identities = generate_identities(10);
         let threshold = 1;
         let runtime = DistributedTestRuntime::new(identities, threshold);
         let results = runtime.evaluate_circuit(&circuit, None).unwrap();

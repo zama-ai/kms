@@ -11,29 +11,27 @@ use self::gen::{
     LaunchComputationResponse, PubkeyRequest, PubkeyResponse, RetrieveResultsRequest,
     RetrieveResultsResponse,
 };
-use crate::choreography::grpc::gen::DecryptionRequest;
-use crate::choreography::NetworkingStrategy;
-use crate::computation::SessionId;
-use crate::execution::distributed::{
-    initialize_key_material, run_circuit_operations_debug, SetupMode,
-};
-use crate::execution::distributed::{run_decryption, DistributedSession};
-use crate::execution::party::Identity;
+use crate::execution::distributed::{initialize_key_material, run_circuit_operations_debug};
 use crate::execution::party::Role;
-use crate::execution::prep::to_large_ciphertext_block;
-use crate::execution::prss::PRSSSetup;
 use crate::execution::random::get_rng;
+use crate::execution::{
+    distributed::run_decryption, small_execution::prep::to_large_ciphertext_block,
+};
+use crate::execution::{party::Identity, session::SessionParameters};
 use crate::file_handling::read_as_json;
 use crate::lwe::{
     gen_key_set, Ciphertext64, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters,
 };
 use crate::value::Value;
-use aes_prng::AesRng;
+use crate::{choreography::grpc::gen::DecryptionRequest, execution::session::SmallSession};
+use crate::{choreography::NetworkingStrategy, execution::session::SetupMode};
+use crate::{computation::SessionId, execution::small_execution::prss::PRSSSetup};
 use async_cell::sync::AsyncCell;
 use async_trait::async_trait;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use itertools::Itertools;
+use rand_chacha::ChaCha12Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -49,7 +47,6 @@ pub struct ComputationOutputs {
 pub struct SetupInfo {
     pub secret_key_share: SecretKeyShare,
     pub prss_setup: Option<PRSSSetup>,
-    pub seed: u64,
 }
 
 type ResultStores = DashMap<SessionId, Arc<AsyncCell<ComputationOutputs>>>;
@@ -156,14 +153,21 @@ impl Choreography for GrpcChoreography {
 
                 tracing::debug!("own identity: {:?}", own_identity);
 
-                let mut session = DistributedSession::new(
+                let mut session =  SmallSession::new(
                     session_id,
                     role_assignments,
                     Arc::clone(&networking),
                     threshold,
                     setup_info.prss_setup,
                     own_identity.clone(),
-                );
+                    None,
+                )
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("could not make a valid session with current parameters. Failed with error \"{:?}\"", e).to_string(),
+                    )
+                })?;
 
                 let execution_start_timer = Instant::now();
                 let result_stores = Arc::clone(&self.result_stores);
@@ -175,16 +179,13 @@ impl Choreography for GrpcChoreography {
                     .collect_vec();
 
                 tokio::spawn(async move {
-                    let mut rng = AesRng::from_random_seed();
                     // maximum one output per party
                     let mut results = HashMap::with_capacity(1);
-                    let outputs = run_circuit_operations_debug(
+                    let outputs: Vec<Value> = run_circuit_operations_debug::<ChaCha12Rng>(
                         &mut session,
-                        &own_identity,
                         &computation,
                         Some(&setup_info.secret_key_share),
                         Some(&ct_large),
-                        &mut rng,
                     )
                     .await
                     .unwrap();
@@ -287,14 +288,21 @@ impl Choreography for GrpcChoreography {
 
                 tracing::debug!("own identity: {:?}", own_identity);
 
-                let mut session = DistributedSession::new(
+                let mut session = SmallSession::new(
                     session_id,
                     role_assignments,
                     Arc::clone(&networking),
                     threshold,
                     setup_info.prss_setup,
                     own_identity.clone(),
-                );
+                    None,
+                )
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("could not make a valid session with current parameters. Failed with error \"{:?}\"", e).to_string(),
+                    )
+                })?;
 
                 let execution_start_timer = Instant::now();
                 let result_stores = Arc::clone(&self.result_stores);
@@ -307,16 +315,10 @@ impl Choreography for GrpcChoreography {
 
                 tokio::spawn(async move {
                     let mut results = HashMap::with_capacity(1);
-                    let outputs = run_decryption(
-                        &mut session,
-                        &own_identity,
-                        &setup_info.secret_key_share,
-                        ct_large,
-                        mode,
-                        setup_info.seed,
-                    )
-                    .await
-                    .unwrap();
+                    let outputs =
+                        run_decryption(&mut session, &setup_info.secret_key_share, ct_large, mode)
+                            .await
+                            .unwrap();
 
                     tracing::info!("Results in session {:?} ready: {:?}", session_id, outputs);
                     results.insert(format!("{session_id}"), outputs);
@@ -448,29 +450,23 @@ impl Choreography for GrpcChoreography {
 
                 tracing::debug!("own identity: {:?}", own_identity);
 
-                let session = DistributedSession::new(
-                    epoch_id,
-                    role_assignments,
-                    Arc::clone(&networking),
-                    threshold,
-                    None,
-                    own_identity.clone(),
-                );
+                let mut session: crate::execution::session::SmallSessionStruct<rand_chacha::ChaCha20Rng, SessionParameters> = SmallSession::new(
+                    epoch_id, role_assignments, Arc::clone(&networking), threshold, None, own_identity, None,)
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("could not make a valid session with current parameters. Failed with error \"{:?}\"", e).to_string(),
+                    )
+                })?;
 
                 let setup_store = Arc::clone(&self.setup_store);
                 let pks = Arc::clone(&self.pubkey_store);
 
                 tokio::spawn(async move {
-                    let (sk, pk, prss_setup) = initialize_key_material(
-                        &session,
-                        &own_identity,
-                        &mut get_rng(),
-                        setup_mode,
-                        params,
-                        request.seed,
-                    )
-                    .await
-                    .unwrap();
+                    let (sk, pk, prss_setup) =
+                        initialize_key_material(&mut session, setup_mode, params)
+                            .await
+                            .unwrap();
 
                     let setup_result_cell = setup_store
                         .get(&epoch_id)
@@ -478,7 +474,6 @@ impl Choreography for GrpcChoreography {
                     setup_result_cell.set(SetupInfo {
                         secret_key_share: sk,
                         prss_setup,
-                        seed: request.seed,
                     });
 
                     *pks.lock().unwrap() = pk;

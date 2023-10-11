@@ -2,20 +2,20 @@
 use aes_prng::AesRng;
 use anyhow::anyhow;
 use clap::{Parser, Subcommand};
-use distributed_decryption::choreography::choreographer::ChoreoRuntime;
 use distributed_decryption::circuit::Circuit;
 use distributed_decryption::computation::SessionId;
-use distributed_decryption::execution::distributed::DecryptionMode;
-use distributed_decryption::execution::distributed::SetupMode;
 use distributed_decryption::execution::party::Identity;
 use distributed_decryption::execution::party::Role;
 use distributed_decryption::execution::party::RoleAssignment;
 use distributed_decryption::file_handling::read_as_json;
 use distributed_decryption::lwe::PublicKey;
 use distributed_decryption::lwe::ThresholdLWEParameters;
+use distributed_decryption::{
+    choreography::choreographer::ChoreoRuntime,
+    execution::session::{DecryptionMode, SetupMode},
+};
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
-use rand::RngCore;
 use rand::SeedableRng;
 
 #[derive(Parser, Debug)]
@@ -187,7 +187,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &SessionId::from(epoch),
                     threshold,
                     default_params,
-                    rng.next_u64(),
                     setup_mode,
                 )
                 .await?;

@@ -1,11 +1,12 @@
-use crate::commitment::{Commitment, Opening};
-use crate::execution::dispute::DisputePayload;
 use crate::execution::party::Role;
-use crate::execution::prss::PrfKey;
 use crate::lwe::PubConKeyPair;
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
 use crate::sharing::vss::ValueOrPoly;
+use crate::{
+    commitment::{Commitment, Opening},
+    execution::{session::DisputePayload, small_execution::prss::PrfKey},
+};
 use crate::{Z128, Z64};
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};

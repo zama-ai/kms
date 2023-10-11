@@ -1,7 +1,7 @@
 use crate::execution::party::Role;
 use crate::networking::constants::NETWORK_TIMEOUT;
+use crate::value::BroadcastValue;
 use crate::value::NetworkValue;
-use crate::{execution::distributed::DistributedSession, value::BroadcastValue};
 use anyhow::anyhow;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -9,15 +9,23 @@ use tokio::task::JoinSet;
 use tokio::time::error::Elapsed;
 use tokio::time::timeout;
 
-use super::party::Identity;
+use super::{
+    party::Identity,
+    session::{NetworkingImpl, ParameterHandles, SessionParameters},
+};
 
 type RoleValueMap = HashMap<Role, BroadcastValue>;
 
-pub async fn send_to_all(session: &DistributedSession, sender: &Role, msg: NetworkValue) {
+pub async fn send_to_all<P: ParameterHandles>(
+    parameters: &P,
+    network: &NetworkingImpl,
+    sender: &Role,
+    msg: NetworkValue,
+) {
     let mut jobs = JoinSet::new();
-    for (other_role, other_identity) in session.role_assignments.iter() {
-        let networking = Arc::clone(&session.networking);
-        let session_id = session.session_id;
+    for (other_role, other_identity) in parameters.role_assignments().iter() {
+        let networking = Arc::clone(network);
+        let session_id = parameters.session_id();
         let msg = msg.clone();
         let other_id = other_identity.clone();
         if sender != other_role {
@@ -34,9 +42,10 @@ pub async fn send_to_all(session: &DistributedSession, sender: &Role, msg: Netwo
 /// On the receiving end, a party processes a message of a single type from the {Send, Echo, Vote} options
 /// and errors out if message is of a different form. This is helpful so that we can peel the message
 /// from the inside enum.
-pub fn generic_receive_from_all_senders<V>(
+pub fn generic_receive_from_all_senders<V, P: ParameterHandles>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
-    session: &DistributedSession,
+    parameters: &P,
+    network: &NetworkingImpl,
     receiver: &Role,
     sender_list: &Vec<Role>,
     match_network_value_fn: fn(network_value: NetworkValue, id: &Identity) -> anyhow::Result<V>,
@@ -45,18 +54,18 @@ where
     V: std::marker::Send + 'static,
 {
     for sender in sender_list {
-        let sender = sender.clone();
+        let sender = *sender;
         if receiver != &sender {
             //If role and ids can't be tied, propagate error
-            let sender_id = session
-                .role_assignments
+            let sender_id = parameters
+                .role_assignments()
                 .get(&sender)
                 .ok_or(anyhow!("Can't find sender's id in the session"))?
                 .clone();
 
-            let networking = Arc::clone(&session.networking);
-            let session_id = session.session_id;
-            let identity = session.own_identity.clone();
+            let networking = Arc::clone(network);
+            let session_id = parameters.session_id();
+            let identity = parameters.own_identity();
             let task = async move {
                 let stripped_message = networking
                     .receive(&sender_id, &session_id)
@@ -70,37 +79,41 @@ where
     Ok(())
 }
 
-pub fn generic_receive_from_all<V>(
+pub fn generic_receive_from_all<V, P: ParameterHandles>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
-    session: &DistributedSession,
+    parameters: &P,
+    network: &NetworkingImpl,
     receiver: &Role,
     match_network_value_fn: fn(network_value: NetworkValue, id: &Identity) -> anyhow::Result<V>,
 ) -> anyhow::Result<()>
 where
     V: std::marker::Send + 'static,
 {
-    let sender_list: Vec<Role> = session.role_assignments.clone().into_keys().collect();
+    let sender_list: Vec<Role> = parameters.role_assignments().clone().into_keys().collect();
     generic_receive_from_all_senders(
         jobs,
-        session,
+        parameters,
+        network,
         receiver,
         &sender_list,
         match_network_value_fn,
     )
 }
 
-async fn receive_from_all_senders(
+async fn receive_from_all_senders<P: ParameterHandles>(
     round1_data: &mut HashMap<Role, BroadcastValue>,
-    session: &DistributedSession,
+    parameters: &P,
+    network: &NetworkingImpl,
     receiver: &Role,
     sender_list: &Vec<Role>,
 ) -> anyhow::Result<()> {
     let mut jobs = JoinSet::<Result<(Role, anyhow::Result<BroadcastValue>), Elapsed>>::new();
 
     //The error we propagate here is if sender ids and roles cannot be tied together.
-    generic_receive_from_all_senders::<BroadcastValue>(
+    generic_receive_from_all_senders::<BroadcastValue, P>(
         &mut jobs,
-        session,
+        parameters,
+        network,
         receiver,
         sender_list,
         |msg, id| match msg {
@@ -127,7 +140,7 @@ async fn receive_from_all_senders(
                 if let Err(e) = data {
                     tracing::error!("Error {:?}", e);
                 } else {
-                    round1_data.insert(party_id.clone(), data?);
+                    round1_data.insert(party_id, data?);
                 }
             }
         }
@@ -135,41 +148,51 @@ async fn receive_from_all_senders(
     Ok(())
 }
 
-async fn receive_from_all_echo_batch(
-    session: &DistributedSession,
+async fn receive_from_all_echo_batch<P: ParameterHandles>(
+    parameters: &P,
+    network: &NetworkingImpl,
     receiver: &Role,
     echoed_data: &mut HashMap<(Role, BroadcastValue), u32>,
 ) -> anyhow::Result<HashMap<(Role, BroadcastValue), u32>> {
     let mut jobs = JoinSet::<Result<(Role, anyhow::Result<RoleValueMap>), Elapsed>>::new();
-    generic_receive_from_all::<RoleValueMap>(&mut jobs, session, receiver, |msg, id| match msg {
-        NetworkValue::EchoBatch(v) => Ok(v),
-        _ => Err(anyhow!(
-            "I have received sth different from an Echo Batch message on party: {:?}",
-            id
-        )),
-    })?;
+    generic_receive_from_all::<RoleValueMap, P>(
+        &mut jobs,
+        parameters,
+        network,
+        receiver,
+        |msg, id| match msg {
+            NetworkValue::EchoBatch(v) => Ok(v),
+            _ => Err(anyhow!(
+                "I have received sth different from an Echo Batch message on party: {:?}",
+                id
+            )),
+        },
+    )?;
 
     let registered_votes = process_echos(
         &mut jobs,
         echoed_data,
-        session.get_amount_of_parties() as u32,
-        session.threshold as u32,
+        parameters.amount_of_parties() as u32,
+        parameters.threshold() as u32,
     )
     .await?;
     Ok(registered_votes)
 }
 
-fn receive_from_all_votes(
+fn receive_from_all_votes<P: ParameterHandles>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<RoleValueMap>), Elapsed>>,
-    session: &DistributedSession,
+    parameters: &P,
+    network: &NetworkingImpl,
     receiver: &Role,
 ) -> anyhow::Result<()> {
-    generic_receive_from_all::<RoleValueMap>(jobs, session, receiver, |msg, id| match msg {
-        NetworkValue::VoteBatch(v) => Ok(v),
-        _ => Err(anyhow!(
-            "I have received sth different from an Vote Batch message on player: {:?}",
-            id
-        )),
+    generic_receive_from_all::<RoleValueMap, P>(jobs, parameters, network, receiver, |msg, id| {
+        match msg {
+            NetworkValue::VoteBatch(v) => Ok(v),
+            _ => Err(anyhow!(
+                "I have received sth different from an Vote Batch message on player: {:?}",
+                id
+            )),
+        }
     })
 }
 
@@ -193,7 +216,7 @@ async fn process_echos(
                 debug_assert!(rcv_echo.len() <= num_parties as usize);
                 // iterate through the echo batched message and check the frequency of each message
                 let min_entry = rcv_echo.iter().fold(u32::MAX, |acc, (role, m)| {
-                    let entry = echoed_data.entry((role.clone(), m.clone())).or_insert(0);
+                    let entry = echoed_data.entry((*role, m.clone())).or_insert(0);
                     *entry += 1;
                     u32::min(*entry, acc)
                 });
@@ -215,8 +238,9 @@ async fn process_echos(
 }
 
 /// Sender casts a vote only for messages m in registered_votes for which #m >= threshold
-async fn cast_threshold_vote(
-    session: &DistributedSession,
+async fn cast_threshold_vote<P: ParameterHandles>(
+    parameters: &P,
+    network: &NetworkingImpl,
     sender: &Role,
     registered_votes: &HashMap<(Role, BroadcastValue), u32>,
     threshold: u32,
@@ -225,7 +249,7 @@ async fn cast_threshold_vote(
         .iter()
         .filter_map(|(k, f)| {
             if *f >= threshold {
-                Some((k.0.clone(), k.1.clone()))
+                Some((k.0, k.1.clone()))
             } else {
                 None
             }
@@ -236,7 +260,13 @@ async fn cast_threshold_vote(
             "registered votes didn't have any message which had at least threshold occurrences"
         ))
     } else {
-        send_to_all(session, sender, NetworkValue::VoteBatch(vote_data)).await;
+        send_to_all(
+            parameters,
+            network,
+            sender,
+            NetworkValue::VoteBatch(vote_data),
+        )
+        .await;
         Ok(())
     }
 }
@@ -244,14 +274,15 @@ async fn cast_threshold_vote(
 /// Sender gathers votes from all the other parties.
 /// If enough votes >=(T+R) and sender hasn't voted then vote
 /// If enough votes >=(N-T) then stop the computation
-async fn gather_votes(
-    session: &DistributedSession,
+async fn gather_votes<P: ParameterHandles>(
+    parameters: &P,
+    network: &NetworkingImpl,
     sender: &Role,
     registered_votes: &mut HashMap<(Role, BroadcastValue), u32>,
     casted: &mut bool,
 ) -> anyhow::Result<()> {
-    let num_parties = session.get_amount_of_parties();
-    let threshold = session.threshold as usize;
+    let num_parties = parameters.amount_of_parties();
+    let threshold = parameters.threshold() as usize;
     let mut max_common_votes = 0;
 
     // wait for other parties' incoming vote
@@ -259,7 +290,7 @@ async fn gather_votes(
         let mut vote_recv_tasks = JoinSet::new();
 
         //The error we propagate here is if sender ids and roles cannot be tied together.
-        receive_from_all_votes(&mut vote_recv_tasks, session, sender)?;
+        receive_from_all_votes(&mut vote_recv_tasks, parameters, network, sender)?;
 
         while let Some(v) = vote_recv_tasks.join_next().await {
             let task_out = v?.map_err(|_e| anyhow!("timed out error"));
@@ -268,9 +299,7 @@ async fn gather_votes(
                     debug_assert!(inner_map.len() <= num_parties);
                     // iterate through the vote batch message and check the frequency of each message
                     let min_entry = inner_map.iter().fold(usize::MAX, |acc, (role, m)| {
-                        let entry = registered_votes
-                            .entry((role.clone(), m.clone()))
-                            .or_insert(0);
+                        let entry = registered_votes.entry((*role, m.clone())).or_insert(0);
                         *entry += 1;
                         usize::min(*entry as usize, acc)
                     });
@@ -282,7 +311,8 @@ async fn gather_votes(
             if max_common_votes >= threshold + round && !(*casted) {
                 // cast_vote
                 let _ = cast_threshold_vote(
-                    session,
+                    parameters,
+                    network,
                     sender,
                     registered_votes,
                     (threshold + round) as u32,
@@ -297,7 +327,7 @@ async fn gather_votes(
             }
         }
         // increase network round as we either finished broadcast or need to go the next voting round
-        session.networking.increase_round_counter().await?;
+        network.increase_round_counter().await?;
     }
     Ok(())
 }
@@ -306,12 +336,13 @@ async fn gather_votes(
 /// Here Pi = sender and  vi = Vi
 /// Function returns a map bcast_data: Role => Value such that
 /// all players have the broadcasted values inside the map: bcast_data[Pj] = Vj for all j in [n]
-pub async fn reliable_broadcast(
-    session: &DistributedSession,
+pub async fn reliable_broadcast<P: ParameterHandles>(
+    parameters: &P,
+    network: &NetworkingImpl,
     sender_list: &Vec<Role>,
     vi: Option<BroadcastValue>,
 ) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
-    let num_parties = session.get_amount_of_parties();
+    let num_parties = parameters.amount_of_parties();
     if sender_list.is_empty() {
         return Err(anyhow!(
             "We expect at least one party as sender in reliable broadcast"
@@ -319,10 +350,10 @@ pub async fn reliable_broadcast(
     }
     let num_senders = sender_list.len();
 
-    let threshold = session.threshold;
+    let threshold = parameters.threshold();
     let min_honest_nodes = num_parties as u32 - threshold as u32;
 
-    let my_role = session.get_role_from(&session.own_identity)?;
+    let my_role = parameters.my_role()?;
     let is_sender = sender_list.contains(&my_role);
     let mut bcast_data = HashMap::with_capacity(num_senders);
 
@@ -330,82 +361,101 @@ pub async fn reliable_broadcast(
     // Sender parties send the message they intend to broadcast to others
     // The send calls are followed by receive to get the incoming messages from the others
     let mut round1_data = HashMap::<Role, BroadcastValue>::new();
-    session.networking.increase_round_counter().await?;
+    network.increase_round_counter().await?;
     match (vi, is_sender) {
         (Some(vi), true) => {
-            bcast_data.insert(my_role.clone(), vi);
-            round1_data.insert(my_role.clone(), bcast_data[&my_role].clone());
+            bcast_data.insert(my_role, vi);
+            round1_data.insert(my_role, bcast_data[&my_role].clone());
             let msg = NetworkValue::Send(round1_data[&my_role].clone());
-            send_to_all(session, &my_role, msg).await;
+            send_to_all(parameters, network, &my_role, msg).await;
         }
         (None, false) => (),
         (_, _) => return Err(anyhow!("A sender must have a value in rebliable broadcast")),
     }
 
     //The error we propagate here is if sender ids and roles cannot be tied together.
-    receive_from_all_senders(&mut round1_data, session, &my_role, sender_list).await?;
+    receive_from_all_senders(&mut round1_data, parameters, network, &my_role, sender_list).await?;
 
     // Communication round 2
     // Parties send Echo to the other parties
     // Parties receive Echo from others and process them, if there are enough Echo messages then they can cast a vote
-    session.networking.increase_round_counter().await?;
+    network.increase_round_counter().await?;
     let msg = round1_data;
-    send_to_all(session, &my_role, NetworkValue::EchoBatch(msg.clone())).await;
+    send_to_all(
+        parameters,
+        network,
+        &my_role,
+        NetworkValue::EchoBatch(msg.clone()),
+    )
+    .await;
     // adding own echo to the map
-    let mut echos: HashMap<(Role, BroadcastValue), u32> = msg
-        .iter()
-        .map(|(k, v)| ((k.clone(), v.clone()), 1))
-        .collect();
+    let mut echos: HashMap<(Role, BroadcastValue), u32> =
+        msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
     // retrieve echos from all parties
-    let mut registered_votes = receive_from_all_echo_batch(session, &my_role, &mut echos).await?;
+    let mut registered_votes =
+        receive_from_all_echo_batch(parameters, network, &my_role, &mut echos).await?;
 
     // Communication round 3
     // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
-    session.networking.increase_round_counter().await?;
+    network.increase_round_counter().await?;
     let mut casted_vote = false;
     if !registered_votes.is_empty() {
-        cast_threshold_vote(session, &my_role, &registered_votes, 1).await?;
+        cast_threshold_vote(parameters, network, &my_role, &registered_votes, 1).await?;
         casted_vote = true;
     }
 
     // receive votes from the other parties, if we have at least T for a message m associated to a party Pi
     // then we know for sure that Pi has broadcasted message m
-    gather_votes(session, &my_role, &mut registered_votes, &mut casted_vote).await?;
+    gather_votes(
+        parameters,
+        network,
+        &my_role,
+        &mut registered_votes,
+        &mut casted_vote,
+    )
+    .await?;
     for ((role, value), hits) in registered_votes.iter() {
         if *hits >= min_honest_nodes {
-            bcast_data.insert(role.clone(), value.clone());
+            bcast_data.insert(*role, value.clone());
         }
     }
     Ok(bcast_data)
 }
 
-pub async fn reliable_broadcast_all(
-    session: &DistributedSession,
+pub async fn reliable_broadcast_all<P: ParameterHandles>(
+    parameters: &P,
+    network: &NetworkingImpl,
     vi: Option<BroadcastValue>,
 ) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
-    let sender_list = session.role_assignments.clone().into_keys().collect();
-    reliable_broadcast(session, &sender_list, vi).await
+    let sender_list = parameters.role_assignments().clone().into_keys().collect();
+    reliable_broadcast(parameters, network, &sender_list, vi).await
 }
 
 /// Execute a broadcast in the presence of corrupt parties.
 /// Parties in `corrupt_roles` are ignored during the execution and if any new corruptions are detected then they are added to `corrupt_roles`
-pub async fn broadcast_with_corruption(
-    session: &DistributedSession,
+pub async fn broadcast_with_corruption<P: ParameterHandles>(
+    parameters: &P,
+    network: &NetworkingImpl,
     corrupt_roles: &mut HashSet<Role>,
     vi: BroadcastValue,
 ) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
-    // TODO once pr 143 gets approved use the interface there to ensure that corrupt parties are skipped and add a test
-    let mut modified_session = session.clone();
+    let mut parameters_wo_corrupt_parties = SessionParameters {
+        threshold: parameters.threshold(),
+        session_id: parameters.session_id(),
+        own_identity: parameters.own_identity(),
+        role_assignments: parameters.role_assignments().clone(),
+    };
     // Remove corrupt parties from the current session
     corrupt_roles.iter().for_each(|r| {
-        modified_session.role_assignments.remove(r);
+        parameters_wo_corrupt_parties.role_assignments.remove(r);
     });
-    let broadcast_res = reliable_broadcast_all(&modified_session, Some(vi)).await?;
-    session.role_assignments.keys().for_each(|role| {
+    let broadcast_res =
+        reliable_broadcast_all(&parameters_wo_corrupt_parties, network, Some(vi)).await?;
+    parameters.role_assignments().keys().for_each(|role| {
         // Each party that was party that was supposed to broadcast but where the parties did not consistently agree on the result
         // is added to the set of corrupt parties
         if !broadcast_res.contains_key(role) {
-            corrupt_roles.insert(role.clone());
+            corrupt_roles.insert(*role);
         }
     });
     Ok(broadcast_res)
@@ -414,9 +464,13 @@ pub async fn broadcast_with_corruption(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::distributed::DistributedTestRuntime;
-    use crate::execution::party::Identity;
+    use crate::execution::{party::Identity, session::BaseSessionHandles};
     use crate::{computation::SessionId, value::Value};
+    use crate::{
+        execution::distributed::DistributedTestRuntime, tests::helper::tests::generate_identities,
+    };
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
     use std::num::Wrapping;
     use tracing_test::traced_test;
 
@@ -427,12 +481,7 @@ mod tests {
         Vec<BroadcastValue>,
         Vec<HashMap<Role, BroadcastValue>>,
     ) {
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-        ];
+        let identities = generate_identities(4);
 
         let input_values = vec![
             BroadcastValue::from(Value::Ring128(Wrapping(1))),
@@ -453,28 +502,51 @@ mod tests {
 
         if identities.len() == sender_parties.len() {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
-                let session = runtime.session_for_player(session_id, party_no);
+                let num = party_no as u8;
+                let session = runtime
+                    .small_session_for_player(
+                        session_id,
+                        party_no,
+                        Some(ChaCha20Rng::from_seed([num; 32])),
+                    )
+                    .unwrap();
                 set.spawn(async move {
-                    reliable_broadcast_all(&session, Some(my_data))
+                    reliable_broadcast_all(&session.parameters, session.network(), Some(my_data))
                         .await
                         .unwrap()
                 });
             }
         } else {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
-                let session = runtime.session_for_player(session_id, party_no);
+                let session = runtime
+                    .small_session_for_player(
+                        session_id,
+                        party_no,
+                        Some(ChaCha20Rng::from_seed([0_u8; 32])),
+                    )
+                    .unwrap();
                 let sender_list = sender_parties.clone();
                 if sender_parties.contains(&Role::from(party_no as u64 + 1_u64)) {
                     set.spawn(async move {
-                        reliable_broadcast(&session, &sender_list, Some(my_data))
-                            .await
-                            .unwrap()
+                        reliable_broadcast(
+                            &session.parameters,
+                            session.network(),
+                            &sender_list,
+                            Some(my_data),
+                        )
+                        .await
+                        .unwrap()
                     });
                 } else {
                     set.spawn(async move {
-                        reliable_broadcast(&session, &sender_list, None)
-                            .await
-                            .unwrap()
+                        reliable_broadcast(
+                            &session.parameters,
+                            session.network(),
+                            &sender_list,
+                            None,
+                        )
+                        .await
+                        .unwrap()
                     });
                 }
             }
@@ -558,12 +630,7 @@ mod tests {
     #[traced_test]
     #[test]
     fn test_broadcast_dropout() {
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-        ];
+        let identities = generate_identities(4);
 
         let input_values = vec![
             BroadcastValue::from(Value::Ring128(Wrapping(1))),
@@ -582,10 +649,16 @@ mod tests {
 
         let mut set = JoinSet::new();
         for (party_no, my_data) in input_values.iter().cloned().enumerate() {
-            let session = runtime.session_for_player(session_id, party_no);
+            let session = runtime
+                .small_session_for_player(
+                    session_id,
+                    party_no,
+                    Some(ChaCha20Rng::from_seed([0_u8; 32])),
+                )
+                .unwrap();
             if party_no != 0 {
                 set.spawn(async move {
-                    reliable_broadcast_all(&session, Some(my_data))
+                    reliable_broadcast_all(&session.parameters, session.network(), Some(my_data))
                         .await
                         .unwrap()
                 });
@@ -620,12 +693,7 @@ mod tests {
     #[test]
     fn broadcast_w_corruption() {
         let msg = BroadcastValue::from(Value::U64(42));
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-        ];
+        let identities = generate_identities(4);
         let parties = identities.len();
 
         // code for session setup
@@ -639,18 +707,32 @@ mod tests {
 
         let mut set = JoinSet::new();
         for party_id in 0..parties {
-            let session = runtime.session_for_player(session_id, party_id);
-            let mut corruption_set = HashSet::from([corrupt_role.clone()]);
-            let cur_msg = msg.clone();
+            if corrupt_role != Role((party_id + 1) as u64) {
+                let session = runtime
+                    .small_session_for_player(
+                        session_id,
+                        party_id,
+                        Some(ChaCha20Rng::from_seed([0_u8; 32])),
+                    )
+                    .unwrap();
+                let mut corruption_set = HashSet::from([corrupt_role]);
+                let cur_msg = msg.clone();
 
-            set.spawn(async move {
-                let res = broadcast_with_corruption(&session, &mut corruption_set, cur_msg).await;
-                // Check no new corruptions are added to the honest parties view
-                if party_id + 1 != corrupt_role.0 as usize {
-                    assert_eq!(1, corruption_set.len());
-                }
-                (party_id, res)
-            });
+                set.spawn(async move {
+                    let res = broadcast_with_corruption(
+                        &session.parameters,
+                        session.network(),
+                        &mut corruption_set,
+                        cur_msg,
+                    )
+                    .await;
+                    // Check no new corruptions are added to the honest parties view
+                    if party_id + 1 != corrupt_role.0 as usize {
+                        assert_eq!(1, corruption_set.len());
+                    }
+                    (party_id, res)
+                });
+            }
         }
 
         let results = rt.block_on(async {

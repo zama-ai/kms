@@ -46,8 +46,7 @@ message KeygenRequest {
     bytes role_assignment = 2;
     bytes threshold = 3;
     bytes params = 4;
-    uint64 seed = 5;
-    bytes setup_mode = 6;
+    bytes setup_mode = 5;
 }
 
 message KeygenResponse {}

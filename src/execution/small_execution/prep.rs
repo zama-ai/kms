@@ -10,8 +10,7 @@ use crate::{
     lwe::BootstrappingKey,
 };
 use crate::{Zero, Z128};
-use aes_prng::AesRng;
-use rand::SeedableRng;
+use rand::RngCore;
 use std::num::Wrapping;
 use tfhe::core_crypto::prelude::*;
 use tfhe::core_crypto::prelude::{
@@ -36,24 +35,20 @@ fn partial_decrypt(
     Ok(res)
 }
 
-pub(crate) fn ddec_prep(
-    seed: u64,
+pub fn ddec_prep<R: RngCore>(
+    rng: &mut R,
     party_id: usize,
     threshold: usize,
     sk_share: &SecretKeyShare,
     ct: &Ciphertext128Block,
 ) -> anyhow::Result<Value> {
-    // initialize rng to compute keygen, encryption and secret shared bits
-    // TODO should be larger seed
-    let mut rng = AesRng::seed_from_u64(seed);
-
     let partial_dec = partial_decrypt(sk_share, ct)?;
 
     // sample shared bits
     let b = (LOG_BD + POW) as usize;
     let shared_bits: Vec<_> = (0..2 * b)
         .map(|_| {
-            let bit_share = gen_single_party_share(&mut rng, Wrapping(0), threshold, party_id)?;
+            let bit_share = gen_single_party_share(rng, Wrapping(0), threshold, party_id)?;
             Ok::<_, anyhow::Error>(bit_share)
         })
         .collect::<anyhow::Result<Vec<_>, _>>()?;
@@ -68,7 +63,7 @@ pub(crate) fn ddec_prep(
     )))
 }
 
-pub(crate) fn prss_prep(
+pub fn prss_prep(
     party_id: usize,
     prss_state: &mut PRSSState,
     sk_share: &SecretKeyShare,
@@ -97,6 +92,7 @@ where
 /// Converts a ciphertext over a 64 bit domain to a ciphertext over a 128 bit domain (which is needed for secure threshold decryption).
 /// Convertion is done using a precreated convertion key [ck].
 /// Observe that the decryption key will be different after convertion, since [ck] is actually a key-switching key.
+#[allow(dead_code)]
 pub fn to_large_ciphertext(ck: &BootstrappingKey, small_ct: &Ciphertext64) -> Ciphertext128 {
     let mut res = Vec::with_capacity(small_ct.len());
     for current_block in small_ct {
@@ -251,20 +247,25 @@ where
 mod tests {
     use super::*;
     use crate::circuit::{Circuit, Operation, Operator};
-    use crate::execution::distributed::{DecryptionMode, DistributedTestRuntime};
+    use crate::execution::distributed::DistributedTestRuntime;
     use crate::execution::party::Identity;
-    use crate::execution::prss::PRSSSetup;
+
     use crate::execution::random::get_rng;
+    use crate::execution::session::DecryptionMode;
+    use crate::execution::small_execution::prss::PRSSSetup;
     use crate::file_handling::{read_as_json, read_element};
     use crate::lwe::{
         keygen_all_party_shares, keygen_single_party_share, value_to_message, KeyPair, KeySet,
         ThresholdLWEParameters,
     };
+    use crate::tests::helper::tests::generate_identities;
 
     use crate::tests::test_data_setup::tests::{
         DEFAULT_KEY_PATH, DEFAULT_PARAM_PATH, TEST_KEY_PATH, TEST_PARAM_PATH,
     };
     use crate::{computation::SessionId, value::err_reconstruct};
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
     use tracing_test::traced_test;
 
     #[traced_test]
@@ -296,12 +297,11 @@ mod tests {
     #[traced_test]
     #[test]
     fn test_prep() {
-        let seed = 0_u64;
         let parties = 4;
         let message = 15;
         let threshold = 1;
         let params: ThresholdLWEParameters = read_as_json(DEFAULT_PARAM_PATH.to_string()).unwrap();
-        let mut rng = AesRng::seed_from_u64(seed);
+        let mut rng = AesRng::seed_from_u64(0);
         let keyset = read_element(DEFAULT_KEY_PATH.to_string()).unwrap();
         let sk_shares = keygen_all_party_shares(&keyset, &mut rng, parties, threshold).unwrap();
 
@@ -310,8 +310,10 @@ mod tests {
 
         let preps: Vec<_> = (1..=parties)
             .map(|party_id| {
+                // TODO this only works with static seed
+                let mut rng = AesRng::seed_from_u64(1);
                 ddec_prep(
-                    seed,
+                    &mut rng,
                     party_id,
                     threshold,
                     &sk_shares[party_id - 1],
@@ -344,8 +346,7 @@ mod tests {
                 //each party has their own prss state inside their session.
                 let mut rng = AesRng::seed_from_u64(444);
                 let prss_setup =
-                    PRSSSetup::testing_party_epoch_init(num_parties, threshold, &mut rng, party_id)
-                        .unwrap();
+                    PRSSSetup::testing_party_epoch_init(num_parties, threshold, party_id).unwrap();
                 let mut state = prss_setup.new_prss_session_state(sid);
                 let sks =
                     keygen_single_party_share(&keyset, &mut rng, party_id, threshold).unwrap();
@@ -400,18 +401,7 @@ mod tests {
             ],
             input_wires: vec![],
         };
-        let identities = vec![
-            Identity("localhost:5000".to_string()),
-            Identity("localhost:5001".to_string()),
-            Identity("localhost:5002".to_string()),
-            Identity("localhost:5003".to_string()),
-            Identity("localhost:5004".to_string()),
-            Identity("localhost:5005".to_string()),
-            Identity("localhost:5006".to_string()),
-            Identity("localhost:5007".to_string()),
-            Identity("localhost:5008".to_string()),
-            Identity("localhost:5009".to_string()),
-        ];
+        let identities = generate_identities(num_parties);
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys

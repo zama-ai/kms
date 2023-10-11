@@ -1,5 +1,3 @@
-use crate::choreography::grpc::ComputationOutputs;
-use crate::lwe::ThresholdLWEParameters;
 use crate::{
     choreography::grpc::gen::{
         choreography_client::ChoreographyClient, DecryptionRequest, KeygenRequest,
@@ -9,12 +7,13 @@ use crate::{
     computation::SessionId,
     execution::{
         constants::INPUT_PARTY_ID,
-        distributed::{DecryptionMode, SetupMode},
         party::{Identity, Role},
     },
     lwe::{Ciphertext64, PublicKey},
     value::Value,
 };
+use crate::{choreography::grpc::ComputationOutputs, execution::session::DecryptionMode};
+use crate::{execution::session::SetupMode, lwe::ThresholdLWEParameters};
 use std::{collections::HashMap, time::Duration};
 use tonic::transport::{Channel, ClientTlsConfig, Uri};
 
@@ -44,7 +43,7 @@ impl ChoreoRuntime {
                     channel = channel.tls_config(tls_config.clone())?;
                 };
                 let channel = channel.connect_lazy();
-                Ok((role.clone(), channel))
+                Ok((*role, channel))
             })
             .collect::<Result<_, Box<dyn std::error::Error>>>()?;
 
@@ -142,7 +141,7 @@ impl ChoreoRuntime {
 
                 if let Some(time) = co.elapsed_time {
                     combined_stats
-                        .entry(role.clone())
+                        .entry(*role)
                         .or_insert_with(Vec::new)
                         .push(time);
                 }
@@ -167,7 +166,6 @@ impl ChoreoRuntime {
         epoch_id: &SessionId,
         threshold: u8,
         params: ThresholdLWEParameters,
-        seed: u64,
         setup_mode: SetupMode,
     ) -> Result<PublicKey, Box<dyn std::error::Error>> {
         let epoch_id = bincode::serialize(epoch_id)?;
@@ -184,7 +182,6 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.clone(),
                 threshold: threshold.clone(),
                 params: params.clone(),
-                seed, // use an externally supplied seed until we have implemented, e.g. AgreeRandom
                 setup_mode: setup_mode.clone(),
             };
 
