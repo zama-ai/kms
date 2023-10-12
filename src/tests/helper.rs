@@ -106,6 +106,7 @@ pub mod tests {
             parameters,
             network: Arc::new(net_producer.user_net(id)),
             rng: ChaCha20Rng::seed_from_u64(42),
+            corrupt_roles: HashSet::new(),
             prss_state: None,
         }
     }
@@ -119,6 +120,7 @@ pub mod tests {
             parameters,
             network: Arc::new(net_producer.user_net(id)),
             rng: ChaCha20Rng::seed_from_u64(42),
+            corrupt_roles: HashSet::new(),
             prss_state: None,
         }
     }

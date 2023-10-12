@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use itertools::Itertools;
+use rand::RngCore;
 use tokio::{
     task::JoinSet,
     time::{error::Elapsed, timeout},
@@ -11,17 +12,17 @@ use crate::{networking::constants::NETWORK_TIMEOUT, value::NetworkValue};
 use super::{
     party::Role,
     session::{
-        BaseSession, BaseSessionHandles, LargeSession, LargeSessionHandles, NetworkingImpl,
-        ParameterHandles, ToBaseSession,
+        BaseSession, BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
+        ToBaseSession,
     },
 };
 
 /// Send specific values to specific parties, while validating that the parties are sensible within the session.
 /// I.e. not the sending party or in dispute or corrupt.
 /// Each party is supposed to receive a specfic value, mapped to their role in `values_to_send`.
-pub async fn send_to_parties(
+pub async fn send_to_parties<R: RngCore, B: BaseSessionHandles<R>>(
     values_to_send: &HashMap<Role, NetworkValue>,
-    session: &BaseSession,
+    session: &B,
 ) -> anyhow::Result<()> {
     let mut send_job = JoinSet::new();
     internal_send_to_parties(&mut send_job, values_to_send, session)?;
@@ -31,10 +32,10 @@ pub async fn send_to_parties(
 
 /// Add a job of sending specific values to specific parties.
 /// Each party is supposed to receive a specfic value, mapped to their role in `values_to_send`.
-fn internal_send_to_parties(
+fn internal_send_to_parties<R: RngCore, B: BaseSessionHandles<R>>(
     jobs: &mut JoinSet<Result<(), Elapsed>>,
     values_to_send: &HashMap<Role, NetworkValue>,
-    session: &BaseSession,
+    session: &B,
 ) -> anyhow::Result<()> {
     for (cur_receiver, cur_value) in values_to_send.iter() {
         // Ensure we don't send to ourself
@@ -57,16 +58,15 @@ fn internal_send_to_parties(
 
 /// Send specific values to specific parties.
 /// Each party is supposed to receive a specfic value, mapped to their role in `values_to_send`.
-pub async fn send_distinct_to_parties<P: ParameterHandles>(
-    parameters: &P,
-    network: &NetworkingImpl,
+pub async fn send_distinct_to_parties<R: RngCore, B: BaseSessionHandles<R>>(
+    session: &B,
     sender: &Role,
     values_to_send: HashMap<&Role, NetworkValue>,
 ) -> anyhow::Result<()> {
     let mut send_jobs = JoinSet::new();
-    for (other_role, other_identity) in parameters.role_assignments().iter() {
-        let networking = Arc::clone(network);
-        let session_id = parameters.session_id();
+    for (other_role, other_identity) in session.role_assignments().iter() {
+        let networking = Arc::clone(session.network());
+        let session_id = session.session_id();
         let other_id = other_identity.clone();
         let msg = values_to_send[other_role].clone();
         if sender != other_role {

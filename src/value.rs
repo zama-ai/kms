@@ -15,13 +15,17 @@ use std::collections::{BTreeMap, HashMap};
 /// a collection of shares
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
 pub enum Value {
-    IndexedShare64((usize, ResiduePoly<Z64>)),
-    IndexedShare128((usize, ResiduePoly<Z128>)),
     Poly64(ResiduePoly<Z64>),
     Poly128(ResiduePoly<Z128>),
     Ring64(Z64),
     Ring128(Z128),
     U64(u64),
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
+pub struct IndexedValue {
+    pub party_id: usize,
+    pub value: Value,
 }
 
 /// Captures network values which can (and sometimes should) be broadcast
@@ -61,19 +65,19 @@ pub enum NetworkValue {
 }
 
 pub fn err_reconstruct(
-    shares: &Vec<Value>,
+    shares: &Vec<IndexedValue>,
     threshold: usize,
     max_error_count: usize,
 ) -> anyhow::Result<Value> {
     if shares.is_empty() {
         return Err(anyhow!("Input to reconstruction is empty"));
     }
-    match shares[0] {
-        Value::IndexedShare64(_) => {
+    match shares[0].value {
+        Value::Poly64(_) => {
             let stripped_shares: Vec<_> = shares
                 .iter()
-                .filter_map(|v| match v {
-                    Value::IndexedShare64((i, s)) => Some((*i, *s)),
+                .filter_map(|v| match v.value {
+                    Value::Poly64(vv) => Some((v.party_id, vv)),
                     _ => None,
                 })
                 .collect();
@@ -82,7 +86,7 @@ pub fn err_reconstruct(
                     "Mixed types when reconstructing, expected to be Ring64"
                 ))
             } else {
-                Ok(Value::Ring64(ShamirGSharings::<Z64>::err_reconstruct(
+                Ok(Value::Poly64(ShamirGSharings::<Z64>::err_reconstruct(
                     &ShamirGSharings {
                         shares: stripped_shares,
                     },
@@ -91,11 +95,11 @@ pub fn err_reconstruct(
                 )?))
             }
         }
-        Value::IndexedShare128(_) => {
+        Value::Poly128(_) => {
             let stripped_shares: Vec<_> = shares
                 .iter()
-                .filter_map(|v| match v {
-                    Value::IndexedShare128((i, s)) => Some((*i, *s)),
+                .filter_map(|v| match v.value {
+                    Value::Poly128(vv) => Some((v.party_id, vv)),
                     _ => None,
                 })
                 .collect();
@@ -104,7 +108,7 @@ pub fn err_reconstruct(
                     "Mixed types when reconstructing, expected to be Ring128"
                 ))
             } else {
-                Ok(Value::Ring128(ShamirGSharings::<Z128>::err_reconstruct(
+                Ok(Value::Poly128(ShamirGSharings::<Z128>::err_reconstruct(
                     &ShamirGSharings {
                         shares: stripped_shares,
                     },

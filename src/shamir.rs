@@ -166,7 +166,7 @@ macro_rules! impl_share_type {
                 Ok(ShamirGSharings { shares })
             }
 
-            pub fn reconstruct(&self, threshold: usize) -> anyhow::Result<$z> {
+            pub fn reconstruct(&self, threshold: usize) -> anyhow::Result<ResiduePoly<$z>> {
                 self.err_reconstruct(threshold, 0)
             }
 
@@ -174,10 +174,9 @@ macro_rules! impl_share_type {
                 &self,
                 threshold: usize,
                 max_error_count: usize,
-            ) -> anyhow::Result<$z> {
+            ) -> anyhow::Result<ResiduePoly<$z>> {
                 let recon = self.decode(threshold, max_error_count)?;
-                let f_zero = recon.eval(&ResiduePoly::ZERO);
-                f_zero.to_scalar()
+                Ok(recon.eval(&ResiduePoly::ZERO))
             }
 
             pub fn decode(
@@ -302,7 +301,7 @@ mod tests {
 
                 let sumsharing = &sharings + Wrapping(2 as $u);
 
-                let recon = sumsharing.reconstruct(5).unwrap();
+                let recon = $z::try_from(sumsharing.reconstruct(5).unwrap()).unwrap();
                 assert_eq!(recon, Wrapping(25));
             }
 
@@ -314,7 +313,7 @@ mod tests {
 
                 let sumsharing = &sharings * Wrapping(2 as $u);
 
-                let recon = sumsharing.reconstruct(5).unwrap();
+                let recon = $z::try_from(sumsharing.reconstruct(5).unwrap()).unwrap();
                 assert_eq!(recon, Wrapping(46));
             }
 
@@ -338,7 +337,7 @@ mod tests {
 
                 sumsharing = &sumsharing - &sharings_c;
 
-                let recon = sumsharing.reconstruct(5).unwrap();
+                let recon = $z::try_from(sumsharing.reconstruct(5).unwrap()).unwrap();
                 assert_eq!(recon, Wrapping(123));
             }
 
@@ -354,7 +353,7 @@ mod tests {
 
                 let sumsharing = &sharings_a + &sharings_b;
 
-                let recon = sumsharing.reconstruct(5).unwrap();
+                let recon = $z::try_from(sumsharing.reconstruct(5).unwrap()).unwrap();
                 assert_eq!(recon, Wrapping(23 + 42));
             }
 
@@ -373,7 +372,7 @@ mod tests {
 
                 let mut rng = ChaCha12Rng::seed_from_u64(0);
                 let sharings = ShamirGSharings::<$z>::share(&mut rng, secret, num_parties, threshold).unwrap();
-                let recon = sharings.reconstruct(threshold).unwrap();
+                let recon = $z::try_from(sharings.reconstruct(threshold).unwrap()).unwrap();
                 assert_eq!(recon, secret);
             }
 
@@ -392,7 +391,7 @@ mod tests {
 
                 let mut rng = ChaCha12Rng::from_entropy();
                 let sharings = ShamirGSharings::<$z>::share(&mut rng, secret, num_parties, threshold).unwrap();
-                let recon = sharings.reconstruct(threshold).unwrap();
+                let recon = $z::try_from(sharings.reconstruct(threshold).unwrap()).unwrap();
                 assert_eq!(recon, secret);
             }
 

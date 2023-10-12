@@ -322,7 +322,7 @@ mod tests {
 
         let e_shares = ShamirGSharings { shares };
 
-        let recon = e_shares.reconstruct(threshold).unwrap();
+        let recon = Z128::try_from(e_shares.reconstruct(threshold).unwrap()).unwrap();
 
         tracing::debug!("reconstructed prss value: {}", recon.0);
         tracing::debug!("bitsize of reconstructed value: {}", recon.0.ilog2());

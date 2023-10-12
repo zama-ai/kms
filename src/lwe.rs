@@ -122,7 +122,10 @@ pub(crate) fn to_expanded_msg(message: u64, message_mod_bits: usize) -> Plaintex
 /// Thtat is, take the constant term of the polynomial and divide by the appropriate delta.
 pub fn value_to_message(rec_value: Value, message_mod_bits: usize) -> anyhow::Result<Z128> {
     match rec_value {
-        Value::Ring128(value) => Ok(from_expanded_msg(value.0, message_mod_bits)),
+        Value::Poly128(value) => {
+            let value_scalar = Z128::try_from(value)?;
+            Ok(from_expanded_msg(value_scalar.0, message_mod_bits))
+        }
         _other => Err(anyhow!(
             "Expected decrypted element to be a Ring128 element, but it was not!"
         )),

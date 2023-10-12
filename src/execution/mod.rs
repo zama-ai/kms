@@ -1,5 +1,6 @@
 pub mod agree_random;
 pub mod broadcast;
+pub mod coinflip;
 pub mod constants;
 pub mod distributed;
 pub mod p2p;

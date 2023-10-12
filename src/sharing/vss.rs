@@ -3,15 +3,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use anyhow::anyhow;
 use async_trait::async_trait;
 use itertools::Itertools;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tokio::{task::JoinSet, time::error::Elapsed};
 
 use crate::execution::{
-    broadcast::generic_receive_from_all,
-    p2p::send_to_parties,
-    session::{
-        LargeSession, LargeSessionHandles, ParameterHandles, SessionParameters, ToBaseSession,
-    },
+    broadcast::generic_receive_from_all, p2p::send_to_parties, session::LargeSessionHandles,
 };
 use crate::value::NetworkValue;
 use crate::{algebra::bivariate::BivariateEval, value::Value};
@@ -26,7 +23,7 @@ use crate::{
 };
 
 #[async_trait]
-trait Vss {
+pub trait Vss {
     /// Executes a batched Verifiable Secret Sharing with
     /// - session as the MPC session
     /// - secret as secret to be shared
@@ -34,11 +31,9 @@ trait Vss {
     ///
     /// Returns
     /// - a vector of shares (share at idx i is a sharing of the secret of party i)
-    async fn execute(
-        &self,
-        session: &mut LargeSession,
+    async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+        session: &mut L,
         secret: &ResiduePoly<Z128>,
-        corrupt_roles: &mut HashSet<Role>,
     ) -> anyhow::Result<Vec<ResiduePoly<Z128>>>;
 }
 type Challenge = Vec<ResiduePoly<Z128>>;
@@ -93,11 +88,9 @@ pub struct DummyVss {}
 
 #[async_trait]
 impl Vss for DummyVss {
-    async fn execute(
-        &self,
-        session: &mut LargeSession,
+    async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+        session: &mut L,
         secret: &ResiduePoly<Z128>,
-        _corrupt_roles: &mut HashSet<Role>,
     ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
         let own_role = session.my_role()?;
         let nb_parties = session.amount_of_parties();
@@ -106,22 +99,16 @@ impl Vss for DummyVss {
             .keys()
             .map(|role| (*role, NetworkValue::RingValue(Value::Poly128(*secret))))
             .collect();
-        session.network.increase_round_counter().await?;
-        send_to_parties(&values_to_send, &session.to_base_session()).await?;
+        session.network().increase_round_counter().await?;
+        send_to_parties(&values_to_send, session).await?;
         let mut jobs: JoinSet<Result<(Role, Result<ResiduePoly<Z128>, anyhow::Error>), Elapsed>> =
             JoinSet::new();
-        generic_receive_from_all(
-            &mut jobs,
-            &session.parameters,
-            &session.network,
-            &own_role,
-            |msg, _id| match msg {
-                NetworkValue::RingValue(Value::Poly128(v)) => Ok(v),
-                _ => Err(anyhow!(
-                    "Received something else, not a galois ring element"
-                )),
-            },
-        )?;
+        generic_receive_from_all(&mut jobs, session, &own_role, |msg, _id| match msg {
+            NetworkValue::RingValue(Value::Poly128(v)) => Ok(v),
+            _ => Err(anyhow!(
+                "Received something else, not a galois ring element"
+            )),
+        })?;
 
         let mut res = vec![ResiduePoly::<Z128>::ZERO; nb_parties];
         res[own_role.zero_index()] = *secret;
@@ -152,21 +139,19 @@ pub struct RealVss {}
 
 #[async_trait]
 impl Vss for RealVss {
-    async fn execute(
-        &self,
-        session: &mut LargeSession,
+    async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+        session: &mut L,
         secret: &ResiduePoly<Z128>,
-        corrupt_roles: &mut HashSet<Role>,
     ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
         let (bivariate_poly, map_double_shares) = sample_secret(session, secret)?;
         let vss = round_1(session, bivariate_poly, map_double_shares).await?;
-        let verification_map = round_2(session, &vss, corrupt_roles).await?;
-        let unhappy_vec = round_3(session, &vss, &verification_map, corrupt_roles).await?;
-        Ok(round_4(session, &vss, unhappy_vec, corrupt_roles).await?)
+        let verification_map = round_2(session, &vss).await?;
+        let unhappy_vec = round_3(session, &vss, &verification_map).await?;
+        Ok(round_4(session, &vss, unhappy_vec).await?)
     }
 }
-fn sample_secret(
-    session: &mut LargeSession,
+fn sample_secret<R: RngCore, L: LargeSessionHandles<R>>(
+    session: &mut L,
     secret: &ResiduePoly<Z128>,
 ) -> anyhow::Result<(BivariateResiduePoly<Z128>, HashMap<Role, DoublePoly>)> {
     let threshold = session.threshold() as usize;
@@ -190,8 +175,8 @@ fn sample_secret(
     Ok((bivariate_poly, map_double_shares))
 }
 
-async fn round_1(
-    session: &mut LargeSession,
+async fn round_1<R: RngCore, L: LargeSessionHandles<R>>(
+    session: &mut L,
     bivariate_poly: BivariateResiduePoly<Z128>,
     map_double_shares: HashMap<Role, DoublePoly>,
 ) -> anyhow::Result<Round1VSSOutput> {
@@ -227,8 +212,8 @@ async fn round_1(
         })
         .collect();
 
-    session.network.increase_round_counter().await?;
-    send_to_parties(&msgs_to_send, &session.to_base_session()).await?;
+    session.network().increase_round_counter().await?;
+    send_to_parties(&msgs_to_send, session).await?;
 
     let mut jobs = JoinSet::<ResultRound1>::new();
     // Receive data
@@ -257,10 +242,9 @@ async fn round_1(
     })
 }
 
-async fn round_2(
-    session: &LargeSession,
+async fn round_2<R: RngCore, L: LargeSessionHandles<R>>(
+    session: &mut L,
     vss: &Round1VSSOutput,
-    corrupt_roles: &mut HashSet<Role>,
 ) -> anyhow::Result<HashMap<Role, Option<Vec<VerificationValues>>>> {
     let my_role = session.my_role()?;
     let num_parties = session.amount_of_parties();
@@ -281,11 +265,12 @@ async fn round_2(
         })
         .try_collect()?;
 
-    tracing::debug!("Corrupt set before round2 broadcast is {:?}", corrupt_roles);
-    let bcast_data = broadcast_with_corruption(
-        &session.parameters,
-        &session.network,
-        corrupt_roles,
+    tracing::debug!(
+        "Corrupt set before round2 broadcast is {:?}",
+        session.corrupt_roles()
+    );
+    let bcast_data = broadcast_with_corruption::<R, L>(
+        session,
         crate::value::BroadcastValue::Round2VSS(verification_vector),
     )
     .await?;
@@ -303,7 +288,7 @@ async fn round_2(
         .collect();
 
     //Also make sure we don't bother with corrupted players
-    for corrupted_role in corrupt_roles.iter() {
+    for corrupted_role in session.corrupt_roles().iter() {
         casted_bcast_data.insert(*corrupted_role, None);
     }
 
@@ -314,11 +299,10 @@ async fn round_2(
 // Role0 -> Some(v) with v = <VSS1:{<(a_00,b_00), (a_01,b_01), ...>}, VSS2:{}, ..., VSSn:{}>
 // Role1 -> None means somethings wrong happened, consider all values to be 0
 // Role2 -> Some(v) with v = <VSS1:{<(a_20,b_20), (a_21,b_21), ...>}, VSS2:{}, ..., VSSn:{}>
-async fn round_3(
-    session: &LargeSession,
+async fn round_3<R: RngCore, L: LargeSessionHandles<R>>(
+    session: &mut L,
     vss: &Round1VSSOutput,
     verification_map: &HashMap<Role, Option<Vec<VerificationValues>>>,
-    corrupt_roles: &mut HashSet<Role>,
 ) -> anyhow::Result<Vec<HashSet<Role>>> {
     let num_parties = session.amount_of_parties();
     let own_role = session.my_role()?;
@@ -337,18 +321,12 @@ async fn round_3(
     //Broadcast the potential conflicts
     tracing::info!(
         "Corrupt set before unhappy broadcast is {:?}",
-        corrupt_roles
+        session.corrupt_roles()
     );
 
     //Only broadcast if msg is not empty
     let bcast_data: HashMap<Role, BroadcastValue> = if !potentially_unhappy.is_empty() {
-        broadcast_with_corruption(
-            &session.parameters,
-            &session.network,
-            corrupt_roles,
-            BroadcastValue::Round3VSS(msg),
-        )
-        .await?
+        broadcast_with_corruption::<R, L>(session, BroadcastValue::Round3VSS(msg)).await?
     } else {
         HashMap::<Role, BroadcastValue>::new()
     };
@@ -359,18 +337,17 @@ async fn round_3(
 
     for (vss_idx, unhappy_set) in unhappy_vec.iter().enumerate() {
         if unhappy_set.len() > session.threshold() as usize {
-            corrupt_roles.insert(Role::from(vss_idx as u64 + 1));
+            session.add_corrupt(Role::from(vss_idx as u64 + 1));
         }
     }
 
     Ok(unhappy_vec)
 }
 
-async fn round_4(
-    session: &LargeSession,
+async fn round_4<R: RngCore, L: LargeSessionHandles<R>>(
+    session: &mut L,
     vss: &Round1VSSOutput,
     unhappy_vec: Vec<HashSet<Role>>,
-    corrupt_roles: &mut HashSet<Role>,
 ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
     let mut msg = BTreeMap::<(usize, Role), ValueOrPoly>::new();
     let own_role = session.my_role()?;
@@ -382,7 +359,7 @@ async fn round_4(
         .iter()
         .enumerate()
         .filter(|(idx, us)| {
-            !us.contains(&own_role) && !corrupt_roles.contains(&Role::from_zero(*idx))
+            !us.contains(&own_role) && !session.corrupt_roles().contains(&Role::from_zero(*idx))
         })
         .try_for_each(|unhappy_tuple| {
             let is_sender = own_role.zero_index() == unhappy_tuple.0;
@@ -392,20 +369,17 @@ async fn round_4(
     //Broadcast_with_corruption uses broadcast_all,
     //but here we dont expect parties that are in unhappy in all vss to participate
     //For now let's just have everyone broadcast
-    tracing::debug!("Corrupt set before round4 broadcast is {:?}", corrupt_roles);
+    tracing::debug!(
+        "Corrupt set before round4 broadcast is {:?}",
+        session.corrupt_roles()
+    );
     let unhappy_vec_is_empty = unhappy_vec
         .iter()
         .map(|unhappy_set| unhappy_set.is_empty())
         .fold(true, |acc, v| acc & v);
 
     let bcast_data = if !unhappy_vec_is_empty {
-        broadcast_with_corruption(
-            &session.parameters,
-            &session.network,
-            corrupt_roles,
-            BroadcastValue::Round4VSS(msg),
-        )
-        .await?
+        broadcast_with_corruption::<R, L>(session, BroadcastValue::Round4VSS(msg)).await?
     } else {
         HashMap::<Role, BroadcastValue>::new()
     };
@@ -417,8 +391,11 @@ async fn round_4(
         .iter()
         .enumerate()
         .try_for_each(|unhappy_tuple| {
-            if !corrupt_roles.contains(&Role::from_zero(unhappy_tuple.0)) {
-                round_4_fix_conflicts(session, corrupt_roles, unhappy_tuple, &bcast_data)?;
+            if !session
+                .corrupt_roles()
+                .contains(&Role::from_zero(unhappy_tuple.0))
+            {
+                round_4_fix_conflicts(session, unhappy_tuple, &bcast_data)?;
             }
             Ok::<_, anyhow::Error>(())
         })?;
@@ -429,7 +406,7 @@ async fn round_4(
     session
         .role_assignments()
         .keys()
-        .filter(|sender| !corrupt_roles.contains(sender))
+        .filter(|sender| !session.corrupt_roles().contains(sender))
         .for_each(|role_sender| {
             let vss_idx = role_sender.zero_index();
             let maybe_eval = bcast_data
@@ -460,21 +437,17 @@ async fn round_4(
     Ok(result)
 }
 
-fn vss_receive_round_1(
-    session: &LargeSession,
+fn vss_receive_round_1<R: RngCore, L: LargeSessionHandles<R>>(
+    session: &L,
     jobs: &mut JoinSet<ResultRound1>,
     my_role: Role,
 ) -> anyhow::Result<()> {
-    generic_receive_from_all::<ExchangedDataRound1, SessionParameters>(
-        jobs,
-        &session.parameters,
-        &session.network,
-        &my_role,
-        |msg, _id| match msg {
+    generic_receive_from_all::<ExchangedDataRound1, R, L>(jobs, session, &my_role, |msg, _id| {
+        match msg {
             crate::value::NetworkValue::Round1VSS(v) => Ok(v),
             _ => Err(anyhow!("Received something else, not a VSS round1 struct")),
-        },
-    )?;
+        }
+    })?;
     Ok(())
 }
 
@@ -691,9 +664,8 @@ fn round_4_conflict_resolution(
     Ok(())
 }
 
-fn round_4_fix_conflicts(
-    session: &LargeSession,
-    corrupt_roles: &mut HashSet<Role>,
+fn round_4_fix_conflicts<R: RngCore, L: LargeSessionHandles<R>>(
+    session: &mut L,
     unhappy_tuple: (usize, &HashSet<Role>),
     bcast_data: &HashMap<Role, BroadcastValue>,
 ) -> anyhow::Result<()> {
@@ -747,7 +719,7 @@ fn round_4_fix_conflicts(
                 }
             }
             if votes_against_sender >= 2 * threshold {
-                corrupt_roles.insert(sender_role);
+                session.add_corrupt(sender_role);
             }
         }
     }
@@ -756,7 +728,7 @@ fn round_4_fix_conflicts(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
     use std::num::Wrapping;
 
     use rand::SeedableRng;
@@ -767,6 +739,9 @@ mod tests {
     use crate::algebra::bivariate::BivariateResiduePoly;
     use crate::computation::SessionId;
     use crate::execution::party::Role;
+    use crate::execution::session::BaseSessionHandles;
+    use crate::execution::session::LargeSession;
+    use crate::execution::session::ParameterHandles;
     use crate::execution::{distributed::DistributedTestRuntime, party::Identity};
     use crate::poly::Poly;
     use crate::residue_poly::ResiduePoly;
@@ -810,18 +785,10 @@ mod tests {
             let mut session = runtime
                 .large_session_for_player(session_id, party_nb)
                 .unwrap();
-            let dummy_vss = DummyVss::default();
             let s = secrets[party_nb];
-            let mut corrupt_roles = HashSet::<Role>::new();
-            set.spawn(async move {
-                (
-                    party_nb,
-                    dummy_vss
-                        .execute(&mut session, &s, &mut corrupt_roles)
-                        .await
-                        .unwrap(),
-                )
-            });
+            set.spawn(
+                async move { (party_nb, DummyVss::execute(&mut session, &s).await.unwrap()) },
+            );
         }
 
         let results = rt.block_on(async {
@@ -846,7 +813,7 @@ mod tests {
             }
             let shamir_sharing = ShamirGSharings { shares: vec_shares };
             assert_eq!(
-                secrets[vss_idx].to_scalar().unwrap(),
+                secrets[vss_idx],
                 shamir_sharing.reconstruct(threshold.into()).unwrap()
             );
         }
@@ -951,15 +918,9 @@ mod tests {
                 shares: vec_y.clone(),
             };
 
-            assert_eq!(
-                expected_secret.to_scalar().unwrap(),
-                ss_x.reconstruct(threshold.into()).unwrap()
-            );
+            assert_eq!(expected_secret, ss_x.reconstruct(threshold.into()).unwrap());
 
-            assert_eq!(
-                expected_secret.to_scalar().unwrap(),
-                ss_y.reconstruct(threshold.into()).unwrap()
-            );
+            assert_eq!(expected_secret, ss_y.reconstruct(threshold.into()).unwrap());
         }
     }
 
@@ -981,18 +942,8 @@ mod tests {
             let mut session = runtime
                 .large_session_for_player(session_id, party_nb)
                 .unwrap();
-            let real_vss = RealVss::default();
             let s = secrets[party_nb];
-            let mut corrupt_roles = HashSet::<Role>::new();
-            set.spawn(async move {
-                (
-                    party_nb,
-                    real_vss
-                        .execute(&mut session, &s, &mut corrupt_roles)
-                        .await
-                        .unwrap(),
-                )
-            });
+            set.spawn(async move { (party_nb, RealVss::execute(&mut session, &s).await.unwrap()) });
         }
 
         let results = rt.block_on(async {
@@ -1012,7 +963,7 @@ mod tests {
                 .collect();
             let shamir_sharing = ShamirGSharings { shares: vec_shares };
             assert_eq!(
-                secrets[vss_idx].to_scalar().unwrap(),
+                secrets[vss_idx],
                 shamir_sharing.reconstruct(threshold.into()).unwrap()
             );
         }
@@ -1039,20 +990,12 @@ mod tests {
             let mut session = runtime
                 .large_session_for_player(session_id, party_nb)
                 .unwrap();
-            let real_vss = RealVss::default();
             let s = secrets[party_nb];
-            let mut corrupt_roles = HashSet::<Role>::new();
             //Party 0 doesn't participate
             if party_nb != 0 {
                 set.spawn(async move {
-                    let res = (
-                        party_nb,
-                        real_vss
-                            .execute(&mut session, &s, &mut corrupt_roles)
-                            .await
-                            .unwrap(),
-                    );
-                    assert!(corrupt_roles.contains(&Role::from(1)));
+                    let res = (party_nb, RealVss::execute(&mut session, &s).await.unwrap());
+                    assert!(session.corrupt_roles().contains(&Role::from(1)));
                     res
                 });
             }
@@ -1076,12 +1019,12 @@ mod tests {
             let shamir_sharing = ShamirGSharings { shares: vec_shares };
             if vss_idx == 0 {
                 assert_eq!(
-                    Z128::ZERO,
+                    ResiduePoly::<Z128>::ZERO,
                     shamir_sharing.reconstruct(threshold.into()).unwrap()
                 );
             } else {
                 assert_eq!(
-                    secrets[vss_idx].to_scalar().unwrap(),
+                    secrets[vss_idx],
                     shamir_sharing.reconstruct(threshold.into()).unwrap()
                 );
             }
@@ -1157,7 +1100,6 @@ mod tests {
                 .unwrap();
             let real_vss = RealVss::default();
             let s = secrets[party_nb];
-            let mut corrupt_roles = HashSet::<Role>::new();
             //Party 0 executes maliciously
             if party_nb == 0 {
                 let roles_to_lie_to = vec![Role::from(2)];
@@ -1165,29 +1107,19 @@ mod tests {
                     let vss = malicious_round_1(&real_vss, &mut session, &s, &roles_to_lie_to)
                         .await
                         .unwrap();
-                    let verification_map =
-                        round_2(&session, &vss, &mut corrupt_roles).await.unwrap();
-                    let unhappy_vec =
-                        round_3(&session, &vss, &verification_map, &mut corrupt_roles)
-                            .await
-                            .unwrap();
+                    let verification_map = round_2(&mut session, &vss).await.unwrap();
+                    let unhappy_vec = round_3(&mut session, &vss, &verification_map)
+                        .await
+                        .unwrap();
                     (
                         party_nb,
-                        round_4(&session, &vss, unhappy_vec, &mut corrupt_roles)
-                            .await
-                            .unwrap(),
+                        round_4(&mut session, &vss, unhappy_vec).await.unwrap(),
                     )
                 });
             } else {
-                set.spawn(async move {
-                    (
-                        party_nb,
-                        real_vss
-                            .execute(&mut session, &s, &mut corrupt_roles)
-                            .await
-                            .unwrap(),
-                    )
-                });
+                set.spawn(
+                    async move { (party_nb, RealVss::execute(&mut session, &s).await.unwrap()) },
+                );
             }
         }
 
@@ -1208,7 +1140,7 @@ mod tests {
                 .collect();
             let shamir_sharing = ShamirGSharings { shares: vec_shares };
             assert_eq!(
-                secrets[vss_idx].to_scalar().unwrap(),
+                secrets[vss_idx],
                 shamir_sharing.reconstruct(threshold.into()).unwrap()
             );
         }
@@ -1240,7 +1172,6 @@ mod tests {
                 .unwrap();
             let real_vss = RealVss::default();
             let s = secrets[party_nb];
-            let mut corrupt_roles = HashSet::<Role>::new();
             //Party 0 executes maliciously
             if party_nb == 0 {
                 let roles_to_lie_to = vec![Role::from(2), Role::from(3)];
@@ -1248,27 +1179,16 @@ mod tests {
                     let vss = malicious_round_1(&real_vss, &mut session, &s, &roles_to_lie_to)
                         .await
                         .unwrap();
-                    let verification_map =
-                        round_2(&session, &vss, &mut corrupt_roles).await.unwrap();
-                    let unhappy_vec =
-                        round_3(&session, &vss, &verification_map, &mut corrupt_roles)
-                            .await
-                            .unwrap();
-                    (
-                        party_nb,
-                        round_4(&session, &vss, unhappy_vec, &mut corrupt_roles).await,
-                    )
+                    let verification_map = round_2(&mut session, &vss).await.unwrap();
+                    let unhappy_vec = round_3(&mut session, &vss, &verification_map)
+                        .await
+                        .unwrap();
+                    (party_nb, round_4(&mut session, &vss, unhappy_vec).await)
                 });
             } else {
                 set.spawn(async move {
-                    let res = (
-                        party_nb,
-                        real_vss
-                            .execute(&mut session, &s, &mut corrupt_roles)
-                            .await
-                            .unwrap(),
-                    );
-                    assert!(corrupt_roles.contains(&Role::from(1)));
+                    let res = (party_nb, RealVss::execute(&mut session, &s).await.unwrap());
+                    assert!(session.corrupt_roles().contains(&Role::from(1)));
                     res
                 });
             }
@@ -1292,12 +1212,12 @@ mod tests {
             let shamir_sharing = ShamirGSharings { shares: vec_shares };
             if vss_idx == 0 {
                 assert_eq!(
-                    Z128::ZERO,
+                    ResiduePoly::<Z128>::ZERO,
                     shamir_sharing.reconstruct(threshold.into()).unwrap()
                 );
             } else {
                 assert_eq!(
-                    secrets[vss_idx].to_scalar().unwrap(),
+                    secrets[vss_idx],
                     shamir_sharing.reconstruct(threshold.into()).unwrap()
                 );
             }
@@ -1327,9 +1247,7 @@ mod tests {
             let mut session = runtime
                 .large_session_for_player(session_id, party_nb)
                 .unwrap();
-            let real_vss = RealVss::default();
             let s = secrets[party_nb];
-            let mut corrupt_roles = HashSet::<Role>::new();
             if party_nb == 1 {
                 malicious_set.spawn(async move {
                     let (bivariate_poly, map_double_shares) =
@@ -1343,14 +1261,8 @@ mod tests {
                 });
             } else {
                 set.spawn(async move {
-                    let res = (
-                        party_nb,
-                        real_vss
-                            .execute(&mut session, &s, &mut corrupt_roles)
-                            .await
-                            .unwrap(),
-                    );
-                    assert!(corrupt_roles.contains(&Role::from(2)));
+                    let res = (party_nb, RealVss::execute(&mut session, &s).await.unwrap());
+                    assert!(session.corrupt_roles().contains(&Role::from(2)));
                     res
                 });
             }
@@ -1373,12 +1285,12 @@ mod tests {
             let shamir_sharing = ShamirGSharings { shares: vec_shares };
             if vss_idx == 1 {
                 assert_eq!(
-                    Z128::ZERO,
+                    ResiduePoly::<Z128>::ZERO,
                     shamir_sharing.reconstruct(threshold.into()).unwrap()
                 );
             } else {
                 assert_eq!(
-                    secrets[vss_idx].to_scalar().unwrap(),
+                    secrets[vss_idx],
                     shamir_sharing.reconstruct(threshold.into()).unwrap()
                 );
             }
@@ -1408,9 +1320,7 @@ mod tests {
             let mut session = runtime
                 .large_session_for_player(session_id, party_nb)
                 .unwrap();
-            let real_vss = RealVss::default();
             let s = secrets[party_nb];
-            let mut corrupt_roles = HashSet::<Role>::new();
             if party_nb == 2 {
                 malicious_set.spawn(async move {
                     let (bivariate_poly, map_double_shares) =
@@ -1418,21 +1328,12 @@ mod tests {
                     let vss = round_1(&mut session, bivariate_poly, map_double_shares)
                         .await
                         .unwrap();
-                    (
-                        party_nb,
-                        round_2(&session, &vss, &mut corrupt_roles).await.unwrap(),
-                    )
+                    (party_nb, round_2(&mut session, &vss).await.unwrap())
                 });
             } else {
-                set.spawn(async move {
-                    (
-                        party_nb,
-                        real_vss
-                            .execute(&mut session, &s, &mut corrupt_roles)
-                            .await
-                            .unwrap(),
-                    )
-                });
+                set.spawn(
+                    async move { (party_nb, RealVss::execute(&mut session, &s).await.unwrap()) },
+                );
             }
         }
         let results = rt.block_on(async {
@@ -1452,7 +1353,7 @@ mod tests {
                 .collect();
             let shamir_sharing = ShamirGSharings { shares: vec_shares };
             assert_eq!(
-                secrets[vss_idx].to_scalar().unwrap(),
+                secrets[vss_idx],
                 shamir_sharing.reconstruct(threshold.into()).unwrap()
             );
         }

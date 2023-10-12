@@ -31,6 +31,20 @@ where
     const EL_BIT_LENGTH: usize = Z::EL_BIT_LENGTH;
 }
 
+impl TryFrom<ResiduePoly<Z128>> for Z128 {
+    type Error = anyhow::Error;
+    fn try_from(poly: ResiduePoly<Z128>) -> Result<Z128, Self::Error> {
+        poly.to_scalar()
+    }
+}
+
+impl TryFrom<ResiduePoly<Z64>> for Z64 {
+    type Error = anyhow::Error;
+    fn try_from(poly: ResiduePoly<Z64>) -> Result<Z64, Self::Error> {
+        poly.to_scalar()
+    }
+}
+
 impl<Z> ResiduePoly<Z> {
     pub fn from_scalar(x: Z) -> Self
     where

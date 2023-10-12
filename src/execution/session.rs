@@ -48,6 +48,7 @@ pub trait ParameterHandles: Sync + Send + Clone {
     fn amount_of_parties(&self) -> usize;
     fn role_from(&self, identity: &Identity) -> anyhow::Result<Role>;
     fn role_assignments(&self) -> &HashMap<Role, Identity>;
+    fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>);
 }
 
 impl SessionParameters {
@@ -136,6 +137,10 @@ impl ParameterHandles for SessionParameters {
     fn role_assignments(&self) -> &HashMap<Role, Identity> {
         &self.role_assignments
     }
+
+    fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
+        self.role_assignments = role_assignments;
+    }
 }
 
 pub type BaseSession = BaseSessionStruct<ChaCha20Rng, SessionParameters>;
@@ -145,8 +150,11 @@ pub struct BaseSessionStruct<R: RngCore + Send + Sync, P: ParameterHandles> {
     pub parameters: P,
     pub networking: NetworkingImpl,
     pub rng: R,
+    pub corrupt_roles: HashSet<Role>,
 }
 pub trait BaseSessionHandles<R: RngCore>: ParameterHandles {
+    fn corrupt_roles(&self) -> &HashSet<Role>;
+    fn add_corrupt(&mut self, role: Role) -> bool;
     fn rng(&mut self) -> &mut R;
     fn network(&self) -> &NetworkingImpl;
 }
@@ -161,6 +169,7 @@ impl BaseSession {
             parameters,
             networking: network,
             rng,
+            corrupt_roles: HashSet::new(),
         })
     }
 }
@@ -199,6 +208,10 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
     fn role_assignments(&self) -> &HashMap<Role, Identity> {
         self.parameters.role_assignments()
     }
+
+    fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
+        self.parameters.set_role_assignments(role_assignments);
+    }
 }
 
 impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
@@ -210,6 +223,14 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R
 
     fn network(&self) -> &NetworkingImpl {
         &self.networking
+    }
+
+    fn corrupt_roles(&self) -> &HashSet<Role> {
+        &self.corrupt_roles
+    }
+
+    fn add_corrupt(&mut self, role: Role) -> bool {
+        self.corrupt_roles.insert(role)
     }
 }
 
@@ -227,6 +248,7 @@ pub struct SmallSessionStruct<R: RngCore + Send + Sync, P: ParameterHandles> {
     pub parameters: P,
     pub network: NetworkingImpl,
     pub rng: R,
+    pub corrupt_roles: HashSet<Role>,
     pub prss_state: Option<PRSSState>,
 }
 impl SmallSession {
@@ -248,6 +270,7 @@ impl SmallSession {
             )?,
             rng: rng.unwrap_or_else(ChaCha20Rng::from_entropy),
             network,
+            corrupt_roles: HashSet::new(),
             prss_state: prss_setup.map(|x| x.new_prss_session_state(session_id)),
         })
     }
@@ -287,6 +310,9 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
     fn role_assignments(&self) -> &HashMap<Role, Identity> {
         self.parameters.role_assignments()
     }
+    fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
+        self.parameters.set_role_assignments(role_assignments);
+    }
 }
 
 impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
@@ -298,6 +324,14 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R
 
     fn network(&self) -> &NetworkingImpl {
         &self.network
+    }
+
+    fn corrupt_roles(&self) -> &HashSet<Role> {
+        &self.corrupt_roles
+    }
+
+    fn add_corrupt(&mut self, role: Role) -> bool {
+        self.corrupt_roles.insert(role)
     }
 }
 
@@ -317,6 +351,7 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles>
             parameters: self.parameters.clone(),
             networking: self.network.clone(),
             rng: self.rng.clone(),
+            corrupt_roles: self.corrupt_roles.clone(),
         }
     }
 }
@@ -335,8 +370,8 @@ pub struct DisputePayload {
 pub type LargeSession = LargeSessionStruct<ChaCha20Rng, SessionParameters>;
 
 #[async_trait]
-pub trait LargeSessionHandles<R: RngCore> {
-    fn rng(&mut self) -> &mut R;
+pub trait LargeSessionHandles<R: RngCore>: BaseSessionHandles<R> {
+    fn disputed_roles(&self) -> &DisputeSet;
     fn my_disputes(&self) -> anyhow::Result<&BTreeSet<Role>>;
     async fn add_dispute(&mut self, disputed_parties: &[Role]) -> anyhow::Result<()>;
 }
@@ -396,6 +431,9 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
     fn role_assignments(&self) -> &HashMap<Role, Identity> {
         self.parameters.role_assignments()
     }
+    fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
+        self.parameters.set_role_assignments(role_assignments);
+    }
 }
 impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
     for LargeSessionStruct<R, P>
@@ -407,6 +445,14 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R
     fn network(&self) -> &NetworkingImpl {
         &self.network
     }
+
+    fn corrupt_roles(&self) -> &HashSet<Role> {
+        &self.corrupt_roles
+    }
+
+    fn add_corrupt(&mut self, role: Role) -> bool {
+        self.corrupt_roles.insert(role)
+    }
 }
 
 impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles>
@@ -417,6 +463,7 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles>
             parameters: self.parameters.clone(),
             networking: self.network.clone(),
             rng: self.rng.clone(),
+            corrupt_roles: self.corrupt_roles.clone(),
         }
     }
 }
@@ -425,8 +472,8 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles>
 impl<R: RngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync>
     LargeSessionHandles<R> for LargeSessionStruct<R, P>
 {
-    fn rng(&mut self) -> &mut R {
-        &mut self.rng
+    fn disputed_roles(&self) -> &DisputeSet {
+        &self.disputed_roles
     }
 
     fn my_disputes(&self) -> anyhow::Result<&BTreeSet<Role>> {
@@ -450,13 +497,8 @@ impl<R: RngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync
                 self.disputed_roles.add(&self.my_role()?, cur_role)?;
             }
         }
-        let bcast_data = broadcast_with_corruption(
-            &self.parameters,
-            &self.network,
-            &mut self.corrupt_roles,
-            BroadcastValue::AddDispute(payload),
-        )
-        .await?;
+        let bcast_data =
+            broadcast_with_corruption(self, BroadcastValue::AddDispute(payload)).await?;
         for (cur_role, cur_payload) in bcast_data.into_iter() {
             if cur_role != self.my_role()? {
                 let payload = match cur_payload {

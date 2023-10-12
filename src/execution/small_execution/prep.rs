@@ -57,10 +57,7 @@ pub fn ddec_prep<R: RngCore>(
         acc + (shared_bits[index] + shared_bits[b + index]) * (Wrapping(1_u128) << index)
     });
 
-    Ok(Value::IndexedShare128((
-        party_id,
-        partial_dec + composed_bits,
-    )))
+    Ok(Value::Poly128(partial_dec + composed_bits))
 }
 
 pub fn prss_prep(
@@ -72,10 +69,7 @@ pub fn prss_prep(
     let partial_dec = partial_decrypt(sk_share, ct)?;
     let composed_bits = prss_state.next(party_id)?;
 
-    Ok(Value::IndexedShare128((
-        party_id,
-        partial_dec + composed_bits,
-    )))
+    Ok(Value::Poly128(partial_dec + composed_bits))
 }
 
 // TODO is this the general correct formula? should be:
@@ -263,6 +257,7 @@ mod tests {
     use crate::tests::test_data_setup::tests::{
         DEFAULT_KEY_PATH, DEFAULT_PARAM_PATH, TEST_KEY_PATH, TEST_PARAM_PATH,
     };
+    use crate::value::IndexedValue;
     use crate::{computation::SessionId, value::err_reconstruct};
     use aes_prng::AesRng;
     use rand::SeedableRng;
@@ -277,15 +272,15 @@ mod tests {
             keygen_all_party_shares(&keyset, &mut AesRng::seed_from_u64(0), parties, 1).unwrap();
         let mut first_bit_shares = Vec::with_capacity(parties);
         (0..parties).for_each(|i| {
-            first_bit_shares.push(Value::IndexedShare128((
-                i + 1,
-                *shares[i].input_key_share.get(0).unwrap(),
-            )));
+            first_bit_shares.push(IndexedValue {
+                party_id: i + 1,
+                value: Value::Poly128(*shares[i].input_key_share.get(0).unwrap()),
+            });
         });
 
         let rec: Value = err_reconstruct(&first_bit_shares, 1, 0).unwrap();
         let inner_rec = match rec {
-            Value::Ring128(v) => v,
+            Value::Poly128(v) => Z128::try_from(v).unwrap(),
             _ => unimplemented!(),
         };
         assert_eq!(
@@ -312,14 +307,17 @@ mod tests {
             .map(|party_id| {
                 // TODO this only works with static seed
                 let mut rng = AesRng::seed_from_u64(1);
-                ddec_prep(
-                    &mut rng,
+                IndexedValue {
                     party_id,
-                    threshold,
-                    &sk_shares[party_id - 1],
-                    &large_ct,
-                )
-                .unwrap()
+                    value: ddec_prep(
+                        &mut rng,
+                        party_id,
+                        threshold,
+                        &sk_shares[party_id - 1],
+                        &large_ct,
+                    )
+                    .unwrap(),
+                }
             })
             .collect();
         let rec = err_reconstruct(&preps, threshold, 0).unwrap();
@@ -350,7 +348,10 @@ mod tests {
                 let mut state = prss_setup.new_prss_session_state(sid);
                 let sks =
                     keygen_single_party_share(&keyset, &mut rng, party_id, threshold).unwrap();
-                prss_prep(party_id, &mut state, &sks, &large_ct).unwrap()
+                IndexedValue {
+                    party_id,
+                    value: prss_prep(party_id, &mut state, &sks, &large_ct).unwrap(),
+                }
             })
             .collect();
         let rec = err_reconstruct(&preps, threshold, 0).unwrap();

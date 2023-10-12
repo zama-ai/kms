@@ -4,7 +4,7 @@ use crate::{
     execution::{
         p2p::exchange_values,
         party::Role,
-        session::{LargeSession, LargeSessionHandles},
+        session::{BaseSessionHandles, LargeSession, LargeSessionHandles},
     },
     poly::Poly,
     residue_poly::ResiduePoly,
@@ -277,7 +277,7 @@ mod tests {
                 shares: poly_points,
             };
             // Reconstruct the message and check it is as expected
-            let res = sham.err_reconstruct(threshold as usize, 0).unwrap();
+            let res = Z128::try_from(sham.err_reconstruct(threshold as usize, 0).unwrap()).unwrap();
             assert_eq!(msg, res);
         }
     }
@@ -371,7 +371,8 @@ mod tests {
                     shares: poly_points,
                 };
                 // Reconstruct the message the honest party shared with the other honest parties
-                let res = sham.err_reconstruct(threshold as usize, 0).unwrap();
+                let res =
+                    Z128::try_from(sham.err_reconstruct(threshold as usize, 0).unwrap()).unwrap();
                 assert_eq!(msg, res);
             }
         }
@@ -455,7 +456,8 @@ mod tests {
         let points = (1..parties).map(|x| (x, interpolation[x - 1])).collect();
         let sham = ShamirGSharings::<Z128> { shares: points };
         // Reconstruct the message and check it is as expected
-        let ref_msg = sham.err_reconstruct(threshold, dispute_ids.len()).unwrap();
+        let ref_msg =
+            Z128::try_from(sham.err_reconstruct(threshold, dispute_ids.len()).unwrap()).unwrap();
         assert_eq!(msg, ref_msg.0);
     }
 

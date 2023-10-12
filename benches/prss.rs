@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
@@ -52,6 +55,7 @@ pub fn get_small_session_for_parties(amount: usize, threshold: u8, role: Role) -
         parameters,
         network: Arc::new(net_producer.user_net(id)),
         rng: ChaCha20Rng::seed_from_u64(42),
+        corrupt_roles: HashSet::new(),
         prss_state: None,
     }
 }
