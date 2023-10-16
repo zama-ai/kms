@@ -1,4 +1,4 @@
-use crate::execution::party::Role;
+use crate::execution::{party::Role, small_execution::prss::PsiSet};
 use crate::lwe::PubConKeyPair;
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
@@ -10,7 +10,10 @@ use crate::{
 use crate::{Z128, Z64};
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    num::Wrapping,
+};
 
 /// a collection of shares
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
@@ -22,6 +25,12 @@ pub enum Value {
     U64(u64),
 }
 
+impl From<u128> for Value {
+    fn from(value: u128) -> Self {
+        Value::Ring128(Wrapping(value))
+    }
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
 pub struct IndexedValue {
     pub party_id: usize,
@@ -31,7 +40,9 @@ pub struct IndexedValue {
 /// Captures network values which can (and sometimes should) be broadcast
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
 pub enum BroadcastValue {
+    RingVector(Vec<Value>),
     RingValue(Value),
+    PRSSVotes(Vec<(PsiSet, Value)>),
     AddDispute(DisputePayload),
     Round2VSS(Vec<crate::sharing::vss::VerificationValues>),
     Round3VSS(BTreeMap<(usize, Role, Role), ResiduePoly<Z128>>),
@@ -48,6 +59,11 @@ pub enum AgreeRandomValue {
 impl From<Value> for BroadcastValue {
     fn from(value: Value) -> Self {
         BroadcastValue::RingValue(value)
+    }
+}
+impl From<Vec<Value>> for BroadcastValue {
+    fn from(value: Vec<Value>) -> Self {
+        BroadcastValue::RingVector(value)
     }
 }
 

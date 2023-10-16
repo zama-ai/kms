@@ -90,6 +90,22 @@ impl DistributedTestRuntime {
         self.prss_setups = setups;
     }
 
+    // Setups and adds the PRSS state to the current session
+    pub fn add_prss<A: AgreeRandom + Send>(session: &mut SmallSession) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        let prss_setup = rt
+            .block_on(async {
+                PRSSSetup::party_epoch_init_sess::<A>(
+                    session,
+                    session.my_role().unwrap().party_id(),
+                )
+                .await
+            })
+            .unwrap();
+        session.prss_state = Some(prss_setup.new_prss_session_state(session.session_id()));
+    }
+
     pub fn small_session_for_player(
         &self,
         session_id: SessionId,
