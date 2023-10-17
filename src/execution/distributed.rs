@@ -397,7 +397,7 @@ pub async fn robust_open_to_all<R: RngCore + Send, B: BaseSessionHandles<R>>(
     send_to_all(session, &own_role, NetworkValue::RingValue(share.clone())).await;
 
     let mut jobs = JoinSet::<Result<(Role, anyhow::Result<Value>), Elapsed>>::new();
-    generic_receive_from_all(&mut jobs, session, &own_role, |msg, _id| match msg {
+    generic_receive_from_all(&mut jobs, session, &own_role, None, |msg, _id| match msg {
         NetworkValue::RingValue(v) => Ok(v),
         _ => Err(anyhow!(
             "Received something else than a Ring value in robust open to all"
@@ -421,7 +421,7 @@ pub async fn robust_open_to<R: RngCore + Send, B: BaseSessionHandles<R>>(
     if role.party_id() == output_party_id {
         let mut set = JoinSet::new();
 
-        generic_receive_from_all(&mut set, session, role, |msg, _id| match msg {
+        generic_receive_from_all(&mut set, session, role, None, |msg, _id| match msg {
             NetworkValue::RingValue(v) => Ok(v),
             _ => Err(anyhow!(
                 "Received something else than a Ring value in robust open to all"

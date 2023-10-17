@@ -6,6 +6,7 @@ use anyhow::anyhow;
 use itertools::Itertools;
 use rand::RngCore;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tokio::time::error::Elapsed;
@@ -46,14 +47,17 @@ pub fn generic_receive_from_all_senders<V, R: RngCore, B: BaseSessionHandles<R>>
     session: &B,
     receiver: &Role,
     sender_list: &Vec<Role>,
+    non_answering_parties: Option<&HashSet<Role>>,
     match_network_value_fn: fn(network_value: NetworkValue, id: &Identity) -> anyhow::Result<V>,
 ) -> anyhow::Result<()>
 where
     V: std::marker::Send + 'static,
 {
+    let binding = HashSet::new();
+    let non_answering_parties = non_answering_parties.unwrap_or(&binding);
     for sender in sender_list {
         let sender = *sender;
-        if receiver != &sender {
+        if !non_answering_parties.contains(&sender) && receiver != &sender {
             //If role and ids can't be tied, propagate error
             let sender_id = session
                 .role_assignments()
@@ -81,6 +85,7 @@ pub fn generic_receive_from_all<V, R: RngCore, B: BaseSessionHandles<R>>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &B,
     receiver: &Role,
+    non_answering_parties: Option<&HashSet<Role>>,
     match_network_value_fn: fn(network_value: NetworkValue, id: &Identity) -> anyhow::Result<V>,
 ) -> anyhow::Result<()>
 where
@@ -92,6 +97,7 @@ where
         session,
         receiver,
         &sender_list,
+        non_answering_parties,
         match_network_value_fn,
     )
 }
@@ -101,6 +107,7 @@ async fn receive_from_all_senders<R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
     receiver: &Role,
     sender_list: &Vec<Role>,
+    non_answering_parties: &mut HashSet<Role>,
 ) -> anyhow::Result<()> {
     let mut jobs = JoinSet::<Result<(Role, anyhow::Result<BroadcastValue>), Elapsed>>::new();
 
@@ -110,6 +117,7 @@ async fn receive_from_all_senders<R: RngCore, B: BaseSessionHandles<R>>(
         session,
         receiver,
         sender_list,
+        Some(non_answering_parties),
         |msg, id| match msg {
             NetworkValue::Send(v) => Ok(v),
             NetworkValue::EchoBatch(_) => Err(anyhow!(
@@ -124,19 +132,29 @@ async fn receive_from_all_senders<R: RngCore, B: BaseSessionHandles<R>>(
     )?;
 
     // Place the received (Send) messages in the hashmap
+    let mut answering_parties = HashSet::<Role>::new();
     while let Some(v) = jobs.join_next().await {
+        //Propagate only JoinErrors
         let joined_result = v?;
         match joined_result {
-            Err(e) => {
-                tracing::error!("Error {:?}", e);
-            }
+            Err(_e) => {}
             Ok((party_id, data)) => {
+                answering_parties.insert(party_id);
                 if let Err(e) = data {
-                    tracing::error!("Error {:?}", e);
+                    tracing::warn!(
+                        "(Bcast Round 1) I am {receiver}, received wrong type from {party_id} {:?}",
+                        e
+                    );
                 } else {
                     round1_data.insert(party_id, data?);
                 }
             }
+        }
+    }
+    for party_id in sender_list {
+        if !answering_parties.contains(party_id) && party_id != receiver {
+            non_answering_parties.insert(*party_id);
+            tracing::warn!("(Bcast Round1) I am {receiver}, haven't heard from {party_id}");
         }
     }
     Ok(())
@@ -145,6 +163,7 @@ async fn receive_from_all_senders<R: RngCore, B: BaseSessionHandles<R>>(
 async fn receive_from_all_echo_batch<R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
     receiver: &Role,
+    non_answering_parties: &mut HashSet<Role>,
     echoed_data: &mut HashMap<(Role, BroadcastValue), u32>,
 ) -> anyhow::Result<HashMap<(Role, BroadcastValue), u32>> {
     let mut jobs = JoinSet::<Result<(Role, anyhow::Result<RoleValueMap>), Elapsed>>::new();
@@ -152,8 +171,10 @@ async fn receive_from_all_echo_batch<R: RngCore, B: BaseSessionHandles<R>>(
         &mut jobs,
         session,
         receiver,
+        Some(non_answering_parties),
         |msg, id| match msg {
             NetworkValue::EchoBatch(v) => Ok(v),
+            NetworkValue::Empty => Ok(RoleValueMap::new()),
             _ => Err(anyhow!(
                 "I have received sth different from an Echo Batch message on party: {:?}",
                 id
@@ -162,10 +183,12 @@ async fn receive_from_all_echo_batch<R: RngCore, B: BaseSessionHandles<R>>(
     )?;
 
     let registered_votes = process_echos(
+        receiver,
         &mut jobs,
         echoed_data,
         session.amount_of_parties() as u32,
         session.threshold() as u32,
+        non_answering_parties,
     )
     .await?;
     Ok(registered_votes)
@@ -175,52 +198,91 @@ fn receive_from_all_votes<R: RngCore, B: BaseSessionHandles<R>>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<RoleValueMap>), Elapsed>>,
     session: &B,
     receiver: &Role,
+    non_answering_parties: &HashSet<Role>,
 ) -> anyhow::Result<()> {
-    generic_receive_from_all::<RoleValueMap, R, B>(jobs, session, receiver, |msg, id| match msg {
-        NetworkValue::VoteBatch(v) => Ok(v),
-        _ => Err(anyhow!(
-            "I have received sth different from an Vote Batch message on player: {:?}",
-            id
-        )),
-    })
+    generic_receive_from_all::<RoleValueMap, R, B>(
+        jobs,
+        session,
+        receiver,
+        Some(non_answering_parties),
+        |msg, id| match msg {
+            NetworkValue::VoteBatch(v) => Ok(v),
+            NetworkValue::Empty => Ok(RoleValueMap::new()),
+            _ => Err(anyhow!(
+                "I have received sth different from an Vote Batch message on player: {:?}",
+                id
+            )),
+        },
+    )
+}
+
+async fn internal_process_echos_or_votes(
+    receiver: &Role,
+    rcv_tasks: &mut JoinSet<Result<(Role, anyhow::Result<RoleValueMap>), Elapsed>>,
+    map_data: &mut HashMap<(Role, BroadcastValue), u32>,
+    num_parties: u32,
+    non_answering_parties: &mut HashSet<Role>,
+) -> anyhow::Result<()> {
+    // Receiving Echo messages one by one
+    let mut answering_parties = HashSet::<Role>::new();
+    while let Some(v) = rcv_tasks.join_next().await {
+        let task_out = v?;
+        // if no timeout error then we count it towards casting a vote
+        if let Ok((from_party, data)) = task_out {
+            answering_parties.insert(from_party);
+            if let Ok(rcv_echo) = data {
+                debug_assert!(rcv_echo.len() <= num_parties as usize);
+                // iterate through the echo batched message and check the frequency of each message
+                rcv_echo.iter().for_each(|(role, m)| {
+                    let entry = map_data.entry((*role, m.clone())).or_insert(0);
+                    *entry += 1;
+                });
+            } else {
+                tracing::warn!(
+                    "(Process echos) I am {receiver}, received wrong type from {}: {:?}",
+                    from_party.clone(),
+                    data
+                );
+            }
+        }
+    }
+    //Log timeouts
+    for party_id in 1..=num_parties {
+        if !answering_parties.contains(&Role::from(party_id as u64))
+            && party_id as usize != receiver.party_id()
+        {
+            non_answering_parties.insert(Role::from(party_id as u64));
+            tracing::warn!("(Process echos) I am {receiver} haven't heard from {party_id}");
+        }
+    }
+    Ok(())
 }
 
 /// Process Echo messages one by one, starting with the own echoed_data
 /// If enough echoes >=(N-T) then player can cast a vote
 async fn process_echos(
+    receiver: &Role,
     echo_recv_tasks: &mut JoinSet<Result<(Role, anyhow::Result<RoleValueMap>), Elapsed>>,
     echoed_data: &mut HashMap<(Role, BroadcastValue), u32>,
     num_parties: u32,
     threshold: u32,
+    non_answering_parties: &mut HashSet<Role>,
 ) -> anyhow::Result<HashMap<(Role, BroadcastValue), u32>> {
     let mut registered_votes = HashMap::new();
-    let mut common_batches = 0;
 
-    // Receiving Echo messages one by one
-    while let Some(v) = echo_recv_tasks.join_next().await {
-        let task_out = v?.map_err(|_e| anyhow!("time out error in processing echos"));
-        // if no timeout error then we count it towards casting a vote
-        task_out.and_then(|(_from_party, data)| {
-            data.map(|rcv_echo| {
-                debug_assert!(rcv_echo.len() <= num_parties as usize);
-                // iterate through the echo batched message and check the frequency of each message
-                let min_entry = rcv_echo.iter().fold(u32::MAX, |acc, (role, m)| {
-                    let entry = echoed_data.entry((*role, m.clone())).or_insert(0);
-                    *entry += 1;
-                    u32::min(*entry, acc)
-                });
-                // if the entry with the least number of occurrences has appeared at least N-T times
-                // then we good to cast a vote using data from echo
-                common_batches = u32::max(common_batches, min_entry);
-                if common_batches >= (num_parties - threshold) {
-                    for (role, m) in rcv_echo {
-                        registered_votes.insert((role, m), 1);
-                    }
-                }
-            })
-        })?;
-        if !registered_votes.is_empty() {
-            echo_recv_tasks.shutdown().await;
+    internal_process_echos_or_votes(
+        receiver,
+        echo_recv_tasks,
+        echoed_data,
+        num_parties,
+        non_answering_parties,
+    )
+    .await?;
+
+    //Any entry with at least N-t times is good for a vote
+    for ((role, m), nb_entries) in echoed_data.iter() {
+        if nb_entries >= &(num_parties - threshold) {
+            registered_votes.insert((*role, m.clone()), 1);
         }
     }
     Ok(registered_votes)
@@ -232,7 +294,7 @@ async fn cast_threshold_vote<R: RngCore, B: BaseSessionHandles<R>>(
     sender: &Role,
     registered_votes: &HashMap<(Role, BroadcastValue), u32>,
     threshold: u32,
-) -> anyhow::Result<()> {
+) {
     let vote_data: HashMap<Role, BroadcastValue> = registered_votes
         .iter()
         .filter_map(|(k, f)| {
@@ -243,13 +305,12 @@ async fn cast_threshold_vote<R: RngCore, B: BaseSessionHandles<R>>(
             }
         })
         .collect();
+    //Send empty msg to avoid waiting on timeouts on rcver side
     if vote_data.is_empty() {
-        Err(anyhow!(
-            "registered votes didn't have any message which had at least threshold occurrences"
-        ))
+        tracing::debug!("I am {sender}, sending an empty message");
+        send_to_all(session, sender, NetworkValue::Empty).await;
     } else {
         send_to_all(session, sender, NetworkValue::VoteBatch(vote_data)).await;
-        Ok(())
     }
 }
 
@@ -260,55 +321,60 @@ async fn gather_votes<R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
     sender: &Role,
     registered_votes: &mut HashMap<(Role, BroadcastValue), u32>,
-    casted: &mut bool,
+    casted: &mut HashMap<Role, bool>,
+    non_answering_parties: &mut HashSet<Role>,
 ) -> anyhow::Result<()> {
     let num_parties = session.amount_of_parties();
     let threshold = session.threshold() as usize;
-    let mut max_common_votes = 0;
 
     // wait for other parties' incoming vote
-    for round in 1..=threshold {
+    for round in 1..=threshold + 1 {
         let mut vote_recv_tasks = JoinSet::new();
 
         //The error we propagate here is if sender ids and roles cannot be tied together.
-        receive_from_all_votes(&mut vote_recv_tasks, session, sender)?;
+        receive_from_all_votes(&mut vote_recv_tasks, session, sender, non_answering_parties)?;
+        internal_process_echos_or_votes(
+            sender,
+            &mut vote_recv_tasks,
+            registered_votes,
+            num_parties as u32,
+            non_answering_parties,
+        )
+        .await?;
 
-        while let Some(v) = vote_recv_tasks.join_next().await {
-            let task_out = v?.map_err(|_e| anyhow!("timed out error"));
-            task_out.and_then(|(_from_party, data)| {
-                data.map(|inner_map| {
-                    debug_assert!(inner_map.len() <= num_parties);
-                    // iterate through the vote batch message and check the frequency of each message
-                    let min_entry = inner_map.iter().fold(usize::MAX, |acc, (role, m)| {
-                        let entry = registered_votes.entry((*role, m.clone())).or_insert(0);
-                        *entry += 1;
-                        usize::min(*entry as usize, acc)
-                    });
-                    max_common_votes = usize::max(min_entry, max_common_votes);
-                })
-            })?;
-            // When processing incoming vote, we check whether we received at least T + r votes
-            // If so, then we're safe to cast a vote to everyone else
-            if max_common_votes >= threshold + round && !(*casted) {
-                // cast_vote
-                let _ = cast_threshold_vote(
-                    session,
-                    sender,
-                    registered_votes,
-                    (threshold + round) as u32,
-                )
-                .await;
-                *casted = true;
-            }
-            // If we have received at least N-T votes then we can safely return the broadcast output
-            if max_common_votes >= num_parties - threshold {
-                vote_recv_tasks.shutdown().await;
-                return Ok(());
+        //We don't need to try to vote if it's the last round
+        if round == threshold + 1 {
+            return Ok(());
+        }
+
+        //Here propagate error if my own casted hashmap doesnt contain the expected party's id
+        let mut round_registered_votes = HashMap::<(Role, BroadcastValue), u32>::new();
+        for ((role, m), nb_votes) in registered_votes.iter_mut() {
+            if *nb_votes as usize >= (threshold + round)
+                && !*(casted
+                    .get(role)
+                    .ok_or(anyhow!("Cant retrieve whether I casted a vote"))?)
+            {
+                round_registered_votes.insert((*role, m.clone()), *nb_votes);
+                //Remember I casted a vote
+                let casted_vote_role = casted
+                    .get_mut(role)
+                    .ok_or(anyhow!("Can't retrieve whether I casted a vote"))?;
+                *casted_vote_role = true;
+                //Also add a vote in my own data struct
+                *nb_votes += 1;
             }
         }
-        // increase network round as we either finished broadcast or need to go the next voting round
         session.network().increase_round_counter().await?;
+        cast_threshold_vote(
+            session,
+            sender,
+            &round_registered_votes,
+            (threshold + round) as u32,
+        )
+        .await;
     }
+    // increase network round as we either finished broadcast or need to go the next voting round
     Ok(())
 }
 
@@ -336,6 +402,8 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
     let is_sender = sender_list.contains(&my_role);
     let mut bcast_data = HashMap::with_capacity(num_senders);
 
+    let mut non_answering_parties = HashSet::<Role>::new();
+
     // Communication round 1
     // Sender parties send the message they intend to broadcast to others
     // The send calls are followed by receive to get the incoming messages from the others
@@ -353,7 +421,14 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
     }
 
     //The error we propagate here is if sender ids and roles cannot be tied together.
-    receive_from_all_senders(&mut round1_data, session, &my_role, sender_list).await?;
+    receive_from_all_senders(
+        &mut round1_data,
+        session,
+        &my_role,
+        sender_list,
+        &mut non_answering_parties,
+    )
+    .await?;
 
     // Communication round 2
     // Parties send Echo to the other parties
@@ -365,20 +440,39 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
     let mut echos: HashMap<(Role, BroadcastValue), u32> =
         msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
     // retrieve echos from all parties
-    let mut registered_votes = receive_from_all_echo_batch(session, &my_role, &mut echos).await?;
+    let mut registered_votes =
+        receive_from_all_echo_batch(session, &my_role, &mut non_answering_parties, &mut echos)
+            .await?;
 
     // Communication round 3
     // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
+    //Here propagate error if my own casted hashmap doesnt contain the expected party's id
     session.network().increase_round_counter().await?;
-    let mut casted_vote = false;
-    if !registered_votes.is_empty() {
-        cast_threshold_vote(session, &my_role, &registered_votes, 1).await?;
-        casted_vote = true;
+    let mut casted_vote: HashMap<Role, bool> =
+        sender_list.iter().map(|role| (*role, false)).collect();
+
+    cast_threshold_vote(session, &my_role, &registered_votes, 1).await;
+
+    for ((role, _), _) in registered_votes.iter() {
+        let casted_vote_role = casted_vote
+            .get_mut(role)
+            .ok_or(anyhow!("Can't retrieve whether I casted a vote"))?;
+        if *casted_vote_role {
+            return Err(anyhow!("Trying to cast two votes for the same sender!"));
+        }
+        *casted_vote_role = true;
     }
 
     // receive votes from the other parties, if we have at least T for a message m associated to a party Pi
     // then we know for sure that Pi has broadcasted message m
-    gather_votes(session, &my_role, &mut registered_votes, &mut casted_vote).await?;
+    gather_votes(
+        session,
+        &my_role,
+        &mut registered_votes,
+        &mut casted_vote,
+        &mut non_answering_parties,
+    )
+    .await?;
     for ((role, value), hits) in registered_votes.iter() {
         if *hits >= min_honest_nodes {
             bcast_data.insert(*role, value.clone());
@@ -427,11 +521,12 @@ pub async fn broadcast_with_corruption<R: RngCore, L: BaseSessionHandles<R>>(
 mod tests {
     use super::*;
     use crate::execution::party::Identity;
-    use crate::execution::session::LargeSession;
+    use crate::execution::session::{LargeSession, ParameterHandles};
     use crate::{computation::SessionId, value::Value};
     use crate::{
         execution::distributed::DistributedTestRuntime, tests::helper::tests::generate_identities,
     };
+    use itertools::Itertools;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
     use std::num::Wrapping;
@@ -517,6 +612,7 @@ mod tests {
         (identities, input_values, results)
     }
 
+    #[traced_test]
     #[test]
     fn test_broadcast_all() {
         let sender_parties = (0..4).map(|x| Role::from(x as u64 + 1_u64)).collect();
@@ -698,6 +794,369 @@ mod tests {
                     if cur_role_id != corrupt_role.0 {
                         assert_eq!(&msg, unwrapped.get(&Role(cur_role_id)).unwrap());
                     }
+                }
+            }
+        }
+    }
+
+    //In this strategy, the cheater broadcast something different to all the parties,
+    //and then votes for something whenever it has the opportunity
+    //this behaviour is expected to NOT come to any output for this sender
+    async fn cheater_broadcast_strategy_1<R: RngCore, B: BaseSessionHandles<R>>(
+        session: &B,
+        sender_list: &Vec<Role>,
+        vec_vi: Option<Vec<BroadcastValue>>,
+    ) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
+        let num_parties = session.amount_of_parties();
+        if sender_list.is_empty() {
+            return Err(anyhow!(
+                "We expect at least one party as sender in reliable broadcast"
+            ));
+        }
+        let num_senders = sender_list.len();
+
+        let threshold = session.threshold();
+        let min_honest_nodes = num_parties as u32 - threshold as u32;
+
+        let my_role = session.role_from(&session.own_identity())?;
+        let is_sender = sender_list.contains(&my_role);
+        let mut bcast_data = HashMap::with_capacity(num_senders);
+
+        let mut non_answering_parties = HashSet::new();
+
+        // Communication round 1
+        // As a cheater I send a different message to all the parties
+        // The send calls are followed by receive to get the incoming messages from the others
+        let mut round1_data = HashMap::<Role, BroadcastValue>::new();
+        session.network().increase_round_counter().await?;
+        match (vec_vi.clone(), is_sender) {
+            (Some(vec_vi), true) => {
+                bcast_data.insert(my_role, vec_vi[1].clone());
+                round1_data.insert(my_role, bcast_data[&my_role].clone());
+                let mut jobs = JoinSet::new();
+                for (other_role, other_identity) in session.role_assignments().iter() {
+                    let networking = Arc::clone(session.network());
+                    let session_id = session.session_id();
+                    let msg = NetworkValue::Send(vec_vi[other_role.zero_index()].clone());
+                    tracing::debug!(
+                        "As malicious sender {my_role}, sending {:?} to {other_role}",
+                        vec_vi[other_role.zero_index()]
+                    );
+                    let other_id = other_identity.clone();
+                    if &my_role != other_role {
+                        jobs.spawn(async move {
+                            let _ = networking.send(msg, &other_id, &session_id).await;
+                        });
+                    }
+                }
+                while (jobs.join_next().await).is_some() {}
+            }
+            (None, false) => (),
+            (_, _) => return Err(anyhow!("A sender must have a value in rebliable broadcast")),
+        }
+
+        //The error we propagate here is if sender ids and roles cannot be tied together.
+        receive_from_all_senders(
+            &mut round1_data,
+            session,
+            &my_role,
+            sender_list,
+            &mut non_answering_parties,
+        )
+        .await?;
+
+        // Communication round 2
+        // Parties send Echo to the other parties
+        // Parties receive Echo from others and process them, if there are enough Echo messages then they can cast a vote
+        session.network().increase_round_counter().await?;
+        let msg = round1_data;
+        send_to_all(session, &my_role, NetworkValue::EchoBatch(msg.clone())).await;
+        // adding own echo to the map
+        let mut echos: HashMap<(Role, BroadcastValue), u32> =
+            msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
+        // retrieve echos from all parties
+        let mut registered_votes =
+            receive_from_all_echo_batch(session, &my_role, &mut non_answering_parties, &mut echos)
+                .await?;
+
+        // Communication round 3
+        // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
+        // As cheater, voting for something even though I shouldnt
+        registered_votes.insert((Role::from(2), vec_vi.unwrap()[1].clone()), 1);
+        session.network().increase_round_counter().await?;
+        let mut casted_vote: HashMap<Role, bool> = session
+            .role_assignments()
+            .keys()
+            .map(|role| (*role, false))
+            .collect();
+        if !registered_votes.is_empty() {
+            cast_threshold_vote(session, &my_role, &registered_votes, 1).await;
+            for ((role, _), _) in registered_votes.iter() {
+                let casted_vote_role = casted_vote
+                    .get_mut(role)
+                    .ok_or(anyhow!("Can't retrieve whether I casted a vote"))?;
+                if *casted_vote_role {
+                    return Err(anyhow!("Trying to cast two votes for the same sender!"));
+                }
+                *casted_vote_role = true;
+            }
+        }
+
+        // receive votes from the other parties, if we have at least T for a message m associated to a party Pi
+        // then we know for sure that Pi has broadcasted message m
+        gather_votes(
+            session,
+            &my_role,
+            &mut registered_votes,
+            &mut casted_vote,
+            &mut non_answering_parties,
+        )
+        .await?;
+        for ((role, value), hits) in registered_votes.iter() {
+            if *hits >= min_honest_nodes {
+                bcast_data.insert(*role, value.clone());
+            }
+        }
+        Ok(bcast_data)
+    }
+
+    //Test bcast with one actively malicious party
+    #[test]
+    fn broadcast_w_malicious_1() {
+        let msg = BroadcastValue::from(Value::U64(42));
+        let corrupt_msg = (0..5)
+            .map(|i| BroadcastValue::from(Value::U64(43 + i)))
+            .collect_vec();
+        let identities = generate_identities(5);
+        let parties = identities.len();
+
+        // code for session setup
+        let threshold = 1;
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
+        let session_id = SessionId(1);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let mut set = JoinSet::new();
+        let mut malicious_set = JoinSet::new();
+        for party_id in 0..parties {
+            let mut session = runtime
+                .small_session_for_player(session_id, party_id, None)
+                .unwrap();
+            let cur_msg = msg.clone();
+            if party_id == 0 {
+                let cms = corrupt_msg.clone();
+                malicious_set.spawn(async move {
+                    let res = cheater_broadcast_strategy_1(
+                        &session,
+                        &session.role_assignments().clone().into_keys().collect_vec(),
+                        Some(cms),
+                    )
+                    .await;
+                    (party_id, res)
+                });
+            } else {
+                set.spawn(async move {
+                    let res = broadcast_with_corruption(&mut session, cur_msg).await;
+                    // Check cheater is added to corrupt roles
+                    assert_eq!(1, session.corrupt_roles().len());
+                    (party_id, res)
+                });
+            }
+        }
+
+        let results = rt.block_on(async {
+            let mut results = Vec::new();
+            while let Some(v) = set.join_next().await {
+                let data = v.unwrap();
+                results.push(data);
+            }
+            results
+        });
+
+        for (_cur_role_id, cur_res) in results {
+            // Check that we received response from all except the cheater P0 which sould be absent from result
+            let unwrapped = cur_res.unwrap();
+            assert_eq!(parties - 1, unwrapped.len());
+            for cur_role_id in 1..=parties as u64 {
+                // And that all parties agreed on the messages sent
+                if cur_role_id != 1 {
+                    assert_eq!(&msg, unwrapped.get(&Role(cur_role_id)).unwrap());
+                }
+            }
+        }
+    }
+
+    //Assume 4 parties, P1 is the corrupt (hardcode roles in the strategy)
+    //In this strategy, the cheater sends m0 to P2 and m1 to P3 and P4,
+    //it then echoes m to P3 an P4 but echoes m0 to P2 and does not vote for anything
+    //we thus expect that P2,P3,P4 will end up agreeing on m1 at the end of round5
+    async fn cheater_broadcast_strategy_2<R: RngCore, B: BaseSessionHandles<R>>(
+        session: &B,
+        sender_list: &Vec<Role>,
+        vec_vi: Option<Vec<BroadcastValue>>,
+    ) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
+        if sender_list.is_empty() {
+            return Err(anyhow!(
+                "We expect at least one party as sender in reliable broadcast"
+            ));
+        }
+        let num_senders = sender_list.len();
+
+        let my_role = session.role_from(&session.own_identity())?;
+        let is_sender = sender_list.contains(&my_role);
+        let mut bcast_data = HashMap::with_capacity(num_senders);
+
+        let mut non_answering_parties = HashSet::new();
+
+        // Communication round 1
+        // As a cheater I send a different message to all the parties
+        // The send calls are followed by receive to get the incoming messages from the others
+        let mut round1_data = HashMap::<Role, BroadcastValue>::new();
+        session.network().increase_round_counter().await?;
+        match (vec_vi.clone(), is_sender) {
+            (Some(vec_vi), true) => {
+                bcast_data.insert(my_role, vec_vi[1].clone());
+                round1_data.insert(my_role, bcast_data[&my_role].clone());
+                let mut jobs = JoinSet::new();
+                for (other_role, other_identity) in session.role_assignments().iter() {
+                    let networking = Arc::clone(session.network());
+                    let session_id = session.session_id();
+                    let other_id = other_identity.clone();
+                    if &my_role != other_role && other_role.party_id() > 2 {
+                        let msg = NetworkValue::Send(vec_vi[1].clone());
+                        jobs.spawn(async move {
+                            let _ = networking.send(msg, &other_id, &session_id).await;
+                        });
+                    } else if other_role.party_id() == 2 {
+                        let msg = NetworkValue::Send(vec_vi[0].clone());
+                        jobs.spawn(async move {
+                            let _ = networking.send(msg, &other_id, &session_id).await;
+                        });
+                    }
+                }
+                while (jobs.join_next().await).is_some() {}
+            }
+            (None, false) => (),
+            (_, _) => return Err(anyhow!("A sender must have a value in rebliable broadcast")),
+        }
+
+        //The error we propagate here is if sender ids and roles cannot be tied together.
+        receive_from_all_senders(
+            &mut round1_data,
+            session,
+            &my_role,
+            sender_list,
+            &mut non_answering_parties,
+        )
+        .await?;
+
+        // Communication round 2
+        // Parties send Echo to the other parties
+        // Parties receive Echo from others and process them, if there are enough Echo messages then they can cast a vote
+        session.network().increase_round_counter().await?;
+        let mut msg_to_p2 = round1_data.clone();
+        msg_to_p2.insert(my_role, vec_vi.clone().unwrap()[0].clone());
+        let msg_to_others = round1_data;
+        let mut jobs = JoinSet::new();
+        for (other_role, other_identity) in session.role_assignments().iter() {
+            let networking = Arc::clone(session.network());
+            let session_id = session.session_id();
+            let other_id = other_identity.clone();
+            if &my_role != other_role && other_role.party_id() > 2 {
+                let msg = NetworkValue::EchoBatch(msg_to_others.clone());
+                jobs.spawn(async move {
+                    let _ = networking.send(msg, &other_id, &session_id).await;
+                });
+            } else if other_role.party_id() == 2 {
+                let msg = NetworkValue::EchoBatch(msg_to_p2.clone());
+                jobs.spawn(async move {
+                    let _ = networking.send(msg, &other_id, &session_id).await;
+                });
+            }
+        }
+        while (jobs.join_next().await).is_some() {}
+        let msg = msg_to_others;
+        // adding own echo to the map
+        let mut echos: HashMap<(Role, BroadcastValue), u32> =
+            msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
+        // retrieve echos from all parties
+        let _ =
+            receive_from_all_echo_batch(session, &my_role, &mut non_answering_parties, &mut echos)
+                .await?;
+
+        //Stop voting now
+
+        Ok(bcast_data)
+    }
+
+    //Test bcast with one actively malicious party
+    #[traced_test]
+    #[test]
+    fn broadcast_w_malicious_2() {
+        let msg = BroadcastValue::from(Value::U64(42));
+        let corrupt_msg = (0..5)
+            .map(|i| BroadcastValue::from(Value::U64(43 + i)))
+            .collect_vec();
+        let identities = generate_identities(4);
+        let parties = identities.len();
+
+        // code for session setup
+        let threshold = 1;
+        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
+        let session_id = SessionId(1);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let mut set = JoinSet::new();
+        let mut malicious_set = JoinSet::new();
+        for party_id in 0..parties {
+            let mut session = runtime
+                .small_session_for_player(session_id, party_id, None)
+                .unwrap();
+            let cur_msg = msg.clone();
+            if party_id == 0 {
+                let cms = corrupt_msg.clone();
+                malicious_set.spawn(async move {
+                    let res = cheater_broadcast_strategy_2(
+                        &session,
+                        &session.role_assignments().clone().into_keys().collect_vec(),
+                        Some(cms),
+                    )
+                    .await;
+                    (party_id, res)
+                });
+            } else {
+                set.spawn(async move {
+                    let res = broadcast_with_corruption(&mut session, cur_msg).await;
+                    // Check cheater is not added to corrupt roles
+                    assert_eq!(0, session.corrupt_roles().len());
+                    (party_id, res)
+                });
+            }
+        }
+
+        let results = rt.block_on(async {
+            let mut results = Vec::new();
+            while let Some(v) = set.join_next().await {
+                let data = v.unwrap();
+                results.push(data);
+            }
+            results
+        });
+
+        for (_cur_role_id, cur_res) in results {
+            // Check that we received response from all except the cheater P0 which sould be absent from result
+            let unwrapped = cur_res.unwrap();
+            assert_eq!(parties, unwrapped.len());
+            for cur_role_id in 1..=parties as u64 {
+                // And that all parties agreed on the messages sent
+                if cur_role_id != 1 {
+                    assert_eq!(&msg, unwrapped.get(&Role(cur_role_id)).unwrap());
+                } else {
+                    assert_eq!(&corrupt_msg[1], unwrapped.get(&Role(cur_role_id)).unwrap());
                 }
             }
         }

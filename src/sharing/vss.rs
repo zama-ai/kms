@@ -103,7 +103,7 @@ impl Vss for DummyVss {
         send_to_parties(&values_to_send, session).await?;
         let mut jobs: JoinSet<Result<(Role, Result<ResiduePoly<Z128>, anyhow::Error>), Elapsed>> =
             JoinSet::new();
-        generic_receive_from_all(&mut jobs, session, &own_role, |msg, _id| match msg {
+        generic_receive_from_all(&mut jobs, session, &own_role, None, |msg, _id| match msg {
             NetworkValue::RingValue(Value::Poly128(v)) => Ok(v),
             _ => Err(anyhow!(
                 "Received something else, not a galois ring element"
@@ -442,12 +442,16 @@ fn vss_receive_round_1<R: RngCore, L: LargeSessionHandles<R>>(
     jobs: &mut JoinSet<ResultRound1>,
     my_role: Role,
 ) -> anyhow::Result<()> {
-    generic_receive_from_all::<ExchangedDataRound1, R, L>(jobs, session, &my_role, |msg, _id| {
-        match msg {
+    generic_receive_from_all::<ExchangedDataRound1, R, L>(
+        jobs,
+        session,
+        &my_role,
+        None,
+        |msg, _id| match msg {
             crate::value::NetworkValue::Round1VSS(v) => Ok(v),
             _ => Err(anyhow!("Received something else, not a VSS round1 struct")),
-        }
-    })?;
+        },
+    )?;
     Ok(())
 }
 

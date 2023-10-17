@@ -77,6 +77,7 @@ pub enum NetworkValue {
     VoteBatch(HashMap<Role, BroadcastValue>),
     AgreeRandom(AgreeRandomValue),
     Bot,
+    Empty,
     Round1VSS(crate::sharing::vss::ExchangedDataRound1),
 }
 
