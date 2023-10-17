@@ -171,13 +171,6 @@ pub fn evaluate_w_zero_roots(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, num::Wrapping};
-
-    use rand::SeedableRng;
-    use rand_chacha::{ChaCha12Rng, ChaCha20Rng};
-    use tokio::task::JoinSet;
-    use tracing_test::traced_test;
-
     use crate::{
         computation::SessionId,
         execution::{
@@ -192,10 +185,13 @@ mod tests {
         tests::helper::tests::{generate_identities, get_large_session},
         Zero, Z128,
     };
+    use rand::SeedableRng;
+    use rand_chacha::{ChaCha12Rng, ChaCha20Rng};
+    use std::{collections::HashSet, num::Wrapping};
+    use tokio::task::JoinSet;
 
     use super::{evaluate_w_zero_roots, share_w_dispute, ShareableInput};
 
-    #[traced_test]
     #[test]
     fn optimistic_share() {
         let msg = Wrapping(42);
@@ -216,7 +212,6 @@ mod tests {
         });
     }
 
-    #[traced_test]
     #[test]
     fn optimistic_share_multiple_parties() {
         let msg = Wrapping(42);
@@ -282,7 +277,6 @@ mod tests {
         }
     }
 
-    #[traced_test]
     #[test]
     fn test_sharing_with_dispute() {
         let msg = Wrapping(42);
@@ -378,7 +372,6 @@ mod tests {
         }
     }
 
-    #[traced_test]
     #[test]
     fn test_evaluate_w_zero_roots() {
         let parties = 4;
@@ -395,7 +388,6 @@ mod tests {
             .for_each(|x| assert_eq!(ResiduePoly::ZERO, res[*x]));
     }
 
-    #[traced_test]
     #[test]
     fn test_interpolate_w_puncture() {
         let parties = 7;
@@ -405,7 +397,6 @@ mod tests {
         execute_interpolate_poly_w_punctures(msg, parties, threshold, dispute_ids);
     }
 
-    #[traced_test]
     #[test]
     fn test_no_disputes() {
         let parties = 7;
@@ -415,7 +406,6 @@ mod tests {
         execute_interpolate_poly_w_punctures(msg, parties, threshold, dispute_ids);
     }
 
-    #[traced_test]
     #[test]
     fn test_too_many_disputes() {
         let parties = 7;
@@ -461,7 +451,6 @@ mod tests {
         assert_eq!(msg, ref_msg.0);
     }
 
-    #[traced_test]
     #[test]
     fn zero_degree_interpolate_w_puncture() {
         let parties = 4;

@@ -183,10 +183,8 @@ mod tests {
 
     use super::*;
     use std::num::Wrapping;
-    use tracing_test::traced_test;
 
     #[tokio::test]
-    #[traced_test]
     async fn test_async_networking() {
         let identities: Vec<Identity> = vec!["alice".into(), "bob".into()];
         let net_producer = LocalNetworkingProducer::from_ids(&identities);

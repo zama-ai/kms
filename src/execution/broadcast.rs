@@ -530,7 +530,6 @@ mod tests {
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
     use std::num::Wrapping;
-    use tracing_test::traced_test;
 
     fn legitimate_broadcast(
         sender_parties: &Vec<Role>,
@@ -612,7 +611,6 @@ mod tests {
         (identities, input_values, results)
     }
 
-    #[traced_test]
     #[test]
     fn test_broadcast_all() {
         let sender_parties = (0..4).map(|x| Role::from(x as u64 + 1_u64)).collect();
@@ -676,7 +674,6 @@ mod tests {
         assert_eq!(results[0][&Role(3)], input_values[2]);
     }
 
-    #[traced_test]
     #[test]
     fn test_broadcast_dropout() {
         let identities = generate_identities(4);
@@ -738,7 +735,6 @@ mod tests {
     }
 
     /// Test that the broadcast with disputes ensures that corrupt parties get excluded from the broadcast execution
-    #[traced_test]
     #[test]
     fn broadcast_w_corruption() {
         let num_parties = 4;
@@ -1092,7 +1088,6 @@ mod tests {
     }
 
     //Test bcast with one actively malicious party
-    #[traced_test]
     #[test]
     fn broadcast_w_malicious_2() {
         let msg = BroadcastValue::from(Value::U64(42));

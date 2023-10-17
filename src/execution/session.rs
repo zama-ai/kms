@@ -566,6 +566,8 @@ impl DisputeSet {
 
 #[cfg(test)]
 mod tests {
+    use super::SessionParameters;
+    use crate::{execution::party::Role, tests::helper::tests::execute_protocol};
     use crate::{
         execution::session::{
             DisputeSet, LargeSession, LargeSessionHandles, LargeSessionStruct, ParameterHandles,
@@ -575,16 +577,10 @@ mod tests {
             get_dummy_parameters, get_dummy_parameters_for_parties, get_large_session,
         },
     };
-    use std::{collections::HashSet, sync::Arc};
-
     use itertools::Itertools;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
-    use tracing_test::traced_test;
-
-    use crate::{execution::party::Role, tests::helper::tests::execute_protocol};
-
-    use super::SessionParameters;
+    use std::{collections::HashSet, sync::Arc};
 
     #[test]
     fn too_large_threshold() {
@@ -615,7 +611,6 @@ mod tests {
         .is_err());
     }
 
-    #[traced_test]
     #[test]
     fn add_dispute_sunshine() {
         let parties: usize = 4;
@@ -655,7 +650,6 @@ mod tests {
     /// Tests what happens when a party drops out of broadcast
     /// NOTE non-responding parties which act as senders in a broadcast ARE considered corrupt
     /// TODO this is probably NOT the logic we actually want, in which case this test needs updating
-    #[traced_test]
     #[test]
     fn party_not_responding() {
         let parties = 4;
@@ -685,7 +679,6 @@ mod tests {
     }
 
     /// Tests what happens when the calling party is the one being added to the set of disputes when calling `add_dispute`
-    #[traced_test]
     #[test]
     fn test_i_am_dispute() {
         let mut session = get_large_session();
@@ -706,7 +699,6 @@ mod tests {
     }
 
     /// Tests what happens when there a party gets added to the dispute set using `add_dispute`
-    #[traced_test]
     #[test]
     fn test_dispute() {
         let parameters = get_dummy_parameters();
@@ -738,7 +730,6 @@ mod tests {
     }
 
     /// Tests what happens when more than `threshold` parties gets added to the dispute set using `add_dispute`.
-    #[traced_test]
     #[test]
     fn too_many_disputes() {
         let parties = 6;
@@ -775,7 +766,6 @@ mod tests {
 
     /// Tests what happens when the calling party is on the list of corrupt parties and `add_dispute` is executed.
     /// The expected result is that things go ok and that the calling party will stay on the list of corruptions.
-    #[traced_test]
     #[test]
     fn test_i_am_corrupt() {
         let set_of_self = HashSet::from([Role(1)]);

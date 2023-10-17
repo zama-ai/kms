@@ -32,11 +32,9 @@ pub fn read_element<T: DeserializeOwned + Serialize>(file_path: String) -> anyho
 mod tests {
     use serde::{Deserialize, Serialize};
     use std::fs::remove_file;
-    use tracing_test::traced_test;
 
     use crate::file_handling::{read_as_json, read_element, write_as_json, write_element};
 
-    #[traced_test]
     #[test]
     fn read_write_element() {
         let msg = "I am a teacup!".to_owned();
@@ -47,7 +45,6 @@ mod tests {
         remove_file(file_name).unwrap();
     }
 
-    #[traced_test]
     #[test]
     fn read_write_json() {
         #[derive(Serialize, Deserialize, PartialEq, Debug)]

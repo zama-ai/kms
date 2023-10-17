@@ -150,10 +150,8 @@ mod tests {
     };
 
     use super::*;
-    use tracing_test::traced_test;
 
     #[tokio::test]
-    #[traced_test]
     async fn test_box_sending() {
         let keys: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
         let pck = PubConKeyPair::new(keys);

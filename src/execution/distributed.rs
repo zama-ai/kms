@@ -1112,9 +1112,7 @@ mod tests {
         file_handling::read_as_json,
         tests::{helper::tests::generate_identities, test_data_setup::tests::DEFAULT_PARAM_PATH},
     };
-    use tracing_test::traced_test;
 
-    #[traced_test]
     #[test]
     fn test_load_ci_circuit() {
         let circuit = Circuit {
@@ -1145,7 +1143,6 @@ mod tests {
         assert_eq!(out[0], Value::Ring128(Wrapping(100)));
     }
 
-    #[traced_test]
     #[test]
     fn test_open_secret_large_t() {
         let circuit = Circuit {

@@ -569,9 +569,7 @@ mod tests {
         core_crypto::prelude::{LweSecretKey, LweSecretKeyOwned, Plaintext},
         shortint::prelude::LweDimension,
     };
-    use tracing_test::traced_test;
 
-    #[traced_test]
     #[test]
     fn indeterminism_of_rng() {
         let mut rng1 = get_rng();
@@ -579,7 +577,6 @@ mod tests {
         assert_ne!(rng1.next_u64(), rng2.next_u64());
     }
 
-    #[traced_test]
     #[test]
     fn determinism_of_seed() {
         let mut rng1 = secret_rng_from_seed(42);
@@ -593,7 +590,6 @@ mod tests {
         assert_eq!(lwe_secret_key_1, lwe_secret_key_2);
     }
 
-    #[traced_test]
     #[test]
     fn seed_of_rng() {
         let mut rng = AesRng::seed_from_u64(42);
@@ -605,7 +601,6 @@ mod tests {
         assert_ne!(seed1, seed2);
     }
 
-    #[traced_test]
     #[rstest]
     #[case(0)]
     #[case(1)]
@@ -622,7 +617,6 @@ mod tests {
         assert_eq!(plain_domain.0, (msg as u128) % (1 << 4));
     }
 
-    #[traced_test]
     #[test]
     fn sunshine_block() {
         let params: ThresholdLWEParameters = read_as_json(TEST_PARAM_PATH.to_string()).unwrap();

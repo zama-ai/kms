@@ -261,9 +261,7 @@ mod tests {
     use crate::{computation::SessionId, value::err_reconstruct};
     use aes_prng::AesRng;
     use rand::SeedableRng;
-    use tracing_test::traced_test;
 
-    #[traced_test]
     #[test]
     fn reconstruct_key() {
         let parties = 5;
@@ -289,7 +287,6 @@ mod tests {
         );
     }
 
-    #[traced_test]
     #[test]
     fn test_prep() {
         let parties = 4;
@@ -326,7 +323,6 @@ mod tests {
         assert_eq!(recovered_message.unwrap().0, message as u128);
     }
 
-    #[traced_test]
     #[test]
     fn test_prssprep() {
         let message = 3;
@@ -432,7 +428,6 @@ mod tests {
         assert!(out_circ[0] == ref_res);
     }
 
-    #[traced_test]
     #[test]
     fn sunshine_domain_switching() {
         let keyset: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();

@@ -187,9 +187,7 @@ mod tests {
         value::{NetworkValue, Value},
     };
     use std::collections::HashMap;
-    use tracing_test::traced_test;
 
-    #[traced_test]
     #[test]
     fn optimistic_exchange_values() {
         let parties = 4;
@@ -219,7 +217,6 @@ mod tests {
         }
     }
 
-    #[traced_test]
     #[test]
     fn pessimistic_share_multiple_parties() {
         let parties = 5;
