@@ -1,7 +1,7 @@
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::gf256::GF256;
 use crate::poly::Ring;
 use crate::{One, Sample, ZConsts, Zero, Z128, Z64};
-use anyhow::anyhow;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::ops::MulAssign;
@@ -61,10 +61,10 @@ impl<Z> ResiduePoly<Z> {
     {
         for i in 1..F_DEG {
             if self.coefs[i] != Z::ZERO {
-                return Err(anyhow!(
+                return Err(anyhow_error_and_log(format!(
                     "Higher coefficient must be zero but was {}",
                     self.coefs[i]
-                ));
+                )));
             }
         }
         Ok(self.coefs[0])
@@ -92,15 +92,15 @@ impl<Z> ResiduePoly<Z> {
 
     pub fn from_vec(coefs: Vec<Z>) -> anyhow::Result<Self> {
         if coefs.len() != F_DEG {
-            return Err(anyhow!(
+            return Err(anyhow_error_and_log(format!(
                 "Error: required {F_DEG} coefficients, but got {}",
                 coefs.len()
-            ));
+            )));
         }
         Ok(ResiduePoly {
-            coefs: coefs
-                .try_into()
-                .map_err(|_| anyhow!("Error converting coefficient vector into Z64Poly"))?,
+            coefs: coefs.try_into().map_err(|_| {
+                anyhow_error_and_log("Error converting coefficient vector into Z64Poly".to_string())
+            })?,
         })
     }
 
@@ -553,7 +553,9 @@ where
     /// For eg, suppose x = sum(2^i * x_i); Then ResiduePoly = (x_0, ..., x_7) where x_i \in Z
     pub fn embed(x: usize) -> anyhow::Result<ResiduePoly<Z>> {
         if x >= (1 << F_DEG) {
-            return Err(anyhow!("Value {x} is too large to be embedded!"));
+            return Err(anyhow_error_and_log(format!(
+                "Value {x} is too large to be embedded!"
+            )));
         }
 
         let mut coefs: [Z; F_DEG] = [Z::ZERO; F_DEG];
@@ -591,7 +593,7 @@ macro_rules! impl_share_type {
             /// invert and lift an Integer to the large Ring
             pub fn lift_and_invert(p: usize) -> anyhow::Result<ResiduePoly<$z>> {
                 if p == 0 {
-                    return Err(anyhow!("Party ID must be at least 1"));
+                    return Err(anyhow_error_and_log(format!("Party ID must be at least 1")));
                 }
 
                 let gamma = ResiduePoly::<$z>::ZERO - ResiduePoly::embed(p)?;

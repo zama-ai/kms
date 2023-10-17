@@ -6,13 +6,13 @@ use super::{
 };
 use crate::{
     commitment::{commit, KEY_BYTE_LEN},
+    error::error_handler::anyhow_error_and_log,
     value::NetworkValue,
 };
 use crate::{
     commitment::{verify, Commitment, Opening},
     value::AgreeRandomValue,
 };
-use anyhow::anyhow;
 use async_trait::async_trait;
 use blake3::Hasher;
 use itertools::Itertools;
@@ -35,11 +35,10 @@ fn check_rcv_len(rcv_len: usize, expect_len: usize, tstr: &str) -> anyhow::Resul
             rcv_len,
             expect_len
         );
-        return Err(anyhow!(
+        return Err(anyhow_error_and_log(format!(
             "have received {} {tstr}, but expected {}",
-            rcv_len,
-            expect_len
-        ));
+            rcv_len, expect_len
+        )));
     }
     Ok(())
 }
@@ -58,10 +57,9 @@ fn check_and_unpack_coms(
                 rcv_coms[(sender_role.0 - 1) as usize] = cv.to_vec();
             }
             _ => {
-                tracing::error!("Have not received a CommitmentValue from role {sender_role}!");
-                return Err(anyhow!(
+                return Err(anyhow_error_and_log(format!(
                     "Have not received a CommitmentValue from role {sender_role}!"
-                ));
+                )));
             }
         }
     }
@@ -84,12 +82,9 @@ fn check_and_unpack_keys(
             }
             _ => {
                 return {
-                    tracing::error!(
+                    Err(anyhow_error_and_log(format!(
                         "Have not received a KeyOpenValue value from role {sender_role}!"
-                    );
-                    Err(anyhow!(
-                        "Have not received a KeyOpenValue value from role {sender_role}!"
-                    ))
+                    )))
                 }
             }
         }
@@ -136,8 +131,9 @@ fn compute_and_verify(
 
                 // check that randomnes was properly committed to in the first round
                 if !verify(&ko.0 .0, &com, &ko.1) {
-                    tracing::error!("Commitment verification has failed for party {p}!");
-                    return Err(anyhow!("Commitment verification has failed for party {p}!"));
+                    return Err(anyhow_error_and_log(format!(
+                        "Commitment verification has failed for party {p}!"
+                    )));
                 }
 
                 // XOR verified external value
@@ -497,7 +493,7 @@ mod tests {
         check_rcv_len(0, 0, "zeros").unwrap();
         check_rcv_len(0, 0, "").unwrap();
         let err = check_rcv_len(23, 42, "things").unwrap_err().to_string();
-        assert_eq!(err, "have received 23 things, but expected 42".to_string());
+        assert!(err.contains("have received 23 things, but expected 42"));
     }
 
     #[test]
@@ -530,7 +526,7 @@ mod tests {
         let r = check_and_unpack_coms(&rc, num_parties)
             .unwrap_err()
             .to_string();
-        assert_eq!(r, "have received 3 commitments, but expected 2");
+        assert!(r.contains("have received 3 commitments, but expected 2"));
 
         // Test Error when receiving a wrong AR value
         let ko = (
@@ -547,7 +543,7 @@ mod tests {
         let r = check_and_unpack_coms(&rc, num_parties)
             .unwrap_err()
             .to_string();
-        assert_eq!(r, "Have not received a CommitmentValue from role 2!");
+        assert!(r.contains("Have not received a CommitmentValue from role 2!"));
 
         // Test Error when receiving Bot
         rc = HashMap::new();
@@ -556,7 +552,7 @@ mod tests {
         let r = check_and_unpack_coms(&rc, num_parties)
             .unwrap_err()
             .to_string();
-        assert_eq!(r, "Have not received a CommitmentValue from role 1!");
+        assert!(r.contains("Have not received a CommitmentValue from role 1!"));
     }
 
     #[test]
@@ -596,7 +592,7 @@ mod tests {
         let r = check_and_unpack_keys(&rc, num_parties)
             .unwrap_err()
             .to_string();
-        assert_eq!(r, "have received 3 keys/openings, but expected 2");
+        assert!(r.contains("have received 3 keys/openings, but expected 2"));
 
         // Test Error when receiving a wrong AR value
         let c = Commitment([12_u8; COMMITMENT_BYTE_LEN]);
@@ -610,7 +606,7 @@ mod tests {
         let r = check_and_unpack_keys(&rc, num_parties)
             .unwrap_err()
             .to_string();
-        assert_eq!(r, "Have not received a KeyOpenValue value from role 2!");
+        assert!(r.contains("Have not received a KeyOpenValue value from role 2!"));
 
         // Test Error when receiving Bot
         rc = HashMap::new();
@@ -619,7 +615,7 @@ mod tests {
         let r = check_and_unpack_keys(&rc, num_parties)
             .unwrap_err()
             .to_string();
-        assert_eq!(r, "Have not received a KeyOpenValue value from role 1!");
+        assert!(r.contains("Have not received a KeyOpenValue value from role 1!"));
     }
 
     #[test]
@@ -676,6 +672,6 @@ mod tests {
         .unwrap_err()
         .to_string();
 
-        assert_eq!(r, "Commitment verification has failed for party 1!");
+        assert!(r.contains("Commitment verification has failed for party 1!"));
     }
 }

@@ -9,11 +9,11 @@ use self::gen::gnetworking_client::GnetworkingClient;
 use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
 use crate::computation::SessionId;
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::party::{Identity, RoleAssignment};
 use crate::networking::constants;
 use crate::networking::Networking;
 use crate::value::NetworkValue;
-use anyhow::anyhow;
 use async_trait::async_trait;
 use backoff::future::retry;
 use backoff::ExponentialBackoff;
@@ -85,7 +85,7 @@ impl GrpcNetworking {
             .or_try_insert_with(|| {
                 tracing::debug!("Creating channel to '{}'", receiver);
                 let endpoint: Uri = format!("http://{}", receiver).parse().map_err(|_e| {
-                    anyhow!(format!(
+                    anyhow_error_and_log(format!(
                         "failed to parse identity as endpoint: {:?}",
                         receiver
                     ))
@@ -109,7 +109,7 @@ impl Networking for GrpcNetworking {
         let ctr: usize = *self
             .network_round
             .lock()
-            .map_err(|e| anyhow!(format!("Locking error: {:?}", e.to_string())))?;
+            .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e)))?;
 
         retry(
             ExponentialBackoff {
@@ -126,8 +126,9 @@ impl Networking for GrpcNetworking {
                     round_counter: ctr,
                 };
 
-                let bytes = bincode::serialize(&tagged_value)
-                    .map_err(|e| anyhow!("networking error: {:?}", e.to_string()))?;
+                let bytes = bincode::serialize(&tagged_value).map_err(|e| {
+                    anyhow_error_and_log(format!("networking error: {:?}", e.to_string()))
+                })?;
                 let request = SendValueRequest {
                     tagged_value: bytes,
                 };
@@ -139,10 +140,9 @@ impl Networking for GrpcNetworking {
                     receiver,
                     self.session_id
                 );
-                let _response = client
-                    .send_value(request)
-                    .await
-                    .map_err(|e| anyhow!("networking error: {:?}", e.to_string()))?;
+                let _response = client.send_value(request).await.map_err(|e| {
+                    anyhow_error_and_log(format!("networking error: {:?}", e.to_string()))
+                })?;
 
                 Ok(())
             },
@@ -156,18 +156,20 @@ impl Networking for GrpcNetworking {
         _session_id: &SessionId,
     ) -> anyhow::Result<NetworkValue> {
         if !self.message_queues.contains_key(&self.session_id) {
-            return Err(anyhow!(
-                "Did not have session id key for message storage inside receive call"
+            return Err(anyhow_error_and_log(
+                "Did not have session id key for message storage inside receive call".to_string(),
             ));
         }
 
-        let session_store = self
-            .message_queues
-            .get(&self.session_id)
-            .ok_or(anyhow!("couldn't retrieve channels from store"))?;
+        let session_store =
+            self.message_queues
+                .get(&self.session_id)
+                .ok_or(anyhow_error_and_log(
+                    "couldn't retrieve channels from store".to_string(),
+                ))?;
 
-        let channels = session_store.get(sender).ok_or(anyhow!(
-            "couldn't retrieve session store from message stores"
+        let channels = session_store.get(sender).ok_or(anyhow_error_and_log(
+            "couldn't retrieve session store from message stores".to_string(),
         ))?;
         let (_, rx) = channels.value();
 
@@ -176,7 +178,7 @@ impl Networking for GrpcNetworking {
         let network_round: usize = *self
             .network_round
             .lock()
-            .map_err(|e| anyhow!(format!("Locking error: {:?}", e.to_string())))?;
+            .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e)))?;
 
         let mut local_packet = rx.recv().await?;
 
@@ -194,7 +196,7 @@ impl Networking for GrpcNetworking {
             *net_round += 1;
             tracing::debug!("changed network round to: {:?}", *net_round);
         } else {
-            return Err(anyhow!("Couldn't lock mutex"));
+            return Err(anyhow_error_and_log("Couldn't lock mutex".to_string()));
         }
         Ok(())
     }
@@ -255,14 +257,16 @@ impl Gnetworking for NetworkingImpl {
             let session_store = self
                 .message_queues
                 .get(&tagged_value.session_id)
-                .ok_or(anyhow!(
-                    "couldn't retrieve session store from message stores"
+                .ok_or(anyhow_error_and_log(
+                    "couldn't retrieve session store from message stores".to_string(),
                 ))
                 .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?;
 
             let channels = session_store
                 .get(&tagged_value.sender)
-                .ok_or(anyhow!("couldn't retrieve channels from session store"))
+                .ok_or(anyhow_error_and_log(
+                    "couldn't retrieve channels from session store".to_string(),
+                ))
                 .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?;
 
             let (tx, _) = channels.value();
@@ -289,7 +293,7 @@ fn extract_sender<T>(request: &tonic::Request<T>) -> Result<Option<String>, Stri
         None => Ok(None),
         Some(certs) => {
             if certs.len() != 1 {
-                return Err(format!(
+                anyhow_error_and_log(format!(
                     "cannot extract identity from certificate chain of length {:?}",
                     certs.len()
                 ));

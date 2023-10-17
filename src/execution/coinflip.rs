@@ -2,9 +2,10 @@ use async_trait::async_trait;
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 
-use crate::{residue_poly::ResiduePoly, sharing::vss::Vss, value, Sample, Z128};
-
-use anyhow::anyhow;
+use crate::{
+    error::error_handler::anyhow_error_and_log, residue_poly::ResiduePoly, sharing::vss::Vss,
+    value, Sample, Z128,
+};
 
 use super::{distributed::robust_open_to_all, session::LargeSessionHandles};
 
@@ -50,8 +51,8 @@ impl<V: Vss> Coinflip for RealCoinflip<V> {
 
         match opening {
             Some(value::Value::Poly128(v)) => Ok(v),
-            _ => Err(anyhow!(
-                "Value reconstructed in coinflip not of the right type"
+            _ => Err(anyhow_error_and_log(
+                "Value reconstructed in coinflip not of the right type".to_string(),
             )),
         }
     }

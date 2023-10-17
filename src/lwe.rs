@@ -1,3 +1,4 @@
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::random::get_rng;
 use crate::execution::random::secret_rng_from_seed;
 use crate::execution::random::seed_from_rng;
@@ -9,7 +10,6 @@ use crate::Sample;
 use crate::Z128;
 use crate::{One, Zero};
 use aligned_vec::ABox;
-use anyhow::anyhow;
 use core::fmt;
 use core::fmt::Debug;
 use ndarray::Array1;
@@ -126,8 +126,8 @@ pub fn value_to_message(rec_value: Value, message_mod_bits: usize) -> anyhow::Re
             let value_scalar = Z128::try_from(value)?;
             Ok(from_expanded_msg(value_scalar.0, message_mod_bits))
         }
-        _other => Err(anyhow!(
-            "Expected decrypted element to be a Ring128 element, but it was not!"
+        _other => Err(anyhow_error_and_log(
+            "Expected decrypted element to be a Ring128 element, but it was not!".to_string(),
         )),
     }
 }

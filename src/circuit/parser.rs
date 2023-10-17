@@ -8,6 +8,8 @@ use nom::multi::{many0, separated_list0};
 use nom::sequence::delimited;
 use nom::sequence::pair;
 
+use crate::error::error_handler::anyhow_error_and_log;
+
 use super::{Circuit, Operation, Operator};
 
 type Res<T, U> = nom::IResult<T, U, nom::error::Error<T>>;
@@ -83,7 +85,7 @@ impl TryFrom<&[u8]> for Circuit {
     type Error = anyhow::Error;
     fn try_from(bytes: &[u8]) -> Result<Circuit, Self::Error> {
         parse_circuit(bytes)
-            .map_err(|e| anyhow::anyhow!("Unexpected error during parsing {}", e))
+            .map_err(|e| anyhow_error_and_log(format!("Unexpected error during parsing {}", e)))
             .map(|res| res.1)
     }
 }

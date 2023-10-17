@@ -1,3 +1,4 @@
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::{party::Role, small_execution::prss::PsiSet};
 use crate::lwe::PubConKeyPair;
 use crate::residue_poly::ResiduePoly;
@@ -8,7 +9,6 @@ use crate::{
     execution::{session::DisputePayload, small_execution::prss::PrfKey},
 };
 use crate::{Z128, Z64};
-use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -87,7 +87,9 @@ pub fn err_reconstruct(
     max_error_count: usize,
 ) -> anyhow::Result<Value> {
     if shares.is_empty() {
-        return Err(anyhow!("Input to reconstruction is empty"));
+        return Err(anyhow_error_and_log(
+            "Input to reconstruction is empty".to_string(),
+        ));
     }
     match shares[0].value {
         Value::Poly64(_) => {
@@ -99,8 +101,8 @@ pub fn err_reconstruct(
                 })
                 .collect();
             if stripped_shares.len() != shares.len() {
-                Err(anyhow!(
-                    "Mixed types when reconstructing, expected to be Ring64"
+                Err(anyhow_error_and_log(
+                    "Mixed types when reconstructing, expected to be Ring64".to_string(),
                 ))
             } else {
                 Ok(Value::Poly64(ShamirGSharings::<Z64>::err_reconstruct(
@@ -121,8 +123,8 @@ pub fn err_reconstruct(
                 })
                 .collect();
             if stripped_shares.len() != shares.len() {
-                Err(anyhow!(
-                    "Mixed types when reconstructing, expected to be Ring128"
+                Err(anyhow_error_and_log(
+                    "Mixed types when reconstructing, expected to be Ring128".to_string(),
                 ))
             } else {
                 Ok(Value::Poly128(ShamirGSharings::<Z128>::err_reconstruct(
@@ -134,8 +136,8 @@ pub fn err_reconstruct(
                 )?))
             }
         }
-        _ => Err(anyhow!(
-            "Cannot reconstruct when types are not indexed shares"
+        _ => Err(anyhow_error_and_log(
+            "Cannot reconstruct when types are not indexed shares".to_string(),
         )),
     }
 }

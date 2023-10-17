@@ -7,6 +7,7 @@ use super::{
     },
     small_execution::prss::PRSSSetup,
 };
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::broadcast::generic_receive_from_all;
 use crate::execution::party::{Identity, Role, RoleAssignment};
 use crate::execution::{constants::INPUT_PARTY_ID, session::ToBaseSession};
@@ -25,7 +26,6 @@ use crate::{
 use crate::{computation::SessionId, execution::small_execution::prep::prss_prep};
 use crate::{One, Z128, Z64};
 use aes_prng::AesRng;
-use anyhow::anyhow;
 use ndarray::Array1;
 use num_integer::div_ceil;
 use rand::RngCore;
@@ -242,7 +242,9 @@ impl DistributedTestRuntime {
                 .keyshares
                 .clone()
                 .map(|ks| ks[index_id].clone())
-                .ok_or_else(|| anyhow!("key share not set during decryption"))?;
+                .ok_or_else(|| {
+                    anyhow_error_and_log("key share not set during decryption".to_string())
+                })?;
 
             let ct = ct.clone();
             let mode = mode.clone();
@@ -375,7 +377,9 @@ async fn try_reconstruct_from_shares<P: ParameterHandles>(
             }
         }
     }
-    Err(anyhow!("Could not reconstruct the sharing"))
+    Err(anyhow_error_and_log(
+        "Could not reconstruct the sharing".to_string(),
+    ))
 }
 
 /// Try to reconstruct to all the secret which corresponds to the provided share.
@@ -399,8 +403,8 @@ pub async fn robust_open_to_all<R: RngCore + Send, B: BaseSessionHandles<R>>(
     let mut jobs = JoinSet::<Result<(Role, anyhow::Result<Value>), Elapsed>>::new();
     generic_receive_from_all(&mut jobs, session, &own_role, None, |msg, _id| match msg {
         NetworkValue::RingValue(v) => Ok(v),
-        _ => Err(anyhow!(
-            "Received something else than a Ring value in robust open to all"
+        _ => Err(anyhow_error_and_log(
+            "Received something else than a Ring value in robust open to all".to_string(),
         )),
     })?;
 
@@ -423,8 +427,8 @@ pub async fn robust_open_to<R: RngCore + Send, B: BaseSessionHandles<R>>(
 
         generic_receive_from_all(&mut set, session, role, None, |msg, _id| match msg {
             NetworkValue::RingValue(v) => Ok(v),
-            _ => Err(anyhow!(
-                "Received something else than a Ring value in robust open to all"
+            _ => Err(anyhow_error_and_log(
+                "Received something else than a Ring value in robust open to all".to_string(),
             )),
         })?;
         let indexed_share = IndexedValue {
@@ -462,8 +466,9 @@ pub async fn robust_input<R: RngCore>(
             match value {
                 Some(v) => v.clone(),
                 None => {
-                    return Err(anyhow!(
+                    return Err(anyhow_error_and_log(
                         "Expected Some(v) as an input argument for the input party, got None"
+                            .to_string(),
                     ))
                 }
             }
@@ -521,8 +526,9 @@ pub async fn robust_input<R: RngCore>(
                 (values, roles)
             }
             _ => {
-                return Err(anyhow!(
+                return Err(anyhow_error_and_log(
                     "Cannot share a value which has type different than U64, Ring64/Ring128"
+                        .to_string(),
                 ));
             }
         };
@@ -552,7 +558,9 @@ pub async fn robust_input<R: RngCore>(
 
         let data = match data {
             NetworkValue::RingValue(rv) => rv,
-            _ => Err(anyhow!("I have received sth different from a ring value!"))?,
+            _ => Err(anyhow_error_and_log(
+                "I have received sth different from a ring value!".to_string(),
+            ))?,
         };
 
         Ok(data)
@@ -594,7 +602,9 @@ pub async fn transfer_pk(
 
         let pk = match data {
             NetworkValue::PubKey(pk) => pk,
-            _ => Err(anyhow!("I have received sth different from a public key!"))?,
+            _ => Err(anyhow_error_and_log(
+                "I have received sth different from a public key!".to_string(),
+            ))?,
         };
         Ok(*pk)
     }
@@ -650,21 +660,21 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 let r0 = op
                     .operands
                     .get(0)
-                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                    .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?;
                 let si = u32::from_str(
                     op.operands
                         .get(1)
-                        .ok_or_else(|| anyhow!("Wrong index buddy"))?,
+                        .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?,
                 )?;
                 let bits_in_block = u32::from_str(
                     op.operands
                         .get(2)
-                        .ok_or_else(|| anyhow!("Wrong index buddy"))?,
+                        .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?,
                 )?;
                 let bits_to_encrypt = u32::from_str(
                     op.operands
                         .get(3)
-                        .ok_or_else(|| anyhow!("Wrong index buddy"))?,
+                        .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?,
                 )?;
                 let amount_of_blocks = div_ceil(bits_to_encrypt, bits_in_block);
 
@@ -701,13 +711,15 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 let c0: &String = op
                     .operands
                     .get(2)
-                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                    .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?;
                 let s0 = op
                     .operands
                     .get(3)
-                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                    .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?;
                 let own_share = env.get(s0).ok_or_else(|| {
-                    anyhow!("Couldn't retrieve secret register index for opening")
+                    anyhow_error_and_log(
+                        "Couldn't retrieve secret register index for opening".to_string(),
+                    )
                 })?;
                 let mut opened = Vec::new();
                 for current_share in own_share {
@@ -738,12 +750,11 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 let r0 = op
                     .operands
                     .get(0)
-                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
-                let ci = Value::U64(u64::from_str(
-                    op.operands
-                        .get(1)
-                        .ok_or_else(|| anyhow!("Wrong index buddy"))?,
-                )?);
+                    .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?;
+                let ci =
+                    Value::U64(u64::from_str(op.operands.get(1).ok_or_else(|| {
+                        anyhow_error_and_log("Wrong index buddy".to_string())
+                    })?)?);
                 env.insert(r0, vec![ci]);
             }
             // Returns an opened value stored in a register as output.
@@ -754,21 +765,24 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                     let r0 = op
                         .operands
                         .get(0)
-                        .ok_or_else(|| anyhow!("Wrong index buddy"))?;
-                    let bits_in_block = u32::from_str(
-                        op.operands
-                            .get(1)
-                            .ok_or_else(|| anyhow!("Wrong index buddy"))?,
-                    )?;
+                        .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?;
+                    let bits_in_block =
+                        u32::from_str(op.operands.get(1).ok_or_else(|| {
+                            anyhow_error_and_log("Wrong index buddy".to_string())
+                        })?)?;
                     let val = env
                         .get(&r0.to_string())
-                        .ok_or_else(|| anyhow!("Couldn't find register {r0}"))?
+                        .ok_or_else(|| {
+                            anyhow_error_and_log(format!("Couldn't find register {r0}"))
+                        })?
                         .clone();
                     let res = match combine(bits_in_block, val) {
                         Ok(res) => res,
                         Err(error) => {
                             eprint!("Panicked in combining {error}");
-                            return Err(error);
+                            return Err(anyhow_error_and_log(format!(
+                                "Panicked in combining {error}"
+                            )));
                         }
                     };
                     outputs.append(&mut vec![Value::Ring128(Wrapping(res))]);
@@ -784,23 +798,24 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                     let dest = op
                         .operands
                         .get(0)
-                        .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                        .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?;
 
                     let source = op
                         .operands
                         .get(1)
-                        .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                        .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?;
 
                     let source_val = env
                         .get(&source.to_string())
-                        .ok_or_else(|| anyhow!("Couldn't find register {source}"))?
+                        .ok_or_else(|| {
+                            anyhow_error_and_log(format!("Couldn't find register {source}"))
+                        })?
                         .clone();
 
-                    let offset = usize::from_str(
-                        op.operands
-                            .get(2)
-                            .ok_or_else(|| anyhow!("Wrong index buddy"))?,
-                    )?;
+                    let offset =
+                        usize::from_str(op.operands.get(2).ok_or_else(|| {
+                            anyhow_error_and_log("Wrong index buddy".to_string())
+                        })?)?;
 
                     let mut res = Vec::new();
                     for current_source in source_val {
@@ -811,7 +826,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                             Value::Ring64(v) => {
                                 res.push(Value::Ring64(v >> offset));
                             }
-                            _ => return Err(anyhow!("Cannot do shift right on a cleartext register with a different type than Ring64/Ring128"))
+                            _ => return Err(anyhow_error_and_log("Cannot do shift right on a cleartext register with a different type than Ring64/Ring128".to_string()))
                         };
                     }
                     env.insert(dest, res);
@@ -826,23 +841,24 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                     let dest = op
                         .operands
                         .get(0)
-                        .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                        .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?;
 
                     let source = op
                         .operands
                         .get(1)
-                        .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                        .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?;
 
                     let source_val = env
                         .get(&source.to_string())
-                        .ok_or_else(|| anyhow!("Couldn't find register {source}"))?
+                        .ok_or_else(|| {
+                            anyhow_error_and_log(format!("Couldn't find register {source}"))
+                        })?
                         .clone();
 
-                    let offset = usize::from_str(
-                        op.operands
-                            .get(2)
-                            .ok_or_else(|| anyhow!("Wrong index buddy"))?,
-                    )?;
+                    let offset =
+                        usize::from_str(op.operands.get(2).ok_or_else(|| {
+                            anyhow_error_and_log("Wrong index buddy".to_string())
+                        })?)?;
 
                     let mut res = Vec::new();
                     for current_source in source_val {
@@ -857,7 +873,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                                 let rounding = (v.0 & rounding_bit) << 1;
                                 res.push(Value::Ring64(Wrapping(v.0 + rounding) >> offset));
                             },
-                            _ => return Err(anyhow!("Cannot do shift right on a cleartext register with a different type than Ring64/Ring128"))
+                            _ => return Err(anyhow_error_and_log("Cannot do shift right on a cleartext register with a different type than Ring64/Ring128".to_string()))
                         };
                     }
                     env.insert(dest, res);
@@ -873,17 +889,19 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 let dest = op
                     .operands
                     .get(0)
-                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                    .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?;
                 // TODO @Daniel should we replace this with a prfkey from SetupInfo or direct call to agree_random?
-                let prep_seed = u64::from_str(
-                    op.operands
-                        .get(1)
-                        .ok_or_else(|| anyhow!("Couldn't retrieve seed"))?,
-                )?;
+                let prep_seed =
+                    u64::from_str(op.operands.get(1).ok_or_else(|| {
+                        anyhow_error_and_log("Couldn't retrieve seed".to_string())
+                    })?)?;
                 let mut rng = AesRng::seed_from_u64(prep_seed);
-                let ciphertext = ct.ok_or_else(|| anyhow!("no ciphertext found to decrypt"))?;
-                let existing_keyshare =
-                    keyshares.ok_or_else(|| anyhow!("Key share not set during dist prep"))?;
+                let ciphertext = ct.ok_or_else(|| {
+                    anyhow_error_and_log("no ciphertext found to decrypt".to_string())
+                })?;
+                let existing_keyshare = keyshares.ok_or_else(|| {
+                    anyhow_error_and_log("Key share not set during dist prep".to_string())
+                })?;
                 let mut block_shares = Vec::with_capacity(ciphertext.len());
                 for i in 0..ciphertext.len() {
                     // current_block in ciphertext {
@@ -892,9 +910,9 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                         own_role.party_id(),
                         session.threshold() as usize,
                         existing_keyshare,
-                        ciphertext
-                            .get(i)
-                            .ok_or_else(|| anyhow!("Wrong index in ciphertext"))?,
+                        ciphertext.get(i).ok_or_else(|| {
+                            anyhow_error_and_log("Wrong index in ciphertext".to_string())
+                        })?,
                     )?;
                     tracing::debug!("finished generating proto 2 prep: {:?}", block_share);
                     block_shares.push(block_share);
@@ -911,17 +929,19 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 let dest = op
                     .operands
                     .get(0)
-                    .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                    .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?;
 
-                let prss_state = session
-                    .prss_state
-                    .as_mut()
-                    .ok_or_else(|| anyhow!("PRSS_State not initialized"))?;
+                let prss_state = session.prss_state.as_mut().ok_or_else(|| {
+                    anyhow_error_and_log("PRSS_State not initialized".to_string())
+                })?;
 
-                let ciphertext = ct.ok_or_else(|| anyhow!("no ciphertext found to decrypt"))?;
+                let ciphertext = ct.ok_or_else(|| {
+                    anyhow_error_and_log("no ciphertext found to decrypt".to_string())
+                })?;
 
-                let existing_keyshare =
-                    keyshares.ok_or_else(|| anyhow!("Key share not set during prssprep"))?;
+                let existing_keyshare = keyshares.ok_or_else(|| {
+                    anyhow_error_and_log("Key share not set during prssprep".to_string())
+                })?;
                 let mut partial_decrypted_blocks = Vec::with_capacity(ciphertext.len());
                 for i in 0..ciphertext.len() {
                     // current_block in ciphertext {
@@ -929,9 +949,9 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                         own_role.party_id(),
                         prss_state,
                         existing_keyshare,
-                        ciphertext
-                            .get(i)
-                            .ok_or_else(|| anyhow!("Wrong index in ciphertext"))?,
+                        ciphertext.get(i).ok_or_else(|| {
+                            anyhow_error_and_log("Wrong index in ciphertext".to_string())
+                        })?,
                     )?;
                     tracing::debug!(
                         "finished generating PRSS proto prep: {:?}",
@@ -948,11 +968,11 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                     let dest = op
                         .operands
                         .get(0)
-                        .ok_or_else(|| anyhow!("Wrong index buddy"))?;
+                        .ok_or_else(|| anyhow_error_and_log("Wrong index buddy".to_string()))?;
 
-                    let correct_share_value = env
-                        .get(dest)
-                        .ok_or_else(|| anyhow!("Couldn't retrieve party share to modify"))?;
+                    let correct_share_value = env.get(dest).ok_or_else(|| {
+                        anyhow_error_and_log("Couldn't retrieve party share to modify".to_string())
+                    })?;
                     let mut parsed_shares = Vec::with_capacity(correct_share_value.len());
                     for current_share in correct_share_value {
                         // increase value of existing share by 1
@@ -964,8 +984,9 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                             parsed_shares
                                 .push(Value::Poly128(ResiduePoly::<Z128>::ONE + parsed_share));
                         } else {
-                            return Err(anyhow!(
+                            return Err(anyhow_error_and_log(
                                 "Other type than IndexShare128 found in threshold_fault"
+                                    .to_string(),
                             ));
                         }
                     }
@@ -993,10 +1014,9 @@ pub async fn run_decryption(
     for current_ct_block in ciphertext {
         let res = match mode {
             DecryptionMode::PRSSDecrypt => {
-                let prss_state = session
-                    .prss_state
-                    .as_mut()
-                    .ok_or_else(|| anyhow!("PRSS_State not initialized"))?;
+                let prss_state = session.prss_state.as_mut().ok_or_else(|| {
+                    anyhow_error_and_log("PRSS_State not initialized".to_string())
+                })?;
 
                 prss_prep(
                     own_role.party_id(),
@@ -1029,8 +1049,8 @@ pub async fn run_decryption(
                     Value::Ring128(from_expanded_msg(v_scalar.0, message_mod_bits))
                 }
                 _ => {
-                    return Err(anyhow!(
-                        "Right shift not possible - wrong opened value type"
+                    return Err(anyhow_error_and_log(
+                        "Right shift not possible - wrong opened value type".to_string(),
                     ))
                 }
             };
@@ -1047,7 +1067,9 @@ pub async fn run_decryption(
             Ok(res) => res,
             Err(error) => {
                 eprint!("Panicked in combining {error}");
-                return Err(error);
+                return Err(anyhow_error_and_log(format!(
+                    "Panicked in combining {error}"
+                )));
             }
         };
         outputs.push(Value::Ring128(Wrapping(res)));

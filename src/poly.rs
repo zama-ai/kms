@@ -3,8 +3,7 @@ use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::{One, Sample, Zero};
-use anyhow::anyhow;
+use crate::{error::error_handler::anyhow_error_and_log, One, Sample, Zero};
 
 pub trait Ring
 where
@@ -412,7 +411,9 @@ pub fn gao_decoding<F: Field>(
     if rem.is_zero() && h.deg() < k && q0.deg() <= max_error_count {
         Ok(h)
     } else {
-        Err(anyhow!("Gao decoding checks failed"))
+        Err(anyhow_error_and_log(
+            "Gao decoding checks failed".to_string(),
+        ))
     }
 }
 

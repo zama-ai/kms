@@ -1,5 +1,6 @@
+use crate::error::error_handler::anyhow_error_and_log;
+
 use super::*;
-use anyhow::anyhow;
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -94,7 +95,9 @@ impl Networking for LocalNetworking {
         let (tx, _) = self
             .pairwise_channels
             .get(&(self.owner.clone(), receiver.clone()))
-            .ok_or(anyhow!("Could not retrieve pairwise channels in send call"))?
+            .ok_or(anyhow_error_and_log(
+                "Could not retrieve pairwise channels in send call".to_string(),
+            ))?
             .value()
             .clone();
 
@@ -127,7 +130,7 @@ impl Networking for LocalNetworking {
         let (_, rx) = self
             .pairwise_channels
             .get(&(sender.clone(), self.owner.clone()))
-            .ok_or(anyhow!(format!(
+            .ok_or(anyhow_error_and_log(format!(
                 "Could not retrieve pairwise channels in receive call, owner: {:?}, sender: {:?}",
                 self.owner, sender
             )))?
@@ -138,7 +141,7 @@ impl Networking for LocalNetworking {
         let network_round: usize = *self
             .network_round
             .lock()
-            .map_err(|e| anyhow!(format!("Locking error: {:?}", e.to_string())))?;
+            .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e.to_string())))?;
 
         tracing::debug!(
             "async receiving: owner: {:?} sender: {:?}, network_round = {:?}, tagged value ctr = {:?}",
@@ -165,7 +168,7 @@ impl Networking for LocalNetworking {
                 self.owner
             );
         } else {
-            return Err(anyhow!("Couldn't lock mutex"));
+            return Err(anyhow_error_and_log("Couldn't lock mutex".to_string()));
         }
         Ok(())
     }

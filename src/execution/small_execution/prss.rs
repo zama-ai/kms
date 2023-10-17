@@ -1,5 +1,6 @@
 use crate::{
     computation::SessionId,
+    error::error_handler::anyhow_error_and_log,
     execution::{
         agree_random::AgreeRandom,
         broadcast::broadcast_with_corruption,
@@ -13,7 +14,6 @@ use crate::{
     value::{BroadcastValue, Value},
     One, Zero, Z128,
 };
-use anyhow::anyhow;
 use blake3::Hasher;
 use byteorder::{BigEndian, ReadBytesExt};
 use itertools::Itertools;
@@ -152,7 +152,7 @@ impl PRSSState {
                 let f_a = set.f_a_points[party_id - 1];
                 res += f_a * psi;
             } else {
-                return Err(anyhow!("Called prss.next() with party ID {party_id} that is not in a precomputed set of parties!"));
+                return Err(anyhow_error_and_log(format!("Called prss.next() with party ID {party_id} that is not in a precomputed set of parties!")));
             }
         }
 
@@ -345,8 +345,8 @@ impl PRSSState {
                     if let Some(Value::Ring128(cur_psi)) = true_psi_vals.get(set) {
                         cur_s += f_a * (*cur_psi);
                     } else {
-                        return Err(anyhow!(
-                            "A PSI value which should exist does no longer exist",
+                        return Err(anyhow_error_and_log(
+                            "A PSI value which should exist does no longer exist".to_string(),
                         ));
                     }
                 }
@@ -366,7 +366,9 @@ impl PRSSSetup {
         let binom_nt = num_integer::binomial(num_parties, session.threshold() as usize);
 
         if binom_nt > PRSS_SIZE_MAX {
-            return Err(anyhow!("PRSS set size is too large!"));
+            return Err(anyhow_error_and_log(
+                "PRSS set size is too large!".to_string(),
+            ));
         }
 
         let log_n_choose_t = binom_nt.next_power_of_two().ilog2();
@@ -447,7 +449,9 @@ mod tests {
             let binom_nt = num_integer::binomial(num_parties, threshold);
 
             if binom_nt > PRSS_SIZE_MAX {
-                return Err(anyhow!("PRSS set size is too large!"));
+                return Err(anyhow_error_and_log(
+                    "PRSS set size is too large!".to_string(),
+                ));
             }
 
             let log_n_choose_t = binom_nt.next_power_of_two().ilog2();

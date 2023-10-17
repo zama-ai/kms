@@ -1,9 +1,9 @@
 //! CLI tool for interacting with a group of mobys
 use aes_prng::AesRng;
-use anyhow::anyhow;
 use clap::{Parser, Subcommand};
 use distributed_decryption::circuit::Circuit;
 use distributed_decryption::computation::SessionId;
+use distributed_decryption::error::error_handler::anyhow_error_and_log;
 use distributed_decryption::execution::party::Identity;
 use distributed_decryption::execution::party::Role;
 use distributed_decryption::execution::party::RoleAssignment;
@@ -174,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let setup_mode = match protocol {
                 1 => Ok(SetupMode::AllProtos),
                 2 => Ok(SetupMode::NoPrss),
-                _ => Err(anyhow! {"Invalid SetupMode"}),
+                _ => Err(anyhow_error_and_log("Invalid SetupMode".to_string())),
             }?;
 
             let default_params: ThresholdLWEParameters =
@@ -219,7 +219,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mode = match protocol {
                 1 => Ok(DecryptionMode::PRSSDecrypt),
                 2 => Ok(DecryptionMode::Proto2Decrypt),
-                _ => Err(anyhow!("Decryption mode not supported!")),
+                _ => Err(anyhow_error_and_log(
+                    "Decryption mode not supported!".to_string(),
+                )),
             }?;
 
             let session_id = runtime

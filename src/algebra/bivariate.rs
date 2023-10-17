@@ -1,11 +1,12 @@
 use ndarray::Array;
 use rand::RngCore;
 
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::poly::Poly;
 use crate::residue_poly::LutMulReduction;
 use crate::One;
 use crate::{residue_poly::ResiduePoly, Sample, Zero};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use ndarray::ArrayD;
 use ndarray::IxDyn;
 use std::ops::Mul;
@@ -78,7 +79,7 @@ where
         match (self.ndim(), rhs.ndim()) {
             (1, 1) => {
                 if self.dim() != rhs.dim() {
-                    Err(anyhow!("Cannot compute multiplication between rank 1 tensor where dimension of lhs {:?} and rhs {:?}", self.dim(), rhs.dim()))
+                    Err(anyhow_error_and_log(format!("Cannot compute multiplication between rank 1 tensor where dimension of lhs {:?} and rhs {:?}", self.dim(), rhs.dim())))
                 } else {
                     let res = self
                         .iter()
@@ -89,7 +90,7 @@ where
             }
             (1, 2) => {
                 if self.dim()[0] != rhs.dim()[0] {
-                    Err(anyhow!("Cannot compute multiplication between rank 1 tensor and rank 2 tensor where dimension of lhs {:?} and rhs {:?}", self.dim(), rhs.dim()))
+                    Err(anyhow_error_and_log(format!("Cannot compute multiplication between rank 1 tensor and rank 2 tensor where dimension of lhs {:?} and rhs {:?}", self.dim(), rhs.dim())))
                 } else {
                     let mut res = Vec::new();
                     for col in rhs.columns() {
@@ -104,7 +105,7 @@ where
             }
             (2, 1) => {
                 if self.dim()[1] != rhs.dim()[0] {
-                    Err(anyhow!("Cannot compute multiplication between rank 2 tensor and rank 1 tensor where dimension of lhs {:?} and rhs {:?}", self.dim(), rhs.dim()))
+                    Err(anyhow_error_and_log(format!("Cannot compute multiplication between rank 2 tensor and rank 1 tensor where dimension of lhs {:?} and rhs {:?}", self.dim(), rhs.dim())))
                 } else {
                     let mut res = Vec::new();
                     for row in self.rows() {
@@ -117,11 +118,10 @@ where
                     Ok(Array::from_vec(res).into_dyn())
                 }
             }
-            (l_rank, r_rank) => Err(anyhow!(
+            (l_rank, r_rank) => Err(anyhow_error_and_log(format!(
                 "Matmul not implemented for tensors of rank {:?}, {:?}",
-                l_rank,
-                r_rank,
-            )),
+                l_rank, r_rank,
+            ))),
         }
     }
 }

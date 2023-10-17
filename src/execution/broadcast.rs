@@ -1,8 +1,8 @@
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::party::Role;
 use crate::networking::constants::NETWORK_TIMEOUT;
 use crate::value::BroadcastValue;
 use crate::value::NetworkValue;
-use anyhow::anyhow;
 use itertools::Itertools;
 use rand::RngCore;
 use std::collections::HashMap;
@@ -62,7 +62,9 @@ where
             let sender_id = session
                 .role_assignments()
                 .get(&sender)
-                .ok_or(anyhow!("Can't find sender's id in the session"))?
+                .ok_or(anyhow_error_and_log(
+                    "Can't find sender's id in the session".to_string(),
+                ))?
                 .clone();
 
             let networking = Arc::clone(session.network());
@@ -120,14 +122,14 @@ async fn receive_from_all_senders<R: RngCore, B: BaseSessionHandles<R>>(
         Some(non_answering_parties),
         |msg, id| match msg {
             NetworkValue::Send(v) => Ok(v),
-            NetworkValue::EchoBatch(_) => Err(anyhow!(
+            NetworkValue::EchoBatch(_) => Err(anyhow_error_and_log(format!(
                 "I have received an Echo batch instead of a Send message on party: {:?}",
                 id
-            )),
-            _ => Err(anyhow!(
+            ))),
+            _ => Err(anyhow_error_and_log(format!(
                 "I have received sth different from Send message on party: {:?}",
                 id
-            )),
+            ))),
         },
     )?;
 
@@ -175,10 +177,10 @@ async fn receive_from_all_echo_batch<R: RngCore, B: BaseSessionHandles<R>>(
         |msg, id| match msg {
             NetworkValue::EchoBatch(v) => Ok(v),
             NetworkValue::Empty => Ok(RoleValueMap::new()),
-            _ => Err(anyhow!(
+            _ => Err(anyhow_error_and_log(format!(
                 "I have received sth different from an Echo Batch message on party: {:?}",
-                id
-            )),
+                id,
+            ))),
         },
     )?;
 
@@ -208,10 +210,10 @@ fn receive_from_all_votes<R: RngCore, B: BaseSessionHandles<R>>(
         |msg, id| match msg {
             NetworkValue::VoteBatch(v) => Ok(v),
             NetworkValue::Empty => Ok(RoleValueMap::new()),
-            _ => Err(anyhow!(
+            _ => Err(anyhow_error_and_log(format!(
                 "I have received sth different from an Vote Batch message on player: {:?}",
                 id
-            )),
+            ))),
         },
     )
 }
@@ -351,15 +353,15 @@ async fn gather_votes<R: RngCore, B: BaseSessionHandles<R>>(
         let mut round_registered_votes = HashMap::<(Role, BroadcastValue), u32>::new();
         for ((role, m), nb_votes) in registered_votes.iter_mut() {
             if *nb_votes as usize >= (threshold + round)
-                && !*(casted
-                    .get(role)
-                    .ok_or(anyhow!("Cant retrieve whether I casted a vote"))?)
+                && !*(casted.get(role).ok_or(anyhow_error_and_log(
+                    "Cant retrieve whether I casted a vote".to_string(),
+                ))?)
             {
                 round_registered_votes.insert((*role, m.clone()), *nb_votes);
                 //Remember I casted a vote
-                let casted_vote_role = casted
-                    .get_mut(role)
-                    .ok_or(anyhow!("Can't retrieve whether I casted a vote"))?;
+                let casted_vote_role = casted.get_mut(role).ok_or(anyhow_error_and_log(
+                    "Can't retrieve whether I casted a vote".to_string(),
+                ))?;
                 *casted_vote_role = true;
                 //Also add a vote in my own data struct
                 *nb_votes += 1;
@@ -389,8 +391,8 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
 ) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
     let num_parties = session.amount_of_parties();
     if sender_list.is_empty() {
-        return Err(anyhow!(
-            "We expect at least one party as sender in reliable broadcast"
+        return Err(anyhow_error_and_log(
+            "We expect at least one party as sender in reliable broadcast".to_string(),
         ));
     }
     let num_senders = sender_list.len();
@@ -417,7 +419,11 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
             send_to_all(session, &my_role, msg).await;
         }
         (None, false) => (),
-        (_, _) => return Err(anyhow!("A sender must have a value in rebliable broadcast")),
+        (_, _) => {
+            return Err(anyhow_error_and_log(
+                "A sender must have a value in rebliable broadcast".to_string(),
+            ))
+        }
     }
 
     //The error we propagate here is if sender ids and roles cannot be tied together.
@@ -454,11 +460,13 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
     cast_threshold_vote(session, &my_role, &registered_votes, 1).await;
 
     for ((role, _), _) in registered_votes.iter() {
-        let casted_vote_role = casted_vote
-            .get_mut(role)
-            .ok_or(anyhow!("Can't retrieve whether I casted a vote"))?;
+        let casted_vote_role = casted_vote.get_mut(role).ok_or(anyhow_error_and_log(
+            "Can't retrieve whether I casted a vote".to_string(),
+        ))?;
         if *casted_vote_role {
-            return Err(anyhow!("Trying to cast two votes for the same sender!"));
+            return Err(anyhow_error_and_log(
+                "Trying to cast two votes for the same sender!".to_string(),
+            ));
         }
         *casted_vote_role = true;
     }
@@ -805,8 +813,8 @@ mod tests {
     ) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
         let num_parties = session.amount_of_parties();
         if sender_list.is_empty() {
-            return Err(anyhow!(
-                "We expect at least one party as sender in reliable broadcast"
+            return Err(anyhow_error_and_log(
+                "We expect at least one party as sender in reliable broadcast".to_string(),
             ));
         }
         let num_senders = sender_list.len();
@@ -848,7 +856,11 @@ mod tests {
                 while (jobs.join_next().await).is_some() {}
             }
             (None, false) => (),
-            (_, _) => return Err(anyhow!("A sender must have a value in rebliable broadcast")),
+            (_, _) => {
+                return Err(anyhow_error_and_log(
+                    "A sender must have a value in rebliable broadcast".to_string(),
+                ))
+            }
         }
 
         //The error we propagate here is if sender ids and roles cannot be tied together.
@@ -888,11 +900,13 @@ mod tests {
         if !registered_votes.is_empty() {
             cast_threshold_vote(session, &my_role, &registered_votes, 1).await;
             for ((role, _), _) in registered_votes.iter() {
-                let casted_vote_role = casted_vote
-                    .get_mut(role)
-                    .ok_or(anyhow!("Can't retrieve whether I casted a vote"))?;
+                let casted_vote_role = casted_vote.get_mut(role).ok_or(anyhow_error_and_log(
+                    "Can't retrieve whether I casted a vote".to_string(),
+                ))?;
                 if *casted_vote_role {
-                    return Err(anyhow!("Trying to cast two votes for the same sender!"));
+                    return Err(anyhow_error_and_log(
+                        "Trying to cast two votes for the same sender!".to_string(),
+                    ));
                 }
                 *casted_vote_role = true;
             }
@@ -994,8 +1008,8 @@ mod tests {
         vec_vi: Option<Vec<BroadcastValue>>,
     ) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
         if sender_list.is_empty() {
-            return Err(anyhow!(
-                "We expect at least one party as sender in reliable broadcast"
+            return Err(anyhow_error_and_log(
+                "We expect at least one party as sender in reliable broadcast".to_string(),
             ));
         }
         let num_senders = sender_list.len();
@@ -1035,7 +1049,11 @@ mod tests {
                 while (jobs.join_next().await).is_some() {}
             }
             (None, false) => (),
-            (_, _) => return Err(anyhow!("A sender must have a value in rebliable broadcast")),
+            (_, _) => {
+                return Err(anyhow_error_and_log(
+                    "A sender must have a value in rebliable broadcast".to_string(),
+                ))
+            }
         }
 
         //The error we propagate here is if sender ids and roles cannot be tied together.

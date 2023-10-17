@@ -1,9 +1,9 @@
 use crate::{
+    error::error_handler::anyhow_error_and_log,
     gf256,
     residue_poly::{ResiduePoly, F_DEG},
     Z128,
 };
-use anyhow::anyhow;
 use gf256::GF256;
 use std::num::Wrapping;
 
@@ -56,8 +56,8 @@ pub fn solve(a: ResiduePoly<Z128>) -> anyhow::Result<ResiduePoly<Z128>> {
     }
     // Validate the result, i.e. x+x^2 = input
     if a != x + x * x {
-        return Err(anyhow!(
-            "The outer Newton Raphson inversion computation failed"
+        return Err(anyhow_error_and_log(
+            "The outer Newton Raphson inversion computation failed".to_string(),
         ));
     }
     Ok(x)

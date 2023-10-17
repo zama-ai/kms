@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
+    error::error_handler::anyhow_error_and_log,
     execution::{
         p2p::exchange_values,
         party::Role,
@@ -11,7 +12,6 @@ use crate::{
     value::{NetworkValue, Value},
     One, Zero, Z128,
 };
-use anyhow::anyhow;
 use rand::RngCore;
 
 #[allow(dead_code)]
@@ -109,11 +109,11 @@ pub fn interpolate_poly_w_punctures<R: RngCore>(
     secret: ResiduePoly<Z128>,
 ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
     if threshold <= dispute_party_ids.len() {
-        return Err(anyhow!(
+        return Err(anyhow_error_and_log(format!(
             "Too many disputess, {}, for threshold {}",
             threshold,
             dispute_party_ids.len()
-        ));
+        )));
     }
     let degree = threshold - dispute_party_ids.len();
     // make a random polynomial of degree threshold `dispute_party_ids`

@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use async_trait::async_trait;
 use derive_more::Display;
 use rand::{RngCore, SeedableRng};
@@ -9,7 +8,10 @@ use std::{
     sync::Arc,
 };
 
-use crate::{computation::SessionId, networking::Networking, value::BroadcastValue};
+use crate::{
+    computation::SessionId, error::error_handler::anyhow_error_and_log, networking::Networking,
+    value::BroadcastValue,
+};
 
 use super::{
     broadcast::broadcast_with_corruption,
@@ -59,10 +61,10 @@ impl SessionParameters {
         role_assignments: HashMap<Role, Identity>,
     ) -> anyhow::Result<Self> {
         if role_assignments.len() <= threshold as usize {
-            return Err(anyhow!(
+            return Err(anyhow_error_and_log(format!(
                 "Threshold {threshold} cannot be less than the amount of parties, {:?}",
                 role_assignments.len()
-            ));
+            )));
         }
         let res = Self {
             threshold,
@@ -71,8 +73,8 @@ impl SessionParameters {
             role_assignments,
         };
         if res.role_from(&own_identity).is_err() {
-            return Err(anyhow!(
-                "Your own role is not contained in the role_assignments"
+            return Err(anyhow_error_and_log(
+                "Your own role is not contained in the role_assignments".to_string(),
             ));
         }
         Ok(res)
@@ -87,7 +89,10 @@ impl ParameterHandles for SessionParameters {
     fn identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
         match self.role_assignments.get(role) {
             Some(identity) => Ok(identity.clone()),
-            None => Err(anyhow!("Role {} does not exist", role.0)),
+            None => Err(anyhow_error_and_log(format!(
+                "Role {} does not exist",
+                role.0
+            ))),
         }
     }
 
@@ -112,10 +117,10 @@ impl ParameterHandles for SessionParameters {
         let role = {
             match role.len() {
                 1 => Ok(role[0]),
-                _ => Err(anyhow!(
+                _ => Err(anyhow_error_and_log(format!(
                     "Unknown or ambiguous role for identity {:?}",
                     identity
-                )),
+                ))),
             }?
         };
 
@@ -503,7 +508,11 @@ impl<R: RngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync
             if cur_role != self.my_role()? {
                 let payload = match cur_payload {
                     BroadcastValue::AddDispute(payload) => payload,
-                    _ => return Err(anyhow!("Unexpected data received from broadcast")),
+                    _ => {
+                        return Err(anyhow_error_and_log(
+                            "Unexpected data received from broadcast".to_string(),
+                        ))
+                    }
                 };
                 if payload.msg != DisputeMsg::OK {
                     for dispute_role in payload.disputes {
@@ -545,12 +554,12 @@ impl DisputeSet {
         let disputed_roles = &mut self.disputed_roles;
         let a_disputes = disputed_roles
             .get_mut((role_a.0 - 1) as usize)
-            .ok_or_else(|| anyhow!("Role does not exist"))?;
+            .ok_or_else(|| anyhow_error_and_log("Role does not exist".to_string()))?;
         let _ = a_disputes.insert(*role_b);
         // Insert the second pair of disputes
         let b_disputes: &mut BTreeSet<Role> = disputed_roles
             .get_mut((role_b.0 - 1) as usize)
-            .ok_or_else(|| anyhow!("Role does not exist"))?;
+            .ok_or_else(|| anyhow_error_and_log("Role does not exist".to_string()))?;
         let _ = b_disputes.insert(*role_a);
         Ok(())
     }
@@ -559,7 +568,7 @@ impl DisputeSet {
         if let Some(cur) = self.disputed_roles.get((role.0 - 1) as usize) {
             Ok(cur)
         } else {
-            Err(anyhow!("Role does not exist"))
+            Err(anyhow_error_and_log("Role does not exist".to_string()))
         }
     }
 }

@@ -19,6 +19,7 @@ pub mod tests;
 pub mod value;
 pub use tokio;
 pub mod algebra;
+pub mod error;
 pub mod sharing;
 
 pub trait Zero {

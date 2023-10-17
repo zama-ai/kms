@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use anyhow::anyhow;
 use async_trait::async_trait;
 use itertools::Itertools;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use tokio::{task::JoinSet, time::error::Elapsed};
 
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::{
     broadcast::generic_receive_from_all, p2p::send_to_parties, session::LargeSessionHandles,
 };
@@ -105,8 +105,8 @@ impl Vss for DummyVss {
             JoinSet::new();
         generic_receive_from_all(&mut jobs, session, &own_role, None, |msg, _id| match msg {
             NetworkValue::RingValue(Value::Poly128(v)) => Ok(v),
-            _ => Err(anyhow!(
-                "Received something else, not a galois ring element"
+            _ => Err(anyhow_error_and_log(
+                "Received something else, not a galois ring element".to_string(),
             )),
         })?;
 
@@ -449,7 +449,9 @@ fn vss_receive_round_1<R: RngCore, L: LargeSessionHandles<R>>(
         None,
         |msg, _id| match msg {
             crate::value::NetworkValue::Round1VSS(v) => Ok(v),
-            _ => Err(anyhow!("Received something else, not a VSS round1 struct")),
+            _ => Err(anyhow_error_and_log(
+                "Received something else, not a VSS round1 struct".to_string(),
+            )),
         },
     )?;
     Ok(())
