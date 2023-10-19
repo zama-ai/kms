@@ -72,6 +72,8 @@ impl From<Vec<Value>> for BroadcastValue {
 pub enum NetworkValue {
     PubKey(Box<PubConKeyPair>),
     RingValue(Value),
+    VecRingValue(Vec<Value>),
+    VecPairRingValue(Vec<(Value, Value)>),
     Send(BroadcastValue),
     EchoBatch(HashMap<Role, BroadcastValue>),
     VoteBatch(HashMap<Role, BroadcastValue>),
