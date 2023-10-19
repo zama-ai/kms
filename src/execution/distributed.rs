@@ -1034,7 +1034,8 @@ pub async fn run_decryption(
             )?,
         };
 
-        let opened = robust_open_to(&session.to_base_session(), &res, &own_role, 1).await?;
+        let opened =
+            robust_open_to(&session.to_base_session(), &res, &own_role, INPUT_PARTY_ID).await?;
 
         if own_role.party_id() == INPUT_PARTY_ID {
             let message_mod_bits = keyshares

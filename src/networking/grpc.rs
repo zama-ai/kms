@@ -161,16 +161,13 @@ impl Networking for GrpcNetworking {
             ));
         }
 
-        let session_store =
-            self.message_queues
-                .get(&self.session_id)
-                .ok_or(anyhow_error_and_log(
-                    "couldn't retrieve channels from store".to_string(),
-                ))?;
+        let session_store = self.message_queues.get(&self.session_id).ok_or_else(|| {
+            anyhow_error_and_log("couldn't retrieve channels from store".to_string())
+        })?;
 
-        let channels = session_store.get(sender).ok_or(anyhow_error_and_log(
-            "couldn't retrieve session store from message stores".to_string(),
-        ))?;
+        let channels = session_store.get(sender).ok_or_else(|| {
+            anyhow_error_and_log("couldn't retrieve session store from message stores".to_string())
+        })?;
         let (_, rx) = channels.value();
 
         tracing::debug!("Waiting to receive from {:?}", sender);
@@ -257,16 +254,20 @@ impl Gnetworking for NetworkingImpl {
             let session_store = self
                 .message_queues
                 .get(&tagged_value.session_id)
-                .ok_or(anyhow_error_and_log(
-                    "couldn't retrieve session store from message stores".to_string(),
-                ))
+                .ok_or_else(|| {
+                    anyhow_error_and_log(
+                        "couldn't retrieve session store from message stores".to_string(),
+                    )
+                })
                 .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?;
 
             let channels = session_store
                 .get(&tagged_value.sender)
-                .ok_or(anyhow_error_and_log(
-                    "couldn't retrieve channels from session store".to_string(),
-                ))
+                .ok_or_else(|| {
+                    anyhow_error_and_log(
+                        "couldn't retrieve channels from session store".to_string(),
+                    )
+                })
                 .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?;
 
             let (tx, _) = channels.value();

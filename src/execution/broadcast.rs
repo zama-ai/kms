@@ -62,9 +62,12 @@ where
             let sender_id = session
                 .role_assignments()
                 .get(&sender)
-                .ok_or(anyhow_error_and_log(
-                    "Can't find sender's id in the session".to_string(),
-                ))?
+                .ok_or_else(|| {
+                    anyhow_error_and_log(format!(
+                        "Can't find sender's id {sender} in session {}",
+                        session.session_id()
+                    ))
+                })?
                 .clone();
 
             let networking = Arc::clone(session.network());
@@ -353,15 +356,15 @@ async fn gather_votes<R: RngCore, B: BaseSessionHandles<R>>(
         let mut round_registered_votes = HashMap::<(Role, BroadcastValue), u32>::new();
         for ((role, m), nb_votes) in registered_votes.iter_mut() {
             if *nb_votes as usize >= (threshold + round)
-                && !*(casted.get(role).ok_or(anyhow_error_and_log(
-                    "Cant retrieve whether I casted a vote".to_string(),
-                ))?)
+                && !*(casted.get(role).ok_or_else(|| {
+                    anyhow_error_and_log("Cant retrieve whether I casted a vote".to_string())
+                })?)
             {
                 round_registered_votes.insert((*role, m.clone()), *nb_votes);
                 //Remember I casted a vote
-                let casted_vote_role = casted.get_mut(role).ok_or(anyhow_error_and_log(
-                    "Can't retrieve whether I casted a vote".to_string(),
-                ))?;
+                let casted_vote_role = casted.get_mut(role).ok_or_else(|| {
+                    anyhow_error_and_log("Can't retrieve whether I casted a vote".to_string())
+                })?;
                 *casted_vote_role = true;
                 //Also add a vote in my own data struct
                 *nb_votes += 1;
@@ -460,9 +463,9 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
     cast_threshold_vote(session, &my_role, &registered_votes, 1).await;
 
     for ((role, _), _) in registered_votes.iter() {
-        let casted_vote_role = casted_vote.get_mut(role).ok_or(anyhow_error_and_log(
-            "Can't retrieve whether I casted a vote".to_string(),
-        ))?;
+        let casted_vote_role = casted_vote.get_mut(role).ok_or_else(|| {
+            anyhow_error_and_log("Can't retrieve whether I casted a vote".to_string())
+        })?;
         if *casted_vote_role {
             return Err(anyhow_error_and_log(
                 "Trying to cast two votes for the same sender!".to_string(),
@@ -900,9 +903,9 @@ mod tests {
         if !registered_votes.is_empty() {
             cast_threshold_vote(session, &my_role, &registered_votes, 1).await;
             for ((role, _), _) in registered_votes.iter() {
-                let casted_vote_role = casted_vote.get_mut(role).ok_or(anyhow_error_and_log(
-                    "Can't retrieve whether I casted a vote".to_string(),
-                ))?;
+                let casted_vote_role = casted_vote.get_mut(role).ok_or_else(|| {
+                    anyhow_error_and_log("Can't retrieve whether I casted a vote".to_string())
+                })?;
                 if *casted_vote_role {
                     return Err(anyhow_error_and_log(
                         "Trying to cast two votes for the same sender!".to_string(),

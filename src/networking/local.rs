@@ -95,9 +95,12 @@ impl Networking for LocalNetworking {
         let (tx, _) = self
             .pairwise_channels
             .get(&(self.owner.clone(), receiver.clone()))
-            .ok_or(anyhow_error_and_log(
-                "Could not retrieve pairwise channels in send call".to_string(),
-            ))?
+            .ok_or_else(|| {
+                anyhow_error_and_log(format!(
+                "Could not retrieve pairwise channels in receive call, owner: {:?}, receiver: {:?}. Session {:?}",
+                self.owner, receiver, _session_id
+            ))
+            })?
             .value()
             .clone();
 
@@ -113,10 +116,11 @@ impl Networking for LocalNetworking {
             value: val,
         };
         tracing::debug!(
-            "async sender: owner: {:?} receiver: {:?}, value: {:?}",
+            "async sender: owner: {:?} receiver: {:?}, value: {:?} in session {:?}",
             self.owner,
             receiver,
-            tagged_value
+            tagged_value,
+            _session_id
         );
 
         tx.send(tagged_value).await.map_err(|e| e.into())
@@ -130,10 +134,12 @@ impl Networking for LocalNetworking {
         let (_, rx) = self
             .pairwise_channels
             .get(&(sender.clone(), self.owner.clone()))
-            .ok_or(anyhow_error_and_log(format!(
+            .ok_or_else(|| {
+                anyhow_error_and_log(format!(
                 "Could not retrieve pairwise channels in receive call, owner: {:?}, sender: {:?}",
                 self.owner, sender
-            )))?
+            ))
+            })?
             .value()
             .clone();
 
@@ -163,7 +169,7 @@ impl Networking for LocalNetworking {
         if let Ok(mut net_round) = self.network_round.lock() {
             *net_round += 1;
             tracing::debug!(
-                "changed network round to: {:?} on party :{:?}",
+                "changed network round to: {:?} on party: {:?}",
                 *net_round,
                 self.owner
             );
