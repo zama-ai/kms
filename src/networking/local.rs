@@ -241,7 +241,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[traced_test]
     #[should_panic = "Trying to send to bob in round 0 more than once !"]
     async fn test_async_networking_panic() {
         let identities: Vec<Identity> = vec!["alice".into(), "bob".into()];
