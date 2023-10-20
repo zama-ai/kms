@@ -98,28 +98,43 @@ where
     Ok(share)
 }
 
-/// Map a raw, decrypted message to its real value by dividing by the appropriate shift, delta
+/// Map a raw, decrypted message to its real value by dividing by the appropriate shift, delta, assuming padding
 pub(crate) fn from_expanded_msg<Scalar: UnsignedInteger + AsPrimitive<u128>>(
     raw_plaintext: Scalar,
     message_mod_bits: usize,
 ) -> Z128 {
-    let delta_bits = (Scalar::BITS as u128 - 1_u128) - message_mod_bits as u128;
-    let rounding_bit = 1 << (delta_bits - 1);
-    //compute the rounding bit
-    let rounding = (raw_plaintext.as_() & rounding_bit) << 1;
-
-    let msg = (raw_plaintext.as_().wrapping_add(rounding)) >> delta_bits;
-    Wrapping(msg % (1 << message_mod_bits))
+    // delta = q/t where t is the amount of plain text bits
+    // Observe we actually divide this by 2 (i.e. subtract 1 bit) to make space for padding
+    let delta_pad_bits = (Scalar::BITS as u128 - 1_u128) - message_mod_bits as u128;
+    let delta_pad_half = 1 << (delta_pad_bits - 1);
+    // Compute the rounding since we don't want the floor function, but general rounding
+    let rounding = (raw_plaintext.as_() & delta_pad_half) << 1;
+    let raw_msg = (raw_plaintext.as_().wrapping_add(rounding)) >> delta_pad_bits;
+    let msg = Wrapping(raw_msg % (1 << message_mod_bits));
+    // Observe that in certain situations the computation of b-<a,s> may be negative
+    // Concretely this happens when the message encrypted is 0 and randomness ends up being negative.
+    // We cannot simply do the standard modulo operation then, as this would mean the message becomes
+    // 2^message_mod_bits instead of 0 as it should be.
+    // However the maximal negative value it can have (without a general decryption error) is delta/2
+    // which we can compute as 1 << delta_pad_bits, since the padding already halfs the true delta
+    if raw_plaintext.as_() > Scalar::MAX.as_() - (1 << delta_pad_bits) {
+        Z128::ZERO
+    } else {
+        msg
+    }
 }
 
-/// Map a real message, of a few bits, to the encryption domain, by applying the appropriate shift, delta
+/// Map a real message, of a few bits, to the encryption domain, by applying the appropriate shift, delta.
+/// The function assumes padding will be used.
 pub(crate) fn to_expanded_msg(message: u64, message_mod_bits: usize) -> Plaintext<u64> {
+    let sanitized_msg = message % (1 << message_mod_bits);
+    // Observe we shift with u64::BITS - 1 to allow for the padding bit so PBS can be used on the ciphertext made from this
     let delta_bits = (u64::BITS - 1) - message_mod_bits as u32;
-    Plaintext(message << delta_bits)
+    Plaintext(sanitized_msg << delta_bits)
 }
 
 /// Map a distributedly decrypting ring element from Z_{2^128}[X] to its message.
-/// Thtat is, take the constant term of the polynomial and divide by the appropriate delta.
+/// That is, take the constant term of the polynomial and divide by the appropriate delta.
 pub fn value_to_message(rec_value: Value, message_mod_bits: usize) -> anyhow::Result<Z128> {
     match rec_value {
         Value::Poly128(value) => {
@@ -553,6 +568,8 @@ pub fn keygen_all_party_shares<R: RngCore>(
 
 #[cfg(test)]
 mod tests {
+    use std::num::Wrapping;
+
     use crate::{
         execution::small_execution::prep::to_large_ciphertext_block,
         file_handling::{read_as_json, read_element},
@@ -561,12 +578,15 @@ mod tests {
             KeySet, ThresholdLWEParameters,
         },
         tests::test_data_setup::tests::{TEST_KEY_PATH, TEST_PARAM_PATH},
+        Z128,
     };
     use aes_prng::AesRng;
+    use num_traits::AsPrimitive;
     use rand::{RngCore, SeedableRng};
-    use rstest::rstest;
+    use rand_chacha::ChaCha20Rng;
+
     use tfhe::{
-        core_crypto::prelude::{LweSecretKey, LweSecretKeyOwned, Plaintext},
+        core_crypto::prelude::{LweSecretKey, LweSecretKeyOwned, Plaintext, UnsignedInteger},
         shortint::prelude::LweDimension,
     };
 
@@ -601,20 +621,14 @@ mod tests {
         assert_ne!(seed1, seed2);
     }
 
-    #[rstest]
-    #[case(0)]
-    #[case(1)]
-    #[case(2)]
-    #[case(3)]
-    #[case(4)]
-    #[case(7)]
-    #[case(15)]
-    #[case(16)]
-    fn check_cipher_mapping(#[case] msg: u64) {
-        let cipher_domain: Plaintext<u64> = to_expanded_msg(msg, 4);
-        let plain_domain = from_expanded_msg(cipher_domain.0, 4);
-        // Compare with the message, taken modulo the message domain size
-        assert_eq!(plain_domain.0, (msg as u128) % (1 << 4));
+    #[test]
+    fn check_cipher_mapping() {
+        for msg in 0..=17 {
+            let cipher_domain: Plaintext<u64> = to_expanded_msg(msg, 4);
+            let plain_domain = from_expanded_msg(cipher_domain.0, 4);
+            // Compare with the message, taken modulo the message domain size, 16=1<<4
+            assert_eq!(plain_domain.0, (msg as u128) % (1 << 4));
+        }
     }
 
     #[test]
@@ -623,12 +637,53 @@ mod tests {
         let usable_mod_bits = params.input_cipher_parameters.usable_message_modulus_log.0;
         let keys: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
         for msg in 0..(1 << usable_mod_bits) {
-            let small_ct = keys.pk.encrypt_block(&mut get_rng(), msg);
+            let mut rng = ChaCha20Rng::seed_from_u64(msg);
+            let small_ct = keys.pk.encrypt_block(&mut rng, msg);
             let small_res = keys.sk.decrypt_block_64(&small_ct);
             assert_eq!(msg as u128, small_res.0);
             let large_ct = to_large_ciphertext_block(&keys.ck, &small_ct);
             let large_res = keys.sk.decrypt_block_128(&large_ct);
             assert_eq!(msg as u128, large_res.0);
         }
+    }
+
+    /// Tests the fixing of this bug https://github.com/zama-ai/distributed-decryption/issues/181
+    /// which could result in decrypting 2^message_bits when a message 0 was encrypted and randomness
+    /// in the encryption ends up being negative
+    #[test]
+    fn negative_wrapping() {
+        let params: ThresholdLWEParameters = read_as_json(TEST_PARAM_PATH.to_string()).unwrap();
+        let delta_half = 1
+            << ((u128::BITS as u128 - 1_u128)
+                - params.output_cipher_parameters.message_modulus_log.0 as u128);
+        // Should be rounded to 0, since it is the negative part of the numbers that should round to 0
+        let msg = u128::MAX - delta_half + 1;
+        let res = from_expanded_msg(msg, params.output_cipher_parameters.message_modulus_log.0);
+        assert_eq!(0, res.0);
+
+        // Check that this is where the old code failed
+        let res = old_from_expanded_msg(msg, params.output_cipher_parameters.message_modulus_log.0);
+        assert_ne!(0, res.0);
+
+        // Should not be 0, but instead the maximal message allowed
+        let msg = u128::MAX - delta_half - 1;
+        let res = from_expanded_msg(msg, params.output_cipher_parameters.message_modulus_log.0);
+        assert_eq!(
+            (1 << params.output_cipher_parameters.message_modulus_log.0) - 1,
+            res.0
+        );
+    }
+
+    fn old_from_expanded_msg<Scalar: UnsignedInteger + AsPrimitive<u128>>(
+        raw_plaintext: Scalar,
+        message_mod_bits: usize,
+    ) -> Z128 {
+        let delta_bits = (Scalar::BITS as u128 - 1_u128) - message_mod_bits as u128;
+        let rounding_bit = 1 << (delta_bits - 1);
+        //compute the rounding bit
+        let rounding = (raw_plaintext.as_() & rounding_bit) << 1;
+
+        let msg = (raw_plaintext.as_().wrapping_add(rounding)) >> delta_bits;
+        Wrapping(msg % (1 << message_mod_bits))
     }
 }

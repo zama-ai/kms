@@ -30,8 +30,8 @@ fn partial_decrypt(
             acc + sk_share.input_key_share[column]
                 * ResiduePoly::from_scalar(Wrapping(mask.as_ref()[column]))
         });
-    // b-a*ssp
-    let res = a_time_s * Wrapping(u128::MAX) + ResiduePoly::from_scalar(Wrapping(*body.data));
+    // b-<a, s>
+    let res = ResiduePoly::from_scalar(Wrapping(*body.data)) - a_time_s;
     Ok(res)
 }
 
