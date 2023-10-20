@@ -2,6 +2,7 @@ use crate::error::error_handler::anyhow_error_and_log;
 
 use super::*;
 use dashmap::DashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -15,6 +16,7 @@ pub struct LocalNetworking {
     pub owner: Identity,
     pub send_counter: DashMap<Identity, usize>,
     pub network_round: Arc<Mutex<usize>>,
+    already_sent: Arc<Mutex<HashSet<(Identity, usize)>>>,
 }
 
 #[derive(Default)]
@@ -107,7 +109,10 @@ impl Networking for LocalNetworking {
         let net_round = {
             match self.network_round.lock() {
                 Ok(net_round) => *net_round,
-                _ => panic!(),
+                _ => panic!(
+                    "Another user of the {:?} mutex panicked",
+                    self.network_round
+                ),
             }
         };
 
@@ -115,6 +120,24 @@ impl Networking for LocalNetworking {
             send_counter: net_round,
             value: val,
         };
+
+        match self.already_sent.lock() {
+            Ok(mut already_sent) => {
+                if already_sent.contains(&(receiver.clone(), net_round)) {
+                    panic!(
+                        "Trying to send to {} in round {} more than once !",
+                        receiver, net_round
+                    )
+                } else {
+                    already_sent.insert((receiver.clone(), net_round));
+                }
+            }
+            _ => panic!(
+                "Another user of the {:?} mutex panicked.",
+                self.already_sent
+            ),
+        }
+
         tracing::debug!(
             "async sender: owner: {:?} receiver: {:?}, value: {:?} in session {:?}",
             self.owner,
@@ -215,5 +238,21 @@ mod tests {
         });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    #[should_panic = "Trying to send to bob in round 0 more than once !"]
+    async fn test_async_networking_panic() {
+        let identities: Vec<Identity> = vec!["alice".into(), "bob".into()];
+        let net_producer = LocalNetworkingProducer::from_ids(&identities);
+
+        let net_alice = net_producer.user_net("alice".into());
+
+        let value = NetworkValue::RingValue(Value::Ring64(Wrapping::<u64>(1234)));
+        let _ = net_alice
+            .send(value.clone(), &"bob".into(), &123_u128.into())
+            .await;
+        let _ = net_alice.send(value, &"bob".into(), &123_u128.into()).await;
     }
 }
