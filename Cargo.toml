@@ -19,11 +19,14 @@ byteorder = "~1.5"
 blake3 = { version = "~1.5", features = ["std"] }
 clap = { version = "~4", features = ["derive", "env"] }
 concurrent-queue = "2.1.0"
+crypto_box = {version = "~0.9.1", features = ["salsa20"]}
 dashmap = "~5"
 derive_more = "~0.99"
+digest = "0.10.7"
 futures = "~0.3"
 g2p = "1.0.1"
 itertools = "0.11"
+k256 = "0.13.1"
 lazy_static = "~1.4"
 ndarray = { version = "~0.15", features = ["serde"] }
 ndarray-stats = "~0.5"
@@ -38,6 +41,9 @@ rand_chacha = "~0.3"
 regex = { version = "1", features = ["unicode-case"] }
 serde = { version = "~1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
+serde_asn1_der = "0.8.0"
+sha3 = "~0.10.8"
+signature = "~2.1"
 static_assertions = "~1.1"
 # TODO this should be updated at some point so we don't use a specific weird branch
 # Ensure that "# ~/.gitconfig \n [credential] \n helper = store" is added to .gitconfig
