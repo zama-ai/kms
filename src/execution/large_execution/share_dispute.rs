@@ -438,7 +438,7 @@ pub async fn share_w_dispute(
             res.insert(cur_role, ResiduePoly::ZERO);
         }
     }
-    session.add_dispute(&disputed_parties).await?;
+    session.add_dispute_and_bcast(&disputed_parties).await?;
     Ok(res)
 }
 

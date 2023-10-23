@@ -378,7 +378,8 @@ pub type LargeSession = LargeSessionStruct<ChaCha20Rng, SessionParameters>;
 pub trait LargeSessionHandles<R: RngCore>: BaseSessionHandles<R> {
     fn disputed_roles(&self) -> &DisputeSet;
     fn my_disputes(&self) -> anyhow::Result<&BTreeSet<Role>>;
-    async fn add_dispute(&mut self, disputed_parties: &[Role]) -> anyhow::Result<()>;
+    fn add_dispute(&mut self, party_a: &Role, party_b: &Role) -> anyhow::Result<()>;
+    async fn add_dispute_and_bcast(&mut self, disputed_parties: &[Role]) -> anyhow::Result<()>;
 }
 #[derive(Clone)]
 pub struct LargeSessionStruct<R: RngCore + Sync + Send + Clone, P: ParameterHandles> {
@@ -485,7 +486,19 @@ impl<R: RngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync
         self.disputed_roles.get(&self.my_role()?)
     }
 
-    async fn add_dispute(&mut self, disputed_parties: &[Role]) -> anyhow::Result<()> {
+    fn add_dispute(&mut self, party_a: &Role, party_b: &Role) -> anyhow::Result<()> {
+        self.disputed_roles.add(party_a, party_b)?;
+
+        //Now check whether too many dispute w/ either
+        //which result in adding that party to corrupt
+        self.sync_dispute_corrupt(party_a)?;
+        self.sync_dispute_corrupt(party_b)?;
+        Ok(())
+    }
+
+    //Is this actually used ? Cant see where in the nist paper
+    ///Add a list of dispute parties and broadcast it
+    async fn add_dispute_and_bcast(&mut self, disputed_parties: &[Role]) -> anyhow::Result<()> {
         if self.corrupt_roles.contains(&self.my_role()?) {
             return Ok(());
         }
@@ -502,7 +515,7 @@ impl<R: RngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync
                 self.disputed_roles.add(&self.my_role()?, cur_role)?;
             }
         }
-        let bcast_data =
+        let bcast_data: HashMap<Role, BroadcastValue> =
             broadcast_with_corruption(self, BroadcastValue::AddDispute(payload)).await?;
         for (cur_role, cur_payload) in bcast_data.into_iter() {
             if cur_role != self.my_role()? {
@@ -518,10 +531,7 @@ impl<R: RngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync
                     for dispute_role in payload.disputes {
                         self.disputed_roles.add(&cur_role, &dispute_role)?;
                         // Check whether each party in the dispute set has more than [threshold] disputes and if so add them to the corrupt set
-                        if self.disputed_roles.get(&dispute_role)?.len() > self.threshold() as usize
-                        {
-                            let _ = self.corrupt_roles.insert(dispute_role);
-                        }
+                        self.sync_dispute_corrupt(&dispute_role)?;
                     }
                 }
             }
@@ -530,7 +540,25 @@ impl<R: RngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync
     }
 }
 
-#[derive(PartialEq, Eq, Clone)]
+impl<R: RngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync>
+    LargeSessionStruct<R, P>
+{
+    pub fn sync_dispute_corrupt(&mut self, role: &Role) -> anyhow::Result<()> {
+        if self.disputed_roles.get(role)?.len() > self.threshold() as usize {
+            tracing::warn!(
+                "Party {role} is in conflict with too many parties, adding it to the corrupt set"
+            );
+            self.corrupt_roles.insert(*role);
+            //Make sure we now have role in dispute with everyone
+            for role_b in self.parameters.role_assignments().keys() {
+                self.disputed_roles.add(role, role_b)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct DisputeSet {
     disputed_roles: Vec<BTreeSet<Role>>,
 }
@@ -626,7 +654,7 @@ mod tests {
         static DISPUTE_ROLE: Role = Role(2);
         async fn task(mut session: LargeSession) -> LargeSession {
             session
-                .add_dispute(&Vec::from([DISPUTE_ROLE]))
+                .add_dispute_and_bcast(&Vec::from([DISPUTE_ROLE]))
                 .await
                 .unwrap();
             session
@@ -665,7 +693,7 @@ mod tests {
         static NON_RESPONSE_ROLE: Role = Role(2);
         async fn task(mut session: LargeSession) -> LargeSession {
             if session.parameters.my_role().unwrap() != NON_RESPONSE_ROLE {
-                session.add_dispute(&Vec::new()).await.unwrap();
+                session.add_dispute_and_bcast(&Vec::new()).await.unwrap();
             }
             session
         }
@@ -699,7 +727,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         rt.block_on(async {
-            let res = session.add_dispute(&set_of_self).await;
+            let res = session.add_dispute_and_bcast(&set_of_self).await;
             assert!(res.is_ok());
             assert_eq!(0, session.corrupt_roles.len());
             // I cannot be in dispute with myself
@@ -724,7 +752,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         rt.block_on(async {
-            let res = session.add_dispute(&set_of_other).await;
+            let res = session.add_dispute_and_bcast(&set_of_other).await;
             assert!(res.is_ok());
             assert_eq!(0, session.corrupt_roles.len());
             // Check that only one party is in dispute
@@ -745,7 +773,7 @@ mod tests {
         static DISPUTE_ROLES: [Role; 2] = [Role(2), Role(3)];
         async fn task(mut session: LargeSession) -> LargeSession {
             session
-                .add_dispute(&Vec::from(DISPUTE_ROLES))
+                .add_dispute_and_bcast(&Vec::from(DISPUTE_ROLES))
                 .await
                 .unwrap();
             session
@@ -784,7 +812,7 @@ mod tests {
         let _guard = rt.enter();
         rt.block_on(async {
             let res = session
-                .add_dispute(&set_of_self.into_iter().collect_vec())
+                .add_dispute_and_bcast(&set_of_self.into_iter().collect_vec())
                 .await;
             assert!(res.is_ok());
             assert!(session.corrupt_roles.contains(&Role(1)));

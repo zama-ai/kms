@@ -10,8 +10,8 @@ use crate::{
 use super::{distributed::robust_open_to_all, session::LargeSessionHandles};
 
 #[async_trait]
-trait Coinflip {
-    async fn execute<R: RngCore + Send, L: LargeSessionHandles<R>>(
+pub trait Coinflip {
+    async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
         session: &mut L,
     ) -> anyhow::Result<ResiduePoly<Z128>>;
 }
@@ -21,7 +21,7 @@ pub struct DummyCoinflip {}
 
 #[async_trait]
 impl Coinflip for DummyCoinflip {
-    async fn execute<R: RngCore + Send, L: LargeSessionHandles<R>>(
+    async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
         _session: &mut L,
     ) -> anyhow::Result<ResiduePoly<Z128>> {
         //Everyone just generate the same randomness by calling a new rng with a fixed seed
@@ -37,7 +37,7 @@ pub struct RealCoinflip<V: Vss> {
 
 #[async_trait]
 impl<V: Vss> Coinflip for RealCoinflip<V> {
-    async fn execute<R: RngCore + Send, L: LargeSessionHandles<R>>(
+    async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
         session: &mut L,
     ) -> anyhow::Result<ResiduePoly<Z128>> {
         //NOTE: I don't care if I am in Corrupt

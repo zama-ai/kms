@@ -214,7 +214,7 @@ fn internal_receive_from_parties<R: RngCore, B: BaseSessionHandles<R>>(
     }
     Ok(())
 }
-
+//NOTE: Is this function used anywhere ? (except in the share_w_dispute version which we do not use?)
 /// Method for parties to exchange values p2p while handling any potential disputes.
 /// That is, each party wants to send and receive a value privately between each other party.
 /// If an exchange is successful then the value sent to a given role will be included in the result,
@@ -257,7 +257,7 @@ pub async fn exchange_values(
     if let Some(value) = self_value {
         res.insert(session.my_role()?, value.clone());
     }
-    session.add_dispute(&disputed_parties).await?;
+    session.add_dispute_and_bcast(&disputed_parties).await?;
     Ok(res)
 }
 

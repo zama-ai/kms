@@ -185,7 +185,7 @@ macro_rules! impl_share_type {
                 max_error_count: usize,
             ) -> anyhow::Result<Poly<ResiduePoly<$z>>> {
                 // threshold is the degree of the shamir polynomial
-                let ring_size: usize = <$z>::EL_BIT_LENGTH;
+                let ring_size: usize = <$z>::BIT_LENGTH;
 
                 let mut y: Vec<_> = self.shares.iter().map(|x| x.1).collect();
                 let parties: Vec<_> = self.shares.iter().map(|x| x.0).collect();

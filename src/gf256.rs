@@ -25,7 +25,7 @@ impl One for GF256 {
 }
 
 impl Ring for GF256 {
-    const EL_BIT_LENGTH: usize = 8;
+    const BIT_LENGTH: usize = 8;
 }
 impl Field for GF256 {}
 

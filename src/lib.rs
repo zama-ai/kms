@@ -65,7 +65,7 @@ macro_rules! ring_impl {
         }
 
         impl Ring for $z {
-            const EL_BIT_LENGTH: usize = $l;
+            const BIT_LENGTH: usize = $l;
         }
     };
 }

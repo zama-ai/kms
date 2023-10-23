@@ -500,7 +500,7 @@ pub async fn reliable_broadcast_all<R: RngCore, B: BaseSessionHandles<R>>(
     reliable_broadcast(session, &sender_list, vi).await
 }
 
-/// Execute a broadcast in the presence of corrupt parties.
+/// Execute a [reliable_broadcast_all] in the presence of corrupt parties.
 /// Parties in `corrupt_roles` are ignored during the execution and if any new corruptions are detected then they are added to `corrupt_roles`
 pub async fn broadcast_with_corruption<R: RngCore, L: BaseSessionHandles<R>>(
     session: &mut L,

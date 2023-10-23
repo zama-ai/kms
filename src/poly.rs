@@ -15,7 +15,7 @@ where
     Self: Sub<Self, Output = Self> + SubAssign<Self>,
     Self: Mul<Self, Output = Self> + MulAssign<Self>,
 {
-    const EL_BIT_LENGTH: usize;
+    const BIT_LENGTH: usize;
 }
 
 pub trait Field

@@ -47,6 +47,7 @@ pub enum BroadcastValue {
     Round2VSS(Vec<crate::sharing::vss::VerificationValues>),
     Round3VSS(BTreeMap<(usize, Role, Role), ResiduePoly<Z128>>),
     Round4VSS(BTreeMap<(usize, Role), ValueOrPoly>),
+    LocalSingleShare(crate::sharing::local_single_share::MapsSharesChallenges),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]

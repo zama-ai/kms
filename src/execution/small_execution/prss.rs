@@ -75,7 +75,7 @@ fn psi(psi_prf_key: &PrfKey, sid: u128, ctr: u128, log_n_choose_t: u32) -> anyho
     let mut res = [0_u128; 1];
     psi_out.read_u128_into::<BigEndian>(&mut res)?;
 
-    let u = res[0] >> (Z128::EL_BIT_LENGTH as u32 - LOG_BD1_NOM + log_n_choose_t);
+    let u = res[0] >> (Z128::BIT_LENGTH as u32 - LOG_BD1_NOM + log_n_choose_t);
 
     Ok(Wrapping(u))
 }

@@ -391,7 +391,7 @@ async fn try_reconstruct_from_shares<P: ParameterHandles>(
 /// - The reconstructed secret if reconstruction was possible
 ///
 /// NOTE: Will likely need a batched version in the future
-pub async fn robust_open_to_all<R: RngCore + Send, B: BaseSessionHandles<R>>(
+pub async fn robust_open_to_all<R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
     share: &Value,
 ) -> anyhow::Result<Option<Value>> {

@@ -28,9 +28,8 @@ where
     Z: Ring + ZConsts,
     ResiduePoly<Z>: ReductionTable<Z>,
 {
-    const EL_BIT_LENGTH: usize = Z::EL_BIT_LENGTH;
+    const BIT_LENGTH: usize = Z::BIT_LENGTH * F_DEG;
 }
-
 impl TryFrom<ResiduePoly<Z128>> for Z128 {
     type Error = anyhow::Error;
     fn try_from(poly: ResiduePoly<Z128>) -> Result<Z128, Self::Error> {
@@ -42,6 +41,20 @@ impl TryFrom<ResiduePoly<Z64>> for Z64 {
     type Error = anyhow::Error;
     fn try_from(poly: ResiduePoly<Z64>) -> Result<Z64, Self::Error> {
         poly.to_scalar()
+    }
+}
+
+impl ResiduePoly<Z128> {
+    pub fn from_bytes(bytes: &[u8; ResiduePoly::<Z128>::BIT_LENGTH >> 3]) -> Self {
+        let mut coefs = [Z128::default(); F_DEG];
+        const Z128_SIZE_BYTE: usize = Z128::BIT_LENGTH >> 3;
+        for (i, coef) in coefs.iter_mut().enumerate() {
+            let curr_index = Z128_SIZE_BYTE * i;
+            let mut coef_byte = [0_u8; Z128_SIZE_BYTE];
+            coef_byte[..].copy_from_slice(&bytes[curr_index..curr_index + Z128_SIZE_BYTE]);
+            *coef = Wrapping::<u128>(u128::from_le_bytes(coef_byte));
+        }
+        ResiduePoly { coefs }
     }
 }
 
@@ -602,7 +615,7 @@ macro_rules! impl_share_type {
                 let mut x0 = ResiduePoly::embed(ainv.0 as usize)?;
 
                 // compute Newton-Raphson iterations
-                for _ in 0..<$z>::EL_BIT_LENGTH.ilog2() {
+                for _ in 0..<$z>::BIT_LENGTH.ilog2() {
                     x0 *= ResiduePoly::TWO - gamma * x0;
                 }
 
@@ -612,8 +625,8 @@ macro_rules! impl_share_type {
             }
 
             pub fn multiple_pow2(&self, exp: usize) -> bool {
-                assert!(exp <= <$z>::EL_BIT_LENGTH);
-                if exp == <$z>::EL_BIT_LENGTH {
+                assert!(exp <= <$z>::BIT_LENGTH);
+                if exp == <$z>::BIT_LENGTH {
                     return self.is_zero();
                 }
                 let bit_checks: Vec<_> = self
