@@ -412,13 +412,23 @@ pub fn gao_decoding<F: Field>(
     let gcd_stop = (n + k) / 2;
     let (q1, q0) = partial_xgcd(g, r, gcd_stop);
 
+    // abort early if we have too many errors
+    if q0.deg() > max_error_count {
+        return Err(anyhow_error_and_log(
+            format!("Gao decoding failure: Allowed at most {max_error_count} errors but xgcd factor degree indicates {}.", q0.deg())
+        ));
+    }
+
     let (h, rem) = q1 / &q0;
-    if rem.is_zero() && h.deg() < k && q0.deg() <= max_error_count {
-        Ok(h)
-    } else {
+
+    if !rem.is_zero() {
         Err(anyhow_error_and_log(
-            "Gao decoding checks failed".to_string(),
+            "Gao decoding failure: Division remainder is not zero but.".to_string(),
         ))
+    } else if h.deg() >= k {
+        Err(anyhow_error_and_log(format!("Gao decoding failure: Division result is of too high degree {}, but should be less than {}.", h.deg(), k-1)))
+    } else {
+        Ok(h)
     }
 }
 
@@ -496,7 +506,7 @@ mod tests {
     #[test]
     fn test_gao_decoding() {
         let f = Poly {
-            coefs: vec![GF256::from(1), GF256::from(1), GF256::from(1)],
+            coefs: vec![GF256::from(7), GF256::from(13), GF256::from(2)],
         };
         let xs = vec![
             GF256::from(20),
@@ -507,9 +517,32 @@ mod tests {
             GF256::from(70),
         ];
         let mut ys: Vec<_> = xs.iter().map(|x| f.eval(x)).collect();
-        // adding an error
-        ys[0] += GF256::from(2);
+        // add an error
+        ys[0] += GF256::from(3);
         let polynomial = gao_decoding(&xs, &ys, 3, 1).unwrap();
-        assert_eq!(polynomial.eval(&GF256::from(0)), GF256::from(1));
+        assert_eq!(polynomial.eval(&GF256::from(0)), GF256::from(7));
+    }
+
+    #[test]
+    fn test_gao_decoding_failure() {
+        let f = Poly {
+            coefs: vec![GF256::from(7), GF256::from(23), GF256::from(8)],
+        };
+        let xs = vec![
+            GF256::from(20),
+            GF256::from(30),
+            GF256::from(40),
+            GF256::from(50),
+            GF256::from(60),
+            GF256::from(70),
+        ];
+        let mut ys: Vec<_> = xs.iter().map(|x| f.eval(x)).collect();
+        // adding two errors
+        ys[0] += GF256::from(222);
+        ys[1] += GF256::from(55);
+        let r = gao_decoding(&xs, &ys, 3, 1).unwrap_err().to_string();
+        assert!(r.contains(
+            "Gao decoding failure: Allowed at most 1 errors but xgcd factor degree indicates 2."
+        ));
     }
 }
