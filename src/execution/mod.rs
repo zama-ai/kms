@@ -15,3 +15,6 @@ pub mod session;
 pub mod large_execution {
     pub mod share_dispute;
 }
+pub mod online {
+    pub mod triple;
+}

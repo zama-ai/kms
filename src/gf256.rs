@@ -1,6 +1,6 @@
 use crate::{
     poly::{gao_decoding, Field, Poly, Ring},
-    One, Zero,
+    One, Sample, Zero,
 };
 use g2p::{g2p, GaloisField};
 
@@ -22,6 +22,14 @@ impl Zero for GF256 {
 
 impl One for GF256 {
     const ONE: Self = <GF256 as GaloisField>::ONE;
+}
+
+impl Sample for GF256 {
+    fn sample<R: rand::RngCore>(rng: &mut R) -> Self {
+        let mut candidate = [0_u8; 1];
+        rng.fill_bytes(candidate.as_mut());
+        GF256::from(candidate[0])
+    }
 }
 
 impl Ring for GF256 {

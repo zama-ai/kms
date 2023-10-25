@@ -350,36 +350,50 @@ async fn try_reconstruct_from_shares<P: ParameterHandles>(
                 tracing::warn!("(Share reconstruction) Party {role} timed out.");
             }
         }
-
-        if 4 * t < num_parties {
-            if collected_shares.len() > 3 * t {
-                let opened = err_reconstruct(&collected_shares, t, 0)?;
-                tracing::debug!(
-                    "managed to reconstruct with given {:?} shares",
-                    collected_shares.len()
-                );
-                jobs.shutdown().await;
-                return Ok(Some(opened));
-            }
-        } else if 3 * t < num_parties {
-            for max_error in 0..=t {
-                if collected_shares.len() > 2 * t + max_error {
-                    if let Ok(opened) = err_reconstruct(&collected_shares, t, max_error) {
-                        tracing::debug!(
-                            "managed to reconstruct with error count: {:?} given {:?} shares",
-                            max_error,
-                            collected_shares.len()
-                        );
-                        jobs.shutdown().await;
-                        return Ok(Some(opened));
-                    }
-                }
-            }
+        if let Ok(Some(res)) = reconstruct_w_errors(num_parties, t, &collected_shares) {
+            jobs.shutdown().await;
+            return Ok(Some(res));
         }
     }
     Err(anyhow_error_and_log(
         "Could not reconstruct the sharing".to_string(),
     ))
+}
+
+/// Core algorithm for robust reconstructions which tries to reconstruct from a collection of shares
+/// Takes as input:
+/// - num_parties as number of parties
+/// - threshold as the threshold of maximum corruptions
+/// - indexed_shares as the indexed shares of the parties
+pub fn reconstruct_w_errors(
+    num_parties: usize,
+    threshold: usize,
+    indexed_shares: &Vec<IndexedValue>,
+) -> anyhow::Result<Option<Value>> {
+    if 4 * threshold < num_parties {
+        if indexed_shares.len() > 3 * threshold {
+            let opened = err_reconstruct(indexed_shares, threshold, 0)?;
+            tracing::debug!(
+                "managed to reconstruct with given {:?} shares",
+                indexed_shares.len()
+            );
+            return Ok(Some(opened));
+        }
+    } else if 3 * threshold < num_parties {
+        for max_error in 0..=threshold {
+            if indexed_shares.len() > 2 * threshold + max_error {
+                if let Ok(opened) = err_reconstruct(indexed_shares, threshold, max_error) {
+                    tracing::debug!(
+                        "managed to reconstruct with error count: {:?} given {:?} shares",
+                        max_error,
+                        indexed_shares.len()
+                    );
+                    return Ok(Some(opened));
+                }
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Try to reconstruct to all the secret which corresponds to the provided share.

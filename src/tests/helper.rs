@@ -62,13 +62,13 @@ pub mod tests {
         res
     }
 
-    /// Generates dummy parameters for unit tests with role 1. Parameters contain a single party, session ID = 1 and threshold = 1
+    /// Generates dummy parameters for unit tests with role 1. Parameters contain a single party, session ID = 1 and threshold = 0
     pub fn get_dummy_parameters() -> SessionParameters {
         let mut role_assignment = HashMap::new();
         let id = Identity("localhost:5000".to_string());
         role_assignment.insert(Role(1), id.clone());
         SessionParameters {
-            threshold: 1,
+            threshold: 0,
             session_id: SessionId(1),
             own_identity: id,
             role_assignments: role_assignment,
@@ -97,7 +97,7 @@ pub mod tests {
         }
     }
 
-    /// Returns a small session to be used with a single party, with role 1
+    /// Returns a small session to be used with a single party, with role 1, suitable for testing with dummy constructs
     pub fn get_small_session() -> SmallSession {
         let parameters = get_dummy_parameters();
         let id = parameters.own_identity.clone();

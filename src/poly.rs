@@ -9,8 +9,12 @@ pub trait Ring
 where
     Self: Sized,
     Self: Copy,
+    Self: Eq,
     Self: PartialEq,
+    Self: Sample,
     Self: Zero + One,
+    Self: Mul<Self, Output = Self>,
+    Self: Add<Self, Output = Self>,
     Self: Add<Self, Output = Self> + AddAssign<Self>,
     Self: Sub<Self, Output = Self> + SubAssign<Self>,
     Self: Mul<Self, Output = Self> + MulAssign<Self>,
@@ -34,6 +38,7 @@ impl<R> Poly<R> {
         Poly { coefs }
     }
 }
+// TODO shouldn't poly also implement the Ring trait itself?
 
 impl<R: Ring> PartialEq for Poly<R> {
     fn eq(&self, other: &Self) -> bool {
