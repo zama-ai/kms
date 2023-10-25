@@ -171,9 +171,7 @@ impl ShareDispute for RealShareDispute {
             session.my_role()?,
             polypoints_map
                 .get(&session.my_role()?)
-                .ok_or::<anyhow::Error>(anyhow_error_and_log(
-                    "Can not find my own share".to_string(),
-                ))?
+                .ok_or_else(|| anyhow_error_and_log("Can not find my own share".to_string()))?
                 .clone(),
         );
 
@@ -304,9 +302,12 @@ impl ShareDispute for RealShareDispute {
             session.my_role()?,
             polypoints_map
                 .get(&session.my_role()?)
-                .ok_or::<anyhow::Error>(anyhow_error_and_log(
-                    "Can not find my own share".to_string(),
-                ))?
+                .ok_or_else(|| {
+                    anyhow_error_and_log(format!(
+                        "I am {} and can not find my own share",
+                        session.my_role().unwrap()
+                    ))
+                })?
                 .clone(),
         );
 

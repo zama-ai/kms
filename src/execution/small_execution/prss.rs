@@ -191,11 +191,11 @@ impl PRSSState {
         .await?;
 
         // Count the votes received from the broadcast
-        let count = Self::count_votes(&broadcast_result, session);
+        let count = Self::count_votes(&broadcast_result, session)?;
         // Find which values have received most votes
         let true_psi_vals = Self::find_winning_psi_values(&count);
         // Find the parties who did not vote for the results and add them to the corrupt set
-        Self::handle_non_voting_parties(&true_psi_vals, &count, session);
+        Self::handle_non_voting_parties(&true_psi_vals, &count, session)?;
         // Compute result based on majority votes
         self.compute_result(&true_psi_vals, session)
     }
@@ -206,7 +206,7 @@ impl PRSSState {
     fn count_votes<R: RngCore, S: SmallSessionHandles<R>>(
         broadcast_result: &HashMap<Role, BroadcastValue>,
         session: &mut S,
-    ) -> HashMap<PsiSet, HashMap<Value, HashSet<Role>>> {
+    ) -> anyhow::Result<HashMap<PsiSet, HashMap<Value, HashSet<Role>>>> {
         // We count through a set of voting roles in order to avoid one party voting for the same value multiple times
         let mut count: HashMap<PsiSet, HashMap<Value, HashSet<Role>>> = HashMap::new();
         for (role, broadcast_val) in broadcast_result {
@@ -217,7 +217,7 @@ impl PRSSState {
                         match cur_val {
                             Value::Ring128(_) => continue,
                             _ => {
-                                session.add_corrupt(*role);
+                                session.add_corrupt(*role)?;
                                 tracing::warn!("Party with role {:?} and identity {:?} sent a value of unexpected type",
                                      role.0, session.role_assignments().get(role));
                             }
@@ -227,7 +227,7 @@ impl PRSSState {
                 }
                 // If the party does not broadcast the type as expected they are considered malicious
                 _ => {
-                    session.add_corrupt(*role);
+                    session.add_corrupt(*role)?;
                     tracing::warn!("Party with role {:?} and identity {:?} sent values they shouldn't and is thus malicious",
                      role.0, session.role_assignments().get(role));
                     continue;
@@ -237,7 +237,7 @@ impl PRSSState {
             for prss_value_pair in vec_pairs {
                 let (prss_set, psi) = prss_value_pair;
                 match count.get_mut(prss_set) {
-                    Some(value_votes) => Self::add_vote(value_votes, psi, *role, session),
+                    Some(value_votes) => Self::add_vote(value_votes, psi, *role, session)?,
                     None => {
                         count.insert(
                             prss_set.clone(),
@@ -247,7 +247,7 @@ impl PRSSState {
                 };
             }
         }
-        count
+        Ok(count)
     }
 
     /// Helper method that uses a psi value, `cur_psi`, and counts it in `value_votes`, associated to `cur_role`.
@@ -259,7 +259,7 @@ impl PRSSState {
         cur_psi: &Value,
         cur_role: Role,
         session: &mut S,
-    ) {
+    ) -> anyhow::Result<()> {
         match value_votes.get_mut(cur_psi) {
             Some(existing_roles) => {
                 // If it has been seen before, insert the current contributing role
@@ -267,7 +267,7 @@ impl PRSSState {
                 if !role_inserted {
                     // If the role was not inserted then it was already present and hence the party is trying to vote multiple times
                     // and they should be marked as corrupt
-                    session.add_corrupt(cur_role);
+                    session.add_corrupt(cur_role)?;
                     tracing::warn!("Party with role {:?} and identity {:?} is trying to vote for the same psi more than once and is thus malicious",
                          cur_role.0, session.role_assignments().get(&cur_role));
                 }
@@ -276,6 +276,7 @@ impl PRSSState {
                 value_votes.insert(cur_psi.clone(), HashSet::from([cur_role]));
             }
         };
+        Ok(())
     }
 
     /// Helper method for finding which values have received most votes
@@ -308,7 +309,7 @@ impl PRSSState {
         true_psi_vals: &HashMap<&PsiSet, &Value>,
         count: &HashMap<PsiSet, HashMap<Value, HashSet<Role>>>,
         session: &mut S,
-    ) {
+    ) -> anyhow::Result<()> {
         for (prss_set, value) in true_psi_vals {
             if let Some(roles_votes) = count
                 .get(*prss_set)
@@ -317,7 +318,7 @@ impl PRSSState {
                 if prss_set.len() > roles_votes.len() {
                     for cur_role in session.role_assignments().clone().keys() {
                         if !roles_votes.contains(cur_role) {
-                            session.add_corrupt(*cur_role);
+                            session.add_corrupt(*cur_role)?;
                             tracing::warn!("Party with role {:?} and identity {:?} did not vote for the correct psi value and is thus malicious",
                                  cur_role.0, session.role_assignments().get(cur_role));
                         }
@@ -325,6 +326,7 @@ impl PRSSState {
                 }
             }
         }
+        Ok(())
     }
 
     /// Helper method for computing the resultant psi value based on the winning value for each [PrssSet]
@@ -823,7 +825,7 @@ mod tests {
             (Role(3), BroadcastValue::PRSSVotes(values.clone())),
         ]);
 
-        let res = PRSSState::count_votes(&broadcast_result, &mut session);
+        let res = PRSSState::count_votes(&broadcast_result, &mut session).unwrap();
         let reference_votes =
             HashMap::from([(value.clone(), HashSet::from([Role(1), Role(2), Role(3)]))]);
         let reference = HashMap::from([(set.clone(), reference_votes)]);
@@ -853,7 +855,7 @@ mod tests {
             ), // Not the right Value typw
         ]);
 
-        let res = PRSSState::count_votes(&broadcast_result, &mut session);
+        let res = PRSSState::count_votes(&broadcast_result, &mut session).unwrap();
         let reference_votes = HashMap::from([(value.clone(), HashSet::from([Role(1), Role(3)]))]);
         let reference = HashMap::from([(set.clone(), reference_votes)]);
         assert_eq!(reference, res);
@@ -874,20 +876,20 @@ mod tests {
         let value = Value::U64(42);
         let mut votes = HashMap::new();
 
-        PRSSState::add_vote(&mut votes, &value, Role(3), &mut session);
+        PRSSState::add_vote(&mut votes, &value, Role(3), &mut session).unwrap();
         // Check that the vote of `my_role` was added
         assert!(votes.get(&value).unwrap().contains(&Role(3)));
         // And that the corruption set is still empty
         assert!(session.corrupt_roles().is_empty());
 
-        PRSSState::add_vote(&mut votes, &value, Role(2), &mut session);
+        PRSSState::add_vote(&mut votes, &value, Role(2), &mut session).unwrap();
         // Check that role 2 also gets added
         assert!(votes.get(&value).unwrap().contains(&Role(2)));
         // And that the corruption set is still empty
         assert!(session.corrupt_roles().is_empty());
 
         // Check that `my_role` gets added to the set of corruptions after trying to vote a second time
-        PRSSState::add_vote(&mut votes, &value, Role(3), &mut session);
+        PRSSState::add_vote(&mut votes, &value, Role(3), &mut session).unwrap();
         assert!(votes.get(&value).unwrap().contains(&Role(3)));
         assert!(session.corrupt_roles().contains(&Role(3)));
         assert!(logs_contain(
@@ -921,7 +923,7 @@ mod tests {
         // Party 3 is not voting for the correct value
         let votes = HashMap::from([(value.clone(), HashSet::from([Role(1), Role(2)]))]);
         let count = HashMap::from([(set.clone(), votes)]);
-        PRSSState::handle_non_voting_parties(&true_psi_vals, &count, &mut session);
+        PRSSState::handle_non_voting_parties(&true_psi_vals, &count, &mut session).unwrap();
         assert!(session.corrupt_roles.contains(&Role(3)));
         assert!(logs_contain(
             "did not vote for the correct psi value and is thus malicious"

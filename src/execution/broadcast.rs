@@ -398,14 +398,16 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
             "We expect at least one party as sender in reliable broadcast".to_string(),
         ));
     }
-    let num_senders = sender_list.len();
 
     let threshold = session.threshold();
     let min_honest_nodes = num_parties as u32 - threshold as u32;
 
     let my_role = session.my_role()?;
     let is_sender = sender_list.contains(&my_role);
-    let mut bcast_data = HashMap::with_capacity(num_senders);
+    let mut bcast_data: HashMap<Role, BroadcastValue> = sender_list
+        .iter()
+        .map(|role| (*role, BroadcastValue::Bot))
+        .collect();
 
     let mut non_answering_parties = HashSet::<Role>::new();
 
@@ -514,15 +516,21 @@ pub async fn broadcast_with_corruption<R: RngCore, L: BaseSessionHandles<R>>(
     });
 
     session.set_role_assignments(new_role_assignments);
-    let broadcast_res = reliable_broadcast_all(session, Some(vi)).await?;
+    let mut broadcast_res = reliable_broadcast_all(session, Some(vi)).await?;
     session.set_role_assignments(old_role_assignments);
 
+    //Add bot for the parties which were already corrupt before the bcast
+    for role in session.corrupt_roles() {
+        broadcast_res.insert(*role, BroadcastValue::Bot);
+    }
     let role_list = session.role_assignments().keys().cloned().collect_vec();
     for role in role_list {
         // Each party that was party that was supposed to broadcast but where the parties did not consistently agree on the result
         // is added to the set of corrupt parties
-        if !broadcast_res.contains_key(&role) {
-            session.add_corrupt(role);
+        if let BroadcastValue::Bot = broadcast_res.get(&role).ok_or_else(|| {
+            anyhow_error_and_log(format!("Can not find {role} in broadcast's result."))
+        })? {
+            session.add_corrupt(role)?;
         }
     }
     Ok(broadcast_res)
@@ -792,14 +800,19 @@ mod tests {
         });
 
         for (cur_role_id, cur_res) in results {
-            // Check that we received response from all except the corrupt role
+            // Check that we received response from all and corrupt role is Bot
             if cur_role_id + 1 != corrupt_role.0 as usize {
                 let unwrapped = cur_res.unwrap();
-                assert_eq!(parties - 1, unwrapped.len());
+                assert_eq!(parties, unwrapped.len());
                 for cur_role_id in 1..=parties as u64 {
                     // And that all parties agreed on the messages sent
                     if cur_role_id != corrupt_role.0 {
                         assert_eq!(&msg, unwrapped.get(&Role(cur_role_id)).unwrap());
+                    } else {
+                        assert_eq!(
+                            &BroadcastValue::Bot,
+                            unwrapped.get(&Role(cur_role_id)).unwrap()
+                        );
                     }
                 }
             }
@@ -989,13 +1002,18 @@ mod tests {
         });
 
         for (_cur_role_id, cur_res) in results {
-            // Check that we received response from all except the cheater P0 which sould be absent from result
+            // Check that we received response from all the cheater P0 which sould be mapped to Bot
             let unwrapped = cur_res.unwrap();
-            assert_eq!(parties - 1, unwrapped.len());
+            assert_eq!(parties, unwrapped.len());
             for cur_role_id in 1..=parties as u64 {
                 // And that all parties agreed on the messages sent
                 if cur_role_id != 1 {
                     assert_eq!(&msg, unwrapped.get(&Role(cur_role_id)).unwrap());
+                } else {
+                    assert_eq!(
+                        &BroadcastValue::Bot,
+                        unwrapped.get(&Role(cur_role_id)).unwrap()
+                    );
                 }
             }
         }

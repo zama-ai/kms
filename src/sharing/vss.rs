@@ -337,7 +337,7 @@ async fn round_3<R: RngCore, L: LargeSessionHandles<R>>(
 
     for (vss_idx, unhappy_set) in unhappy_vec.iter().enumerate() {
         if unhappy_set.len() > session.threshold() as usize {
-            session.add_corrupt(Role::from(vss_idx as u64 + 1));
+            session.add_corrupt(Role::from(vss_idx as u64 + 1))?;
         }
     }
 
@@ -725,7 +725,7 @@ fn round_4_fix_conflicts<R: RngCore, L: LargeSessionHandles<R>>(
                 }
             }
             if votes_against_sender >= 2 * threshold {
-                session.add_corrupt(sender_role);
+                session.add_corrupt(sender_role)?;
             }
         }
     }

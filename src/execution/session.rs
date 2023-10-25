@@ -159,7 +159,7 @@ pub struct BaseSessionStruct<R: RngCore + Send + Sync, P: ParameterHandles> {
 }
 pub trait BaseSessionHandles<R: RngCore>: ParameterHandles {
     fn corrupt_roles(&self) -> &HashSet<Role>;
-    fn add_corrupt(&mut self, role: Role) -> bool;
+    fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool>;
     fn rng(&mut self) -> &mut R;
     fn network(&self) -> &NetworkingImpl;
 }
@@ -234,8 +234,8 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R
         &self.corrupt_roles
     }
 
-    fn add_corrupt(&mut self, role: Role) -> bool {
-        self.corrupt_roles.insert(role)
+    fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool> {
+        Ok(self.corrupt_roles.insert(role))
     }
 }
 
@@ -335,8 +335,8 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R
         &self.corrupt_roles
     }
 
-    fn add_corrupt(&mut self, role: Role) -> bool {
-        self.corrupt_roles.insert(role)
+    fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool> {
+        Ok(self.corrupt_roles.insert(role))
     }
 }
 
@@ -456,8 +456,13 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R
         &self.corrupt_roles
     }
 
-    fn add_corrupt(&mut self, role: Role) -> bool {
-        self.corrupt_roles.insert(role)
+    fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool> {
+        let res = self.corrupt_roles.insert(role);
+        //Make sure we now have this role in dispute with everyone
+        for role_b in self.parameters.role_assignments().keys() {
+            self.disputed_roles.add(&role, role_b)?;
+        }
+        Ok(res)
     }
 }
 
@@ -518,7 +523,7 @@ impl<R: RngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync
         let bcast_data: HashMap<Role, BroadcastValue> =
             broadcast_with_corruption(self, BroadcastValue::AddDispute(payload)).await?;
         for (cur_role, cur_payload) in bcast_data.into_iter() {
-            if cur_role != self.my_role()? {
+            if cur_role != self.my_role()? && !self.corrupt_roles().contains(&cur_role) {
                 let payload = match cur_payload {
                     BroadcastValue::AddDispute(payload) => payload,
                     _ => {
@@ -548,11 +553,7 @@ impl<R: RngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync
             tracing::warn!(
                 "Party {role} is in conflict with too many parties, adding it to the corrupt set"
             );
-            self.corrupt_roles.insert(*role);
-            //Make sure we now have role in dispute with everyone
-            for role_b in self.parameters.role_assignments().keys() {
-                self.disputed_roles.add(role, role_b)?;
-            }
+            self.add_corrupt(*role)?;
         }
         Ok(())
     }
@@ -687,6 +688,8 @@ mod tests {
     /// Tests what happens when a party drops out of broadcast
     /// NOTE non-responding parties which act as senders in a broadcast ARE considered corrupt
     /// TODO this is probably NOT the logic we actually want, in which case this test needs updating
+    /// In large session, adding a party to corrupt will always make it in dispute with everyone
+
     #[test]
     fn party_not_responding() {
         let parties = 4;
@@ -706,8 +709,12 @@ mod tests {
                 for cur_role_id in 1..=parties as u64 {
                     let cur_dispute_set =
                         cur_session.disputed_roles.get(&Role(cur_role_id)).unwrap();
-                    // Check there are no disputes
-                    assert_eq!(0, cur_dispute_set.len());
+                    // Check there is the exepected number of disputes
+                    if cur_role_id as usize != NON_RESPONSE_ROLE.party_id() {
+                        assert_eq!(1, cur_dispute_set.len());
+                    } else {
+                        assert_eq!(parties - 1, cur_dispute_set.len());
+                    }
                 }
                 // And there is one corruption
                 assert_eq!(1, cur_session.corrupt_roles.len());

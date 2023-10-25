@@ -40,6 +40,7 @@ pub struct IndexedValue {
 /// Captures network values which can (and sometimes should) be broadcast
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
 pub enum BroadcastValue {
+    Bot,
     RingVector(Vec<Value>),
     RingValue(Value),
     PRSSVotes(Vec<(PsiSet, Value)>),
@@ -48,6 +49,7 @@ pub enum BroadcastValue {
     Round3VSS(BTreeMap<(usize, Role, Role), ResiduePoly<Z128>>),
     Round4VSS(BTreeMap<(usize, Role), ValueOrPoly>),
     LocalSingleShare(crate::sharing::local_single_share::MapsSharesChallenges),
+    LocalDoubleShare(crate::sharing::local_double_share::MapsDoubleSharesChallenges),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]

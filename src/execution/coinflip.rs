@@ -200,7 +200,7 @@ mod tests {
                 .unwrap();
             seeds.push(session.rng.get_seed());
             if party_nb != 0 {
-                session.add_corrupt(Role::from_zero(0));
+                session.add_corrupt(Role::from_zero(0)).unwrap();
                 set.spawn(async move {
                     (
                         party_nb,

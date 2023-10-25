@@ -1,18 +1,17 @@
 //! CLI tool for interacting with a group of mobys
 use aes_prng::AesRng;
 use clap::{Parser, Subcommand};
-use distributed_decryption::circuit::Circuit;
-use distributed_decryption::computation::SessionId;
-use distributed_decryption::error::error_handler::anyhow_error_and_log;
-use distributed_decryption::execution::party::Identity;
-use distributed_decryption::execution::party::Role;
-use distributed_decryption::execution::party::RoleAssignment;
-use distributed_decryption::file_handling::read_as_json;
-use distributed_decryption::lwe::PublicKey;
-use distributed_decryption::lwe::ThresholdLWEParameters;
 use distributed_decryption::{
     choreography::choreographer::ChoreoRuntime,
-    execution::session::{DecryptionMode, SetupMode},
+    circuit::Circuit,
+    computation::SessionId,
+    error::error_handler::anyhow_error_and_log,
+    execution::{
+        party::{Identity, Role, RoleAssignment},
+        session::{DecryptionMode, SetupMode},
+    },
+    file_handling::read_as_json,
+    lwe::{PublicKey, ThresholdLWEParameters},
 };
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
