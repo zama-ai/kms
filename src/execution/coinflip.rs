@@ -10,7 +10,7 @@ use crate::{
 use super::{distributed::robust_open_to_all, session::LargeSessionHandles};
 
 #[async_trait]
-pub trait Coinflip {
+pub trait Coinflip: Send {
     async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
         session: &mut L,
     ) -> anyhow::Result<ResiduePoly<Z128>>;

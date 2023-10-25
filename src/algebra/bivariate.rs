@@ -48,7 +48,7 @@ impl<Z> BivariateResiduePoly<Z> {
 }
 
 /// Computes powers of a specific point up to degree: p^0, p^1,...,p^degree
-fn compute_powers<Z>(point: ResiduePoly<Z>, degree: usize) -> Vec<ResiduePoly<Z>>
+pub(crate) fn compute_powers<Z>(point: ResiduePoly<Z>, degree: usize) -> Vec<ResiduePoly<Z>>
 where
     ResiduePoly<Z>: One,
     ResiduePoly<Z>: Mul<ResiduePoly<Z>, Output = ResiduePoly<Z>>,
@@ -62,7 +62,7 @@ where
     powers_of_point
 }
 
-trait MatrixMul<Z> {
+pub(crate) trait MatrixMul<Z> {
     fn matmul(&self, rhs: &ArrayD<ResiduePoly<Z>>) -> Result<ArrayD<ResiduePoly<Z>>>;
 }
 

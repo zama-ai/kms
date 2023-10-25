@@ -23,7 +23,7 @@ use crate::{
 };
 
 #[async_trait]
-pub trait Vss {
+pub trait Vss: Send {
     /// Executes a batched Verifiable Secret Sharing with
     /// - session as the MPC session
     /// - secret as secret to be shared

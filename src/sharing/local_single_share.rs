@@ -24,7 +24,7 @@ use crate::{
 use super::constants::DISPUTE_STAT_SEC;
 
 #[async_trait]
-pub trait LocalSingleShare {
+pub trait LocalSingleShare: Send {
     ///Executes a batch LocalSingleShare where every party is sharing a vector of secrets
     ///
     ///NOTE: This does not always guarantee privacy of the inputs towards honest parties (but this is intended behaviour!)
@@ -53,6 +53,7 @@ pub struct MapsSharesChallenges {
 /// We expect instances of:
 /// - [Coinflip]
 /// - [ShareDispute]
+#[derive(Default)]
 pub struct RealLocalSingleShare<C: Coinflip, S: ShareDispute> {
     _marker_coinflip: std::marker::PhantomData<C>,
     _marker_share_dispute: std::marker::PhantomData<S>,

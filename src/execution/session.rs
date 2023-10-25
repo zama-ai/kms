@@ -703,7 +703,7 @@ mod tests {
 
         let results = execute_protocol(parties, 1, &mut task);
 
-        // Check that the party that did not respond does _not_ get marked as a dispute
+        // Check that the party that did not respond does get marked as a dispute
         for cur_session in results {
             if cur_session.my_role().unwrap() != NON_RESPONSE_ROLE {
                 for cur_role_id in 1..=parties as u64 {

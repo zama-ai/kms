@@ -35,7 +35,7 @@ pub struct ShareDisputeOutputDouble {
 //Not sure it makes sense to do a dummy implementation?
 //what would it look like?
 #[async_trait]
-pub trait ShareDispute {
+pub trait ShareDispute: Send {
     /// Executes the ShareDispute protocol on a vector of secrets,
     /// expecting all parties to also share a vector of secrets of the same length.
     /// Returns:
@@ -55,6 +55,7 @@ pub trait ShareDispute {
     ) -> anyhow::Result<ShareDisputeOutputDouble>;
 }
 
+#[derive(Default)]
 pub struct RealShareDispute {}
 
 //Want to puncture only at Dispute\Corrupt ids
