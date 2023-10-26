@@ -30,12 +30,12 @@ use super::{
 //TODO: Here until we actually use it
 #[allow(dead_code)]
 pub struct DoubleShares {
-    share_t: Vec<ResiduePoly<Z128>>,
-    share_2t: Vec<ResiduePoly<Z128>>,
+    pub(crate) share_t: Vec<ResiduePoly<Z128>>,
+    pub(crate) share_2t: Vec<ResiduePoly<Z128>>,
 }
 
 #[async_trait]
-pub trait LocalDoubleShare {
+pub trait LocalDoubleShare: Send {
     async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
         session: &mut L,
         secrets: &[ResiduePoly<Z128>],
@@ -49,6 +49,7 @@ pub(crate) type MapsDoubleSharesChallenges = (
     BTreeMap<Role, ResiduePoly<Z128>>,
 );
 
+#[derive(Default)]
 pub struct RealLocalDoubleShare<C: Coinflip, S: ShareDispute> {
     _marker_coinflip: std::marker::PhantomData<C>,
     _marker_share_dispute: std::marker::PhantomData<S>,

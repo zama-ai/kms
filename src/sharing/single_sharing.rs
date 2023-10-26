@@ -10,7 +10,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{party::Role, session::LargeSessionHandles},
     residue_poly::ResiduePoly,
-    Sample, Zero, Z128,
+    Sample, Z128,
 };
 
 use super::local_single_share::LocalSingleShare;
@@ -33,9 +33,7 @@ pub trait SingleSharing: Send {
 #[derive(Clone, Default)]
 pub struct RealSingleSharing<S: LocalSingleShare> {
     _marker_local_single_share: std::marker::PhantomData<S>,
-    cnt0: usize,
-    cnt1: usize,
-    available_lsl: HashMap<usize, ArrayD<ResiduePoly<Z128>>>,
+    available_lsl: Vec<ArrayD<ResiduePoly<Z128>>>,
     available_shares: Vec<ResiduePoly<Z128>>,
     max_nb_iterations: usize,
     vdm_matrix: ArrayD<ResiduePoly<Z128>>,
@@ -53,8 +51,6 @@ impl<S: LocalSingleShare> SingleSharing for RealSingleSharing<S> {
             .collect_vec();
 
         self.available_lsl = format_for_next(S::execute(session, &my_secrets).await?, l)?;
-        self.cnt0 = 0;
-        self.cnt1 = session.amount_of_parties() - session.threshold() as usize;
         self.max_nb_iterations = l;
         self.vdm_matrix = init_vdm(
             session.amount_of_parties(),
@@ -66,17 +62,16 @@ impl<S: LocalSingleShare> SingleSharing for RealSingleSharing<S> {
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<ResiduePoly<Z128>> {
-        if self.cnt1 == session.amount_of_parties() - session.threshold() as usize {
-            if self.cnt0 == self.max_nb_iterations {
+        if self.available_shares.is_empty() {
+            if self.available_lsl.is_empty() {
                 self.init(session, self.max_nb_iterations).await?;
             }
-            self.available_shares =
-                compute_next_batch(&self.available_lsl, &self.vdm_matrix, self.cnt0)?;
-            self.cnt0 += 1;
-            self.cnt1 = 0;
+            self.available_shares = compute_next_batch(&mut self.available_lsl, &self.vdm_matrix)?;
         }
-        self.cnt1 += 1;
-        Ok(self.available_shares[self.cnt1 - 1])
+        Ok(self
+            .available_shares
+            .pop()
+            .ok_or_else(|| anyhow_error_and_log("Trying to pop an empty vector".to_string()))?)
     }
 }
 
@@ -95,40 +90,38 @@ pub fn init_vdm(height: usize, width: usize) -> anyhow::Result<ArrayD<ResiduePol
 }
 //Have to be careful about ordering (e.g. cant just iterate over the set of key as its unordered)
 //Format the map with keys role_i in Roles
-//role_i -> [<x_1^{(i)}_self>, ... , <x_l^{(i)}_self>]
+//role_i -> [<x_1^{(i)}>_{self}, ... , <x_l^{(i)}>_{self}]
 //to a map appropriate for the randomness extraction with keys j in [l]
-// j -> [<x_j^{(1)}>_self, ..., <x_j^{(n)}>_self]
+// j -> [<x_j^{(1)}>_{self}, ..., <x_j^{(n)}>_{self}]
 fn format_for_next(
     local_single_shares: HashMap<Role, Vec<ResiduePoly<Z128>>>,
     l: usize,
-) -> anyhow::Result<HashMap<usize, ArrayD<ResiduePoly<Z128>>>> {
+) -> anyhow::Result<Vec<ArrayD<ResiduePoly<Z128>>>> {
     let num_parties = local_single_shares.len();
-    let mut res = HashMap::<usize, ArrayD<ResiduePoly<Z128>>>::new();
+    let mut res = Vec::with_capacity(l);
     for i in 0..l {
-        let mut vec = vec![ResiduePoly::<Z128>::ZERO; local_single_shares.len()];
-        for (j, vec_j) in vec.iter_mut().enumerate() {
-            *vec_j = local_single_shares
-                .get(&Role::from_zero(j))
-                .ok_or_else(|| {
-                    anyhow_error_and_log(format!("Can not find shares for Party {}", j + 1))
-                })?[i];
+        let mut vec = Vec::with_capacity(num_parties);
+        for j in 0..num_parties {
+            vec.push(
+                local_single_shares
+                    .get(&Role::from_zero(j))
+                    .ok_or_else(|| {
+                        anyhow_error_and_log(format!("Can not find shares for Party {}", j + 1))
+                    })?[i],
+            );
         }
-        res.insert(
-            i,
-            ArrayD::from_shape_vec(IxDyn(&[num_parties]), vec)?.into_dyn(),
-        );
+        res.push(ArrayD::from_shape_vec(IxDyn(&[num_parties]), vec)?.into_dyn());
     }
     Ok(res)
 }
 
 fn compute_next_batch(
-    formated_lsl: &HashMap<usize, ArrayD<ResiduePoly<Z128>>>,
+    formated_lsl: &mut Vec<ArrayD<ResiduePoly<Z128>>>,
     vdm: &ArrayD<ResiduePoly<Z128>>,
-    idx_share: usize,
 ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
     let res = formated_lsl
-        .get(&idx_share)
-        .ok_or_else(|| anyhow_error_and_log(format!("Can not acces {idx_share} in map_shares")))?
+        .pop()
+        .ok_or_else(|| anyhow_error_and_log("Can not pop empty formated_lsl vector".to_string()))?
         .matmul(vdm)?;
     Ok(res.into_raw_vec())
 }
