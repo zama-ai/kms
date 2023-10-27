@@ -23,6 +23,7 @@ use crate::error::error_handler::{anyhow_error_and_log, anyhow_error_and_warn_lo
 ///
 const DIGEST_BYTES: usize = 256 / 8; // SHA3-256 digest
 const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
+const RND_SIZE: usize = 256 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
 
 // Type used for the signcrypted payload returned by a server
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
@@ -142,12 +143,16 @@ pub struct SigncryptionPrivKey {
     decryption_key: PrivateEncKey,
 }
 
+/// Structure for public keys for signcryption that can get DER encoded as follows:
+///     verification_key, (SEC1 as an OCTET STRING)
+///     enc_key, (Montgomery point following libsodium serialization as OCTET STRING)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct SigncryptionPubKey {
     verification_key: PublicSigKey,
     enc_key: PublicEncKey,
 }
 
+/// Structure for private keys for signcryption
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SigncryptionPair {
     sk: SigncryptionPrivKey,
@@ -195,29 +200,96 @@ impl<'de> Visitor<'de> for SignatureVisitor {
     }
 }
 
-/// Struct reflecting the client's decryption request.
+/// Struct reflecting the client's decryption request of FHE ciphertext.
 /// Concretely containing the client's public keys and a signature on the ephemeral encryption key (in reality a cryptobox
 /// from libsodium for ECIES based on ECDH with curve 25519 and using Salsa for hybrid encryptoin).
-/// DER encoding of the request is the following sequence with the bytes of each component encoded using OCTET STRINGS:
-///     client_signcryption_key.verification_key, (SEC1)
-///     client_signcryption_key.enc_key, (Montgomery point following libsodium serialization)
-///     signature (sequence of r, s in big endian)
+/// DER encoding of the request as a SEQUENCE of ClientPayload and signature ( r||s in big endian encoded using OCTET STRINGS)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct ClientRequest {
-    client_signcryption_key: SigncryptionPubKey,
+    payload: ClientPayload,
     signature: Signature,
 }
-
+/// Structure for DER encoding as a SEQUENCE of client_signcryption_key and digest (as OCTET STRING)
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
+pub struct ClientPayload {
+    client_signcryption_key: SigncryptionPubKey, // The client's public keys needed for signcryption
+    digest: Vec<u8>, // Digest of the fhe_cipher the client wish to have decrypted
+    sig_randomization: Vec<u8>, // Randomness to concatenate to the encrypted message to ensure EU-CMA security, see https://link.springer.com/content/pdf/10.1007/3-540-36492-7_1.pdf
+}
 impl ClientRequest {
-    /// Verified the signature on the client's ephemeral encryption key based on the client's verification key
-    pub fn verify(&self) -> bool {
-        let msg = self.client_signcryption_key.enc_key.as_ref();
-        let res = self
+    /// Constructs a new signcryption request for a message `msg` by sampling necesary ephemeral keys and returning the aggegrated signcryption keys
+    pub fn new<T: Serialize + AsRef<[u8]>>(
+        fhe_cipher: &T,
+        client_sig_sk: &PrivateSigKey,
+        rng: &mut impl CryptoRngCore,
+    ) -> anyhow::Result<(Self, SigncryptionPair)> {
+        let keys = ClientRequest::ephemeral_key_generation(rng, client_sig_sk);
+        let digest = hash_element(fhe_cipher);
+        let mut r = [0_u8; RND_SIZE];
+        rng.fill_bytes(r.as_mut());
+        let payload = ClientPayload {
+            client_signcryption_key: keys.pk.clone(),
+            digest,
+            sig_randomization: r.to_vec(),
+        };
+        // DER encode the payload
+        let to_sign = serde_asn1_der::to_vec(&payload)?;
+        // Sign the public key and digest of the message
+        let signature: Signature = Signature {
+            sig: keys.sk.signing_key.sk.sign(&to_sign[..]),
+        };
+        Ok((ClientRequest { payload, signature }, keys))
+    }
+
+    /// Verify the request.
+    /// This involves validating the signature on the client's request based on the client's verification key
+    /// and that the message requested to be decrypted is as expected.
+    ///
+    /// Returns true if everything is ok and false otherwise.
+    ///
+    /// WARNING: IT IS ASSUMED THAT THE CLIENT'S PUBLIC VERIFICATION KEY HAS BEEN CROSS-CHECKED TO BELONG TO A CLIENT
+    /// THAT IS ALLOWED TO DECRYPT `fhe_cipher`
+    pub fn verify<T: Serialize + AsRef<[u8]>>(&self, fhe_cipher: &T) -> anyhow::Result<bool> {
+        let digest = hash_element(fhe_cipher);
+        if digest != self.payload.digest {
+            return Ok(false);
+        };
+        // DER encode the payload
+        let signed = serde_asn1_der::to_vec(&self.payload)?;
+        // Verify the signature
+        if self
+            .payload
             .client_signcryption_key
             .verification_key
             .pk
-            .verify(msg, &self.signature.sig);
-        res.is_ok()
+            .verify(&signed[..], &self.signature.sig)
+            .is_err()
+        {
+            return Ok(false);
+        }
+        // Check that the signature is normalized
+        Ok(check_normalized(&self.signature))
+    }
+
+    /// Helper method for what the client is supposed to do when generating ephemeral keys linked to the client's blockchain signing key
+    fn ephemeral_key_generation(
+        rng: &mut impl CryptoRngCore,
+        sig_key: &PrivateSigKey,
+    ) -> SigncryptionPair {
+        let verification_key = PublicSigKey {
+            pk: *SigningKey::verifying_key(&sig_key.sk),
+        };
+        let (enc_pk, enc_sk) = encryption_key_generation(rng);
+        SigncryptionPair {
+            sk: SigncryptionPrivKey {
+                signing_key: sig_key.clone(),
+                decryption_key: enc_sk,
+            },
+            pk: SigncryptionPubKey {
+                verification_key,
+                enc_key: enc_pk,
+            },
+        }
     }
 }
 
@@ -228,36 +300,32 @@ pub fn encryption_key_generation(rng: &mut impl CryptoRngCore) -> (PublicEncKey,
     (PublicEncKey(sk.public_key()), sk)
 }
 
-/// Method for computing the signcryption of a payload, `msg`, based on a request from a client, `req`, and the server's signing key `serve_sig_key`.
-/// Returns the signcrypted message if the client's request is valid.
+/// Method for computing the signcryption of a payload, `msg`, based on the necessary public keys `client_pk`
+/// received from a client, and the server's signing key `server_sig_key`.
+/// Returns the signcrypted message.
 ///
-/// WARNING: It is assumed that the client's public key HAS been validated to be consistent with the one contained in `req` BEFORE calling this method.
+/// WARNING: It is assumed that the client's public key HAS been validated to come from a valid [ClientRequest] and
+/// validated to be consistent with the blockchain identity of the client BEFORE calling this method.
 /// IF THIS HAS NOT BEEN DONE THEN ANYONE CAN IMPERSONATE ANY CLIENT!!!
 pub fn signcrypt<T>(
     rng: &mut impl CryptoRngCore,
     msg: &T,
-    req: &ClientRequest,
+    client_pk: &SigncryptionPubKey,
     server_sig_key: &PrivateSigKey,
 ) -> anyhow::Result<Cipher>
 where
     T: Serialize + AsRef<[u8]>,
 {
-    if !req.verify() {
-        return Err(anyhow_error_and_warn_log(
-            "The client signcryption request could not be sucessfully validated".to_string(),
-        ));
-    }
-    let client_keys = &req.client_signcryption_key;
     // Adds the hash digest of the receivers public encryption key to the message to sign
     // Sign msg || H(client_verification_key) || H(client_enc_key)
     let to_sign = [
         msg.as_ref(),
-        &hash_element(&client_keys.verification_key.pk.to_sec1_bytes())[..],
-        &hash_element(&client_keys.enc_key)[..],
+        &hash_element(&client_pk.verification_key.pk.to_sec1_bytes())[..],
+        &hash_element(&client_pk.enc_key)[..],
     ]
     .concat();
     let sig: k256::ecdsa::Signature = server_sig_key.sk.sign(to_sign.as_ref());
-    // Normalize s value to ensure a consistant signature and protect against mallibility
+    // Normalize s value to ensure a consistant signature and protect against malleability
     sig.normalize_s();
 
     // Generate the server part of the key agreement
@@ -276,7 +344,7 @@ where
     ]
     .concat();
 
-    let enc_box = SalsaBox::new(&client_keys.enc_key.0, &server_enc_sk);
+    let enc_box = SalsaBox::new(&client_pk.enc_key.0, &server_enc_sk);
     let nonce = SalsaBox::generate_nonce(rng);
     let ciphertext = match enc_box.encrypt(&nonce, &to_encrypt[..]) {
         Ok(ciphertext) => ciphertext,
@@ -379,6 +447,10 @@ fn check_signature(
         return false;
     }
     // Check that the signature is normalized
+    check_normalized(sig)
+}
+
+fn check_normalized(sig: &Signature) -> bool {
     if sig.sig.normalize_s().is_some() {
         tracing::warn!(
             "Received signature {:X?} was not normalized as expected",
@@ -409,14 +481,15 @@ mod tests {
     use signature::Signer;
     use tracing_test::traced_test;
 
-    use crate::execution::reencryption::{
-        check_signature, encryption_key_generation, hash_element, parse_msg, signcrypt,
-        validate_and_decrypt, ClientRequest, Signature, DIGEST_BYTES, SIG_SIZE,
+    use crate::{
+        execution::reencryption::{
+            check_signature, encryption_key_generation, hash_element, parse_msg, signcrypt,
+            validate_and_decrypt, ClientRequest, Signature, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
+        },
+        file_handling::write_element,
     };
 
-    use super::{
-        PrivateSigKey, PublicSigKey, SigncryptionPair, SigncryptionPrivKey, SigncryptionPubKey,
-    };
+    use super::{PrivateSigKey, PublicSigKey, SigncryptionPair};
 
     /// Helper method for generating keys for digital signatures
     pub fn signing_key_generation(rng: &mut impl CryptoRngCore) -> (PublicSigKey, PrivateSigKey) {
@@ -425,51 +498,53 @@ mod tests {
         (PublicSigKey { pk: *pk }, PrivateSigKey { sk })
     }
 
-    /// Helper method for what the client is supposed to do when generating ephemral keys linked to the client's blockchain signing key
-    pub fn client_key_generation(
-        rng: &mut impl CryptoRngCore,
-        sig_key: PrivateSigKey,
-    ) -> (SigncryptionPair, Signature) {
-        let verification_key = PublicSigKey {
-            pk: *SigningKey::verifying_key(&sig_key.sk),
-        };
-        let (enc_pk, enc_sk) = encryption_key_generation(rng);
-        // Sign the public key
-        let sig: Signature = Signature {
-            sig: sig_key.sk.sign(enc_pk.as_ref()),
-        };
-        let signcryption_keys = SigncryptionPair {
-            sk: SigncryptionPrivKey {
-                signing_key: sig_key,
-                decryption_key: enc_sk,
-            },
-            pk: SigncryptionPubKey {
-                verification_key,
-                enc_key: enc_pk,
-            },
-        };
-        (signcryption_keys, sig)
-    }
-
-    fn test_setup() -> (ChaCha20Rng, ClientRequest, SigncryptionPair) {
+    /// Helper method that creates an rng, a valid client request (on a dummy fhe cipher) and client singcryption keys SigncryptionPair
+    /// Returns the rng, client request, client signcryption keys and the dummy fhe cipher the request is made for.
+    fn test_setup() -> (ChaCha20Rng, ClientRequest, SigncryptionPair, Vec<u8>) {
+        let cipher = [42_u8; 1];
         let mut rng = ChaCha20Rng::seed_from_u64(1);
         let client_sig_key = PrivateSigKey {
             sk: SigningKey::random(&mut rng),
         };
-        let (client_signcryption_keys, signature) = client_key_generation(&mut rng, client_sig_key);
-        let request = ClientRequest {
-            client_signcryption_key: client_signcryption_keys.pk.clone(),
-            signature,
-        };
-        (rng, request, client_signcryption_keys)
+        let (request, keys) = ClientRequest::new(&cipher, &client_sig_key, &mut rng).unwrap();
+        (rng, request, keys, cipher.to_vec())
+    }
+
+    #[cfg(test)]
+    #[ctor::ctor]
+    fn setup_data_for_integration() {
+        let (mut rng, request, client_signcryption_keys, _fhe_cipher) = test_setup();
+        let (_server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
+        let msg = "A message".as_bytes();
+        let cipher = signcrypt(
+            &mut rng,
+            &msg,
+            &client_signcryption_keys.pk,
+            &server_sig_key,
+        )
+        .unwrap();
+        // Dump encodings for use in client implementation validation
+        let enc_req = to_vec(&request).unwrap();
+        write_element("temp/client_req.der".to_string(), &enc_req).unwrap();
+        let enc_pk = to_vec(&client_signcryption_keys.pk).unwrap();
+        write_element("temp/client_signcryption_pk.der".to_string(), &enc_pk).unwrap();
+        let enc_cipher = to_vec(&cipher).unwrap();
+        write_element("temp/signcryption.der".to_string(), &enc_cipher).unwrap();
     }
 
     #[test]
     fn sunshine() {
-        let (mut rng, request, client_signcryption_keys) = test_setup();
+        let (mut rng, request, client_signcryption_keys, fhe_cipher) = test_setup();
+        assert!(request.verify(&fhe_cipher).unwrap());
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
-        let cipher = signcrypt(&mut rng, &msg, &request, &server_sig_key).unwrap();
+        let cipher = signcrypt(
+            &mut rng,
+            &msg,
+            &client_signcryption_keys.pk,
+            &server_sig_key,
+        )
+        .unwrap();
         let decrypted_msg =
             validate_and_decrypt(&cipher, &client_signcryption_keys, &server_verf_key)
                 .unwrap()
@@ -479,10 +554,16 @@ mod tests {
 
     #[test]
     fn sunshine_encoding_decoding() {
-        let (mut rng, request, client_signcryption_keys) = test_setup();
+        let (mut rng, request, client_signcryption_keys, _fhe_cipher) = test_setup();
         let (_server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A message".as_bytes();
-        let cipher = signcrypt(&mut rng, &msg, &request, &server_sig_key).unwrap();
+        let cipher = signcrypt(
+            &mut rng,
+            &msg,
+            &client_signcryption_keys.pk,
+            &server_sig_key,
+        )
+        .unwrap();
         // Observe that the methods from serde_asn1_der is used to make an en-decoding in DER ASN1
         let enc_req = to_vec(&request).unwrap();
         let dec_req = from_bytes(&enc_req).unwrap();
@@ -492,13 +573,12 @@ mod tests {
         assert_eq!(client_signcryption_keys.pk, dec_pk);
         let enc_cipher = to_vec(&cipher).unwrap();
         let dec_cipher = from_bytes(&enc_cipher).unwrap();
-        assert_eq!(cipher, dec_cipher)
+        assert_eq!(cipher, dec_cipher);
     }
 
     #[test]
-    #[should_panic(expected = "The client signcryption request could not be sucessfully validated")]
-    fn bad_request() {
-        let (mut rng, mut request, client_signcryption_keys) = test_setup();
+    fn bad_request_sig() {
+        let (_rng, mut request, client_signcryption_keys, fhe_cipher) = test_setup();
         let wrong_sig = Signature {
             sig: client_signcryption_keys
                 .sk
@@ -507,18 +587,36 @@ mod tests {
                 .sign("not a key".as_ref()),
         };
         request.signature = wrong_sig;
-        let (_server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
-        let msg = "msg".as_bytes();
-        let _cipher = signcrypt(&mut rng, &msg, &request, &server_sig_key).unwrap();
+        assert!(!request.verify(&fhe_cipher).unwrap())
+    }
+
+    #[test]
+    fn bad_request_digest() {
+        let (_rng, mut request, _client_signcryption_keys, fhe_cipher) = test_setup();
+        request.payload.digest = Vec::from([0_u8; DIGEST_BYTES]);
+        assert!(!request.verify(&fhe_cipher).unwrap())
+    }
+
+    #[test]
+    fn bad_request_randomness() {
+        let (_rng, mut request, _client_signcryption_keys, fhe_cipher) = test_setup();
+        request.payload.sig_randomization = Vec::from([0_u8; RND_SIZE]);
+        assert!(!request.verify(&fhe_cipher).unwrap())
     }
 
     #[traced_test]
     #[test]
     fn wrong_decryption_nonce() {
-        let (mut rng, request, client_signcryption_keys) = test_setup();
+        let (mut rng, _request, client_signcryption_keys, _fhe_cipher) = test_setup();
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A message".as_bytes();
-        let mut cipher = signcrypt(&mut rng, &msg, &request, &server_sig_key).unwrap();
+        let mut cipher = signcrypt(
+            &mut rng,
+            &msg,
+            &client_signcryption_keys.pk,
+            &server_sig_key,
+        )
+        .unwrap();
         // Flip a bit in the nonce
         cipher.nonce[0] ^= 1;
         let decrypted_msg =
@@ -563,7 +661,7 @@ mod tests {
     #[traced_test]
     #[test]
     fn bad_signature() {
-        let (mut rng, _request, client_signcryption_keys) = test_setup();
+        let (mut rng, _request, client_signcryption_keys, _fhe_cipher) = test_setup();
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "Some message".as_bytes();
         let sig = Signature {
@@ -589,8 +687,8 @@ mod tests {
         let client_sig_key = PrivateSigKey {
             sk: SigningKey::random(&mut rng),
         };
-        let (client_signcryption_keys, _key_signature) =
-            client_key_generation(&mut rng, client_sig_key);
+        let client_signcryption_keys =
+            ClientRequest::ephemeral_key_generation(&mut rng, &client_sig_key);
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let to_sign = [
             msg,
