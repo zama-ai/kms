@@ -3,8 +3,11 @@ use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha12Rng;
 
 use crate::{
-    error::error_handler::anyhow_error_and_log, residue_poly::ResiduePoly, sharing::vss::Vss,
-    value, Sample, Z128,
+    error::error_handler::anyhow_error_and_log,
+    residue_poly::ResiduePoly,
+    sharing::vss::Vss,
+    value::{self, Value},
+    Sample, Z128,
 };
 
 use super::{distributed::robust_open_to_all, session::LargeSessionHandles};
@@ -47,12 +50,12 @@ impl<V: Vss> Coinflip for RealCoinflip<V> {
 
         let share_of_coin: ResiduePoly<Z128> = shares_of_contributions.into_iter().sum();
 
-        let opening = robust_open_to_all(session, &value::Value::Poly128(share_of_coin)).await?;
+        let opening = robust_open_to_all(session, value::Value::Poly128(share_of_coin)).await?;
 
         match opening {
-            Some(value::Value::Poly128(v)) => Ok(v),
+            Some(Value::Poly128(v)) => Ok(v),
             _ => Err(anyhow_error_and_log(
-                "Value reconstructed in coinflip not of the right type".to_string(),
+                "No Value reconstructed in coinflip".to_string(),
             )),
         }
     }

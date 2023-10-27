@@ -26,6 +26,7 @@ use crate::{
 use crate::{computation::SessionId, execution::small_execution::prep::prss_prep};
 use crate::{One, Z128, Z64};
 use aes_prng::AesRng;
+use itertools::Itertools;
 use ndarray::Array1;
 use num_integer::div_ceil;
 use rand::RngCore;
@@ -309,6 +310,7 @@ pub async fn setup_prss_sess<A: AgreeRandom + Send>(
     Some(hm)
 }
 
+type JobResultType = (Role, anyhow::Result<Vec<Value>>);
 /// Helper function of robust reconstructions which collect the shares and tries to reconstruct
 /// Takes as input:
 /// - num_parties as number of parties
@@ -317,26 +319,37 @@ pub async fn setup_prss_sess<A: AgreeRandom + Send>(
 /// - t as the threshold
 async fn try_reconstruct_from_shares<P: ParameterHandles>(
     session_parameters: &P,
-    indexed_share: &IndexedValue,
-    jobs: &mut JoinSet<Result<(Role, anyhow::Result<Value>), Elapsed>>,
-) -> anyhow::Result<Option<Value>> {
+    indexed_shares: &[IndexedValue],
+    jobs: &mut JoinSet<Result<JobResultType, Elapsed>>,
+) -> anyhow::Result<Option<Vec<Value>>> {
     let num_parties = session_parameters.amount_of_parties();
     let t = session_parameters.threshold() as usize;
     let own_role = session_parameters.my_role()?;
 
     let mut answering_parties = HashSet::<Role>::new();
-    let mut collected_shares = Vec::with_capacity(num_parties);
-    collected_shares.push(indexed_share.clone());
+    let mut vec_collected_shares = indexed_shares
+        .iter()
+        .map(|indexed_share| {
+            let mut res = Vec::with_capacity(num_parties);
+            res.push(indexed_share.clone());
+            res
+        })
+        .collect_vec();
 
     while let Some(v) = jobs.join_next().await {
         let joined_result = v?;
         if let Ok((party_id, data)) = joined_result {
             answering_parties.insert(party_id);
             if let Ok(value) = data {
-                collected_shares.push(IndexedValue {
-                    party_id: party_id.party_id(),
-                    value,
-                });
+                value
+                    .into_iter()
+                    .zip(vec_collected_shares.iter_mut())
+                    .for_each(|(v, collected_shares)| {
+                        collected_shares.push(IndexedValue {
+                            party_id: party_id.party_id(),
+                            value: v,
+                        });
+                    });
             } else if let Err(e) = data {
                 tracing::warn!(
                     "(Share reconstruction) Received malformed data from {party_id}:  {:?}",
@@ -344,15 +357,24 @@ async fn try_reconstruct_from_shares<P: ParameterHandles>(
                 );
             }
         }
-
-        for role in session_parameters.role_assignments().keys() {
-            if !answering_parties.contains(role) && role != &own_role {
-                tracing::warn!("(Share reconstruction) Party {role} timed out.");
-            }
-        }
-        if let Ok(Some(res)) = reconstruct_w_errors(num_parties, t, &collected_shares) {
+        let res: Option<Vec<_>> = vec_collected_shares
+            .iter()
+            .map(|collected_shares| {
+                if let Ok(Some(r)) = reconstruct_w_errors(num_parties, t, collected_shares) {
+                    Some(r)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if let Some(r) = res {
             jobs.shutdown().await;
-            return Ok(Some(res));
+            return Ok(Some(r));
+        }
+    }
+    for role in session_parameters.role_assignments().keys() {
+        if !answering_parties.contains(role) && role != &own_role {
+            tracing::warn!("(Share reconstruction) Party {role} timed out.");
         }
     }
     Err(anyhow_error_and_log(
@@ -365,6 +387,7 @@ async fn try_reconstruct_from_shares<P: ParameterHandles>(
 /// - num_parties as number of parties
 /// - threshold as the threshold of maximum corruptions
 /// - indexed_shares as the indexed shares of the parties
+/// TODO: IS THIS REALLY CORRECT ? Why is erro_count 0 in the 4t<n case??
 pub fn reconstruct_w_errors(
     num_parties: usize,
     threshold: usize,
@@ -396,70 +419,102 @@ pub fn reconstruct_w_errors(
     Ok(None)
 }
 
+pub async fn robust_open_to_all<R: RngCore, B: BaseSessionHandles<R>>(
+    session: &B,
+    share: Value,
+) -> anyhow::Result<Option<Value>> {
+    let res = robust_opens_to_all(session, &[share]).await?;
+    match res {
+        Some(mut r) => Ok(r.pop()),
+        _ => Ok(None),
+    }
+}
 /// Try to reconstruct to all the secret which corresponds to the provided share.
 /// Inputs:
 /// - session
-/// - share of the secret to open
+/// - shares of the secrets to open
 ///
 /// Output:
-/// - The reconstructed secret if reconstruction was possible
-///
-/// NOTE: Will likely need a batched version in the future
-pub async fn robust_open_to_all<R: RngCore, B: BaseSessionHandles<R>>(
+/// - The reconstructed secrets if reconstruction for all was possible
+pub async fn robust_opens_to_all<R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
-    share: &Value,
-) -> anyhow::Result<Option<Value>> {
+    shares: &[Value],
+) -> anyhow::Result<Option<Vec<Value>>> {
     let own_role = session.my_role()?;
 
     session.network().increase_round_counter().await?;
-    send_to_all(session, &own_role, NetworkValue::RingValue(share.clone())).await;
+    send_to_all(
+        session,
+        &own_role,
+        NetworkValue::VecRingValue(shares.to_vec()),
+    )
+    .await;
 
-    let mut jobs = JoinSet::<Result<(Role, anyhow::Result<Value>), Elapsed>>::new();
+    let mut jobs = JoinSet::<Result<(Role, anyhow::Result<Vec<Value>>), Elapsed>>::new();
     generic_receive_from_all(&mut jobs, session, &own_role, None, |msg, _id| match msg {
-        NetworkValue::RingValue(v) => Ok(v),
+        NetworkValue::VecRingValue(v) => Ok(v),
         _ => Err(anyhow_error_and_log(
             "Received something else than a Ring value in robust open to all".to_string(),
         )),
     })?;
 
-    let indexed_share = IndexedValue {
-        party_id: own_role.party_id(),
-        value: share.clone(),
-    };
-    try_reconstruct_from_shares(session, &indexed_share, &mut jobs).await
+    let indexed_shares = shares
+        .iter()
+        .map(|share| IndexedValue {
+            party_id: own_role.party_id(),
+            value: share.clone(),
+        })
+        .collect_vec();
+    try_reconstruct_from_shares(session, &indexed_shares, &mut jobs).await
 }
 
 pub async fn robust_open_to<R: RngCore + Send, B: BaseSessionHandles<R>>(
     session: &B,
-    share: &Value,
+    share: Value,
     role: &Role,
     output_party_id: usize,
 ) -> anyhow::Result<Option<Value>> {
+    let res = robust_opens_to(session, &[share], role, output_party_id).await?;
+    match res {
+        Some(mut r) => Ok(r.pop()),
+        _ => Ok(None),
+    }
+}
+
+pub async fn robust_opens_to<R: RngCore + Send, B: BaseSessionHandles<R>>(
+    session: &B,
+    shares: &[Value],
+    role: &Role,
+    output_party_id: usize,
+) -> anyhow::Result<Option<Vec<Value>>> {
     session.network().increase_round_counter().await?;
     if role.party_id() == output_party_id {
         let mut set = JoinSet::new();
 
         generic_receive_from_all(&mut set, session, role, None, |msg, _id| match msg {
-            NetworkValue::RingValue(v) => Ok(v),
+            NetworkValue::VecRingValue(v) => Ok(v),
             _ => Err(anyhow_error_and_log(
                 "Received something else than a Ring value in robust open to all".to_string(),
             )),
         })?;
-        let indexed_share = IndexedValue {
-            party_id: role.party_id(),
-            value: share.clone(),
-        };
-        try_reconstruct_from_shares(session, &indexed_share, &mut set).await
+        let indexed_shares = shares
+            .iter()
+            .map(|share| IndexedValue {
+                party_id: role.party_id(),
+                value: share.clone(),
+            })
+            .collect_vec();
+        try_reconstruct_from_shares(session, &indexed_shares, &mut set).await
     } else {
         let receiver = session.identity_from(&Role(output_party_id as u64))?;
 
         let networking = Arc::clone(session.network());
-        let share = share.clone();
+        let shares = shares.to_vec();
         let session_id = session.session_id();
 
         tokio::spawn(async move {
             let _ = networking
-                .send(NetworkValue::RingValue(share), &receiver, &session_id)
+                .send(NetworkValue::VecRingValue(shares), &receiver, &session_id)
                 .await;
         })
         .await?;
@@ -738,9 +793,13 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 let mut opened = Vec::new();
                 for current_share in own_share {
                     // TODO is this the behaviour we want here?
-                    if let Some(val) =
-                        robust_open_to(&session.to_base_session(), current_share, &own_role, 1)
-                            .await?
+                    if let Some(val) = robust_open_to(
+                        &session.to_base_session(),
+                        current_share.clone(),
+                        &own_role,
+                        1,
+                    )
+                    .await?
                     {
                         match val {
                             Value::Poly64(v) => {
@@ -1049,7 +1108,7 @@ pub async fn run_decryption(
         };
 
         let opened =
-            robust_open_to(&session.to_base_session(), &res, &own_role, INPUT_PARTY_ID).await?;
+            robust_open_to(&session.to_base_session(), res, &own_role, INPUT_PARTY_ID).await?;
 
         if own_role.party_id() == INPUT_PARTY_ID {
             let message_mod_bits = keyshares
@@ -1065,7 +1124,7 @@ pub async fn run_decryption(
                 }
                 _ => {
                     return Err(anyhow_error_and_log(
-                        "Right shift not possible - wrong opened value type".to_string(),
+                        "Right shift not possible - no opened value".to_string(),
                     ))
                 }
             };
@@ -1147,7 +1206,10 @@ mod tests {
     use crate::{
         circuit::Operation,
         file_handling::read_as_json,
-        tests::{helper::tests::generate_identities, test_data_setup::tests::DEFAULT_PARAM_PATH},
+        tests::{
+            helper::tests::{execute_protocol, generate_identities},
+            test_data_setup::tests::DEFAULT_PARAM_PATH,
+        },
     };
 
     #[test]
@@ -1348,5 +1410,44 @@ mod tests {
         assert_eq!(out[0], Value::Ring128(std::num::Wrapping(100)));
         assert_eq!(out[1], Value::Ring128(std::num::Wrapping(101)));
         assert_eq!(out[2], Value::Ring128(std::num::Wrapping(102)));
+    }
+
+    #[test]
+    fn test_robust_open_all() {
+        let parties = 4;
+        let threshold = 1;
+
+        async fn task(session: LargeSession) -> Vec<Value> {
+            let parties = 4;
+            let threshold = 1;
+            let nb_secrets = 10;
+            let mut rng = ChaCha20Rng::seed_from_u64(0);
+            let shares = (0..nb_secrets)
+                .map(|idx| {
+                    Value::Poly128(
+                        ShamirGSharings::<Z128>::share(&mut rng, Wrapping(idx), parties, threshold)
+                            .unwrap()
+                            .shares
+                            .get(session.my_role().unwrap().zero_index())
+                            .unwrap()
+                            .1,
+                    )
+                })
+                .collect_vec();
+            let res = robust_opens_to_all(&session, &shares)
+                .await
+                .unwrap()
+                .unwrap();
+            for (idx, r) in res.clone().into_iter().enumerate() {
+                if let Value::Poly128(r) = r {
+                    assert_eq!(Z128::try_from(r).unwrap(), Wrapping::<u128>(idx as u128));
+                } else {
+                    panic!();
+                }
+            }
+            res
+        }
+
+        let _ = execute_protocol(parties, threshold, &mut task);
     }
 }
