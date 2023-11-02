@@ -14,7 +14,6 @@ use crate::{
     value::AgreeRandomValue,
 };
 use async_trait::async_trait;
-use blake3::Hasher;
 use itertools::Itertools;
 use rand::RngCore;
 use std::collections::HashMap;
@@ -258,7 +257,7 @@ impl AgreeRandom for DummyAgreeRandom {
                     bytes.extend_from_slice(&p.to_le_bytes());
                 }
 
-                let mut hasher = Hasher::new();
+                let mut hasher = blake3::Hasher::new();
                 hasher.update(&bytes);
                 let mut or = hasher.finalize_xof();
                 or.fill(&mut r_a);
@@ -271,7 +270,7 @@ impl AgreeRandom for DummyAgreeRandom {
 }
 
 // compute bit-wise xor of two byte arrays in place
-fn xor_u8_arr_in_place(arr1: &mut [u8; KEY_BYTE_LEN], arr2: &[u8; KEY_BYTE_LEN]) {
+pub(crate) fn xor_u8_arr_in_place(arr1: &mut [u8; KEY_BYTE_LEN], arr2: &[u8; KEY_BYTE_LEN]) {
     for i in 0..KEY_BYTE_LEN {
         arr1[i] ^= arr2[i];
     }

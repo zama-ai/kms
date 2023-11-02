@@ -96,5 +96,5 @@ name = "decoding"
 harness = false
 
 [[bench]]
-name = "prss"
+name = "bench_prss"
 harness = false

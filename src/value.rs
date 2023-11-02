@@ -1,5 +1,5 @@
 use crate::error::error_handler::anyhow_error_and_log;
-use crate::execution::{party::Role, small_execution::prss::PsiSet};
+use crate::execution::{party::Role, small_execution::prss::PartySet};
 use crate::lwe::PubConKeyPair;
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
@@ -49,7 +49,7 @@ pub enum BroadcastValue {
     Bot,
     RingVector(Vec<Value>),
     RingValue(Value),
-    PRSSVotes(Vec<(PsiSet, Value)>),
+    PRSSVotes(Vec<(PartySet, Vec<Value>)>),
     AddDispute(DisputePayload),
     Round2VSS(Vec<crate::sharing::vss::VerificationValues>),
     Round3VSS(BTreeMap<(usize, Role, Role), ResiduePoly<Z128>>),

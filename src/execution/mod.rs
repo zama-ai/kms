@@ -7,6 +7,7 @@ pub mod p2p;
 pub mod party;
 pub mod small_execution {
     pub mod prep;
+    pub mod prf;
     pub mod prss;
 }
 pub mod random;

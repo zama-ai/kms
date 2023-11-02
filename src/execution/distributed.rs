@@ -91,13 +91,17 @@ impl DistributedTestRuntime {
         self.prss_setups = setups;
     }
 
-    // Setups and adds the PRSS state to the current session
-    pub fn add_prss<A: AgreeRandom + Send>(session: &mut SmallSession) {
+    // Setups and adds a PRSS state with DummyAgreeRandom to the current session
+    pub fn add_dummy_prss(session: &mut SmallSession) {
+        // this only works for DummyAgreeRandom
+        // for RealAgreeRandom this needs to happen async/in parallel, so the parties can actually talk to each other at the same time
+        // ==> use a JoinSet where this is called and collect the results later.
+        // see also setup_prss_sess() below
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         let prss_setup = rt
             .block_on(async {
-                PRSSSetup::party_epoch_init_sess::<A>(
+                PRSSSetup::party_epoch_init_sess::<DummyAgreeRandom>(
                     session,
                     session.my_role().unwrap().party_id(),
                 )
@@ -939,12 +943,12 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                             Value::Ring128(v) => {
                                 let rounding_bit = 1 << (offset - 1);
                                 let rounding = (v.0 & rounding_bit) << 1;
-                                res.push(Value::Ring128(Wrapping(v.0 + rounding) >> offset));
+                                res.push(Value::Ring128(Wrapping(v.0.wrapping_add(rounding)) >> offset));
                             },
                             Value::Ring64(v) => {
                                 let rounding_bit = 1 << (offset - 1);
                                 let rounding = (v.0 & rounding_bit) << 1;
-                                res.push(Value::Ring64(Wrapping(v.0 + rounding) >> offset));
+                                res.push(Value::Ring64(Wrapping(v.0.wrapping_add(rounding)) >> offset));
                             },
                             _ => return Err(anyhow_error_and_log("Cannot do shift right on a cleartext register with a different type than Ring64/Ring128".to_string()))
                         };

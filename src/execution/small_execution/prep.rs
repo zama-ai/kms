@@ -1,4 +1,5 @@
 use super::prss::PRSSState;
+use crate::execution::constants::BD1;
 use crate::lwe::{
     gen_single_party_share, Ciphertext128, Ciphertext128Block, Ciphertext64, Ciphertext64Block,
     CiphertextParameters, SecretKeyShare,
@@ -67,7 +68,7 @@ pub fn prss_prep(
     ct: &Ciphertext128Block,
 ) -> anyhow::Result<Value> {
     let partial_dec = partial_decrypt(sk_share, ct)?;
-    let composed_bits = prss_state.next(party_id)?;
+    let composed_bits = prss_state.mask_next(party_id, BD1)?;
 
     Ok(Value::Poly128(partial_dec + composed_bits))
 }
