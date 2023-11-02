@@ -793,7 +793,7 @@ mod tests {
             // Validate that each party has the expected amount of outputs
             assert_eq!(parties, output.len());
             // Validate that all parties have the same view of output
-            assert_eq!(results.get(0).unwrap(), output);
+            assert_eq!(results.first().unwrap(), output);
             for (received_role, received_poly) in output {
                 // Validate against result of the "next" method
                 assert_eq!(

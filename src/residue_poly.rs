@@ -1,7 +1,8 @@
-use crate::error::error_handler::anyhow_error_and_log;
 use crate::gf256::GF256;
 use crate::poly::Ring;
+use crate::{error::error_handler::anyhow_error_and_log, value::Value};
 use crate::{One, Sample, ZConsts, Zero, Z128, Z64};
+use anyhow::anyhow;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::ops::MulAssign;
@@ -41,6 +42,38 @@ impl TryFrom<ResiduePoly<Z64>> for Z64 {
     type Error = anyhow::Error;
     fn try_from(poly: ResiduePoly<Z64>) -> Result<Z64, Self::Error> {
         poly.to_scalar()
+    }
+}
+
+impl From<Value> for ResiduePoly<Z128> {
+    fn from(value: Value) -> Self {
+        match value {
+            Value::Poly64(v) => {
+                tracing::warn!("Trying to convert a polynomial over Z128 to one over Z64. Mathematical relations will probably not be kept");
+                let mut coefs = [Z128::ZERO; F_DEG];
+                for i in 0..v.coefs.len() {
+                    coefs[i] = Wrapping(v.coefs[i].0 as u128);
+                }
+                ResiduePoly { coefs }
+            }
+            Value::Poly128(v) => v,
+            Value::Ring64(v) => ResiduePoly::from_scalar(Wrapping(v.0 as u128)),
+            Value::Ring128(v) => ResiduePoly::from_scalar(Wrapping(v.0)),
+            Value::U64(v) => ResiduePoly::from_scalar(Wrapping(v as u128)),
+        }
+    }
+}
+
+impl TryFrom<Value> for ResiduePoly<Z64> {
+    type Error = anyhow::Error;
+    fn try_from(value: Value) -> Result<ResiduePoly<Z64>, Self::Error> {
+        match value {
+            Value::Poly64(v) => Ok(v),
+            Value::Poly128(_) => Err(anyhow!("Cannot convert Residue<Z128> to Residue<Z64>")),
+            Value::Ring64(v) => Ok(ResiduePoly::from_scalar(Wrapping(v.0))),
+            Value::Ring128(_) => Err(anyhow!("Cannot convert Z128 to Residue<Z64>")),
+            Value::U64(v) => Ok(ResiduePoly::from_scalar(Wrapping(v))),
+        }
     }
 }
 

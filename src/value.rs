@@ -30,7 +30,13 @@ impl From<u128> for Value {
         Value::Ring128(Wrapping(value))
     }
 }
+impl From<ResiduePoly<Z128>> for Value {
+    fn from(value: ResiduePoly<Z128>) -> Self {
+        Value::Poly128(value)
+    }
+}
 
+// TODO this struct is now fully captured by [Share] and hence this type should be removed at next refactoring.
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
 pub struct IndexedValue {
     pub party_id: usize,

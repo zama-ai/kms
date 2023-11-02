@@ -158,6 +158,47 @@ pub mod tests {
     /// The `task` argument contains the code to be execute per party which returns a value of type [OutputT].
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
+    pub fn execute_protocol_small<TaskOutputT, OutputT>(
+        parties: usize,
+        threshold: u8,
+        task: &mut dyn FnMut(SmallSession) -> TaskOutputT,
+    ) -> Vec<OutputT>
+    where
+        TaskOutputT: Future<Output = OutputT>,
+        TaskOutputT: Send + 'static,
+        OutputT: Send + 'static,
+    {
+        let identities = generate_identities(parties);
+        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
+        let session_id = SessionId(1);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let mut tasks = JoinSet::new();
+        for party_id in 0..parties {
+            let session = test_runtime
+                .small_session_for_player(
+                    session_id,
+                    party_id,
+                    Some(ChaCha20Rng::seed_from_u64(party_id as u64)),
+                )
+                .unwrap();
+            tasks.spawn(task(session));
+        }
+        rt.block_on(async {
+            let mut results = Vec::with_capacity(tasks.len());
+            while let Some(v) = tasks.join_next().await {
+                results.push(v.unwrap());
+            }
+            results
+        })
+    }
+
+    /// Helper method for executing networked tests with multiple parties.
+    /// The `task` argument contains the code to be execute per party which returns a value of type [OutputT].
+    /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
+    /// interactive computation.
     pub fn execute_protocol<TaskOutputT, OutputT>(
         parties: usize,
         threshold: u8,

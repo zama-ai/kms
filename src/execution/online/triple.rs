@@ -1,362 +1,334 @@
-use std::num::Wrapping;
-
-use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha20Rng;
-
 use crate::{
     error::error_handler::anyhow_error_and_log,
-    execution::{
-        distributed::reconstruct_w_errors,
-        party::Role,
-        session::{BaseSessionHandles, ParameterHandles, SessionParameters},
-    },
-    poly::{Poly, Ring},
-    residue_poly::ResiduePoly,
-    value::{IndexedValue, Value},
-    Sample, Z128,
+    execution::{distributed::robust_opens_to_all, session::BaseSessionHandles},
+    poly::Ring,
+    value::{self, Value},
 };
+use anyhow::Context;
+use itertools::Itertools;
+use rand::RngCore;
 
-/// Generic structure for shares
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
-pub struct Share<R>
-where
-    R: Ring,
-{
-    value: R,
-    owner: Role,
-}
+use super::share::Share;
 
-impl<R: Ring> Share<R> {
-    pub fn new(owner: Role, value: R) -> Self {
-        Self { value, owner }
-    }
-
-    pub fn value(&self) -> R {
-        self.value
-    }
-
-    pub fn owner(&self) -> Role {
-        self.owner
-    }
-}
-/// Implementable trait to realize reconstruction for a specific types of shares
-pub trait Reconstruct<R>
-where
-    R: Ring,
-{
-    /// Reconstructs a shared ring element based on a vector of shares.
-    /// Returns an error if reconstruction fails, and otherwise the reconstructed ring value.
-    fn reconstruct(params: &SessionParameters, shares: Vec<Share<R>>) -> anyhow::Result<R>;
-}
-impl Reconstruct<ResiduePoly<Z128>> for Share<ResiduePoly<Z128>> {
-    fn reconstruct(
-        param: &SessionParameters,
-        shares: Vec<Share<ResiduePoly<Z128>>>,
-    ) -> anyhow::Result<ResiduePoly<Z128>> {
-        let index_shares = &shares
-            .iter()
-            .map(|cur_share| IndexedValue {
-                party_id: cur_share.owner().0 as usize,
-                value: Value::Poly128(cur_share.value()),
-            })
-            .collect();
-        if let Ok(Some(Value::Poly128(res))) = reconstruct_w_errors(
-            param.amount_of_parties(),
-            param.threshold() as usize,
-            index_shares,
-        ) {
-            return Ok(res);
-        }
-        Err(anyhow_error_and_log(
-            "Could not reconstruct the sharing".to_string(),
-        ))
-    }
-}
-
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Triple<R>
 where
-    R: Ring,
+    R: Ring + std::convert::From<value::Value> + Send + Sync,
+    value::Value: std::convert::From<R>,
 {
-    a: Share<R>,
-    b: Share<R>,
-    c: Share<R>,
+    pub a: Share<R>,
+    pub b: Share<R>,
+    pub c: Share<R>,
 }
-impl<R: Ring> Triple<R> {
+impl<R: Ring + std::convert::From<value::Value> + Send + Sync> Triple<R>
+where
+    value::Value: std::convert::From<R>,
+{
     pub fn new(a: Share<R>, b: Share<R>, c: Share<R>) -> Self {
         Self { a, b, c }
     }
 }
 
-// ID to define subsession IDs for preprocessing. Stored using an alias to allow easy future refactoring
-pub type OfflineId = u64;
-
-/// Trait for implementing preprocessing values
-pub trait Preprocessing<Rnd: RngCore + Send + Sync + Clone, R: Ring, Ses: BaseSessionHandles<Rnd>> {
-    /// Constructs a random triple
-    fn next_triple(&self, session: &mut Ses, id: OfflineId) -> anyhow::Result<Triple<R>>;
-
-    /// Constructs a random sharing
-    fn next_random(&self, session: &mut Ses, id: OfflineId) -> anyhow::Result<Share<R>>;
-}
-
-/// Struct for dummy preprocessing for use in interactive tests although it is constructed non-interactively.
-/// The struct reflects dummy shares that are technically correct Shamir shares of a polynomial
-/// with `threshold` degree.
-/// Its implementation is deterministic but pseudorandomly and fully derived using the `seed`.
-#[derive(Clone)]
-pub struct DummyPreprocessing {
-    seed: u64,
-}
-impl DummyPreprocessing {
-    /// Dummy preprocessing which generates shares deterministically from `seed`
-    pub fn new(seed: u64) -> Self {
-        DummyPreprocessing { seed }
-    }
-
-    /// Helper method for computes the Shamir shares of a `secret`.
-    /// Returns a vector of the shares 0-indexed based on [Role]
-    fn share(
-        parties: usize,
-        threshold: u8,
-        secret: ResiduePoly<Z128>,
-        rng: &mut impl RngCore,
-    ) -> anyhow::Result<Vec<Share<ResiduePoly<Z128>>>> {
-        let poly = Poly::sample_random(rng, secret, threshold as usize);
-        (1..=parties)
-            .map(|xi| {
-                let embedded_xi = ResiduePoly::embed(xi)?;
-                Ok(Share::new(Role(xi as u64), poly.eval(&embedded_xi)))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()
-    }
-}
-impl<Rnd: RngCore + Send + Sync + Clone, Ses: BaseSessionHandles<Rnd>>
-    Preprocessing<Rnd, ResiduePoly<Z128>, Ses> for DummyPreprocessing
+/// Multiplication of two shares using a triple.
+/// Concretely computing the following:
+///     [epsilon]   =[x]+[triple.a]
+///     [rho]       =[y]+[triple.b]
+///     Open        [epsilon], [rho]
+///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
+#[allow(dead_code)] // TODO remove once used
+async fn mult<
+    R: Ring + std::convert::From<value::Value> + Send + Sync,
+    Rnd: RngCore + Send + Sync + 'static,
+    Ses: BaseSessionHandles<Rnd> + 'static,
+>(
+    x: Share<R>,
+    y: Share<R>,
+    triple: Triple<R>,
+    session: &Ses,
+) -> anyhow::Result<Share<R>>
+where
+    value::Value: std::convert::From<R>,
 {
-    /// Computes a dummy triple deterministically constructed from the seed in [DummyPreprocessing] and the [OfflineId] `id`.
-    fn next_triple(
-        &self,
-        session: &mut Ses,
-        id: OfflineId,
-    ) -> anyhow::Result<Triple<ResiduePoly<Z128>>> {
-        // Derive distinct ids for generating the parts of a
-        let mut rng_a: ChaCha20Rng = ChaCha20Rng::seed_from_u64(self.seed ^ id ^ 1);
-        let a: ResiduePoly<Wrapping<u128>> = ResiduePoly::<Z128>::sample(&mut rng_a);
-        let a_vec = DummyPreprocessing::share(
-            session.amount_of_parties(),
-            session.threshold(),
-            a,
-            &mut rng_a,
-        )?;
-        // Retrive the share of the calling party
-        let a_share = a_vec
-            .get(session.my_role()?.zero_index())
-            .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
-        // Derive distinct ids for generating the parts of b
-        let mut rng_b: ChaCha20Rng = ChaCha20Rng::seed_from_u64(self.seed ^ id ^ 2);
-        let b = ResiduePoly::<Z128>::sample(&mut rng_b);
-        let b_vec = DummyPreprocessing::share(
-            session.amount_of_parties(),
-            session.threshold(),
-            b,
-            &mut rng_b,
-        )?;
-        // Retrive the share of the calling party
-        let b_share = b_vec
-            .get(session.my_role()?.zero_index())
-            .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
-        // Derive distinct ids for generating the parts of c
-        let mut rng_c: ChaCha20Rng = ChaCha20Rng::seed_from_u64(self.seed ^ id ^ 2);
-        // Compute the c shares based on the true values of a and b
-        let c_vec = DummyPreprocessing::share(
-            session.amount_of_parties(),
-            session.threshold(),
-            a * b,
-            &mut rng_c,
-        )?;
-        // Retrive the share of the calling party
-        let c_share = c_vec
-            .get(session.my_role()?.zero_index())
-            .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
-        Ok(Triple::new(*a_share, *b_share, *c_share))
-    }
-
-    /// Computes a random element deterministically but pseudorandomly constructed from the seed in [DummyPreprocessing] and the [OfflineId] `id`.
-    fn next_random(
-        &self,
-        session: &mut Ses,
-        id: OfflineId,
-    ) -> anyhow::Result<Share<ResiduePoly<Z128>>> {
-        // Construct a rng uniquely defined from the dummy seed and the id
-        let mut rng: ChaCha20Rng = ChaCha20Rng::seed_from_u64(self.seed ^ id);
-        let secret = ResiduePoly::sample(&mut rng);
-        let all_parties_shares = DummyPreprocessing::share(
-            session.amount_of_parties(),
-            session.threshold(),
-            secret,
-            &mut rng,
-        )?;
-        let my_share = all_parties_shares
-            .get(session.my_role()?.zero_index())
-            .ok_or_else(|| anyhow_error_and_log("Party share does not exist".to_string()))?;
-        Ok(*my_share)
+    let res = mult_list(&[x], &[y], vec![triple], session).await?;
+    match res.first() {
+        Some(res) => Ok(*res),
+        None => Err(anyhow_error_and_log(
+            "Mult_list did not return a result".to_string(),
+        )),
     }
 }
 
-/// Dummy preprocessing struct constructed primarely for use for debugging
-/// Concretely the struct can be used _non-interactively_ since shares will all be points,
-/// i.e. sharing of threshold=0
-pub struct DummyDebugPreprocessing {
-    seed: u64,
-}
-impl DummyDebugPreprocessing {
-    // Dummy preprocessing which generates shares deterministically from `seed`
-    pub fn new(seed: u64) -> Self {
-        DummyDebugPreprocessing { seed }
-    }
-
-    /// Samples a triple in plain from the full domain of the underlying ring
-    pub fn sample<R: Ring>(owner: Role, rng: &mut impl RngCore) -> Triple<R> {
-        let plain_a: Share<R> = Share::new(owner, R::sample(rng));
-        let plain_b: Share<R> = Share::new(owner, R::sample(rng));
-        let plain_c: Share<R> = Share::new(owner, plain_a.value() * plain_b.value());
-        Triple::new(plain_a, plain_b, plain_c)
-    }
-}
-impl<Rnd: RngCore + Send + Sync + Clone, R: Ring, Ses: BaseSessionHandles<Rnd>>
-    Preprocessing<Rnd, R, Ses> for DummyDebugPreprocessing
+/// Pairwise multiplication of two vectors of shares using a vector of triples
+/// Concretely computing the following entry-wise on the input vectors:
+///     [epsilon]   =[x]+[triple.a]
+///     [rho]       =[y]+[triple.b]
+///     Open        [epsilon], [rho]
+///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
+#[allow(dead_code)] // TODO remove once used
+async fn mult_list<
+    R: Ring + std::convert::From<value::Value> + Send + Sync,
+    Rnd: RngCore + Send + Sync + 'static,
+    Ses: BaseSessionHandles<Rnd> + 'static,
+>(
+    x_vec: &[Share<R>],
+    y_vec: &[Share<R>],
+    triples: Vec<Triple<R>>,
+    session: &Ses,
+) -> anyhow::Result<Vec<Share<R>>>
+where
+    value::Value: std::convert::From<R>,
 {
-    /// Computes a dummy triple deterministically constructed from the seed in [DummyPreprocessing] and the [OfflineId] `id`.
-    fn next_triple(&self, session: &mut Ses, id: OfflineId) -> anyhow::Result<Triple<R>> {
-        let plain_a = self.next_random(session, id ^ 1)?;
-        let plain_b = self.next_random(session, id ^ 2)?;
-        Ok(Triple::new(
-            plain_a,
-            plain_b,
-            Share::new(session.my_role()?, plain_a.value() * plain_b.value()),
-        ))
+    let amount = x_vec.len();
+    if amount != y_vec.len() || amount != triples.len() {
+        return Err(anyhow_error_and_log(format!(
+            "Trying to multiply two lists of values using a list of triple, but they are not of equal length: a_vec: {:?}, b_vec: {:?}, triples: {:?}",
+            amount,
+            y_vec.len(),
+            triples.len()
+        )));
     }
+    let mut to_open = Vec::with_capacity(2 * amount);
+    // Compute the shares of epsilon and rho and merge them together into a single list
+    for ((cur_x, cur_y), cur_trip) in x_vec.iter().zip(y_vec).zip(&triples) {
+        if cur_x.owner() != cur_y.owner()
+            || cur_trip.a.owner() != cur_x.owner()
+            || cur_trip.b.owner() != cur_x.owner()
+            || cur_trip.c.owner() != cur_x.owner()
+        {
+            tracing::warn!("Trying to multiply with shares of different owners. This will always result in an incorrect share");
+        }
+        let share_epsilon = cur_trip.a + *cur_x;
+        let share_rho = cur_trip.b + *cur_y;
+        to_open.push(share_epsilon);
+        to_open.push(share_rho);
+    }
+    // Open and seperate the list of both epsilon and rho values into two lists of values
+    let mut epsilonrho = open_list(&to_open, session).await?;
+    let mut epsilon_vec = Vec::with_capacity(amount);
+    let mut rho_vec = Vec::with_capacity(amount);
+    // Indicator variable if the current element is an eprilson value (or rho value)
+    let mut epsilon_val = false;
+    // Go through the list from the back
+    while let Some(cur_val) = epsilonrho.pop() {
+        match epsilon_val {
+            true => epsilon_vec.push(cur_val),
+            false => rho_vec.push(cur_val),
+        }
+        // Flip the indicator
+        epsilon_val = !epsilon_val;
+    }
+    // Compute the linear equation of shares to get the result
+    let mut res = Vec::with_capacity(amount);
+    for i in 0..amount {
+        let y = *y_vec.get(i).context("Missing y value")?;
+        // Observe that the list of epsilons and rhos have already been reversed above, because of the use of pop,
+        // so we get the elements in the original order by popping again here
+        let epsilon = epsilon_vec.pop().context("Missing epsilon value")?;
+        let rho = rho_vec.pop().context("Missing rho value")?;
+        let trip = triples.get(i).context("Missing triple")?;
+        res.push(y * epsilon - trip.a * rho + trip.c);
+    }
+    Ok(res)
+}
 
-    /// Computes a random element deterministically but pseudorandomly constructed from the seed in [DummyPreprocessing] and the [OfflineId] `id`.
-    fn next_random(&self, session: &mut Ses, id: OfflineId) -> anyhow::Result<Share<R>> {
-        // Construct a rng uniquely defined from the dummy seed and the id
-        let mut rng: ChaCha20Rng = ChaCha20Rng::seed_from_u64(self.seed ^ id);
-        Ok(Share::new(session.my_role()?, R::sample(&mut rng)))
+// Open a single share
+#[allow(dead_code)] // TODO remove once used
+async fn open<
+    R: Ring + std::convert::From<value::Value> + Send + Sync,
+    Rnd: RngCore + Send + Sync + 'static,
+    Ses: BaseSessionHandles<Rnd> + 'static,
+>(
+    to_open: Share<R>,
+    session: &Ses,
+) -> anyhow::Result<R>
+where
+    value::Value: std::convert::From<R>,
+{
+    let res = open_list(&[to_open], session).await?;
+    match res.first() {
+        Some(res) => Ok(*res),
+        None => Err(anyhow_error_and_log(
+            "Open_list did not return a result".to_string(),
+        )),
     }
+}
+
+/// Opens a list of shares to all parties
+#[allow(dead_code)] // TODO remove once used
+async fn open_list<
+    R: Ring + std::convert::From<value::Value> + Send + Sync,
+    Rnd: RngCore + Send + Sync + 'static,
+    Ses: BaseSessionHandles<Rnd> + 'static,
+>(
+    to_open: &[Share<R>],
+    session: &Ses,
+) -> anyhow::Result<Vec<R>>
+where
+    value::Value: std::convert::From<R>,
+{
+    let parsed_to_open = to_open
+        .iter()
+        .map(|cur_open| Value::from(cur_open.value()))
+        .collect_vec();
+    let opened_vals: Vec<R> = match robust_opens_to_all(session, &parsed_to_open).await? {
+        Some(opened_vals) => opened_vals
+            .iter()
+            .map(|cur_opened| R::from(cur_opened.clone()))
+            .collect_vec(),
+        None => return Err(anyhow_error_and_log("Could not open shares".to_string())),
+    };
+    Ok(opened_vals)
 }
 
 #[cfg(test)]
 mod tests {
-    use tracing_test::traced_test;
+    use std::num::Wrapping;
 
     use crate::{
         execution::{
-            online::triple::{
-                DummyDebugPreprocessing, DummyPreprocessing, Preprocessing, Reconstruct, Triple,
+            online::{
+                preprocessing::{DummyPreprocessing, Preprocessing},
+                triple::{mult, mult_list, open_list},
             },
             party::Role,
-            session::{BaseSessionHandles, ParameterHandles},
+            session::{ParameterHandles, SmallSession},
         },
         residue_poly::ResiduePoly,
-        tests::helper::tests::{get_small_session, get_small_session_for_parties},
-        Zero, Z128,
+        tests::helper::tests::execute_protocol_small,
+        Z128,
     };
-    use std::num::Wrapping;
 
     use super::Share;
 
+    // Multiply random values and open the random values and the result
     #[test]
-    fn test_debug_dummy_rand() {
-        let preprocessing = DummyDebugPreprocessing::new(42);
-        let mut session = get_small_session();
-        let rand = preprocessing.next_random(&mut session, 1337).unwrap();
-        let recon_rand =
-            Share::<ResiduePoly<Z128>>::reconstruct(&session.parameters, vec![rand]).unwrap();
-        // Check that things are "shared" in plain, i.e. with threshold=0
-        assert_eq!(rand.value, recon_rand);
-    }
+    fn mult_sunshine() {
+        let parties = 4;
+        let threshold = 1;
+        async fn task(mut session: SmallSession) -> Vec<ResiduePoly<Wrapping<u128>>> {
+            let mut preprocessing = DummyPreprocessing::new(42);
+            let cur_a = preprocessing.next_random(&mut session).unwrap();
+            let cur_b = preprocessing.next_random(&mut session).unwrap();
+            let trip = preprocessing.next_triple(&mut session).unwrap();
+            let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
+            open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap()
+        }
 
-    #[test]
-    fn test_debug_dummy_triple() {
-        let preprocessing = DummyDebugPreprocessing::new(42);
-        let mut session = get_small_session();
-        let trip: Triple<ResiduePoly<Z128>> =
-            preprocessing.next_triple(&mut session, 1337).unwrap();
-        let recon_c =
-            Share::<ResiduePoly<Z128>>::reconstruct(&session.parameters, vec![trip.c]).unwrap();
-        // Check that things are "shared" in plain, i.e. with threshold=0
-        assert_eq!(recon_c, trip.a.value * trip.b.value);
-    }
+        let results = execute_protocol_small(parties, threshold, &mut task);
+        assert_eq!(results.len(), parties);
 
-    #[test]
-    fn test_threshold_dummy_share() {
-        let msg = Wrapping(42);
-        let mut session = get_small_session_for_parties(10, 3, Role(1));
-        let shares = DummyPreprocessing::share(
-            session.amount_of_parties(),
-            session.threshold(),
-            ResiduePoly::from_scalar(msg),
-            session.rng(),
-        )
-        .unwrap();
-        let recon = Share::<ResiduePoly<Z128>>::reconstruct(&session.parameters, shares).unwrap();
-        assert_eq!(msg, recon.coefs[0]);
-        // The functionality is currently only used to share a scalar so the rest of the coefficients should be 0
-        for i in 1..recon.coefs.len() {
-            assert_eq!(Wrapping::ZERO, recon.coefs[i]);
+        for cur_res in results {
+            let recon_a = cur_res[0];
+            let recon_b = cur_res[1];
+            let recon_c = cur_res[2];
+            assert_eq!(recon_c, recon_a * recon_b);
         }
     }
 
+    // Multiply lists of random values and use repeated openings to open the random values and the result
     #[test]
-    fn test_threshold_dummy_rand() {
-        let parties = 10;
-        let threshold = 3;
-        let mut rand_recon = Vec::new();
-        let preprocessing = DummyPreprocessing::new(42);
-        for i in 1..=parties {
-            let mut session = get_small_session_for_parties(parties, threshold, Role(i as u64));
-            let cur_rand = preprocessing.next_random(&mut session, 1337).unwrap();
-            rand_recon.push(cur_rand);
+    fn mult_list_sunshine() {
+        let parties = 4;
+        let threshold = 1;
+        const AMOUNT: usize = 3;
+        async fn task(
+            mut session: SmallSession,
+        ) -> (
+            Vec<ResiduePoly<Wrapping<u128>>>,
+            Vec<ResiduePoly<Wrapping<u128>>>,
+            Vec<ResiduePoly<Wrapping<u128>>>,
+        ) {
+            let mut preprocessing = DummyPreprocessing::new(42);
+            let mut a_vec = Vec::with_capacity(AMOUNT);
+            let mut b_vec = Vec::with_capacity(AMOUNT);
+            let mut trip_vec = Vec::with_capacity(AMOUNT);
+            for _i in 0..AMOUNT {
+                a_vec.push(preprocessing.next_random(&mut session).unwrap());
+                b_vec.push(preprocessing.next_random(&mut session).unwrap());
+                trip_vec.push(preprocessing.next_triple(&mut session).unwrap());
+            }
+            let c_vec = mult_list(&a_vec, &b_vec, trip_vec, &session).await.unwrap();
+            let a_plain = open_list(&a_vec, &session).await.unwrap();
+            let b_plain = open_list(&b_vec, &session).await.unwrap();
+            let c_plain = open_list(&c_vec, &session).await.unwrap();
+            (a_plain, b_plain, c_plain)
         }
-        let session = get_small_session_for_parties(parties, threshold, Role(1));
-        let recon =
-            Share::<ResiduePoly<Z128>>::reconstruct(&session.parameters, rand_recon).unwrap();
-        // Assert equality with a reference value for exactly the seed: 42
-        assert_eq!(
-            Wrapping(202747963817102809561422760277939422522),
-            recon.coefs[0]
-        );
-        // We just sanity check the rest of the coefficients
-        for i in 1..recon.coefs.len() {
-            assert_ne!(Wrapping::ZERO, recon.coefs[i]);
+
+        let results = execute_protocol_small(parties, threshold, &mut task);
+        assert_eq!(results.len(), parties);
+        for (a_vec, b_vec, c_vec) in &results {
+            for i in 0..AMOUNT {
+                assert_eq!(
+                    *c_vec.get(i).unwrap(),
+                    *a_vec.get(i).unwrap() * *b_vec.get(i).unwrap()
+                );
+            }
         }
     }
 
-    #[traced_test]
+    // Multiply random values and open the random values and the result when a party drops out
     #[test]
-    fn test_threshold_dummy_trip() {
-        let parties = 10;
-        let threshold = 3;
-        let mut a_shares = Vec::new();
-        let mut b_shares = Vec::new();
-        let mut c_shares = Vec::new();
-        let preprocessing = DummyPreprocessing::new(42);
-        for i in 1..=parties {
-            let mut session = get_small_session_for_parties(parties, threshold, Role(i as u64));
-            let cur_trip: Triple<ResiduePoly<Z128>> =
-                preprocessing.next_triple(&mut session, 1337).unwrap();
-            a_shares.push(cur_trip.a);
-            b_shares.push(cur_trip.b);
-            c_shares.push(cur_trip.c);
+    fn mult_party_drop() {
+        let parties = 4;
+        let threshold = 1;
+        const BAD_ROLE: Role = Role(4);
+        async fn task(mut session: SmallSession) -> (Role, Vec<ResiduePoly<Z128>>) {
+            if session.my_role().unwrap() != BAD_ROLE {
+                let mut preprocessing = DummyPreprocessing::new(42);
+                let cur_a = preprocessing.next_random(&mut session).unwrap();
+                let cur_b = preprocessing.next_random(&mut session).unwrap();
+                let trip = preprocessing.next_triple(&mut session).unwrap();
+                let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
+                (
+                    session.my_role().unwrap(),
+                    open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap(),
+                )
+            } else {
+                (session.my_role().unwrap(), Vec::new())
+            }
         }
-        let session = get_small_session_for_parties(parties, threshold, Role(1));
-        let recon_a =
-            Share::<ResiduePoly<Z128>>::reconstruct(&session.parameters, a_shares).unwrap();
-        let recon_b =
-            Share::<ResiduePoly<Z128>>::reconstruct(&session.parameters, b_shares).unwrap();
-        let recon_c =
-            Share::<ResiduePoly<Z128>>::reconstruct(&session.parameters, c_shares).unwrap();
-        assert_eq!(recon_a * recon_b, recon_c);
+
+        let results = execute_protocol_small(parties, threshold, &mut task);
+        assert_eq!(results.len(), parties);
+
+        for (cur_role, cur_res) in results {
+            if cur_role != BAD_ROLE {
+                let recon_a = cur_res[0];
+                let recon_b = cur_res[1];
+                let recon_c = cur_res[2];
+                assert_eq!(recon_c, recon_a * recon_b);
+            } else {
+                assert_eq!(Vec::<ResiduePoly<Z128>>::new(), *cur_res);
+            }
+        }
+    }
+
+    // Multiply random values and open the random values and the result when a party uses a wrong value
+    #[test]
+    fn mult_wrong_val() {
+        let parties = 4;
+        let threshold = 1;
+        const BAD_ROLE: Role = Role(4);
+        async fn task(mut session: SmallSession) -> Vec<ResiduePoly<Z128>> {
+            let mut preprocessing = DummyPreprocessing::new(42);
+            let cur_a = preprocessing.next_random(&mut session).unwrap();
+            let cur_b = match session.my_role().unwrap() {
+                BAD_ROLE => Share::new(BAD_ROLE, ResiduePoly::<Z128>::from_scalar(Wrapping(42))),
+                _ => preprocessing.next_random(&mut session).unwrap(),
+            };
+            let trip = preprocessing.next_triple(&mut session).unwrap();
+            let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
+            open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap()
+        }
+
+        let results = execute_protocol_small(parties, threshold, &mut task);
+        assert_eq!(results.len(), parties);
+
+        for cur_res in results {
+            let recon_a = cur_res[0];
+            let recon_b = cur_res[1];
+            let recon_c = cur_res[2];
+            assert_eq!(recon_c, recon_a * recon_b);
+        }
     }
 }
