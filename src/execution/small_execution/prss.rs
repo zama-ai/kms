@@ -15,6 +15,7 @@ use crate::{
     value::{BroadcastValue, Value},
     One, Zero, Z128,
 };
+use anyhow::Context;
 use itertools::Itertools;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -282,7 +283,7 @@ impl PRSSState {
         // Count the votes received from the broadcast
         let count = Self::count_votes(&broadcast_result, session)?;
         // Find which values have received most votes
-        let true_psi_vals = Self::find_winning_prf_values(&count);
+        let true_psi_vals = Self::find_winning_prf_values(&count)?;
         // Find the parties who did not vote for the results and add them to the corrupt set
         Self::handle_non_voting_parties(&true_psi_vals, &count, session)?;
         // Compute result based on majority votes
@@ -318,7 +319,7 @@ impl PRSSState {
         // Count the votes received from the broadcast
         let count = Self::count_votes(&broadcast_result, session)?;
         // Find which values have received most votes
-        let true_chi_vals = Self::find_winning_prf_values(&count);
+        let true_chi_vals = Self::find_winning_prf_values(&count)?;
         // Find the parties who did not vote for the results and add them to the corrupt set
         Self::handle_non_voting_parties(&true_chi_vals, &count, session)?;
         // Compute result based on majority votes
@@ -412,17 +413,17 @@ impl PRSSState {
     /// Returns a [HashMap] mapping each of the sets in [PrssSet] to the [Value] received by most parties for this set.
     fn find_winning_prf_values(
         count: &HashMap<PartySet, ValueVotes>,
-    ) -> HashMap<&PartySet, &Vec<Value>> {
+    ) -> anyhow::Result<HashMap<&PartySet, &Vec<Value>>> {
         let mut true_prf_vals = HashMap::with_capacity(count.len());
         for (prss_set, value_votes) in count {
             let (value_max, _) = value_votes
                 .iter()
                 .max_by_key(|&(_, votes)| votes.len())
-                .expect("No votes found!");
+                .with_context(|| "No votes found!")?;
 
             true_prf_vals.insert(prss_set, value_max);
         }
-        true_prf_vals
+        Ok(true_prf_vals)
     }
 
     /// Helper method for finding the parties who did not vote for the results and add them to the corrupt set.
@@ -548,10 +549,9 @@ impl PRSSSetup {
 
         let mut party_prss_sets: Vec<PrssSet> = Vec::new();
 
-        // TODO use Agree Random with abort here, once it is implemented
         let ars = A::agree_random(&mut session.to_base_session())
             .await
-            .expect("AgreeRandom failed!");
+            .with_context(|| "AgreeRandom failed!")?;
 
         let f_a_points = party_compute_f_a_points(&party_sets, num_parties)?;
         let alpha_powers = compute_alpha_powers(num_parties, session.threshold())?;
@@ -607,7 +607,7 @@ mod tests {
         circuit::{Circuit, Operation, Operator},
         commitment::KEY_BYTE_LEN,
         execution::{
-            agree_random::{DummyAgreeRandom, RealAgreeRandom},
+            agree_random::{DummyAgreeRandom, RealAgreeRandomWithAbort},
             constants::{BD1, LOG_BD, STATSEC},
             distributed::{setup_prss_sess, DistributedTestRuntime},
             party::{Identity, Role},
@@ -816,11 +816,12 @@ mod tests {
             })
             .collect();
 
-        // Test with real dummy AgreeRandom
+        // Test with Real AgreeRandom with Abort
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
-        let prss_setups =
-            rt.block_on(async { setup_prss_sess::<RealAgreeRandom>(sessions.clone()).await });
+        let prss_setups = rt.block_on(async {
+            setup_prss_sess::<RealAgreeRandomWithAbort>(sessions.clone()).await
+        });
 
         runtime.setup_prss(prss_setups);
 
@@ -839,7 +840,7 @@ mod tests {
         assert_eq!(out_dec[0], Value::Ring128(std::num::Wrapping(msg as u128)));
         assert_eq!(out_circ[0], Value::Ring128(std::num::Wrapping(msg as u128)));
 
-        // Test with real AgreeRandom
+        // Test with Dummy AgreeRandom
         let _guard = rt.enter();
         let prss_setups =
             rt.block_on(async { setup_prss_sess::<DummyAgreeRandom>(sessions).await });
@@ -1286,7 +1287,7 @@ mod tests {
             (value.clone(), HashSet::from([Role(1), Role(2), Role(3)])),
         ]);
         let count = HashMap::from([(set.clone(), votes)]);
-        let result = PRSSState::find_winning_prf_values(&count);
+        let result = PRSSState::find_winning_prf_values(&count).unwrap();
         assert_eq!(result, true_psi_vals);
     }
 
