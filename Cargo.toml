@@ -28,6 +28,7 @@ g2p = "1.0.1"
 itertools = "0.11"
 k256 = "0.13.1"
 lazy_static = "~1.4"
+mockall = "~0.11"
 ndarray = { version = "~0.15", features = ["serde"] }
 ndarray-stats = "~0.5"
 noisy_float = "0.2.0"

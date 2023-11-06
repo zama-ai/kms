@@ -25,9 +25,19 @@ pub enum Value {
     U64(u64),
 }
 
+impl From<u64> for Value {
+    fn from(value: u64) -> Self {
+        Value::Ring64(Wrapping(value))
+    }
+}
 impl From<u128> for Value {
     fn from(value: u128) -> Self {
         Value::Ring128(Wrapping(value))
+    }
+}
+impl From<ResiduePoly<Z64>> for Value {
+    fn from(value: ResiduePoly<Z64>) -> Self {
+        Value::Poly64(value)
     }
 }
 impl From<ResiduePoly<Z128>> for Value {

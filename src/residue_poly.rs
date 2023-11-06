@@ -2,7 +2,6 @@ use crate::gf256::GF256;
 use crate::poly::Ring;
 use crate::{error::error_handler::anyhow_error_and_log, value::Value};
 use crate::{One, Sample, ZConsts, Zero, Z128, Z64};
-use anyhow::anyhow;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::ops::MulAssign;
@@ -64,15 +63,26 @@ impl From<Value> for ResiduePoly<Z128> {
     }
 }
 
-impl TryFrom<Value> for ResiduePoly<Z64> {
-    type Error = anyhow::Error;
-    fn try_from(value: Value) -> Result<ResiduePoly<Z64>, Self::Error> {
+impl From<Value> for ResiduePoly<Z64> {
+    fn from(value: Value) -> Self {
         match value {
-            Value::Poly64(v) => Ok(v),
-            Value::Poly128(_) => Err(anyhow!("Cannot convert Residue<Z128> to Residue<Z64>")),
-            Value::Ring64(v) => Ok(ResiduePoly::from_scalar(Wrapping(v.0))),
-            Value::Ring128(_) => Err(anyhow!("Cannot convert Z128 to Residue<Z64>")),
-            Value::U64(v) => Ok(ResiduePoly::from_scalar(Wrapping(v))),
+            Value::Poly64(v) => v,
+            Value::Poly128(v) => {
+                tracing::warn!("Trying to convert a polynomial over Z128 to one over Z64. Mathematical relations will probably not be kept");
+                let mut coefs = [Z64::ZERO; F_DEG];
+                for i in 0..v.coefs.len() {
+                    // Observe that `as` truncates, i.e. since the coefficient is unsigned, this corresponds to modulo u64::MAX+1
+                    coefs[i] = Wrapping(v.coefs[i].0 as u64);
+                }
+                ResiduePoly { coefs }
+            }
+            Value::Ring64(v) => ResiduePoly::from_scalar(Wrapping(v.0)),
+            Value::Ring128(v) => {
+                tracing::warn!("Trying to convert an over Z64 to a polynomial over Z128. Mathematical relations will probably not be kept");
+                // Observe that `as` truncates, i.e. since the coefficient is unsigned, this corresponds to modulo u64::MAX+1
+                ResiduePoly::from_scalar(Wrapping(v.0 as u64))
+            }
+            Value::U64(v) => ResiduePoly::from_scalar(Wrapping(v)),
         }
     }
 }
@@ -637,12 +647,11 @@ macro_rules! impl_share_type {
             }
 
             /// invert and lift an Integer to the large Ring
-            pub fn lift_and_invert(p: usize) -> anyhow::Result<ResiduePoly<$z>> {
-                if p == 0 {
-                    return Err(anyhow_error_and_log(format!("Party ID must be at least 1")));
+            pub fn invert(gamma: ResiduePoly<$z>) -> anyhow::Result<ResiduePoly<$z>> {
+                if gamma == ResiduePoly::<$z>::ZERO {
+                    return Err(anyhow_error_and_log(format!("Cannot invert 0")));
                 }
 
-                let gamma = ResiduePoly::<$z>::ZERO - ResiduePoly::embed(p)?;
                 let alpha_k = gamma.bit_compose(0);
                 let ainv = GF256::from(1) / alpha_k;
                 let mut x0 = ResiduePoly::embed(ainv.0 as usize)?;
@@ -655,6 +664,11 @@ macro_rules! impl_share_type {
                 debug_assert_eq!(x0 * gamma, ResiduePoly::ONE);
 
                 Ok(x0)
+            }
+
+            /// invert and lift an Integer to the large Ring
+            pub fn lift_and_invert(p: usize) -> anyhow::Result<ResiduePoly<$z>> {
+                Self::invert(ResiduePoly::<$z>::ZERO - ResiduePoly::embed(p)?)
             }
 
             pub fn multiple_pow2(&self, exp: usize) -> bool {

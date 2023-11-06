@@ -35,8 +35,7 @@ where
 ///     [rho]       =[y]+[triple.b]
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
-#[allow(dead_code)] // TODO remove once used
-async fn mult<
+pub async fn mult<
     R: Ring + std::convert::From<value::Value> + Send + Sync,
     Rnd: RngCore + Send + Sync + 'static,
     Ses: BaseSessionHandles<Rnd> + 'static,
@@ -64,8 +63,7 @@ where
 ///     [rho]       =[y]+[triple.b]
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
-#[allow(dead_code)] // TODO remove once used
-async fn mult_list<
+pub async fn mult_list<
     R: Ring + std::convert::From<value::Value> + Send + Sync,
     Rnd: RngCore + Send + Sync + 'static,
     Ses: BaseSessionHandles<Rnd> + 'static,
@@ -132,8 +130,7 @@ where
 }
 
 // Open a single share
-#[allow(dead_code)] // TODO remove once used
-async fn open<
+pub async fn open<
     R: Ring + std::convert::From<value::Value> + Send + Sync,
     Rnd: RngCore + Send + Sync + 'static,
     Ses: BaseSessionHandles<Rnd> + 'static,
@@ -154,8 +151,7 @@ where
 }
 
 /// Opens a list of shares to all parties
-#[allow(dead_code)] // TODO remove once used
-async fn open_list<
+pub async fn open_list<
     R: Ring + std::convert::From<value::Value> + Send + Sync,
     Rnd: RngCore + Send + Sync + 'static,
     Ses: BaseSessionHandles<Rnd> + 'static,
@@ -184,6 +180,7 @@ where
 mod tests {
     use std::num::Wrapping;
 
+    use super::Share;
     use crate::{
         execution::{
             online::{
@@ -195,140 +192,147 @@ mod tests {
         },
         residue_poly::ResiduePoly,
         tests::helper::tests::execute_protocol_small,
-        Z128,
+        Z128, Z64,
     };
+    use paste::paste;
 
-    use super::Share;
+    macro_rules! tests {
+        ($z:ty, $u:ty) => {
+            paste! {
+                // Multiply random values and open the random values and the result
+                #[test]
+                fn [<mult_sunshine_ $z:lower>]() {
+                    let parties = 4;
+                    let threshold = 1;
+                    async fn task(mut session: SmallSession) -> Vec<ResiduePoly<Wrapping<$u>>> {
+                        let mut preprocessing = DummyPreprocessing::<$z>::new(42);
+                        let cur_a = preprocessing.next_random(&mut session).unwrap();
+                        let cur_b = preprocessing.next_random(&mut session).unwrap();
+                        let trip = preprocessing.next_triple(&mut session).unwrap();
+                        let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
+                        open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap()
+                    }
 
-    // Multiply random values and open the random values and the result
-    #[test]
-    fn mult_sunshine() {
-        let parties = 4;
-        let threshold = 1;
-        async fn task(mut session: SmallSession) -> Vec<ResiduePoly<Wrapping<u128>>> {
-            let mut preprocessing = DummyPreprocessing::new(42);
-            let cur_a = preprocessing.next_random(&mut session).unwrap();
-            let cur_b = preprocessing.next_random(&mut session).unwrap();
-            let trip = preprocessing.next_triple(&mut session).unwrap();
-            let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
-            open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap()
-        }
+                    let results = execute_protocol_small(parties, threshold, &mut task);
+                    assert_eq!(results.len(), parties);
 
-        let results = execute_protocol_small(parties, threshold, &mut task);
-        assert_eq!(results.len(), parties);
+                    for cur_res in results {
+                        let recon_a = cur_res[0];
+                        let recon_b = cur_res[1];
+                        let recon_c = cur_res[2];
+                        assert_eq!(recon_c, recon_a * recon_b);
+                    }
+                }
 
-        for cur_res in results {
-            let recon_a = cur_res[0];
-            let recon_b = cur_res[1];
-            let recon_c = cur_res[2];
-            assert_eq!(recon_c, recon_a * recon_b);
-        }
-    }
+                // Multiply lists of random values and use repeated openings to open the random values and the result
+                #[test]
+                fn [<mult_list_sunshine_ $z:lower>]() {
+                    let parties = 4;
+                    let threshold = 1;
+                    const AMOUNT: usize = 3;
+                    async fn task(
+                        mut session: SmallSession,
+                    ) -> (
+                        Vec<ResiduePoly<Wrapping<$u>>>,
+                        Vec<ResiduePoly<Wrapping<$u>>>,
+                        Vec<ResiduePoly<Wrapping<$u>>>,
+                    ) {
+                        let mut preprocessing = DummyPreprocessing::<$z>::new(42);
+                        let mut a_vec = Vec::with_capacity(AMOUNT);
+                        let mut b_vec = Vec::with_capacity(AMOUNT);
+                        let mut trip_vec = Vec::with_capacity(AMOUNT);
+                        for _i in 0..AMOUNT {
+                            a_vec.push(preprocessing.next_random(&mut session).unwrap());
+                            b_vec.push(preprocessing.next_random(&mut session).unwrap());
+                            trip_vec.push(preprocessing.next_triple(&mut session).unwrap());
+                        }
+                        let c_vec = mult_list(&a_vec, &b_vec, trip_vec, &session).await.unwrap();
+                        let a_plain = open_list(&a_vec, &session).await.unwrap();
+                        let b_plain = open_list(&b_vec, &session).await.unwrap();
+                        let c_plain = open_list(&c_vec, &session).await.unwrap();
+                        (a_plain, b_plain, c_plain)
+                    }
 
-    // Multiply lists of random values and use repeated openings to open the random values and the result
-    #[test]
-    fn mult_list_sunshine() {
-        let parties = 4;
-        let threshold = 1;
-        const AMOUNT: usize = 3;
-        async fn task(
-            mut session: SmallSession,
-        ) -> (
-            Vec<ResiduePoly<Wrapping<u128>>>,
-            Vec<ResiduePoly<Wrapping<u128>>>,
-            Vec<ResiduePoly<Wrapping<u128>>>,
-        ) {
-            let mut preprocessing = DummyPreprocessing::new(42);
-            let mut a_vec = Vec::with_capacity(AMOUNT);
-            let mut b_vec = Vec::with_capacity(AMOUNT);
-            let mut trip_vec = Vec::with_capacity(AMOUNT);
-            for _i in 0..AMOUNT {
-                a_vec.push(preprocessing.next_random(&mut session).unwrap());
-                b_vec.push(preprocessing.next_random(&mut session).unwrap());
-                trip_vec.push(preprocessing.next_triple(&mut session).unwrap());
+                    let results = execute_protocol_small(parties, threshold, &mut task);
+                    assert_eq!(results.len(), parties);
+                    for (a_vec, b_vec, c_vec) in &results {
+                        for i in 0..AMOUNT {
+                            assert_eq!(
+                                *c_vec.get(i).unwrap(),
+                                *a_vec.get(i).unwrap() * *b_vec.get(i).unwrap()
+                            );
+                        }
+                    }
+                }
+
+                // Multiply random values and open the random values and the result when a party drops out
+                #[test]
+                fn [<mult_party_drop_ $z:lower>]() {
+                    let parties = 4;
+                    let threshold = 1;
+                    const BAD_ROLE: Role = Role(4);
+                    async fn task(mut session: SmallSession) -> (Role, Vec<ResiduePoly<$z>>) {
+                        if session.my_role().unwrap() != BAD_ROLE {
+                            let mut preprocessing = DummyPreprocessing::<$z>::new(42);
+                            let cur_a = preprocessing.next_random(&mut session).unwrap();
+                            let cur_b = preprocessing.next_random(&mut session).unwrap();
+                            let trip = preprocessing.next_triple(&mut session).unwrap();
+                            let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
+                            (
+                                session.my_role().unwrap(),
+                                open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap(),
+                            )
+                        } else {
+                            (session.my_role().unwrap(), Vec::new())
+                        }
+                    }
+
+                    let results = execute_protocol_small(parties, threshold, &mut task);
+                    assert_eq!(results.len(), parties);
+
+                    for (cur_role, cur_res) in results {
+                        if cur_role != BAD_ROLE {
+                            let recon_a = cur_res[0];
+                            let recon_b = cur_res[1];
+                            let recon_c = cur_res[2];
+                            assert_eq!(recon_c, recon_a * recon_b);
+                        } else {
+                            assert_eq!(Vec::<ResiduePoly<$z>>::new(), *cur_res);
+                        }
+                    }
+                }
+
+                // Multiply random values and open the random values and the result when a party uses a wrong value
+                #[test]
+                fn [<mult_wrong_value_ $z:lower>]() {
+                    let parties = 4;
+                    let threshold = 1;
+                    const BAD_ROLE: Role = Role(4);
+                    async fn task(mut session: SmallSession) -> Vec<ResiduePoly<$z>> {
+                        let mut preprocessing = DummyPreprocessing::<$z>::new(42);
+                        let cur_a = preprocessing.next_random(&mut session).unwrap();
+                        let cur_b = match session.my_role().unwrap() {
+                            BAD_ROLE => Share::new(BAD_ROLE, ResiduePoly::<$z>::from_scalar(Wrapping(42))),
+                            _ => preprocessing.next_random(&mut session).unwrap(),
+                        };
+                        let trip = preprocessing.next_triple(&mut session).unwrap();
+                        let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
+                        open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap()
+                    }
+
+                    let results = execute_protocol_small(parties, threshold, &mut task);
+                    assert_eq!(results.len(), parties);
+
+                    for cur_res in results {
+                        let recon_a = cur_res[0];
+                        let recon_b = cur_res[1];
+                        let recon_c = cur_res[2];
+                        assert_eq!(recon_c, recon_a * recon_b);
+                    }
+                }
             }
-            let c_vec = mult_list(&a_vec, &b_vec, trip_vec, &session).await.unwrap();
-            let a_plain = open_list(&a_vec, &session).await.unwrap();
-            let b_plain = open_list(&b_vec, &session).await.unwrap();
-            let c_plain = open_list(&c_vec, &session).await.unwrap();
-            (a_plain, b_plain, c_plain)
-        }
-
-        let results = execute_protocol_small(parties, threshold, &mut task);
-        assert_eq!(results.len(), parties);
-        for (a_vec, b_vec, c_vec) in &results {
-            for i in 0..AMOUNT {
-                assert_eq!(
-                    *c_vec.get(i).unwrap(),
-                    *a_vec.get(i).unwrap() * *b_vec.get(i).unwrap()
-                );
-            }
-        }
+        };
     }
-
-    // Multiply random values and open the random values and the result when a party drops out
-    #[test]
-    fn mult_party_drop() {
-        let parties = 4;
-        let threshold = 1;
-        const BAD_ROLE: Role = Role(4);
-        async fn task(mut session: SmallSession) -> (Role, Vec<ResiduePoly<Z128>>) {
-            if session.my_role().unwrap() != BAD_ROLE {
-                let mut preprocessing = DummyPreprocessing::new(42);
-                let cur_a = preprocessing.next_random(&mut session).unwrap();
-                let cur_b = preprocessing.next_random(&mut session).unwrap();
-                let trip = preprocessing.next_triple(&mut session).unwrap();
-                let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
-                (
-                    session.my_role().unwrap(),
-                    open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap(),
-                )
-            } else {
-                (session.my_role().unwrap(), Vec::new())
-            }
-        }
-
-        let results = execute_protocol_small(parties, threshold, &mut task);
-        assert_eq!(results.len(), parties);
-
-        for (cur_role, cur_res) in results {
-            if cur_role != BAD_ROLE {
-                let recon_a = cur_res[0];
-                let recon_b = cur_res[1];
-                let recon_c = cur_res[2];
-                assert_eq!(recon_c, recon_a * recon_b);
-            } else {
-                assert_eq!(Vec::<ResiduePoly<Z128>>::new(), *cur_res);
-            }
-        }
-    }
-
-    // Multiply random values and open the random values and the result when a party uses a wrong value
-    #[test]
-    fn mult_wrong_val() {
-        let parties = 4;
-        let threshold = 1;
-        const BAD_ROLE: Role = Role(4);
-        async fn task(mut session: SmallSession) -> Vec<ResiduePoly<Z128>> {
-            let mut preprocessing = DummyPreprocessing::new(42);
-            let cur_a = preprocessing.next_random(&mut session).unwrap();
-            let cur_b = match session.my_role().unwrap() {
-                BAD_ROLE => Share::new(BAD_ROLE, ResiduePoly::<Z128>::from_scalar(Wrapping(42))),
-                _ => preprocessing.next_random(&mut session).unwrap(),
-            };
-            let trip = preprocessing.next_triple(&mut session).unwrap();
-            let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
-            open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap()
-        }
-
-        let results = execute_protocol_small(parties, threshold, &mut task);
-        assert_eq!(results.len(), parties);
-
-        for cur_res in results {
-            let recon_a = cur_res[0];
-            let recon_b = cur_res[1];
-            let recon_c = cur_res[2];
-            assert_eq!(recon_c, recon_a * recon_b);
-        }
-    }
+    tests![Z64, u64];
+    tests![Z128, u128];
 }

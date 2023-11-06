@@ -17,6 +17,7 @@ pub mod large_execution {
     pub mod share_dispute;
 }
 pub mod online {
+    pub mod gen_bits;
     pub mod preprocessing;
     pub mod share;
     pub mod triple;

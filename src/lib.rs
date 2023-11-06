@@ -2,7 +2,6 @@ use crate::poly::Ring;
 use rand::RngCore;
 use std::num::Wrapping;
 
-pub mod bit_generation;
 pub mod choreography;
 pub mod circuit;
 pub mod commitment;
