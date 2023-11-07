@@ -203,7 +203,7 @@ impl PRSSState {
         for set in self.prss_setup.sets.iter_mut() {
             if set.parties.contains(&party_id) {
                 if let Some(aes_prf) = &set.prfs {
-                    let psi = psi(&aes_prf.psi_aes, self.prss_ctr);
+                    let psi = psi(&aes_prf.psi_aes, self.prss_ctr)?;
 
                     // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points
                     let f_a = set.f_a_points[party_id - 1];
@@ -235,7 +235,7 @@ impl PRSSState {
             if set.parties.contains(&party_id) {
                 if let Some(aes_prf) = &set.prfs {
                     for j in 1..=t {
-                        let chi = chi(&aes_prf.chi_aes, self.przs_ctr, j);
+                        let chi = chi(&aes_prf.chi_aes, self.przs_ctr, j)?;
                         // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points
                         let f_a = set.f_a_points[party_id - 1];
                         // power of alpha_i^j
@@ -267,7 +267,7 @@ impl PRSSState {
         let mut psi_values = Vec::with_capacity(sets.len());
         for cur_set in sets {
             if let Some(aes_prf) = &cur_set.prfs {
-                let psi = vec![Value::Poly128(psi(&aes_prf.psi_aes, self.prss_ctr))];
+                let psi = vec![Value::Poly128(psi(&aes_prf.psi_aes, self.prss_ctr)?)];
                 psi_values.push((cur_set.parties.clone(), psi));
             } else {
                 return Err(anyhow_error_and_log(
@@ -302,7 +302,7 @@ impl PRSSState {
             if let Some(aes_prf) = &cur_set.prfs {
                 let mut chi_list = Vec::with_capacity(session.threshold() as usize);
                 for j in 1..=session.threshold() {
-                    chi_list.push(Value::Poly128(chi(&aes_prf.chi_aes, self.przs_ctr, j)));
+                    chi_list.push(Value::Poly128(chi(&aes_prf.chi_aes, self.przs_ctr, j)?));
                 }
                 chi_values.push((cur_set.parties.clone(), chi_list.clone()));
             } else {
@@ -1045,7 +1045,7 @@ mod tests {
         let mut psi_sum = ResiduePoly::<Z128>::ZERO;
         for (idx, _set) in all_sets.iter().enumerate() {
             let psi_aes = PsiAes::new(&keys[idx], sid);
-            let psi = psi(&psi_aes, 0);
+            let psi = psi(&psi_aes, 0).unwrap();
             psi_sum += psi
         }
         tracing::info!("reconstructed psi sum: {:?}", psi_sum);
@@ -1333,7 +1333,7 @@ mod tests {
             // Compute the reference value and use clone to ensure that the same counter is used for all parties
             let psi_next = cloned_state.prss_next(role.party_id()).unwrap();
 
-            let local_psi = psi(&set.prfs.unwrap().psi_aes, state.prss_ctr);
+            let local_psi = psi(&set.prfs.unwrap().psi_aes, state.prss_ctr).unwrap();
             let local_psi_value = vec![Value::Poly128(local_psi)];
             let true_psi_vals = HashMap::from([(&set.parties, &local_psi_value)]);
 

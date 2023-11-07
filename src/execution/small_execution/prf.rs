@@ -93,6 +93,13 @@ pub(crate) fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
         ));
     }
 
+    // check ctr is smaller 2^120, so nothing gets overwritten by setting the index below
+    if ctr >= 1 << 120 {
+        return Err(anyhow_error_and_log(format!(
+            "ctr in phi must be smaller than 2^120 but was {ctr}."
+        )));
+    }
+
     // number of AES blocks, currently limited to 1. This will grow once BGV decryption is implemented
     let v = (((bd1 + 1) as f32).log2() / 128_f32).ceil() as u32;
     debug_assert_eq!(v, 1);
@@ -112,14 +119,21 @@ pub(crate) fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
 
 /// Function Psi that generates bounded randomness for PRSS.next()
 /// This currently assumes that q is 2^128
-pub(crate) fn psi(pa: &PsiAes, ctr: u128) -> ResiduePoly<Z128> {
+pub(crate) fn psi(pa: &PsiAes, ctr: u128) -> anyhow::Result<ResiduePoly<Z128>> {
+    // check ctr is smaller 2^112, so nothing gets overwritten by setting the indices in inner_psi
+    if ctr >= 1 << 112 {
+        return Err(anyhow_error_and_log(format!(
+            "ctr in psi must be smaller than 2^112 but was {ctr}."
+        )));
+    }
+
     let mut coefs = [Z128::ZERO; F_DEG];
 
     for (i, c) in coefs.iter_mut().enumerate().take(F_DEG) {
         *c = inner_psi(pa, ctr, i as u8);
     }
 
-    ResiduePoly::<Z128> { coefs }
+    Ok(ResiduePoly::<Z128> { coefs })
 }
 
 /// Inner function Psi^(i) that generates bounded randomness for PRSS.next()
@@ -139,26 +153,31 @@ fn inner_psi(pa: &PsiAes, ctr: u128, i: u8) -> Z128 {
 
 /// Function Chi that generates bounded randomness for PRZS.next()
 /// This currently assumes that q = 2^128
-pub(crate) fn chi(pa: &ChiAes, ctr: u128, j: u8) -> ResiduePoly<Z128> {
+pub(crate) fn chi(pa: &ChiAes, ctr: u128, j: u8) -> anyhow::Result<ResiduePoly<Z128>> {
+    // check ctr is smaller 2^104, so nothing gets overwritten by setting the indices in inner_chi
+    if ctr >= 1 << 104 {
+        return Err(anyhow_error_and_log(format!(
+            "ctr in chi must be smaller than 2^104 but was {ctr}."
+        )));
+    }
     let mut coefs = [Z128::ZERO; F_DEG];
 
     for (i, c) in coefs.iter_mut().enumerate().take(F_DEG) {
         *c = inner_chi(pa, ctr, i as u8, j);
     }
 
-    ResiduePoly::<Z128> { coefs }
+    Ok(ResiduePoly::<Z128> { coefs })
 }
 
 /// Inner function Chi^(i) that generates bounded randomness for PRZS.next()
 /// This currently assumes that q is 2^128
 fn inner_chi(pa: &ChiAes, ctr: u128, i: u8, j: u8) -> Z128 {
-    // shift ctr by 8 bits, so we can put j in the LSBs, as described in the NIST doc
-    let mut ctr_bytes = (ctr << 8).to_le_bytes();
+    let mut ctr_bytes = ctr.to_le_bytes();
 
     // pad/truncate ctr value and put v and i in the MSBs, and j in the LSBs
     ctr_bytes[15] = 0; // v - the block counter, currently fixed to zero
     ctr_bytes[14] = i; // i - the dimension index
-    ctr_bytes[0] = j; // j - the threshold index
+    ctr_bytes[13] = j; // j - the threshold index
     let mut to_enc = GenericArray::from(ctr_bytes);
     pa.aes.encrypt_block(&mut to_enc);
     let out = u128::from_le_bytes(to_enc.into());
@@ -190,41 +209,50 @@ mod tests {
 
         let aes_2 = PhiAes::new(&key, SessionId(2));
         assert_ne!(phi(&aes, 0, BD1).unwrap(), phi(&aes_2, 0, BD1).unwrap());
-    }
-
-    #[test]
-    fn test_phi_error() {
-        let key = PrfKey([123_u8; 16]);
-        let aes = PhiAes::new(&key, SessionId(0));
 
         let err_overflow = phi(&aes, 0, 1 << 127).unwrap_err().to_string();
         assert!(err_overflow.contains("Bd1 must be at most 2^126 to not overflow, but is larger"));
 
-        let err_overflow = phi(&aes, 0, 3).unwrap_err().to_string();
-        assert!(err_overflow.contains("Bd1 must be a power of two, but is not."));
+        let err_power_two = phi(&aes, 0, 3).unwrap_err().to_string();
+        assert!(err_power_two.contains("Bd1 must be a power of two, but is not."));
+
+        let err_ctr = phi(&aes, 1 << 123, BD1).unwrap_err().to_string();
+        assert!(err_ctr.contains(
+            "ctr in phi must be smaller than 2^120 but was 10633823966279326983230456482242756608."
+        ));
     }
 
     #[test]
     fn test_psi() {
         let key = PrfKey([23_u8; 16]);
         let aes = PsiAes::new(&key, SessionId(0));
-        assert_ne!(psi(&aes, 0), psi(&aes, 1));
-        assert_eq!(psi(&aes, 0), psi(&aes, 0));
+        assert_ne!(psi(&aes, 0).unwrap(), psi(&aes, 1).unwrap());
+        assert_eq!(psi(&aes, 0).unwrap(), psi(&aes, 0).unwrap());
 
         let aes_2 = PsiAes::new(&key, SessionId(2));
-        assert_ne!(psi(&aes, 0), psi(&aes_2, 0));
+        assert_ne!(psi(&aes, 0).unwrap(), psi(&aes_2, 0).unwrap());
+
+        let err_ctr = psi(&aes, 1 << 123).unwrap_err().to_string();
+        assert!(err_ctr.contains(
+            "ctr in psi must be smaller than 2^112 but was 10633823966279326983230456482242756608."
+        ));
     }
 
     #[test]
     fn test_chi() {
         let key = PrfKey([23_u8; 16]);
         let aes = ChiAes::new(&key, SessionId(0));
-        assert_ne!(chi(&aes, 0, 0), chi(&aes, 1, 0));
-        assert_ne!(chi(&aes, 0, 0), chi(&aes, 0, 1));
-        assert_eq!(chi(&aes, 0, 0), chi(&aes, 0, 0));
+        assert_ne!(chi(&aes, 0, 0).unwrap(), chi(&aes, 1, 0).unwrap());
+        assert_ne!(chi(&aes, 0, 0).unwrap(), chi(&aes, 0, 1).unwrap());
+        assert_eq!(chi(&aes, 0, 0).unwrap(), chi(&aes, 0, 0).unwrap());
 
         let aes_2 = ChiAes::new(&key, SessionId(2));
-        assert_ne!(chi(&aes, 0, 0), chi(&aes_2, 0, 0));
+        assert_ne!(chi(&aes, 0, 0).unwrap(), chi(&aes_2, 0, 0).unwrap());
+
+        let err_ctr = chi(&aes, 1 << 123, 0).unwrap_err().to_string();
+        assert!(err_ctr.contains(
+            "ctr in chi must be smaller than 2^104 but was 10633823966279326983230456482242756608."
+        ));
     }
 
     /// check that all three PRFs cause different encryptions, even when initialized from the same key
@@ -237,7 +265,7 @@ mod tests {
         let phiaes = PhiAes::new(&key, SessionId(0));
 
         // test direct PRF calls
-        assert_ne!(chi(&chiaes, 0, 0), psi(&psiaes, 0));
+        assert_ne!(chi(&chiaes, 0, 0).unwrap(), psi(&psiaes, 0).unwrap());
 
         // initialize identical 128-bit block
         let mut chi_block = GenericArray::from([42u8; 16]);
