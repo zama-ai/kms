@@ -194,8 +194,8 @@ async fn receive_from_all_echo_batch<R: RngCore, B: BaseSessionHandles<R>>(
         receiver,
         &mut jobs,
         echoed_data,
-        session.amount_of_parties() as u32,
-        session.threshold() as u32,
+        session.amount_of_parties(),
+        session.threshold() as usize,
         non_answering_parties,
     )
     .await?;
@@ -228,7 +228,7 @@ async fn internal_process_echos_or_votes(
     receiver: &Role,
     rcv_tasks: &mut JoinSet<Result<(Role, anyhow::Result<RoleValueMap>), Elapsed>>,
     map_data: &mut HashMap<(Role, BroadcastValue), u32>,
-    num_parties: u32,
+    num_parties: usize,
     non_answering_parties: &mut HashSet<Role>,
 ) -> anyhow::Result<()> {
     // Receiving Echo messages one by one
@@ -239,7 +239,7 @@ async fn internal_process_echos_or_votes(
         if let Ok((from_party, data)) = task_out {
             answering_parties.insert(from_party);
             if let Ok(rcv_echo) = data {
-                debug_assert!(rcv_echo.len() <= num_parties as usize);
+                debug_assert!(rcv_echo.len() <= num_parties);
                 // iterate through the echo batched message and check the frequency of each message
                 rcv_echo.iter().for_each(|(role, m)| {
                     let entry = map_data.entry((*role, m.clone())).or_insert(0);
@@ -256,10 +256,10 @@ async fn internal_process_echos_or_votes(
     }
     //Log timeouts
     for party_id in 1..=num_parties {
-        if !answering_parties.contains(&Role::from(party_id as u64))
-            && party_id as usize != receiver.party_id()
+        if !answering_parties.contains(&Role::indexed_by_one(party_id))
+            && party_id != receiver.one_based()
         {
-            non_answering_parties.insert(Role::from(party_id as u64));
+            non_answering_parties.insert(Role::indexed_by_one(party_id));
             tracing::warn!("(Process echos) I am {receiver} haven't heard from {party_id}");
         }
     }
@@ -272,8 +272,8 @@ async fn process_echos(
     receiver: &Role,
     echo_recv_tasks: &mut JoinSet<Result<(Role, anyhow::Result<RoleValueMap>), Elapsed>>,
     echoed_data: &mut HashMap<(Role, BroadcastValue), u32>,
-    num_parties: u32,
-    threshold: u32,
+    num_parties: usize,
+    threshold: usize,
     non_answering_parties: &mut HashSet<Role>,
 ) -> anyhow::Result<HashMap<(Role, BroadcastValue), u32>> {
     let mut registered_votes = HashMap::new();
@@ -289,7 +289,7 @@ async fn process_echos(
 
     //Any entry with at least N-t times is good for a vote
     for ((role, m), nb_entries) in echoed_data.iter() {
-        if nb_entries >= &(num_parties - threshold) {
+        if nb_entries >= &((num_parties - threshold) as u32) {
             registered_votes.insert((*role, m.clone()), 1);
         }
     }
@@ -345,7 +345,7 @@ async fn gather_votes<R: RngCore, B: BaseSessionHandles<R>>(
             sender,
             &mut vote_recv_tasks,
             registered_votes,
-            num_parties as u32,
+            num_parties,
             non_answering_parties,
         )
         .await?;
@@ -605,7 +605,7 @@ mod tests {
                     )
                     .unwrap();
                 let sender_list = sender_parties.clone();
-                if sender_parties.contains(&Role::from(party_no as u64 + 1_u64)) {
+                if sender_parties.contains(&Role::indexed_by_zero(party_no)) {
                     set.spawn(async move {
                         reliable_broadcast(&session, &sender_list, Some(my_data))
                             .await
@@ -635,7 +635,7 @@ mod tests {
 
     #[test]
     fn test_broadcast_all() {
-        let sender_parties = (0..4).map(|x| Role::from(x as u64 + 1_u64)).collect();
+        let sender_parties = (0..4).map(Role::indexed_by_zero).collect();
         let (identities, input_values, results) = legitimate_broadcast(&sender_parties);
 
         // check that we have exactly n bcast outputs, for each party
@@ -647,15 +647,15 @@ mod tests {
         }
 
         // check output from first party, as they are all equal
-        assert_eq!(results[0][&Role(1)], input_values[0]);
-        assert_eq!(results[0][&Role(2)], input_values[1]);
-        assert_eq!(results[0][&Role(3)], input_values[2]);
-        assert_eq!(results[0][&Role(4)], input_values[3]);
+        assert_eq!(results[0][&Role::indexed_by_zero(0)], input_values[0]);
+        assert_eq!(results[0][&Role::indexed_by_zero(1)], input_values[1]);
+        assert_eq!(results[0][&Role::indexed_by_zero(2)], input_values[2]);
+        assert_eq!(results[0][&Role::indexed_by_zero(3)], input_values[3]);
     }
 
     #[test]
     fn test_broadcast_p3() {
-        let sender_parties = vec![Role::from(4_u64)];
+        let sender_parties = vec![Role::indexed_by_zero(3)];
         let (identities, input_values, results) = legitimate_broadcast(&sender_parties);
 
         // check that we have exactly n bcast outputs, for each party
@@ -666,17 +666,17 @@ mod tests {
             assert_eq!(results[0], results[i]);
         }
 
-        assert!(!results[0].contains_key(&Role(1)));
-        assert!(!results[0].contains_key(&Role(2)));
-        assert!(!results[0].contains_key(&Role(3)));
-        assert!(results[0].contains_key(&Role(4)));
+        assert!(!results[0].contains_key(&Role::indexed_by_zero(0)));
+        assert!(!results[0].contains_key(&Role::indexed_by_zero(1)));
+        assert!(!results[0].contains_key(&Role::indexed_by_zero(2)));
+        assert!(results[0].contains_key(&Role::indexed_by_zero(3)));
 
         // check output from first party, as they are all equal
-        assert_eq!(results[0][&Role(4)], input_values[3]);
+        assert_eq!(results[0][&Role::indexed_by_zero(3)], input_values[3]);
     }
     #[test]
     fn test_broadcast_p0_p2() {
-        let sender_parties = vec![Role::from(1_u64), Role::from(3_u64)];
+        let sender_parties = vec![Role::indexed_by_one(1), Role::indexed_by_one(3)];
         let (identities, input_values, results) = legitimate_broadcast(&sender_parties);
         // check that we have exactly n bcast outputs, for each party
         assert_eq!(results.len(), identities.len());
@@ -686,14 +686,15 @@ mod tests {
             assert_eq!(results[0], results[i]);
         }
 
-        assert!(results[0].contains_key(&Role(1)));
-        assert!(!results[0].contains_key(&Role(2)));
-        assert!(results[0].contains_key(&Role(3)));
-        assert!(!results[0].contains_key(&Role(4)));
+        // contains party P1
+        assert!(results[0].contains_key(&Role::indexed_by_one(1)));
+        assert!(!results[0].contains_key(&Role::indexed_by_one(2)));
+        assert!(results[0].contains_key(&Role::indexed_by_one(3)));
+        assert!(!results[0].contains_key(&Role::indexed_by_one(4)));
 
         // check output from first party, as they are all equal
-        assert_eq!(results[0][&Role(1)], input_values[0]);
-        assert_eq!(results[0][&Role(3)], input_values[2]);
+        assert_eq!(results[0][&Role::indexed_by_zero(0)], input_values[0]);
+        assert_eq!(results[0][&Role::indexed_by_zero(2)], input_values[2]);
     }
 
     #[test]
@@ -751,9 +752,9 @@ mod tests {
         }
 
         // check output from first party, as they are all equal
-        assert_eq!(results[0][&Role(2)], input_values[1]);
-        assert_eq!(results[0][&Role(3)], input_values[2]);
-        assert_eq!(results[0][&Role(4)], input_values[3]);
+        assert_eq!(results[0][&Role::indexed_by_zero(1)], input_values[1]);
+        assert_eq!(results[0][&Role::indexed_by_zero(2)], input_values[2]);
+        assert_eq!(results[0][&Role::indexed_by_zero(3)], input_values[3]);
     }
 
     /// Test that the broadcast with disputes ensures that corrupt parties get excluded from the broadcast execution
@@ -771,11 +772,11 @@ mod tests {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
-        let corrupt_role = Role(4);
+        let corrupt_role = Role::indexed_by_one(4);
 
         let mut set = JoinSet::new();
         for (party_id, _) in runtime.identities.iter().enumerate() {
-            if corrupt_role != Role((party_id + 1) as u64) {
+            if corrupt_role != Role::indexed_by_zero(party_id) {
                 let mut session = runtime
                     .large_session_for_player(session_id, party_id)
                     .unwrap();
@@ -785,7 +786,7 @@ mod tests {
                     let res =
                         broadcast_with_corruption::<_, LargeSession>(&mut session, cur_msg).await;
                     // Check no new corruptions are added to the honest parties view
-                    if party_id + 1 != corrupt_role.0 as usize {
+                    if party_id != corrupt_role.zero_based() {
                         assert_eq!(1, session.corrupt_roles().len());
                     }
                     (party_id, res)
@@ -804,17 +805,20 @@ mod tests {
 
         for (cur_role_id, cur_res) in results {
             // Check that we received response from all and corrupt role is Bot
-            if cur_role_id + 1 != corrupt_role.0 as usize {
+            if cur_role_id != corrupt_role.zero_based() {
                 let unwrapped = cur_res.unwrap();
                 assert_eq!(parties, unwrapped.len());
-                for cur_role_id in 1..=parties as u64 {
+                for cur_role_id in 1..=parties {
                     // And that all parties agreed on the messages sent
-                    if cur_role_id != corrupt_role.0 {
-                        assert_eq!(&msg, unwrapped.get(&Role(cur_role_id)).unwrap());
+                    if cur_role_id != corrupt_role.one_based() {
+                        assert_eq!(
+                            &msg,
+                            unwrapped.get(&Role::indexed_by_one(cur_role_id)).unwrap()
+                        );
                     } else {
                         assert_eq!(
                             &BroadcastValue::Bot,
-                            unwrapped.get(&Role(cur_role_id)).unwrap()
+                            unwrapped.get(&Role::indexed_by_one(cur_role_id)).unwrap()
                         );
                     }
                 }
@@ -860,10 +864,10 @@ mod tests {
                 for (other_role, other_identity) in session.role_assignments().iter() {
                     let networking = Arc::clone(session.network());
                     let session_id = session.session_id();
-                    let msg = NetworkValue::Send(vec_vi[other_role.zero_index()].clone());
+                    let msg = NetworkValue::Send(vec_vi[other_role.zero_based()].clone());
                     tracing::debug!(
                         "As malicious sender {my_role}, sending {:?} to {other_role}",
-                        vec_vi[other_role.zero_index()]
+                        vec_vi[other_role.zero_based()]
                     );
                     let other_id = other_identity.clone();
                     if &my_role != other_role {
@@ -909,7 +913,7 @@ mod tests {
         // Communication round 3
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
         // As cheater, voting for something even though I shouldnt
-        registered_votes.insert((Role::from(2), vec_vi.unwrap()[1].clone()), 1);
+        registered_votes.insert((Role::indexed_by_one(2), vec_vi.unwrap()[1].clone()), 1);
         session.network().increase_round_counter().await?;
         let mut casted_vote: HashMap<Role, bool> = session
             .role_assignments()
@@ -1008,14 +1012,17 @@ mod tests {
             // Check that we received response from all the cheater P0 which sould be mapped to Bot
             let unwrapped = cur_res.unwrap();
             assert_eq!(parties, unwrapped.len());
-            for cur_role_id in 1..=parties as u64 {
+            for cur_role_id in 1..=parties {
                 // And that all parties agreed on the messages sent
                 if cur_role_id != 1 {
-                    assert_eq!(&msg, unwrapped.get(&Role(cur_role_id)).unwrap());
+                    assert_eq!(
+                        &msg,
+                        unwrapped.get(&Role::indexed_by_one(cur_role_id)).unwrap()
+                    );
                 } else {
                     assert_eq!(
                         &BroadcastValue::Bot,
-                        unwrapped.get(&Role(cur_role_id)).unwrap()
+                        unwrapped.get(&Role::indexed_by_one(cur_role_id)).unwrap()
                     );
                 }
             }
@@ -1058,12 +1065,12 @@ mod tests {
                     let networking = Arc::clone(session.network());
                     let session_id = session.session_id();
                     let other_id = other_identity.clone();
-                    if &my_role != other_role && other_role.party_id() > 2 {
+                    if &my_role != other_role && other_role.one_based() > 2 {
                         let msg = NetworkValue::Send(vec_vi[1].clone());
                         jobs.spawn(async move {
                             let _ = networking.send(msg, &other_id, &session_id).await;
                         });
-                    } else if other_role.party_id() == 2 {
+                    } else if other_role.one_based() == 2 {
                         let msg = NetworkValue::Send(vec_vi[0].clone());
                         jobs.spawn(async move {
                             let _ = networking.send(msg, &other_id, &session_id).await;
@@ -1102,12 +1109,12 @@ mod tests {
             let networking = Arc::clone(session.network());
             let session_id = session.session_id();
             let other_id = other_identity.clone();
-            if &my_role != other_role && other_role.party_id() > 2 {
+            if &my_role != other_role && other_role.one_based() > 2 {
                 let msg = NetworkValue::EchoBatch(msg_to_others.clone());
                 jobs.spawn(async move {
                     let _ = networking.send(msg, &other_id, &session_id).await;
                 });
-            } else if other_role.party_id() == 2 {
+            } else if other_role.one_based() == 2 {
                 let msg = NetworkValue::EchoBatch(msg_to_p2.clone());
                 jobs.spawn(async move {
                     let _ = networking.send(msg, &other_id, &session_id).await;
@@ -1188,12 +1195,18 @@ mod tests {
             // Check that we received response from all except the cheater P0 which sould be absent from result
             let unwrapped = cur_res.unwrap();
             assert_eq!(parties, unwrapped.len());
-            for cur_role_id in 1..=parties as u64 {
+            for cur_role_id in 1..=parties {
                 // And that all parties agreed on the messages sent
                 if cur_role_id != 1 {
-                    assert_eq!(&msg, unwrapped.get(&Role(cur_role_id)).unwrap());
+                    assert_eq!(
+                        &msg,
+                        unwrapped.get(&Role::indexed_by_one(cur_role_id)).unwrap()
+                    );
                 } else {
-                    assert_eq!(&corrupt_msg[1], unwrapped.get(&Role(cur_role_id)).unwrap());
+                    assert_eq!(
+                        &corrupt_msg[1],
+                        unwrapped.get(&Role::indexed_by_one(cur_role_id)).unwrap()
+                    );
                 }
             }
         }

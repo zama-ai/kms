@@ -50,7 +50,7 @@ fn check_and_unpack_coms(
     for (sender_role, sender_data) in received_coms {
         match sender_data {
             NetworkValue::AgreeRandom(AgreeRandomValue::CommitmentValue(cv)) => {
-                rcv_coms[(sender_role.0 - 1) as usize] = cv.to_vec();
+                rcv_coms[sender_role.zero_based()] = cv.to_vec();
             }
             _ => {
                 return Err(anyhow_error_and_log(format!(
@@ -74,7 +74,7 @@ fn check_and_unpack_keys(
     for (sender_role, sender_data) in received_keys {
         match sender_data {
             NetworkValue::AgreeRandom(AgreeRandomValue::KeyOpenValue(kov)) => {
-                rcv_keys_opens[(sender_role.0 - 1) as usize] = kov.to_vec();
+                rcv_keys_opens[sender_role.zero_based()] = kov.to_vec();
             }
             _ => {
                 return {
@@ -208,14 +208,14 @@ async fn agree_random_communication(
     keys_opens: &[Vec<(PrfKey, Opening)>],
 ) -> anyhow::Result<(Vec<Vec<Commitment>>, Vec<Vec<(PrfKey, Opening)>>)> {
     let num_parties = session.amount_of_parties();
-    let party_id = session.my_role()?.0 as usize;
+    let party_id = session.my_role()?.one_based();
 
     // send commitments to all other parties. Each party gets the commitment for _all_ sets that they are member of at once to avoid multiple comm rounds
     let mut coms_to_send: HashMap<Role, NetworkValue> = HashMap::new();
     for p in 1..=num_parties {
         if p != party_id {
             coms_to_send.insert(
-                Role(p as u64),
+                Role::indexed_by_one(p),
                 NetworkValue::AgreeRandom(AgreeRandomValue::CommitmentValue(coms[p - 1].clone())),
             );
         }
@@ -236,7 +236,7 @@ async fn agree_random_communication(
     for p in 1..=num_parties {
         if p != party_id {
             key_open_to_send.insert(
-                Role(p as u64),
+                Role::indexed_by_one(p),
                 NetworkValue::AgreeRandom(AgreeRandomValue::KeyOpenValue(
                     keys_opens[p - 1].clone(),
                 )),
@@ -260,7 +260,7 @@ async fn agree_random_communication(
 impl AgreeRandom for RealAgreeRandom {
     async fn agree_random(session: &mut BaseSession) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.amount_of_parties();
-        let party_id = session.my_role()?.0 as usize;
+        let party_id = session.my_role()?.one_based();
 
         let mut party_sets = compute_party_sets(session)?;
 
@@ -300,7 +300,7 @@ pub struct RealAgreeRandomWithAbort {}
 impl AgreeRandom for RealAgreeRandomWithAbort {
     async fn agree_random(session: &mut BaseSession) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.amount_of_parties();
-        let party_id = session.my_role()?.0 as usize;
+        let party_id = session.my_role()?.one_based();
 
         let mut party_sets = compute_party_sets(session)?;
 
@@ -376,7 +376,7 @@ pub(crate) fn xor_u8_arr_in_place(arr1: &mut [u8; KEY_BYTE_LEN], arr2: &[u8; KEY
 
 // helper function returns the all the subsets of party IDs of size n-t of which the given party is a member
 fn compute_party_sets(session: &BaseSession) -> anyhow::Result<Vec<Vec<usize>>> {
-    let party_id = session.my_role()?.0 as usize;
+    let party_id = session.my_role()?.one_based();
     let sets = create_sets(session.amount_of_parties(), session.threshold() as usize)
         .into_iter()
         .filter(|aset| aset.contains(&party_id))
@@ -451,7 +451,8 @@ mod tests {
         let mut allkeys: Vec<VecDeque<PrfKey>> = Vec::new();
 
         for p in 1..=num_parties {
-            let sess = get_small_session_for_parties(num_parties, threshold, Role(p as u64));
+            let sess =
+                get_small_session_for_parties(num_parties, threshold, Role::indexed_by_one(p));
 
             let _guard = rt.enter();
             let keys = rt
@@ -504,7 +505,7 @@ mod tests {
         // unpack results into hashmap
         let mut key_hm: HashMap<usize, VecDeque<PrfKey>> = HashMap::new();
         for (role, data) in res {
-            key_hm.insert(role.party_id() - 1, data);
+            key_hm.insert(role.zero_based(), data);
         }
 
         let all_party_sets: Vec<Vec<usize>> = create_sets(num_parties, threshold as usize)
@@ -591,11 +592,11 @@ mod tests {
         let c2 = Commitment([42_u8; COMMITMENT_BYTE_LEN]);
 
         rc.insert(
-            Role(3),
+            Role::indexed_by_one(3),
             NetworkValue::AgreeRandom(AgreeRandomValue::CommitmentValue(vec![c1])),
         );
         rc.insert(
-            Role(1),
+            Role::indexed_by_one(1),
             NetworkValue::AgreeRandom(AgreeRandomValue::CommitmentValue(vec![c2])),
         );
         let r = check_and_unpack_coms(&rc, num_parties).unwrap();
@@ -605,7 +606,7 @@ mod tests {
 
         // Test Error when receiving wrong number of values
         rc.insert(
-            Role(4),
+            Role::indexed_by_one(4),
             NetworkValue::AgreeRandom(AgreeRandomValue::CommitmentValue(vec![c2])),
         );
 
@@ -622,7 +623,7 @@ mod tests {
         num_parties = 2;
         rc = HashMap::new();
         rc.insert(
-            Role(2),
+            Role::indexed_by_one(2),
             NetworkValue::AgreeRandom(AgreeRandomValue::KeyOpenValue(vec![ko])),
         );
 
@@ -633,7 +634,7 @@ mod tests {
 
         // Test Error when receiving Bot
         rc = HashMap::new();
-        rc.insert(Role(1), NetworkValue::Bot);
+        rc.insert(Role::indexed_by_one(1), NetworkValue::Bot);
 
         let r = check_and_unpack_coms(&rc, num_parties)
             .unwrap_err()
@@ -653,11 +654,11 @@ mod tests {
         );
 
         rc.insert(
-            Role(3),
+            Role::indexed_by_one(3),
             NetworkValue::AgreeRandom(AgreeRandomValue::KeyOpenValue(vec![ko1.clone()])),
         );
         rc.insert(
-            Role(1),
+            Role::indexed_by_one(1),
             NetworkValue::AgreeRandom(AgreeRandomValue::KeyOpenValue(vec![ko2.clone()])),
         );
         let r = check_and_unpack_keys(&rc, num_parties).unwrap();
@@ -671,7 +672,7 @@ mod tests {
 
         // Test Error when receiving wrong number of values
         rc.insert(
-            Role(4),
+            Role::indexed_by_one(4),
             NetworkValue::AgreeRandom(AgreeRandomValue::KeyOpenValue(vec![ko2])),
         );
 
@@ -685,7 +686,7 @@ mod tests {
         num_parties = 2;
         rc = HashMap::new();
         rc.insert(
-            Role(2),
+            Role::indexed_by_one(2),
             NetworkValue::AgreeRandom(AgreeRandomValue::CommitmentValue(vec![c])),
         );
 
@@ -696,7 +697,7 @@ mod tests {
 
         // Test Error when receiving Bot
         rc = HashMap::new();
-        rc.insert(Role(1), NetworkValue::Bot);
+        rc.insert(Role::indexed_by_one(1), NetworkValue::Bot);
 
         let r = check_and_unpack_keys(&rc, num_parties)
             .unwrap_err()

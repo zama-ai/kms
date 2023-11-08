@@ -91,7 +91,7 @@ impl ParameterHandles for SessionParameters {
             Some(identity) => Ok(identity.clone()),
             None => Err(anyhow_error_and_log(format!(
                 "Role {} does not exist",
-                role.0
+                role.one_based()
             ))),
         }
     }
@@ -582,19 +582,19 @@ impl DisputeSet {
         // Insert the first pair of disputes
         let disputed_roles = &mut self.disputed_roles;
         let a_disputes = disputed_roles
-            .get_mut((role_a.0 - 1) as usize)
+            .get_mut(role_a.zero_based())
             .ok_or_else(|| anyhow_error_and_log("Role does not exist".to_string()))?;
         let _ = a_disputes.insert(*role_b);
         // Insert the second pair of disputes
         let b_disputes: &mut BTreeSet<Role> = disputed_roles
-            .get_mut((role_b.0 - 1) as usize)
+            .get_mut(role_b.zero_based())
             .ok_or_else(|| anyhow_error_and_log("Role does not exist".to_string()))?;
         let _ = b_disputes.insert(*role_a);
         Ok(())
     }
 
     pub fn get(&self, role: &Role) -> anyhow::Result<&BTreeSet<Role>> {
-        if let Some(cur) = self.disputed_roles.get((role.0 - 1) as usize) {
+        if let Some(cur) = self.disputed_roles.get(role.zero_based()) {
             Ok(cur)
         } else {
             Err(anyhow_error_and_log("Role does not exist".to_string()))
@@ -623,7 +623,8 @@ mod tests {
     #[test]
     fn too_large_threshold() {
         let parties = 3;
-        let params = get_dummy_parameters_for_parties(parties, parties as u8, Role(1));
+        let params =
+            get_dummy_parameters_for_parties(parties, parties as u8, Role::indexed_by_one(1));
         // Same amount of parties and threshold, which is not allowed
         assert!(SessionParameters::new(
             params.threshold(),
@@ -637,9 +638,9 @@ mod tests {
     #[test]
     fn missing_self_identity() {
         let parties = 3;
-        let mut params = get_dummy_parameters_for_parties(parties, 1, Role(1));
+        let mut params = get_dummy_parameters_for_parties(parties, 1, Role::indexed_by_one(1));
         // remove my role
-        params.role_assignments.remove(&Role(1));
+        params.role_assignments.remove(&Role::indexed_by_one(1));
         assert!(SessionParameters::new(
             params.threshold(),
             params.session_id(),
@@ -652,30 +653,33 @@ mod tests {
     #[test]
     fn add_dispute_sunshine() {
         let parties: usize = 4;
-        static DISPUTE_ROLE: Role = Role(2);
-        async fn task(mut session: LargeSession) -> LargeSession {
+        let dispute_role: Role = Role::indexed_by_one(2);
+
+        let mut task = |mut session: LargeSession| async move {
             session
-                .add_dispute_and_bcast(&Vec::from([DISPUTE_ROLE]))
+                .add_dispute_and_bcast(&Vec::from([dispute_role]))
                 .await
                 .unwrap();
             session
-        }
+        };
 
         let results = execute_protocol(parties, 1, &mut task);
 
         assert_eq!(results.len(), parties);
         // check they agree on the disputed party
         for cur_session in results {
-            if cur_session.my_role().unwrap() != DISPUTE_ROLE {
-                for cur_role_id in 1..=parties as u64 {
-                    let cur_dispute_set =
-                        cur_session.disputed_roles.get(&Role(cur_role_id)).unwrap();
+            if cur_session.my_role().unwrap() != dispute_role {
+                for cur_role_id in 1..=parties {
+                    let cur_dispute_set = cur_session
+                        .disputed_roles
+                        .get(&Role::indexed_by_one(cur_role_id))
+                        .unwrap();
                     // Check that the view of each honest party is consistant with all parties in dispute with the same party
-                    if cur_role_id != DISPUTE_ROLE.0 {
+                    if cur_role_id != dispute_role.one_based() {
                         // Check there is only one dispute
                         assert_eq!(1, cur_dispute_set.len());
                         // Check the identity of the dispute
-                        assert!(cur_dispute_set.contains(&DISPUTE_ROLE));
+                        assert!(cur_dispute_set.contains(&dispute_role));
                     } else {
                         // And that the party in dispute is disagreeing with everyone else (except themself)
                         assert_eq!(parties - 1, cur_dispute_set.len());
@@ -693,24 +697,26 @@ mod tests {
     #[test]
     fn party_not_responding() {
         let parties = 4;
-        static NON_RESPONSE_ROLE: Role = Role(2);
-        async fn task(mut session: LargeSession) -> LargeSession {
-            if session.parameters.my_role().unwrap() != NON_RESPONSE_ROLE {
+        let non_response_role: Role = Role::indexed_by_one(2);
+        let mut task = |mut session: LargeSession| async move {
+            if session.parameters.my_role().unwrap() != non_response_role {
                 session.add_dispute_and_bcast(&Vec::new()).await.unwrap();
             }
             session
-        }
+        };
 
         let results = execute_protocol(parties, 1, &mut task);
 
         // Check that the party that did not respond does get marked as a dispute
         for cur_session in results {
-            if cur_session.my_role().unwrap() != NON_RESPONSE_ROLE {
-                for cur_role_id in 1..=parties as u64 {
-                    let cur_dispute_set =
-                        cur_session.disputed_roles.get(&Role(cur_role_id)).unwrap();
+            if cur_session.my_role().unwrap() != non_response_role {
+                for cur_role_id in 1..=parties {
+                    let cur_dispute_set = cur_session
+                        .disputed_roles
+                        .get(&Role::indexed_by_one(cur_role_id))
+                        .unwrap();
                     // Check there is the exepected number of disputes
-                    if cur_role_id as usize != NON_RESPONSE_ROLE.party_id() {
+                    if cur_role_id != non_response_role.one_based() {
                         assert_eq!(1, cur_dispute_set.len());
                     } else {
                         assert_eq!(parties - 1, cur_dispute_set.len());
@@ -755,7 +761,7 @@ mod tests {
             corrupt_roles: HashSet::new(),
             disputed_roles: DisputeSet::new(43),
         };
-        let set_of_other = vec![Role(42)];
+        let set_of_other = vec![Role::indexed_by_one(42)];
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         rt.block_on(async {
@@ -769,7 +775,7 @@ mod tests {
                 .disputed_roles
                 .get(&session.parameters.my_role().unwrap())
                 .unwrap()
-                .contains(&Role(42)));
+                .contains(&Role::indexed_by_one(42)));
         });
     }
 
@@ -777,29 +783,32 @@ mod tests {
     #[test]
     fn too_many_disputes() {
         let parties = 6;
-        static DISPUTE_ROLES: [Role; 2] = [Role(2), Role(3)];
-        async fn task(mut session: LargeSession) -> LargeSession {
+        let dispute_roles: [Role; 2] = [Role::indexed_by_one(2), Role::indexed_by_one(3)];
+        let mut task = |mut session: LargeSession| async move {
             session
-                .add_dispute_and_bcast(&Vec::from(DISPUTE_ROLES))
+                .add_dispute_and_bcast(&Vec::from(dispute_roles))
                 .await
                 .unwrap();
             session
-        }
+        };
 
         let results = execute_protocol(parties, 1, &mut task);
 
         assert_eq!(results.len(), parties);
         // check that honest parties agree on the corrupt party
         for cur_session in results {
-            for cur_role_id in 1..=parties as u64 {
-                let cur_dispute_set = cur_session.disputed_roles.get(&Role(cur_role_id)).unwrap();
+            for cur_role_id in 1..=parties {
+                let cur_dispute_set = cur_session
+                    .disputed_roles
+                    .get(&Role::indexed_by_one(cur_role_id))
+                    .unwrap();
                 // Check that the view of each honest party is consistant with all parties in dispute with the same party
-                if !DISPUTE_ROLES.contains(&Role(cur_role_id)) {
+                if !dispute_roles.contains(&Role::indexed_by_one(cur_role_id)) {
                     // Check there are 2 disputes
                     assert_eq!(2, cur_dispute_set.len());
                     // Check that these are also considered corrupted (since everyone agrees they are in dispute)
-                    assert!(cur_session.corrupt_roles.contains(&DISPUTE_ROLES[0]));
-                    assert!(cur_session.corrupt_roles.contains(&DISPUTE_ROLES[1]));
+                    assert!(cur_session.corrupt_roles.contains(&dispute_roles[0]));
+                    assert!(cur_session.corrupt_roles.contains(&dispute_roles[1]));
                 } else {
                     // And that the party in dispute is disagreeing with everyone else (except themself)
                     assert_eq!(parties - 1, cur_dispute_set.len());
@@ -812,7 +821,7 @@ mod tests {
     /// The expected result is that things go ok and that the calling party will stay on the list of corruptions.
     #[test]
     fn test_i_am_corrupt() {
-        let set_of_self = HashSet::from([Role(1)]);
+        let set_of_self = HashSet::from([Role::indexed_by_one(1)]);
         let mut session = get_large_session();
         session.corrupt_roles = set_of_self.clone();
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -822,7 +831,7 @@ mod tests {
                 .add_dispute_and_bcast(&set_of_self.into_iter().collect_vec())
                 .await;
             assert!(res.is_ok());
-            assert!(session.corrupt_roles.contains(&Role(1)));
+            assert!(session.corrupt_roles.contains(&Role::indexed_by_one(1)));
         });
     }
 }

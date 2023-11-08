@@ -341,7 +341,7 @@ mod tests {
 
         let secrets: HashMap<Role, Vec<ResiduePoly<Z128>>> = (0..nb_parties)
             .map(|party_id| {
-                let role_pi = Role::from_zero(party_id);
+                let role_pi = Role::indexed_by_zero(party_id);
                 (
                     role_pi,
                     (0..nb_secrets)
@@ -380,7 +380,10 @@ mod tests {
             let mut session = runtime
                 .large_session_for_player(session_id, party_nb)
                 .unwrap();
-            let s = secrets.get(&Role::from_zero(party_nb)).unwrap().clone();
+            let s = secrets
+                .get(&Role::indexed_by_zero(party_nb))
+                .unwrap()
+                .clone();
             set.spawn(async move {
                 (
                     party_nb,
@@ -420,7 +423,7 @@ mod tests {
                         results
                             .get(&share_idx)
                             .unwrap()
-                            .get(&Role::from_zero(sender_id))
+                            .get(&Role::indexed_by_zero(sender_id))
                             .unwrap()
                             .share_t[secret_id],
                     );
@@ -429,7 +432,7 @@ mod tests {
                         results
                             .get(&share_idx)
                             .unwrap()
-                            .get(&Role::from_zero(sender_id))
+                            .get(&Role::indexed_by_zero(sender_id))
                             .unwrap()
                             .share_2t[secret_id],
                     );
@@ -440,7 +443,8 @@ mod tests {
                 let shamir_sharing_2t = ShamirGSharings {
                     shares: vec_shares_2t,
                 };
-                let expected_result = secrets.get(&Role::from_zero(sender_id)).unwrap()[secret_id];
+                let expected_result =
+                    secrets.get(&Role::indexed_by_zero(sender_id)).unwrap()[secret_id];
                 assert_eq!(
                     expected_result,
                     shamir_sharing_t.reconstruct(threshold.into()).unwrap()
@@ -522,12 +526,15 @@ mod tests {
             let mut session = runtime
                 .large_session_for_player(session_id, party_nb)
                 .unwrap();
-            let s = secrets.get(&Role::from_zero(party_nb)).unwrap().clone();
+            let s = secrets
+                .get(&Role::indexed_by_zero(party_nb))
+                .unwrap()
+                .clone();
             if party_nb == 1 {
                 malicious_set.spawn(async move {
                     (
                         party_nb,
-                        cheating_strategy_1(&mut session, &s, &[Role::from_zero(2)])
+                        cheating_strategy_1(&mut session, &s, &[Role::indexed_by_zero(2)])
                             .await
                             .unwrap(),
                     )
@@ -545,9 +552,9 @@ mod tests {
                     );
                     assert!(session
                         .disputed_roles()
-                        .get(&Role::from_zero(2))
+                        .get(&Role::indexed_by_zero(2))
                         .unwrap()
-                        .contains(&Role::from_zero(1)));
+                        .contains(&Role::indexed_by_zero(1)));
                     res
                 });
             }
@@ -589,7 +596,7 @@ mod tests {
                             results
                                 .get(&share_idx)
                                 .unwrap()
-                                .get(&Role::from_zero(sender_id))
+                                .get(&Role::indexed_by_zero(sender_id))
                                 .unwrap()
                                 .share_t[secret_id],
                         );
@@ -598,7 +605,7 @@ mod tests {
                             results
                                 .get(&share_idx)
                                 .unwrap()
-                                .get(&Role::from_zero(sender_id))
+                                .get(&Role::indexed_by_zero(sender_id))
                                 .unwrap()
                                 .share_2t[secret_id],
                         );
@@ -610,7 +617,8 @@ mod tests {
                 let shamir_sharing_2t = ShamirGSharings {
                     shares: vec_shares_2t,
                 };
-                let expected_result = secrets.get(&Role::from_zero(sender_id)).unwrap()[secret_id];
+                let expected_result =
+                    secrets.get(&Role::indexed_by_zero(sender_id)).unwrap()[secret_id];
                 assert_eq!(
                     expected_result,
                     shamir_sharing_t
@@ -648,7 +656,10 @@ mod tests {
             let mut session = runtime
                 .large_session_for_player(session_id, party_nb)
                 .unwrap();
-            let s = secrets.get(&Role::from_zero(party_nb)).unwrap().clone();
+            let s = secrets
+                .get(&Role::indexed_by_zero(party_nb))
+                .unwrap()
+                .clone();
             if party_nb == 1 {
                 malicious_set.spawn(async move {
                     (
@@ -656,7 +667,7 @@ mod tests {
                         cheating_strategy_1(
                             &mut session,
                             &s,
-                            &[Role::from_zero(2), Role::from_zero(3)],
+                            &[Role::indexed_by_zero(2), Role::indexed_by_zero(3)],
                         )
                         .await,
                     )
@@ -672,7 +683,7 @@ mod tests {
                         .await
                         .unwrap(),
                     );
-                    assert!(session.corrupt_roles().contains(&Role::from_zero(1)));
+                    assert!(session.corrupt_roles().contains(&Role::indexed_by_zero(1)));
                     res
                 });
             }
@@ -700,7 +711,7 @@ mod tests {
                             results
                                 .get(&share_idx)
                                 .unwrap()
-                                .get(&Role::from_zero(sender_id))
+                                .get(&Role::indexed_by_zero(sender_id))
                                 .unwrap()
                                 .share_t[secret_id],
                         ));
@@ -709,7 +720,7 @@ mod tests {
                             results
                                 .get(&share_idx)
                                 .unwrap()
-                                .get(&Role::from_zero(sender_id))
+                                .get(&Role::indexed_by_zero(sender_id))
                                 .unwrap()
                                 .share_2t[secret_id],
                         ));
@@ -724,7 +735,7 @@ mod tests {
                 let expected_result = if sender_id == 1 {
                     ResiduePoly::<Z128>::ZERO
                 } else {
-                    secrets.get(&Role::from_zero(sender_id)).unwrap()[secret_id]
+                    secrets.get(&Role::indexed_by_zero(sender_id)).unwrap()[secret_id]
                 };
 
                 assert_eq!(

@@ -107,7 +107,7 @@ mod tests {
             let mut session = get_large_session_for_parties(
                 identities.len(),
                 threshold,
-                Role::from_zero(party_nb),
+                Role::indexed_by_zero(party_nb),
             );
             set.spawn(async move {
                 (
@@ -208,7 +208,7 @@ mod tests {
                 .unwrap();
             seeds.push(session.rng.get_seed());
             if party_nb != 0 {
-                session.add_corrupt(Role::from_zero(0)).unwrap();
+                session.add_corrupt(Role::indexed_by_zero(0)).unwrap();
                 set.spawn(async move {
                     (
                         party_nb,
@@ -282,7 +282,7 @@ mod tests {
                             .await
                             .unwrap(),
                     );
-                    assert!(session.corrupt_roles().contains(&Role::from_zero(0)));
+                    assert!(session.corrupt_roles().contains(&Role::indexed_by_zero(0)));
                     res
                 });
             }

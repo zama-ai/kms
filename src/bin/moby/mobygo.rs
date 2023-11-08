@@ -25,7 +25,7 @@ pub struct Cli {
     command: Commands,
 
     #[clap(short)]
-    n_parties: u64,
+    n_parties: usize,
 
     #[structopt(env, long, default_value_t = 50000)]
     port: u16,
@@ -118,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let docker_role_assignments: RoleAssignment = (1..=args.n_parties)
         .map(|party_id| {
-            let role = Role::from(party_id);
+            let role = Role::indexed_by_one(party_id);
             let identity = Identity::from(&format!("p{party_id}:{port}"));
             (role, identity)
         })

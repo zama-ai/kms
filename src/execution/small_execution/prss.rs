@@ -346,7 +346,7 @@ impl PRSSState {
                                 _ => {
                                     session.add_corrupt(*role)?;
                                     tracing::warn!("Party with role {:?} and identity {:?} sent a value of unexpected type",
-                                     role.0, session.role_assignments().get(role));
+                                     role.one_based(), session.role_assignments().get(role));
                                 }
                             }
                         }
@@ -357,7 +357,7 @@ impl PRSSState {
                 _ => {
                     session.add_corrupt(*role)?;
                     tracing::warn!("Party with role {:?} and identity {:?} sent values they shouldn't and is thus malicious",
-                     role.0, session.role_assignments().get(role));
+                     role.one_based(), session.role_assignments().get(role));
                     continue;
                 }
             };
@@ -397,7 +397,7 @@ impl PRSSState {
                     // and they should be marked as corrupt
                     session.add_corrupt(cur_role)?;
                     tracing::warn!("Party with role {:?} and identity {:?} is trying to vote for the same prf value more than once and is thus malicious",
-                         cur_role.0, session.role_assignments().get(&cur_role));
+                         cur_role.one_based(), session.role_assignments().get(&cur_role));
                 }
             }
             None => {
@@ -444,7 +444,7 @@ impl PRSSState {
                         if !roles_votes.contains(cur_role) {
                             session.add_corrupt(*cur_role)?;
                             tracing::warn!("Party with role {:?} and identity {:?} did not vote for the correct prf value and is thus malicious",
-                                 cur_role.0, session.role_assignments().get(cur_role));
+                                 cur_role.one_based(), session.role_assignments().get(cur_role));
                         }
                     }
                 }
@@ -475,8 +475,8 @@ impl PRSSState {
         for cur_role in session.role_assignments().keys() {
             let mut cur_s = ResiduePoly::<Z128>::ZERO;
             for (idx, set) in sets.iter().enumerate() {
-                if set.contains(&(cur_role.0 as usize)) {
-                    let f_a = points[idx][(cur_role.0 - 1) as usize];
+                if set.contains(&cur_role.one_based()) {
+                    let f_a = points[idx][cur_role.zero_based()];
 
                     if let Some(cur_prf_val) = true_prf_vals.get(set) {
                         match mode {
@@ -504,7 +504,7 @@ impl PRSSState {
 
                                 for (idx, cv) in cur_prf_val.iter().enumerate() {
                                     if let (Value::Poly128(val), Some(alpha)) = (cv, &alphas) {
-                                        cur_s += f_a * alpha[(cur_role.0 - 1) as usize][idx] * val;
+                                        cur_s += f_a * alpha[cur_role.zero_based()][idx] * val;
                                     } else {
                                         return Err(anyhow_error_and_log(
                                             "Received a wrong PRZS chi value".to_string(),
@@ -653,7 +653,7 @@ mod tests {
             let sess = get_small_session_for_parties(
                 num_parties,
                 threshold as u8,
-                Role::from(party_id as u64),
+                Role::indexed_by_one(party_id),
             );
             let rt = tokio::runtime::Runtime::new().unwrap();
             let _guard = rt.enter();
@@ -1105,14 +1105,12 @@ mod tests {
             for (received_role, received_poly) in output {
                 // Validate against result of the "next" method
                 assert_eq!(
-                    reference_values
-                        .get((received_role.0 - 1) as usize)
-                        .unwrap(),
+                    reference_values.get(received_role.zero_based()).unwrap(),
                     received_poly
                 );
                 // Perform sanity checks (i.e. that nothing is a trivial element and party IDs are in a valid range)
-                assert!(received_role.0 <= parties as u64);
-                assert!(received_role.0 > 0_u64);
+                assert!(received_role.one_based() <= parties);
+                assert!(received_role.one_based() > 0);
                 assert_ne!(&ResiduePoly::ZERO, received_poly);
                 assert_ne!(&ResiduePoly::ONE, received_poly);
             }
@@ -1176,14 +1174,12 @@ mod tests {
             for (received_role, received_poly) in output {
                 // Validate against result of the "next" method
                 assert_eq!(
-                    reference_values
-                        .get((received_role.0 - 1) as usize)
-                        .unwrap(),
+                    reference_values.get(received_role.zero_based()).unwrap(),
                     received_poly
                 );
                 // Perform sanity checks (i.e. that nothing is a trivial element and party IDs are in a valid range)
-                assert!(received_role.0 <= parties as u64);
-                assert!(received_role.0 > 0_u64);
+                assert!(received_role.one_based() <= parties);
+                assert!(received_role.one_based() > 0);
                 assert_ne!(&ResiduePoly::ZERO, received_poly);
                 assert_ne!(&ResiduePoly::ONE, received_poly);
             }
@@ -1193,20 +1189,35 @@ mod tests {
     #[test]
     fn test_count_votes() {
         let parties = 3;
-        let my_role = Role(3);
+        let my_role = Role::indexed_by_one(3);
         let mut session = get_small_session_for_parties(parties, 0, my_role);
         let set = Vec::from([1, 2, 3]);
         let value = vec![Value::Poly128(ResiduePoly::from_scalar(Wrapping(87654)))];
         let values = Vec::from([(set.clone(), value.clone())]);
         let broadcast_result = HashMap::from([
-            (Role(1), BroadcastValue::PRSSVotes(values.clone())),
-            (Role(2), BroadcastValue::PRSSVotes(values.clone())),
-            (Role(3), BroadcastValue::PRSSVotes(values.clone())),
+            (
+                Role::indexed_by_one(1),
+                BroadcastValue::PRSSVotes(values.clone()),
+            ),
+            (
+                Role::indexed_by_one(2),
+                BroadcastValue::PRSSVotes(values.clone()),
+            ),
+            (
+                Role::indexed_by_one(3),
+                BroadcastValue::PRSSVotes(values.clone()),
+            ),
         ]);
 
         let res = PRSSState::count_votes(&broadcast_result, &mut session).unwrap();
-        let reference_votes =
-            HashMap::from([(value.clone(), HashSet::from([Role(1), Role(2), Role(3)]))]);
+        let reference_votes = HashMap::from([(
+            value.clone(),
+            HashSet::from([
+                Role::indexed_by_one(1),
+                Role::indexed_by_one(2),
+                Role::indexed_by_one(3),
+            ]),
+        )]);
         let reference = HashMap::from([(set.clone(), reference_votes)]);
         assert_eq!(reference, res);
         assert!(session.corrupt_roles().is_empty());
@@ -1217,30 +1228,35 @@ mod tests {
     #[test]
     fn test_count_votes_bad_type() {
         let parties = 3;
-        let my_role = Role(3);
+        let my_role = Role::indexed_by_one(3);
         let mut session = get_small_session_for_parties(parties, 0, my_role);
         let set = Vec::from([1, 2, 3]);
         let value = Value::U64(42);
         let values = Vec::from([(set.clone(), vec![value.clone()])]);
         let broadcast_result = HashMap::from([
-            (Role(1), BroadcastValue::PRSSVotes(values.clone())),
             (
-                Role(2),
+                Role::indexed_by_one(1),
+                BroadcastValue::PRSSVotes(values.clone()),
+            ),
+            (
+                Role::indexed_by_one(2),
                 BroadcastValue::RingValue(Value::Poly128(ResiduePoly::from_scalar(Wrapping(333)))),
             ), // Not the broadcast type
             (
-                Role(3),
+                Role::indexed_by_one(3),
                 BroadcastValue::PRSSVotes(Vec::from([(set.clone(), vec![Value::U64(42)])])),
             ), // Not the right Value type
         ]);
 
         let res = PRSSState::count_votes(&broadcast_result, &mut session).unwrap();
-        let reference_votes =
-            HashMap::from([(vec![value.clone()], HashSet::from([Role(1), Role(3)]))]);
+        let reference_votes = HashMap::from([(
+            vec![value.clone()],
+            HashSet::from([Role::indexed_by_one(1), Role::indexed_by_one(3)]),
+        )]);
         let reference = HashMap::from([(set.clone(), reference_votes)]);
         assert_eq!(reference, res);
-        assert!(session.corrupt_roles().contains(&Role(2)));
-        assert!(session.corrupt_roles().contains(&Role(3)));
+        assert!(session.corrupt_roles().contains(&Role::indexed_by_one(2)));
+        assert!(session.corrupt_roles().contains(&Role::indexed_by_one(3)));
         assert!(logs_contain(
             "sent values they shouldn't and is thus malicious"
         ));
@@ -1251,27 +1267,36 @@ mod tests {
     #[test]
     fn test_add_votes() {
         let parties = 3;
-        let my_role = Role(3);
+        let my_role = Role::indexed_by_one(3);
         let mut session = get_small_session_for_parties(parties, 0, my_role);
         let value = vec![Value::U64(42)];
         let mut votes = HashMap::new();
 
-        PRSSState::add_vote(&mut votes, &value, Role(3), &mut session).unwrap();
+        PRSSState::add_vote(&mut votes, &value, Role::indexed_by_one(3), &mut session).unwrap();
         // Check that the vote of `my_role` was added
-        assert!(votes.get(&value).unwrap().contains(&Role(3)));
+        assert!(votes
+            .get(&value)
+            .unwrap()
+            .contains(&Role::indexed_by_one(3)));
         // And that the corruption set is still empty
         assert!(session.corrupt_roles().is_empty());
 
-        PRSSState::add_vote(&mut votes, &value, Role(2), &mut session).unwrap();
+        PRSSState::add_vote(&mut votes, &value, Role::indexed_by_one(2), &mut session).unwrap();
         // Check that role 2 also gets added
-        assert!(votes.get(&value).unwrap().contains(&Role(2)));
+        assert!(votes
+            .get(&value)
+            .unwrap()
+            .contains(&Role::indexed_by_one(2)));
         // And that the corruption set is still empty
         assert!(session.corrupt_roles().is_empty());
 
         // Check that `my_role` gets added to the set of corruptions after trying to vote a second time
-        PRSSState::add_vote(&mut votes, &value, Role(3), &mut session).unwrap();
-        assert!(votes.get(&value).unwrap().contains(&Role(3)));
-        assert!(session.corrupt_roles().contains(&Role(3)));
+        PRSSState::add_vote(&mut votes, &value, Role::indexed_by_one(3), &mut session).unwrap();
+        assert!(votes
+            .get(&value)
+            .unwrap()
+            .contains(&Role::indexed_by_one(3)));
+        assert!(session.corrupt_roles().contains(&Role::indexed_by_one(3)));
         assert!(logs_contain(
             "is trying to vote for the same prf value more than once and is thus malicious"
         ));
@@ -1283,8 +1308,18 @@ mod tests {
         let value = vec![Value::U64(42)];
         let true_psi_vals = HashMap::from([(&set, &value)]);
         let votes = HashMap::from([
-            (vec![Value::U64(1)], HashSet::from([Role(1), Role(2)])),
-            (value.clone(), HashSet::from([Role(1), Role(2), Role(3)])),
+            (
+                vec![Value::U64(1)],
+                HashSet::from([Role::indexed_by_one(1), Role::indexed_by_one(2)]),
+            ),
+            (
+                value.clone(),
+                HashSet::from([
+                    Role::indexed_by_one(1),
+                    Role::indexed_by_one(2),
+                    Role::indexed_by_one(3),
+                ]),
+            ),
         ]);
         let count = HashMap::from([(set.clone(), votes)]);
         let result = PRSSState::find_winning_prf_values(&count).unwrap();
@@ -1297,15 +1332,18 @@ mod tests {
     fn identify_non_voting_party() {
         let parties = 3;
         let set = Vec::from([1, 2, 3]);
-        let mut session = get_small_session_for_parties(parties, 0, Role(1));
+        let mut session = get_small_session_for_parties(parties, 0, Role::indexed_by_one(1));
         let value = vec![Value::U64(42)];
         let ref_value = value.clone();
         let true_psi_vals = HashMap::from([(&set, &ref_value)]);
         // Party 3 is not voting for the correct value
-        let votes = HashMap::from([(value, HashSet::from([Role(1), Role(2)]))]);
+        let votes = HashMap::from([(
+            value,
+            HashSet::from([Role::indexed_by_one(1), Role::indexed_by_one(2)]),
+        )]);
         let count = HashMap::from([(set.clone(), votes)]);
         PRSSState::handle_non_voting_parties(&true_psi_vals, &count, &mut session).unwrap();
-        assert!(session.corrupt_roles.contains(&Role(3)));
+        assert!(session.corrupt_roles.contains(&Role::indexed_by_one(3)));
         assert!(logs_contain(
             "did not vote for the correct prf value and is thus malicious"
         ));
@@ -1314,8 +1352,8 @@ mod tests {
     #[test]
     fn sunshine_compute_party_shares() {
         let parties = 1;
-        let role = Role(1);
-        let session = get_small_session_for_parties(parties, 0, Role(1));
+        let role = Role::indexed_by_one(1);
+        let session = get_small_session_for_parties(parties, 0, Role::indexed_by_one(1));
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
@@ -1331,7 +1369,7 @@ mod tests {
 
         for set in state.prss_setup.sets {
             // Compute the reference value and use clone to ensure that the same counter is used for all parties
-            let psi_next = cloned_state.prss_next(role.party_id()).unwrap();
+            let psi_next = cloned_state.prss_next(role.one_based()).unwrap();
 
             let local_psi = psi(&set.prfs.unwrap().psi_aes, state.prss_ctr).unwrap();
             let local_psi_value = vec![Value::Poly128(local_psi)];
@@ -1348,7 +1386,7 @@ mod tests {
     #[test]
     fn expected_set_not_present() {
         let parties = 10;
-        let mut session = get_small_session_for_parties(parties, 0, Role(1));
+        let mut session = get_small_session_for_parties(parties, 0, Role::indexed_by_one(1));
         DistributedTestRuntime::add_dummy_prss(&mut session);
         let mut state = session.prss().clone().unwrap();
         // Use an empty hash map to ensure that

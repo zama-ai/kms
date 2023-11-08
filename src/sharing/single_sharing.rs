@@ -5,6 +5,7 @@ use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use rand::RngCore;
 
+use super::local_single_share::LocalSingleShare;
 use crate::{
     algebra::bivariate::{compute_powers, MatrixMul},
     error::error_handler::anyhow_error_and_log,
@@ -12,8 +13,6 @@ use crate::{
     residue_poly::ResiduePoly,
     Sample, Z128,
 };
-
-use super::local_single_share::LocalSingleShare;
 
 #[async_trait]
 pub trait SingleSharing: Send + Default {
@@ -104,7 +103,7 @@ fn format_for_next(
         for j in 0..num_parties {
             vec.push(
                 local_single_shares
-                    .get(&Role::from_zero(j))
+                    .get(&Role::indexed_by_zero(j))
                     .ok_or_else(|| {
                         anyhow_error_and_log(format!("Can not find shares for Party {}", j + 1))
                     })?[i],
@@ -186,7 +185,7 @@ mod tests {
         for value_idx in 0..nb_output {
             let mut res_vec = vec![(0_usize, ResiduePoly::<Z128>::ZERO); parties];
             for (role, _, res) in result.iter() {
-                res_vec[role.zero_index()] = (role.party_id(), res[value_idx]);
+                res_vec[role.zero_based()] = (role.one_based(), res[value_idx]);
             }
             let shamir_sharing = ShamirGSharings { shares: res_vec };
             let res = shamir_sharing.reconstruct(threshold as usize);
@@ -205,7 +204,7 @@ mod tests {
             let lsl_batch_size = 10_usize;
             let extracted_size = session.amount_of_parties() - session.threshold() as usize;
             let mut res = Vec::<ResiduePoly<Z128>>::new();
-            if session.my_role().unwrap().zero_index() != 1 {
+            if session.my_role().unwrap().one_based() != 2 {
                 let mut single_sharing = RealSingleSharing::<TrueLocalSingleShare>::default();
                 single_sharing
                     .init(&mut session, lsl_batch_size)
@@ -214,7 +213,7 @@ mod tests {
                 for _ in 0..lsl_batch_size * extracted_size + 1 {
                     res.push(single_sharing.next(&mut session).await.unwrap());
                 }
-                assert!(session.corrupt_roles.contains(&Role::from_zero(1)));
+                assert!(session.corrupt_roles.contains(&Role::indexed_by_one(2)));
             } else {
                 for _ in 0..lsl_batch_size * extracted_size + 1 {
                     res.push(ResiduePoly::<Z128>::sample(&mut session.rng));
@@ -233,7 +232,7 @@ mod tests {
         for value_idx in 0..nb_output {
             let mut res_vec = vec![(0_usize, ResiduePoly::<Z128>::ZERO); parties];
             for (role, _, res) in result.iter() {
-                res_vec[role.zero_index()] = (role.party_id(), res[value_idx]);
+                res_vec[role.zero_based()] = (role.one_based(), res[value_idx]);
             }
             let shamir_sharing = ShamirGSharings { shares: res_vec };
             //Expect max 1 error coming from dropout

@@ -26,7 +26,7 @@ fn bench_prss(c: &mut Criterion) {
 
     let sid = SessionId::from(42);
 
-    let sess = get_small_session_for_parties(num_parties, threshold, Role(1));
+    let sess = get_small_session_for_parties(num_parties, threshold, Role::indexed_by_one(1));
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
@@ -68,7 +68,7 @@ pub fn get_dummy_parameters_for_parties(
     let mut role_assignment = HashMap::new();
     for i in 0..amount {
         role_assignment.insert(
-            Role::from_zero(i),
+            Role::indexed_by_zero(i),
             Identity(format!("localhost:{}", 5000 + i)),
         );
     }

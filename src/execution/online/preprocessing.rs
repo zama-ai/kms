@@ -85,7 +85,10 @@ macro_rules! impl_dummy_preprocessing {
                 (1..=parties)
                     .map(|xi| {
                         let embedded_xi = ResiduePoly::embed(xi)?;
-                        Ok(Share::new(Role(xi as u64), poly.eval(&embedded_xi)))
+                        Ok(Share::new(
+                            Role::indexed_by_one(xi),
+                            poly.eval(&embedded_xi),
+                        ))
                     })
                     .collect::<anyhow::Result<Vec<_>>>()
             }
@@ -112,7 +115,7 @@ macro_rules! impl_dummy_preprocessing {
                     &mut rng,
                 )?;
                 // Retrive the share of the calling party
-                let a_share = a_vec.get(session.my_role()?.zero_index()).ok_or_else(|| {
+                let a_share = a_vec.get(session.my_role()?.zero_based()).ok_or_else(|| {
                     anyhow_error_and_log("My role index does not exist".to_string())
                 })?;
                 let b = ResiduePoly::<$z>::sample(&mut rng);
@@ -123,7 +126,7 @@ macro_rules! impl_dummy_preprocessing {
                     &mut rng,
                 )?;
                 // Retrive the share of the calling party
-                let b_share = b_vec.get(session.my_role()?.zero_index()).ok_or_else(|| {
+                let b_share = b_vec.get(session.my_role()?.zero_based()).ok_or_else(|| {
                     anyhow_error_and_log("My role index does not exist".to_string())
                 })?;
                 // Compute the c shares based on the true values of a and b
@@ -134,7 +137,7 @@ macro_rules! impl_dummy_preprocessing {
                     &mut rng,
                 )?;
                 // Retrive the share of the calling party
-                let c_share = c_vec.get(session.my_role()?.zero_index()).ok_or_else(|| {
+                let c_share = c_vec.get(session.my_role()?.zero_based()).ok_or_else(|| {
                     anyhow_error_and_log("My role index does not exist".to_string())
                 })?;
                 Ok(Triple::new(*a_share, *b_share, *c_share))
@@ -156,7 +159,7 @@ macro_rules! impl_dummy_preprocessing {
                     &mut rng,
                 )?;
                 let my_share = all_parties_shares
-                    .get(session.my_role()?.zero_index())
+                    .get(session.my_role()?.zero_based())
                     .ok_or_else(|| {
                         anyhow_error_and_log("Party share does not exist".to_string())
                     })?;
@@ -284,7 +287,7 @@ where
     let index_shares = &shares
         .iter()
         .map(|cur_share| IndexedValue {
-            party_id: cur_share.owner().0 as usize,
+            party_id: cur_share.owner().one_based(),
             value: cur_share.value().into(),
         })
         .collect();
@@ -389,7 +392,7 @@ mod tests {
                 #[test]
                 fn [<test_threshold_dummy_share $z:lower>]() {
                     let msg = ResiduePoly::<$z>::from_scalar(Wrapping(42));
-                    let mut session = get_small_session_for_parties(10, 3, Role(1));
+                    let mut session = get_small_session_for_parties(10, 3, Role::indexed_by_one(1));
                     let shares = DummyPreprocessing::<$z>::share(
                         session.amount_of_parties(),
                         session.threshold(),
@@ -422,12 +425,12 @@ mod tests {
                     amount: usize,
                     preps: &mut [DummyPreprocessing::<$z>],
                 ) -> Vec<ResiduePoly<$z>> {
-                    let params = get_dummy_parameters_for_parties(parties, threshold, Role(1));
+                    let params = get_dummy_parameters_for_parties(parties, threshold, Role::indexed_by_one(1));
                     let mut res = Vec::new();
                     let mut temp: Vec<Vec<Share<ResiduePoly<Wrapping<$u>>>>> = Vec::new();
                     for i in 1..=parties {
                         let preprocessing = preps.get_mut(i - 1).unwrap();
-                        let mut session = get_small_session_for_parties(parties, threshold, Role(i as u64));
+                        let mut session = get_small_session_for_parties(parties, threshold, Role::indexed_by_one(i));
                         let cur_rand = preprocessing.next_random_vec(amount, &mut session).unwrap();
                         temp.push(cur_rand);
                     }
@@ -460,14 +463,14 @@ mod tests {
                     amount: usize,
                     preps: &mut [DummyPreprocessing::<$z>],
                 ) -> Vec<(ResiduePoly<$z>, ResiduePoly<$z>, ResiduePoly<$z>)> {
-                    let params = get_dummy_parameters_for_parties(parties, threshold, Role(1));
+                    let params = get_dummy_parameters_for_parties(parties, threshold, Role::indexed_by_one(1));
                     let mut res = Vec::new();
                     let mut a_shares = Vec::new();
                     let mut b_shares = Vec::new();
                     let mut c_shares = Vec::new();
                     for i in 1..=parties {
                         let preprocessing = preps.get_mut(i - 1).unwrap();
-                        let mut session = get_small_session_for_parties(parties, threshold, Role(i as u64));
+                        let mut session = get_small_session_for_parties(parties, threshold, Role::indexed_by_one(i));
                         let cur_trip: Vec<Triple<ResiduePoly<$z>>> =
                             preprocessing.next_triple_vec(amount, &mut session).unwrap();
                         a_shares.push(cur_trip.iter().map(|trip| trip.a).collect_vec());

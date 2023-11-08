@@ -111,12 +111,12 @@ impl Vss for DummyVss {
         })?;
 
         let mut res = vec![ResiduePoly::<Z128>::ZERO; nb_parties];
-        res[own_role.zero_index()] = *secret;
+        res[own_role.zero_based()] = *secret;
         while let Some(v) = jobs.join_next().await {
             let joined_result = v?;
             match joined_result {
                 Ok((party_id, Ok(data))) => {
-                    res[party_id.zero_index()] = data;
+                    res[party_id.zero_based()] = data;
                 }
                 //NOTE: received_data was init with default 0 values,
                 //so no need to do anything when p2p fails
@@ -160,7 +160,7 @@ fn sample_secret<R: RngCore, L: LargeSessionHandles<R>>(
         .role_assignments()
         .keys()
         .map(|r| {
-            let embedded_role = ResiduePoly::embed(r.party_id())?;
+            let embedded_role = ResiduePoly::embed(r.one_based())?;
             let share_in_x = bivariate_poly.partial_y_evaluation(embedded_role)?;
             let share_in_y = bivariate_poly.partial_x_evaluation(embedded_role)?;
             Ok::<(Role, DoublePoly), anyhow::Error>((
@@ -185,7 +185,7 @@ async fn round_1<R: RngCore, L: LargeSessionHandles<R>>(
 
     let mut received_data: Vec<ExchangedDataRound1> =
         vec![ExchangedDataRound1::default(num_parties); num_parties];
-    received_data[my_role.zero_index()].double_poly = map_double_shares[&my_role].clone();
+    received_data[my_role.zero_based()].double_poly = map_double_shares[&my_role].clone();
 
     //For every party, create challenges for every VSS
     let challenges: Vec<Challenge> = (0..num_parties)
@@ -206,7 +206,7 @@ async fn round_1<R: RngCore, L: LargeSessionHandles<R>>(
                 *role,
                 crate::value::NetworkValue::Round1VSS(ExchangedDataRound1 {
                     double_poly: poly.clone(),
-                    challenge: challenges[role.zero_index()].clone(),
+                    challenge: challenges[role.zero_based()].clone(),
                 }),
             )
         })
@@ -223,7 +223,7 @@ async fn round_1<R: RngCore, L: LargeSessionHandles<R>>(
         let joined_result = v?;
         match joined_result {
             Ok((party_id, Ok(data))) => {
-                received_data[party_id.zero_index()] = data;
+                received_data[party_id.zero_based()] = data;
             }
             //NOTE: received_data was init with default 0 values,
             //so no need to do anything when p2p fails
@@ -258,7 +258,7 @@ async fn round_2<R: RngCore, L: LargeSessionHandles<R>>(
             (0..num_parties)
                 .map(|party_idx| {
                     let verification_values =
-                        generate_verification_value(my_role.zero_index(), party_idx, vss_idx, vss)?;
+                        generate_verification_value(my_role.zero_based(), party_idx, vss_idx, vss)?;
                     Ok::<_, anyhow::Error>(verification_values)
                 })
                 .try_collect()
@@ -337,7 +337,7 @@ async fn round_3<R: RngCore, L: LargeSessionHandles<R>>(
 
     for (vss_idx, unhappy_set) in unhappy_vec.iter().enumerate() {
         if unhappy_set.len() > session.threshold() as usize {
-            session.add_corrupt(Role::from(vss_idx as u64 + 1))?;
+            session.add_corrupt(Role::indexed_by_zero(vss_idx))?;
         }
     }
 
@@ -359,10 +359,13 @@ async fn round_4<R: RngCore, L: LargeSessionHandles<R>>(
         .iter()
         .enumerate()
         .filter(|(idx, us)| {
-            !us.contains(&own_role) && !session.corrupt_roles().contains(&Role::from_zero(*idx))
+            !us.contains(&own_role)
+                && !session
+                    .corrupt_roles()
+                    .contains(&Role::indexed_by_zero(*idx))
         })
         .try_for_each(|unhappy_tuple| {
-            let is_sender = own_role.zero_index() == unhappy_tuple.0;
+            let is_sender = own_role.zero_based() == unhappy_tuple.0;
             round_4_conflict_resolution(&mut msg, is_sender, unhappy_tuple, vss)?;
             Ok::<(), anyhow::Error>(())
         })?;
@@ -393,7 +396,7 @@ async fn round_4<R: RngCore, L: LargeSessionHandles<R>>(
         .try_for_each(|unhappy_tuple| {
             if !session
                 .corrupt_roles()
-                .contains(&Role::from_zero(unhappy_tuple.0))
+                .contains(&Role::indexed_by_zero(unhappy_tuple.0))
             {
                 round_4_fix_conflicts(session, unhappy_tuple, &bcast_data)?;
             }
@@ -408,7 +411,7 @@ async fn round_4<R: RngCore, L: LargeSessionHandles<R>>(
         .keys()
         .filter(|sender| !session.corrupt_roles().contains(sender))
         .for_each(|role_sender| {
-            let vss_idx = role_sender.zero_index();
+            let vss_idx = role_sender.zero_based();
             let maybe_eval = bcast_data
                 .get(role_sender)
                 .and_then(|bcast| match bcast {
@@ -428,7 +431,7 @@ async fn round_4<R: RngCore, L: LargeSessionHandles<R>>(
             if let Some(p) = maybe_eval {
                 result[vss_idx] = p;
             } else {
-                result[role_sender.zero_index()] = vss.received_vss[vss_idx]
+                result[role_sender.zero_based()] = vss.received_vss[vss_idx]
                     .double_poly
                     .share_in_x
                     .eval(&ResiduePoly::<Z128>::ZERO);
@@ -529,14 +532,14 @@ fn find_potential_conflicts_received_challenges(
                 .iter()
                 .enumerate()
                 .for_each(|(pj_index, aij)| {
-                    let pj_role = Role::from(pj_index as u64 + 1);
+                    let pj_role = Role::indexed_by_zero(pj_index);
                     //No need to compare with itself
                     if pi_role != &pj_role {
                         //Retrieve all the challenges of Pj and look bji for VSS idx_vss,
                         match verification_map.get(&pj_role) {
                             //If there is value for bji AND aij neq bji add the pair to potential unhappy
                             Some(Some(v)) => {
-                                if v[idx_vss][pi_role.zero_index()].1 != aij.0 {
+                                if v[idx_vss][pi_role.zero_based()].1 != aij.0 {
                                     potentially_unhappy.insert((idx_vss, *pi_role, pj_role));
                                 }
                             }
@@ -556,7 +559,7 @@ fn answer_to_potential_conflicts(
     vss: &Round1VSSOutput,
 ) -> anyhow::Result<BTreeMap<(usize, Role, Role), ResiduePoly<Z128>>> {
     let mut msg = BTreeMap::<(usize, Role, Role), ResiduePoly<Z128>>::new();
-    let my_vss_idx = own_role.zero_index();
+    let my_vss_idx = own_role.zero_based();
     //Can now match over the tuples of keys in potentially unhappy
     //If vss_idx is the one where I'm sender send F(alpha_j, alpha_i)
     //If im a Pi send Fi(alpha_j)
@@ -565,15 +568,15 @@ fn answer_to_potential_conflicts(
     for key_tuple in potentially_unhappy.iter() {
         match key_tuple {
             (vss_idx, pi_role, pj_role) if vss_idx == &my_vss_idx => {
-                let point_x = ResiduePoly::<Z128>::embed(pj_role.party_id())?;
-                let point_y = ResiduePoly::<Z128>::embed(pi_role.party_id())?;
+                let point_x = ResiduePoly::<Z128>::embed(pj_role.one_based())?;
+                let point_y = ResiduePoly::<Z128>::embed(pi_role.one_based())?;
                 msg.insert(
                     (*vss_idx, *pi_role, *pj_role),
                     vss.my_poly.full_evaluation(point_x, point_y)?,
                 );
             }
             (vss_idx, pi_role, pj_role) if pi_role == own_role => {
-                let point = ResiduePoly::<Z128>::embed(pj_role.party_id())?;
+                let point = ResiduePoly::<Z128>::embed(pj_role.one_based())?;
                 msg.insert(
                     (*vss_idx, *pi_role, *pj_role),
                     vss.received_vss[*vss_idx]
@@ -583,7 +586,7 @@ fn answer_to_potential_conflicts(
                 );
             }
             (vss_idx, pi_role, pj_role) if pj_role == own_role => {
-                let point = ResiduePoly::<Z128>::embed(pi_role.party_id())?;
+                let point = ResiduePoly::<Z128>::embed(pi_role.one_based())?;
                 msg.insert(
                     (*vss_idx, *pi_role, *pj_role),
                     vss.received_vss[*vss_idx]
@@ -610,7 +613,7 @@ fn find_real_conflicts(
         let common_key = (*vss_idx, *role_pi, *role_pj);
 
         let sender_resolve = bcast_settlements
-            .get(&Role::from(*vss_idx as u64 + 1))
+            .get(&Role::indexed_by_zero(*vss_idx))
             .and_then(|bcd| match bcd {
                 BroadcastValue::Round3VSS(v) => Some(v),
                 _ => None,
@@ -655,7 +658,7 @@ fn round_4_conflict_resolution(
 ) -> anyhow::Result<()> {
     let (vss_idx, unhappy_set) = unhappy_tuple;
     for role_pi in unhappy_set.iter() {
-        let point_pi = ResiduePoly::<Z128>::embed(role_pi.party_id())?;
+        let point_pi = ResiduePoly::<Z128>::embed(role_pi.one_based())?;
         let msg_entry = match is_sender {
             true => ValueOrPoly::Poly(vss.my_poly.partial_y_evaluation(point_pi)?),
             false => ValueOrPoly::Value(
@@ -676,7 +679,7 @@ fn round_4_fix_conflicts<R: RngCore, L: LargeSessionHandles<R>>(
     bcast_data: &HashMap<Role, BroadcastValue>,
 ) -> anyhow::Result<()> {
     let (vss_idx, unhappy_set) = unhappy_tuple;
-    let sender_role = Role::from_zero(vss_idx);
+    let sender_role = Role::indexed_by_zero(vss_idx);
     let threshold = session.threshold() as usize;
 
     for role_pi in unhappy_set.iter() {
@@ -719,7 +722,7 @@ fn round_4_fix_conflicts<R: RngCore, L: LargeSessionHandles<R>>(
             let sender_poly = maybe_poly.map_or_else(Poly::zero, |p| p.clone());
             let mut votes_against_sender = 0_usize;
             for (role_pj, value_pj) in non_sender_happy_values {
-                let point_pj = ResiduePoly::<Z128>::embed(role_pj.party_id())?;
+                let point_pj = ResiduePoly::<Z128>::embed(role_pj.one_based())?;
                 if value_pj != sender_poly.eval(&point_pj) {
                     votes_against_sender += 1;
                 }
@@ -1001,7 +1004,7 @@ mod tests {
             if party_nb != 0 {
                 set.spawn(async move {
                     let res = (party_nb, RealVss::execute(&mut session, &s).await.unwrap());
-                    assert!(session.corrupt_roles().contains(&Role::from(1)));
+                    assert!(session.corrupt_roles().contains(&Role::indexed_by_one(1)));
                     res
                 });
             }
@@ -1053,7 +1056,7 @@ mod tests {
             .role_assignments()
             .keys()
             .map(|r| {
-                let embedded_role = ResiduePoly::embed(r.party_id()).unwrap();
+                let embedded_role = ResiduePoly::embed(r.one_based()).unwrap();
                 if roles_to_lie_to.contains(r) {
                     (
                         *r,
@@ -1108,7 +1111,7 @@ mod tests {
             let s = secrets[party_nb];
             //Party 0 executes maliciously
             if party_nb == 0 {
-                let roles_to_lie_to = vec![Role::from(2)];
+                let roles_to_lie_to = vec![Role::indexed_by_one(2)];
                 set.spawn(async move {
                     let vss = malicious_round_1(&real_vss, &mut session, &s, &roles_to_lie_to)
                         .await
@@ -1180,7 +1183,7 @@ mod tests {
             let s = secrets[party_nb];
             //Party 0 executes maliciously
             if party_nb == 0 {
-                let roles_to_lie_to = vec![Role::from(2), Role::from(3)];
+                let roles_to_lie_to = vec![Role::indexed_by_one(2), Role::indexed_by_one(3)];
                 malicious_set.spawn(async move {
                     let vss = malicious_round_1(&real_vss, &mut session, &s, &roles_to_lie_to)
                         .await
@@ -1194,7 +1197,7 @@ mod tests {
             } else {
                 set.spawn(async move {
                     let res = (party_nb, RealVss::execute(&mut session, &s).await.unwrap());
-                    assert!(session.corrupt_roles().contains(&Role::from(1)));
+                    assert!(session.corrupt_roles().contains(&Role::indexed_by_one(1)));
                     res
                 });
             }
@@ -1268,7 +1271,7 @@ mod tests {
             } else {
                 set.spawn(async move {
                     let res = (party_nb, RealVss::execute(&mut session, &s).await.unwrap());
-                    assert!(session.corrupt_roles().contains(&Role::from(2)));
+                    assert!(session.corrupt_roles().contains(&Role::indexed_by_one(2)));
                     res
                 });
             }

@@ -66,7 +66,7 @@ pub mod tests {
     pub fn get_dummy_parameters() -> SessionParameters {
         let mut role_assignment = HashMap::new();
         let id = Identity("localhost:5000".to_string());
-        role_assignment.insert(Role(1), id.clone());
+        role_assignment.insert(Role::indexed_by_one(1), id.clone());
         SessionParameters {
             threshold: 0,
             session_id: SessionId(1),
@@ -85,7 +85,7 @@ pub mod tests {
         let mut role_assignment = HashMap::new();
         for i in 0..amount {
             role_assignment.insert(
-                Role::from_zero(i),
+                Role::indexed_by_zero(i),
                 Identity(format!("localhost:{}", 5000 + i)),
             );
         }

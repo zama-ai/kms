@@ -159,7 +159,10 @@ mod tests {
 
     #[test]
     fn op_overload() {
-        let share = Share::new(Role(1), ResiduePoly::<Z128>::from_scalar(Wrapping(42)));
+        let share = Share::new(
+            Role::indexed_by_one(1),
+            ResiduePoly::<Z128>::from_scalar(Wrapping(42)),
+        );
         let one = ResiduePoly::<Z128>::from_scalar(Wrapping(1));
         let two = ResiduePoly::<Z128>::from_scalar(Wrapping(2));
         let res = share * two + one - two;

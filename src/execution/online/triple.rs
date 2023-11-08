@@ -275,9 +275,9 @@ mod tests {
                 fn [<mult_party_drop_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    const BAD_ROLE: Role = Role(4);
-                    async fn task(mut session: SmallSession) -> (Role, Vec<ResiduePoly<$z>>) {
-                        if session.my_role().unwrap() != BAD_ROLE {
+                    let bad_role: Role = Role::indexed_by_one(4);
+                    let mut task = |mut session: SmallSession| async move {
+                        if session.my_role().unwrap() != bad_role {
                             let mut preprocessing = DummyPreprocessing::<$z>::new(42);
                             let cur_a = preprocessing.next_random(&mut session).unwrap();
                             let cur_b = preprocessing.next_random(&mut session).unwrap();
@@ -290,13 +290,13 @@ mod tests {
                         } else {
                             (session.my_role().unwrap(), Vec::new())
                         }
-                    }
+                    };
 
                     let results = execute_protocol_small(parties, threshold, &mut task);
                     assert_eq!(results.len(), parties);
 
                     for (cur_role, cur_res) in results {
-                        if cur_role != BAD_ROLE {
+                        if cur_role != bad_role {
                             let recon_a = cur_res[0];
                             let recon_b = cur_res[1];
                             let recon_c = cur_res[2];
@@ -312,18 +312,18 @@ mod tests {
                 fn [<mult_wrong_value_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    const BAD_ROLE: Role = Role(4);
-                    async fn task(mut session: SmallSession) -> Vec<ResiduePoly<$z>> {
+                    let bad_role: Role = Role::indexed_by_one(4);
+                    let mut task = |mut session: SmallSession| async move {
                         let mut preprocessing = DummyPreprocessing::<$z>::new(42);
                         let cur_a = preprocessing.next_random(&mut session).unwrap();
                         let cur_b = match session.my_role().unwrap() {
-                            BAD_ROLE => Share::new(BAD_ROLE, ResiduePoly::<$z>::from_scalar(Wrapping(42))),
+                            role if role == bad_role  => Share::new(bad_role, ResiduePoly::<$z>::from_scalar(Wrapping(42))),
                             _ => preprocessing.next_random(&mut session).unwrap(),
                         };
                         let trip = preprocessing.next_triple(&mut session).unwrap();
                         let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
                         open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap()
-                    }
+                    };
 
                     let results = execute_protocol_small(parties, threshold, &mut task);
                     assert_eq!(results.len(), parties);

@@ -192,12 +192,12 @@ mod tests {
                 fn [<even_malicious_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    const BAD_PARTY: Role = Role(2);
+                    let bad_party: Role = Role::indexed_by_one(2);
                     const AMOUNT: usize = 100;
-                    async fn task(mut session: SmallSession) -> Vec<ResiduePoly<Wrapping<$u>>> {
+                    let mut task = |mut session: SmallSession| async move {
                         let mut preprocessing = DummyPreprocessing::<$z>::new(42);
                         // Execute with dummy prepreocessing for honest parties and a mock for the bad one
-                        let bits = if session.my_role().unwrap() == BAD_PARTY {
+                        let bits = if session.my_role().unwrap() == bad_party {
                             let mut mock =
                                 MockPreprocessing::<ChaCha20Rng, ResiduePoly<$z>, SmallSession>::new();
                             // Mock the bad party's preprocessing by returning incorrect shares on calls to next_random_vec
@@ -206,7 +206,7 @@ mod tests {
                                     Ok((0..amount)
                                         .map(|i| {
                                             Share::new(
-                                                BAD_PARTY,
+                                                bad_party,
                                                 ResiduePoly::<$z>::from_scalar(Wrapping(i as $u)),
                                             )
                                         })
@@ -223,7 +223,7 @@ mod tests {
                                 .unwrap()
                         };
                         open_list(&bits, &session).await.unwrap()
-                    }
+                    };
 
                     let results = execute_protocol_small(parties, threshold, &mut task);
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);

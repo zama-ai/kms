@@ -135,7 +135,7 @@ impl ChoreoRuntime {
 
             for co in bincode::deserialize::<Vec<ComputationOutputs>>(&response.get_ref().values)? {
                 // only party 1 reconstructs at them moment, so ignore other outputs (they would override party 1 outputs)
-                if role.party_id() == INPUT_PARTY_ID {
+                if role.one_based() == INPUT_PARTY_ID {
                     combined_outputs.extend(co.outputs);
                 }
 
@@ -190,7 +190,7 @@ impl ChoreoRuntime {
         }
 
         for (role, channel) in self.channels.iter() {
-            if role.party_id() == INPUT_PARTY_ID {
+            if role.one_based() == INPUT_PARTY_ID {
                 let mut client = ChoreographyClient::new(channel.clone());
                 let request = PubkeyRequest { epoch_id };
                 let response = client.retrieve_pubkey(request).await?;
@@ -209,7 +209,7 @@ impl ChoreoRuntime {
         let epoch_id = bincode::serialize(epoch_id)?;
 
         for (role, channel) in self.channels.iter() {
-            if role.party_id() == INPUT_PARTY_ID {
+            if role.one_based() == INPUT_PARTY_ID {
                 let mut client = ChoreographyClient::new(channel.clone());
                 let request = PubkeyRequest { epoch_id };
                 let response = client.retrieve_pubkey(request).await?;

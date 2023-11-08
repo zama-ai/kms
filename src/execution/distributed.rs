@@ -57,7 +57,7 @@ impl DistributedTestRuntime {
             .clone()
             .into_iter()
             .enumerate()
-            .map(|(role_id, identity)| (Role(role_id as u64 + 1), identity))
+            .map(|(role_id, identity)| (Role::indexed_by_zero(role_id), identity))
             .collect();
 
         let net_producer = LocalNetworkingProducer::from_ids(&identities);
@@ -103,7 +103,7 @@ impl DistributedTestRuntime {
             .block_on(async {
                 PRSSSetup::party_epoch_init_sess::<DummyAgreeRandom>(
                     session,
-                    session.my_role().unwrap().party_id(),
+                    session.my_role().unwrap().one_based(),
                 )
                 .await
             })
@@ -125,7 +125,7 @@ impl DistributedTestRuntime {
             .as_ref()
             .map(|per_party| per_party[&player_id].clone());
 
-        let own_role = Role(player_id as u64 + 1);
+        let own_role = Role::indexed_by_zero(player_id);
         let identity = self.role_assignments[&own_role].clone();
 
         SmallSession::new(
@@ -146,7 +146,7 @@ impl DistributedTestRuntime {
     ) -> anyhow::Result<LargeSession> {
         let role_assignments = self.role_assignments.clone();
         let net = Arc::clone(&self.user_nets[player_id]);
-        let own_role = Role(player_id as u64 + 1);
+        let own_role = Role::indexed_by_zero(player_id);
         let identity = self.role_assignments[&own_role].clone();
         let parameters =
             SessionParameters::new(self.threshold, session_id, identity, role_assignments)?;
@@ -352,7 +352,7 @@ async fn try_reconstruct_from_shares<P: ParameterHandles>(
                     .zip(vec_collected_shares.iter_mut())
                     .for_each(|(v, collected_shares)| {
                         collected_shares.push(IndexedValue {
-                            party_id: party_id.party_id(),
+                            party_id: party_id.one_based(),
                             value: v,
                         });
                     });
@@ -508,7 +508,7 @@ pub async fn robust_opens_to_all<R: RngCore, B: BaseSessionHandles<R>>(
     let indexed_shares = shares
         .iter()
         .map(|share| IndexedValue {
-            party_id: own_role.party_id(),
+            party_id: own_role.one_based(),
             value: share.clone(),
         })
         .collect_vec();
@@ -540,7 +540,7 @@ pub async fn robust_opens_to<R: RngCore + Send, B: BaseSessionHandles<R>>(
     output_party_id: usize,
 ) -> anyhow::Result<Option<Vec<Value>>> {
     session.network().increase_round_counter().await?;
-    if role.party_id() == output_party_id {
+    if role.one_based() == output_party_id {
         let mut set = JoinSet::new();
 
         //Note: we give the set of corrupt parties as the non_answering_parties argument
@@ -560,7 +560,7 @@ pub async fn robust_opens_to<R: RngCore + Send, B: BaseSessionHandles<R>>(
         let indexed_shares = shares
             .iter()
             .map(|share| IndexedValue {
-                party_id: role.party_id(),
+                party_id: role.one_based(),
                 value: share.clone(),
             })
             .collect_vec();
@@ -570,7 +570,7 @@ pub async fn robust_opens_to<R: RngCore + Send, B: BaseSessionHandles<R>>(
         let threshold = session.threshold() as usize - session.corrupt_roles().len();
         try_reconstruct_from_shares(session, &indexed_shares, degree, threshold, &mut set).await
     } else {
-        let receiver = session.identity_from(&Role(output_party_id as u64))?;
+        let receiver = session.identity_from(&Role::indexed_by_one(output_party_id))?;
 
         let networking = Arc::clone(session.network());
         let shares = shares.to_vec();
@@ -593,7 +593,7 @@ pub async fn robust_input<R: RngCore>(
     input_party_id: usize,
 ) -> anyhow::Result<Value> {
     session.network().increase_round_counter().await?;
-    if role.party_id() == input_party_id {
+    if role.one_based() == input_party_id {
         let threshold = session.threshold();
         let si = {
             match value {
@@ -620,7 +620,7 @@ pub async fn robust_input<R: RngCore>(
                 let roles: Vec<_> = sharings
                     .shares
                     .iter()
-                    .map(|(party_id, _)| Role(*party_id as u64))
+                    .map(|(party_id, _)| Role::indexed_by_one(*party_id))
                     .collect();
                 (values, roles)
             }
@@ -639,7 +639,7 @@ pub async fn robust_input<R: RngCore>(
                 let roles: Vec<_> = sharings
                     .shares
                     .iter()
-                    .map(|(party_id, _)| Role(*party_id as u64))
+                    .map(|(party_id, _)| Role::indexed_by_one(*party_id))
                     .collect();
                 (values, roles)
             }
@@ -654,7 +654,7 @@ pub async fn robust_input<R: RngCore>(
                 let roles: Vec<_> = sharings
                     .shares
                     .iter()
-                    .map(|(party_id, _)| Role(*party_id as u64))
+                    .map(|(party_id, _)| Role::indexed_by_one(*party_id))
                     .collect();
                 (values, roles)
             }
@@ -682,7 +682,7 @@ pub async fn robust_input<R: RngCore>(
         while (set.join_next().await).is_some() {}
         Ok(shamir_sharings[0].clone())
     } else {
-        let sender = session.identity_from(&Role(input_party_id as u64))?;
+        let sender = session.identity_from(&Role::indexed_by_one(input_party_id))?;
 
         let networking = Arc::clone(session.network());
         let session_id = session.session_id();
@@ -706,14 +706,14 @@ pub async fn transfer_pk(
     role: &Role,
     input_party_id: usize,
 ) -> anyhow::Result<PubConKeyPair> {
-    if role.party_id() == input_party_id {
+    if role.one_based() == input_party_id {
         let num_parties = session.amount_of_parties();
         let pkval = NetworkValue::PubKey(Box::new(pubkey.clone()));
 
         let mut set = JoinSet::new();
         for to_send_role in 1..=num_parties {
             if to_send_role != input_party_id {
-                let identity = session.identity_from(&Role(to_send_role as u64))?;
+                let identity = session.identity_from(&Role::indexed_by_one(to_send_role))?;
 
                 let networking = Arc::clone(session.network());
                 let session_id = session.session_id();
@@ -727,7 +727,7 @@ pub async fn transfer_pk(
         while (set.join_next().await).is_some() {}
         Ok(pubkey.clone())
     } else {
-        let receiver = session.identity_from(&Role(input_party_id as u64))?;
+        let receiver = session.identity_from(&Role::indexed_by_one(input_party_id))?;
         let networking = Arc::clone(session.network());
         let session_id = session.session_id();
         let data: NetworkValue =
@@ -812,7 +812,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 let amount_of_blocks = div_ceil(bits_to_encrypt, bits_in_block);
 
                 let mut sharings = Vec::new();
-                if own_role.party_id() == 1 {
+                if own_role.one_based() == 1 {
                     let decomposer = BlockDecomposer::new(si, bits_in_block);
                     for block in decomposer.iter_as::<u64>().take(amount_of_blocks as usize) {
                         let sharing: Value = robust_input::<R>(
@@ -899,7 +899,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
             // Operand 0 => register of the opened value
             // Operand 1 => the amount of bits in the plaintext space of each ciphertext block
             PrintRegPlain => {
-                if own_role.party_id() == INPUT_PARTY_ID {
+                if own_role.one_based() == INPUT_PARTY_ID {
                     let r0 = op
                         .operands
                         .get(0)
@@ -932,7 +932,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
             // Operand 1 => register of the open value to shift
             // Operand 2 => value as unsigned integer indicating how many bits the shift should be
             ShrCI => {
-                if own_role.party_id() == INPUT_PARTY_ID {
+                if own_role.one_based() == INPUT_PARTY_ID {
                     let dest = op
                         .operands
                         .get(0)
@@ -975,7 +975,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
             // Operand 1 => register of the open value to shift
             // Operand 2 => value as unsigned integer indicating how many bits the shift should be
             ShrCIRound => {
-                if own_role.party_id() == INPUT_PARTY_ID {
+                if own_role.one_based() == INPUT_PARTY_ID {
                     let dest = op
                         .operands
                         .get(0)
@@ -1045,7 +1045,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                     // current_block in ciphertext {
                     let block_share = ddec_prep(
                         &mut rng,
-                        own_role.party_id(),
+                        own_role.one_based(),
                         session.threshold() as usize,
                         existing_keyshare,
                         ciphertext.get(i).ok_or_else(|| {
@@ -1084,7 +1084,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                 for i in 0..ciphertext.len() {
                     // current_block in ciphertext {
                     let partial_decryption = prss_prep(
-                        own_role.party_id(),
+                        own_role.one_based(),
                         prss_state,
                         existing_keyshare,
                         ciphertext.get(i).ok_or_else(|| {
@@ -1102,7 +1102,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
             FaultyThreshold => {
                 // all parties up to (including) t manipulate their share
                 // (to simulate a faulty/malicious party in benchmarking)
-                if own_role.party_id() <= session.threshold() as usize {
+                if own_role.one_based() <= session.threshold() as usize {
                     let dest = op
                         .operands
                         .get(0)
@@ -1117,7 +1117,7 @@ pub async fn run_circuit_operations_debug<R: RngCore>(
                         if let Value::Poly128(parsed_share) = current_share {
                             tracing::debug!(
                                 "I'm party {} and I will send bollocks!",
-                                own_role.party_id()
+                                own_role.one_based()
                             );
                             parsed_shares
                                 .push(Value::Poly128(ResiduePoly::<Z128>::ONE + parsed_share));
@@ -1157,7 +1157,7 @@ pub async fn run_decryption(
                 })?;
 
                 prss_prep(
-                    own_role.party_id(),
+                    own_role.one_based(),
                     prss_state,
                     keyshares,
                     &current_ct_block,
@@ -1165,7 +1165,7 @@ pub async fn run_decryption(
             }
             DecryptionMode::Proto2Decrypt => ddec_prep(
                 session.rng(),
-                own_role.party_id(),
+                own_role.one_based(),
                 threshold,
                 keyshares,
                 &current_ct_block,
@@ -1181,7 +1181,7 @@ pub async fn run_decryption(
         )
         .await?;
 
-        if own_role.party_id() == INPUT_PARTY_ID {
+        if own_role.one_based() == INPUT_PARTY_ID {
             let message_mod_bits = keyshares
                 .threshold_lwe_parameters
                 .output_cipher_parameters
@@ -1202,7 +1202,7 @@ pub async fn run_decryption(
             partial_decrypted.push(c);
         }
     }
-    if own_role.party_id() == INPUT_PARTY_ID {
+    if own_role.one_based() == INPUT_PARTY_ID {
         let bits_in_block = keyshares
             .threshold_lwe_parameters
             .output_cipher_parameters
@@ -1232,7 +1232,7 @@ pub async fn initialize_key_material(
 
     let prss_setup = if setup_mode == SetupMode::AllProtos {
         Some(
-            PRSSSetup::party_epoch_init_sess::<DummyAgreeRandom>(session, own_role.party_id())
+            PRSSSetup::party_epoch_init_sess::<DummyAgreeRandom>(session, own_role.one_based())
                 .await?,
         )
     } else {
@@ -1245,7 +1245,7 @@ pub async fn initialize_key_material(
     let mut key_shares = Vec::new();
     // iterate through sk and share each element
     for cur in sk_container {
-        let secret = match own_role.party_id() {
+        let secret = match own_role.one_based() {
             1 => Some(Value::Ring128(Wrapping(cur))),
             _ => None,
         };
@@ -1499,7 +1499,7 @@ mod tests {
                         ShamirGSharings::<Z128>::share(&mut rng, Wrapping(idx), parties, threshold)
                             .unwrap()
                             .shares
-                            .get(session.my_role().unwrap().zero_index())
+                            .get(session.my_role().unwrap().zero_based())
                             .unwrap()
                             .1,
                     )

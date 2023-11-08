@@ -281,8 +281,10 @@ mod tests {
             let msgs = (1..=session.amount_of_parties())
                 .map(|i| {
                     (
-                        Role(i as u64),
-                        NetworkValue::RingValue(Value::U64(session.my_role().unwrap().0)),
+                        Role::indexed_by_one(i),
+                        NetworkValue::RingValue(Value::U64(
+                            session.my_role().unwrap().one_based() as u64
+                        )),
                     )
                 })
                 .collect();
@@ -296,7 +298,7 @@ mod tests {
             for (sender_role, sender_val) in cur_data.unwrap() {
                 assert_eq!(
                     sender_val,
-                    NetworkValue::RingValue(Value::U64(sender_role.0))
+                    NetworkValue::RingValue(Value::U64(sender_role.one_based() as u64))
                 );
             }
         }
@@ -305,44 +307,44 @@ mod tests {
     #[test]
     fn pessimistic_share_multiple_parties() {
         let parties = 5;
-        static DISPUTE_PARTY: Role = Role(5);
-        async fn task(
-            mut session: LargeSession,
-        ) -> (Role, anyhow::Result<HashMap<Role, NetworkValue>>) {
-            for i in 1..=session.amount_of_parties() as u64 {
+        let dispute_party: Role = Role::indexed_by_one(5);
+        let mut task = |mut session: LargeSession| async move {
+            for i in 1..=session.amount_of_parties() {
                 session
                     .disputed_roles
-                    .add(&Role(i), &DISPUTE_PARTY)
+                    .add(&Role::indexed_by_one(i), &dispute_party)
                     .unwrap();
             }
             // Make messages of the sending party's role number
             let msgs = (1..=session.amount_of_parties())
                 .map(|i| {
                     (
-                        Role(i as u64),
-                        NetworkValue::RingValue(Value::U64(session.my_role().unwrap().0)),
+                        Role::indexed_by_one(i),
+                        NetworkValue::RingValue(Value::U64(
+                            session.my_role().unwrap().one_based() as u64
+                        )),
                     )
                 })
                 .collect();
             let exchanged_values = exchange_values(&msgs, NetworkValue::Bot, &mut session).await;
             (session.my_role().unwrap(), exchanged_values)
-        }
+        };
 
         let results = execute_protocol(parties, 1, &mut task);
 
         // Recover the shares shared by for each of the parties and validate that they reconstruct to the shared msg
         for (cur_role, cur_data) in results {
-            if cur_role != DISPUTE_PARTY {
+            if cur_role != dispute_party {
                 // If `cur_role` is an honest party then check what we received
                 assert!(cur_data.is_ok());
                 for (sender_role, sender_val) in cur_data.unwrap() {
                     // Check the shares for all the honest parties with the dispute party (i.e. party 5) is Bot
-                    if sender_role == DISPUTE_PARTY {
+                    if sender_role == dispute_party {
                         assert_eq!(NetworkValue::Bot, sender_val);
                     } else {
                         assert_eq!(
                             sender_val,
-                            NetworkValue::RingValue(Value::U64(sender_role.0))
+                            NetworkValue::RingValue(Value::U64(sender_role.one_based() as u64))
                         );
                     }
                 }
@@ -353,18 +355,18 @@ mod tests {
     #[test]
     fn party_does_not_reply() {
         let parties = 5;
-        static NON_SENDING_PARTY: Role = Role(1);
-        async fn task(
-            mut session: LargeSession,
-        ) -> (LargeSession, anyhow::Result<HashMap<Role, NetworkValue>>) {
+        let non_sending_party: Role = Role::indexed_by_one(1);
+        let mut task = |mut session: LargeSession| async move {
             // Only `non_sending_party` is not executing
-            if session.my_role().unwrap() != NON_SENDING_PARTY {
+            if session.my_role().unwrap() != non_sending_party {
                 // Make messages of the sending party's role number
                 let msgs = (1..=session.amount_of_parties())
                     .map(|i| {
                         (
-                            Role(i as u64),
-                            NetworkValue::RingValue(Value::U64(session.my_role().unwrap().0)),
+                            Role::indexed_by_one(i),
+                            NetworkValue::RingValue(Value::U64(
+                                session.my_role().unwrap().one_based() as u64,
+                            )),
                         )
                     })
                     .collect();
@@ -375,12 +377,12 @@ mod tests {
             } else {
                 (session, Ok(HashMap::new()))
             }
-        }
+        };
 
         let results = execute_protocol(parties, 1, &mut task);
 
         for (cur_session, cur_data) in results {
-            if cur_session.my_role().unwrap() != NON_SENDING_PARTY {
+            if cur_session.my_role().unwrap() != non_sending_party {
                 // If the current role is an honest party then check what we received
                 assert!(cur_data.is_ok());
                 // Check that the non-sending party is in the dispute set
@@ -396,18 +398,18 @@ mod tests {
                     .disputed_roles
                     .get(&cur_session.my_role().unwrap())
                     .unwrap()
-                    .contains(&NON_SENDING_PARTY));
+                    .contains(&non_sending_party));
                 // And has also been added to the set of corrupt parties (since none of the parties received anything)
                 assert_eq!(1, cur_session.corrupt_roles.len());
-                assert!(cur_session.corrupt_roles.contains(&NON_SENDING_PARTY));
+                assert!(cur_session.corrupt_roles.contains(&non_sending_party));
                 for (sender_role, sender_val) in cur_data.unwrap() {
                     // Check the shares for all the honest parties with the `non_sending_party` (i.e. party 1) is Bot
-                    if sender_role == NON_SENDING_PARTY {
+                    if sender_role == non_sending_party {
                         assert_eq!(NetworkValue::Bot, sender_val);
                     } else {
                         assert_eq!(
                             sender_val,
-                            NetworkValue::RingValue(Value::U64(sender_role.0))
+                            NetworkValue::RingValue(Value::U64(sender_role.one_based() as u64))
                         );
                     }
                 }

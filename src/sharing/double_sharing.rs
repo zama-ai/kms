@@ -113,7 +113,7 @@ fn format_for_next(
         let mut vec_2t = Vec::with_capacity(num_parties);
         for j in 0..num_parties {
             let double_share_j = local_double_shares
-                .get(&Role::from_zero(j))
+                .get(&Role::indexed_by_zero(j))
                 .ok_or_else(|| {
                     anyhow_error_and_log(format!("Can not find shares for Party {}", j + 1))
                 })?;
@@ -194,8 +194,8 @@ mod tests {
             let mut res_vec_t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); parties];
             let mut res_vec_2t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); parties];
             for (role, _, res) in result.iter() {
-                res_vec_t[role.zero_index()] = (role.party_id(), res[value_idx].degree_t);
-                res_vec_2t[role.zero_index()] = (role.party_id(), res[value_idx].degree_2t);
+                res_vec_t[role.zero_based()] = (role.one_based(), res[value_idx].degree_t);
+                res_vec_2t[role.zero_based()] = (role.one_based(), res[value_idx].degree_2t);
             }
             let shamir_sharing_t = ShamirGSharings { shares: res_vec_t };
             let shamir_sharing_2t = ShamirGSharings { shares: res_vec_2t };
@@ -216,7 +216,7 @@ mod tests {
             let ldl_batch_size = 10_usize;
             let extracted_size = session.amount_of_parties() - session.threshold() as usize;
             let mut res = Vec::<DoubleShare>::new();
-            if session.my_role().unwrap().zero_index() != 1 {
+            if session.my_role().unwrap().zero_based() != 1 {
                 let mut double_sharing = RealDoubleSharing::<TrueLocalDoubleShare>::default();
                 double_sharing
                     .init(&mut session, ldl_batch_size)
@@ -225,7 +225,7 @@ mod tests {
                 for _ in 0..ldl_batch_size * extracted_size + 1 {
                     res.push(double_sharing.next(&mut session).await.unwrap());
                 }
-                assert!(session.corrupt_roles.contains(&Role::from_zero(1)));
+                assert!(session.corrupt_roles.contains(&Role::indexed_by_zero(1)));
             } else {
                 for _ in 0..ldl_batch_size * extracted_size + 1 {
                     res.push(DoubleShare {
@@ -248,8 +248,8 @@ mod tests {
             let mut res_vec_t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); parties];
             let mut res_vec_2t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); parties];
             for (role, _, res) in result.iter() {
-                res_vec_t[role.zero_index()] = (role.party_id(), res[value_idx].degree_t);
-                res_vec_2t[role.zero_index()] = (role.party_id(), res[value_idx].degree_2t);
+                res_vec_t[role.zero_based()] = (role.one_based(), res[value_idx].degree_t);
+                res_vec_2t[role.zero_based()] = (role.one_based(), res[value_idx].degree_2t);
             }
             //Remove corrupt party's share
             res_vec_2t.remove(1);

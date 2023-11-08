@@ -70,7 +70,7 @@ fn compute_puncture_idx<R: RngCore, L: LargeSessionHandles<R>>(
             if session.corrupt_roles().contains(id) {
                 None
             } else {
-                Some(id.0 as usize)
+                Some(id.one_based())
             }
         })
         .collect())
@@ -141,7 +141,7 @@ impl ShareDispute for RealShareDispute {
                 .zip(polypoints_2t.into_iter())
                 .enumerate()
             {
-                let curr_role = Role::from_zero(role_id);
+                let curr_role = Role::indexed_by_zero(role_id);
                 match polypoints_map.get_mut(&curr_role) {
                     Some(NetworkValue::VecPairRingValue(v)) => {
                         v.push((Value::Poly128(polypoint_t), Value::Poly128(polypoint_2t)))
@@ -276,7 +276,7 @@ impl ShareDispute for RealShareDispute {
         let mut polypoints_map: HashMap<Role, NetworkValue> = HashMap::new();
         for polypoints in vec_polypoints.into_iter() {
             for (role_id, polypoint) in polypoints.into_iter().enumerate() {
-                let curr_role = Role::from_zero(role_id);
+                let curr_role = Role::indexed_by_zero(role_id);
                 match polypoints_map.get_mut(&curr_role) {
                     Some(NetworkValue::VecRingValue(v)) => v.push(Value::Poly128(polypoint)),
                     None => {
@@ -398,7 +398,7 @@ pub async fn share_w_dispute(
         let dispute_ids = session
             .my_disputes()?
             .iter()
-            .map(|id| id.0 as usize)
+            .map(|id| id.one_based())
             .collect();
 
         interpolate_poly_w_punctures(
@@ -414,7 +414,7 @@ pub async fn share_w_dispute(
         .enumerate()
         .map(|(i, p)| {
             (
-                Role((i + 1) as u64),
+                Role::indexed_by_zero(i),
                 NetworkValue::RingValue(Value::Poly128(*p)),
             )
         })
@@ -561,7 +561,7 @@ mod tests {
 
             assert!(share.is_ok());
             // Since we only have one party we assume the result is just a constant which is exactly the message given as input
-            let shared_val = *share.unwrap().get(&Role(1)).unwrap();
+            let shared_val = *share.unwrap().get(&Role::indexed_by_one(1)).unwrap();
             assert_eq!(msg, shared_val.coefs[0]);
             shared_val.coefs[1..]
                 .iter()
@@ -584,7 +584,7 @@ mod tests {
         let mut set = JoinSet::new();
         for (party_no, _id) in identities.iter().cloned().enumerate() {
             let num_parties = identities.len();
-            let own_role = Role::from(party_no as u64 + 1);
+            let own_role = Role::indexed_by_zero(party_no);
             let mut session = test_runtime
                 .large_session_for_player(session_id, party_no)
                 .unwrap();
@@ -620,9 +620,9 @@ mod tests {
                 let shared_val = cur_data
                     .as_ref()
                     .unwrap()
-                    .get(&Role((received_from_role + 1) as u64))
+                    .get(&Role::indexed_by_zero(received_from_role))
                     .unwrap();
-                poly_points.push((cur_role.0 as usize, *shared_val));
+                poly_points.push((cur_role.one_based(), *shared_val));
             }
             // Each party shares the same msg
             let sham = ShamirGSharings::<Z128> {
@@ -640,10 +640,12 @@ mod tests {
         let identities = generate_identities(5);
         let threshold = 3;
         let mut dispute_roles = DisputeSet::new(identities.len());
-        let dispute_party = Role(1);
+        let dispute_party = Role::indexed_by_one(1);
         // Party 1 is in dispute
-        for i in 1..=identities.len() as u64 {
-            dispute_roles.add(&Role(i), &dispute_party).unwrap();
+        for i in 1..=identities.len() {
+            dispute_roles
+                .add(&Role::indexed_by_one(i), &dispute_party)
+                .unwrap();
         }
 
         let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
@@ -654,7 +656,7 @@ mod tests {
         let mut set = JoinSet::new();
         for (party_no, _id) in identities.iter().cloned().enumerate() {
             let num_parties = identities.len();
-            let own_role = Role::from(party_no as u64 + 1);
+            let own_role = Role::indexed_by_zero(party_no);
             let mut session = test_runtime
                 .large_session_for_player(session_id, party_no)
                 .unwrap();
@@ -692,7 +694,7 @@ mod tests {
 
         assert_eq!(results.len(), identities.len());
         // Recover the shares shared by for each of the parties and validate that they reconstruct to the shared msg
-        for received_from_role in 1..identities.len() as u64 {
+        for received_from_role in 1..identities.len() {
             let mut poly_points = Vec::new();
             for (executing_role, cur_data) in &results {
                 if executing_role == &dispute_party {
@@ -705,18 +707,18 @@ mod tests {
                     let shared_val = cur_data
                         .as_ref()
                         .unwrap()
-                        .get(&Role(received_from_role))
+                        .get(&Role::indexed_by_one(received_from_role))
                         .unwrap();
                     // Check the shares for all the honest parties with the disputed party (i.e. party 1) is 0
-                    if received_from_role == dispute_party.0 {
+                    if received_from_role == dispute_party.one_based() {
                         assert_eq!(ResiduePoly::ZERO, *shared_val);
                     } else {
                         assert_ne!(ResiduePoly::ZERO, *shared_val);
                     }
-                    poly_points.push((executing_role.0 as usize, *shared_val));
+                    poly_points.push((executing_role.one_based(), *shared_val));
                 }
             }
-            if received_from_role != dispute_party.0 {
+            if received_from_role != dispute_party.one_based() {
                 // Each honest party shared the same msg
                 let sham = ShamirGSharings::<Z128> {
                     shares: poly_points,
@@ -762,7 +764,7 @@ mod tests {
             let secret: Vec<ResiduePoly<Z128>> = (0..=4)
                 .map(|v| {
                     ResiduePoly::<Z128>::from_scalar(Wrapping::<u128>(
-                        (v + own_role.zero_index() * 10).try_into().unwrap(),
+                        (v + own_role.zero_based() * 10).try_into().unwrap(),
                     ))
                 })
                 .collect();
@@ -783,8 +785,8 @@ mod tests {
             let (rcv_res_pi, _sent_res_pi) = (&res_pi.all_shares, &res_pi.shares_own_secret);
             for (role_pj, data_vec) in rcv_res_pi.iter() {
                 for (idx_data, data) in data_vec.iter().enumerate() {
-                    vec_of_vec_of_shares[role_pj.zero_index()][idx_data][role_pi.zero_index()] =
-                        (role_pi.party_id(), *data);
+                    vec_of_vec_of_shares[role_pj.zero_based()][idx_data][role_pi.zero_based()] =
+                        (role_pi.one_based(), *data);
                 }
             }
             for (role_pj, res_pj) in results.iter() {
@@ -824,7 +826,7 @@ mod tests {
             let secret: Vec<ResiduePoly<Z128>> = (0..=4)
                 .map(|v| {
                     ResiduePoly::<Z128>::from_scalar(Wrapping::<u128>(
-                        (v + own_role.zero_index() * 10).try_into().unwrap(),
+                        (v + own_role.zero_based() * 10).try_into().unwrap(),
                     ))
                 })
                 .collect();
@@ -851,14 +853,14 @@ mod tests {
                 (&res_pi_2t.all_shares, &res_pi_2t.shares_own_secret);
             for (role_pj, data_vec) in rcv_res_pi_t.iter() {
                 for (idx_data, data) in data_vec.iter().enumerate() {
-                    vec_of_vec_of_shares_t[role_pj.zero_index()][idx_data][role_pi.zero_index()] =
-                        (role_pi.party_id(), *data);
+                    vec_of_vec_of_shares_t[role_pj.zero_based()][idx_data][role_pi.zero_based()] =
+                        (role_pi.one_based(), *data);
                 }
             }
             for (role_pj, data_vec) in rcv_res_pi_2t.iter() {
                 for (idx_data, data) in data_vec.iter().enumerate() {
-                    vec_of_vec_of_shares_2t[role_pj.zero_index()][idx_data][role_pi.zero_index()] =
-                        (role_pi.party_id(), *data);
+                    vec_of_vec_of_shares_2t[role_pj.zero_based()][idx_data][role_pi.zero_based()] =
+                        (role_pi.one_based(), *data);
                 }
             }
             for (role_pj, res_pj) in results.iter() {
@@ -918,11 +920,11 @@ mod tests {
             let secret: Vec<ResiduePoly<Z128>> = (0..=4)
                 .map(|v| {
                     ResiduePoly::<Z128>::from_scalar(Wrapping::<u128>(
-                        (v + own_role.zero_index() * 10).try_into().unwrap(),
+                        (v + own_role.zero_based() * 10).try_into().unwrap(),
                     ))
                 })
                 .collect();
-            if own_role.zero_index() != 0 {
+            if own_role.zero_based() != 0 {
                 (
                     own_role,
                     RealShareDispute::execute(&mut session, &secret).await,
@@ -946,12 +948,12 @@ mod tests {
             let (rcv_res_pi, _sent_res_pi) = (&res_pi.all_shares, &res_pi.shares_own_secret);
             for (role_pj, data_vec) in rcv_res_pi.iter() {
                 for (idx_data, data) in data_vec.iter().enumerate() {
-                    vec_of_vec_of_shares[role_pj.zero_index()][idx_data][role_pi.zero_index()] =
-                        (role_pi.party_id(), *data);
+                    vec_of_vec_of_shares[role_pj.zero_based()][idx_data][role_pi.zero_based()] =
+                        (role_pi.one_based(), *data);
                 }
             }
             for (role_pj, res_pj) in results.iter() {
-                if role_pj.zero_index() == 0 {
+                if role_pj.zero_based() == 0 {
                     assert_eq!(
                         rcv_res_pi.get(role_pj).unwrap(),
                         &vec![ResiduePoly::<Z128>::ZERO; 5]
@@ -998,11 +1000,11 @@ mod tests {
             let secret: Vec<ResiduePoly<Z128>> = (0..=4)
                 .map(|v| {
                     ResiduePoly::<Z128>::from_scalar(Wrapping::<u128>(
-                        (v + own_role.zero_index() * 10).try_into().unwrap(),
+                        (v + own_role.zero_based() * 10).try_into().unwrap(),
                     ))
                 })
                 .collect();
-            if own_role.zero_index() != 0 {
+            if own_role.zero_based() != 0 {
                 (
                     own_role,
                     RealShareDispute::execute(&mut session, &secret).await,
@@ -1023,7 +1025,7 @@ mod tests {
                 let mut polypoints_map: HashMap<Role, NetworkValue> = HashMap::new();
                 for polypoints in vec_polypoints.into_iter() {
                     for (role_id, polypoint) in polypoints.into_iter().enumerate() {
-                        let curr_role = Role::from_zero(role_id);
+                        let curr_role = Role::indexed_by_zero(role_id);
                         match polypoints_map.get_mut(&curr_role) {
                             Some(NetworkValue::VecRingValue(v)) => {
                                 v.push(Value::Ring128(polypoint))
@@ -1060,12 +1062,12 @@ mod tests {
             let (rcv_res_pi, _sent_res_pi) = (&res_pi.all_shares, &res_pi.shares_own_secret);
             for (role_pj, data_vec) in rcv_res_pi.iter() {
                 for (idx_data, data) in data_vec.iter().enumerate() {
-                    vec_of_vec_of_shares[role_pj.zero_index()][idx_data][role_pi.zero_index()] =
-                        (role_pi.party_id(), *data);
+                    vec_of_vec_of_shares[role_pj.zero_based()][idx_data][role_pi.zero_based()] =
+                        (role_pi.one_based(), *data);
                 }
             }
             for (role_pj, res_pj) in results.iter() {
-                if role_pj.zero_index() == 0 {
+                if role_pj.zero_based() == 0 {
                     assert_eq!(
                         rcv_res_pi.get(role_pj).unwrap(),
                         &vec![ResiduePoly::<Z128>::ZERO; 5]

@@ -290,9 +290,9 @@ mod tests {
             for (_, res) in result.iter() {
                 let curr_triple = res.get(idx).unwrap();
                 let (x, y, z) = curr_triple.take();
-                res_vec_x.push((x.owner().party_id(), x.value()));
-                res_vec_y.push((y.owner().party_id(), y.value()));
-                res_vec_z.push((z.owner().party_id(), z.value()));
+                res_vec_x.push((x.owner().one_based(), x.value()));
+                res_vec_y.push((y.owner().one_based(), y.value()));
+                res_vec_z.push((z.owner().one_based(), z.value()));
             }
 
             let shamir_x = ShamirGSharings { shares: res_vec_x };
@@ -319,7 +319,7 @@ mod tests {
         let threshold = 1;
 
         async fn task(mut session: LargeSession) -> (Role, Vec<Triple<ResiduePoly<Z128>>>) {
-            if session.my_role().unwrap().zero_index() != 1 {
+            if session.my_role().unwrap().zero_based() != 1 {
                 let mut large_preproc =
                     LargePreprocessing::<TrueSingleSharing, TrueDoubleSharing>::init(
                         &mut session,
@@ -332,7 +332,7 @@ mod tests {
                     res.push(large_preproc.next_triple(&mut session).unwrap());
                 }
                 //assert P2 is corrupt
-                assert!(session.corrupt_roles.contains(&Role::from_zero(1)));
+                assert!(session.corrupt_roles.contains(&Role::indexed_by_zero(1)));
 
                 (session.my_role().unwrap(), res)
             } else {
@@ -348,12 +348,12 @@ mod tests {
             let mut res_vec_y = Vec::new();
             let mut res_vec_z = Vec::new();
             for (role, res) in result.iter() {
-                if role.zero_index() != 1 {
+                if role.zero_based() != 1 {
                     let curr_triple = res.get(idx).unwrap();
                     let (x, y, z) = curr_triple.take();
-                    res_vec_x.push((x.owner().party_id(), x.value()));
-                    res_vec_y.push((y.owner().party_id(), y.value()));
-                    res_vec_z.push((z.owner().party_id(), z.value()));
+                    res_vec_x.push((x.owner().one_based(), x.value()));
+                    res_vec_y.push((y.owner().one_based(), y.value()));
+                    res_vec_z.push((z.owner().one_based(), z.value()));
                 }
             }
 

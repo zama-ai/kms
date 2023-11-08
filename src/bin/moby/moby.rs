@@ -11,7 +11,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 pub struct Opt {
     #[structopt(short)]
     /// Party ID (1...=n)
-    party_id: u64,
+    party_id: usize,
 
     #[structopt(env, long, default_value = "50000")]
     /// Port to use for gRPC server, Moby in docker uses 50000 as dafault and is mapped via docker compose
@@ -19,7 +19,7 @@ pub struct Opt {
 
     #[structopt(env, short, default_value = "10")]
     /// Total number of parties in the moby cluster
-    n_parties: u64,
+    n_parties: usize,
 }
 
 fn init_tracer() {
@@ -39,14 +39,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let docker_static_endpoints: RoleAssignment = (1..=opt.n_parties)
         .map(|party_id| {
-            let role = Role::from(party_id);
+            let role = Role::indexed_by_one(party_id);
             let identity = Identity::from(&format!("p{party_id}:{}", opt.port));
             (role, identity)
         })
         .collect();
 
     let own_identity = docker_static_endpoints
-        .get(&Role::from(opt.party_id))
+        .get(&Role::indexed_by_one(opt.party_id))
         .unwrap()
         .clone();
 

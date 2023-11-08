@@ -2,27 +2,31 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Role/party ID of a party.
+/// Role/party ID of a party (1...N)
 #[derive(
     Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Serialize, Deserialize,
 )]
-pub struct Role(pub u64);
-
-impl From<u64> for Role {
-    fn from(s: u64) -> Self {
-        Role(s)
-    }
-}
+pub struct Role(u64);
 
 impl Role {
-    pub fn party_id(&self) -> usize {
+    /// Create Role from a 1..N indexing
+    pub fn indexed_by_one(x: usize) -> Self {
+        Role(x as u64)
+    }
+
+    /// Create Role from a 0..N-1 indexing
+    pub fn indexed_by_zero(x: usize) -> Self {
+        Role(x as u64 + 1_u64)
+    }
+
+    /// Retrieve index of Role considering that indexing starts from 1.
+    pub fn one_based(&self) -> usize {
         self.0 as usize
     }
-    pub fn zero_index(&self) -> usize {
+
+    /// Retrieve index of Role considering that indexing starts from 0.
+    pub fn zero_based(&self) -> usize {
         self.0 as usize - 1
-    }
-    pub fn from_zero(s: usize) -> Self {
-        Role(s as u64 + 1)
     }
 }
 

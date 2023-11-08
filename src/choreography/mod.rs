@@ -30,7 +30,7 @@ pub struct SecurityConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct RoleConfig {
-    pub id: u64,
+    pub id: usize,
     pub identity: String,
 }
 
@@ -50,7 +50,7 @@ pub fn parse_session_config_file_with_computation(
         .roles
         .iter()
         .map(|role_config| {
-            let role = Role::from(role_config.id);
+            let role = Role::indexed_by_one(role_config.id);
             let identity = Identity::from(&role_config.identity);
             (role, identity)
         })
