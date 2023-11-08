@@ -14,6 +14,7 @@ pub mod random;
 pub mod reencryption;
 pub mod session;
 pub mod large_execution {
+    pub mod offline;
     pub mod share_dispute;
 }
 pub mod online {

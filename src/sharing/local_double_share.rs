@@ -35,7 +35,7 @@ pub struct DoubleShares {
 }
 
 #[async_trait]
-pub trait LocalDoubleShare: Send {
+pub trait LocalDoubleShare: Send + Default {
     async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
         session: &mut L,
         secrets: &[ResiduePoly<Z128>],

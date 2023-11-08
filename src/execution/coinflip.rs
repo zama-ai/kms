@@ -13,7 +13,7 @@ use crate::{
 use super::{distributed::robust_open_to_all, session::LargeSessionHandles};
 
 #[async_trait]
-pub trait Coinflip: Send {
+pub trait Coinflip: Send + Default {
     async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
         session: &mut L,
     ) -> anyhow::Result<ResiduePoly<Z128>>;
@@ -50,7 +50,12 @@ impl<V: Vss> Coinflip for RealCoinflip<V> {
 
         let share_of_coin: ResiduePoly<Z128> = shares_of_contributions.into_iter().sum();
 
-        let opening = robust_open_to_all(session, value::Value::Poly128(share_of_coin)).await?;
+        let opening = robust_open_to_all(
+            session,
+            value::Value::Poly128(share_of_coin),
+            session.threshold() as usize,
+        )
+        .await?;
 
         match opening {
             Some(Value::Poly128(v)) => Ok(v),

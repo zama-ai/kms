@@ -23,7 +23,7 @@ use crate::{
 };
 
 #[async_trait]
-pub trait Vss: Send {
+pub trait Vss: Send + Default {
     /// Executes a batched Verifiable Secret Sharing with
     /// - session as the MPC session
     /// - secret as secret to be shared
@@ -446,7 +446,7 @@ fn vss_receive_round_1<R: RngCore, L: LargeSessionHandles<R>>(
         jobs,
         session,
         &my_role,
-        None,
+        Some(session.corrupt_roles()),
         |msg, _id| match msg {
             crate::value::NetworkValue::Round1VSS(v) => Ok(v),
             _ => Err(anyhow_error_and_log(

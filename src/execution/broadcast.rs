@@ -37,9 +37,11 @@ pub async fn send_to_all<R: RngCore, B: BaseSessionHandles<R>>(
     while (jobs.join_next().await).is_some() {}
 }
 
+/// **NOTE: We do not try to receive any value from the non_aswering_parties set.**
+///
 /// Spawns receive tasks and matches the incomming messages according to the match_network_value_fn
 /// The function makes sure that it process the correct type of message, i.e.
-/// On the receiving end, a party processes a message of a single type from the {Send, Echo, Vote} options
+/// On the receiving end, a party processes a message of a single variant of the [NetworkValue] enum
 /// and errors out if message is of a different form. This is helpful so that we can peel the message
 /// from the inside enum.
 pub fn generic_receive_from_all_senders<V, R: RngCore, B: BaseSessionHandles<R>>(
@@ -86,6 +88,7 @@ where
     Ok(())
 }
 
+///Wrapper around [generic_receive_from_all_senders] where the sender list is all the parties.
 pub fn generic_receive_from_all<V, R: RngCore, B: BaseSessionHandles<R>>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &B,

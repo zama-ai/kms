@@ -28,7 +28,7 @@ pub struct DoubleShare {
 }
 
 #[async_trait]
-pub trait DoubleSharing: Send {
+pub trait DoubleSharing: Send + Default {
     async fn init<R: RngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,

@@ -35,7 +35,7 @@ pub struct ShareDisputeOutputDouble {
 //Not sure it makes sense to do a dummy implementation?
 //what would it look like?
 #[async_trait]
-pub trait ShareDispute: Send {
+pub trait ShareDispute: Send + Default {
     /// Executes the ShareDispute protocol on a vector of secrets,
     /// expecting all parties to also share a vector of secrets of the same length.
     /// Returns:

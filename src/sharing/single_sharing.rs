@@ -16,7 +16,7 @@ use crate::{
 use super::local_single_share::LocalSingleShare;
 
 #[async_trait]
-pub trait SingleSharing: Send {
+pub trait SingleSharing: Send + Default {
     async fn init<R: RngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,

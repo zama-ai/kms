@@ -24,7 +24,7 @@ use crate::{
 use super::constants::DISPUTE_STAT_SEC;
 
 #[async_trait]
-pub trait LocalSingleShare: Send {
+pub trait LocalSingleShare: Send + Default {
     ///Executes a batch LocalSingleShare where every party is sharing a vector of secrets
     ///
     ///NOTE: This does not always guarantee privacy of the inputs towards honest parties (but this is intended behaviour!)

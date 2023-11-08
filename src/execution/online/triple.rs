@@ -27,6 +27,10 @@ where
     pub fn new(a: Share<R>, b: Share<R>, c: Share<R>) -> Self {
         Self { a, b, c }
     }
+
+    pub fn take(&self) -> (Share<R>, Share<R>, Share<R>) {
+        (self.a, self.b, self.c)
+    }
 }
 
 /// Multiplication of two shares using a triple.
@@ -166,13 +170,14 @@ where
         .iter()
         .map(|cur_open| Value::from(cur_open.value()))
         .collect_vec();
-    let opened_vals: Vec<R> = match robust_opens_to_all(session, &parsed_to_open).await? {
-        Some(opened_vals) => opened_vals
-            .iter()
-            .map(|cur_opened| R::from(cur_opened.clone()))
-            .collect_vec(),
-        None => return Err(anyhow_error_and_log("Could not open shares".to_string())),
-    };
+    let opened_vals: Vec<R> =
+        match robust_opens_to_all(session, &parsed_to_open, session.threshold() as usize).await? {
+            Some(opened_vals) => opened_vals
+                .iter()
+                .map(|cur_opened| R::from(cur_opened.clone()))
+                .collect_vec(),
+            None => return Err(anyhow_error_and_log("Could not open shares".to_string())),
+        };
     Ok(opened_vals)
 }
 

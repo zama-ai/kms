@@ -7,7 +7,7 @@ use rand_chacha::ChaCha20Rng;
 use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
-        distributed::reconstruct_w_errors,
+        distributed::reconstruct_w_errors_sync,
         party::Role,
         session::{BaseSessionHandles, ParameterHandles, SessionParameters},
     },
@@ -288,8 +288,9 @@ where
             value: cur_share.value().into(),
         })
         .collect();
-    if let Ok(Some(res)) = reconstruct_w_errors(
+    if let Ok(Some(res)) = reconstruct_w_errors_sync(
         param.amount_of_parties(),
+        param.threshold() as usize,
         param.threshold() as usize,
         index_shares,
     ) {
