@@ -258,7 +258,7 @@ mod tests {
     use crate::tests::test_data_setup::tests::{
         DEFAULT_KEY_PATH, DEFAULT_PARAM_PATH, TEST_KEY_PATH, TEST_PARAM_PATH,
     };
-    use crate::value::IndexedValue;
+    use crate::value::{IndexedValue, RingType};
     use crate::{computation::SessionId, value::err_reconstruct};
     use aes_prng::AesRng;
     use rand::SeedableRng;
@@ -277,7 +277,8 @@ mod tests {
             });
         });
 
-        let rec: Value = err_reconstruct(&first_bit_shares, 1, 0).unwrap();
+        let rec: Value =
+            err_reconstruct(&first_bit_shares, 1, 0, &RingType::GalExtRing128).unwrap();
         let inner_rec = match rec {
             Value::Poly128(v) => Z128::try_from(v).unwrap(),
             _ => unimplemented!(),
@@ -318,7 +319,7 @@ mod tests {
                 }
             })
             .collect();
-        let rec = err_reconstruct(&preps, threshold, 0).unwrap();
+        let rec = err_reconstruct(&preps, threshold, 0, &RingType::GalExtRing128).unwrap();
         let recovered_message =
             value_to_message(rec, params.input_cipher_parameters.message_modulus_log.0);
         assert_eq!(recovered_message.unwrap().0, message as u128);
@@ -351,7 +352,7 @@ mod tests {
                 }
             })
             .collect();
-        let rec = err_reconstruct(&preps, threshold, 0).unwrap();
+        let rec = err_reconstruct(&preps, threshold, 0, &RingType::GalExtRing128).unwrap();
         let recovered_message =
             value_to_message(rec, params.input_cipher_parameters.message_modulus_log.0);
         assert_eq!(recovered_message.unwrap().0, message as u128);

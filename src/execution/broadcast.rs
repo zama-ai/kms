@@ -288,8 +288,8 @@ async fn process_echos(
     .await?;
 
     //Any entry with at least N-t times is good for a vote
-    for ((role, m), nb_entries) in echoed_data.iter() {
-        if nb_entries >= &((num_parties - threshold) as u32) {
+    for ((role, m), num_entries) in echoed_data.iter() {
+        if num_entries >= &((num_parties - threshold) as u32) {
             registered_votes.insert((*role, m.clone()), 1);
         }
     }
@@ -357,20 +357,20 @@ async fn gather_votes<R: RngCore, B: BaseSessionHandles<R>>(
 
         //Here propagate error if my own casted hashmap doesnt contain the expected party's id
         let mut round_registered_votes = HashMap::<(Role, BroadcastValue), u32>::new();
-        for ((role, m), nb_votes) in registered_votes.iter_mut() {
-            if *nb_votes as usize >= (threshold + round)
+        for ((role, m), num_votes) in registered_votes.iter_mut() {
+            if *num_votes as usize >= (threshold + round)
                 && !*(casted.get(role).ok_or_else(|| {
                     anyhow_error_and_log("Cant retrieve whether I casted a vote".to_string())
                 })?)
             {
-                round_registered_votes.insert((*role, m.clone()), *nb_votes);
+                round_registered_votes.insert((*role, m.clone()), *num_votes);
                 //Remember I casted a vote
                 let casted_vote_role = casted.get_mut(role).ok_or_else(|| {
                     anyhow_error_and_log("Can't retrieve whether I casted a vote".to_string())
                 })?;
                 *casted_vote_role = true;
                 //Also add a vote in my own data struct
-                *nb_votes += 1;
+                *num_votes += 1;
             }
         }
         session.network().increase_round_counter().await?;

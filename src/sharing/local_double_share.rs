@@ -328,10 +328,10 @@ mod tests {
     use super::{format_output, send_receive_pads_double, verify_sharing, DoubleShares};
 
     fn setup_parties_and_secrets(
-        nb_parties: usize,
-        nb_secrets: usize,
+        num_parties: usize,
+        num_secrets: usize,
     ) -> (Vec<Identity>, HashMap<Role, Vec<ResiduePoly<Z128>>>) {
-        let identities: Vec<Identity> = (0..nb_parties)
+        let identities: Vec<Identity> = (0..num_parties)
             .map(|party_nb| {
                 let mut id_str = "localhost:500".to_owned();
                 id_str.push_str(&party_nb.to_string());
@@ -339,15 +339,15 @@ mod tests {
             })
             .collect();
 
-        let secrets: HashMap<Role, Vec<ResiduePoly<Z128>>> = (0..nb_parties)
+        let secrets: HashMap<Role, Vec<ResiduePoly<Z128>>> = (0..num_parties)
             .map(|party_id| {
                 let role_pi = Role::indexed_by_zero(party_id);
                 (
                     role_pi,
-                    (0..nb_secrets)
+                    (0..num_secrets)
                         .map(|secret_idx| {
                             ResiduePoly::<Z128>::from_scalar(Wrapping(
-                                ((party_id + 1) * nb_parties + secret_idx)
+                                ((party_id + 1) * num_parties + secret_idx)
                                     .try_into()
                                     .unwrap(),
                             ))
@@ -363,9 +363,9 @@ mod tests {
     type TrueCoinFlip = RealCoinflip<RealVss>;
     #[test]
     fn test_ldl() {
-        let nb_parties = 4;
-        let nb_secrets = 10;
-        let (identities, secrets) = setup_parties_and_secrets(nb_parties, nb_secrets);
+        let num_parties = 4;
+        let num_secrets = 10;
+        let (identities, secrets) = setup_parties_and_secrets(num_parties, num_secrets);
         // code for session setup
         let threshold = 1;
         let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
@@ -406,13 +406,13 @@ mod tests {
             results
         });
 
-        assert_eq!(results.len(), nb_parties);
+        assert_eq!(results.len(), num_parties);
 
         //Check that all secrets reconstruct correctly
-        for sender_id in 0..nb_parties {
-            for secret_id in 0..nb_secrets {
-                let mut vec_shares_t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); nb_parties];
-                let mut vec_shares_2t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); nb_parties];
+        for sender_id in 0..num_parties {
+            for secret_id in 0..num_secrets {
+                let mut vec_shares_t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); num_parties];
+                let mut vec_shares_2t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); num_parties];
                 for (share_idx, (vec_share_t, vec_share_2t)) in vec_shares_t
                     .iter_mut()
                     .zip(vec_shares_2t.iter_mut())
@@ -508,9 +508,9 @@ mod tests {
     //We thus expected all the honest parties to add a dispute (P2,P3) and restart the protocol once.
     #[test]
     fn test_ldl_cheater_1() {
-        let nb_parties = 4;
-        let nb_secrets = 2;
-        let (identities, secrets) = setup_parties_and_secrets(nb_parties, nb_secrets);
+        let num_parties = 4;
+        let num_secrets = 2;
+        let (identities, secrets) = setup_parties_and_secrets(num_parties, num_secrets);
         // code for session setup
         let threshold = 1;
         let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
@@ -573,12 +573,12 @@ mod tests {
             results
         });
 
-        assert_eq!(results.len(), nb_parties);
+        assert_eq!(results.len(), num_parties);
         //Check that all secrets reconstruct correctly
-        for sender_id in 0..nb_parties {
-            for secret_id in 0..nb_secrets {
-                let mut vec_shares_t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); nb_parties];
-                let mut vec_shares_2t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); nb_parties];
+        for sender_id in 0..num_parties {
+            for secret_id in 0..num_secrets {
+                let mut vec_shares_t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); num_parties];
+                let mut vec_shares_2t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); num_parties];
                 for (share_idx, (vec_share_t, vec_share_2t)) in vec_shares_t
                     .iter_mut()
                     .zip(vec_shares_2t.iter_mut())
@@ -638,9 +638,9 @@ mod tests {
 
     #[test]
     fn test_ldl_cheater_2() {
-        let nb_parties = 4;
-        let nb_secrets = 2;
-        let (identities, secrets) = setup_parties_and_secrets(nb_parties, nb_secrets);
+        let num_parties = 4;
+        let num_secrets = 2;
+        let (identities, secrets) = setup_parties_and_secrets(num_parties, num_secrets);
         // code for session setup
         let threshold = 1;
         let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
@@ -698,13 +698,13 @@ mod tests {
             results
         });
 
-        assert_eq!(results.len(), nb_parties - 1);
+        assert_eq!(results.len(), num_parties - 1);
         //Check that all secrets reconstruct correctly
-        for sender_id in 0..nb_parties {
-            for secret_id in 0..nb_secrets {
-                let mut vec_shares_t = Vec::<(usize, ResiduePoly<Z128>)>::new(); //vec![(0_usize, ResiduePoly::<Z128>::ZERO); nb_parties];
-                let mut vec_shares_2t = Vec::<(usize, ResiduePoly<Z128>)>::new(); // vec![(0_usize, ResiduePoly::<Z128>::ZERO); nb_parties];
-                for share_idx in 0..nb_parties {
+        for sender_id in 0..num_parties {
+            for secret_id in 0..num_secrets {
+                let mut vec_shares_t = Vec::<(usize, ResiduePoly<Z128>)>::new(); //vec![(0_usize, ResiduePoly::<Z128>::ZERO); num_parties];
+                let mut vec_shares_2t = Vec::<(usize, ResiduePoly<Z128>)>::new(); // vec![(0_usize, ResiduePoly::<Z128>::ZERO); num_parties];
+                for share_idx in 0..num_parties {
                     if share_idx != 1 {
                         vec_shares_t.push((
                             share_idx + 1,

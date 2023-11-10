@@ -8,7 +8,7 @@ use crate::{
     commitment::{Commitment, Opening},
     execution::{session::DisputePayload, small_execution::prss::PrfKey},
 };
-use crate::{Z128, Z64};
+use crate::{Zero, Z128, Z64};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -23,6 +23,27 @@ pub enum Value {
     Ring64(Z64),
     Ring128(Z128),
     U64(u64),
+    Empty,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum RingType {
+    GalExtRing64,
+    GalExtRing128,
+    Ring64,
+    Ring128,
+}
+
+impl Value {
+    pub fn ty(&self) -> anyhow::Result<RingType> {
+        match self {
+            Value::Poly64(_) => Ok(RingType::GalExtRing64),
+            Value::Poly128(_) => Ok(RingType::GalExtRing128),
+            Value::Ring64(_) => Ok(RingType::Ring64),
+            Value::Ring128(_) => Ok(RingType::Ring128),
+            _ => Err(anyhow_error_and_log("Not a ring".to_string())),
+        }
+    }
 }
 
 impl From<u64> for Value {
@@ -106,56 +127,46 @@ pub fn err_reconstruct(
     shares: &Vec<IndexedValue>,
     threshold: usize,
     max_error_count: usize,
+    expected_type: &RingType,
 ) -> anyhow::Result<Value> {
     if shares.is_empty() {
         return Err(anyhow_error_and_log(
             "Input to reconstruction is empty".to_string(),
         ));
     }
-    match shares[0].value {
-        Value::Poly64(_) => {
+
+    match expected_type {
+        RingType::GalExtRing64 => {
             let stripped_shares: Vec<_> = shares
                 .iter()
-                .filter_map(|v| match v.value {
-                    Value::Poly64(vv) => Some((v.party_id, vv)),
-                    _ => None,
+                .map(|v| match v.value {
+                    Value::Poly64(vv) => (v.party_id, vv),
+                    _ => (v.party_id, ResiduePoly::ZERO), //default to 0
                 })
                 .collect();
-            if stripped_shares.len() != shares.len() {
-                Err(anyhow_error_and_log(
-                    "Mixed types when reconstructing, expected to be Ring64".to_string(),
-                ))
-            } else {
-                Ok(Value::Poly64(ShamirGSharings::<Z64>::err_reconstruct(
-                    &ShamirGSharings {
-                        shares: stripped_shares,
-                    },
-                    threshold,
-                    max_error_count,
-                )?))
-            }
+            Ok(Value::Poly64(ShamirGSharings::<Z64>::err_reconstruct(
+                &ShamirGSharings {
+                    shares: stripped_shares,
+                },
+                threshold,
+                max_error_count,
+            )?))
         }
-        Value::Poly128(_) => {
+        RingType::GalExtRing128 => {
             let stripped_shares: Vec<_> = shares
                 .iter()
-                .filter_map(|v| match v.value {
-                    Value::Poly128(vv) => Some((v.party_id, vv)),
-                    _ => None,
+                .map(|v| match v.value {
+                    Value::Poly128(vv) => (v.party_id, vv),
+                    _ => (v.party_id, ResiduePoly::ZERO), //default to 0
                 })
                 .collect();
-            if stripped_shares.len() != shares.len() {
-                Err(anyhow_error_and_log(
-                    "Mixed types when reconstructing, expected to be Ring128".to_string(),
-                ))
-            } else {
-                Ok(Value::Poly128(ShamirGSharings::<Z128>::err_reconstruct(
-                    &ShamirGSharings {
-                        shares: stripped_shares,
-                    },
-                    threshold,
-                    max_error_count,
-                )?))
-            }
+            Ok(Value::Poly128(ShamirGSharings::<Z128>::err_reconstruct(
+                &ShamirGSharings {
+                    shares: stripped_shares,
+                },
+                threshold,
+                max_error_count,
+            )?))
         }
         _ => Err(anyhow_error_and_log(
             "Cannot reconstruct when types are not indexed shares".to_string(),

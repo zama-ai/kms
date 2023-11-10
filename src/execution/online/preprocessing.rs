@@ -1,5 +1,6 @@
 use std::num::Wrapping;
 
+use itertools::Itertools;
 use mockall::automock;
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
@@ -13,7 +14,7 @@ use crate::{
     },
     poly::{Poly, Ring},
     residue_poly::ResiduePoly,
-    value::{self, IndexedValue},
+    value::{self, IndexedValue, RingType, Value},
     Sample, Z128, Z64,
 };
 
@@ -284,6 +285,21 @@ pub fn reconstruct<R: Ring + std::convert::From<value::Value> + Send + Sync>(
 where
     value::Value: std::convert::From<R>,
 {
+    let my_role = param.my_role()?;
+    let expected_type = *shares
+        .iter()
+        .filter_map(|share| {
+            if share.owner() == my_role {
+                let share_value: Value = share.value().into();
+                Some(share_value.ty())
+            } else {
+                None
+            }
+        })
+        .try_collect::<_, Vec<RingType>, _>()?
+        .iter()
+        .all_equal_value()
+        .map_err(|err| anyhow_error_and_log(format!("Error in opening types {:?}", err)))?;
     let index_shares = &shares
         .iter()
         .map(|cur_share| IndexedValue {
@@ -296,6 +312,7 @@ where
         param.threshold() as usize,
         param.threshold() as usize,
         index_shares,
+        &expected_type,
     ) {
         return Ok(res.into());
     }

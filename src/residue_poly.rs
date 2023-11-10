@@ -59,6 +59,7 @@ impl From<Value> for ResiduePoly<Z128> {
             Value::Ring64(v) => ResiduePoly::from_scalar(Wrapping(v.0 as u128)),
             Value::Ring128(v) => ResiduePoly::from_scalar(Wrapping(v.0)),
             Value::U64(v) => ResiduePoly::from_scalar(Wrapping(v as u128)),
+            Value::Empty => ResiduePoly::ZERO, //Default to 0
         }
     }
 }
@@ -83,6 +84,7 @@ impl From<Value> for ResiduePoly<Z64> {
                 ResiduePoly::from_scalar(Wrapping(v.0 as u64))
             }
             Value::U64(v) => ResiduePoly::from_scalar(Wrapping(v)),
+            Value::Empty => ResiduePoly::ZERO, //Default to 0
         }
     }
 }

@@ -62,13 +62,13 @@ pub struct ExchangedDataRound1 {
 }
 
 impl ExchangedDataRound1 {
-    pub fn default(nb_parties: usize) -> Self {
+    pub fn default(num_parties: usize) -> Self {
         Self {
             double_poly: DoublePoly {
                 share_in_x: Poly::default(),
                 share_in_y: Poly::default(),
             },
-            challenge: (0..nb_parties).map(|_| ResiduePoly::default()).collect(),
+            challenge: (0..num_parties).map(|_| ResiduePoly::default()).collect(),
         }
     }
 }
@@ -93,7 +93,7 @@ impl Vss for DummyVss {
         secret: &ResiduePoly<Z128>,
     ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
         let own_role = session.my_role()?;
-        let nb_parties = session.amount_of_parties();
+        let num_parties = session.amount_of_parties();
         let values_to_send: HashMap<Role, NetworkValue> = session
             .role_assignments()
             .keys()
@@ -110,7 +110,7 @@ impl Vss for DummyVss {
             )),
         })?;
 
-        let mut res = vec![ResiduePoly::<Z128>::ZERO; nb_parties];
+        let mut res = vec![ResiduePoly::<Z128>::ZERO; num_parties];
         res[own_role.zero_based()] = *secret;
         while let Some(v) = jobs.join_next().await {
             let joined_result = v?;
@@ -404,8 +404,8 @@ async fn round_4<R: RngCore, L: LargeSessionHandles<R>>(
         })?;
     //Remains to output trivial 0 for all senders in corrupt and correct share for all others
     //aux result variable to insert the result in order and not rely on the arbitrary order of keys()
-    let nb_parties = session.amount_of_parties();
-    let mut result: Vec<ResiduePoly<Z128>> = vec![ResiduePoly::<Z128>::ZERO; nb_parties];
+    let num_parties = session.amount_of_parties();
+    let mut result: Vec<ResiduePoly<Z128>> = vec![ResiduePoly::<Z128>::ZERO; num_parties];
     session
         .role_assignments()
         .keys()
@@ -487,7 +487,7 @@ fn generate_verification_value(
 
 fn find_potential_conflicts_for_all_roles(
     verification_map: &HashMap<Role, Option<Vec<VerificationValues>>>,
-    nb_parties: usize,
+    num_parties: usize,
 ) -> HashSet<(usize, Role, Role)> {
     let mut potentially_unhappy = HashSet::<(usize, Role, Role)>::new();
     //iter over all roles
@@ -504,7 +504,7 @@ fn find_potential_conflicts_for_all_roles(
                 );
             }
             //We do not have challenges for pi, it's in conflict with everyone for every vss (except itself)
-            None => (0..nb_parties).for_each(|idx_vss| {
+            None => (0..num_parties).for_each(|idx_vss| {
                 verification_map.keys().for_each(|pj_role| {
                     if pj_role != pi_role {
                         potentially_unhappy.insert((idx_vss, *pi_role, *pj_role));
@@ -605,10 +605,10 @@ fn answer_to_potential_conflicts(
 fn find_real_conflicts(
     potentially_unhappy: &HashSet<(usize, Role, Role)>,
     bcast_settlements: HashMap<Role, BroadcastValue>,
-    nb_parties: usize,
+    num_parties: usize,
 ) -> Vec<HashSet<Role>> {
     //Loop through potential unhappy, retrieve the corresponding three dispute settlment values and decide who to add in the unhappy set
-    let mut unhappy_vec = vec![HashSet::<Role>::new(); nb_parties];
+    let mut unhappy_vec = vec![HashSet::<Role>::new(); num_parties];
     for (vss_idx, role_pi, role_pj) in potentially_unhappy {
         let common_key = (*vss_idx, *role_pi, *role_pj);
 
@@ -758,8 +758,8 @@ mod tests {
     use crate::{One, Zero, Z128};
     use rand_chacha::ChaCha12Rng;
 
-    fn setup_parties_and_secret(nb_parties: usize) -> (Vec<Identity>, Vec<ResiduePoly<Z128>>) {
-        let identities: Vec<Identity> = (0..nb_parties)
+    fn setup_parties_and_secret(num_parties: usize) -> (Vec<Identity>, Vec<ResiduePoly<Z128>>) {
+        let identities: Vec<Identity> = (0..num_parties)
             .map(|party_nb| {
                 let mut id_str = "localhost:500".to_owned();
                 id_str.push_str(&party_nb.to_string());
@@ -767,7 +767,7 @@ mod tests {
             })
             .collect();
 
-        let secrets: Vec<ResiduePoly<Z128>> = (0..nb_parties)
+        let secrets: Vec<ResiduePoly<Z128>> = (0..num_parties)
             .map(|secret| {
                 ResiduePoly::<Z128>::from_scalar(Wrapping((secret + 1).try_into().unwrap()))
             })

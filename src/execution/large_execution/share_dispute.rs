@@ -732,9 +732,9 @@ mod tests {
     }
 
     fn generate_ids_and_secrets(
-        nb_party: usize,
+        num_party: usize,
     ) -> (Vec<Identity>, HashMap<Identity, Vec<ResiduePoly<Z128>>>) {
-        let identities = generate_identities(nb_party);
+        let identities = generate_identities(num_party);
         let secrets: HashMap<Identity, Vec<ResiduePoly<Z128>>> = identities
             .iter()
             .enumerate()

@@ -18,7 +18,7 @@ use crate::lwe::{
 use crate::networking::local::{LocalNetworking, LocalNetworkingProducer};
 use crate::residue_poly::ResiduePoly;
 use crate::shamir::ShamirGSharings;
-use crate::value::{err_reconstruct, IndexedValue, NetworkValue, Value};
+use crate::value::{err_reconstruct, IndexedValue, NetworkValue, RingType, Value};
 use crate::{
     circuit::{Circuit, Operator},
     execution::small_execution::prep::ddec_prep,
@@ -314,6 +314,30 @@ pub async fn setup_prss_sess<A: AgreeRandom + Send>(
     Some(hm)
 }
 
+fn fill_indexed_shares(
+    vec_collected_shares: &mut [Vec<IndexedValue>],
+    values: Vec<Value>,
+    num_values: usize,
+    party_id: usize,
+) {
+    let values_len = values.len();
+    values
+        .into_iter()
+        .zip(vec_collected_shares.iter_mut())
+        .for_each(|(v, collected_shares)| {
+            collected_shares.push(IndexedValue { party_id, value: v });
+        });
+
+    if values_len < num_values {
+        for collected_shares in vec_collected_shares.iter_mut().skip(values_len) {
+            collected_shares.push(IndexedValue {
+                party_id,
+                value: Value::Empty,
+            });
+        }
+    }
+}
+
 type JobResultType = (Role, anyhow::Result<Vec<Value>>);
 /// Helper function of robust reconstructions which collect the shares and tries to reconstruct
 /// Takes as input:
@@ -325,13 +349,14 @@ type JobResultType = (Role, anyhow::Result<Vec<Value>>);
 async fn try_reconstruct_from_shares<P: ParameterHandles>(
     session_parameters: &P,
     indexed_shares: &[IndexedValue],
+    expected_type: RingType,
     degree: usize,
     threshold: usize,
     jobs: &mut JoinSet<Result<JobResultType, Elapsed>>,
 ) -> anyhow::Result<Option<Vec<Value>>> {
     let num_parties = session_parameters.amount_of_parties();
     let own_role = session_parameters.my_role()?;
-
+    let num_secrets = indexed_shares.len();
     let mut answering_parties = HashSet::<Role>::new();
     let mut vec_collected_shares = indexed_shares
         .iter()
@@ -346,20 +371,23 @@ async fn try_reconstruct_from_shares<P: ParameterHandles>(
         let joined_result = v?;
         if let Ok((party_id, data)) = joined_result {
             answering_parties.insert(party_id);
-            if let Ok(value) = data {
-                value
-                    .into_iter()
-                    .zip(vec_collected_shares.iter_mut())
-                    .for_each(|(v, collected_shares)| {
-                        collected_shares.push(IndexedValue {
-                            party_id: party_id.one_based(),
-                            value: v,
-                        });
-                    });
+            if let Ok(values) = data {
+                fill_indexed_shares(
+                    &mut vec_collected_shares,
+                    values,
+                    num_secrets,
+                    party_id.one_based(),
+                );
             } else if let Err(e) = data {
                 tracing::warn!(
                     "(Share reconstruction) Received malformed data from {party_id}:  {:?}",
                     e
+                );
+                fill_indexed_shares(
+                    &mut vec_collected_shares,
+                    [].to_vec(),
+                    num_secrets,
+                    party_id.one_based(),
                 );
             }
         }
@@ -371,9 +399,13 @@ async fn try_reconstruct_from_shares<P: ParameterHandles>(
         let res: Option<Vec<_>> = vec_collected_shares
             .iter()
             .map(|collected_shares| {
-                if let Ok(Some(r)) =
-                    reconstruct_w_errors_sync(num_parties, degree, threshold, collected_shares)
-                {
+                if let Ok(Some(r)) = reconstruct_w_errors_sync(
+                    num_parties,
+                    degree,
+                    threshold,
+                    collected_shares,
+                    &expected_type,
+                ) {
                     Some(r)
                 } else {
                     None
@@ -389,20 +421,20 @@ async fn try_reconstruct_from_shares<P: ParameterHandles>(
     //If we havent yet been able to reconstruct it may be because we havent heard from all parties
     //In which case we have to know if we knew those were already malicious.
     //If not, we have to try reconstruct with those parties considered as malicious (i.e. w/ updated threshold)
-    let nb_known_corrupt = session_parameters.threshold() as usize - threshold;
-    let mut nb_non_answering = 0;
+    let num_known_corrupt = session_parameters.threshold() as usize - threshold;
+    let mut num_non_answering = 0;
     for role in session_parameters.role_assignments().keys() {
         if !answering_parties.contains(role) && role != &own_role {
             tracing::warn!("(Share reconstruction) Party {role} timed out.");
-            nb_non_answering += 1;
+            num_non_answering += 1;
         }
     }
     //If we have more non-answering parties than expected by previous malicious set
     //try to reconstruct with updated threshold
     //If there is even one that can not be opened at this point,
     //then we will error out
-    if nb_non_answering > nb_known_corrupt {
-        let updated_threshold = session_parameters.threshold() as usize - nb_non_answering;
+    if num_non_answering > num_known_corrupt {
+        let updated_threshold = session_parameters.threshold() as usize - num_non_answering;
         let res: Option<Vec<_>> = vec_collected_shares
             .iter()
             .map(|collected_shares| {
@@ -411,6 +443,7 @@ async fn try_reconstruct_from_shares<P: ParameterHandles>(
                     degree,
                     updated_threshold,
                     collected_shares,
+                    &expected_type,
                 ) {
                     Some(r)
                 } else {
@@ -439,9 +472,10 @@ pub fn reconstruct_w_errors_sync(
     degree: usize,
     threshold: usize,
     indexed_shares: &Vec<IndexedValue>,
+    expected_type: &RingType,
 ) -> anyhow::Result<Option<Value>> {
     if degree + 2 * threshold < num_parties && indexed_shares.len() > degree + 2 * threshold {
-        let opened = err_reconstruct(indexed_shares, degree, threshold)?;
+        let opened = err_reconstruct(indexed_shares, degree, threshold, expected_type)?;
         tracing::debug!(
             "managed to reconstruct with given {:?} shares",
             indexed_shares.len()
@@ -479,6 +513,14 @@ pub async fn robust_opens_to_all<R: RngCore, B: BaseSessionHandles<R>>(
     shares: &[Value],
     degree: usize,
 ) -> anyhow::Result<Option<Vec<Value>>> {
+    let expected_type = *shares
+        .iter()
+        .map(|v| v.ty())
+        .try_collect::<_, Vec<_>, _>()?
+        .iter()
+        .all_equal_value()
+        .map_err(|err| anyhow_error_and_log(format!("Error in opening types {:?}", err)))?;
+
     let own_role = session.my_role()?;
 
     session.network().increase_round_counter().await?;
@@ -515,7 +557,15 @@ pub async fn robust_opens_to_all<R: RngCore, B: BaseSessionHandles<R>>(
     //Note: We are not even considering shares for the already known corrupt parties,
     //thus the effective threshold at this point is the "real" threshold - the number of known corrupt parties
     let threshold = session.threshold() as usize - session.corrupt_roles().len();
-    try_reconstruct_from_shares(session, &indexed_shares, degree, threshold, &mut jobs).await
+    try_reconstruct_from_shares(
+        session,
+        &indexed_shares,
+        expected_type,
+        degree,
+        threshold,
+        &mut jobs,
+    )
+    .await
 }
 
 pub async fn robust_open_to<R: RngCore + Send, B: BaseSessionHandles<R>>(
@@ -541,6 +591,13 @@ pub async fn robust_opens_to<R: RngCore + Send, B: BaseSessionHandles<R>>(
 ) -> anyhow::Result<Option<Vec<Value>>> {
     session.network().increase_round_counter().await?;
     if role.one_based() == output_party_id {
+        let expected_type = *shares
+            .iter()
+            .map(|v| v.ty())
+            .try_collect::<_, Vec<_>, _>()?
+            .iter()
+            .all_equal_value()
+            .map_err(|err| anyhow_error_and_log(format!("Error in opening types {:?}", err)))?;
         let mut set = JoinSet::new();
 
         //Note: we give the set of corrupt parties as the non_answering_parties argument
@@ -568,7 +625,15 @@ pub async fn robust_opens_to<R: RngCore + Send, B: BaseSessionHandles<R>>(
         //Note: We are not even considering shares for the already known corrupt parties,
         //thus the effective threshold at this point is the "real" threshold - the number of known corrupt parties
         let threshold = session.threshold() as usize - session.corrupt_roles().len();
-        try_reconstruct_from_shares(session, &indexed_shares, degree, threshold, &mut set).await
+        try_reconstruct_from_shares(
+            session,
+            &indexed_shares,
+            expected_type,
+            degree,
+            threshold,
+            &mut set,
+        )
+        .await
     } else {
         let receiver = session.identity_from(&Role::indexed_by_one(output_party_id))?;
 
@@ -755,6 +820,7 @@ fn combine(bits_in_block: u32, decryptions: Vec<Value>) -> anyhow::Result<u128> 
             Value::U64(value) => value as u128,
             Value::Poly64(value) => value.coefs[0].0 as u128,
             Value::Poly128(value) => value.coefs[0].0,
+            Value::Empty => 0_u128, //Default 0
         };
         if !recomposer.add_unmasked(value) {
             // End of T::BITS reached no need to try more
@@ -1491,9 +1557,9 @@ mod tests {
         async fn task(session: LargeSession) -> Vec<Value> {
             let parties = 4;
             let threshold = 1;
-            let nb_secrets = 10;
+            let num_secrets = 10;
             let mut rng = ChaCha20Rng::seed_from_u64(0);
-            let shares = (0..nb_secrets)
+            let shares = (0..num_secrets)
                 .map(|idx| {
                     Value::Poly128(
                         ShamirGSharings::<Z128>::share(&mut rng, Wrapping(idx), parties, threshold)

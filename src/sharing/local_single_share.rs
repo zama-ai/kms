@@ -17,7 +17,7 @@ use crate::{
     },
     poly::Ring,
     residue_poly::ResiduePoly,
-    value::{err_reconstruct, BroadcastValue, IndexedValue, Value},
+    value::{err_reconstruct, BroadcastValue, IndexedValue, RingType, Value},
     Sample, Zero, Z128,
 };
 
@@ -299,7 +299,8 @@ pub(crate) fn verify_sender_challenge<R: RngCore, L: LargeSessionHandles<R>>(
                     value: Value::Poly128(*share),
                 })
                 .collect_vec();
-            let try_reconstruct = err_reconstruct(&indexed_shares, threshold, 0);
+            let try_reconstruct =
+                err_reconstruct(&indexed_shares, threshold, 0, &RingType::GalExtRing128);
 
             if let Ok(value) = try_reconstruct {
                 if let Some(result_map) = result_map {
@@ -399,10 +400,10 @@ mod tests {
     };
 
     fn setup_parties_and_secrets(
-        nb_parties: usize,
-        nb_secrets: usize,
+        num_parties: usize,
+        num_secrets: usize,
     ) -> (Vec<Identity>, HashMap<Role, Vec<ResiduePoly<Z128>>>) {
-        let identities: Vec<Identity> = (0..nb_parties)
+        let identities: Vec<Identity> = (0..num_parties)
             .map(|party_nb| {
                 let mut id_str = "localhost:500".to_owned();
                 id_str.push_str(&party_nb.to_string());
@@ -410,15 +411,15 @@ mod tests {
             })
             .collect();
 
-        let secrets: HashMap<Role, Vec<ResiduePoly<Z128>>> = (0..nb_parties)
+        let secrets: HashMap<Role, Vec<ResiduePoly<Z128>>> = (0..num_parties)
             .map(|party_id| {
                 let role_pi = Role::indexed_by_zero(party_id);
                 (
                     role_pi,
-                    (0..nb_secrets)
+                    (0..num_secrets)
                         .map(|secret_idx| {
                             ResiduePoly::<Z128>::from_scalar(Wrapping(
-                                ((party_id + 1) * nb_parties + secret_idx)
+                                ((party_id + 1) * num_parties + secret_idx)
                                     .try_into()
                                     .unwrap(),
                             ))
@@ -435,9 +436,9 @@ mod tests {
     #[traced_test]
     #[test]
     fn test_lsl() {
-        let nb_parties = 4;
-        let nb_secrets = 10;
-        let (identities, secrets) = setup_parties_and_secrets(nb_parties, nb_secrets);
+        let num_parties = 4;
+        let num_secrets = 10;
+        let (identities, secrets) = setup_parties_and_secrets(num_parties, num_secrets);
         // code for session setup
         let threshold = 1;
         let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
@@ -478,12 +479,12 @@ mod tests {
             results
         });
 
-        assert_eq!(results.len(), nb_parties);
+        assert_eq!(results.len(), num_parties);
 
         //Check that all secrets reconstruct correctly
-        for sender_id in 0..nb_parties {
-            for secret_id in 0..nb_secrets {
-                let mut vec_shares = vec![(0_usize, ResiduePoly::<Z128>::ZERO); nb_parties];
+        for sender_id in 0..num_parties {
+            for secret_id in 0..num_secrets {
+                let mut vec_shares = vec![(0_usize, ResiduePoly::<Z128>::ZERO); num_parties];
                 for (share_idx, vec_share) in vec_shares.iter_mut().enumerate() {
                     *vec_share = (
                         share_idx + 1,
@@ -549,9 +550,9 @@ mod tests {
     //We thus expected all the honest parties to add a dispute (P2,P3) and restart the protocol once.
     #[test]
     fn test_lsl_cheater_1() {
-        let nb_parties = 4;
-        let nb_secrets = 2;
-        let (identities, secrets) = setup_parties_and_secrets(nb_parties, nb_secrets);
+        let num_parties = 4;
+        let num_secrets = 2;
+        let (identities, secrets) = setup_parties_and_secrets(num_parties, num_secrets);
         // code for session setup
         let threshold = 1;
         let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
@@ -614,13 +615,13 @@ mod tests {
             results
         });
 
-        assert_eq!(results.len(), nb_parties);
+        assert_eq!(results.len(), num_parties);
 
         //Check that all secrets reconstruct correctly
-        for sender_id in 0..nb_parties {
-            for secret_id in 0..nb_secrets {
+        for sender_id in 0..num_parties {
+            for secret_id in 0..num_secrets {
                 let mut vec_shares = Vec::<(usize, ResiduePoly<Z128>)>::new();
-                for share_idx in 0..nb_parties {
+                for share_idx in 0..num_parties {
                     vec_shares.push((
                         share_idx + 1,
                         results
@@ -646,9 +647,9 @@ mod tests {
     //We thus expected all the honest parties to see party 2 as corrupt due to too many disputes and restart the protocol once, ignoring it.
     #[test]
     fn test_lsl_cheater_2() {
-        let nb_parties = 4;
-        let nb_secrets = 2;
-        let (identities, secrets) = setup_parties_and_secrets(nb_parties, nb_secrets);
+        let num_parties = 4;
+        let num_secrets = 2;
+        let (identities, secrets) = setup_parties_and_secrets(num_parties, num_secrets);
         // code for session setup
         let threshold = 1;
         let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
@@ -706,13 +707,13 @@ mod tests {
             results
         });
 
-        assert_eq!(results.len(), nb_parties - 1);
+        assert_eq!(results.len(), num_parties - 1);
 
         //Check that all secrets reconstruct correctly
-        for sender_id in 0..nb_parties {
-            for secret_id in 0..nb_secrets {
+        for sender_id in 0..num_parties {
+            for secret_id in 0..num_secrets {
                 let mut vec_shares = Vec::<(usize, ResiduePoly<Z128>)>::new();
-                for share_idx in 0..nb_parties {
+                for share_idx in 0..num_parties {
                     if share_idx != 1 {
                         vec_shares.push((
                             share_idx + 1,
@@ -855,9 +856,9 @@ mod tests {
     //We thus expected all the honest parties to see party 2 as corrupt and output default 0 shares for when its a sender.
     #[test]
     fn test_lsl_cheater_3() {
-        let nb_parties = 4;
-        let nb_secrets = 2;
-        let (identities, secrets) = setup_parties_and_secrets(nb_parties, nb_secrets);
+        let num_parties = 4;
+        let num_secrets = 2;
+        let (identities, secrets) = setup_parties_and_secrets(num_parties, num_secrets);
         // code for session setup
         let threshold = 1;
         let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
@@ -910,13 +911,13 @@ mod tests {
             results
         });
 
-        assert_eq!(results.len(), nb_parties - 1);
+        assert_eq!(results.len(), num_parties - 1);
 
         //Check that all secrets reconstruct correctly
-        for sender_id in 0..nb_parties {
-            for secret_id in 0..nb_secrets {
+        for sender_id in 0..num_parties {
+            for secret_id in 0..num_secrets {
                 let mut vec_shares = Vec::<(usize, ResiduePoly<Z128>)>::new();
-                for share_idx in 0..nb_parties {
+                for share_idx in 0..num_parties {
                     if share_idx != 1 {
                         vec_shares.push((
                             share_idx + 1,

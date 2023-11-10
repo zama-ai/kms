@@ -48,7 +48,7 @@ pub struct RealDoubleSharing<S: LocalDoubleShare> {
     _marker_local_single_share: std::marker::PhantomData<S>,
     available_ldl: Vec<DoubleArrayShares>,
     available_shares: Vec<(ResiduePoly<Z128>, ResiduePoly<Z128>)>,
-    max_nb_iterations: usize,
+    max_num_iterations: usize,
     vdm_matrix: ArrayD<ResiduePoly<Z128>>,
 }
 
@@ -66,7 +66,7 @@ impl<S: LocalDoubleShare> DoubleSharing for RealDoubleSharing<S> {
         let ldl = S::execute(session, &my_secrets).await?;
 
         self.available_ldl = format_for_next(ldl, l)?;
-        self.max_nb_iterations = l;
+        self.max_num_iterations = l;
         self.vdm_matrix = init_vdm(
             session.amount_of_parties(),
             session.amount_of_parties() - session.threshold() as usize,
@@ -79,7 +79,7 @@ impl<S: LocalDoubleShare> DoubleSharing for RealDoubleSharing<S> {
     ) -> anyhow::Result<DoubleShare> {
         if self.available_shares.is_empty() {
             if self.available_ldl.is_empty() {
-                self.init(session, self.max_nb_iterations).await?;
+                self.init(session, self.max_num_iterations).await?;
             }
             self.available_shares = compute_next_batch(&mut self.available_ldl, &self.vdm_matrix)?;
         }
@@ -188,9 +188,9 @@ mod tests {
         //Check we can reconstruct both degree t and 2t, and they are equal
         let ldl_batch_size = 10_usize;
         let extracted_size = parties - threshold as usize;
-        let nb_output = ldl_batch_size * extracted_size + 1;
-        assert_eq!(result[0].2.len(), nb_output);
-        for value_idx in 0..nb_output {
+        let num_output = ldl_batch_size * extracted_size + 1;
+        assert_eq!(result[0].2.len(), num_output);
+        for value_idx in 0..num_output {
             let mut res_vec_t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); parties];
             let mut res_vec_2t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); parties];
             for (role, _, res) in result.iter() {
@@ -242,9 +242,9 @@ mod tests {
         //Check we can reconstruct both degree t and 2t, and they are equal
         let ldl_batch_size = 10_usize;
         let extracted_size = parties - threshold as usize;
-        let nb_output = ldl_batch_size * extracted_size + 1;
-        assert_eq!(result[0].2.len(), nb_output);
-        for value_idx in 0..nb_output {
+        let num_output = ldl_batch_size * extracted_size + 1;
+        assert_eq!(result[0].2.len(), num_output);
+        for value_idx in 0..num_output {
             let mut res_vec_t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); parties];
             let mut res_vec_2t = vec![(0_usize, ResiduePoly::<Z128>::ZERO); parties];
             for (role, _, res) in result.iter() {
