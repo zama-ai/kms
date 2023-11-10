@@ -75,17 +75,9 @@ impl PsiAes {
 }
 
 /// Function Phi that generates bounded randomness for PRSS-Mask.Next()
-/// This currently assumes that the value Bd_1 in the NIST doc is a power of two
+/// This currently assumes that the value Bd_1 in the NIST doc is smaller than 2^126
 pub(crate) fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
-    // we currently assume that Bd1 is a power of two and at most 126 bits large, so we only need a single block of AES and can fit the result in an i128.
-
-    // check that bd1 is a power of two
-    if 1 << bd1.ilog2() != bd1.next_power_of_two() {
-        return Err(anyhow_error_and_log(
-            "Bd1 must be a power of two, but is not.".to_string(),
-        ));
-    }
-
+    // we currently assume that Bd1 is at most 126 bits large, so we only need a single block of AES and can fit the result in an i128.
     // check that bd1 is small enough to not cause overflow of the result
     if bd1 > (1 << 126) {
         return Err(anyhow_error_and_log(
@@ -195,12 +187,24 @@ mod tests {
         let key = PrfKey([123_u8; 16]);
         let aes = PhiAes::new(&key, SessionId(0));
         let mut prev = 0_i128;
+
+        // test for BD1 constant (currently even, so we can count bits using ilog2)
         for ctr in 0..100 {
             let res = phi(&aes, ctr, BD1).unwrap();
             let log = res.abs().ilog2();
             assert!(log < (LOG_BD + STATSEC));
             assert!(-(BD1 as i128) <= res);
             assert!(BD1 as i128 > res);
+            assert_ne!(prev, res);
+            prev = res;
+        }
+
+        // test for some odd bound value
+        let odd_bound = (1 << 113) + 23;
+        for ctr in 0..100 {
+            let res = phi(&aes, ctr, odd_bound).unwrap();
+            assert!(-(odd_bound as i128) <= res);
+            assert!(odd_bound as i128 > res);
             assert_ne!(prev, res);
             prev = res;
         }
@@ -212,9 +216,6 @@ mod tests {
 
         let err_overflow = phi(&aes, 0, 1 << 127).unwrap_err().to_string();
         assert!(err_overflow.contains("Bd1 must be at most 2^126 to not overflow, but is larger"));
-
-        let err_power_two = phi(&aes, 0, 3).unwrap_err().to_string();
-        assert!(err_power_two.contains("Bd1 must be a power of two, but is not."));
 
         let err_ctr = phi(&aes, 1 << 123, BD1).unwrap_err().to_string();
         assert!(err_ctr.contains(
