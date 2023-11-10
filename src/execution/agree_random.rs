@@ -220,6 +220,7 @@ async fn agree_random_communication(
             );
         }
     }
+    session.network().increase_round_counter().await?;
     send_to_parties(&coms_to_send, session).await?;
 
     // receive commitments from other parties
@@ -247,9 +248,6 @@ async fn agree_random_communication(
 
     // receive keys and openings from other parties
     let received_keys = receive_from_parties(&receive_from_roles, session).await?;
-
-    // increase round counter, so follow-up use (e.g. in AR with abort) does not collide
-    session.network().increase_round_counter().await?;
 
     let rcv_keys_opens = check_and_unpack_keys(&received_keys, num_parties)?;
 

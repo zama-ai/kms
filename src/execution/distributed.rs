@@ -39,6 +39,7 @@ use std::sync::Arc;
 use tfhe::integer::block_decomposition::{BlockDecomposer, BlockRecomposer};
 use tokio::task::JoinSet;
 use tokio::time::error::Elapsed;
+use tokio::time::timeout_at;
 
 // TODO The name and use of unwrap hints that this is a struct only to be used for testing, but it is laos used in production, e.g. in grpc.rs
 // Unsafe and test code should not be mixed with production code. See issue 173
@@ -751,8 +752,11 @@ pub async fn robust_input<R: RngCore>(
 
         let networking = Arc::clone(session.network());
         let session_id = session.session_id();
-        let data =
-            tokio::spawn(async move { networking.receive(&sender, &session_id).await }).await??;
+        let data = tokio::spawn(timeout_at(
+            session.network().get_timeout_current_round()?,
+            async move { networking.receive(&sender, &session_id).await },
+        ))
+        .await???;
 
         let data = match data {
             NetworkValue::RingValue(rv) => rv,
@@ -771,6 +775,7 @@ pub async fn transfer_pk(
     role: &Role,
     input_party_id: usize,
 ) -> anyhow::Result<PubConKeyPair> {
+    session.network().increase_round_counter().await?;
     if role.one_based() == input_party_id {
         let num_parties = session.amount_of_parties();
         let pkval = NetworkValue::PubKey(Box::new(pubkey.clone()));
@@ -795,8 +800,11 @@ pub async fn transfer_pk(
         let receiver = session.identity_from(&Role::indexed_by_one(input_party_id))?;
         let networking = Arc::clone(session.network());
         let session_id = session.session_id();
-        let data: NetworkValue =
-            tokio::spawn(async move { networking.receive(&receiver, &session_id).await }).await??;
+        let data: NetworkValue = tokio::spawn(timeout_at(
+            session.network().get_timeout_current_round()?,
+            async move { networking.receive(&receiver, &session_id).await },
+        ))
+        .await???;
 
         let pk = match data {
             NetworkValue::PubKey(pk) => pk,

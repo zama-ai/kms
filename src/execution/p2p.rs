@@ -2,12 +2,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use itertools::Itertools;
 use rand::RngCore;
-use tokio::{
-    task::JoinSet,
-    time::{error::Elapsed, timeout},
-};
+use tokio::{task::JoinSet, time::timeout_at};
 
-use crate::{networking::constants::NETWORK_TIMEOUT, value::NetworkValue};
+use crate::value::NetworkValue;
 
 use super::{
     party::Role,
@@ -94,7 +91,7 @@ pub async fn send_to_parties_w_dispute<R: RngCore, L: LargeSessionHandles<R>>(
 /// Add a job of sending specific values to specific parties.
 /// Each party is supposed to receive a specfic value, mapped to their role in `values_to_send`.
 fn internal_send_to_parties<R: RngCore, B: BaseSessionHandles<R>>(
-    jobs: &mut JoinSet<Result<(), Elapsed>>,
+    jobs: &mut JoinSet<()>,
     values_to_send: &HashMap<Role, NetworkValue>,
     session: &B,
     check_fn: &dyn Fn(&Role, &B) -> anyhow::Result<bool>,
@@ -106,11 +103,11 @@ fn internal_send_to_parties<R: RngCore, B: BaseSessionHandles<R>>(
             let session_id = session.session_id();
             let receiver_identity = session.identity_from(cur_receiver)?;
             let value_to_send = cur_value.clone();
-            jobs.spawn(timeout(*NETWORK_TIMEOUT, async move {
+            jobs.spawn(async move {
                 let _ = networking
                     .send(value_to_send, &receiver_identity, &session_id)
                     .await;
-            }));
+            });
         } else {
             tracing::info!("You are trying to communicate with a party that doesnt pass check");
             continue;
@@ -193,9 +190,10 @@ fn internal_receive_from_parties<R: RngCore, B: BaseSessionHandles<R>>(
             let session_id = session.session_id();
             let receiver_identity = session.identity_from(cur_receiver)?;
             let role_to_receive_from = *cur_receiver;
+            let deadline = session.network().get_timeout_current_round()?;
             jobs.spawn(async move {
-                match timeout(
-                    *NETWORK_TIMEOUT,
+                match timeout_at(
+                    deadline,
                     networking.receive(&receiver_identity, &session_id),
                 )
                 .await
@@ -226,6 +224,7 @@ pub async fn exchange_values(
     default_value: NetworkValue,
     session: &mut LargeSession,
 ) -> anyhow::Result<HashMap<Role, NetworkValue>> {
+    session.network().increase_round_counter().await?;
     send_to_parties(values_to_send, &session.to_base_session()).await?;
     let roles = values_to_send.keys().cloned().collect_vec();
     let received_values = receive_from_parties(&roles, &session.to_base_session()).await?;

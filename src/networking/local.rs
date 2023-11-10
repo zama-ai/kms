@@ -1,5 +1,6 @@
 use crate::error::error_handler::anyhow_error_and_log;
 
+use super::constants::NETWORK_TIMEOUT;
 use super::*;
 use dashmap::DashMap;
 use std::collections::HashSet;
@@ -10,13 +11,26 @@ use std::sync::Mutex;
 ///
 /// This implementation is intended for local development/testing purposes
 /// only. It simply stores all values in a hashmap without any actual networking.
-#[derive(Default)]
 pub struct LocalNetworking {
     pairwise_channels: SimulatedPairwiseChannels,
     pub owner: Identity,
     pub send_counter: DashMap<Identity, usize>,
     pub network_round: Arc<Mutex<usize>>,
     already_sent: Arc<Mutex<HashSet<(Identity, usize)>>>,
+    init_time: Instant,
+}
+
+impl Default for LocalNetworking {
+    fn default() -> Self {
+        Self {
+            pairwise_channels: Default::default(),
+            owner: Default::default(),
+            send_counter: Default::default(),
+            network_round: Default::default(),
+            already_sent: Default::default(),
+            init_time: Instant::now(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -200,6 +214,14 @@ impl Networking for LocalNetworking {
             return Err(anyhow_error_and_log("Couldn't lock mutex".to_string()));
         }
         Ok(())
+    }
+
+    fn get_timeout_current_round(&self) -> anyhow::Result<Instant> {
+        if let Ok(net_round) = self.network_round.lock() {
+            Ok(self.init_time + *NETWORK_TIMEOUT * (*net_round as u32))
+        } else {
+            Err(anyhow_error_and_log("Couldn't lock mutex".to_string()))
+        }
     }
 }
 

@@ -1,6 +1,5 @@
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::party::Role;
-use crate::networking::constants::NETWORK_TIMEOUT;
 use crate::value::BroadcastValue;
 use crate::value::NetworkValue;
 use itertools::Itertools;
@@ -10,7 +9,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tokio::time::error::Elapsed;
-use tokio::time::timeout;
+use tokio::time::timeout_at;
 
 use super::party::Identity;
 use super::session::BaseSessionHandles;
@@ -82,7 +81,10 @@ where
                     .map_or_else(|e| Err(e), |x| match_network_value_fn(x, &identity));
                 (sender, stripped_message)
             };
-            jobs.spawn(timeout(*NETWORK_TIMEOUT, task));
+            jobs.spawn(timeout_at(
+                session.network().get_timeout_current_round()?,
+                task,
+            ));
         }
     }
     Ok(())

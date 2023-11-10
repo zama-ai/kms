@@ -21,6 +21,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::Mutex;
+use tokio::time::Instant;
 use tonic::codegen::http::Uri;
 use tonic::transport::Channel;
 
@@ -196,6 +197,10 @@ impl Networking for GrpcNetworking {
             return Err(anyhow_error_and_log("Couldn't lock mutex".to_string()));
         }
         Ok(())
+    }
+
+    fn get_timeout_current_round(&self) -> anyhow::Result<Instant> {
+        todo!("Need to implement get_timeout_current_round for grpc")
     }
 }
 

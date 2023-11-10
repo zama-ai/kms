@@ -4,6 +4,7 @@ use crate::computation::SessionId;
 use crate::execution::party::Identity;
 use crate::value::NetworkValue;
 use async_trait::async_trait;
+use tokio::time::Instant;
 
 pub mod constants;
 pub mod grpc;
@@ -26,4 +27,7 @@ pub trait Networking {
     ) -> anyhow::Result<NetworkValue>;
 
     async fn increase_round_counter(&self) -> anyhow::Result<()>;
+
+    ///Used to compute the timeout in network functions
+    fn get_timeout_current_round(&self) -> anyhow::Result<Instant>;
 }
