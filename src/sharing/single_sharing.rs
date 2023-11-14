@@ -31,7 +31,7 @@ pub trait SingleSharing: Send + Default {
 //as that'll influence how to reconstruct stuff later on
 #[derive(Clone, Default)]
 pub struct RealSingleSharing<S: LocalSingleShare> {
-    _marker_local_single_share: std::marker::PhantomData<S>,
+    local_single_share: S,
     available_lsl: Vec<ArrayD<ResiduePoly<Z128>>>,
     available_shares: Vec<ResiduePoly<Z128>>,
     max_num_iterations: usize,
@@ -49,7 +49,12 @@ impl<S: LocalSingleShare> SingleSharing for RealSingleSharing<S> {
             .map(|_| ResiduePoly::<Z128>::sample(session.rng()))
             .collect_vec();
 
-        self.available_lsl = format_for_next(S::execute(session, &my_secrets).await?, l)?;
+        self.available_lsl = format_for_next(
+            self.local_single_share
+                .execute(session, &my_secrets)
+                .await?,
+            l,
+        )?;
         self.max_num_iterations = l;
         self.vdm_matrix = init_vdm(
             session.amount_of_parties(),

@@ -23,7 +23,7 @@ use crate::{
 };
 
 #[async_trait]
-pub trait Vss: Send + Default {
+pub trait Vss: Send + Sync + Default + Clone {
     /// Executes a batched Verifiable Secret Sharing with
     /// - session as the MPC session
     /// - secret as secret to be shared
@@ -32,6 +32,7 @@ pub trait Vss: Send + Default {
     /// Returns
     /// - a vector of shares (share at idx i is a sharing of the secret of party i)
     async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+        &self,
         session: &mut L,
         secret: &ResiduePoly<Z128>,
     ) -> anyhow::Result<Vec<ResiduePoly<Z128>>>;
@@ -83,12 +84,13 @@ pub struct Round1VSSOutput {
 
 ///Simply send the trivial sharing P: X -> secret (P constant polynomial)
 ///i.e. the secret is the share for everyone
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct DummyVss {}
 
 #[async_trait]
 impl Vss for DummyVss {
     async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+        &self,
         session: &mut L,
         secret: &ResiduePoly<Z128>,
     ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
@@ -134,12 +136,13 @@ impl Vss for DummyVss {
 }
 
 //TODO: Once ready, add SyncBroadcast via generic and trait bounds
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RealVss {}
 
 #[async_trait]
 impl Vss for RealVss {
     async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+        &self,
         session: &mut L,
         secret: &ResiduePoly<Z128>,
     ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
@@ -736,11 +739,12 @@ fn round_4_fix_conflicts<R: RngCore, L: LargeSessionHandles<R>>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::collections::HashMap;
     use std::num::Wrapping;
 
     use rand::SeedableRng;
+    use rstest::rstest;
     use tokio::task::JoinSet;
 
     use super::*;
@@ -755,6 +759,8 @@ mod tests {
     use crate::poly::Poly;
     use crate::residue_poly::ResiduePoly;
     use crate::shamir::ShamirGSharings;
+    use crate::tests::helper::tests::execute_protocol_w_disputes_and_malicious;
+    use crate::tests::helper::tests::roles_from_idxs;
     use crate::{One, Zero, Z128};
     use rand_chacha::ChaCha12Rng;
 
@@ -795,9 +801,10 @@ mod tests {
                 .large_session_for_player(session_id, party_nb)
                 .unwrap();
             let s = secrets[party_nb];
-            set.spawn(
-                async move { (party_nb, DummyVss::execute(&mut session, &s).await.unwrap()) },
-            );
+            set.spawn(async move {
+                let dummy_vss = DummyVss::default();
+                (party_nb, dummy_vss.execute(&mut session, &s).await.unwrap())
+            });
         }
 
         let results = rt.block_on(async {
@@ -933,118 +940,91 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_honest_vss_exec() {
-        let (identities, secrets) = setup_parties_and_secret(4);
+    //We now define cheatin strategies, each implement the VSS trait
+    ///Does nothing, and output an empty Vec
+    #[derive(Default, Clone)]
+    pub struct DroppingVssFromStart {}
+    ///Does round 1 and then drops
+    #[derive(Default, Clone)]
+    pub struct DroppingVssAfterR1 {}
+    ///Does round 1 and 2 and then drops
+    #[derive(Default, Clone)]
+    pub struct DroppingVssAfterR2 {}
+    ///Participate in the protocol, but lies to some parties in the first round
+    #[derive(Default, Clone)]
+    pub struct MaliciousVssR1 {
+        roles_to_lie_to: Vec<Role>,
+    }
 
-        // code for session setup
-        let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
-        let mut set = JoinSet::new();
-
-        for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = runtime
-                .large_session_for_player(session_id, party_nb)
-                .unwrap();
-            let s = secrets[party_nb];
-            set.spawn(async move { (party_nb, RealVss::execute(&mut session, &s).await.unwrap()) });
-        }
-
-        let results = rt.block_on(async {
-            let mut results = Vec::new();
-            while let Some(v) = set.join_next().await {
-                let data = v.unwrap();
-                results.push(data);
-            }
-            results
-        });
-
-        //Check that for each VSS we have a sharing of the secret
-        for vss_idx in 0..=3 {
-            let vec_shares: Vec<(usize, ResiduePoly<Z128>)> = results
-                .iter()
-                .map(|(party_id, vec_shares_party)| (party_id + 1, vec_shares_party[vss_idx]))
-                .collect();
-            let shamir_sharing = ShamirGSharings { shares: vec_shares };
-            assert_eq!(
-                secrets[vss_idx],
-                shamir_sharing.reconstruct(threshold.into()).unwrap()
-            );
+    #[async_trait]
+    impl Vss for DroppingVssFromStart {
+        //Do nothing, and output an empty Vec
+        async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+            &self,
+            _session: &mut L,
+            _secret: &ResiduePoly<Z128>,
+        ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
+            Ok(Vec::new())
         }
     }
 
-    //Test behaviour if a party doesn't participate in the protocol
-    //Expected behaviour is that we end up with trivial 0 sharing for this party
-    //and all other vss are fine
-    #[test]
-    fn test_missing_party_vss_exec() {
-        let (identities, secrets) = setup_parties_and_secret(4);
-
-        // code for session setup
-        let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
-        let mut set = JoinSet::new();
-
-        for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = runtime
-                .large_session_for_player(session_id, party_nb)
-                .unwrap();
-            let s = secrets[party_nb];
-            //Party 0 doesn't participate
-            if party_nb != 0 {
-                set.spawn(async move {
-                    let res = (party_nb, RealVss::execute(&mut session, &s).await.unwrap());
-                    assert!(session.corrupt_roles().contains(&Role::indexed_by_one(1)));
-                    res
-                });
-            }
-        }
-
-        let results = rt.block_on(async {
-            let mut results = Vec::new();
-            while let Some(v) = set.join_next().await {
-                let data = v.unwrap();
-                results.push(data);
-            }
-            results
-        });
-
-        //Check that for each VSS we have a sharing of the secret
-        for vss_idx in 0..=3 {
-            let vec_shares: Vec<(usize, ResiduePoly<Z128>)> = results
-                .iter()
-                .map(|(party_id, vec_shares_party)| (party_id + 1, vec_shares_party[vss_idx]))
-                .collect();
-            let shamir_sharing = ShamirGSharings { shares: vec_shares };
-            if vss_idx == 0 {
-                assert_eq!(
-                    ResiduePoly::<Z128>::ZERO,
-                    shamir_sharing.reconstruct(threshold.into()).unwrap()
-                );
-            } else {
-                assert_eq!(
-                    secrets[vss_idx],
-                    shamir_sharing.reconstruct(threshold.into()).unwrap()
-                );
-            }
+    #[async_trait]
+    impl Vss for DroppingVssAfterR1 {
+        //Do round1, and output an empty Vec
+        async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+            &self,
+            session: &mut L,
+            secret: &ResiduePoly<Z128>,
+        ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
+            let (bivariate_poly, map_double_shares) = sample_secret(session, secret)?;
+            let _ = round_1(session, bivariate_poly, map_double_shares).await?;
+            Ok(Vec::new())
         }
     }
 
-    //This code executes a round1 where the party sends malformed double shares for its VSS to 2 parties
-    //ALWAYS ASSUME P0 is calling this
-    async fn malicious_round_1(
-        mut _vss: &RealVss,
-        session: &mut LargeSession,
+    #[async_trait]
+    impl Vss for DroppingVssAfterR2 {
+        //Do round1 and round2, and output an empty Vec
+        async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+            &self,
+            session: &mut L,
+            secret: &ResiduePoly<Z128>,
+        ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
+            let (bivariate_poly, map_double_shares) = sample_secret(session, secret)?;
+            let vss = round_1(session, bivariate_poly, map_double_shares).await?;
+            let _ = round_2(session, &vss).await?;
+            Ok(Vec::new())
+        }
+    }
+
+    impl MaliciousVssR1 {
+        pub fn init(roles_from_zero: &[usize]) -> Self {
+            Self {
+                roles_to_lie_to: roles_from_zero
+                    .iter()
+                    .map(|id_role| Role::indexed_by_zero(*id_role))
+                    .collect_vec(),
+            }
+        }
+    }
+    #[async_trait]
+    impl Vss for MaliciousVssR1 {
+        async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+            &self,
+            session: &mut L,
+            secret: &ResiduePoly<Z128>,
+        ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
+            //Execute a malicious round 1
+            let vss = malicious_round_1(session, secret, &self.roles_to_lie_to).await?;
+            let verification_map = round_2(session, &vss).await?;
+            let unhappy_vec = round_3(session, &vss, &verification_map).await?;
+            Ok(round_4(session, &vss, unhappy_vec).await?)
+        }
+    }
+
+    //This code executes a round1 where the party sends malformed double shares for its VSS to parties in roles_to_lie_to
+    async fn malicious_round_1<R: RngCore, L: LargeSessionHandles<R>>(
+        session: &mut L,
         secret: &ResiduePoly<Z128>,
         roles_to_lie_to: &[Role],
     ) -> anyhow::Result<Round1VSSOutput> {
@@ -1087,284 +1067,216 @@ mod tests {
         round_1(session, bivariate_poly, map_double_shares).await
     }
 
-    //Test for a malicious sender in Round1 (lies to 1 party)
-    //We expect everything to happen normally - dispute will settle
-    #[test]
-    fn test_malicious_r1_sender_1p() {
-        let (identities, secrets) = setup_parties_and_secret(4);
-
-        // code for session setup
-        let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
-        let mut set = JoinSet::new();
-
-        for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = runtime
-                .large_session_for_player(session_id, party_nb)
-                .unwrap();
+    fn test_vss_strategies<V: Vss + 'static>(
+        num_parties: usize,
+        threshold: usize,
+        malicious_vss: V,
+        malicious_roles: &[Role],
+        should_be_detected: bool,
+    ) {
+        async fn task_honest(
+            mut session: LargeSession,
+        ) -> (
+            usize,
+            ResiduePoly<Z128>,
+            Vec<ResiduePoly<Z128>>,
+            HashSet<Role>,
+        ) {
             let real_vss = RealVss::default();
-            let s = secrets[party_nb];
-            //Party 0 executes maliciously
-            if party_nb == 0 {
-                let roles_to_lie_to = vec![Role::indexed_by_one(2)];
-                set.spawn(async move {
-                    let vss = malicious_round_1(&real_vss, &mut session, &s, &roles_to_lie_to)
-                        .await
-                        .unwrap();
-                    let verification_map = round_2(&mut session, &vss).await.unwrap();
-                    let unhappy_vec = round_3(&mut session, &vss, &verification_map)
-                        .await
-                        .unwrap();
-                    (
-                        party_nb,
-                        round_4(&mut session, &vss, unhappy_vec).await.unwrap(),
-                    )
-                });
-            } else {
-                set.spawn(
-                    async move { (party_nb, RealVss::execute(&mut session, &s).await.unwrap()) },
-                );
+            let secret = ResiduePoly::<Z128>::sample(session.rng());
+            (
+                session.my_role().unwrap().zero_based(),
+                secret,
+                real_vss.execute(&mut session, &secret).await.unwrap(),
+                session.corrupt_roles().clone(),
+            )
+        }
+
+        async fn task_malicious<V: Vss>(
+            mut session: LargeSession,
+            malicious_vss: V,
+        ) -> (usize, ResiduePoly<Z128>) {
+            let secret = ResiduePoly::<Z128>::sample(session.rng());
+            let _ = malicious_vss.execute(&mut session, &secret).await;
+            (session.my_role().unwrap().zero_based(), secret)
+        }
+
+        let (results_honest, results_malicious) = execute_protocol_w_disputes_and_malicious(
+            num_parties,
+            threshold as u8,
+            &[],
+            malicious_roles,
+            malicious_vss,
+            &mut task_honest,
+            &mut task_malicious,
+        );
+
+        //Assert malicious parties we shouldve been caught indeed are
+        if should_be_detected {
+            for (_, _, _, corrupt_set) in results_honest.iter() {
+                for role in malicious_roles {
+                    assert!(corrupt_set.contains(role));
+                }
             }
         }
 
-        let results = rt.block_on(async {
-            let mut results = Vec::new();
-            while let Some(v) = set.join_next().await {
-                let data = v.unwrap();
-                results.push(data);
-            }
-            results
-        });
+        //Create a vec of expected secrets
+        let mut expected_secrets = vec![ResiduePoly::<Z128>::ZERO; num_parties];
+        for (party_idx, s, _, _) in results_honest.iter() {
+            expected_secrets[*party_idx] = *s;
+        }
 
-        //Check that for each VSS we have a sharing of the secret
-        for vss_idx in 0..=3 {
-            let vec_shares: Vec<(usize, ResiduePoly<Z128>)> = results
+        if !should_be_detected {
+            for result_malicious in results_malicious.iter() {
+                assert!(result_malicious.is_ok());
+                let (party_idx, s) = result_malicious.as_ref().unwrap();
+                expected_secrets[*party_idx] = *s;
+            }
+        }
+
+        //Reconstruct secret from honest parties and check it's correct
+        for vss_idx in 0..num_parties {
+            let vec_shares = results_honest
                 .iter()
-                .map(|(party_id, vec_shares_party)| (party_id + 1, vec_shares_party[vss_idx]))
-                .collect();
+                .map(|(party_id, _, vec_shares, _)| (party_id + 1, vec_shares[vss_idx]))
+                .collect_vec();
             let shamir_sharing = ShamirGSharings { shares: vec_shares };
-            assert_eq!(
-                secrets[vss_idx],
-                shamir_sharing.reconstruct(threshold.into()).unwrap()
-            );
+            let reconstructed_secret = shamir_sharing.reconstruct(threshold);
+            assert!(reconstructed_secret.is_ok());
+            assert_eq!(expected_secrets[vss_idx], reconstructed_secret.unwrap());
         }
     }
 
-    //Test for a malicious sender in Round1 (lies to 2 parties)
-    //Expect the sender to get caught and be put into corrupt parties
-    //Output for the sender's vss is the default 0 value
-    #[test]
-    fn test_malicious_r1_sender_2p() {
-        let (identities, secrets) = setup_parties_and_secret(4);
+    #[rstest]
+    #[case(4, 1)]
+    #[case(7, 2)]
+    #[case(10, 3)]
+    fn test_vss_honest(#[case] num_parties: usize, #[case] threshold: usize) {
+        //This is honest execution, so no malicious strategy
+        let malicious_vss = RealVss::default();
+        let malicious_roles = &[];
+        let should_be_detected = false;
 
-        // code for session setup
-        let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
-        let mut set = JoinSet::new();
-        //NOTE: had to create a different thread set
-        //because the malicious party will put itself in corrupt and panic during bcast
-        let mut malicious_set = JoinSet::new();
-
-        for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = runtime
-                .large_session_for_player(session_id, party_nb)
-                .unwrap();
-            let real_vss = RealVss::default();
-            let s = secrets[party_nb];
-            //Party 0 executes maliciously
-            if party_nb == 0 {
-                let roles_to_lie_to = vec![Role::indexed_by_one(2), Role::indexed_by_one(3)];
-                malicious_set.spawn(async move {
-                    let vss = malicious_round_1(&real_vss, &mut session, &s, &roles_to_lie_to)
-                        .await
-                        .unwrap();
-                    let verification_map = round_2(&mut session, &vss).await.unwrap();
-                    let unhappy_vec = round_3(&mut session, &vss, &verification_map)
-                        .await
-                        .unwrap();
-                    (party_nb, round_4(&mut session, &vss, unhappy_vec).await)
-                });
-            } else {
-                set.spawn(async move {
-                    let res = (party_nb, RealVss::execute(&mut session, &s).await.unwrap());
-                    assert!(session.corrupt_roles().contains(&Role::indexed_by_one(1)));
-                    res
-                });
-            }
-        }
-
-        let results = rt.block_on(async {
-            let mut results = Vec::new();
-            while let Some(v) = set.join_next().await {
-                let data = v.unwrap();
-                results.push(data);
-            }
-            results
-        });
-
-        //Check that for each VSS we have a sharing of the secret
-        for vss_idx in 0..=3 {
-            let vec_shares: Vec<(usize, ResiduePoly<Z128>)> = results
-                .iter()
-                .map(|(party_id, vec_shares_party)| (party_id + 1, vec_shares_party[vss_idx]))
-                .collect();
-            let shamir_sharing = ShamirGSharings { shares: vec_shares };
-            if vss_idx == 0 {
-                assert_eq!(
-                    ResiduePoly::<Z128>::ZERO,
-                    shamir_sharing.reconstruct(threshold.into()).unwrap()
-                );
-            } else {
-                assert_eq!(
-                    secrets[vss_idx],
-                    shamir_sharing.reconstruct(threshold.into()).unwrap()
-                );
-            }
-        }
+        test_vss_strategies(
+            num_parties,
+            threshold,
+            malicious_vss,
+            malicious_roles,
+            should_be_detected,
+        );
     }
 
-    //Test for a dropout party (P1) in Round2
-    //We expect that the dropout party will make its VSS default to 0, all others VSS will recover
-    #[test]
-    fn test_dropout_r2() {
-        let (identities, secrets) = setup_parties_and_secret(4);
-
-        // code for session setup
-        let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
-        let mut set = JoinSet::new();
-        //NOTE: had to create a different thread set
-        //because the malicious party will put itself in corrupt and panic during bcast
-        let mut malicious_set = JoinSet::new();
-
-        for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = runtime
-                .large_session_for_player(session_id, party_nb)
-                .unwrap();
-            let s = secrets[party_nb];
-            if party_nb == 1 {
-                malicious_set.spawn(async move {
-                    let (bivariate_poly, map_double_shares) =
-                        sample_secret(&mut session, &s).unwrap();
-                    (
-                        party_nb,
-                        round_1(&mut session, bivariate_poly, map_double_shares)
-                            .await
-                            .unwrap(),
-                    )
-                });
-            } else {
-                set.spawn(async move {
-                    let res = (party_nb, RealVss::execute(&mut session, &s).await.unwrap());
-                    assert!(session.corrupt_roles().contains(&Role::indexed_by_one(2)));
-                    res
-                });
-            }
-        }
-        let results = rt.block_on(async {
-            let mut results = Vec::new();
-            while let Some(v) = set.join_next().await {
-                let data = v.unwrap();
-                results.push(data);
-            }
-            results
-        });
-
-        //Check that for each VSS we have a sharing of the secret
-        for vss_idx in 0..=3 {
-            let vec_shares: Vec<(usize, ResiduePoly<Z128>)> = results
-                .iter()
-                .map(|(party_id, vec_shares_party)| (party_id + 1, vec_shares_party[vss_idx]))
-                .collect();
-            let shamir_sharing = ShamirGSharings { shares: vec_shares };
-            if vss_idx == 1 {
-                assert_eq!(
-                    ResiduePoly::<Z128>::ZERO,
-                    shamir_sharing.reconstruct(threshold.into()).unwrap()
-                );
-            } else {
-                assert_eq!(
-                    secrets[vss_idx],
-                    shamir_sharing.reconstruct(threshold.into()).unwrap()
-                );
-            }
-        }
+    //Test behaviour if a party doesn't participate in the protocol
+    //Expected behaviour is that we end up with trivial 0 sharing for this party
+    //and all other vss are fine
+    #[rstest]
+    #[case(4,1,&roles_from_idxs(&[0]),true)]
+    #[case(4,1,&roles_from_idxs(&[1]),true)]
+    #[case(4,1,&roles_from_idxs(&[2]),true)]
+    #[case(4,1,&roles_from_idxs(&[2]),true)]
+    #[case(7,2,&roles_from_idxs(&[0,2]),true)]
+    #[case(7,2,&roles_from_idxs(&[1,3]),true)]
+    #[case(7,2,&roles_from_idxs(&[5,6]),true)]
+    fn test_vss_dropping_from_start(
+        #[case] num_parties: usize,
+        #[case] threshold: usize,
+        #[case] malicious_roles: &[Role],
+        #[case] should_be_detected: bool,
+    ) {
+        let dropping_vss_from_start = DroppingVssFromStart::default();
+        test_vss_strategies(
+            num_parties,
+            threshold,
+            dropping_vss_from_start,
+            malicious_roles,
+            should_be_detected,
+        );
     }
 
-    //Test for a dropout party (P3) in Round3
+    ///Test for an adversary that sends malformed sharing in round 1 and does everything else honestly.
+    ///If it lies to strictly more than t parties, we expect this party to get caught
+    //Otherwise, we expect everything to happen normally - dispute will settle
+    #[rstest]
+    #[case(4,1,&roles_from_idxs(&[0]),&roles_from_idxs(&[3]),false)]
+    #[case(4,1,&roles_from_idxs(&[1]),&roles_from_idxs(&[0]),false)]
+    #[case(4,1,&roles_from_idxs(&[2]),&roles_from_idxs(&[1]),false)]
+    #[case(4,1,&roles_from_idxs(&[3]),&roles_from_idxs(&[2]),false)]
+    #[case(4,1,&roles_from_idxs(&[0]),&roles_from_idxs(&[3,1]),true)]
+    #[case(4,1,&roles_from_idxs(&[1]),&roles_from_idxs(&[0,2]),true)]
+    #[case(4,1,&roles_from_idxs(&[2]),&roles_from_idxs(&[3,0]),true)]
+    #[case(4,1,&roles_from_idxs(&[3]),&roles_from_idxs(&[2,1]),true)]
+    #[case(7,2,&roles_from_idxs(&[0,2]),&roles_from_idxs(&[3,1]),false)]
+    #[case(7,2,&roles_from_idxs(&[1,3]),&roles_from_idxs(&[4,2,0]),true)]
+    #[case(7,2,&roles_from_idxs(&[5,6]),&roles_from_idxs(&[3,1,0,2]),true)]
+    fn test_vss_malicious_r1(
+        #[case] num_parties: usize,
+        #[case] threshold: usize,
+        #[case] malicious_roles: &[Role],
+        #[case] roles_to_lie_to: &[Role],
+        #[case] should_be_detected: bool,
+    ) {
+        let malicious_vss_r1 = MaliciousVssR1 {
+            roles_to_lie_to: roles_to_lie_to.to_vec(),
+        };
+
+        test_vss_strategies(
+            num_parties,
+            threshold,
+            malicious_vss_r1,
+            malicious_roles,
+            should_be_detected,
+        );
+    }
+
+    //Test for an adversary that drops out after Round1
+    //We expect that adversarial parties will see their vss default to 0, all others VSS will recover
+    #[rstest]
+    #[case(4,1,&roles_from_idxs(&[0]),true)]
+    #[case(4,1,&roles_from_idxs(&[1]),true)]
+    #[case(4,1,&roles_from_idxs(&[2]),true)]
+    #[case(4,1,&roles_from_idxs(&[2]),true)]
+    #[case(7,2,&roles_from_idxs(&[0,2]),true)]
+    #[case(7,2,&roles_from_idxs(&[1,3]),true)]
+    #[case(7,2,&roles_from_idxs(&[5,6]),true)]
+    fn test_vss_dropout_after_r1(
+        #[case] num_parties: usize,
+        #[case] threshold: usize,
+        #[case] malicious_roles: &[Role],
+        #[case] should_be_detected: bool,
+    ) {
+        let dropping_vss_after_r1 = DroppingVssAfterR1::default();
+        test_vss_strategies(
+            num_parties,
+            threshold,
+            dropping_vss_after_r1,
+            malicious_roles,
+            should_be_detected,
+        );
+    }
+
+    //Test for an adversary that drops out after Round2
     //We expect all goes fine as if honest round2, there's no further communication
-    #[test]
-    fn test_dropout_r3() {
-        let (identities, secrets) = setup_parties_and_secret(4);
-
-        // code for session setup
-        let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
-        let mut set = JoinSet::new();
-        //NOTE: had to create a different thread set
-        //because the malicious party will put itself in corrupt and panic during bcast
-        let mut malicious_set = JoinSet::new();
-
-        for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = runtime
-                .large_session_for_player(session_id, party_nb)
-                .unwrap();
-            let s = secrets[party_nb];
-            if party_nb == 2 {
-                malicious_set.spawn(async move {
-                    let (bivariate_poly, map_double_shares) =
-                        sample_secret(&mut session, &s).unwrap();
-                    let vss = round_1(&mut session, bivariate_poly, map_double_shares)
-                        .await
-                        .unwrap();
-                    (party_nb, round_2(&mut session, &vss).await.unwrap())
-                });
-            } else {
-                set.spawn(
-                    async move { (party_nb, RealVss::execute(&mut session, &s).await.unwrap()) },
-                );
-            }
-        }
-        let results = rt.block_on(async {
-            let mut results = Vec::new();
-            while let Some(v) = set.join_next().await {
-                let data = v.unwrap();
-                results.push(data);
-            }
-            results
-        });
-
-        //Check that for each VSS we have a sharing of the secret
-        for vss_idx in 0..=3 {
-            let vec_shares: Vec<(usize, ResiduePoly<Z128>)> = results
-                .iter()
-                .map(|(party_id, vec_shares_party)| (party_id + 1, vec_shares_party[vss_idx]))
-                .collect();
-            let shamir_sharing = ShamirGSharings { shares: vec_shares };
-            assert_eq!(
-                secrets[vss_idx],
-                shamir_sharing.reconstruct(threshold.into()).unwrap()
-            );
-        }
+    #[rstest]
+    #[case(4,1,&roles_from_idxs(&[0]),false)]
+    #[case(4,1,&roles_from_idxs(&[1]),false)]
+    #[case(4,1,&roles_from_idxs(&[2]),false)]
+    #[case(4,1,&roles_from_idxs(&[2]),false)]
+    #[case(7,2,&roles_from_idxs(&[0,2]),false)]
+    #[case(7,2,&roles_from_idxs(&[1,3]),false)]
+    #[case(7,2,&roles_from_idxs(&[5,6]),false)]
+    fn test_dropout_r3(
+        #[case] num_parties: usize,
+        #[case] threshold: usize,
+        #[case] malicious_roles: &[Role],
+        #[case] should_be_detected: bool,
+    ) {
+        let dropping_vss_after_r2 = DroppingVssAfterR2::default();
+        test_vss_strategies(
+            num_parties,
+            threshold,
+            dropping_vss_after_r2,
+            malicious_roles,
+            should_be_detected,
+        );
     }
 }

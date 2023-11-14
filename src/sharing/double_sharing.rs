@@ -45,7 +45,7 @@ pub trait DoubleSharing: Send + Default {
 //as that'll influence how to reconstruct stuff later on
 #[derive(Clone, Default)]
 pub struct RealDoubleSharing<S: LocalDoubleShare> {
-    _marker_local_single_share: std::marker::PhantomData<S>,
+    local_double_share: S,
     available_ldl: Vec<DoubleArrayShares>,
     available_shares: Vec<(ResiduePoly<Z128>, ResiduePoly<Z128>)>,
     max_num_iterations: usize,
@@ -63,7 +63,10 @@ impl<S: LocalDoubleShare> DoubleSharing for RealDoubleSharing<S> {
             .map(|_| ResiduePoly::<Z128>::sample(session.rng()))
             .collect_vec();
 
-        let ldl = S::execute(session, &my_secrets).await?;
+        let ldl = self
+            .local_double_share
+            .execute(session, &my_secrets)
+            .await?;
 
         self.available_ldl = format_for_next(ldl, l)?;
         self.max_num_iterations = l;

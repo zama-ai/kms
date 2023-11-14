@@ -1,3 +1,4 @@
+#![allow(deprecated)] //NOTE: TO BE REMOVED AT SOME POINT
 use std::{collections::HashMap, sync::Arc};
 
 use itertools::Itertools;
@@ -219,6 +220,7 @@ fn internal_receive_from_parties<R: RngCore, B: BaseSessionHandles<R>>(
 /// but if an exchange is not successful then the `default_value` will be used instead.
 /// In case of a malicious response the malicious party will get added to the `dispute`.
 /// In case of _either_ a missing or malicious response the set and the `default_value` will be returned.
+#[deprecated(note = "Only used by deprecated function [share_dispute::share_w_dispute]")]
 pub async fn exchange_values(
     values_to_send: &HashMap<Role, NetworkValue>,
     default_value: NetworkValue,

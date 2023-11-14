@@ -24,7 +24,7 @@ use crate::{
 use super::constants::DISPUTE_STAT_SEC;
 
 #[async_trait]
-pub trait LocalSingleShare: Send + Default {
+pub trait LocalSingleShare: Send + Sync + Default {
     ///Executes a batch LocalSingleShare where every party is sharing a vector of secrets
     ///
     ///NOTE: This does not always guarantee privacy of the inputs towards honest parties (but this is intended behaviour!)
@@ -39,6 +39,7 @@ pub trait LocalSingleShare: Send + Default {
     /// - A HashMap that maps role to the vector of shares receive from that party (including my own shares).
     /// Corrupt parties are mapped to the default 0 sharing
     async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+        &self,
         session: &mut L,
         secrets: &[ResiduePoly<Z128>],
     ) -> anyhow::Result<HashMap<Role, Vec<ResiduePoly<Z128>>>>;
@@ -55,24 +56,25 @@ pub struct MapsSharesChallenges {
 /// - [ShareDispute]
 #[derive(Default)]
 pub struct RealLocalSingleShare<C: Coinflip, S: ShareDispute> {
-    _marker_coinflip: std::marker::PhantomData<C>,
-    _marker_share_dispute: std::marker::PhantomData<S>,
+    coinflip: C,
+    share_dispute: S,
 }
 
 #[async_trait]
 impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, S> {
     async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+        &self,
         session: &mut L,
         secrets: &[ResiduePoly<Z128>],
     ) -> anyhow::Result<HashMap<Role, Vec<ResiduePoly<Z128>>>> {
         //Keeps executing til verification passes
         loop {
             //ShareDispute will fill shares from corrupted players with 0s
-            let mut shared_secrets = S::execute(session, secrets).await?;
+            let mut shared_secrets = self.share_dispute.execute(session, secrets).await?;
 
-            let shared_pads = send_receive_pads::<R, L, S>(session).await?;
+            let shared_pads = send_receive_pads::<R, L, S>(session, &self.share_dispute).await?;
 
-            let x = C::execute(session).await?;
+            let x = self.coinflip.execute(session).await?;
 
             if verify_sharing(
                 session,
@@ -89,7 +91,10 @@ impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, 
     }
 }
 
-async fn send_receive_pads<R, L, S>(session: &mut L) -> anyhow::Result<ShareDisputeOutput>
+async fn send_receive_pads<R, L, S>(
+    session: &mut L,
+    share_dispute: &S,
+) -> anyhow::Result<ShareDisputeOutput>
 where
     R: RngCore,
     L: LargeSessionHandles<R>,
@@ -99,7 +104,7 @@ where
     let my_pads: Vec<ResiduePoly<Z128>> = (0..m)
         .map(|_| ResiduePoly::<Z128>::sample(session.rng()))
         .collect();
-    S::execute(session, &my_pads).await
+    share_dispute.execute(session, &my_pads).await
 }
 
 async fn verify_sharing<R: RngCore, L: LargeSessionHandles<R>>(
@@ -458,14 +463,14 @@ mod tests {
                 .unwrap()
                 .clone();
             set.spawn(async move {
+                let real_local_single_share =
+                    RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::default();
                 (
                     party_nb,
-                    RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::execute(
-                        &mut session,
-                        &s,
-                    )
-                    .await
-                    .unwrap(),
+                    real_local_single_share
+                        .execute(&mut session, &s)
+                        .await
+                        .unwrap(),
                 )
             });
         }
@@ -515,7 +520,8 @@ mod tests {
         //Keeps executing til verification passes
         loop {
             //ShareDispute will fill shares from corrupted players with 0s
-            let mut shared_secrets = RealShareDispute::execute(session, secrets).await?;
+            let real_share_dispute = RealShareDispute::default();
+            let mut shared_secrets = real_share_dispute.execute(session, secrets).await?;
 
             //Modify received shared frome parties in lie to
             for role in lie_to {
@@ -528,9 +534,12 @@ mod tests {
                 shared_secrets.all_shares.insert(*role, new_shares);
             }
 
-            let shared_pads = send_receive_pads::<R, L, RealShareDispute>(session).await?;
+            let shared_pads =
+                send_receive_pads::<R, L, RealShareDispute>(session, &real_share_dispute).await?;
 
-            let x = TrueCoinFlip::execute(session).await?;
+            let coinflip = TrueCoinFlip::default();
+
+            let x = coinflip.execute(session).await?;
 
             if verify_sharing(
                 session,
@@ -583,14 +592,14 @@ mod tests {
                 });
             } else {
                 set.spawn(async move {
+                    let real_local_single_share =
+                        RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::default();
                     let res = (
                         party_nb,
-                        RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::execute(
-                            &mut session,
-                            &s,
-                        )
-                        .await
-                        .unwrap(),
+                        real_local_single_share
+                            .execute(&mut session, &s)
+                            .await
+                            .unwrap(),
                     );
                     assert!(session
                         .disputed_roles()
@@ -683,14 +692,14 @@ mod tests {
                 });
             } else {
                 set.spawn(async move {
+                    let real_local_single_share =
+                        RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::default();
                     let res = (
                         party_nb,
-                        RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::execute(
-                            &mut session,
-                            &s,
-                        )
-                        .await
-                        .unwrap(),
+                        real_local_single_share
+                            .execute(&mut session, &s)
+                            .await
+                            .unwrap(),
                     );
                     assert!(session.corrupt_roles().contains(&Role::indexed_by_zero(1)));
                     res
@@ -831,11 +840,14 @@ mod tests {
         //Keeps executing til verification passes
         loop {
             //ShareDispute will fill shares from corrupted players with 0s
-            let mut shared_secrets = RealShareDispute::execute(session, secrets).await?;
+            let real_share_dispute = RealShareDispute::default();
+            let mut shared_secrets = real_share_dispute.execute(session, secrets).await?;
 
-            let shared_pads = send_receive_pads::<R, L, RealShareDispute>(session).await?;
+            let shared_pads =
+                send_receive_pads::<R, L, RealShareDispute>(session, &real_share_dispute).await?;
 
-            let x = TrueCoinFlip::execute(session).await?;
+            let coinflip = TrueCoinFlip::default();
+            let x = coinflip.execute(session).await?;
 
             if malicious_verify_sharing(
                 session,
@@ -887,14 +899,14 @@ mod tests {
                 });
             } else {
                 set.spawn(async move {
+                    let real_local_single_share =
+                        RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::default();
                     let res = (
                         party_nb,
-                        RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::execute(
-                            &mut session,
-                            &s,
-                        )
-                        .await
-                        .unwrap(),
+                        real_local_single_share
+                            .execute(&mut session, &s)
+                            .await
+                            .unwrap(),
                     );
                     assert!(session.corrupt_roles().contains(&Role::indexed_by_zero(1)));
                     res

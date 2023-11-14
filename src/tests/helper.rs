@@ -8,9 +8,10 @@ pub mod tests {
 
     use aes_prng::AesRng;
     use futures::Future;
+    use itertools::Itertools;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
-    use tokio::task::JoinSet;
+    use tokio::task::{JoinError, JoinSet};
 
     use crate::{
         computation::SessionId,
@@ -18,8 +19,8 @@ pub mod tests {
             distributed::DistributedTestRuntime,
             party::{Identity, Role},
             session::{
-                BaseSessionHandles, DisputeSet, LargeSession, ParameterHandles, SessionParameters,
-                SmallSession,
+                BaseSessionHandles, DisputeSet, LargeSession, LargeSessionHandles,
+                ParameterHandles, SessionParameters, SmallSession,
             },
         },
         file_handling::read_element,
@@ -27,6 +28,14 @@ pub mod tests {
         networking::local::LocalNetworkingProducer,
         tests::test_data_setup::tests::{DEFAULT_SEED, TEST_KEY_PATH},
     };
+
+    ///Generate a vector of roles from zero indexed vector of id
+    pub fn roles_from_idxs(idx_roles: &[usize]) -> Vec<Role> {
+        idx_roles
+            .iter()
+            .map(|idx_role| Role::indexed_by_zero(*idx_role))
+            .collect_vec()
+    }
 
     /// Deterministic key generation
     pub fn generate_keys(params: ThresholdLWEParameters) -> KeySet {
@@ -235,6 +244,84 @@ pub mod tests {
                 results.push(v.unwrap());
             }
             results
+        })
+    }
+
+    /// Helper method for executing networked tests with multiple parties some honest some dishoneset.
+    /// The `task_honest` argument contains the code to be execute by honest parties which returns a value of type [OutputT].
+    /// The `task_malicious` argument contains the code to be execute by malicious parties which returns a value of type [OutputT].
+    /// The `malicious_roles` argument contains the list of roles which should execute the `task_malicious`
+    /// The result of the computation is a vector of [OutputT] which contains the result of each of the honest parties
+    /// interactive computation.
+    ///
+    ///**NOTE: FOR ALL TESTS THE RNG SEED OF A PARTY IS ITS PARTY_ID, THIS IS ACTUALLY USED IN SOME TESTS TO CHECK CORRECTNESS.**
+    pub fn execute_protocol_w_disputes_and_malicious<
+        TaskOutputT,
+        OutputT,
+        TaskOutputM,
+        OutputM,
+        P: Clone,
+    >(
+        parties: usize,
+        threshold: u8,
+        dispute_pairs: &[(Role, Role)],
+        malicious_roles: &[Role],
+        malicious_strategy: P,
+        task_honest: &mut dyn FnMut(LargeSession) -> TaskOutputT,
+        task_malicious: &mut dyn FnMut(LargeSession, P) -> TaskOutputM,
+    ) -> (Vec<OutputT>, Vec<Result<OutputM, JoinError>>)
+    where
+        TaskOutputT: Future<Output = OutputT>,
+        TaskOutputT: Send + 'static,
+        OutputT: Send + 'static,
+        TaskOutputM: Future<Output = OutputM>,
+        TaskOutputM: Send + 'static,
+        OutputM: Send + 'static,
+    {
+        let identities = generate_identities(parties);
+        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
+        let session_id = SessionId(1);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let mut honest_tasks = JoinSet::new();
+        let mut malicious_tasks = JoinSet::new();
+        for party_id in 0..parties {
+            let session = test_runtime
+                .small_session_for_player(
+                    session_id,
+                    party_id,
+                    Some(ChaCha20Rng::seed_from_u64(party_id as u64)),
+                )
+                .unwrap();
+            let mut session = LargeSession {
+                parameters: session.parameters.clone(),
+                network: session.network().clone(),
+                rng: ChaCha20Rng::seed_from_u64(party_id as u64),
+                corrupt_roles: HashSet::new(),
+                disputed_roles: DisputeSet::new(parties),
+            };
+            if malicious_roles.contains(&Role::indexed_by_zero(party_id)) {
+                let malicious_strategy_cloned = malicious_strategy.clone();
+                malicious_tasks.spawn(task_malicious(session, malicious_strategy_cloned));
+            } else {
+                for (role_a, role_b) in dispute_pairs.iter() {
+                    let _ = session.add_dispute(role_a, role_b);
+                }
+                honest_tasks.spawn(task_honest(session));
+            }
+        }
+        rt.block_on(async {
+            let mut results_honest = Vec::with_capacity(honest_tasks.len());
+            let mut results_malicious = Vec::with_capacity(honest_tasks.len());
+            while let Some(v) = honest_tasks.join_next().await {
+                results_honest.push(v.unwrap());
+            }
+            while let Some(v) = malicious_tasks.join_next().await {
+                results_malicious.push(v);
+            }
+            (results_honest, results_malicious)
         })
     }
 }

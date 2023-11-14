@@ -118,8 +118,8 @@ impl ParameterHandles for SessionParameters {
             match role.len() {
                 1 => Ok(role[0]),
                 _ => Err(anyhow_error_and_log(format!(
-                    "Unknown or ambiguous role for identity {:?}",
-                    identity
+                    "Unknown or ambiguous role for identity {:?}, retrieved {:?}",
+                    identity, self.role_assignments
                 ))),
             }?
         };

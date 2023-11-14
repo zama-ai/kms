@@ -1,3 +1,4 @@
+#![allow(deprecated)] //NOTE: TO BE REMOVED AT SOME POINT
 use std::collections::HashMap;
 
 use crate::{
@@ -35,13 +36,14 @@ pub struct ShareDisputeOutputDouble {
 //Not sure it makes sense to do a dummy implementation?
 //what would it look like?
 #[async_trait]
-pub trait ShareDispute: Send + Default {
+pub trait ShareDispute: Send + Sync + Clone + Default {
     /// Executes the ShareDispute protocol on a vector of secrets,
     /// expecting all parties to also share a vector of secrets of the same length.
     /// Returns:
     /// - a hashmap which maps roles to shares I received
     /// - another hashmap which maps roles to shares I sent
     async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+        &self,
         session: &mut L,
         secrets: &[ResiduePoly<Z128>],
     ) -> anyhow::Result<ShareDisputeOutput>;
@@ -50,12 +52,13 @@ pub trait ShareDispute: Send + Default {
     /// actually sharing the secret using a sharing of degree t and one of degree 2t
     /// Needed for doubleSharings
     async fn execute_double<R: RngCore, L: LargeSessionHandles<R>>(
+        &self,
         session: &mut L,
         secrets: &[ResiduePoly<Z128>],
     ) -> anyhow::Result<ShareDisputeOutputDouble>;
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RealShareDispute {}
 
 //Want to puncture only at Dispute\Corrupt ids
@@ -114,6 +117,7 @@ fn fill_incomplete_output<R: RngCore, L: LargeSessionHandles<R>>(
 #[async_trait]
 impl ShareDispute for RealShareDispute {
     async fn execute_double<R: RngCore, L: LargeSessionHandles<R>>(
+        &self,
         session: &mut L,
         secrets: &[ResiduePoly<Z128>],
     ) -> anyhow::Result<ShareDisputeOutputDouble> {
@@ -258,6 +262,7 @@ impl ShareDispute for RealShareDispute {
     }
 
     async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+        &self,
         session: &mut L,
         secrets: &[ResiduePoly<Z128>],
     ) -> anyhow::Result<ShareDisputeOutput> {
@@ -366,9 +371,11 @@ impl ShareDispute for RealShareDispute {
 
 /// Secret shares a value `input` with the other parties while handling disputes.
 /// That is, in case of malicious behaviour detected by a party they will be added to dispute
-// TODO remove this dead code annotation once the code using shareDispute gets implemented
-// NOTE: Not sure we will ever use it? (idem for p2p::exchange_values)
-#[allow(dead_code)]
+///
+/// **TODO remove this dead code annotation once the code using shareDispute gets implemented**
+///
+/// **NOTE: Not sure we will ever use it? (idem for p2p::exchange_values)**
+#[deprecated(note = " Use the ShareDispute trait instead")]
 pub async fn share_w_dispute(
     num_parties: usize,
     degree: usize,
@@ -455,9 +462,8 @@ pub fn interpolate_poly_w_punctures<R: RngCore>(
 ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
     if threshold < dispute_party_ids.len() {
         return Err(anyhow_error_and_log(format!(
-            "Too many disputes, {}, for threshold {}",
-            dispute_party_ids.len(),
-            threshold,
+            "Too many disputes, {:?}, for threshold {}",
+            dispute_party_ids, threshold,
         )));
     }
     let degree = threshold - dispute_party_ids.len();
@@ -521,9 +527,11 @@ mod tests {
         num::Wrapping,
     };
 
+    use async_trait::async_trait;
     use itertools::Itertools;
-    use rand::SeedableRng;
+    use rand::{RngCore, SeedableRng};
     use rand_chacha::{ChaCha12Rng, ChaCha20Rng};
+    use rstest::rstest;
     use tokio::task::JoinSet;
     use tracing_test::traced_test;
 
@@ -536,15 +544,20 @@ mod tests {
                 ShareDisputeOutputDouble,
             },
             p2p::send_to_parties_w_dispute,
-            party::{Identity, Role},
-            session::{BaseSessionHandles, DisputeSet, LargeSession, ParameterHandles},
+            party::Role,
+            session::{
+                BaseSessionHandles, DisputeSet, LargeSession, LargeSessionHandles, ParameterHandles,
+            },
         },
         poly::Poly,
         residue_poly::ResiduePoly,
         shamir::ShamirGSharings,
-        tests::helper::tests::{execute_protocol, generate_identities, get_large_session},
+        tests::helper::tests::{
+            execute_protocol_w_disputes_and_malicious, generate_identities, get_large_session,
+            roles_from_idxs,
+        },
         value::{NetworkValue, Value},
-        Zero, Z128,
+        Sample, Zero, Z128,
     };
 
     use super::{evaluate_w_zero_roots, share_w_dispute, ShareableInput};
@@ -731,375 +744,405 @@ mod tests {
         }
     }
 
-    fn generate_ids_and_secrets(
-        num_party: usize,
-    ) -> (Vec<Identity>, HashMap<Identity, Vec<ResiduePoly<Z128>>>) {
-        let identities = generate_identities(num_party);
-        let secrets: HashMap<Identity, Vec<ResiduePoly<Z128>>> = identities
-            .iter()
-            .enumerate()
-            .map(|(party_idx, party_id)| {
-                (
-                    party_id.clone(),
-                    (0..=4)
-                        .map(|v| {
-                            ResiduePoly::<Z128>::from_scalar(Wrapping::<u128>(
-                                (v + party_idx * 10).try_into().unwrap(),
-                            ))
+    ///Dropout strategy
+    #[derive(Default, Clone)]
+    pub struct DroppingShareDispute {}
+
+    ///Send wrong kind of shares and an incorrect amount
+    #[derive(Default, Clone)]
+    pub struct MaliciousShareDisputeRecons {}
+
+    //TODO:
+    //Should I create a strategy of a malicious player that just sends BS (but correct amount of correct type)
+    //Wouldnt be able to check anything here, but might be useful for testing in higher level protocols?
+
+    #[async_trait]
+    impl ShareDispute for DroppingShareDispute {
+        async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+            &self,
+            _session: &mut L,
+            _secrets: &[ResiduePoly<Z128>],
+        ) -> anyhow::Result<ShareDisputeOutput> {
+            Ok(ShareDisputeOutput::default())
+        }
+
+        async fn execute_double<R: RngCore, L: LargeSessionHandles<R>>(
+            &self,
+            _session: &mut L,
+            _secrets: &[ResiduePoly<Z128>],
+        ) -> anyhow::Result<ShareDisputeOutputDouble> {
+            Ok(ShareDisputeOutputDouble::default())
+        }
+    }
+
+    #[async_trait]
+    impl ShareDispute for MaliciousShareDisputeRecons {
+        async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+            &self,
+            session: &mut L,
+            secrets: &[ResiduePoly<Z128>],
+        ) -> anyhow::Result<ShareDisputeOutput> {
+            //Sample nonsensical (and not enough) shares for type Z128 and not ResiduePoly<Z128>
+            let vec_polypoints: Vec<Vec<Z128>> = (0..secrets.len() - 1)
+                .map(|secret_idx| {
+                    (0_usize..session.amount_of_parties())
+                        .map(|party_idx| {
+                            Wrapping((secret_idx * session.amount_of_parties() + party_idx) as u128)
                         })
-                        .collect(),
-                )
-            })
-            .collect();
-        (identities, secrets)
-    }
-    #[test]
-    fn test_real_share_dispute() {
-        let parties = 5;
-        let threshold = 1;
-        let (identities, secrets) = generate_ids_and_secrets(parties);
-
-        async fn task(mut session: LargeSession) -> (Role, anyhow::Result<ShareDisputeOutput>) {
-            let own_role = session.my_role().unwrap();
-            let secret: Vec<ResiduePoly<Z128>> = (0..=4)
-                .map(|v| {
-                    ResiduePoly::<Z128>::from_scalar(Wrapping::<u128>(
-                        (v + own_role.zero_based() * 10).try_into().unwrap(),
-                    ))
+                        .collect::<Vec<Z128>>()
                 })
-                .collect();
-            (
-                own_role,
-                RealShareDispute::execute(&mut session, &secret).await,
-            )
-        }
+                .collect_vec();
 
-        let results = execute_protocol(parties, threshold, &mut task);
-
-        assert_eq!(results.len(), identities.len());
-        //Can check that for each party the received value corresponds to the sent one
-        let mut vec_of_vec_of_shares =
-            vec![vec![vec![(usize::default(), ResiduePoly::<Z128>::ZERO); 5]; 5]; 5];
-        for (role_pi, res_pi) in results.iter() {
-            let res_pi = res_pi.as_ref().unwrap();
-            let (rcv_res_pi, _sent_res_pi) = (&res_pi.all_shares, &res_pi.shares_own_secret);
-            for (role_pj, data_vec) in rcv_res_pi.iter() {
-                for (idx_data, data) in data_vec.iter().enumerate() {
-                    vec_of_vec_of_shares[role_pj.zero_based()][idx_data][role_pi.zero_based()] =
-                        (role_pi.one_based(), *data);
-                }
-            }
-            for (role_pj, res_pj) in results.iter() {
-                let res_pj = res_pj.as_ref().unwrap();
-                let (_rcv_res_pj, sent_res_pj) = (&res_pj.all_shares, &res_pj.shares_own_secret);
-                assert_eq!(
-                    rcv_res_pi.get(role_pj).unwrap(),
-                    sent_res_pj.get(role_pi).unwrap()
-                );
-            }
-        }
-        //Can also check that the secrets correctly reconstruct to the expected values
-        for (idx_party, vec_of_shares) in vec_of_vec_of_shares.iter().enumerate() {
-            for (idx_sharing, shares) in vec_of_shares.iter().enumerate() {
-                let expected_secret = secrets.get(&identities[idx_party]).unwrap()[idx_sharing];
-                let shamir_sharing = ShamirGSharings {
-                    shares: shares.clone(),
-                };
-                assert_eq!(
-                    shamir_sharing.reconstruct(threshold.into()).unwrap(),
-                    expected_secret
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_real_share_dispute_2t() {
-        let parties = 5;
-        let threshold = 1;
-        let (identities, secrets) = generate_ids_and_secrets(parties);
-
-        async fn task(
-            mut session: LargeSession,
-        ) -> (Role, anyhow::Result<ShareDisputeOutputDouble>) {
-            let own_role = session.my_role().unwrap();
-            let secret: Vec<ResiduePoly<Z128>> = (0..=4)
-                .map(|v| {
-                    ResiduePoly::<Z128>::from_scalar(Wrapping::<u128>(
-                        (v + own_role.zero_based() * 10).try_into().unwrap(),
-                    ))
-                })
-                .collect();
-            (
-                own_role,
-                RealShareDispute::execute_double(&mut session, &secret).await,
-            )
-        }
-
-        let results = execute_protocol(parties, threshold, &mut task);
-
-        assert_eq!(results.len(), identities.len());
-        //Can check that for each party the received value corresponds to the sent one in both sharings
-        let mut vec_of_vec_of_shares_t =
-            vec![vec![vec![(usize::default(), ResiduePoly::<Z128>::ZERO); 5]; 5]; 5];
-        let mut vec_of_vec_of_shares_2t =
-            vec![vec![vec![(usize::default(), ResiduePoly::<Z128>::ZERO); 5]; 5]; 5];
-        for (role_pi, res_pi) in results.iter() {
-            let res_pi = res_pi.as_ref().unwrap();
-            let (res_pi_t, res_pi_2t) = (res_pi.output_t.clone(), res_pi.output_2t.clone());
-            let (rcv_res_pi_t, _sent_res_pi_t) =
-                (&res_pi_t.all_shares, &res_pi_t.shares_own_secret);
-            let (rcv_res_pi_2t, _sent_res_pi_2t) =
-                (&res_pi_2t.all_shares, &res_pi_2t.shares_own_secret);
-            for (role_pj, data_vec) in rcv_res_pi_t.iter() {
-                for (idx_data, data) in data_vec.iter().enumerate() {
-                    vec_of_vec_of_shares_t[role_pj.zero_based()][idx_data][role_pi.zero_based()] =
-                        (role_pi.one_based(), *data);
-                }
-            }
-            for (role_pj, data_vec) in rcv_res_pi_2t.iter() {
-                for (idx_data, data) in data_vec.iter().enumerate() {
-                    vec_of_vec_of_shares_2t[role_pj.zero_based()][idx_data][role_pi.zero_based()] =
-                        (role_pi.one_based(), *data);
-                }
-            }
-            for (role_pj, res_pj) in results.iter() {
-                let res_pj = res_pj.as_ref().unwrap();
-                let (res_pj_t, res_pj_2t) = (res_pj.output_t.clone(), res_pj.output_2t.clone());
-                let (_rcv_res_pj_t, sent_res_pj_t) =
-                    (&res_pj_t.all_shares, &res_pj_t.shares_own_secret);
-                let (_rcv_res_pj_2t, sent_res_pj_2t) =
-                    (&res_pj_2t.all_shares, &res_pj_2t.shares_own_secret);
-                assert_eq!(
-                    rcv_res_pi_t.get(role_pj).unwrap(),
-                    sent_res_pj_t.get(role_pi).unwrap()
-                );
-
-                assert_eq!(
-                    rcv_res_pi_2t.get(role_pj).unwrap(),
-                    sent_res_pj_2t.get(role_pi).unwrap()
-                );
-            }
-        }
-        //Can also check that the secrets correctly reconstruct to the expected values
-        for (idx_party, vec_of_shares) in vec_of_vec_of_shares_t.iter().enumerate() {
-            for (idx_sharing, shares) in vec_of_shares.iter().enumerate() {
-                let expected_secret = secrets.get(&identities[idx_party]).unwrap()[idx_sharing];
-                let shamir_sharing = ShamirGSharings {
-                    shares: shares.clone(),
-                };
-                assert_eq!(
-                    shamir_sharing.reconstruct(threshold.into()).unwrap(),
-                    expected_secret
-                );
-            }
-        }
-        for (idx_party, vec_of_shares) in vec_of_vec_of_shares_2t.iter().enumerate() {
-            for (idx_sharing, shares) in vec_of_shares.iter().enumerate() {
-                let expected_secret = secrets.get(&identities[idx_party]).unwrap()[idx_sharing];
-                let shamir_sharing = ShamirGSharings {
-                    shares: shares.clone(),
-                };
-                assert_eq!(
-                    shamir_sharing.reconstruct(2 * threshold as usize).unwrap(),
-                    expected_secret
-                );
-            }
-        }
-    }
-
-    //Test with one party no participating.
-    #[test]
-    fn test_real_share_dispute_dropout() {
-        let parties = 5;
-        let threshold = 1;
-        let (identities, secrets) = generate_ids_and_secrets(parties);
-
-        async fn task(mut session: LargeSession) -> (Role, anyhow::Result<ShareDisputeOutput>) {
-            let own_role = session.my_role().unwrap();
-            let secret: Vec<ResiduePoly<Z128>> = (0..=4)
-                .map(|v| {
-                    ResiduePoly::<Z128>::from_scalar(Wrapping::<u128>(
-                        (v + own_role.zero_based() * 10).try_into().unwrap(),
-                    ))
-                })
-                .collect();
-            if own_role.zero_based() != 0 {
-                (
-                    own_role,
-                    RealShareDispute::execute(&mut session, &secret).await,
-                )
-            } else {
-                (own_role, Ok(ShareDisputeOutput::default()))
-            }
-        }
-
-        let mut results = execute_protocol(parties, threshold, &mut task);
-        //drop first party as its malicious
-        let _ = results.remove(0);
-        assert_eq!(results.len(), identities.len() - 1);
-        //Can check that for each party the received value corresponds to the sent one
-        //Except for party 0, check defaulted to 0
-        let mut vec_of_vec_of_shares =
-            vec![vec![vec![(1_usize, ResiduePoly::<Z128>::ZERO); 5]; 5]; 5];
-        //vec_of_vec_of_shares is indexed by [idx_of_sender][idx_of_secret][idx_of_share]
-        for (role_pi, res_pi) in results.iter() {
-            let res_pi = res_pi.as_ref().unwrap();
-            let (rcv_res_pi, _sent_res_pi) = (&res_pi.all_shares, &res_pi.shares_own_secret);
-            for (role_pj, data_vec) in rcv_res_pi.iter() {
-                for (idx_data, data) in data_vec.iter().enumerate() {
-                    vec_of_vec_of_shares[role_pj.zero_based()][idx_data][role_pi.zero_based()] =
-                        (role_pi.one_based(), *data);
-                }
-            }
-            for (role_pj, res_pj) in results.iter() {
-                if role_pj.zero_based() == 0 {
-                    assert_eq!(
-                        rcv_res_pi.get(role_pj).unwrap(),
-                        &vec![ResiduePoly::<Z128>::ZERO; 5]
-                    );
-                } else {
-                    let res_pj = res_pj.as_ref().unwrap();
-                    let (_rcv_res_pj, sent_res_pj) =
-                        (&res_pj.all_shares, &res_pj.shares_own_secret);
-                    assert_eq!(
-                        rcv_res_pi.get(role_pj).unwrap(),
-                        sent_res_pj.get(role_pi).unwrap()
-                    );
-                }
-            }
-        }
-        //Can also check that the secrets correctly reconstruct to the expected values
-        for (idx_party, vec_of_shares) in vec_of_vec_of_shares.iter().enumerate() {
-            for (idx_sharing, shares) in vec_of_shares.iter().enumerate() {
-                let expected_secret = if idx_party == 0 {
-                    ResiduePoly::<Z128>::ZERO
-                } else {
-                    secrets.get(&identities[idx_party]).unwrap()[idx_sharing]
-                };
-                let shamir_sharing = ShamirGSharings {
-                    shares: shares.clone(),
-                };
-                assert_eq!(
-                    shamir_sharing.err_reconstruct(threshold.into(), 1).unwrap(),
-                    expected_secret
-                );
-            }
-        }
-    }
-
-    //We have party 0 share not enough secrets of incorrect type. We expect fall back to the default 0 value
-    #[test]
-    fn test_real_share_dispute_incorrect_type() {
-        let parties = 5;
-        let threshold = 1;
-        let (identities, secrets) = generate_ids_and_secrets(parties);
-
-        async fn task(mut session: LargeSession) -> (Role, anyhow::Result<ShareDisputeOutput>) {
-            let own_role = session.my_role().unwrap();
-            let secret: Vec<ResiduePoly<Z128>> = (0..=4)
-                .map(|v| {
-                    ResiduePoly::<Z128>::from_scalar(Wrapping::<u128>(
-                        (v + own_role.zero_based() * 10).try_into().unwrap(),
-                    ))
-                })
-                .collect();
-            if own_role.zero_based() != 0 {
-                (
-                    own_role,
-                    RealShareDispute::execute(&mut session, &secret).await,
-                )
-            } else {
-                let vec_polypoints: Vec<Vec<Z128>> = (0..=2_usize)
-                    .map(|secret_idx| {
-                        (0_usize..session.amount_of_parties())
-                            .map(|party_idx| {
-                                Wrapping(
-                                    (secret_idx * session.amount_of_parties() + party_idx) as u128,
-                                )
-                            })
-                            .collect::<Vec<Z128>>()
-                    })
-                    .collect_vec();
-                //Map each parties' role with their shares (one share per secret)
-                let mut polypoints_map: HashMap<Role, NetworkValue> = HashMap::new();
-                for polypoints in vec_polypoints.into_iter() {
-                    for (role_id, polypoint) in polypoints.into_iter().enumerate() {
-                        let curr_role = Role::indexed_by_zero(role_id);
-                        match polypoints_map.get_mut(&curr_role) {
-                            Some(NetworkValue::VecRingValue(v)) => {
-                                v.push(Value::Ring128(polypoint))
-                            }
-                            None => {
-                                let mut new_party_vec = Vec::with_capacity(5);
-                                new_party_vec.push(Value::Ring128(polypoint));
-                                polypoints_map
-                                    .insert(curr_role, NetworkValue::VecRingValue(new_party_vec));
-                            }
-                            _ => {}
+            //Map each parties' role with their shares (one share per secret)
+            //Except its not of correct type, and we are sending one too few shares per party
+            let mut polypoints_map: HashMap<Role, NetworkValue> = HashMap::new();
+            for polypoints in vec_polypoints.into_iter() {
+                for (role_id, polypoint) in polypoints.into_iter().enumerate() {
+                    let curr_role = Role::indexed_by_zero(role_id);
+                    match polypoints_map.get_mut(&curr_role) {
+                        Some(NetworkValue::VecRingValue(v)) => v.push(Value::Ring128(polypoint)),
+                        None => {
+                            let mut new_party_vec = Vec::with_capacity(secrets.len());
+                            new_party_vec.push(Value::Ring128(polypoint));
+                            polypoints_map
+                                .insert(curr_role, NetworkValue::VecRingValue(new_party_vec));
                         }
+                        _ => {}
                     }
                 }
-                session.network().increase_round_counter().await.unwrap();
-                send_to_parties_w_dispute(&polypoints_map, &session)
+            }
+            session.network().increase_round_counter().await.unwrap();
+            send_to_parties_w_dispute(&polypoints_map, session)
+                .await
+                .unwrap();
+            Ok(ShareDisputeOutput::default())
+        }
+
+        async fn execute_double<R: RngCore, L: LargeSessionHandles<R>>(
+            &self,
+            session: &mut L,
+            secrets: &[ResiduePoly<Z128>],
+        ) -> anyhow::Result<ShareDisputeOutputDouble> {
+            //Sample nonsensical (and not enough) shares for type Z128 and not ResiduePoly<Z128>
+            let vec_polypoints: Vec<Vec<Z128>> = (0..secrets.len() - 1)
+                .map(|secret_idx| {
+                    (0_usize..session.amount_of_parties())
+                        .map(|party_idx| {
+                            Wrapping((secret_idx * session.amount_of_parties() + party_idx) as u128)
+                        })
+                        .collect::<Vec<Z128>>()
+                })
+                .collect_vec();
+
+            //Map each parties' role with their shares (one share per secret)
+            //Except its not of correct type, and we are sending one too few shares per party
+            let mut polypoints_map: HashMap<Role, NetworkValue> = HashMap::new();
+            for polypoints in vec_polypoints.into_iter() {
+                for (role_id, polypoint) in polypoints.into_iter().enumerate() {
+                    let curr_role = Role::indexed_by_zero(role_id);
+                    match polypoints_map.get_mut(&curr_role) {
+                        Some(NetworkValue::VecPairRingValue(v)) => {
+                            v.push((Value::Ring128(polypoint), Value::Ring128(polypoint)))
+                        }
+                        None => {
+                            let mut new_party_vec = Vec::with_capacity(secrets.len());
+                            new_party_vec
+                                .push((Value::Ring128(polypoint), Value::Ring128(polypoint)));
+                            polypoints_map
+                                .insert(curr_role, NetworkValue::VecPairRingValue(new_party_vec));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            session.network().increase_round_counter().await.unwrap();
+            send_to_parties_w_dispute(&polypoints_map, session)
+                .await
+                .unwrap();
+            Ok(ShareDisputeOutputDouble::default())
+        }
+    }
+
+    /// Test sharedispute for different malicious strategies, doing both execute and execute_double
+    /// Accepts a set of dispute pairs that will be inserted to the honest parties' sessions
+    /// before executing the protocol
+    fn test_sharedispute_strategies<S: ShareDispute + 'static>(
+        num_parties: usize,
+        threshold: usize,
+        malicious_sharedispute: S,
+        malicious_roles: &[Role],
+        dispute_pairs: &[(Role, Role)],
+    ) {
+        let num_secrets = 2;
+
+        //Construct dispute map for latter
+        let mut dispute_map = HashMap::new();
+        for (role_a, role_b) in dispute_pairs.iter() {
+            dispute_map
+                .entry(role_a)
+                .and_modify(|vec_dispute: &mut Vec<Role>| vec_dispute.push(*role_b))
+                .or_insert(vec![*role_b]);
+
+            dispute_map
+                .entry(role_b)
+                .and_modify(|vec_dispute: &mut Vec<Role>| vec_dispute.push(*role_a))
+                .or_insert(vec![*role_a]);
+        }
+
+        //Check if the dispute pairs should lead to augment the malicious set
+        //in which case, such malicious parties will also execute the cheating strategy
+        let malicious_due_to_dispute = dispute_map
+            .iter()
+            .filter_map(|(role, vec_dispute)| {
+                if vec_dispute.len() > threshold {
+                    Some(**role)
+                } else {
+                    None
+                }
+            })
+            .collect_vec();
+
+        //Define an honest execution of sharedispute (do both execute and execute_double)
+        let mut task_honest = |mut session: LargeSession| async move {
+            let real_sharedispute = RealShareDispute::default();
+            let secrets = (0..num_secrets)
+                .map(|_| ResiduePoly::<Z128>::sample(session.rng()))
+                .collect_vec();
+
+            (
+                session.my_role().unwrap(),
+                secrets.clone(),
+                real_sharedispute
+                    .execute(&mut session, &secrets)
                     .await
-                    .unwrap();
-                (own_role, Ok(ShareDisputeOutput::default()))
+                    .unwrap(),
+                real_sharedispute
+                    .execute_double(&mut session, &secrets)
+                    .await
+                    .unwrap(),
+            )
+        };
+
+        //Define a malicious execution of sharedispute (again both execute and execute_double)
+        let mut task_malicious = |mut session: LargeSession, malicious_sharedispute: S| async move {
+            let secrets = (0..num_secrets)
+                .map(|_| ResiduePoly::<Z128>::sample(session.rng()))
+                .collect_vec();
+            (
+                session.my_role().unwrap(),
+                malicious_sharedispute.execute(&mut session, &secrets).await,
+                malicious_sharedispute
+                    .execute_double(&mut session, &secrets)
+                    .await,
+            )
+        };
+
+        //Execute the protocol with malicious parties and added disputes
+        let (result_honest, _) = execute_protocol_w_disputes_and_malicious(
+            num_parties,
+            threshold as u8,
+            dispute_pairs,
+            &[malicious_due_to_dispute.clone(), malicious_roles.to_vec()].concat(),
+            malicious_sharedispute,
+            &mut task_honest,
+            &mut task_malicious,
+        );
+
+        //Check that dispute (pi,pj) maps to 0 for pi and pj, malicious map to 0 for all
+        //and otherwise share sent are share received between honest parties.
+        //Also prepare the reconstruction vectors
+        let mut reconstruction_vectors_single =
+            vec![vec![Vec::<(usize, ResiduePoly::<Z128>)>::default(); num_secrets]; num_parties];
+
+        let mut reconstruction_vectors_double_t =
+            vec![vec![Vec::<(usize, ResiduePoly::<Z128>)>::default(); num_secrets]; num_parties];
+
+        let mut reconstruction_vectors_double_2t =
+            vec![vec![Vec::<(usize, ResiduePoly::<Z128>)>::default(); num_secrets]; num_parties];
+
+        for (role_pi, _, output_single_pi, output_double_pi) in result_honest.iter() {
+            let rcv_res_pi_single = &output_single_pi.all_shares;
+            let rcv_res_pi_double_t = &output_double_pi.output_t.all_shares;
+            let rcv_res_pi_double_2t = &output_double_pi.output_2t.all_shares;
+
+            let pi_disputes = dispute_map.get(role_pi);
+            //Push shares into the appropriate reconstruction vectors
+            //AND check that received shares is 0 if (pi,pj) in dispute or pj is corrupt
+            //First for the result of execute
+            for (role_pj, vec_shares_from_pj) in rcv_res_pi_single {
+                for (idx_share, share_from_pj) in vec_shares_from_pj.iter().enumerate() {
+                    //Check 0 if malicious
+                    if malicious_due_to_dispute.contains(role_pj) {
+                        assert!(share_from_pj.is_zero());
+                    }
+                    //Check 0 if in dispute
+                    if let Some(dispute) = pi_disputes {
+                        if dispute.contains(role_pj) {
+                            assert!(share_from_pj.is_zero());
+                        }
+                    }
+                    reconstruction_vectors_single[role_pj.zero_based()][idx_share]
+                        .push((role_pi.one_based(), *share_from_pj));
+                }
+            }
+
+            //Then for the result of execute_double of degree t
+            for (role_pj, vec_shares_from_pj) in rcv_res_pi_double_t {
+                for (idx_share, share_from_pj) in vec_shares_from_pj.iter().enumerate() {
+                    //Check 0 if malicious
+                    if malicious_due_to_dispute.contains(role_pj) {
+                        assert!(share_from_pj.is_zero());
+                    }
+                    //Check 0 if in dispute
+                    if let Some(dispute) = pi_disputes {
+                        if dispute.contains(role_pj) {
+                            assert!(share_from_pj.is_zero());
+                        }
+                    }
+                    reconstruction_vectors_double_t[role_pj.zero_based()][idx_share]
+                        .push((role_pi.one_based(), *share_from_pj));
+                }
+            }
+
+            //Finally for the result of execute_double of degree 2t
+            for (role_pj, vec_shares_from_pj) in rcv_res_pi_double_2t {
+                for (idx_share, share_from_pj) in vec_shares_from_pj.iter().enumerate() {
+                    //Check 0 if malicious
+                    if malicious_due_to_dispute.contains(role_pj) {
+                        assert!(share_from_pj.is_zero());
+                    }
+                    //Check 0 if in dispute
+                    if let Some(dispute) = pi_disputes {
+                        if dispute.contains(role_pj) {
+                            assert!(share_from_pj.is_zero());
+                        }
+                    }
+                    reconstruction_vectors_double_2t[role_pj.zero_based()][idx_share]
+                        .push((role_pi.one_based(), *share_from_pj));
+                }
             }
         }
 
-        let mut results = execute_protocol(parties, threshold, &mut task);
-        //drop first party as its malicious
-        let _ = results.remove(0);
-        assert_eq!(results.len(), identities.len() - 1);
-        //Can check that for each party the received value corresponds to the sent one
-        //Except for party 0, check defaulted to 0
-        let mut vec_of_vec_of_shares =
-            vec![vec![vec![(1_usize, ResiduePoly::<Z128>::ZERO); 5]; 5]; 5];
-        //vec_of_vec_of_shares is indexed by [idx_of_sender][idx_of_secret][idx_of_share]
-        for (role_pi, res_pi) in results.iter() {
-            let res_pi = res_pi.as_ref().unwrap();
-            let (rcv_res_pi, _sent_res_pi) = (&res_pi.all_shares, &res_pi.shares_own_secret);
-            for (role_pj, data_vec) in rcv_res_pi.iter() {
-                for (idx_data, data) in data_vec.iter().enumerate() {
-                    vec_of_vec_of_shares[role_pj.zero_based()][idx_data][role_pi.zero_based()] =
-                        (role_pi.one_based(), *data);
-                }
-            }
-            for (role_pj, res_pj) in results.iter() {
-                if role_pj.zero_based() == 0 {
-                    assert_eq!(
-                        rcv_res_pi.get(role_pj).unwrap(),
-                        &vec![ResiduePoly::<Z128>::ZERO; 5]
-                    );
-                } else {
-                    let res_pj = res_pj.as_ref().unwrap();
-                    let (_rcv_res_pj, sent_res_pj) =
-                        (&res_pj.all_shares, &res_pj.shares_own_secret);
-                    assert_eq!(
-                        rcv_res_pi.get(role_pj).unwrap(),
-                        sent_res_pj.get(role_pi).unwrap()
-                    );
+        //Check correct reconstruction of all honest parties
+        for (role_pi, secrets_pi, _, _) in result_honest {
+            if !malicious_due_to_dispute.contains(&role_pi) {
+                for (idx_secret, expected_secret) in secrets_pi.iter().enumerate() {
+                    //Reconstruct the secret shared by execute
+                    let reconst_single_t = ShamirGSharings {
+                        shares: reconstruction_vectors_single[role_pi.zero_based()][idx_secret]
+                            .clone(),
+                    }
+                    .reconstruct(threshold);
+
+                    //Reconstruct the secret of degree t shared by execute_double
+                    let reconst_double_t = ShamirGSharings {
+                        shares: reconstruction_vectors_double_t[role_pi.zero_based()][idx_secret]
+                            .clone(),
+                    }
+                    .reconstruct(threshold);
+
+                    //Reconstruct the secret of degree 2t shared by execute_double
+                    let reconst_double_2t = ShamirGSharings {
+                        shares: reconstruction_vectors_double_2t[role_pi.zero_based()][idx_secret]
+                            .clone(),
+                    }
+                    .reconstruct(2 * threshold);
+
+                    //Assert all went fine
+                    assert!(reconst_single_t.is_ok());
+                    assert!(reconst_double_t.is_ok());
+                    assert!(reconst_double_2t.is_ok());
+                    assert_eq!(expected_secret, &reconst_single_t.unwrap());
+                    assert_eq!(expected_secret, &reconst_double_t.unwrap());
+                    assert_eq!(expected_secret, &reconst_double_2t.unwrap());
                 }
             }
         }
-        //Can also check that the secrets correctly reconstruct to the expected values
-        for (idx_party, vec_of_shares) in vec_of_vec_of_shares.iter().enumerate() {
-            for (idx_sharing, shares) in vec_of_shares.iter().enumerate() {
-                let expected_secret = if idx_party == 0 {
-                    ResiduePoly::<Z128>::ZERO
-                } else {
-                    secrets.get(&identities[idx_party]).unwrap()[idx_sharing]
-                };
-                let shamir_sharing = ShamirGSharings {
-                    shares: shares.clone(),
-                };
-                assert_eq!(
-                    shamir_sharing.err_reconstruct(threshold.into(), 1).unwrap(),
-                    expected_secret
-                );
-            }
-        }
+    }
+
+    #[rstest]
+    #[case(4, 1, &[])]
+    #[case(4, 1, &[(1,2),(0,3)])]
+    #[case(4, 1, &[(1,2),(1,3)])]
+    #[case(7, 2, &[(1,2),(1,3),(4,6),(0,5)])]
+    fn test_sharedispute_honest(
+        #[case] num_parties: usize,
+        #[case] threshold: usize,
+        #[case] dispute_pairs: &[(usize, usize)],
+    ) {
+        let malicious_sharedispute = RealShareDispute::default();
+        let malicious_roles = &[];
+        let dispute_pairs = dispute_pairs
+            .iter()
+            .map(|(idx_a, idx_b)| (Role::indexed_by_zero(*idx_a), Role::indexed_by_zero(*idx_b)))
+            .collect_vec();
+
+        test_sharedispute_strategies(
+            num_parties,
+            threshold,
+            malicious_sharedispute,
+            malicious_roles,
+            &dispute_pairs,
+        );
+    }
+
+    #[rstest]
+    #[case(4,1,&[],&roles_from_idxs(&[0]))]
+    #[case(4,1,&[],&roles_from_idxs(&[1]))]
+    #[case(4,1,&[],&roles_from_idxs(&[2]))]
+    #[case(4,1,&[],&roles_from_idxs(&[3]))]
+    #[case(4, 1, &[(1,3)],&roles_from_idxs(&[1]))]
+    #[case(4, 1, &[(1,2),(0,3)],&roles_from_idxs(&[1]))]
+    #[case(4, 1, &[(0,2),(1,3)],&roles_from_idxs(&[2]))]
+    #[case(7, 2, &[(0,2),(1,3),(0,4),(1,5)],&roles_from_idxs(&[2,6]))]
+    fn test_sharedispute_dropout(
+        #[case] num_parties: usize,
+        #[case] threshold: usize,
+        #[case] dispute_pairs: &[(usize, usize)],
+        #[case] malicious_roles: &[Role],
+    ) {
+        let dropping_sharedispute = DroppingShareDispute::default();
+        let dispute_pairs = dispute_pairs
+            .iter()
+            .map(|(idx_a, idx_b)| (Role::indexed_by_zero(*idx_a), Role::indexed_by_zero(*idx_b)))
+            .collect_vec();
+
+        test_sharedispute_strategies(
+            num_parties,
+            threshold,
+            dropping_sharedispute,
+            malicious_roles,
+            &dispute_pairs,
+        );
+    }
+
+    #[rstest]
+    #[case(4,1,&[],&roles_from_idxs(&[0]))]
+    #[case(4,1,&[],&roles_from_idxs(&[1]))]
+    #[case(4,1,&[],&roles_from_idxs(&[2]))]
+    #[case(4,1,&[],&roles_from_idxs(&[3]))]
+    #[case(4, 1, &[(1,2),(0,3)],&roles_from_idxs(&[1]))]
+    #[case(4, 1, &[(0,2),(1,3)],&roles_from_idxs(&[2]))]
+    #[case(7, 2, &[(0,2),(1,3),(0,4),(1,5)],&roles_from_idxs(&[2,6]))]
+    fn test_malicious_sharedispute(
+        #[case] num_parties: usize,
+        #[case] threshold: usize,
+        #[case] dispute_pairs: &[(usize, usize)],
+        #[case] malicious_roles: &[Role],
+    ) {
+        let malicious_sharedispute_recons = MaliciousShareDisputeRecons::default();
+        let dispute_pairs = dispute_pairs
+            .iter()
+            .map(|(idx_a, idx_b)| (Role::indexed_by_zero(*idx_a), Role::indexed_by_zero(*idx_b)))
+            .collect_vec();
+
+        test_sharedispute_strategies(
+            num_parties,
+            threshold,
+            malicious_sharedispute_recons,
+            malicious_roles,
+            &dispute_pairs,
+        );
     }
 
     #[traced_test]
