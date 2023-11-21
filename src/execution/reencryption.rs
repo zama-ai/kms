@@ -437,6 +437,12 @@ fn check_signature(
         hash_element(client_pk.enc_key.as_ref()),
     ]
     .concat();
+
+    // Check that the signature is normalized
+    if !check_normalized(sig) {
+        return false;
+    }
+
     // Verify signature
     if server_verf_key
         .pk
@@ -446,8 +452,8 @@ fn check_signature(
         tracing::warn!("Signature {:X?} is not valid", sig.sig);
         return false;
     }
-    // Check that the signature is normalized
-    check_normalized(sig)
+
+    true
 }
 
 fn check_normalized(sig: &Signature) -> bool {
