@@ -2,9 +2,9 @@ name: Rust
 
 on:
   push:
-    branches: [ '**' ]
+    branches: [ main ]
   pull_request:
-    branches: [ '**' ]
+    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,13 +13,22 @@ jobs:
   build:
     strategy:
       fail-fast: false
-      
+
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v3
+
+    - name: Set up Rust.
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+        components: rustfmt, clippy
+
     - uses: Swatinem/rust-cache@v2
-    
+
     - name: Setup usage of private repo
       run: git config --global url."https://${{ secrets.CONCRETE_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
 
