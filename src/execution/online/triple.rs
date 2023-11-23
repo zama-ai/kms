@@ -41,8 +41,8 @@ where
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
 pub async fn mult<
     R: Ring + std::convert::From<value::Value> + Send + Sync,
-    Rnd: RngCore + Send + Sync + 'static,
-    Ses: BaseSessionHandles<Rnd> + 'static,
+    Rnd: RngCore + Send + Sync,
+    Ses: BaseSessionHandles<Rnd>,
 >(
     x: Share<R>,
     y: Share<R>,
@@ -69,8 +69,8 @@ where
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
 pub async fn mult_list<
     R: Ring + std::convert::From<value::Value> + Send + Sync,
-    Rnd: RngCore + Send + Sync + 'static,
-    Ses: BaseSessionHandles<Rnd> + 'static,
+    Rnd: RngCore + Send + Sync,
+    Ses: BaseSessionHandles<Rnd>,
 >(
     x_vec: &[Share<R>],
     y_vec: &[Share<R>],
@@ -136,8 +136,8 @@ where
 // Open a single share
 pub async fn open<
     R: Ring + std::convert::From<value::Value> + Send + Sync,
-    Rnd: RngCore + Send + Sync + 'static,
-    Ses: BaseSessionHandles<Rnd> + 'static,
+    Rnd: RngCore + Send + Sync,
+    Ses: BaseSessionHandles<Rnd>,
 >(
     to_open: Share<R>,
     session: &Ses,
@@ -157,8 +157,8 @@ where
 /// Opens a list of shares to all parties
 pub async fn open_list<
     R: Ring + std::convert::From<value::Value> + Send + Sync,
-    Rnd: RngCore + Send + Sync + 'static,
-    Ses: BaseSessionHandles<Rnd> + 'static,
+    Rnd: RngCore + Send + Sync,
+    Ses: BaseSessionHandles<Rnd>,
 >(
     to_open: &[Share<R>],
     session: &Ses,

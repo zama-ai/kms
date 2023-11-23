@@ -56,9 +56,9 @@ macro_rules! impl_gen_bits {
             /// Generates a vector of secret shared random bits using a preprocessing functionality and a session.
             /// The code only works when the modulo of the ring used is even.
             pub async fn gen_bits_even<
-                Rnd: RngCore + Send + Sync + 'static,
-                Ses: BaseSessionHandles<Rnd> + 'static,
-                P: Preprocessing<Rnd, ResiduePoly<$z>, Ses> + 'static,
+                Rnd: RngCore + Send + Sync,
+                Ses: BaseSessionHandles<Rnd>,
+                P: Preprocessing<Rnd, ResiduePoly<$z>, Ses>,
             >(
                 amount: usize,
                 preproc: &mut P,
