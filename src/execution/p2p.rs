@@ -61,7 +61,7 @@ fn check_talking_to_myself<R: RngCore, B: BaseSessionHandles<R>>(
 /// Send specific values to specific parties.
 /// I.e. not the sending party or in dispute or corrupt.
 /// Each party is supposed to receive a specfic value, mapped to their role in `values_to_send`.
-pub async fn send_to_parties<R: RngCore, B: BaseSessionHandles<R>>(
+pub async fn send_to_honest_parties<R: RngCore, B: BaseSessionHandles<R>>(
     values_to_send: &HashMap<Role, NetworkValue>,
     session: &B,
 ) -> anyhow::Result<()> {
@@ -227,7 +227,7 @@ pub async fn exchange_values(
     session: &mut LargeSession,
 ) -> anyhow::Result<HashMap<Role, NetworkValue>> {
     session.network().increase_round_counter().await?;
-    send_to_parties(values_to_send, &session.to_base_session()).await?;
+    send_to_honest_parties(values_to_send, &session.to_base_session()).await?;
     let roles = values_to_send.keys().cloned().collect_vec();
     let received_values = receive_from_parties(&roles, &session.to_base_session()).await?;
     let mut res = HashMap::with_capacity(received_values.len());

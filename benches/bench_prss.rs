@@ -31,7 +31,7 @@ fn bench_prss(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
     let prss = rt
-        .block_on(async { PRSSSetup::party_epoch_init_sess::<DummyAgreeRandom>(&sess, 1).await })
+        .block_on(async { PRSSSetup::init_with_abort::<DummyAgreeRandom>(&sess).await })
         .unwrap();
 
     let mut state = prss.new_prss_session_state(sid);

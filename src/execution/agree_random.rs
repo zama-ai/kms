@@ -1,5 +1,5 @@
 use super::{
-    p2p::{receive_from_parties, send_to_parties},
+    p2p::{receive_from_parties, send_to_honest_parties},
     party::Role,
     session::{BaseSession, BaseSessionHandles, ParameterHandles},
     small_execution::prss::{create_sets, PrfKey},
@@ -221,7 +221,7 @@ async fn agree_random_communication(
         }
     }
     session.network().increase_round_counter().await?;
-    send_to_parties(&coms_to_send, session).await?;
+    send_to_honest_parties(&coms_to_send, session).await?;
 
     // receive commitments from other parties
     let receive_from_roles = coms_to_send.keys().cloned().collect_vec();
@@ -244,7 +244,7 @@ async fn agree_random_communication(
             );
         }
     }
-    send_to_parties(&key_open_to_send, session).await?;
+    send_to_honest_parties(&key_open_to_send, session).await?;
 
     // receive keys and openings from other parties
     let received_keys = receive_from_parties(&receive_from_roles, session).await?;

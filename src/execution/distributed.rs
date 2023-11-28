@@ -101,13 +101,7 @@ impl DistributedTestRuntime {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         let prss_setup = rt
-            .block_on(async {
-                PRSSSetup::party_epoch_init_sess::<DummyAgreeRandom>(
-                    session,
-                    session.my_role().unwrap().one_based(),
-                )
-                .await
-            })
+            .block_on(async { PRSSSetup::init_with_abort::<DummyAgreeRandom>(session).await })
             .unwrap();
         session.prss_state = Some(prss_setup.new_prss_session_state(session.session_id()));
     }
@@ -292,12 +286,10 @@ pub async fn setup_prss_sess<A: AgreeRandom + Send>(
 ) -> Option<HashMap<usize, PRSSSetup>> {
     let mut jobs = JoinSet::new();
 
-    for (role_idx, sess) in sessions.iter().enumerate() {
-        let ss = sess.clone();
-
+    for sess in sessions.clone() {
         jobs.spawn(async move {
-            let epoc = PRSSSetup::party_epoch_init_sess::<A>(&ss.clone(), role_idx + 1).await;
-            (role_idx, epoc)
+            let epoc = PRSSSetup::init_with_abort::<A>(&sess).await;
+            (sess.my_role().unwrap().zero_based(), epoc)
         });
     }
 
@@ -1302,13 +1294,8 @@ pub async fn initialize_key_material(
     setup_mode: SetupMode,
     params: ThresholdLWEParameters,
 ) -> anyhow::Result<(SecretKeyShare, PubConKeyPair, Option<PRSSSetup>)> {
-    let own_role = session.my_role()?;
-
     let prss_setup = if setup_mode == SetupMode::AllProtos {
-        Some(
-            PRSSSetup::party_epoch_init_sess::<DummyAgreeRandom>(session, own_role.one_based())
-                .await?,
-        )
+        Some(PRSSSetup::init_with_abort::<DummyAgreeRandom>(session).await?)
     } else {
         None
     };
@@ -1317,6 +1304,7 @@ pub async fn initialize_key_material(
 
     let sk_container = keyset.sk.lwe_secret_key_128.into_container();
     let mut key_shares = Vec::new();
+    let own_role = session.my_role()?;
     // iterate through sk and share each element
     for cur in sk_container {
         let secret = match own_role.one_based() {

@@ -122,12 +122,12 @@ where
     // Compute the linear equation of shares to get the result
     let mut res = Vec::with_capacity(amount);
     for i in 0..amount {
-        let y = *y_vec.get(i).context("Missing y value")?;
+        let y = *y_vec.get(i).with_context(|| "Missing y value")?;
         // Observe that the list of epsilons and rhos have already been reversed above, because of the use of pop,
         // so we get the elements in the original order by popping again here
-        let epsilon = epsilon_vec.pop().context("Missing epsilon value")?;
-        let rho = rho_vec.pop().context("Missing rho value")?;
-        let trip = triples.get(i).context("Missing triple")?;
+        let epsilon = epsilon_vec.pop().with_context(|| "Missing epsilon value")?;
+        let rho = rho_vec.pop().with_context(|| "Missing rho value")?;
+        let trip = triples.get(i).with_context(|| "Missing triple")?;
         res.push(y * epsilon - trip.a * rho + trip.c);
     }
     Ok(res)

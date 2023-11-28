@@ -8,7 +8,7 @@ use tokio::{task::JoinSet, time::error::Elapsed};
 
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::{
-    broadcast::generic_receive_from_all, p2p::send_to_parties, session::LargeSessionHandles,
+    broadcast::generic_receive_from_all, p2p::send_to_honest_parties, session::LargeSessionHandles,
 };
 use crate::value::NetworkValue;
 use crate::{algebra::bivariate::BivariateEval, value::Value};
@@ -102,7 +102,7 @@ impl Vss for DummyVss {
             .map(|role| (*role, NetworkValue::RingValue(Value::Poly128(*secret))))
             .collect();
         session.network().increase_round_counter().await?;
-        send_to_parties(&values_to_send, session).await?;
+        send_to_honest_parties(&values_to_send, session).await?;
         let mut jobs: JoinSet<Result<(Role, Result<ResiduePoly<Z128>, anyhow::Error>), Elapsed>> =
             JoinSet::new();
         generic_receive_from_all(&mut jobs, session, &own_role, None, |msg, _id| match msg {
@@ -216,7 +216,7 @@ async fn round_1<R: RngCore, L: LargeSessionHandles<R>>(
         .collect();
 
     session.network().increase_round_counter().await?;
-    send_to_parties(&msgs_to_send, session).await?;
+    send_to_honest_parties(&msgs_to_send, session).await?;
 
     let mut jobs = JoinSet::<ResultRound1>::new();
     // Receive data

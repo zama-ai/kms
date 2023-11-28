@@ -1,22 +1,28 @@
 use super::prf::{ChiAes, PsiAes};
 use crate::{
+    algebra::bivariate::MatrixMul,
+    commitment::KEY_BYTE_LEN,
     computation::SessionId,
     error::error_handler::anyhow_error_and_log,
     execution::{
         agree_random::AgreeRandom,
         broadcast::broadcast_with_corruption,
         constants::PRSS_SIZE_MAX,
+        distributed::robust_opens_to_all,
         party::Role,
-        session::{ParameterHandles, SmallSession, SmallSessionHandles, ToBaseSession},
+        session::{LargeSessionHandles, SmallSessionHandles},
+        session::{ParameterHandles, SmallSession, ToBaseSession},
         small_execution::prf::{chi, phi, psi, PhiAes},
     },
     poly::Poly,
     residue_poly::ResiduePoly,
+    sharing::{single_sharing::init_vdm, vss::Vss},
     value::{BroadcastValue, Value},
-    One, Zero, Z128,
+    One, Sample, Zero, Z128,
 };
 use anyhow::Context;
 use itertools::Itertools;
+use ndarray::{ArrayD, IxDyn};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -454,25 +460,26 @@ impl PRSSState {
     }
 
     /// Helper method for computing the parties resulting share value based on the winning psi value for each [PrssSet]
-    fn compute_party_shares<R: RngCore, S: SmallSessionHandles<R>>(
+    fn compute_party_shares<P: ParameterHandles>(
         &mut self,
         true_prf_vals: &HashMap<&PartySet, &Vec<Value>>,
-        session: &S,
+        param: &P,
         mode: ComputeShareMode,
     ) -> anyhow::Result<HashMap<Role, ResiduePoly<Z128>>> {
-        let sets = create_sets(session.amount_of_parties(), session.threshold() as usize);
-        let points = party_compute_f_a_points(&sets, session.amount_of_parties())?;
+        let sets = create_sets(param.amount_of_parties(), param.threshold() as usize);
+        let points = party_compute_f_a_points(&sets, param.amount_of_parties())?;
 
         let alphas = match mode {
             ComputeShareMode::Przs => Some(compute_alpha_powers(
-                session.amount_of_parties(),
-                session.threshold(),
+                param.amount_of_parties(),
+                param.threshold(),
             )?),
             _ => None,
         };
 
-        let mut s_values = HashMap::with_capacity(session.amount_of_parties());
-        for cur_role in session.role_assignments().keys() {
+        let mut s_values: HashMap<Role, ResiduePoly<Wrapping<u128>>> =
+            HashMap::with_capacity(param.amount_of_parties());
+        for cur_role in param.role_assignments().keys() {
             let mut cur_s = ResiduePoly::<Z128>::ZERO;
             for (idx, set) in sets.iter().enumerate() {
                 if set.contains(&cur_role.one_based()) {
@@ -496,7 +503,7 @@ impl PRSSState {
                                 }
                             }
                             ComputeShareMode::Przs => {
-                                if cur_prf_val.len() != session.threshold() as usize {
+                                if cur_prf_val.len() != param.threshold() as usize {
                                     return Err(anyhow_error_and_log(
                                         "Did not receive t PRZS chi values".to_string(),
                                     ));
@@ -528,12 +535,12 @@ impl PRSSState {
 
 impl PRSSSetup {
     /// initialize the PRSS setup for this epoch and a given party
-    pub async fn party_epoch_init_sess<A: AgreeRandom + Send>(
+    pub async fn init_with_abort<A: AgreeRandom + Send>(
         session: &SmallSession,
-        party_id: usize,
     ) -> anyhow::Result<Self> {
         let num_parties = session.amount_of_parties();
         let binom_nt = num_integer::binomial(num_parties, session.threshold() as usize);
+        let my_id = session.my_role()?.one_based();
 
         if binom_nt > PRSS_SIZE_MAX {
             return Err(anyhow_error_and_log(
@@ -544,7 +551,7 @@ impl PRSSSetup {
         // create all the subsets A that contain the party id
         let party_sets: Vec<Vec<usize>> = create_sets(num_parties, session.threshold() as usize)
             .into_iter()
-            .filter(|aset| aset.contains(&party_id))
+            .filter(|aset| aset.contains(&my_id))
             .collect();
 
         let mut party_prss_sets: Vec<PrssSet> = Vec::new();
@@ -598,6 +605,88 @@ impl PRSSSetup {
             prss_setup,
         }
     }
+
+    pub async fn robust_init<V: Vss, R: RngCore, L: LargeSessionHandles<R>>(
+        session: &mut L,
+        vss: &V,
+    ) -> anyhow::Result<Self> {
+        let n = session.amount_of_parties();
+        let t = session.threshold() as usize;
+        let c = num_integer::binomial(n, t).div_ceil(n - t);
+        let party_id = session.my_role()?.one_based();
+        // create all the subsets A that contain the party id
+        let party_sets: Vec<Vec<usize>> = create_sets(n, t).into_iter().collect();
+        let mut party_prss_sets: Vec<PrssSet> = Vec::new();
+        let mut to_open = Vec::with_capacity(c * (n - t));
+        let m_inverse = inverse_vdm(n - t, n)?;
+        for _i in 0..c {
+            let s = ResiduePoly::sample(session.rng());
+            // TODO do in parallel, i.e. issue 244
+            let vss_s = vss.execute(session, &s).await?;
+            let random_val =
+                m_inverse.matmul(&ArrayD::from_shape_vec(IxDyn(&[n]), vss_s.to_owned())?)?;
+            to_open.append(&mut random_val.into_raw_vec());
+        }
+        let f_a_points = party_compute_f_a_points(&party_sets, n)?;
+        let r = agree_random_robust(session, to_open).await?;
+        for (prf_key, (set, f_a_point)) in r.iter().zip(party_sets.iter().zip(f_a_points)) {
+            // Skip sets which the current party is not part of
+            if !set.contains(&party_id) {
+                continue;
+            }
+            let pset = PrssSet {
+                parties: set.to_vec(),
+                prfs: None,
+                set_key: prf_key.to_owned(),
+                f_a_points: f_a_point.clone(),
+            };
+            party_prss_sets.push(pset);
+        }
+
+        Ok(PRSSSetup {
+            sets: party_prss_sets,
+            alpha_powers: compute_alpha_powers(n, session.threshold())?,
+        })
+    }
+}
+
+/// Compute the inverse Vandemonde matrix with a_i = embed(i).
+/// That is:
+/// 1               1               1           ...    1
+/// a_1             a_2             a_3         ...    a_columns
+/// a_1^2           a_2^2           a_3^2       ...    a_columns^2
+/// ...
+/// a_1^{rows-1}    a_2^{rows-1}    a_3^{rows-1}...    a_colums^{rows-1}
+#[allow(clippy::needless_range_loop)]
+fn inverse_vdm(rows: usize, columns: usize) -> anyhow::Result<ArrayD<ResiduePoly<Z128>>> {
+    Ok(init_vdm(columns, rows)?.reversed_axes())
+}
+
+async fn agree_random_robust<Rnd: RngCore, L: LargeSessionHandles<Rnd>>(
+    session: &mut L,
+    shares: Vec<ResiduePoly<Z128>>,
+) -> anyhow::Result<Vec<PrfKey>> {
+    let converted_shares = shares
+        .iter()
+        .map(|s| Value::from(s.to_owned()))
+        .collect_vec();
+    let r_vec = robust_opens_to_all(session, &converted_shares, session.threshold() as usize)
+        .await?
+        .with_context(|| "No valid result from open")?;
+    // TODO should be updated to SHA3, see https://github.com/zama-ai/distributed-decryption/issues/196
+    let mut hasher = blake3::Hasher::new();
+    let s_vec = r_vec
+        .iter()
+        .map(|cur_r| {
+            let mut digest = [0u8; KEY_BYTE_LEN];
+            hasher.reset();
+            hasher.update(&cur_r.to_vec());
+            let mut or = hasher.finalize_xof();
+            or.fill(&mut digest);
+            PrfKey(digest)
+        })
+        .collect_vec();
+    Ok(s_vec)
 }
 
 #[cfg(test)]
@@ -609,19 +698,23 @@ mod tests {
         execution::{
             agree_random::{DummyAgreeRandom, RealAgreeRandomWithAbort},
             constants::{BD1, LOG_BD, STATSEC},
-            distributed::{setup_prss_sess, DistributedTestRuntime},
+            distributed::{reconstruct_w_errors_sync, setup_prss_sess, DistributedTestRuntime},
             party::{Identity, Role},
-            session::{BaseSessionHandles, DecryptionMode},
+            session::{BaseSessionHandles, DecryptionMode, LargeSession},
             small_execution::prep::to_large_ciphertext,
         },
         file_handling::read_element,
         lwe::{keygen_all_party_shares, KeySet},
         shamir::ShamirGSharings,
+        sharing::vss::RealVss,
         tests::{
-            helper::tests::{generate_identities, get_small_session_for_parties},
+            helper::tests::{
+                execute_protocol, execute_protocol_small, generate_identities,
+                get_small_session_for_parties,
+            },
             test_data_setup::tests::TEST_KEY_PATH,
         },
-        value::Value,
+        value::{IndexedValue, Value},
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;
@@ -1358,9 +1451,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         let prss_setup = rt
-            .block_on(async {
-                PRSSSetup::party_epoch_init_sess::<DummyAgreeRandom>(&session, 1).await
-            })
+            .block_on(async { PRSSSetup::init_with_abort::<DummyAgreeRandom>(&session).await })
             .unwrap();
         let state = prss_setup.new_prss_session_state(session.session_id());
 
@@ -1382,7 +1473,148 @@ mod tests {
         }
     }
 
-    /// Tests that compute_result fails as expected when a set is not present in the `true_psi_vals` given as input
+    #[test]
+    fn sunshine_init_with_abort() {
+        let parties = 5;
+        let threshold = 1;
+
+        async fn task(session: SmallSession) -> IndexedValue {
+            let prss_setup = PRSSSetup::init_with_abort::<DummyAgreeRandom>(&session)
+                .await
+                .unwrap();
+            let mut state = prss_setup.new_prss_session_state(session.session_id());
+            let role = session.my_role().unwrap();
+            IndexedValue {
+                party_id: role.one_based(),
+                value: Value::Poly128(state.prss_next(role.one_based()).unwrap()),
+            }
+        }
+
+        let result = execute_protocol_small(parties, threshold, &mut task);
+
+        validate_prss_init(result, parties, threshold as usize);
+    }
+
+    fn validate_prss_init(result: Vec<IndexedValue>, parties: usize, threshold: usize) {
+        // Reconstruct the shared value
+        let base = reconstruct_w_errors_sync(
+            parties,
+            threshold,
+            threshold,
+            &result,
+            &crate::value::RingType::GalExtRing128,
+        )
+        .unwrap()
+        .unwrap();
+        // Check that we can still
+        for i in 1..=parties {
+            // Exclude party i's shares
+            let cur_set = result
+                .iter()
+                .filter(|e| e.party_id != i)
+                .cloned()
+                .collect_vec();
+            // And check we still get the correct result
+            assert_eq!(
+                base,
+                reconstruct_w_errors_sync(
+                    parties,
+                    threshold,
+                    threshold,
+                    &cur_set,
+                    &crate::value::RingType::GalExtRing128,
+                )
+                .unwrap()
+                .unwrap()
+            )
+        }
+    }
+
+    #[test]
+    fn sunshine_robust_init() {
+        let parties = 5;
+        let threshold = 1;
+
+        async fn task(mut session: LargeSession) -> IndexedValue {
+            let prss_setup = PRSSSetup::robust_init(&mut session, &RealVss::default())
+                .await
+                .unwrap();
+            let mut state = prss_setup.new_prss_session_state(session.session_id());
+            let role = session.my_role().unwrap();
+            IndexedValue {
+                party_id: role.one_based(),
+                value: Value::Poly128(state.prss_next(role.one_based()).unwrap()),
+            }
+        }
+
+        let result = execute_protocol(parties, threshold, &mut task);
+
+        validate_prss_init(result, parties, threshold as usize);
+    }
+
+    #[test]
+    fn robust_init_party_drop() {
+        let parties = 5;
+        let threshold = 1;
+        let bad_party = 3;
+
+        let mut task = |mut session: LargeSession| async move {
+            if session.my_role().unwrap().one_based() != bad_party {
+                let prss_setup = PRSSSetup::robust_init(&mut session, &RealVss::default())
+                    .await
+                    .unwrap();
+                let mut state = prss_setup.new_prss_session_state(session.session_id());
+                let role = session.my_role().unwrap();
+                IndexedValue {
+                    party_id: role.one_based(),
+                    value: Value::Poly128(state.prss_next(role.one_based()).unwrap()),
+                }
+            } else {
+                IndexedValue {
+                    party_id: bad_party,
+                    value: Value::Empty,
+                }
+            }
+        };
+
+        let result = execute_protocol(parties, threshold, &mut task);
+
+        validate_prss_init(result, parties, threshold as usize);
+    }
+
+    #[test]
+    fn test_vdm_inverse() {
+        let res = inverse_vdm(3, 4).unwrap();
+        // Check first row is
+        // 1, 1, 1, 1
+        assert_eq!(ResiduePoly::ONE, res[[0, 0]]);
+        assert_eq!(ResiduePoly::ONE, res[[0, 1]]);
+        assert_eq!(ResiduePoly::ONE, res[[0, 2]]);
+        assert_eq!(ResiduePoly::ONE, res[[0, 3]]);
+        // Check second row is
+        // 1, 2, 3, 4 = 1, x, 1+x, 2x
+        assert_eq!(ResiduePoly::embed(1).unwrap(), res[[1, 0]]);
+        assert_eq!(ResiduePoly::embed(2).unwrap(), res[[1, 1]]);
+        assert_eq!(ResiduePoly::embed(3).unwrap(), res[[1, 2]]);
+        assert_eq!(ResiduePoly::embed(4).unwrap(), res[[1, 3]]);
+        // Check third row is
+        // 1, x^2, (1+x)^2, (2x)^2
+        assert_eq!(ResiduePoly::embed(1).unwrap(), res[[2, 0]]);
+        assert_eq!(
+            ResiduePoly::<Z128>::embed(2).unwrap() * ResiduePoly::<Z128>::embed(2).unwrap(),
+            res[[2, 1]]
+        );
+        assert_eq!(
+            ResiduePoly::<Z128>::embed(3).unwrap() * ResiduePoly::<Z128>::embed(3).unwrap(),
+            res[[2, 2]]
+        );
+        assert_eq!(
+            ResiduePoly::<Z128>::embed(4).unwrap() * ResiduePoly::<Z128>::embed(4).unwrap(),
+            res[[2, 3]]
+        );
+    }
+
+    /// Test that compute_result fails as expected when a set is not present in the `true_psi_vals` given as input
     #[test]
     fn expected_set_not_present() {
         let parties = 10;

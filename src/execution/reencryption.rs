@@ -466,7 +466,6 @@ fn check_normalized(sig: &Signature) -> bool {
     };
     true
 }
-
 fn hash_element<T>(element: &T) -> Vec<u8>
 where
     T: ?Sized + AsRef<[u8]>,

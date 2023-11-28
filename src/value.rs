@@ -1,4 +1,3 @@
-use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::{party::Role, small_execution::prss::PartySet};
 use crate::lwe::PubConKeyPair;
 use crate::residue_poly::ResiduePoly;
@@ -8,7 +7,9 @@ use crate::{
     commitment::{Commitment, Opening},
     execution::{session::DisputePayload, small_execution::prss::PrfKey},
 };
+use crate::{error::error_handler::anyhow_error_and_log, residue_poly::F_DEG};
 use crate::{Zero, Z128, Z64};
+use num_traits::ToBytes;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -64,6 +65,33 @@ impl From<ResiduePoly<Z64>> for Value {
 impl From<ResiduePoly<Z128>> for Value {
     fn from(value: ResiduePoly<Z128>) -> Self {
         Value::Poly128(value)
+    }
+}
+
+impl Value {
+    pub fn to_vec(&self) -> Vec<u8> {
+        match self {
+            Value::Poly64(val) => {
+                let size = F_DEG * u64::BITS as usize / 8;
+                let mut res = Vec::with_capacity(size);
+                for i in 0..F_DEG {
+                    res.append(&mut val.coefs[i].0.to_be_bytes().to_vec());
+                }
+                res
+            }
+            Value::Poly128(val) => {
+                let size = F_DEG * u128::BITS as usize / 8;
+                let mut res = Vec::with_capacity(size);
+                for i in 0..F_DEG {
+                    res.append(&mut val.coefs[i].0.to_be_bytes().to_vec());
+                }
+                res
+            }
+            Value::Ring64(val) => val.0.to_be_bytes().to_vec(),
+            Value::Ring128(val) => val.0.to_be_bytes().to_vec(),
+            Value::U64(val) => val.to_be_bytes().to_vec(),
+            Value::Empty => [0_u8; 0].to_vec(),
+        }
     }
 }
 
