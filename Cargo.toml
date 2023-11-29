@@ -1,0 +1,23 @@
+[package]
+name = "kms"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]] # Bin to run the gRPC server
+name = "kms-server"
+path = "src/server.rs"
+
+[[bin]] # Bin to run the gRPC client
+name = "kms-client"
+path = "src/client.rs"
+
+[dependencies]
+tonic = "0.10"
+prost = "0.12"
+reqwest = { version = "0.11", features = ["json"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+tendermint = "0.34"
+serde = "1"
+
+[build-dependencies]
+tonic-build = "0.10"

@@ -1,0 +1,33 @@
+syntax = "proto3";
+package kms;
+
+service KmsEndpoint {
+  rpc Decrypt(DecryptionRequest) returns (DecryptionResponse);
+  rpc Reencrypt(ReencryptionRequest) returns (ReencryptionResponse);
+}
+
+message Proof {
+  uint32 height = 1;
+  bytes merkle_patricia_proof = 2;
+}
+
+message DecryptionRequest {
+  bytes ciphertext = 1;
+  Proof proof = 2;
+}
+
+message DecryptionResponse {
+  uint32 plaintext = 1;
+  bytes signature = 2;
+}
+
+message ReencryptionRequest {
+  bytes ciphertext = 1;
+  Proof proof = 2;
+  bytes public_key = 3;
+}
+
+message ReencryptionResponse {
+  bytes reencrypted_ciphertext = 1;
+  bytes signature = 2;
+}
