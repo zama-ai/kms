@@ -196,7 +196,7 @@ mod tests {
             session::{ParameterHandles, SmallSession},
         },
         residue_poly::ResiduePoly,
-        tests::helper::tests::execute_protocol_small,
+        tests::helper::tests_and_benches::execute_protocol_small,
         Z128, Z64,
     };
     use paste::paste;

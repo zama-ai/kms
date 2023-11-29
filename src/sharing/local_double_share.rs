@@ -63,6 +63,11 @@ impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, 
         session: &mut L,
         secrets: &[ResiduePoly<Z128>],
     ) -> anyhow::Result<HashMap<Role, DoubleShares>> {
+        if secrets.is_empty() {
+            return Err(anyhow_error_and_log(
+                "Passed an empty secrets vector to LocalDoubleShare".to_string(),
+            ));
+        }
         //Keeps executing til verification passes
         loop {
             //ShareDispute will fill shares from corrupted players with 0s

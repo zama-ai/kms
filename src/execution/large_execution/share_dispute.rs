@@ -553,8 +553,7 @@ mod tests {
         residue_poly::ResiduePoly,
         shamir::ShamirGSharings,
         tests::helper::tests::{
-            execute_protocol_w_disputes_and_malicious, generate_identities, get_large_session,
-            roles_from_idxs,
+            execute_protocol_w_disputes_and_malicious, get_large_session, roles_from_idxs,
         },
         value::{NetworkValue, Value},
         Sample, Zero, Z128,
@@ -585,7 +584,7 @@ mod tests {
     #[test]
     fn optimistic_share_multiple_parties() {
         let msg = Wrapping(42);
-        let identities = generate_identities(4);
+        let identities = DistributedTestRuntime::generate_fixed_identities(4);
         let threshold = 1;
 
         let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
@@ -650,7 +649,7 @@ mod tests {
     #[test]
     fn test_sharing_with_dispute() {
         let msg = Wrapping(42);
-        let identities = generate_identities(5);
+        let identities = DistributedTestRuntime::generate_fixed_identities(5);
         let threshold = 3;
         let mut dispute_roles = DisputeSet::new(identities.len());
         let dispute_party = Role::indexed_by_one(1);

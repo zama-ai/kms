@@ -253,7 +253,6 @@ mod tests {
         keygen_all_party_shares, keygen_single_party_share, value_to_message, KeyPair, KeySet,
         ThresholdLWEParameters,
     };
-    use crate::tests::helper::tests::generate_identities;
 
     use crate::tests::test_data_setup::tests::{
         DEFAULT_KEY_PATH, DEFAULT_PARAM_PATH, TEST_KEY_PATH, TEST_PARAM_PATH,
@@ -400,7 +399,7 @@ mod tests {
             ],
             input_wires: vec![],
         };
-        let identities = generate_identities(num_parties);
+        let identities = DistributedTestRuntime::generate_fixed_identities(num_parties);
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys

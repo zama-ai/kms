@@ -605,7 +605,7 @@ impl DisputeSet {
 #[cfg(test)]
 mod tests {
     use super::SessionParameters;
-    use crate::{execution::party::Role, tests::helper::tests::execute_protocol};
+    use crate::execution::party::Role;
     use crate::{
         execution::session::{
             DisputeSet, LargeSession, LargeSessionHandles, LargeSessionStruct, ParameterHandles,
@@ -614,6 +614,7 @@ mod tests {
         tests::helper::tests::{
             get_dummy_parameters, get_dummy_parameters_for_parties, get_large_session,
         },
+        tests::helper::tests_and_benches::execute_protocol_large,
     };
     use itertools::Itertools;
     use rand::SeedableRng;
@@ -663,7 +664,7 @@ mod tests {
             session
         };
 
-        let results = execute_protocol(parties, 1, &mut task);
+        let results = execute_protocol_large(parties, 1, &mut task);
 
         assert_eq!(results.len(), parties);
         // check they agree on the disputed party
@@ -705,7 +706,7 @@ mod tests {
             session
         };
 
-        let results = execute_protocol(parties, 1, &mut task);
+        let results = execute_protocol_large(parties, 1, &mut task);
 
         // Check that the party that did not respond does get marked as a dispute
         for cur_session in results {
@@ -792,7 +793,7 @@ mod tests {
             session
         };
 
-        let results = execute_protocol(parties, 1, &mut task);
+        let results = execute_protocol_large(parties, 1, &mut task);
 
         assert_eq!(results.len(), parties);
         // check that honest parties agree on the corrupt party

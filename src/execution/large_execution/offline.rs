@@ -15,19 +15,16 @@ use crate::{
 };
 
 pub struct BatchParams {
-    pub single_double_sharing_batch_size: usize,
     pub triple_batch_size: usize,
     pub random_batch_size: usize,
 }
 
-const SINGLE_DOUBLE_SHARING_BATCH_SIZE: usize = 100_usize;
 const TRIPLE_BATCH_SIZE: usize = 100_usize;
 const RANDOM_BATCH_SIZE: usize = 100_usize;
 
 impl Default for BatchParams {
     fn default() -> Self {
         Self {
-            single_double_sharing_batch_size: SINGLE_DOUBLE_SHARING_BATCH_SIZE,
             triple_batch_size: TRIPLE_BATCH_SIZE,
             random_batch_size: RANDOM_BATCH_SIZE,
         }
@@ -58,13 +55,15 @@ impl<S: SingleSharing, D: DoubleSharing> LargePreprocessing<S, D> {
         let batch_sizes = batch_sizes.unwrap_or_default();
         //Init single sharing
         let mut shh = S::default();
-        shh.init(session, batch_sizes.single_double_sharing_batch_size)
-            .await?;
+        shh.init(
+            session,
+            2 * batch_sizes.triple_batch_size + batch_sizes.random_batch_size,
+        )
+        .await?;
 
         //Init double sharing
         let mut dsh = D::default();
-        dsh.init(session, batch_sizes.single_double_sharing_batch_size)
-            .await?;
+        dsh.init(session, batch_sizes.triple_batch_size).await?;
 
         let mut large_preproc = Self {
             triple_batch_size: batch_sizes.triple_batch_size,
@@ -85,6 +84,10 @@ impl<S: SingleSharing, D: DoubleSharing> LargePreprocessing<S, D> {
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<()> {
+        if self.triple_batch_size == 0 {
+            return Ok(());
+        }
+
         let mut vec_share_x = Vec::with_capacity(self.triple_batch_size);
         let mut vec_share_y = Vec::with_capacity(self.triple_batch_size);
         let mut vec_double_share_v = Vec::with_capacity(self.triple_batch_size);
@@ -231,14 +234,24 @@ where
     }
 }
 
+use crate::execution::coinflip::RealCoinflip;
+use crate::execution::large_execution::share_dispute::RealShareDispute;
+use crate::sharing::{
+    double_sharing::RealDoubleSharing, local_double_share::RealLocalDoubleShare,
+    local_single_share::RealLocalSingleShare, single_sharing::RealSingleSharing, vss::RealVss,
+};
+
+pub type TrueSingleSharing =
+    RealSingleSharing<RealLocalSingleShare<RealCoinflip<RealVss>, RealShareDispute>>;
+pub type TrueDoubleSharing =
+    RealDoubleSharing<RealLocalDoubleShare<RealCoinflip<RealVss>, RealShareDispute>>;
+
 #[cfg(test)]
 mod tests {
     use crate::{
         execution::{
-            coinflip::RealCoinflip,
-            large_execution::{
-                offline::{LargePreprocessing, TRIPLE_BATCH_SIZE},
-                share_dispute::RealShareDispute,
+            large_execution::offline::{
+                LargePreprocessing, TrueDoubleSharing, TrueSingleSharing, TRIPLE_BATCH_SIZE,
             },
             online::{preprocessing::Preprocessing, triple::Triple},
             party::Role,
@@ -246,19 +259,9 @@ mod tests {
         },
         residue_poly::ResiduePoly,
         shamir::ShamirGSharings,
-        sharing::{
-            double_sharing::RealDoubleSharing, local_double_share::RealLocalDoubleShare,
-            local_single_share::RealLocalSingleShare, single_sharing::RealSingleSharing,
-            vss::RealVss,
-        },
-        tests::helper::tests::execute_protocol,
+        tests::helper::tests_and_benches::execute_protocol_large,
         Z128,
     };
-
-    type TrueSingleSharing =
-        RealSingleSharing<RealLocalSingleShare<RealCoinflip<RealVss>, RealShareDispute>>;
-    type TrueDoubleSharing =
-        RealDoubleSharing<RealLocalDoubleShare<RealCoinflip<RealVss>, RealShareDispute>>;
 
     #[test_log::test]
     fn test_triple_generation() {
@@ -280,7 +283,7 @@ mod tests {
             (session.my_role().unwrap(), res)
         }
 
-        let result = execute_protocol(parties, threshold, &mut task);
+        let result = execute_protocol_large(parties, threshold, &mut task);
 
         //Check we can reconstruct everything and we do have multiplication triples
         for idx in 0..TRIPLE_BATCH_SIZE {
@@ -299,11 +302,11 @@ mod tests {
             let shamir_y = ShamirGSharings { shares: res_vec_y };
             let shamir_z = ShamirGSharings { shares: res_vec_z };
 
-            let x = shamir_x.reconstruct(threshold as usize);
+            let x = shamir_x.reconstruct(threshold);
             assert!(x.is_ok());
-            let y = shamir_y.reconstruct(threshold as usize);
+            let y = shamir_y.reconstruct(threshold);
             assert!(y.is_ok());
-            let z = shamir_z.reconstruct(threshold as usize);
+            let z = shamir_z.reconstruct(threshold);
             assert!(z.is_ok());
 
             let expected_z = x.unwrap() * y.unwrap();
@@ -340,7 +343,7 @@ mod tests {
             }
         }
 
-        let result = execute_protocol(parties, threshold, &mut task);
+        let result = execute_protocol_large(parties, threshold, &mut task);
 
         //Check we can reconstruct everything and we do have multiplication triples
         for idx in 0..TRIPLE_BATCH_SIZE {
@@ -361,11 +364,11 @@ mod tests {
             let shamir_y = ShamirGSharings { shares: res_vec_y };
             let shamir_z = ShamirGSharings { shares: res_vec_z };
 
-            let x = shamir_x.reconstruct(threshold as usize);
+            let x = shamir_x.reconstruct(threshold);
             assert!(x.is_ok());
-            let y = shamir_y.reconstruct(threshold as usize);
+            let y = shamir_y.reconstruct(threshold);
             assert!(y.is_ok());
-            let z = shamir_z.reconstruct(threshold as usize);
+            let z = shamir_z.reconstruct(threshold);
             assert!(z.is_ok());
 
             let expected_z = x.unwrap() * y.unwrap();

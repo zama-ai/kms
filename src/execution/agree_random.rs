@@ -398,7 +398,8 @@ mod tests {
             session::{ParameterHandles, SmallSession, ToBaseSession},
             small_execution::prss::{create_sets, PrfKey},
         },
-        tests::helper::tests::{execute_protocol_small, get_small_session_for_parties},
+        tests::helper::tests::get_small_session_for_parties,
+        tests::helper::tests_and_benches::execute_protocol_small,
         value::{AgreeRandomValue, NetworkValue},
     };
     use rand::SeedableRng;
@@ -530,7 +531,10 @@ mod tests {
         let num_parties = 7;
         let threshold = 2;
 
-        let identities = crate::tests::helper::tests::generate_identities(num_parties);
+        let identities =
+            crate::execution::distributed::DistributedTestRuntime::generate_fixed_identities(
+                num_parties,
+            );
 
         assert_eq!(identities.len(), num_parties);
 

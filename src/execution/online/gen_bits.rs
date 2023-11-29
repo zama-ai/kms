@@ -159,7 +159,7 @@ mod tests {
         },
         gf256::GF256,
         residue_poly::ResiduePoly,
-        tests::helper::tests::execute_protocol_small,
+        tests::helper::tests_and_benches::execute_protocol_small,
         One, Sample, Zero, Z128, Z64,
     };
     use itertools::Itertools;

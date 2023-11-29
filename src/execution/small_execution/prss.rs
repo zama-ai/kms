@@ -708,10 +708,9 @@ mod tests {
         shamir::ShamirGSharings,
         sharing::vss::RealVss,
         tests::{
-            helper::tests::{
-                execute_protocol, execute_protocol_small, generate_identities,
-                get_small_session_for_parties,
-            },
+            helper::tests::get_small_session_for_parties,
+            helper::tests_and_benches::execute_protocol_large,
+            helper::tests_and_benches::execute_protocol_small,
             test_data_setup::tests::TEST_KEY_PATH,
         },
         value::{IndexedValue, Value},
@@ -883,7 +882,7 @@ mod tests {
             ],
             input_wires: vec![],
         };
-        let identities = generate_identities(num_parties);
+        let identities = DistributedTestRuntime::generate_fixed_identities(num_parties);
 
         // generate keys
         let key_shares = keygen_all_party_shares(&keys, &mut rng, num_parties, threshold).unwrap();
@@ -1150,7 +1149,7 @@ mod tests {
     fn sunshine_prss_check() {
         let parties = 7;
         let threshold = 2;
-        let identities = generate_identities(parties);
+        let identities = DistributedTestRuntime::generate_fixed_identities(parties);
 
         let runtime = DistributedTestRuntime::new(identities, threshold as u8);
         let session_id = SessionId(23);
@@ -1214,7 +1213,7 @@ mod tests {
     fn sunshine_przs_check() {
         let parties = 7;
         let threshold = 2;
-        let identities = generate_identities(parties);
+        let identities = DistributedTestRuntime::generate_fixed_identities(parties);
 
         let runtime = DistributedTestRuntime::new(identities, threshold as u8);
         let session_id = SessionId(17);
@@ -1547,9 +1546,9 @@ mod tests {
             }
         }
 
-        let result = execute_protocol(parties, threshold, &mut task);
+        let result = execute_protocol_large(parties, threshold, &mut task);
 
-        validate_prss_init(result, parties, threshold as usize);
+        validate_prss_init(result, parties, threshold);
     }
 
     #[test]
@@ -1577,9 +1576,9 @@ mod tests {
             }
         };
 
-        let result = execute_protocol(parties, threshold, &mut task);
+        let result = execute_protocol_large(parties, threshold, &mut task);
 
-        validate_prss_init(result, parties, threshold as usize);
+        validate_prss_init(result, parties, threshold);
     }
 
     #[test]

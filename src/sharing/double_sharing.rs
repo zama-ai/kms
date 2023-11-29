@@ -59,6 +59,10 @@ impl<S: LocalDoubleShare> DoubleSharing for RealDoubleSharing<S> {
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()> {
+        if l == 0 {
+            return Ok(());
+        }
+
         let my_secrets = (0..l)
             .map(|_| ResiduePoly::<Z128>::sample(session.rng()))
             .collect_vec();
@@ -160,7 +164,7 @@ mod tests {
             local_double_share::RealLocalDoubleShare,
             vss::RealVss,
         },
-        tests::helper::tests::execute_protocol,
+        tests::helper::tests_and_benches::execute_protocol_large,
         Sample, Zero, Z128,
     };
 
@@ -186,11 +190,11 @@ mod tests {
             (session.my_role().unwrap(), session.rng.get_seed(), res)
         }
 
-        let result = execute_protocol(parties, threshold, &mut task);
+        let result = execute_protocol_large(parties, threshold, &mut task);
 
         //Check we can reconstruct both degree t and 2t, and they are equal
         let ldl_batch_size = 10_usize;
-        let extracted_size = parties - threshold as usize;
+        let extracted_size = parties - threshold;
         let num_output = ldl_batch_size * extracted_size + 1;
         assert_eq!(result[0].2.len(), num_output);
         for value_idx in 0..num_output {
@@ -202,8 +206,8 @@ mod tests {
             }
             let shamir_sharing_t = ShamirGSharings { shares: res_vec_t };
             let shamir_sharing_2t = ShamirGSharings { shares: res_vec_2t };
-            let res_t = shamir_sharing_t.reconstruct(threshold as usize);
-            let res_2t = shamir_sharing_2t.reconstruct(2 * threshold as usize);
+            let res_t = shamir_sharing_t.reconstruct(threshold);
+            let res_2t = shamir_sharing_2t.reconstruct(2 * threshold);
             assert!(res_t.is_ok());
             assert!(res_2t.is_ok());
             assert_eq!(res_t.unwrap(), res_2t.unwrap());
@@ -240,11 +244,11 @@ mod tests {
             (session.my_role().unwrap(), session.rng.get_seed(), res)
         }
 
-        let result = execute_protocol(parties, threshold, &mut task);
+        let result = execute_protocol_large(parties, threshold, &mut task);
 
         //Check we can reconstruct both degree t and 2t, and they are equal
         let ldl_batch_size = 10_usize;
-        let extracted_size = parties - threshold as usize;
+        let extracted_size = parties - threshold;
         let num_output = ldl_batch_size * extracted_size + 1;
         assert_eq!(result[0].2.len(), num_output);
         for value_idx in 0..num_output {
@@ -259,9 +263,9 @@ mod tests {
             let shamir_sharing_t = ShamirGSharings { shares: res_vec_t };
             let shamir_sharing_2t = ShamirGSharings { shares: res_vec_2t };
             //Expect at most 1 error from the dropout party
-            let res_t = shamir_sharing_t.err_reconstruct(threshold as usize, 1);
+            let res_t = shamir_sharing_t.err_reconstruct(threshold, 1);
             //Here we needed to remove the corrupt party's share because of the pol. degree
-            let res_2t = shamir_sharing_2t.reconstruct(2 * threshold as usize);
+            let res_2t = shamir_sharing_2t.reconstruct(2 * threshold);
             assert!(res_t.is_ok());
             assert!(res_2t.is_ok());
             assert_eq!(res_t.unwrap(), res_2t.unwrap());

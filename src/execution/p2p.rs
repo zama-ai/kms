@@ -264,12 +264,10 @@ pub async fn exchange_values(
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        execution::session::{LargeSession, ParameterHandles},
-        tests::helper::tests::execute_protocol,
-    };
+    use crate::execution::session::{LargeSession, ParameterHandles};
     use crate::{
         execution::{p2p::exchange_values, party::Role},
+        tests::helper::tests_and_benches::execute_protocol_large,
         value::{NetworkValue, Value},
     };
     use std::collections::HashMap;
@@ -291,7 +289,7 @@ mod tests {
                 .collect();
             exchange_values(&msgs, NetworkValue::Bot, &mut session).await
         }
-        let results = execute_protocol(parties, 1, &mut task);
+        let results = execute_protocol_large(parties, 1, &mut task);
 
         assert_eq!(results.len(), parties);
         // Recover the values for each of the parties and validate that they reconstruct to the right message
@@ -331,7 +329,7 @@ mod tests {
             (session.my_role().unwrap(), exchanged_values)
         };
 
-        let results = execute_protocol(parties, 1, &mut task);
+        let results = execute_protocol_large(parties, 1, &mut task);
 
         // Recover the shares shared by for each of the parties and validate that they reconstruct to the shared msg
         for (cur_role, cur_data) in results {
@@ -380,7 +378,7 @@ mod tests {
             }
         };
 
-        let results = execute_protocol(parties, 1, &mut task);
+        let results = execute_protocol_large(parties, 1, &mut task);
 
         for (cur_session, cur_data) in results {
             if cur_session.my_role().unwrap() != non_sending_party {

@@ -45,6 +45,10 @@ impl<S: LocalSingleShare> SingleSharing for RealSingleSharing<S> {
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()> {
+        if l == 0 {
+            return Ok(());
+        }
+
         let my_secrets = (0..l)
             .map(|_| ResiduePoly::<Z128>::sample(session.rng()))
             .collect_vec();
@@ -151,7 +155,7 @@ mod tests {
             single_sharing::{RealSingleSharing, SingleSharing},
             vss::RealVss,
         },
-        tests::helper::tests::execute_protocol,
+        tests::helper::tests_and_benches::execute_protocol_large,
         Sample, Zero, Z128,
     };
 
@@ -180,11 +184,11 @@ mod tests {
             (session.my_role().unwrap(), session.rng.get_seed(), res)
         }
 
-        let result = execute_protocol(parties, threshold, &mut task);
+        let result = execute_protocol_large(parties, threshold, &mut task);
 
         //Check we can reconstruct
         let lsl_batch_size = 10_usize;
-        let extracted_size = parties - threshold as usize;
+        let extracted_size = parties - threshold;
         let num_output = lsl_batch_size * extracted_size + 1;
         assert_eq!(result[0].2.len(), num_output);
         for value_idx in 0..num_output {
@@ -193,7 +197,7 @@ mod tests {
                 res_vec[role.zero_based()] = (role.one_based(), res[value_idx]);
             }
             let shamir_sharing = ShamirGSharings { shares: res_vec };
-            let res = shamir_sharing.reconstruct(threshold as usize);
+            let res = shamir_sharing.reconstruct(threshold);
             assert!(res.is_ok());
         }
     }
@@ -227,11 +231,11 @@ mod tests {
             (session.my_role().unwrap(), session.rng.get_seed(), res)
         }
 
-        let result = execute_protocol(parties, threshold, &mut task);
+        let result = execute_protocol_large(parties, threshold, &mut task);
 
         //Check we can reconstruct
         let lsl_batch_size = 10_usize;
-        let extracted_size = parties - threshold as usize;
+        let extracted_size = parties - threshold;
         let num_output = lsl_batch_size * extracted_size + 1;
         assert_eq!(result[0].2.len(), num_output);
         for value_idx in 0..num_output {
@@ -241,7 +245,7 @@ mod tests {
             }
             let shamir_sharing = ShamirGSharings { shares: res_vec };
             //Expect max 1 error coming from dropout
-            let res = shamir_sharing.err_reconstruct(threshold as usize, 1);
+            let res = shamir_sharing.err_reconstruct(threshold, 1);
             assert!(res.is_ok());
         }
     }

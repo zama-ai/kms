@@ -94,5 +94,5 @@ fn bench_decode_z64(c: &mut Criterion) {
     }
 }
 
-criterion_group!(decode, bench_decode_z2, bench_decode_z128, bench_decode_z64);
+criterion_group!(decode, bench_decode_z2, bench_decode_z128, bench_decode_z64,);
 criterion_main!(decode);

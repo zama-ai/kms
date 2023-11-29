@@ -1,3 +1,105 @@
+/// Currently we cannot make this bench under #[cfg(test)] because it is used by the benches
+/// One alternative would be to compile the benches with a special flag but unsure what happens
+/// with the profiler when we do this.
+/// TODO(Dragos) Investigate this afterwards.
+pub mod tests_and_benches {
+
+    use futures::Future;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
+    use tokio::task::JoinSet;
+
+    use crate::{
+        computation::SessionId,
+        execution::{
+            distributed::DistributedTestRuntime,
+            session::{BaseSessionHandles, LargeSession, SmallSession},
+        },
+    };
+
+    /// Helper method for executing networked tests with multiple parties for small session.
+    /// The `task` argument contains the code to be execute per party which returns a value of type [OutputT].
+    /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
+    /// interactive computation.
+    #[allow(dead_code)]
+    pub fn execute_protocol_small<TaskOutputT, OutputT>(
+        parties: usize,
+        threshold: u8,
+        task: &mut dyn FnMut(SmallSession) -> TaskOutputT,
+    ) -> Vec<OutputT>
+    where
+        TaskOutputT: Future<Output = OutputT>,
+        TaskOutputT: Send + 'static,
+        OutputT: Send + 'static,
+    {
+        let identities = DistributedTestRuntime::generate_fixed_identities(parties);
+        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
+        let session_id = SessionId(1);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let mut tasks = JoinSet::new();
+        for party_id in 0..parties {
+            let session = test_runtime
+                .small_session_for_player(
+                    session_id,
+                    party_id,
+                    Some(ChaCha20Rng::seed_from_u64(party_id as u64)),
+                )
+                .unwrap();
+            tasks.spawn(task(session));
+        }
+        rt.block_on(async {
+            let mut results = Vec::with_capacity(tasks.len());
+            while let Some(v) = tasks.join_next().await {
+                results.push(v.unwrap());
+            }
+            results
+        })
+    }
+
+    /// Helper method for executing networked tests with multiple parties for LargeSession.
+    /// The `task` argument contains the code to be execute per party which returns a value of type [OutputT].
+    /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
+    /// interactive computation.
+    #[allow(dead_code)]
+    pub fn execute_protocol_large<TaskOutputT, OutputT>(
+        parties: usize,
+        threshold: usize,
+        task: &mut dyn FnMut(LargeSession) -> TaskOutputT,
+    ) -> Vec<OutputT>
+    where
+        TaskOutputT: Future<Output = OutputT>,
+        TaskOutputT: Send + 'static,
+        OutputT: Send + 'static,
+    {
+        let identities = DistributedTestRuntime::generate_fixed_identities(parties);
+        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold as u8);
+        let session_id = SessionId(1);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let mut tasks = JoinSet::new();
+        for party_id in 0..parties {
+            let session = test_runtime
+                .large_session_for_player(session_id, party_id)
+                .unwrap();
+            let session =
+                LargeSession::new(session.parameters.clone(), session.network().clone()).unwrap();
+            tasks.spawn(task(session));
+        }
+        rt.block_on(async {
+            let mut results = Vec::with_capacity(tasks.len());
+            while let Some(v) = tasks.join_next().await {
+                results.push(v.unwrap());
+            }
+            results
+        })
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
 
@@ -59,16 +161,6 @@ pub mod tests {
         let mut seeded_rng = AesRng::seed_from_u64(444);
         keys.pk
             .encrypt_w_bitlimit(&mut seeded_rng, message, mod_log)
-    }
-
-    /// Generates a list of list identities, setting their addresses as localhost:5000, localhost:5001, ...
-    pub fn generate_identities(parties: usize) -> Vec<Identity> {
-        let mut res = Vec::with_capacity(parties);
-        for i in 1..=parties {
-            let port = 4999 + i;
-            res.push(Identity(format!("localhost:{port}")));
-        }
-        res
     }
 
     /// Generates dummy parameters for unit tests with role 1. Parameters contain a single party, session ID = 1 and threshold = 0
@@ -163,90 +255,6 @@ pub mod tests {
         }
     }
 
-    /// Helper method for executing networked tests with multiple parties.
-    /// The `task` argument contains the code to be execute per party which returns a value of type [OutputT].
-    /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
-    /// interactive computation.
-    pub fn execute_protocol_small<TaskOutputT, OutputT>(
-        parties: usize,
-        threshold: u8,
-        task: &mut dyn FnMut(SmallSession) -> TaskOutputT,
-    ) -> Vec<OutputT>
-    where
-        TaskOutputT: Future<Output = OutputT>,
-        TaskOutputT: Send + 'static,
-        OutputT: Send + 'static,
-    {
-        let identities = generate_identities(parties);
-        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
-        let mut tasks = JoinSet::new();
-        for party_id in 0..parties {
-            let session = test_runtime
-                .small_session_for_player(
-                    session_id,
-                    party_id,
-                    Some(ChaCha20Rng::seed_from_u64(party_id as u64)),
-                )
-                .unwrap();
-            tasks.spawn(task(session));
-        }
-        rt.block_on(async {
-            let mut results = Vec::with_capacity(tasks.len());
-            while let Some(v) = tasks.join_next().await {
-                results.push(v.unwrap());
-            }
-            results
-        })
-    }
-
-    /// Helper method for executing networked tests with multiple parties.
-    /// The `task` argument contains the code to be execute per party which returns a value of type [OutputT].
-    /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
-    /// interactive computation.
-    pub fn execute_protocol<TaskOutputT, OutputT>(
-        parties: usize,
-        threshold: u8,
-        task: &mut dyn FnMut(LargeSession) -> TaskOutputT,
-    ) -> Vec<OutputT>
-    where
-        TaskOutputT: Future<Output = OutputT>,
-        TaskOutputT: Send + 'static,
-        OutputT: Send + 'static,
-    {
-        let identities = generate_identities(parties);
-        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
-        let mut tasks = JoinSet::new();
-        for party_id in 0..parties {
-            let session = test_runtime
-                .small_session_for_player(
-                    session_id,
-                    party_id,
-                    Some(ChaCha20Rng::seed_from_u64(party_id as u64)),
-                )
-                .unwrap();
-            let session =
-                LargeSession::new(session.parameters.clone(), session.network().clone()).unwrap();
-            tasks.spawn(task(session));
-        }
-        rt.block_on(async {
-            let mut results = Vec::with_capacity(tasks.len());
-            while let Some(v) = tasks.join_next().await {
-                results.push(v.unwrap());
-            }
-            results
-        })
-    }
-
     /// Helper method for executing networked tests with multiple parties some honest some dishoneset.
     /// The `task_honest` argument contains the code to be execute by honest parties which returns a value of type [OutputT].
     /// The `task_malicious` argument contains the code to be execute by malicious parties which returns a value of type [OutputT].
@@ -278,7 +286,7 @@ pub mod tests {
         TaskOutputM: Send + 'static,
         OutputM: Send + 'static,
     {
-        let identities = generate_identities(parties);
+        let identities = DistributedTestRuntime::generate_fixed_identities(parties);
         let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 

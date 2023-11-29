@@ -544,12 +544,10 @@ pub async fn broadcast_with_corruption<R: RngCore, L: BaseSessionHandles<R>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution::distributed::DistributedTestRuntime;
     use crate::execution::party::Identity;
     use crate::execution::session::{LargeSession, ParameterHandles};
     use crate::{computation::SessionId, value::Value};
-    use crate::{
-        execution::distributed::DistributedTestRuntime, tests::helper::tests::generate_identities,
-    };
     use itertools::Itertools;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
@@ -562,7 +560,7 @@ mod tests {
         Vec<BroadcastValue>,
         Vec<HashMap<Role, BroadcastValue>>,
     ) {
-        let identities = generate_identities(4);
+        let identities = DistributedTestRuntime::generate_fixed_identities(4);
 
         let input_values = vec![
             BroadcastValue::from(Value::Ring128(Wrapping(1))),
@@ -701,7 +699,7 @@ mod tests {
 
     #[test]
     fn test_broadcast_dropout() {
-        let identities = generate_identities(4);
+        let identities = DistributedTestRuntime::generate_fixed_identities(4);
 
         let input_values = vec![
             BroadcastValue::from(Value::Ring128(Wrapping(1))),
@@ -764,7 +762,7 @@ mod tests {
     fn broadcast_w_corruption() {
         let num_parties = 4;
         let msg = BroadcastValue::from(Value::U64(42));
-        let identities = generate_identities(num_parties);
+        let identities = DistributedTestRuntime::generate_fixed_identities(num_parties);
         let parties = identities.len();
 
         // code for session setup
@@ -962,7 +960,7 @@ mod tests {
         let corrupt_msg = (0..5)
             .map(|i| BroadcastValue::from(Value::U64(43 + i)))
             .collect_vec();
-        let identities = generate_identities(5);
+        let identities = DistributedTestRuntime::generate_fixed_identities(5);
         let parties = identities.len();
 
         // code for session setup
@@ -1145,7 +1143,7 @@ mod tests {
         let corrupt_msg = (0..5)
             .map(|i| BroadcastValue::from(Value::U64(43 + i)))
             .collect_vec();
-        let identities = generate_identities(4);
+        let identities = DistributedTestRuntime::generate_fixed_identities(4);
         let parties = identities.len();
 
         // code for session setup

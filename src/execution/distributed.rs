@@ -82,6 +82,16 @@ impl DistributedTestRuntime {
         }
     }
 
+    /// Generates a list of list identities, setting their addresses as localhost:5000, localhost:5001, ...
+    pub fn generate_fixed_identities(parties: usize) -> Vec<Identity> {
+        let mut res = Vec::with_capacity(parties);
+        for i in 1..=parties {
+            let port = 4999 + i;
+            res.push(Identity(format!("localhost:{port}")));
+        }
+        res
+    }
+
     // store keyshares if you want to test sth related to them
     pub fn setup_keys(&mut self, keyshares: Vec<SecretKeyShare>) {
         self.keyshares = Some(keyshares);
@@ -1337,12 +1347,9 @@ pub async fn initialize_key_material(
 mod tests {
     use super::*;
     use crate::{
-        circuit::Operation,
-        file_handling::read_as_json,
-        tests::{
-            helper::tests::{execute_protocol, generate_identities},
-            test_data_setup::tests::DEFAULT_PARAM_PATH,
-        },
+        circuit::Operation, file_handling::read_as_json,
+        tests::helper::tests_and_benches::execute_protocol_large,
+        tests::test_data_setup::tests::DEFAULT_PARAM_PATH,
     };
 
     #[test]
@@ -1366,7 +1373,7 @@ mod tests {
             ],
             input_wires: vec![],
         };
-        let identities = generate_identities(4);
+        let identities = DistributedTestRuntime::generate_fixed_identities(4);
         let threshold = 1;
 
         let runtime = DistributedTestRuntime::new(identities, threshold);
@@ -1407,7 +1414,7 @@ mod tests {
             ],
             input_wires: vec![],
         };
-        let identities = generate_identities(4);
+        let identities = DistributedTestRuntime::generate_fixed_identities(4);
         let threshold = 1;
 
         let runtime = DistributedTestRuntime::new(identities, threshold);
@@ -1448,7 +1455,7 @@ mod tests {
             ],
             input_wires: vec![],
         };
-        let identities = generate_identities(6);
+        let identities = DistributedTestRuntime::generate_fixed_identities(6);
         let threshold = 1;
         let runtime = DistributedTestRuntime::new(identities, threshold);
         let results = runtime.evaluate_circuit(&circuit, None).unwrap();
@@ -1535,7 +1542,7 @@ mod tests {
             ],
             input_wires: vec![],
         };
-        let identities = generate_identities(10);
+        let identities = DistributedTestRuntime::generate_fixed_identities(10);
         let threshold = 1;
         let runtime = DistributedTestRuntime::new(identities, threshold);
         let results = runtime.evaluate_circuit(&circuit, None).unwrap();
@@ -1581,6 +1588,6 @@ mod tests {
             res
         }
 
-        let _ = execute_protocol(parties, threshold, &mut task);
+        let _ = execute_protocol_large(parties, threshold, &mut task);
     }
 }

@@ -2,6 +2,30 @@
 [![Rust](https://github.com/zama-ai/distributed-decryption/actions/workflows/rust.yml/badge.svg)](https://github.com/zama-ai/distributed-decryption/actions/workflows/rust.yml)
 
 
+## Profiling
+
+To profile various protocols, see the `benches/` folder.
+
+Following instructions are for Linux based systems. For individual benches one can run the following:
+
+```sh
+cargo bench --bench prep -- --profile-time 60 triple_generation/n=5_t=1_batch=1000
+```
+
+To see the flamegraph produced, fire up a terminal and open it with your favorite browser:
+```sh
+firefox target/criterion/triple_generation/n=5_t=1_batch=1000/profile/flamegraph.svg
+```
+
+For MacOS based users run the following:
+
+```sh
+cargo flamegraph --root --bench prep -- triple_generation/n=5_t=1_batch=1000
+```
+
+
+## Text below is outdated...
+
 To run a 10 party benchmark for distributed decryption on a local network run the following:
 
 ```sh
@@ -65,6 +89,6 @@ Change directory to the desired setting, e.g.: `cd distributed-decryption/experi
     ```sh
     mobygo -n 1 results --session-id 100 --session-range 50
     ```
-10. Assume you have collected benchmark results in a file called `results.txt`, you can copy it from docker to the AWS machine using: 
+10. Assume you have collected benchmark results in a file called `results.txt`, you can copy it from docker to the AWS machine using:
 `sudo docker cp f2667e5f5665:usr/src/ddec/results.txt .`
 Otherwise the results will be gone when you stop the containers.
