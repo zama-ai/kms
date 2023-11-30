@@ -20,6 +20,8 @@ use crate::{
 
 use super::{share::Share, triple::Triple};
 
+//NOTE: It's actually cumbersome to have the trait bounds define in the trait definition and not in the methods.
+//It forces to define a Rnd sperately from LargeSession
 /// Trait for implementing preprocessing values
 #[automock]
 pub trait Preprocessing<

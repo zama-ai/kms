@@ -131,6 +131,112 @@ pub mod tests {
         tests::test_data_setup::tests::{DEFAULT_SEED, TEST_KEY_PATH},
     };
 
+    #[derive(Default)]
+    pub struct TestingParameters {
+        pub num_parties: usize,
+        pub threshold: usize,
+        pub malicious_roles: Vec<Role>,
+        pub roles_to_lie_to: Vec<usize>,
+        pub dispute_pairs: Vec<(Role, Role)>,
+        pub should_be_detected: bool,
+    }
+
+    impl TestingParameters {
+        ///Init test parameters with
+        /// - number of parties
+        /// - threshold
+        /// - index of malicious parties (starting at 0)
+        /// - index of parties to lie to if applicable (starting at 0)
+        /// - dispute pairs (starting at 0)
+        /// - whether we expect the current test to be detected
+        pub fn init(
+            num_parties: usize,
+            threshold: usize,
+            malicious_roles_idx: &[usize],
+            roles_to_lie_to: &[usize],
+            dispute_pairs: &[(usize, usize)],
+            should_be_detected: bool,
+        ) -> Self {
+            Self {
+                num_parties,
+                threshold,
+                malicious_roles: roles_from_idxs(malicious_roles_idx),
+                roles_to_lie_to: roles_to_lie_to.to_vec(),
+                dispute_pairs: dispute_pairs
+                    .iter()
+                    .map(|(idx_a, idx_b)| {
+                        (Role::indexed_by_zero(*idx_a), Role::indexed_by_zero(*idx_b))
+                    })
+                    .collect_vec(),
+                should_be_detected,
+            }
+        }
+
+        ///Init test parameters with
+        /// - number of parties
+        /// - threshold
+        ///
+        /// Everything related to cheating is set to default (i.e. no cheating happens)
+        pub fn init_honest(num_parties: usize, threshold: usize) -> Self {
+            Self {
+                num_parties,
+                threshold,
+                ..Default::default()
+            }
+        }
+
+        ///Init test parameters with
+        /// - number of parties
+        /// - threshold
+        /// - dispute pairs (starting at 0)
+        ///
+        /// Everyhting else is set to default (i.e. no cheating happens)
+        pub fn init_dispute(
+            num_parties: usize,
+            threshold: usize,
+            dispute_pairs: &[(usize, usize)],
+        ) -> Self {
+            Self {
+                num_parties,
+                threshold,
+                dispute_pairs: dispute_pairs
+                    .iter()
+                    .map(|(idx_a, idx_b)| {
+                        (Role::indexed_by_zero(*idx_a), Role::indexed_by_zero(*idx_b))
+                    })
+                    .collect_vec(),
+                ..Default::default()
+            }
+        }
+
+        ///Retrieve a dispute map as well as the roles which are malicious due to disputes
+        pub fn get_dispute_map(&self) -> (HashMap<&Role, Vec<Role>>, Vec<Role>) {
+            let mut dispute_map = HashMap::new();
+            for (role_a, role_b) in self.dispute_pairs.iter() {
+                dispute_map
+                    .entry(role_a)
+                    .and_modify(|vec_dispute: &mut Vec<Role>| vec_dispute.push(*role_b))
+                    .or_insert(vec![*role_b]);
+
+                dispute_map
+                    .entry(role_b)
+                    .and_modify(|vec_dispute: &mut Vec<Role>| vec_dispute.push(*role_a))
+                    .or_insert(vec![*role_a]);
+            }
+            let malicious_due_to_dispute = dispute_map
+                .iter()
+                .filter_map(|(role, vec_dispute)| {
+                    if vec_dispute.len() > self.threshold {
+                        Some(**role)
+                    } else {
+                        None
+                    }
+                })
+                .collect_vec();
+            (dispute_map, malicious_due_to_dispute)
+        }
+    }
+
     ///Generate a vector of roles from zero indexed vector of id
     pub fn roles_from_idxs(idx_roles: &[usize]) -> Vec<Role> {
         idx_roles

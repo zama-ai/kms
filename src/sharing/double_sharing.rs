@@ -1,10 +1,7 @@
-use std::collections::HashMap;
-
-use async_trait::async_trait;
-use itertools::Itertools;
-use ndarray::{ArrayD, IxDyn};
-use rand::RngCore;
-
+use super::{
+    local_double_share::{DoubleShares, LocalDoubleShare},
+    single_sharing::init_vdm,
+};
 use crate::{
     algebra::bivariate::MatrixMul,
     error::error_handler::anyhow_error_and_log,
@@ -12,11 +9,11 @@ use crate::{
     residue_poly::ResiduePoly,
     Sample, Z128,
 };
-
-use super::{
-    local_double_share::{DoubleShares, LocalDoubleShare},
-    single_sharing::init_vdm,
-};
+use async_trait::async_trait;
+use itertools::Itertools;
+use ndarray::{ArrayD, IxDyn};
+use rand::RngCore;
+use std::collections::HashMap;
 
 type DoubleArrayShares = (ArrayD<ResiduePoly<Z128>>, ArrayD<ResiduePoly<Z128>>);
 
@@ -28,7 +25,7 @@ pub struct DoubleShare {
 }
 
 #[async_trait]
-pub trait DoubleSharing: Send + Default {
+pub trait DoubleSharing: Send + Default + Clone {
     async fn init<R: RngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -74,10 +71,17 @@ impl<S: LocalDoubleShare> DoubleSharing for RealDoubleSharing<S> {
 
         self.available_ldl = format_for_next(ldl, l)?;
         self.max_num_iterations = l;
-        self.vdm_matrix = init_vdm(
-            session.amount_of_parties(),
-            session.amount_of_parties() - session.threshold() as usize,
-        )?;
+
+        //Init vdm matrix only once or when dim changes
+        let shape = self.vdm_matrix.shape();
+        let curr_height = session.amount_of_parties();
+        let curr_width = session.amount_of_parties() - session.threshold() as usize;
+        if self.vdm_matrix.is_empty() || curr_height != shape[0] || curr_width != shape[1] {
+            self.vdm_matrix = init_vdm(
+                session.amount_of_parties(),
+                session.amount_of_parties() - session.threshold() as usize,
+            )?;
+        }
         Ok(())
     }
     async fn next<R: RngCore, L: LargeSessionHandles<R>>(
@@ -149,7 +153,7 @@ fn compute_next_batch(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::{
         execution::{
             coinflip::RealCoinflip,
@@ -161,7 +165,7 @@ mod tests {
         shamir::ShamirGSharings,
         sharing::{
             double_sharing::{DoubleShare, DoubleSharing, RealDoubleSharing},
-            local_double_share::RealLocalDoubleShare,
+            local_double_share::{LocalDoubleShare, RealLocalDoubleShare},
             vss::RealVss,
         },
         tests::helper::tests_and_benches::execute_protocol_large,
@@ -170,6 +174,14 @@ mod tests {
 
     type TrueLocalDoubleShare = RealLocalDoubleShare<RealCoinflip<RealVss>, RealShareDispute>;
 
+    pub(crate) fn create_real_double_sharing<L: LocalDoubleShare>(
+        ldl_strategy: L,
+    ) -> RealDoubleSharing<L> {
+        RealDoubleSharing {
+            local_double_share: ldl_strategy,
+            ..Default::default()
+        }
+    }
     #[test]
     fn test_doublesharing() {
         let parties = 4;

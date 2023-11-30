@@ -1,11 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
-
-use async_trait::async_trait;
-use blake3::Hasher;
-use itertools::Itertools;
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
-
+use super::constants::DISPUTE_STAT_SEC;
 use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
@@ -20,11 +13,15 @@ use crate::{
     value::{err_reconstruct, BroadcastValue, IndexedValue, RingType, Value},
     Sample, Zero, Z128,
 };
-
-use super::constants::DISPUTE_STAT_SEC;
+use async_trait::async_trait;
+use blake3::Hasher;
+use itertools::Itertools;
+use rand::RngCore;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[async_trait]
-pub trait LocalSingleShare: Send + Sync + Default {
+pub trait LocalSingleShare: Send + Sync + Default + Clone {
     ///Executes a batch LocalSingleShare where every party is sharing a vector of secrets
     ///
     ///NOTE: This does not always guarantee privacy of the inputs towards honest parties (but this is intended behaviour!)
@@ -54,7 +51,7 @@ pub struct MapsSharesChallenges {
 /// We expect instances of:
 /// - [Coinflip]
 /// - [ShareDispute]
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct RealLocalSingleShare<C: Coinflip, S: ShareDispute> {
     coinflip: C,
     share_dispute: S,
@@ -374,591 +371,449 @@ pub(crate) fn look_for_disputes<R: RngCore, L: LargeSessionHandles<R>>(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{
-        collections::{BTreeMap, HashMap, HashSet},
-        num::Wrapping,
-    };
-
-    use itertools::Itertools;
-    use rand::RngCore;
-    use tokio::task::JoinSet;
-    use tracing_test::traced_test;
-
+pub(crate) mod tests {
+    use super::{send_receive_pads, verify_sharing, LocalSingleShare, RealLocalSingleShare};
+    #[cfg(feature = "extensive_testing")]
     use crate::{
-        computation::SessionId,
         execution::{
-            broadcast::broadcast_with_corruption,
-            coinflip::{Coinflip, RealCoinflip},
-            distributed::DistributedTestRuntime,
-            large_execution::share_dispute::{RealShareDispute, ShareDispute, ShareDisputeOutput},
-            party::{Identity, Role},
-            session::{BaseSessionHandles, LargeSessionHandles},
+            coinflip::tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
+            large_execution::share_dispute::tests::{
+                DroppingShareDispute, MaliciousShareDisputeRecons, WrongShareDisputeRecons,
+            },
         },
-        poly::Ring,
+        sharing::vss::tests::{
+            DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
+        },
+    };
+    use crate::{
+        execution::{
+            coinflip::{Coinflip, RealCoinflip},
+            large_execution::share_dispute::{RealShareDispute, ShareDispute},
+            party::Role,
+            session::{BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles},
+        },
         residue_poly::ResiduePoly,
         shamir::ShamirGSharings,
-        sharing::{constants::DISPUTE_STAT_SEC, vss::RealVss},
-        value::BroadcastValue,
-        Zero, Z128,
+        sharing::vss::RealVss,
+        tests::helper::tests::{
+            execute_protocol_w_disputes_and_malicious, roles_from_idxs, TestingParameters,
+        },
+        One, Sample, Zero, Z128,
     };
+    use async_trait::async_trait;
+    use itertools::Itertools;
+    use rand::{RngCore, SeedableRng};
+    use rand_chacha::ChaCha20Rng;
+    use rstest::rstest;
+    use std::collections::HashMap;
 
-    use super::{
-        compute_check_values, derive_challenges_from_coinflip, look_for_disputes,
-        send_receive_pads, verify_sender_challenge, verify_sharing, LocalSingleShare,
-        MapsSharesChallenges, RealLocalSingleShare,
-    };
-
-    fn setup_parties_and_secrets(
-        num_parties: usize,
-        num_secrets: usize,
-    ) -> (Vec<Identity>, HashMap<Role, Vec<ResiduePoly<Z128>>>) {
-        let identities: Vec<Identity> = (0..num_parties)
-            .map(|party_nb| {
-                let mut id_str = "localhost:500".to_owned();
-                id_str.push_str(&party_nb.to_string());
-                Identity(id_str)
-            })
-            .collect();
-
-        let secrets: HashMap<Role, Vec<ResiduePoly<Z128>>> = (0..num_parties)
-            .map(|party_id| {
-                let role_pi = Role::indexed_by_zero(party_id);
-                (
-                    role_pi,
-                    (0..num_secrets)
-                        .map(|secret_idx| {
-                            ResiduePoly::<Z128>::from_scalar(Wrapping(
-                                ((party_id + 1) * num_parties + secret_idx)
-                                    .try_into()
-                                    .unwrap(),
-                            ))
-                        })
-                        .collect(),
-                )
-            })
-            .collect();
-
-        (identities, secrets)
-    }
-
-    type TrueCoinFlip = RealCoinflip<RealVss>;
-    #[traced_test]
-    #[test]
-    fn test_lsl() {
-        let num_parties = 4;
-        let num_secrets = 10;
-        let (identities, secrets) = setup_parties_and_secrets(num_parties, num_secrets);
-        // code for session setup
-        let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
-        let mut set = JoinSet::new();
-
-        for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = runtime
-                .large_session_for_player(session_id, party_nb)
-                .unwrap();
-            let s = secrets
-                .get(&Role::indexed_by_zero(party_nb))
-                .unwrap()
-                .clone();
-            set.spawn(async move {
-                let real_local_single_share =
-                    RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::default();
-                (
-                    party_nb,
-                    real_local_single_share
-                        .execute(&mut session, &s)
-                        .await
-                        .unwrap(),
-                )
-            });
-        }
-
-        let results = rt.block_on(async {
-            let mut results = HashMap::new();
-            while let Some(v) = set.join_next().await {
-                let data = v.unwrap();
-                results.insert(data.0, data.1);
-            }
-            results
-        });
-
-        assert_eq!(results.len(), num_parties);
-
-        //Check that all secrets reconstruct correctly
-        for sender_id in 0..num_parties {
-            for secret_id in 0..num_secrets {
-                let mut vec_shares = vec![(0_usize, ResiduePoly::<Z128>::ZERO); num_parties];
-                for (share_idx, vec_share) in vec_shares.iter_mut().enumerate() {
-                    *vec_share = (
-                        share_idx + 1,
-                        results
-                            .get(&share_idx)
-                            .unwrap()
-                            .get(&Role::indexed_by_zero(sender_id))
-                            .unwrap()[secret_id],
-                    );
-                }
-                let shamir_sharing = ShamirGSharings { shares: vec_shares };
-                let expected_result =
-                    secrets.get(&Role::indexed_by_zero(sender_id)).unwrap()[secret_id];
-                assert_eq!(
-                    expected_result,
-                    shamir_sharing.reconstruct(threshold.into()).unwrap()
-                );
+    impl<C: Coinflip, S: ShareDispute> RealLocalSingleShare<C, S> {
+        pub(crate) fn init(
+            coinflip_strategy: C,
+            share_dispute_strategy: S,
+        ) -> RealLocalSingleShare<C, S> {
+            RealLocalSingleShare {
+                coinflip: coinflip_strategy,
+                share_dispute: share_dispute_strategy,
             }
         }
     }
 
-    //In this test party 2 lies about the shares it received from parties in lie_to
-    async fn cheating_strategy_1<R: RngCore, L: LargeSessionHandles<R>>(
-        session: &mut L,
-        secrets: &[ResiduePoly<Z128>],
-        lie_to: &[Role],
-    ) -> anyhow::Result<HashMap<Role, Vec<ResiduePoly<Z128>>>> {
-        //Keeps executing til verification passes
-        loop {
-            //ShareDispute will fill shares from corrupted players with 0s
-            let real_share_dispute = RealShareDispute::default();
-            let mut shared_secrets = real_share_dispute.execute(session, secrets).await?;
+    /// Lie in broadcast as sender
+    #[derive(Clone, Default)]
+    pub(crate) struct MaliciousSenderLocalSingleShare<C: Coinflip, S: ShareDispute> {
+        coinflip: C,
+        share_dispute: S,
+        roles_to_lie_to: Vec<Role>,
+    }
 
-            //Modify received shared frome parties in lie to
-            for role in lie_to {
-                let share_vec = shared_secrets.all_shares.get(role).unwrap();
-                let mut new_shares = vec![ResiduePoly::<Z128>::ZERO; secrets.len()];
-                for (idx, share) in share_vec.iter().enumerate() {
-                    new_shares[idx] =
-                        *share + ResiduePoly::from_scalar(Wrapping::<u128>(idx as u128 + 1));
-                }
-                shared_secrets.all_shares.insert(*role, new_shares);
+    impl<C: Coinflip, S: ShareDispute> MaliciousSenderLocalSingleShare<C, S> {
+        pub fn init(
+            coinflip_strategy: C,
+            share_dispute_strategy: S,
+            roles_to_lie_to: &[usize],
+        ) -> Self {
+            Self {
+                coinflip: coinflip_strategy,
+                share_dispute: share_dispute_strategy,
+                roles_to_lie_to: roles_from_idxs(roles_to_lie_to),
             }
+        }
+    }
 
-            let shared_pads =
-                send_receive_pads::<R, L, RealShareDispute>(session, &real_share_dispute).await?;
+    /// Lie in broadcast as receiver
+    #[derive(Clone, Default)]
+    pub(crate) struct MaliciousReceiverLocalSingleShare<C: Coinflip, S: ShareDispute> {
+        coinflip: C,
+        share_dispute: S,
+        roles_to_lie_to: Vec<Role>,
+    }
 
-            let coinflip = TrueCoinFlip::default();
+    impl<C: Coinflip, S: ShareDispute> MaliciousReceiverLocalSingleShare<C, S> {
+        pub fn init(
+            coinflip_strategy: C,
+            share_dispute_strategy: S,
+            roles_to_lie_to: &[usize],
+        ) -> Self {
+            Self {
+                coinflip: coinflip_strategy,
+                share_dispute: share_dispute_strategy,
+                roles_to_lie_to: roles_from_idxs(roles_to_lie_to),
+            }
+        }
+    }
 
-            let x = coinflip.execute(session).await?;
+    #[async_trait]
+    impl<C: Coinflip, S: ShareDispute> LocalSingleShare for MaliciousSenderLocalSingleShare<C, S> {
+        async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+            &self,
+            session: &mut L,
+            secrets: &[ResiduePoly<Z128>],
+        ) -> anyhow::Result<HashMap<Role, Vec<ResiduePoly<Z128>>>> {
+            //Keeps executing til verification passes
+            loop {
+                //ShareDispute will fill shares from corrupted players with 0s
+                let mut shared_secrets = self.share_dispute.execute(session, secrets).await?;
 
-            if verify_sharing(
-                session,
-                &mut shared_secrets,
-                &shared_pads,
-                &x,
-                secrets.len(),
+                let shared_pads =
+                    send_receive_pads::<R, L, S>(session, &self.share_dispute).await?;
+
+                let x = self.coinflip.execute(session).await?;
+
+                //Pretend I sent other shares to party in roles_to_lie_to
+                for (sent_role, sent_shares) in shared_secrets.shares_own_secret.iter_mut() {
+                    if self.roles_to_lie_to.contains(sent_role) {
+                        let modified_sent_shares = sent_shares
+                            .iter()
+                            .map(|share| *share + ResiduePoly::<Z128>::ONE)
+                            .collect_vec();
+                        *sent_shares = modified_sent_shares;
+                    }
+                }
+                if verify_sharing(
+                    session,
+                    &mut shared_secrets,
+                    &shared_pads,
+                    &x,
+                    secrets.len(),
+                )
+                .await?
+                {
+                    return Ok(shared_secrets.all_shares);
+                }
+            }
+        }
+    }
+
+    #[async_trait]
+    impl<C: Coinflip, S: ShareDispute> LocalSingleShare for MaliciousReceiverLocalSingleShare<C, S> {
+        async fn execute<R: RngCore, L: LargeSessionHandles<R>>(
+            &self,
+            session: &mut L,
+            secrets: &[ResiduePoly<Z128>],
+        ) -> anyhow::Result<HashMap<Role, Vec<ResiduePoly<Z128>>>> {
+            loop {
+                //ShareDispute will fill shares from corrupted players with 0s
+                let mut shared_secrets = self.share_dispute.execute(session, secrets).await?;
+
+                let shared_pads =
+                    send_receive_pads::<R, L, S>(session, &self.share_dispute).await?;
+
+                let x = self.coinflip.execute(session).await?;
+
+                //Pretend I received other shares from party in roles_to_lie_to
+                for (rcv_role, rcv_shares) in shared_secrets.all_shares.iter_mut() {
+                    if self.roles_to_lie_to.contains(rcv_role) {
+                        let modified_rcv_shares = rcv_shares
+                            .iter()
+                            .map(|share| *share + ResiduePoly::<Z128>::ONE)
+                            .collect_vec();
+                        *rcv_shares = modified_rcv_shares;
+                    }
+                }
+                if verify_sharing(
+                    session,
+                    &mut shared_secrets,
+                    &shared_pads,
+                    &x,
+                    secrets.len(),
+                )
+                .await?
+                {
+                    return Ok(shared_secrets.all_shares);
+                }
+            }
+        }
+    }
+
+    fn test_lsl_strategies<L: LocalSingleShare + 'static>(
+        params: TestingParameters,
+        malicious_lsl: L,
+    ) {
+        let nb_secrets = 10_usize;
+
+        let (_, malicious_due_to_dispute) = params.get_dispute_map();
+
+        let mut task_honest = |mut session: LargeSession| async move {
+            let real_lsl = RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::default();
+            let secrets = (0..nb_secrets)
+                .map(|_| ResiduePoly::<Z128>::sample(session.rng()))
+                .collect_vec();
+            (
+                session.my_role().unwrap(),
+                real_lsl.execute(&mut session, &secrets).await.unwrap(),
+                session.corrupt_roles().clone(),
+                session.disputed_roles().clone(),
             )
-            .await?
+        };
+
+        let mut task_malicious = |mut session: LargeSession, malicious_lsl: L| async move {
+            let secrets = (0..nb_secrets)
+                .map(|_| ResiduePoly::<Z128>::sample(session.rng()))
+                .collect_vec();
+            (
+                session.my_role().unwrap(),
+                malicious_lsl.execute(&mut session, &secrets).await,
+            )
+        };
+
+        let (result_honest, _) = execute_protocol_w_disputes_and_malicious(
+            params.num_parties,
+            params.threshold as u8,
+            &params.dispute_pairs,
+            &[
+                malicious_due_to_dispute.clone(),
+                params.malicious_roles.to_vec(),
+            ]
+            .concat(),
+            malicious_lsl,
+            &mut task_honest,
+            &mut task_malicious,
+        );
+
+        //make sure the dispute and malicious set of all honest parties is in sync
+        let ref_malicious_set = result_honest[0].2.clone();
+        let ref_dispute_set = result_honest[0].3.clone();
+        for (_, _, malicious_set, dispute_set) in result_honest.iter() {
+            assert_eq!(malicious_set, &ref_malicious_set);
+            assert_eq!(dispute_set, &ref_dispute_set);
+        }
+
+        //If it applies
+        //Make sure malicious parties are detected as such
+        if params.should_be_detected {
+            for role in &[
+                malicious_due_to_dispute.clone(),
+                params.malicious_roles.to_vec(),
+            ]
+            .concat()
             {
-                return Ok(shared_secrets.all_shares);
+                assert!(ref_malicious_set.contains(role));
             }
+        } else {
+            assert!(ref_malicious_set.is_empty());
         }
-    }
 
-    //In this test party 2 lies about the shares it received from party 3
-    //We thus expected all the honest parties to add a dispute (P2,P3) and restart the protocol once.
-    #[test]
-    fn test_lsl_cheater_1() {
-        let num_parties = 4;
-        let num_secrets = 2;
-        let (identities, secrets) = setup_parties_and_secrets(num_parties, num_secrets);
-        // code for session setup
-        let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
-        let mut set = JoinSet::new();
-        let mut malicious_set = JoinSet::new();
-
-        for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = runtime
-                .large_session_for_player(session_id, party_nb)
-                .unwrap();
-            let s = secrets
-                .get(&Role::indexed_by_zero(party_nb))
-                .unwrap()
-                .clone();
-            if party_nb == 1 {
-                malicious_set.spawn(async move {
-                    (
-                        party_nb,
-                        cheating_strategy_1(&mut session, &s, &[Role::indexed_by_zero(2)])
-                            .await
-                            .unwrap(),
-                    )
-                });
+        //Check that all secrets reconstruct correctly - for parties in malicious set we expect 0
+        //For others we expect the real value
+        for sender_id in 0..params.num_parties {
+            let sender_role = Role::indexed_by_zero(sender_id);
+            let expected_secrets = if ref_malicious_set.contains(&sender_role) {
+                (0..nb_secrets)
+                    .map(|_| ResiduePoly::<Z128>::ZERO)
+                    .collect_vec()
             } else {
-                set.spawn(async move {
-                    let real_local_single_share =
-                        RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::default();
-                    let res = (
-                        party_nb,
-                        real_local_single_share
-                            .execute(&mut session, &s)
-                            .await
-                            .unwrap(),
-                    );
-                    assert!(session
-                        .disputed_roles()
-                        .get(&Role::indexed_by_zero(2))
-                        .unwrap()
-                        .contains(&Role::indexed_by_zero(1)));
-                    res
-                });
-            }
-        }
-
-        let results = rt.block_on(async {
-            let mut results = HashMap::new();
-            while let Some(v) = set.join_next().await {
-                let data = v.unwrap();
-                results.insert(data.0, data.1);
-            }
-            while let Some(v) = malicious_set.join_next().await {
-                let data = v.unwrap();
-                results.insert(data.0, data.1);
-            }
-            results
-        });
-
-        assert_eq!(results.len(), num_parties);
-
-        //Check that all secrets reconstruct correctly
-        for sender_id in 0..num_parties {
-            for secret_id in 0..num_secrets {
-                let mut vec_shares = Vec::<(usize, ResiduePoly<Z128>)>::new();
-                for share_idx in 0..num_parties {
+                let mut rng_sender = ChaCha20Rng::seed_from_u64(sender_id as u64);
+                (0..nb_secrets)
+                    .map(|_| ResiduePoly::<Z128>::sample(&mut rng_sender))
+                    .collect_vec()
+            };
+            for (secret_id, expected_secret) in expected_secrets.into_iter().enumerate() {
+                let mut vec_shares = Vec::new();
+                for (role, result_lsl, _, _) in result_honest.iter() {
                     vec_shares.push((
-                        share_idx + 1,
-                        results
-                            .get(&share_idx)
-                            .unwrap()
-                            .get(&Role::indexed_by_zero(sender_id))
-                            .unwrap()[secret_id],
+                        role.one_based(),
+                        result_lsl.get(&sender_role).unwrap()[secret_id],
                     ));
                 }
                 let shamir_sharing = ShamirGSharings { shares: vec_shares };
-                let expected_result =
-                    secrets.get(&Role::indexed_by_zero(sender_id)).unwrap()[secret_id];
-                //We expect to be able to reconstruct with at most 1 error comming from the malicious party
-                assert_eq!(
-                    expected_result,
-                    shamir_sharing.err_reconstruct(threshold.into(), 1).unwrap()
-                );
+                let result = shamir_sharing.reconstruct(params.threshold);
+                assert!(result.is_ok());
+                assert_eq!(result.unwrap(), expected_secret);
             }
         }
     }
 
-    //In this test party 2 lies about the shares it received from party 3 and 4
-    //We thus expected all the honest parties to see party 2 as corrupt due to too many disputes and restart the protocol once, ignoring it.
-    #[test]
-    fn test_lsl_cheater_2() {
-        let num_parties = 4;
-        let num_secrets = 2;
-        let (identities, secrets) = setup_parties_and_secrets(num_parties, num_secrets);
-        // code for session setup
-        let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-
-        let mut set = JoinSet::new();
-        let mut malicious_set = JoinSet::new();
-
-        for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = runtime
-                .large_session_for_player(session_id, party_nb)
-                .unwrap();
-            let s = secrets
-                .get(&Role::indexed_by_zero(party_nb))
-                .unwrap()
-                .clone();
-            if party_nb == 1 {
-                malicious_set.spawn(async move {
-                    (
-                        party_nb,
-                        cheating_strategy_1(
-                            &mut session,
-                            &s,
-                            &[Role::indexed_by_zero(2), Role::indexed_by_zero(3)],
-                        )
-                        .await,
-                    )
-                });
-            } else {
-                set.spawn(async move {
-                    let real_local_single_share =
-                        RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::default();
-                    let res = (
-                        party_nb,
-                        real_local_single_share
-                            .execute(&mut session, &s)
-                            .await
-                            .unwrap(),
-                    );
-                    assert!(session.corrupt_roles().contains(&Role::indexed_by_zero(1)));
-                    res
-                });
-            }
-        }
-
-        let results = rt.block_on(async {
-            let mut results = HashMap::new();
-            while let Some(v) = set.join_next().await {
-                let data = v.unwrap();
-                results.insert(data.0, data.1);
-            }
-            results
-        });
-
-        assert_eq!(results.len(), num_parties - 1);
-
-        //Check that all secrets reconstruct correctly
-        for sender_id in 0..num_parties {
-            for secret_id in 0..num_secrets {
-                let mut vec_shares = Vec::<(usize, ResiduePoly<Z128>)>::new();
-                for share_idx in 0..num_parties {
-                    if share_idx != 1 {
-                        vec_shares.push((
-                            share_idx + 1,
-                            results
-                                .get(&share_idx)
-                                .unwrap()
-                                .get(&Role::indexed_by_zero(sender_id))
-                                .unwrap()[secret_id],
-                        ));
-                    }
-                }
-                let shamir_sharing = ShamirGSharings { shares: vec_shares };
-                let expected_result = if sender_id == 1 {
-                    ResiduePoly::<Z128>::ZERO
-                } else {
-                    secrets.get(&Role::indexed_by_zero(sender_id)).unwrap()[secret_id]
-                };
-                //We expect to be able to reconstruct with no error as we have identified the corrupt party
-                //and thus we dont consider its shares
-                assert_eq!(
-                    expected_result,
-                    shamir_sharing.err_reconstruct(threshold.into(), 0).unwrap()
-                );
-            }
-        }
+    type TrueCoinFlip = RealCoinflip<RealVss>;
+    #[rstest]
+    #[case(TestingParameters::init_honest(4, 1))]
+    #[case(TestingParameters::init_honest(7, 2))]
+    fn test_lsl(#[case] params: TestingParameters) {
+        let malicious_lsl = RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::default();
+        test_lsl_strategies(params, malicious_lsl);
     }
 
-    async fn malicious_verify_sharing<R: RngCore, L: LargeSessionHandles<R>>(
-        session: &mut L,
-        secrets: &mut ShareDisputeOutput,
-        pads: &ShareDisputeOutput,
-        x: &ResiduePoly<Z128>,
-        l: usize,
-        ignore_list: &[Role],
-    ) -> anyhow::Result<bool> {
-        let (secrets_shares_all, my_shared_secrets) =
-            (&mut secrets.all_shares, &mut secrets.shares_own_secret);
-        let (pads_shares_all, my_shared_pads) = (&pads.all_shares, &pads.shares_own_secret);
-        let m = (DISPUTE_STAT_SEC as f64 / ResiduePoly::<Z128>::BIT_LENGTH as f64).ceil() as usize;
-        let roles = session.role_assignments().keys().cloned().collect_vec();
-        let my_role = session.my_role()?;
-        let mut result = true;
-        for g in 0..m {
-            let map_challenges = derive_challenges_from_coinflip(x, g, l, &roles);
-
-            //Compute my share of check values for every local single share happening in parallel
-            let map_share_check_values: BTreeMap<Role, ResiduePoly<Z128>> = compute_check_values(
-                pads_shares_all,
-                &map_challenges,
-                secrets_shares_all,
-                g,
-                None,
-            )?;
-
-            //Compute the share of the check value for MY local single share
-            let mut map_share_my_check_values: BTreeMap<Role, ResiduePoly<Z128>> =
-                compute_check_values(
-                    my_shared_pads,
-                    &map_challenges,
-                    my_shared_secrets,
-                    g,
-                    Some(&my_role.clone()),
-                )?;
-
-            for role in ignore_list {
-                map_share_my_check_values.remove(role);
-            }
-
-            //Broadcast both my share of check values on all lsl as well as all the shares of check values for lsl where I am sender
-            //All roles will be mapped to an output, but it may be Bot if they are malicious
-            let bcast_data = broadcast_with_corruption(
-                session,
-                BroadcastValue::LocalSingleShare(MapsSharesChallenges {
-                    checks_for_all: map_share_check_values,
-                    checks_for_mine: map_share_my_check_values,
-                }),
-            )
-            .await?;
-
-            //Map broadcast data back to MapSharesChallenges
-            let mut bcast_output = HashMap::<Role, MapsSharesChallenges>::new();
-            let mut bcast_corrupts = HashSet::<Role>::new();
-            for (role, bcast_value) in bcast_data {
-                if let BroadcastValue::LocalSingleShare(value) = bcast_value {
-                    bcast_output.insert(role, value);
-                } else {
-                    bcast_corrupts.insert(role);
-                }
-            }
-
-            let newly_corrupts = verify_sender_challenge(
-                &bcast_output,
-                session,
-                session.threshold() as usize,
-                &mut None,
-            )?;
-            bcast_corrupts.extend(newly_corrupts);
-            //Set 0 share for newly_corrupt senders and add them to the corrupt set
-            for role_pi in bcast_corrupts {
-                secrets_shares_all.insert(role_pi, vec![ResiduePoly::<Z128>::ZERO; l]);
-                session.add_corrupt(role_pi)?;
-            }
-
-            result &= look_for_disputes(&bcast_output, session)?;
-        }
-        Ok(result)
-    }
-    //In this test party 2 doesnt broadcast all a full set of values as sender.
-    //In particular, it ignores parties in the ignore list
-    async fn cheating_strategy_2<R: RngCore, L: LargeSessionHandles<R>>(
-        session: &mut L,
-        secrets: &[ResiduePoly<Z128>],
-        ignore_list: &[Role],
-    ) -> anyhow::Result<HashMap<Role, Vec<ResiduePoly<Z128>>>> {
-        //Keeps executing til verification passes
-        loop {
-            //ShareDispute will fill shares from corrupted players with 0s
-            let real_share_dispute = RealShareDispute::default();
-            let mut shared_secrets = real_share_dispute.execute(session, secrets).await?;
-
-            let shared_pads =
-                send_receive_pads::<R, L, RealShareDispute>(session, &real_share_dispute).await?;
-
-            let coinflip = TrueCoinFlip::default();
-            let x = coinflip.execute(session).await?;
-
-            if malicious_verify_sharing(
-                session,
-                &mut shared_secrets,
-                &shared_pads,
-                &x,
-                secrets.len(),
-                ignore_list,
-            )
-            .await?
-            {
-                return Ok(shared_secrets.all_shares);
-            }
-        }
+    #[cfg(feature = "extensive_testing")]
+    #[rstest]
+    fn test_lsl_malicious_subprotocols_caught<
+        V: crate::sharing::vss::Vss,
+        C: Coinflip + 'static,
+        S: ShareDispute + 'static,
+    >(
+        #[values(
+            TestingParameters::init(4,1,&[2],&[0,3],&[],true),
+            TestingParameters::init(7,2,&[1,4],&[0,2,5,6],&[],true)
+        )]
+        params: TestingParameters,
+        #[values(
+            DroppingVssFromStart::default(),
+            DroppingVssAfterR1::default(),
+            MaliciousVssR1::init(&params.roles_to_lie_to)
+        )]
+        _vss_strategy: V,
+        #[values(
+            RealCoinflip::init(_vss_strategy.clone()),
+            DroppingCoinflipAfterVss::init(_vss_strategy.clone())
+        )]
+        coinflip_strategy: C,
+        #[values(
+            RealShareDispute::default(),
+            DroppingShareDispute::default(),
+            WrongShareDisputeRecons::default(),
+            MaliciousShareDisputeRecons::init(&params.roles_to_lie_to)
+        )]
+        share_dispute_strategy: S,
+    ) {
+        let malicious_lsl = RealLocalSingleShare {
+            coinflip: coinflip_strategy,
+            share_dispute: share_dispute_strategy,
+        };
+        test_lsl_strategies(params, malicious_lsl);
     }
 
-    //In this test party 2 'ignores' party 3 in its broadcasts
-    //We thus expected all the honest parties to see party 2 as corrupt and output default 0 shares for when its a sender.
-    #[test]
-    fn test_lsl_cheater_3() {
-        let num_parties = 4;
-        let num_secrets = 2;
-        let (identities, secrets) = setup_parties_and_secrets(num_parties, num_secrets);
-        // code for session setup
-        let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
+    #[cfg(feature = "extensive_testing")]
+    #[rstest]
+    fn test_lsl_malicious_subprotocols_not_caught<
+        V: crate::sharing::vss::Vss,
+        C: Coinflip + 'static,
+        S: ShareDispute + 'static,
+    >(
+        #[values(
+            TestingParameters::init(4,1,&[2],&[0],&[],false),
+            TestingParameters::init(7,2,&[1,4],&[0,2],&[],false)
+        )]
+        params: TestingParameters,
+        #[values(
+            RealVss::default(),
+            DroppingVssAfterR2::default(),
+            MaliciousVssR1::init(&params.roles_to_lie_to)
+        )]
+        _vss_strategy: V,
+        #[values(
+            RealCoinflip::init(_vss_strategy.clone()),
+            MaliciousCoinflipRecons::init(_vss_strategy.clone()),
+        )]
+        coinflip_strategy: C,
+        #[values(RealShareDispute::default())] share_dispute_strategy: S,
+    ) {
+        let malicious_lsl = RealLocalSingleShare {
+            coinflip: coinflip_strategy,
+            share_dispute: share_dispute_strategy,
+        };
+        test_lsl_strategies(params, malicious_lsl);
+    }
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
+    #[cfg(feature = "extensive_testing")]
+    #[rstest]
+    #[case(TestingParameters::init(4,1,&[2],&[0],&[],true), TrueCoinFlip::default(), MaliciousShareDisputeRecons::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],false), MaliciousCoinflipRecons::<RealVss>::default(), RealShareDispute::default())]
+    fn test_lsl_malicious_subprotocols_fine_grain<
+        C: Coinflip + 'static,
+        S: ShareDispute + 'static,
+    >(
+        #[case] params: TestingParameters,
+        #[case] coinflip_strategy: C,
+        #[case] share_dispute_strategy: S,
+    ) {
+        let malicious_lsl = RealLocalSingleShare {
+            coinflip: coinflip_strategy,
+            share_dispute: share_dispute_strategy,
+        };
+        test_lsl_strategies(params, malicious_lsl);
+    }
 
-        let mut set = JoinSet::new();
-        let mut malicious_set = JoinSet::new();
+    //Tests for when some parties lie about shares they received
+    //Parties should finish after second iteration,
+    //catching malicious users only if it lies about too many parties
+    #[cfg(feature = "extensive_testing")]
+    #[rstest]
+    fn test_malicious_receiver_lsl_malicious_subprotocols<
+        V: crate::sharing::vss::Vss,
+        C: Coinflip + 'static,
+        S: ShareDispute + 'static,
+    >(
+        #[values(
+            TestingParameters::init(4,1,&[2],&[0],&[],false),
+            TestingParameters::init(4,1,&[2],&[0,1],&[],true),
+            TestingParameters::init(7,2,&[1,4],&[0,2],&[],false),
+            TestingParameters::init(7,2,&[1,4],&[0,2,6],&[],true)
+        )]
+        params: TestingParameters,
+        #[values(
+            RealVss::default(),
+            DroppingVssAfterR2::default(),
+            MaliciousVssR1::init(&params.roles_to_lie_to)
+        )]
+        _vss_strategy: V,
+        #[values(
+            RealCoinflip::init(_vss_strategy.clone()),
+            MaliciousCoinflipRecons::init(_vss_strategy.clone()),
+        )]
+        coinflip_strategy: C,
+        #[values(RealShareDispute::default())] share_dispute_strategy: S,
+    ) {
+        let malicious_lsl = MaliciousReceiverLocalSingleShare {
+            coinflip: coinflip_strategy,
+            share_dispute: share_dispute_strategy,
+            roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
+        };
+        test_lsl_strategies(params, malicious_lsl);
+    }
 
-        for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = runtime
-                .large_session_for_player(session_id, party_nb)
-                .unwrap();
-            let s = secrets
-                .get(&Role::indexed_by_zero(party_nb))
-                .unwrap()
-                .clone();
-            if party_nb == 1 {
-                malicious_set.spawn(async move {
-                    (
-                        party_nb,
-                        cheating_strategy_2(&mut session, &s, &[Role::indexed_by_zero(2)]).await,
-                    )
-                });
-            } else {
-                set.spawn(async move {
-                    let real_local_single_share =
-                        RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::default();
-                    let res = (
-                        party_nb,
-                        real_local_single_share
-                            .execute(&mut session, &s)
-                            .await
-                            .unwrap(),
-                    );
-                    assert!(session.corrupt_roles().contains(&Role::indexed_by_zero(1)));
-                    res
-                });
-            }
-        }
-
-        let results = rt.block_on(async {
-            let mut results = HashMap::new();
-            while let Some(v) = set.join_next().await {
-                let data = v.unwrap();
-                results.insert(data.0, data.1);
-            }
-            results
-        });
-
-        assert_eq!(results.len(), num_parties - 1);
-
-        //Check that all secrets reconstruct correctly
-        for sender_id in 0..num_parties {
-            for secret_id in 0..num_secrets {
-                let mut vec_shares = Vec::<(usize, ResiduePoly<Z128>)>::new();
-                for share_idx in 0..num_parties {
-                    if share_idx != 1 {
-                        vec_shares.push((
-                            share_idx + 1,
-                            results
-                                .get(&share_idx)
-                                .unwrap()
-                                .get(&Role::indexed_by_zero(sender_id))
-                                .unwrap()[secret_id],
-                        ));
-                    }
-                }
-                let shamir_sharing = ShamirGSharings { shares: vec_shares };
-                let expected_result = if sender_id == 1 {
-                    ResiduePoly::<Z128>::ZERO
-                } else {
-                    secrets.get(&Role::indexed_by_zero(sender_id)).unwrap()[secret_id]
-                };
-                //We expect to be able to reconstruct with no error as we have identified the corrupt party
-                //and thus we dont consider its shares
-                assert_eq!(
-                    expected_result,
-                    shamir_sharing.err_reconstruct(threshold.into(), 0).unwrap()
-                );
-            }
-        }
+    //Tests for when some parties lie about shares they sent
+    //Parties should finish after second iteration, catching malicious sender always because it keeps lying
+    #[cfg(feature = "extensive_testing")]
+    #[rstest]
+    fn test_malicious_sender_lsl_malicious_subprotocols<
+        V: crate::sharing::vss::Vss,
+        C: Coinflip + 'static,
+        S: ShareDispute + 'static,
+    >(
+        #[values(
+            TestingParameters::init(4,1,&[2],&[0],&[],true),
+            TestingParameters::init(4,1,&[2],&[0,1],&[],true),
+            TestingParameters::init(7,2,&[1,4],&[0,6],&[],true),
+            TestingParameters::init(7,2,&[1,4],&[0,2,3,6],&[],true)
+        )]
+        params: TestingParameters,
+        #[values(
+            RealVss::default(),
+            DroppingVssAfterR2::default(),
+            MaliciousVssR1::init(&params.roles_to_lie_to)
+        )]
+        _vss_strategy: V,
+        #[values(
+            RealCoinflip::init(_vss_strategy.clone()),
+            MaliciousCoinflipRecons::init(_vss_strategy.clone()),
+        )]
+        coinflip_strategy: C,
+        #[values(RealShareDispute::default())] share_dispute_strategy: S,
+    ) {
+        let malicious_lsl = MaliciousSenderLocalSingleShare {
+            coinflip: coinflip_strategy,
+            share_dispute: share_dispute_strategy,
+            roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
+        };
+        test_lsl_strategies(params, malicious_lsl);
     }
 }

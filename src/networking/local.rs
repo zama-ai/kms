@@ -152,14 +152,6 @@ impl Networking for LocalNetworking {
             ),
         }
 
-        tracing::debug!(
-            "async sender: owner: {:?} receiver: {:?}, value: {:?} in session {:?}",
-            self.owner,
-            receiver,
-            tagged_value,
-            _session_id
-        );
-
         tx.send(tagged_value).await.map_err(|e| e.into())
     }
 
@@ -185,14 +177,6 @@ impl Networking for LocalNetworking {
             .network_round
             .lock()
             .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e.to_string())))?;
-
-        tracing::debug!(
-            "async receiving: owner: {:?} sender: {:?}, network_round = {:?}, tagged value ctr = {:?}",
-            self.owner,
-            sender,
-            network_round,
-            tagged_value
-        );
 
         while tagged_value.send_counter < network_round {
             tracing::debug!("Dropped value: {:?}", tagged_value);

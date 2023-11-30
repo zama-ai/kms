@@ -120,7 +120,6 @@ async fn receive_from_all_senders<R: RngCore, B: BaseSessionHandles<R>>(
     non_answering_parties: &mut HashSet<Role>,
 ) -> anyhow::Result<()> {
     let mut jobs = JoinSet::<Result<(Role, anyhow::Result<BroadcastValue>), Elapsed>>::new();
-
     //The error we propagate here is if sender ids and roles cannot be tied together.
     generic_receive_from_all_senders::<BroadcastValue, R, B>(
         &mut jobs,
@@ -135,8 +134,8 @@ async fn receive_from_all_senders<R: RngCore, B: BaseSessionHandles<R>>(
                 id
             ))),
             _ => Err(anyhow_error_and_log(format!(
-                "I have received sth different from Send message on party: {:?}",
-                id
+                "I am {:?} have received sth different from Send message \n Received {:?}",
+                id, msg
             ))),
         },
     )?;

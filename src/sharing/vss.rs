@@ -1,18 +1,9 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
-
-use async_trait::async_trait;
-use itertools::Itertools;
-use rand::RngCore;
-use serde::{Deserialize, Serialize};
-use tokio::{task::JoinSet, time::error::Elapsed};
-
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::{
     broadcast::generic_receive_from_all, p2p::send_to_honest_parties, session::LargeSessionHandles,
 };
 use crate::value::NetworkValue;
 use crate::{algebra::bivariate::BivariateEval, value::Value};
-
 use crate::{
     algebra::bivariate::BivariateResiduePoly,
     execution::{broadcast::broadcast_with_corruption, party::Role},
@@ -21,6 +12,12 @@ use crate::{
     value::BroadcastValue,
     Sample, Zero, Z128,
 };
+use async_trait::async_trait;
+use itertools::Itertools;
+use rand::RngCore;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use tokio::{task::JoinSet, time::error::Elapsed};
 
 #[async_trait]
 pub trait Vss: Send + Sync + Default + Clone {
@@ -739,30 +736,30 @@ fn round_4_fix_conflicts<R: RngCore, L: LargeSessionHandles<R>>(
 }
 
 #[cfg(test)]
-pub mod tests {
-    use std::collections::HashMap;
-    use std::num::Wrapping;
-
-    use rand::SeedableRng;
-    use rstest::rstest;
-    use tokio::task::JoinSet;
-
+pub(crate) mod tests {
     use super::*;
-    use crate::algebra::bivariate::BivariateEval;
-    use crate::algebra::bivariate::BivariateResiduePoly;
+    use crate::algebra::bivariate::{BivariateEval, BivariateResiduePoly};
     use crate::computation::SessionId;
-    use crate::execution::party::Role;
-    use crate::execution::session::BaseSessionHandles;
-    use crate::execution::session::LargeSession;
-    use crate::execution::session::ParameterHandles;
     use crate::execution::{distributed::DistributedTestRuntime, party::Identity};
+    use crate::execution::{
+        party::Role,
+        session::{BaseSessionHandles, LargeSession, ParameterHandles},
+    };
     use crate::poly::Poly;
     use crate::residue_poly::ResiduePoly;
     use crate::shamir::ShamirGSharings;
-    use crate::tests::helper::tests::execute_protocol_w_disputes_and_malicious;
+    #[cfg(feature = "extensive_testing")]
     use crate::tests::helper::tests::roles_from_idxs;
+    use crate::tests::helper::tests::{
+        execute_protocol_w_disputes_and_malicious, TestingParameters,
+    };
     use crate::{One, Zero, Z128};
+    use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;
+    use rstest::rstest;
+    use std::collections::HashMap;
+    use std::num::Wrapping;
+    use tokio::task::JoinSet;
 
     fn setup_parties_and_secret(num_parties: usize) -> (Vec<Identity>, Vec<ResiduePoly<Z128>>) {
         let identities: Vec<Identity> = (0..num_parties)
@@ -943,16 +940,16 @@ pub mod tests {
     //We now define cheatin strategies, each implement the VSS trait
     ///Does nothing, and output an empty Vec
     #[derive(Default, Clone)]
-    pub struct DroppingVssFromStart {}
+    pub(crate) struct DroppingVssFromStart {}
     ///Does round 1 and then drops
     #[derive(Default, Clone)]
-    pub struct DroppingVssAfterR1 {}
+    pub(crate) struct DroppingVssAfterR1 {}
     ///Does round 1 and 2 and then drops
     #[derive(Default, Clone)]
-    pub struct DroppingVssAfterR2 {}
+    pub(crate) struct DroppingVssAfterR2 {}
     ///Participate in the protocol, but lies to some parties in the first round
     #[derive(Default, Clone)]
-    pub struct MaliciousVssR1 {
+    pub(crate) struct MaliciousVssR1 {
         roles_to_lie_to: Vec<Role>,
     }
 
@@ -1067,13 +1064,7 @@ pub mod tests {
         round_1(session, bivariate_poly, map_double_shares).await
     }
 
-    fn test_vss_strategies<V: Vss + 'static>(
-        num_parties: usize,
-        threshold: usize,
-        malicious_vss: V,
-        malicious_roles: &[Role],
-        should_be_detected: bool,
-    ) {
+    fn test_vss_strategies<V: Vss + 'static>(params: TestingParameters, malicious_vss: V) {
         async fn task_honest(
             mut session: LargeSession,
         ) -> (
@@ -1102,31 +1093,31 @@ pub mod tests {
         }
 
         let (results_honest, results_malicious) = execute_protocol_w_disputes_and_malicious(
-            num_parties,
-            threshold as u8,
+            params.num_parties,
+            params.threshold as u8,
             &[],
-            malicious_roles,
+            &params.malicious_roles,
             malicious_vss,
             &mut task_honest,
             &mut task_malicious,
         );
 
         //Assert malicious parties we shouldve been caught indeed are
-        if should_be_detected {
+        if params.should_be_detected {
             for (_, _, _, corrupt_set) in results_honest.iter() {
-                for role in malicious_roles {
+                for role in params.malicious_roles.iter() {
                     assert!(corrupt_set.contains(role));
                 }
             }
         }
 
         //Create a vec of expected secrets
-        let mut expected_secrets = vec![ResiduePoly::<Z128>::ZERO; num_parties];
+        let mut expected_secrets = vec![ResiduePoly::<Z128>::ZERO; params.num_parties];
         for (party_idx, s, _, _) in results_honest.iter() {
             expected_secrets[*party_idx] = *s;
         }
 
-        if !should_be_detected {
+        if !params.should_be_detected {
             for result_malicious in results_malicious.iter() {
                 assert!(result_malicious.is_ok());
                 let (party_idx, s) = result_malicious.as_ref().unwrap();
@@ -1135,148 +1126,98 @@ pub mod tests {
         }
 
         //Reconstruct secret from honest parties and check it's correct
-        for vss_idx in 0..num_parties {
+        for vss_idx in 0..params.num_parties {
             let vec_shares = results_honest
                 .iter()
                 .map(|(party_id, _, vec_shares, _)| (party_id + 1, vec_shares[vss_idx]))
                 .collect_vec();
             let shamir_sharing = ShamirGSharings { shares: vec_shares };
-            let reconstructed_secret = shamir_sharing.reconstruct(threshold);
+            let reconstructed_secret = shamir_sharing.reconstruct(params.threshold);
             assert!(reconstructed_secret.is_ok());
             assert_eq!(expected_secrets[vss_idx], reconstructed_secret.unwrap());
         }
     }
 
     #[rstest]
-    #[case(4, 1)]
-    #[case(7, 2)]
-    #[case(10, 3)]
-    fn test_vss_honest(#[case] num_parties: usize, #[case] threshold: usize) {
+    #[case(TestingParameters::init_honest(4, 1))]
+    #[case(TestingParameters::init_honest(7, 2))]
+    #[case(TestingParameters::init_honest(10, 3))]
+    fn test_vss_honest(#[case] params: TestingParameters) {
         //This is honest execution, so no malicious strategy
         let malicious_vss = RealVss::default();
-        let malicious_roles = &[];
-        let should_be_detected = false;
-
-        test_vss_strategies(
-            num_parties,
-            threshold,
-            malicious_vss,
-            malicious_roles,
-            should_be_detected,
-        );
+        test_vss_strategies(params, malicious_vss);
     }
 
     //Test behaviour if a party doesn't participate in the protocol
     //Expected behaviour is that we end up with trivial 0 sharing for this party
     //and all other vss are fine
+    #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(4,1,&roles_from_idxs(&[0]),true)]
-    #[case(4,1,&roles_from_idxs(&[1]),true)]
-    #[case(4,1,&roles_from_idxs(&[2]),true)]
-    #[case(4,1,&roles_from_idxs(&[2]),true)]
-    #[case(7,2,&roles_from_idxs(&[0,2]),true)]
-    #[case(7,2,&roles_from_idxs(&[1,3]),true)]
-    #[case(7,2,&roles_from_idxs(&[5,6]),true)]
-    fn test_vss_dropping_from_start(
-        #[case] num_parties: usize,
-        #[case] threshold: usize,
-        #[case] malicious_roles: &[Role],
-        #[case] should_be_detected: bool,
-    ) {
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],true))]
+    #[case(TestingParameters::init(4,1,&[1],&[],&[],true))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],true))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],true))]
+    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true))]
+    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],true))]
+    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true))]
+    fn test_vss_dropping_from_start(#[case] params: TestingParameters) {
         let dropping_vss_from_start = DroppingVssFromStart::default();
-        test_vss_strategies(
-            num_parties,
-            threshold,
-            dropping_vss_from_start,
-            malicious_roles,
-            should_be_detected,
-        );
+        test_vss_strategies(params, dropping_vss_from_start);
     }
 
     ///Test for an adversary that sends malformed sharing in round 1 and does everything else honestly.
     ///If it lies to strictly more than t parties, we expect this party to get caught
     //Otherwise, we expect everything to happen normally - dispute will settle
+    #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(4,1,&roles_from_idxs(&[0]),&roles_from_idxs(&[3]),false)]
-    #[case(4,1,&roles_from_idxs(&[1]),&roles_from_idxs(&[0]),false)]
-    #[case(4,1,&roles_from_idxs(&[2]),&roles_from_idxs(&[1]),false)]
-    #[case(4,1,&roles_from_idxs(&[3]),&roles_from_idxs(&[2]),false)]
-    #[case(4,1,&roles_from_idxs(&[0]),&roles_from_idxs(&[3,1]),true)]
-    #[case(4,1,&roles_from_idxs(&[1]),&roles_from_idxs(&[0,2]),true)]
-    #[case(4,1,&roles_from_idxs(&[2]),&roles_from_idxs(&[3,0]),true)]
-    #[case(4,1,&roles_from_idxs(&[3]),&roles_from_idxs(&[2,1]),true)]
-    #[case(7,2,&roles_from_idxs(&[0,2]),&roles_from_idxs(&[3,1]),false)]
-    #[case(7,2,&roles_from_idxs(&[1,3]),&roles_from_idxs(&[4,2,0]),true)]
-    #[case(7,2,&roles_from_idxs(&[5,6]),&roles_from_idxs(&[3,1,0,2]),true)]
-    fn test_vss_malicious_r1(
-        #[case] num_parties: usize,
-        #[case] threshold: usize,
-        #[case] malicious_roles: &[Role],
-        #[case] roles_to_lie_to: &[Role],
-        #[case] should_be_detected: bool,
-    ) {
+    #[case(TestingParameters::init(4,1,&[0],&[3],&[],false))]
+    #[case(TestingParameters::init(4,1,&[1],&[0],&[],false))]
+    #[case(TestingParameters::init(4,1,&[2],&[1],&[],false))]
+    #[case(TestingParameters::init(4,1,&[3],&[2],&[],false))]
+    #[case(TestingParameters::init(4,1,&[0],&[3,1],&[],true))]
+    #[case(TestingParameters::init(4,1,&[1],&[0,2],&[],true))]
+    #[case(TestingParameters::init(4,1,&[2],&[3,0],&[],true))]
+    #[case(TestingParameters::init(4,1,&[3],&[2,1],&[],true))]
+    #[case(TestingParameters::init(7,2,&[0,2],&[3,1],&[],false))]
+    #[case(TestingParameters::init(7,2,&[1,3],&[4,2,0],&[],true))]
+    #[case(TestingParameters::init(7,2,&[5,6],&[3,1,0,2],&[],true))]
+    fn test_vss_malicious_r1(#[case] params: TestingParameters) {
         let malicious_vss_r1 = MaliciousVssR1 {
-            roles_to_lie_to: roles_to_lie_to.to_vec(),
+            roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
         };
 
-        test_vss_strategies(
-            num_parties,
-            threshold,
-            malicious_vss_r1,
-            malicious_roles,
-            should_be_detected,
-        );
+        test_vss_strategies(params, malicious_vss_r1);
     }
 
     //Test for an adversary that drops out after Round1
     //We expect that adversarial parties will see their vss default to 0, all others VSS will recover
+    #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(4,1,&roles_from_idxs(&[0]),true)]
-    #[case(4,1,&roles_from_idxs(&[1]),true)]
-    #[case(4,1,&roles_from_idxs(&[2]),true)]
-    #[case(4,1,&roles_from_idxs(&[2]),true)]
-    #[case(7,2,&roles_from_idxs(&[0,2]),true)]
-    #[case(7,2,&roles_from_idxs(&[1,3]),true)]
-    #[case(7,2,&roles_from_idxs(&[5,6]),true)]
-    fn test_vss_dropout_after_r1(
-        #[case] num_parties: usize,
-        #[case] threshold: usize,
-        #[case] malicious_roles: &[Role],
-        #[case] should_be_detected: bool,
-    ) {
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],true))]
+    #[case(TestingParameters::init(4,1,&[1],&[],&[],true))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],true))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],true))]
+    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true))]
+    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],true))]
+    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true))]
+    fn test_vss_dropout_after_r1(#[case] params: TestingParameters) {
         let dropping_vss_after_r1 = DroppingVssAfterR1::default();
-        test_vss_strategies(
-            num_parties,
-            threshold,
-            dropping_vss_after_r1,
-            malicious_roles,
-            should_be_detected,
-        );
+        test_vss_strategies(params, dropping_vss_after_r1);
     }
 
     //Test for an adversary that drops out after Round2
     //We expect all goes fine as if honest round2, there's no further communication
+    #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(4,1,&roles_from_idxs(&[0]),false)]
-    #[case(4,1,&roles_from_idxs(&[1]),false)]
-    #[case(4,1,&roles_from_idxs(&[2]),false)]
-    #[case(4,1,&roles_from_idxs(&[2]),false)]
-    #[case(7,2,&roles_from_idxs(&[0,2]),false)]
-    #[case(7,2,&roles_from_idxs(&[1,3]),false)]
-    #[case(7,2,&roles_from_idxs(&[5,6]),false)]
-    fn test_dropout_r3(
-        #[case] num_parties: usize,
-        #[case] threshold: usize,
-        #[case] malicious_roles: &[Role],
-        #[case] should_be_detected: bool,
-    ) {
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],false))]
+    #[case(TestingParameters::init(4,1,&[1],&[],&[],false))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],false))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],false))]
+    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],false))]
+    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],false))]
+    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],false))]
+    fn test_dropout_r3(#[case] params: TestingParameters) {
         let dropping_vss_after_r2 = DroppingVssAfterR2::default();
-        test_vss_strategies(
-            num_parties,
-            threshold,
-            dropping_vss_after_r2,
-            malicious_roles,
-            should_be_detected,
-        );
+        test_vss_strategies(params, dropping_vss_after_r2);
     }
 }

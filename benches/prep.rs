@@ -67,6 +67,8 @@ fn triple(c: &mut Criterion) {
                                 triple_batch_size: config.batch_size,
                                 random_batch_size: 0,
                             }),
+                            TrueSingleSharing::default(),
+                            TrueDoubleSharing::default(),
                         )
                         .await
                         .unwrap();
@@ -113,6 +115,8 @@ fn random_sharing(c: &mut Criterion) {
                                 triple_batch_size: 0,
                                 random_batch_size: config.batch_size,
                             }),
+                            TrueSingleSharing::default(),
+                            TrueDoubleSharing::default(),
                         )
                         .await
                         .unwrap();
@@ -197,6 +201,8 @@ fn bitgen_nlarge(c: &mut Criterion) {
                                     triple_batch_size: config.batch_size,
                                     random_batch_size: config.batch_size,
                                 }),
+                                TrueSingleSharing::default(),
+                                TrueDoubleSharing::default(),
                             )
                             .await
                             .unwrap();

@@ -106,3 +106,6 @@ harness = false
 
 [profile.bench]
 debug = true
+
+[features]
+extensive_testing = []

@@ -1,10 +1,3 @@
-use std::collections::HashMap;
-
-use async_trait::async_trait;
-use itertools::Itertools;
-use ndarray::{ArrayD, IxDyn};
-use rand::RngCore;
-
 use super::local_single_share::LocalSingleShare;
 use crate::{
     algebra::bivariate::{compute_powers, MatrixMul},
@@ -13,9 +6,14 @@ use crate::{
     residue_poly::ResiduePoly,
     Sample, Z128,
 };
+use async_trait::async_trait;
+use itertools::Itertools;
+use ndarray::{ArrayD, IxDyn};
+use rand::RngCore;
+use std::collections::HashMap;
 
 #[async_trait]
-pub trait SingleSharing: Send + Default {
+pub trait SingleSharing: Send + Default + Clone {
     async fn init<R: RngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -60,10 +58,17 @@ impl<S: LocalSingleShare> SingleSharing for RealSingleSharing<S> {
             l,
         )?;
         self.max_num_iterations = l;
-        self.vdm_matrix = init_vdm(
-            session.amount_of_parties(),
-            session.amount_of_parties() - session.threshold() as usize,
-        )?;
+
+        //Init vdm matrix only once or when dim changes
+        let shape = self.vdm_matrix.shape();
+        let curr_height = session.amount_of_parties();
+        let curr_width = session.amount_of_parties() - session.threshold() as usize;
+        if self.vdm_matrix.is_empty() || curr_height != shape[0] || curr_width != shape[1] {
+            self.vdm_matrix = init_vdm(
+                session.amount_of_parties(),
+                session.amount_of_parties() - session.threshold() as usize,
+            )?;
+        }
         Ok(())
     }
     async fn next<R: RngCore, L: LargeSessionHandles<R>>(
@@ -135,12 +140,8 @@ fn compute_next_batch(
 }
 
 #[cfg(test)]
-mod tests {
-    use std::num::Wrapping;
-
-    use ndarray::Ix2;
-    use tracing_test::traced_test;
-
+pub(crate) mod tests {
+    use super::init_vdm;
     use crate::{
         execution::{
             coinflip::RealCoinflip,
@@ -151,17 +152,27 @@ mod tests {
         residue_poly::ResiduePoly,
         shamir::ShamirGSharings,
         sharing::{
-            local_single_share::RealLocalSingleShare,
+            local_single_share::{LocalSingleShare, RealLocalSingleShare},
             single_sharing::{RealSingleSharing, SingleSharing},
             vss::RealVss,
         },
         tests::helper::tests_and_benches::execute_protocol_large,
         Sample, Zero, Z128,
     };
-
-    use super::init_vdm;
+    use ndarray::Ix2;
+    use std::num::Wrapping;
+    use tracing_test::traced_test;
 
     type TrueLocalSingleShare = RealLocalSingleShare<RealCoinflip<RealVss>, RealShareDispute>;
+
+    pub(crate) fn create_real_single_sharing<L: LocalSingleShare>(
+        lsl_strategy: L,
+    ) -> RealSingleSharing<L> {
+        RealSingleSharing {
+            local_single_share: lsl_strategy,
+            ..Default::default()
+        }
+    }
 
     #[traced_test]
     #[test]
