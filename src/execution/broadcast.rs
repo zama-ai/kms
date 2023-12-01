@@ -36,9 +36,9 @@ pub async fn send_to_all<R: RngCore, B: BaseSessionHandles<R>>(
     while (jobs.join_next().await).is_some() {}
 }
 
-/// **NOTE: We do not try to receive any value from the non_aswering_parties set.**
+/// **NOTE: We do not try to receive any value from the non_answering_parties set.**
 ///
-/// Spawns receive tasks and matches the incomming messages according to the match_network_value_fn
+/// Spawns receive tasks and matches the incoming messages according to the match_network_value_fn
 /// The function makes sure that it process the correct type of message, i.e.
 /// On the receiving end, a party processes a message of a single variant of the [NetworkValue] enum
 /// and errors out if message is of a different form. This is helpful so that we can peel the message
@@ -356,7 +356,7 @@ async fn gather_votes<R: RngCore, B: BaseSessionHandles<R>>(
             return Ok(());
         }
 
-        //Here propagate error if my own casted hashmap doesnt contain the expected party's id
+        //Here propagate error if my own casted hashmap does not contain the expected party's id
         let mut round_registered_votes = HashMap::<(Role, BroadcastValue), u32>::new();
         for ((role, m), num_votes) in registered_votes.iter_mut() {
             if *num_votes as usize >= (threshold + round)
@@ -430,7 +430,7 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
         (None, false) => (),
         (_, _) => {
             return Err(anyhow_error_and_log(
-                "A sender must have a value in rebliable broadcast".to_string(),
+                "A sender must have a value in reliable broadcast".to_string(),
             ))
         }
     }
@@ -461,7 +461,7 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
 
     // Communication round 3
     // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
-    //Here propagate error if my own casted hashmap doesnt contain the expected party's id
+    //Here propagate error if my own casted hashmap does not contain the expected party's id
     session.network().increase_round_counter().await?;
     let mut casted_vote: HashMap<Role, bool> =
         sender_list.iter().map(|role| (*role, false)).collect();
@@ -508,8 +508,9 @@ pub async fn reliable_broadcast_all<R: RngCore, B: BaseSessionHandles<R>>(
 
 /// Execute a [reliable_broadcast_all] in the presence of corrupt parties.
 /// Parties in `corrupt_roles` are ignored during the execution and if any new corruptions are detected then they are added to `corrupt_roles`
-pub async fn broadcast_with_corruption<R: RngCore, L: BaseSessionHandles<R>>(
-    session: &mut L,
+/// WARNING: It is CRUCIAL that the corrupt roles are ignored, as otherwise they could cause a DoS attack with the current logic of the functions using this method.
+pub async fn broadcast_with_corruption<R: RngCore, Ses: BaseSessionHandles<R>>(
+    session: &mut Ses,
     vi: BroadcastValue,
 ) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
     // Remove corrupt parties from the current session
@@ -827,7 +828,7 @@ mod tests {
 
     //In this strategy, the cheater broadcast something different to all the parties,
     //and then votes for something whenever it has the opportunity
-    //this behaviour is expected to NOT come to any output for this sender
+    //this behavior is expected to NOT come to any output for this sender
     async fn cheater_broadcast_strategy_1<R: RngCore, B: BaseSessionHandles<R>>(
         session: &B,
         sender_list: &Vec<Role>,
@@ -880,7 +881,7 @@ mod tests {
             (None, false) => (),
             (_, _) => {
                 return Err(anyhow_error_and_log(
-                    "A sender must have a value in rebliable broadcast".to_string(),
+                    "A sender must have a value in reliable broadcast".to_string(),
                 ))
             }
         }
@@ -911,7 +912,7 @@ mod tests {
 
         // Communication round 3
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
-        // As cheater, voting for something even though I shouldnt
+        // As cheater, voting for something even though I should not
         registered_votes.insert((Role::indexed_by_one(2), vec_vi.unwrap()[1].clone()), 1);
         session.network().increase_round_counter().await?;
         let mut casted_vote: HashMap<Role, bool> = session
@@ -1008,7 +1009,7 @@ mod tests {
         });
 
         for (_cur_role_id, cur_res) in results {
-            // Check that we received response from all the cheater P0 which sould be mapped to Bot
+            // Check that we received response from all the cheater P0 which should be mapped to Bot
             let unwrapped = cur_res.unwrap();
             assert_eq!(parties, unwrapped.len());
             for cur_role_id in 1..=parties {
@@ -1081,7 +1082,7 @@ mod tests {
             (None, false) => (),
             (_, _) => {
                 return Err(anyhow_error_and_log(
-                    "A sender must have a value in rebliable broadcast".to_string(),
+                    "A sender must have a value in reliable broadcast".to_string(),
                 ))
             }
         }
@@ -1191,7 +1192,7 @@ mod tests {
         });
 
         for (_cur_role_id, cur_res) in results {
-            // Check that we received response from all except the cheater P0 which sould be absent from result
+            // Check that we received response from all except the cheater P0 which should be absent from result
             let unwrapped = cur_res.unwrap();
             assert_eq!(parties, unwrapped.len());
             for cur_role_id in 1..=parties {

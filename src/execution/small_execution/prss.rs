@@ -10,8 +10,8 @@ use crate::{
         constants::PRSS_SIZE_MAX,
         distributed::robust_opens_to_all,
         party::Role,
+        session::ParameterHandles,
         session::{LargeSessionHandles, SmallSessionHandles},
-        session::{ParameterHandles, SmallSession, ToBaseSession},
         small_execution::prf::{chi, phi, psi, PhiAes},
     },
     poly::Poly,
@@ -75,9 +75,9 @@ pub struct PRSSSetup {
 #[derive(Debug, Clone)]
 pub struct PRSSState {
     /// counters that increases on every call to the respective .next()
-    mask_ctr: u128,
-    prss_ctr: u128,
-    przs_ctr: u128,
+    pub mask_ctr: u128,
+    pub prss_ctr: u128,
+    pub przs_ctr: u128,
     /// PRSSSetup
     prss_setup: PRSSSetup,
 }
@@ -231,7 +231,13 @@ impl PRSSState {
     }
 
     /// PRZS.Next() for a single party
-    pub fn przs_next(&mut self, party_id: usize, t: u8) -> anyhow::Result<ResiduePoly<Z128>> {
+    /// `party_if`: The 1-index party ID.
+    /// `t`: The threshold parameter for the session
+    pub fn przs_next(
+        &mut self,
+        party_id: usize,
+        threshold: u8,
+    ) -> anyhow::Result<ResiduePoly<Z128>> {
         // party IDs start from 1
         debug_assert!(party_id > 0);
 
@@ -240,7 +246,7 @@ impl PRSSState {
         for set in self.prss_setup.sets.iter_mut() {
             if set.parties.contains(&party_id) {
                 if let Some(aes_prf) = &set.prfs {
-                    for j in 1..=t {
+                    for j in 1..=threshold {
                         let chi = chi(&aes_prf.chi_aes, self.przs_ctr, j)?;
                         // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points
                         let f_a = set.f_a_points[party_id - 1];
@@ -263,17 +269,18 @@ impl PRSSState {
         Ok(res)
     }
 
-    /// Compute the PRSS.check() method which returns the summed up psi value for each party based on the internal counter.
-    /// If parties are behaving maliciously they get added to the corruption list in [Dispute]
+    /// Compute the PRSS.check() method which returns the summed up psi value for each party based on the supplied counter `ctr`.
+    /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
     pub async fn prss_check<R: RngCore, S: SmallSessionHandles<R>>(
-        &mut self,
+        &self,
         session: &mut S,
+        ctr: u128,
     ) -> anyhow::Result<HashMap<Role, ResiduePoly<Z128>>> {
         let sets = &self.prss_setup.sets;
         let mut psi_values = Vec::with_capacity(sets.len());
         for cur_set in sets {
             if let Some(aes_prf) = &cur_set.prfs {
-                let psi = vec![Value::Poly128(psi(&aes_prf.psi_aes, self.prss_ctr)?)];
+                let psi = vec![Value::Poly128(psi(&aes_prf.psi_aes, ctr)?)];
                 psi_values.push((cur_set.parties.clone(), psi));
             } else {
                 return Err(anyhow_error_and_log(
@@ -281,7 +288,6 @@ impl PRSSState {
                 ));
             }
         }
-
         let broadcast_result =
             broadcast_with_corruption::<R, S>(session, BroadcastValue::PRSSVotes(psi_values))
                 .await?;
@@ -293,14 +299,15 @@ impl PRSSState {
         // Find the parties who did not vote for the results and add them to the corrupt set
         Self::handle_non_voting_parties(&true_psi_vals, &count, session)?;
         // Compute result based on majority votes
-        self.compute_party_shares(&true_psi_vals, session, ComputeShareMode::Prss)
+        Self::compute_party_shares(&true_psi_vals, session, ComputeShareMode::Prss)
     }
 
-    /// Compute the PRZS.check() method which returns the summed up chi value for each party based on the internal counter.
-    /// If parties are behaving maliciously they get added to the corruption list in [Dispute]
+    /// Compute the PRZS.check() method which returns the summed up chi value for each party based on the supplied counter `ctr`.
+    /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
     pub async fn przs_check<R: RngCore, S: SmallSessionHandles<R>>(
-        &mut self,
+        &self,
         session: &mut S,
+        ctr: u128,
     ) -> anyhow::Result<HashMap<Role, ResiduePoly<Z128>>> {
         let sets = &self.prss_setup.sets;
         let mut chi_values = Vec::with_capacity(sets.len());
@@ -308,7 +315,7 @@ impl PRSSState {
             if let Some(aes_prf) = &cur_set.prfs {
                 let mut chi_list = Vec::with_capacity(session.threshold() as usize);
                 for j in 1..=session.threshold() {
-                    chi_list.push(Value::Poly128(chi(&aes_prf.chi_aes, self.przs_ctr, j)?));
+                    chi_list.push(Value::Poly128(chi(&aes_prf.chi_aes, ctr, j)?));
                 }
                 chi_values.push((cur_set.parties.clone(), chi_list.clone()));
             } else {
@@ -318,6 +325,7 @@ impl PRSSState {
             }
         }
 
+        session.network().increase_round_counter().await?;
         let broadcast_result =
             broadcast_with_corruption::<R, S>(session, BroadcastValue::PRSSVotes(chi_values))
                 .await?;
@@ -329,7 +337,7 @@ impl PRSSState {
         // Find the parties who did not vote for the results and add them to the corrupt set
         Self::handle_non_voting_parties(&true_chi_vals, &count, session)?;
         // Compute result based on majority votes
-        self.compute_party_shares(&true_chi_vals, session, ComputeShareMode::Przs)
+        Self::compute_party_shares(&true_chi_vals, session, ComputeShareMode::Przs)
     }
 
     /// Helper method for counting the votes. Takes the `broadcast_result` and counts which parties has voted/replied each of the different [Value]s for each given [PrssSet].
@@ -446,11 +454,12 @@ impl PRSSState {
                 .and_then(|value_map| value_map.get(*value))
             {
                 if prss_set.len() > roles_votes.len() {
-                    for cur_role in session.role_assignments().clone().keys() {
-                        if !roles_votes.contains(cur_role) {
-                            session.add_corrupt(*cur_role)?;
+                    for cur_party_id in prss_set.iter() {
+                        let cur_role = Role::indexed_by_one(*cur_party_id);
+                        if !roles_votes.contains(&cur_role) {
+                            session.add_corrupt(cur_role)?;
                             tracing::warn!("Party with role {:?} and identity {:?} did not vote for the correct prf value and is thus malicious",
-                                 cur_role.one_based(), session.role_assignments().get(cur_role));
+                                 cur_role.one_based(), session.role_assignments().get(&cur_role));
                         }
                     }
                 }
@@ -461,7 +470,6 @@ impl PRSSState {
 
     /// Helper method for computing the parties resulting share value based on the winning psi value for each [PrssSet]
     fn compute_party_shares<P: ParameterHandles>(
-        &mut self,
         true_prf_vals: &HashMap<&PartySet, &Vec<Value>>,
         param: &P,
         mode: ComputeShareMode,
@@ -535,12 +543,12 @@ impl PRSSState {
 
 impl PRSSSetup {
     /// initialize the PRSS setup for this epoch and a given party
-    pub async fn init_with_abort<A: AgreeRandom + Send>(
-        session: &SmallSession,
+    pub async fn init_with_abort<A: AgreeRandom + Send, R: RngCore, S: SmallSessionHandles<R>>(
+        session: &mut S,
     ) -> anyhow::Result<Self> {
         let num_parties = session.amount_of_parties();
         let binom_nt = num_integer::binomial(num_parties, session.threshold() as usize);
-        let my_id = session.my_role()?.one_based();
+        let party_id = session.my_role()?.one_based();
 
         if binom_nt > PRSS_SIZE_MAX {
             return Err(anyhow_error_and_log(
@@ -551,12 +559,12 @@ impl PRSSSetup {
         // create all the subsets A that contain the party id
         let party_sets: Vec<Vec<usize>> = create_sets(num_parties, session.threshold() as usize)
             .into_iter()
-            .filter(|aset| aset.contains(&my_id))
+            .filter(|aset| aset.contains(&party_id))
             .collect();
 
         let mut party_prss_sets: Vec<PrssSet> = Vec::new();
 
-        let ars = A::agree_random(&mut session.to_base_session())
+        let ars = A::agree_random(session)
             .await
             .with_context(|| "AgreeRandom failed!")?;
 
@@ -700,7 +708,10 @@ mod tests {
             constants::{BD1, LOG_BD, STATSEC},
             distributed::{reconstruct_w_errors_sync, setup_prss_sess, DistributedTestRuntime},
             party::{Identity, Role},
-            session::{BaseSessionHandles, DecryptionMode, LargeSession},
+            session::{
+                BaseSessionHandles, DecryptionMode, LargeSession, ParameterHandles,
+                SessionParameters, SmallSession, SmallSessionStruct,
+            },
             small_execution::prep::to_large_ciphertext,
         },
         file_handling::read_element,
@@ -742,7 +753,7 @@ mod tests {
                 .filter(|aset| aset.contains(&party_id))
                 .collect::<Vec<_>>();
 
-            let sess = get_small_session_for_parties(
+            let mut sess = get_small_session_for_parties(
                 num_parties,
                 threshold as u8,
                 Role::indexed_by_one(party_id),
@@ -750,9 +761,7 @@ mod tests {
             let rt = tokio::runtime::Runtime::new().unwrap();
             let _guard = rt.enter();
             let random_agreed_keys = rt
-                .block_on(async {
-                    DummyAgreeRandom::agree_random(&mut sess.to_base_session()).await
-                })
+                .block_on(async { DummyAgreeRandom::agree_random(&mut sess).await })
                 .unwrap();
 
             let f_a_points = party_compute_f_a_points(&party_sets, num_parties)?;
@@ -1165,12 +1174,15 @@ mod tests {
                 .small_session_for_player(session_id, party_id - 1, Some(rng))
                 .unwrap();
             DistributedTestRuntime::add_dummy_prss(&mut session);
-            let mut state = session.prss().clone().unwrap();
+            let state = session.prss().unwrap();
             // Compute reference value based on check (we clone to ensure that they are evaluated for the same counter)
             reference_values.push(state.clone().prss_next(party_id).unwrap());
             // Do the actual computation
             set.spawn(async move {
-                let res = state.prss_check(&mut session).await.unwrap();
+                let res = state
+                    .prss_check(&mut session, state.prss_ctr)
+                    .await
+                    .unwrap();
                 // Ensure no corruptions happened
                 assert!(session.corrupt_roles().is_empty());
                 res
@@ -1229,7 +1241,7 @@ mod tests {
                 .small_session_for_player(session_id, party_id - 1, Some(rng))
                 .unwrap();
             DistributedTestRuntime::add_dummy_prss(&mut session);
-            let mut state = session.prss().clone().unwrap();
+            let state = session.prss().unwrap();
             // Compute reference value based on check (we clone to ensure that they are evaluated for the same counter)
             reference_values.push(
                 state
@@ -1239,7 +1251,10 @@ mod tests {
             );
             // Do the actual computation
             set.spawn(async move {
-                let res = state.przs_check(&mut session).await.unwrap();
+                let res = state
+                    .przs_check(&mut session, state.przs_ctr)
+                    .await
+                    .unwrap();
                 // Ensure no corruptions happened
                 assert!(session.corrupt_roles().is_empty());
                 res
@@ -1320,7 +1335,7 @@ mod tests {
     #[test]
     fn test_count_votes_bad_type() {
         let parties = 3;
-        let my_role = Role::indexed_by_one(3);
+        let my_role = Role::indexed_by_one(1);
         let mut session = get_small_session_for_parties(parties, 0, my_role);
         let set = Vec::from([1, 2, 3]);
         let value = Value::U64(42);
@@ -1359,7 +1374,7 @@ mod tests {
     #[test]
     fn test_add_votes() {
         let parties = 3;
-        let my_role = Role::indexed_by_one(3);
+        let my_role = Role::indexed_by_one(1);
         let mut session = get_small_session_for_parties(parties, 0, my_role);
         let value = vec![Value::U64(42)];
         let mut votes = HashMap::new();
@@ -1382,7 +1397,7 @@ mod tests {
         // And that the corruption set is still empty
         assert!(session.corrupt_roles().is_empty());
 
-        // Check that `my_role` gets added to the set of corruptions after trying to vote a second time
+        // Check that party 3 gets added to the set of corruptions after trying to vote a second time
         PRSSState::add_vote(&mut votes, &value, Role::indexed_by_one(3), &mut session).unwrap();
         assert!(votes
             .get(&value)
@@ -1422,13 +1437,14 @@ mod tests {
     #[traced_test]
     #[test]
     fn identify_non_voting_party() {
-        let parties = 3;
-        let set = Vec::from([1, 2, 3]);
+        let parties = 4;
+        let set = Vec::from([1, 3, 2]);
         let mut session = get_small_session_for_parties(parties, 0, Role::indexed_by_one(1));
         let value = vec![Value::U64(42)];
         let ref_value = value.clone();
         let true_psi_vals = HashMap::from([(&set, &ref_value)]);
         // Party 3 is not voting for the correct value
+        // and party 4 should not vote since they are not in the set
         let votes = HashMap::from([(
             value,
             HashSet::from([Role::indexed_by_one(1), Role::indexed_by_one(2)]),
@@ -1436,6 +1452,7 @@ mod tests {
         let count = HashMap::from([(set.clone(), votes)]);
         PRSSState::handle_non_voting_parties(&true_psi_vals, &count, &mut session).unwrap();
         assert!(session.corrupt_roles.contains(&Role::indexed_by_one(3)));
+        assert_eq!(1, session.corrupt_roles.len());
         assert!(logs_contain(
             "did not vote for the correct prf value and is thus malicious"
         ));
@@ -1445,12 +1462,19 @@ mod tests {
     fn sunshine_compute_party_shares() {
         let parties = 1;
         let role = Role::indexed_by_one(1);
-        let session = get_small_session_for_parties(parties, 0, Role::indexed_by_one(1));
+        let mut session = get_small_session_for_parties(parties, 0, Role::indexed_by_one(1));
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         let prss_setup = rt
-            .block_on(async { PRSSSetup::init_with_abort::<DummyAgreeRandom>(&session).await })
+            .block_on(async {
+                PRSSSetup::init_with_abort::<
+                    DummyAgreeRandom,
+                    ChaCha20Rng,
+                    SmallSessionStruct<ChaCha20Rng, SessionParameters>,
+                >(&mut session)
+                .await
+            })
             .unwrap();
         let state = prss_setup.new_prss_session_state(session.session_id());
 
@@ -1465,9 +1489,9 @@ mod tests {
             let local_psi_value = vec![Value::Poly128(local_psi)];
             let true_psi_vals = HashMap::from([(&set.parties, &local_psi_value)]);
 
-            let com_true_psi_vals = cloned_state
-                .compute_party_shares(&true_psi_vals, &session, ComputeShareMode::Prss)
-                .unwrap();
+            let com_true_psi_vals =
+                PRSSState::compute_party_shares(&true_psi_vals, &session, ComputeShareMode::Prss)
+                    .unwrap();
             assert_eq!(&psi_next, com_true_psi_vals.get(&role).unwrap());
         }
     }
@@ -1477,8 +1501,11 @@ mod tests {
         let parties = 5;
         let threshold = 1;
 
-        async fn task(session: SmallSession) -> IndexedValue {
-            let prss_setup = PRSSSetup::init_with_abort::<DummyAgreeRandom>(&session)
+        async fn task(mut session: SmallSession) -> IndexedValue {
+            let prss_setup =
+                PRSSSetup::init_with_abort::<DummyAgreeRandom, ChaCha20Rng, SmallSession>(
+                    &mut session,
+                )
                 .await
                 .unwrap();
             let mut state = prss_setup.new_prss_session_state(session.session_id());
@@ -1619,11 +1646,10 @@ mod tests {
         let parties = 10;
         let mut session = get_small_session_for_parties(parties, 0, Role::indexed_by_one(1));
         DistributedTestRuntime::add_dummy_prss(&mut session);
-        let mut state = session.prss().clone().unwrap();
         // Use an empty hash map to ensure that
         let psi_values = HashMap::new();
-        assert!(state
-            .compute_party_shares(&psi_values, &session, ComputeShareMode::Prss)
-            .is_err());
+        assert!(
+            PRSSState::compute_party_shares(&psi_values, &session, ComputeShareMode::Prss).is_err()
+        );
     }
 }

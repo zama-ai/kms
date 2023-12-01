@@ -568,8 +568,6 @@ pub fn keygen_all_party_shares<R: RngCore>(
 
 #[cfg(test)]
 mod tests {
-    use std::num::Wrapping;
-
     use crate::{
         execution::small_execution::prep::to_large_ciphertext_block,
         file_handling::{read_as_json, read_element},
@@ -584,7 +582,7 @@ mod tests {
     use num_traits::AsPrimitive;
     use rand::{RngCore, SeedableRng};
     use rand_chacha::ChaCha20Rng;
-
+    use std::num::Wrapping;
     use tfhe::{
         core_crypto::prelude::{LweSecretKey, LweSecretKeyOwned, Plaintext, UnsignedInteger},
         shortint::prelude::LweDimension,

@@ -170,6 +170,7 @@ where
         .iter()
         .map(|cur_open| Value::from(cur_open.value()))
         .collect_vec();
+    // TODO should be updated to the async one when #217 is complete
     let opened_vals: Vec<R> =
         match robust_opens_to_all(session, &parsed_to_open, session.threshold() as usize).await? {
             Some(opened_vals) => opened_vals
@@ -183,8 +184,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::num::Wrapping;
-
     use super::Share;
     use crate::{
         execution::{
@@ -200,6 +199,8 @@ mod tests {
         Z128, Z64,
     };
     use paste::paste;
+    use rand_chacha::ChaCha20Rng;
+    use std::num::Wrapping;
 
     macro_rules! tests {
         ($z:ty, $u:ty) => {
@@ -209,11 +210,11 @@ mod tests {
                 fn [<mult_sunshine_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    async fn task(mut session: SmallSession) -> Vec<ResiduePoly<Wrapping<$u>>> {
-                        let mut preprocessing = DummyPreprocessing::<$z>::new(42);
-                        let cur_a = preprocessing.next_random(&mut session).unwrap();
-                        let cur_b = preprocessing.next_random(&mut session).unwrap();
-                        let trip = preprocessing.next_triple(&mut session).unwrap();
+                    async fn task(session: SmallSession) -> Vec<ResiduePoly<Wrapping<$u>>> {
+                        let mut preprocessing = DummyPreprocessing::<$z, ChaCha20Rng, SmallSession>::new(42, session.clone());
+                        let cur_a = preprocessing.next_random().unwrap();
+                        let cur_b = preprocessing.next_random().unwrap();
+                        let trip = preprocessing.next_triple().unwrap();
                         let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
                         open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap()
                     }
@@ -236,20 +237,20 @@ mod tests {
                     let threshold = 1;
                     const AMOUNT: usize = 3;
                     async fn task(
-                        mut session: SmallSession,
+                        session: SmallSession,
                     ) -> (
                         Vec<ResiduePoly<Wrapping<$u>>>,
                         Vec<ResiduePoly<Wrapping<$u>>>,
                         Vec<ResiduePoly<Wrapping<$u>>>,
                     ) {
-                        let mut preprocessing = DummyPreprocessing::<$z>::new(42);
+                        let mut preprocessing = DummyPreprocessing::<$z, ChaCha20Rng, SmallSession>::new(42, session.clone());
                         let mut a_vec = Vec::with_capacity(AMOUNT);
                         let mut b_vec = Vec::with_capacity(AMOUNT);
                         let mut trip_vec = Vec::with_capacity(AMOUNT);
                         for _i in 0..AMOUNT {
-                            a_vec.push(preprocessing.next_random(&mut session).unwrap());
-                            b_vec.push(preprocessing.next_random(&mut session).unwrap());
-                            trip_vec.push(preprocessing.next_triple(&mut session).unwrap());
+                            a_vec.push(preprocessing.next_random().unwrap());
+                            b_vec.push(preprocessing.next_random().unwrap());
+                            trip_vec.push(preprocessing.next_triple().unwrap());
                         }
                         let c_vec = mult_list(&a_vec, &b_vec, trip_vec, &session).await.unwrap();
                         let a_plain = open_list(&a_vec, &session).await.unwrap();
@@ -276,12 +277,12 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_by_one(4);
-                    let mut task = |mut session: SmallSession| async move {
+                    let mut task = |session: SmallSession| async move {
                         if session.my_role().unwrap() != bad_role {
-                            let mut preprocessing = DummyPreprocessing::<$z>::new(42);
-                            let cur_a = preprocessing.next_random(&mut session).unwrap();
-                            let cur_b = preprocessing.next_random(&mut session).unwrap();
-                            let trip = preprocessing.next_triple(&mut session).unwrap();
+                            let mut preprocessing = DummyPreprocessing::<$z, ChaCha20Rng, SmallSession>::new(42, session.clone());
+                            let cur_a = preprocessing.next_random().unwrap();
+                            let cur_b = preprocessing.next_random().unwrap();
+                            let trip = preprocessing.next_triple().unwrap();
                             let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
                             (
                                 session.my_role().unwrap(),
@@ -313,14 +314,14 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_by_one(4);
-                    let mut task = |mut session: SmallSession| async move {
-                        let mut preprocessing = DummyPreprocessing::<$z>::new(42);
-                        let cur_a = preprocessing.next_random(&mut session).unwrap();
+                    let mut task = |session: SmallSession| async move {
+                        let mut preprocessing = DummyPreprocessing::<$z, ChaCha20Rng, SmallSession>::new(42, session.clone());
+                        let cur_a = preprocessing.next_random().unwrap();
                         let cur_b = match session.my_role().unwrap() {
                             role if role == bad_role  => Share::new(bad_role, ResiduePoly::<$z>::from_scalar(Wrapping(42))),
-                            _ => preprocessing.next_random(&mut session).unwrap(),
+                            _ => preprocessing.next_random().unwrap(),
                         };
-                        let trip = preprocessing.next_triple(&mut session).unwrap();
+                        let trip = preprocessing.next_triple().unwrap();
                         let cur_c = mult(cur_a, cur_b, trip, &session).await.unwrap();
                         open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap()
                     };

@@ -1,7 +1,7 @@
 use super::{
     p2p::{receive_from_parties, send_to_honest_parties},
     party::Role,
-    session::{BaseSession, BaseSessionHandles, ParameterHandles},
+    session::BaseSessionHandles,
     small_execution::prss::{create_sets, PrfKey},
 };
 use crate::{
@@ -18,7 +18,9 @@ use std::collections::HashMap;
 #[async_trait]
 pub trait AgreeRandom {
     /// agree on a random value, as seen from a single party's view (determined by the session)
-    async fn agree_random(session: &mut BaseSession) -> anyhow::Result<Vec<PrfKey>>;
+    async fn agree_random<R: RngCore, S: BaseSessionHandles<R>>(
+        session: &mut S,
+    ) -> anyhow::Result<Vec<PrfKey>>;
 }
 
 pub struct RealAgreeRandom {}
@@ -202,8 +204,8 @@ fn verify_and_xor_keys(
 }
 
 /// does the (identical) communication for both RealAgreeRandom and RealAgreeRandomWithAbort and returns the unpacked commitments and keys/openings
-async fn agree_random_communication(
-    session: &mut BaseSession,
+async fn agree_random_communication<R: RngCore, S: BaseSessionHandles<R>>(
+    session: &mut S,
     coms: &[Vec<Commitment>],
     keys_opens: &[Vec<(PrfKey, Opening)>],
 ) -> anyhow::Result<(Vec<Vec<Commitment>>, Vec<Vec<(PrfKey, Opening)>>)> {
@@ -256,11 +258,17 @@ async fn agree_random_communication(
 
 #[async_trait]
 impl AgreeRandom for RealAgreeRandom {
-    async fn agree_random(session: &mut BaseSession) -> anyhow::Result<Vec<PrfKey>> {
+    async fn agree_random<R: RngCore, S: BaseSessionHandles<R>>(
+        session: &mut S,
+    ) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.amount_of_parties();
         let party_id = session.my_role()?.one_based();
 
-        let mut party_sets = compute_party_sets(session)?;
+        let mut party_sets = compute_party_sets(
+            session.my_role()?,
+            session.amount_of_parties(),
+            session.threshold() as usize,
+        );
 
         let mut s = [0u8; KEY_BYTE_LEN];
 
@@ -296,11 +304,16 @@ pub struct RealAgreeRandomWithAbort {}
 
 #[async_trait]
 impl AgreeRandom for RealAgreeRandomWithAbort {
-    async fn agree_random(session: &mut BaseSession) -> anyhow::Result<Vec<PrfKey>> {
+    async fn agree_random<R: RngCore, S: BaseSessionHandles<R>>(
+        session: &mut S,
+    ) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.amount_of_parties();
-        let party_id = session.my_role()?.one_based();
 
-        let mut party_sets = compute_party_sets(session)?;
+        let mut party_sets = compute_party_sets(
+            session.my_role()?,
+            num_parties,
+            session.threshold() as usize,
+        );
 
         // run plain AgreeRandom to determine random keys as a first step
         let ars = RealAgreeRandom::agree_random(session).await?;
@@ -323,7 +336,7 @@ impl AgreeRandom for RealAgreeRandomWithAbort {
             agree_random_communication(session, &coms, &keys_opens).await?;
 
         let r_a_keys = verify_keys_equal(
-            party_id,
+            session.my_role()?.one_based(),
             &mut party_sets,
             &mut keys_opens,
             &mut rcv_keys_opens,
@@ -338,8 +351,14 @@ pub struct DummyAgreeRandom {}
 
 #[async_trait]
 impl AgreeRandom for DummyAgreeRandom {
-    async fn agree_random(session: &mut BaseSession) -> anyhow::Result<Vec<PrfKey>> {
-        let party_sets = compute_party_sets(session)?;
+    async fn agree_random<R: RngCore, S: BaseSessionHandles<R>>(
+        session: &mut S,
+    ) -> anyhow::Result<Vec<PrfKey>> {
+        let party_sets = compute_party_sets(
+            session.my_role()?,
+            session.amount_of_parties(),
+            session.threshold() as usize,
+        );
 
         // byte array for holding the randomness
         let mut r_a = [0u8; KEY_BYTE_LEN];
@@ -373,13 +392,13 @@ pub(crate) fn xor_u8_arr_in_place(arr1: &mut [u8; KEY_BYTE_LEN], arr2: &[u8; KEY
 }
 
 // helper function returns the all the subsets of party IDs of size n-t of which the given party is a member
-fn compute_party_sets(session: &BaseSession) -> anyhow::Result<Vec<Vec<usize>>> {
-    let party_id = session.my_role()?.one_based();
-    let sets = create_sets(session.amount_of_parties(), session.threshold() as usize)
+
+fn compute_party_sets(my_role: Role, parties: usize, threshold: usize) -> Vec<Vec<usize>> {
+    let party_id = my_role.one_based();
+    create_sets(parties, threshold)
         .into_iter()
         .filter(|aset| aset.contains(&party_id))
-        .collect();
-    Ok(sets)
+        .collect()
 }
 
 #[cfg(test)]
@@ -395,7 +414,7 @@ mod tests {
             agree_random::{check_and_unpack_keys, verify_keys_equal},
             distributed::DistributedTestRuntime,
             party::Role,
-            session::{ParameterHandles, SmallSession, ToBaseSession},
+            session::{ParameterHandles, SmallSession},
             small_execution::prss::{create_sets, PrfKey},
         },
         tests::helper::tests::get_small_session_for_parties,
@@ -450,14 +469,12 @@ mod tests {
         let mut allkeys: Vec<VecDeque<PrfKey>> = Vec::new();
 
         for p in 1..=num_parties {
-            let sess =
+            let mut sess =
                 get_small_session_for_parties(num_parties, threshold, Role::indexed_by_one(p));
 
             let _guard = rt.enter();
             let keys = rt
-                .block_on(async {
-                    DummyAgreeRandom::agree_random(&mut sess.to_base_session()).await
-                })
+                .block_on(async { DummyAgreeRandom::agree_random(&mut sess).await })
                 .unwrap();
 
             let vd = VecDeque::from(keys);
@@ -493,8 +510,8 @@ mod tests {
         let num_parties = 7;
         let threshold = 2;
 
-        async fn task<A: AgreeRandom>(session: SmallSession) -> (Role, VecDeque<PrfKey>) {
-            let keys = A::agree_random(&mut session.to_base_session()).await;
+        async fn task<A: AgreeRandom>(mut session: SmallSession) -> (Role, VecDeque<PrfKey>) {
+            let keys = A::agree_random(&mut session).await;
             let vd = VecDeque::from(keys.unwrap());
             (session.my_role().unwrap(), vd)
         }
@@ -560,11 +577,9 @@ mod tests {
         let mut jobs = JoinSet::new();
 
         for sess in sessions.iter() {
-            let ss = sess.clone();
+            let mut ss = sess.clone();
 
-            jobs.spawn(
-                async move { RealAgreeRandom::agree_random(&mut ss.to_base_session()).await },
-            );
+            jobs.spawn(async move { RealAgreeRandom::agree_random(&mut ss).await });
         }
 
         rt.block_on(async {

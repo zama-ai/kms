@@ -6,6 +6,7 @@ pub mod distributed;
 pub mod p2p;
 pub mod party;
 pub mod small_execution {
+    pub mod offline;
     pub mod prep;
     pub mod prf;
     pub mod prss;

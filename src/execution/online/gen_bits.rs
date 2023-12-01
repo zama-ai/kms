@@ -58,7 +58,7 @@ macro_rules! impl_gen_bits {
             pub async fn gen_bits_even<
                 Rnd: RngCore + Send + Sync,
                 Ses: BaseSessionHandles<Rnd>,
-                P: Preprocessing<Rnd, ResiduePoly<$z>, Ses>,
+                P: Preprocessing<ResiduePoly<$z>>,
             >(
                 amount: usize,
                 preproc: &mut P,
@@ -67,8 +67,8 @@ macro_rules! impl_gen_bits {
             where
                 value::Value: std::convert::From<ResiduePoly<$z>>,
             {
-                let a = preproc.next_random_vec(amount, session)?;
-                let trips = preproc.next_triple_vec(amount, session)?;
+                let a = preproc.next_random_vec(amount)?;
+                let trips = preproc.next_triple_vec(amount)?;
                 let s = mult_list(&a, &a, trips, session).await?;
                 let v = a
                     .iter()
@@ -177,7 +177,7 @@ mod tests {
                     let threshold = 1;
                     const AMOUNT: usize = 100;
                     async fn task(mut session: SmallSession) -> Vec<ResiduePoly<Wrapping<$u>>> {
-                        let mut preprocessing = DummyPreprocessing::<$z>::new(42);
+                        let mut preprocessing = DummyPreprocessing::<$z, ChaCha20Rng, SmallSession>::new(42, session.clone());
                         let bits = Solve::<$z>::gen_bits_even(AMOUNT, &mut preprocessing, &mut session)
                             .await
                             .unwrap();
@@ -195,14 +195,14 @@ mod tests {
                     let bad_party: Role = Role::indexed_by_one(2);
                     const AMOUNT: usize = 100;
                     let mut task = |mut session: SmallSession| async move {
-                        let mut preprocessing = DummyPreprocessing::<$z>::new(42);
+                        let mut preprocessing = DummyPreprocessing::<$z, ChaCha20Rng, SmallSession>::new(42, session.clone());
                         // Execute with dummy prepreocessing for honest parties and a mock for the bad one
                         let bits = if session.my_role().unwrap() == bad_party {
                             let mut mock =
-                                MockPreprocessing::<ChaCha20Rng, ResiduePoly<$z>, SmallSession>::new();
+                                MockPreprocessing::<ResiduePoly<$z>>::new();
                             // Mock the bad party's preprocessing by returning incorrect shares on calls to next_random_vec
                             mock.expect_next_random_vec()
-                                .returning(move |amount, _ses| {
+                                .returning(move |amount| {
                                     Ok((0..amount)
                                         .map(|i| {
                                             Share::new(
@@ -213,7 +213,7 @@ mod tests {
                                         .collect_vec())
                                 });
                             mock.expect_next_triple_vec()
-                                .returning(move |amount, ses| preprocessing.next_triple_vec(amount, ses));
+                                .returning(move |amount| preprocessing.next_triple_vec(amount));
                             Solve::<$z>::gen_bits_even(AMOUNT, &mut mock, &mut session)
                                 .await
                                 .unwrap()

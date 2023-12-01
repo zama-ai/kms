@@ -2,7 +2,13 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         distributed::robust_opens_to_all,
-        online::{preprocessing::Preprocessing, share::Share, triple::Triple},
+        online::{
+            preprocessing::{
+                BasePreprocessing, Preprocessing, RANDOM_BATCH_SIZE, TRIPLE_BATCH_SIZE,
+            },
+            share::Share,
+            triple::Triple,
+        },
         session::LargeSessionHandles,
     },
     residue_poly::ResiduePoly,
@@ -22,8 +28,8 @@ pub struct BatchParams {
 impl Default for BatchParams {
     fn default() -> Self {
         Self {
-            triple_batch_size: 10_usize,
-            random_batch_size: 10_usize,
+            triple_batch_size: TRIPLE_BATCH_SIZE,
+            random_batch_size: RANDOM_BATCH_SIZE,
         }
     }
 }
@@ -34,12 +40,12 @@ pub struct LargePreprocessing<S: SingleSharing, D: DoubleSharing> {
     random_batch_size: usize,
     single_sharing_handle: S,
     double_sharing_handle: D,
-    available_triples: Vec<Triple<ResiduePoly<Z128>>>,
-    available_randoms: Vec<Share<ResiduePoly<Z128>>>,
+    elements: BasePreprocessing<ResiduePoly<Z128>>,
 }
 
 impl<S: SingleSharing, D: DoubleSharing> LargePreprocessing<S, D> {
-    ///NOTE: if None is passed for the option, we use the constants, which should at some point
+    /// Initializes the preprocessing for a new epoch, by preprocessing a batch
+    /// NOTE: if None is passed for the option, we use the constants, which should at some point
     /// be set to give an optimized offline phase for ddec.
     ///
     /// batch_sizes is an option which contains in order:
@@ -62,14 +68,16 @@ impl<S: SingleSharing, D: DoubleSharing> LargePreprocessing<S, D> {
 
         //Init double sharing
         dsh.init(session, batch_sizes.triple_batch_size).await?;
-
+        let base_preprocessing = BasePreprocessing {
+            available_triples: Vec::new(),
+            available_randoms: Vec::new(),
+        };
         let mut large_preproc = Self {
             triple_batch_size: batch_sizes.triple_batch_size,
             random_batch_size: batch_sizes.random_batch_size,
             single_sharing_handle: shh,
             double_sharing_handle: dsh,
-            available_triples: Vec::new(),
-            available_randoms: Vec::new(),
+            elements: base_preprocessing,
         };
 
         large_preproc.next_triple_batch(session).await?;
@@ -78,6 +86,8 @@ impl<S: SingleSharing, D: DoubleSharing> LargePreprocessing<S, D> {
         Ok(large_preproc)
     }
 
+    /// Constructs a new batch of triples and appends this to the internal triple storage.
+    /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
     async fn next_triple_batch<R: RngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -133,7 +143,7 @@ impl<S: SingleSharing, D: DoubleSharing> LargePreprocessing<S, D> {
             .try_collect()?;
 
         let my_role = session.my_role()?;
-        let res = vec_share_x
+        let mut res = vec_share_x
             .into_iter()
             .zip(vec_share_y.into_iter())
             .zip(vec_shares_z.into_iter())
@@ -145,10 +155,12 @@ impl<S: SingleSharing, D: DoubleSharing> LargePreprocessing<S, D> {
                 )
             })
             .collect_vec();
-        self.available_triples = res;
+        self.elements.available_triples.append(&mut res);
         Ok(())
     }
 
+    /// Computes a new batch of random values and appends the new batch to the the existing stash of prepreocessing random values.
+    /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
     async fn next_random_batch<R: RngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -161,66 +173,30 @@ impl<S: SingleSharing, D: DoubleSharing> LargePreprocessing<S, D> {
                 self.single_sharing_handle.next(session).await?,
             ));
         }
-        self.available_randoms = res;
+        self.elements.available_randoms.append(&mut res);
         Ok(())
     }
 }
 
-impl<Rnd, L, S, D> Preprocessing<Rnd, ResiduePoly<Z128>, L> for LargePreprocessing<S, D>
+impl<S, D> Preprocessing<ResiduePoly<Z128>> for LargePreprocessing<S, D>
 where
-    Rnd: RngCore + Send + Sync + Clone,
-    L: LargeSessionHandles<Rnd>,
     S: SingleSharing,
     D: DoubleSharing,
 {
-    fn next_triple(&mut self, _session: &mut L) -> anyhow::Result<Triple<ResiduePoly<Z128>>> {
-        self.available_triples
-            .pop()
-            .ok_or_else(|| anyhow_error_and_log("available_triple is empty".to_string()))
-    }
-    fn next_triple_vec(
-        &mut self,
-        amount: usize,
-        _session: &mut L,
-    ) -> anyhow::Result<Vec<Triple<ResiduePoly<Z128>>>> {
-        if self.available_triples.len() >= amount {
-            let mut res = Vec::with_capacity(amount);
-            for _ in 0..amount {
-                res.push(self.available_triples.pop().ok_or_else(|| {
-                    anyhow_error_and_log("available_triple is empty".to_string())
-                })?);
-            }
-            Ok(res)
-        } else {
-            Err(anyhow_error_and_log(format!(
-                "Not enough triples to pop {amount}"
-            )))
-        }
-    }
-    fn next_random(&mut self, _session: &mut L) -> anyhow::Result<Share<ResiduePoly<Z128>>> {
-        self.available_randoms
-            .pop()
-            .ok_or_else(|| anyhow_error_and_log("available_triple is empty".to_string()))
+    fn next_triple(&mut self) -> anyhow::Result<Triple<ResiduePoly<Z128>>> {
+        self.elements.next_triple()
     }
 
-    fn next_random_vec(
-        &mut self,
-        amount: usize,
-        _session: &mut L,
-    ) -> anyhow::Result<Vec<Share<ResiduePoly<Z128>>>> {
-        if self.available_randoms.len() >= amount {
-            let mut res = Vec::with_capacity(amount);
-            for _ in 0..amount {
-                res.push(self.available_randoms.pop().ok_or_else(|| {
-                    anyhow_error_and_log("available_random is empty".to_string())
-                })?);
-            }
-            Ok(res)
-        } else {
-            Err(anyhow_error_and_log(format!(
-                "Not enough randomness to pop {amount}"
-            )))
-        }
+    fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<ResiduePoly<Z128>>>> {
+        self.elements.next_triple_vec(amount)
+    }
+
+    fn next_random(&mut self) -> anyhow::Result<Share<ResiduePoly<Z128>>> {
+        self.elements.next_random()
+    }
+
+    fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<ResiduePoly<Z128>>>> {
+        self.elements.next_random_vec(amount)
     }
 }
 
@@ -255,7 +231,11 @@ mod tests {
                     RealShareDispute, ShareDispute,
                 },
             },
-            online::{preprocessing::Preprocessing, share::Share, triple::Triple},
+            online::{
+                preprocessing::{Preprocessing, RANDOM_BATCH_SIZE, TRIPLE_BATCH_SIZE},
+                share::Share,
+                triple::Triple,
+            },
             session::{BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles},
         },
         residue_poly::ResiduePoly,
@@ -278,14 +258,15 @@ mod tests {
                 RealVss, Vss,
             },
         },
-        tests::helper::tests::{execute_protocol_w_disputes_and_malicious, TestingParameters},
+        tests::helper::{
+            tests::{execute_protocol_w_disputes_and_malicious, TestingParameters},
+            tests_and_benches::execute_protocol_large,
+        },
         value::Value,
         Sample, Z128,
     };
     use async_trait::async_trait;
     use itertools::Itertools;
-    use rand::RngCore;
-    use rand_chacha::ChaCha20Rng;
     use rstest::rstest;
 
     fn test_offline_strategies<
@@ -313,12 +294,16 @@ mod tests {
                 .await
                 .unwrap();
 
-                for _ in 0..batch_sizes.triple_batch_size {
-                    res_triples.push(real_preproc.next_triple(&mut session).unwrap());
-                }
-                for _ in 0..batch_sizes.random_batch_size {
-                    res_random.push(real_preproc.next_random(&mut session).unwrap());
-                }
+                res_triples.append(
+                    &mut real_preproc
+                        .next_triple_vec(batch_sizes.triple_batch_size)
+                        .unwrap(),
+                );
+                res_random.append(
+                    &mut real_preproc
+                        .next_random_vec(batch_sizes.random_batch_size)
+                        .unwrap(),
+                );
             }
 
             (
@@ -407,7 +392,7 @@ mod tests {
 
     #[async_trait]
     trait GenericMaliciousPreprocessing<S: SingleSharing, D: DoubleSharing>:
-        Preprocessing<ChaCha20Rng, ResiduePoly<Z128>, LargeSession> + Clone + Send
+        Preprocessing<ResiduePoly<Z128>> + Clone + Send
     {
         async fn init(
             &mut self,
@@ -507,7 +492,7 @@ mod tests {
             .await?
             .unwrap();
 
-            let vec_shares_z: Vec<_> = recons_vec_share_d
+            let vec_share_z: Vec<_> = recons_vec_share_d
                 .into_iter()
                 .zip(vec_double_share_v.iter())
                 .map(|(d, v)| {
@@ -523,7 +508,7 @@ mod tests {
             let res = vec_share_x
                 .into_iter()
                 .zip(vec_share_y)
-                .zip(vec_shares_z)
+                .zip(vec_share_z)
                 .map(|((x, y), z)| {
                     Triple::new(
                         Share::new(my_role, x),
@@ -550,20 +535,17 @@ mod tests {
         }
     }
 
-    impl<Rnd, L, S, D> Preprocessing<Rnd, ResiduePoly<Z128>, L> for CheatingLargePreprocessing<S, D>
+    impl<S, D> Preprocessing<ResiduePoly<Z128>> for CheatingLargePreprocessing<S, D>
     where
-        Rnd: RngCore + Send + Sync + Clone,
-        L: LargeSessionHandles<Rnd>,
         S: SingleSharing,
         D: DoubleSharing,
     {
-        fn next_triple(&mut self, _session: &mut L) -> anyhow::Result<Triple<ResiduePoly<Z128>>> {
+        fn next_triple(&mut self) -> anyhow::Result<Triple<ResiduePoly<Z128>>> {
             Ok(self.available_triples.pop().unwrap())
         }
         fn next_triple_vec(
             &mut self,
             amount: usize,
-            _session: &mut L,
         ) -> anyhow::Result<Vec<Triple<ResiduePoly<Z128>>>> {
             if self.available_triples.len() >= amount {
                 let mut res = Vec::with_capacity(amount);
@@ -575,14 +557,13 @@ mod tests {
                 Ok(Vec::new())
             }
         }
-        fn next_random(&mut self, _session: &mut L) -> anyhow::Result<Share<ResiduePoly<Z128>>> {
+        fn next_random(&mut self) -> anyhow::Result<Share<ResiduePoly<Z128>>> {
             Ok(self.available_randoms.pop().unwrap())
         }
 
         fn next_random_vec(
             &mut self,
             amount: usize,
-            _session: &mut L,
         ) -> anyhow::Result<Vec<Share<ResiduePoly<Z128>>>> {
             if self.available_randoms.len() >= amount {
                 let mut res = Vec::with_capacity(amount);
@@ -626,33 +607,29 @@ mod tests {
         }
     }
 
-    impl<Rnd, L, S, D> Preprocessing<Rnd, ResiduePoly<Z128>, L> for HonestLargePreprocessing<S, D>
+    impl<S, D> Preprocessing<ResiduePoly<Z128>> for HonestLargePreprocessing<S, D>
     where
-        Rnd: RngCore + Send + Sync + Clone,
-        L: LargeSessionHandles<Rnd>,
         S: SingleSharing,
         D: DoubleSharing,
     {
-        fn next_triple(&mut self, session: &mut L) -> anyhow::Result<Triple<ResiduePoly<Z128>>> {
-            self.large_preproc.next_triple(session)
+        fn next_triple(&mut self) -> anyhow::Result<Triple<ResiduePoly<Z128>>> {
+            self.large_preproc.next_triple()
         }
         fn next_triple_vec(
             &mut self,
             amount: usize,
-            session: &mut L,
         ) -> anyhow::Result<Vec<Triple<ResiduePoly<Z128>>>> {
-            self.large_preproc.next_triple_vec(amount, session)
+            self.large_preproc.next_triple_vec(amount)
         }
-        fn next_random(&mut self, session: &mut L) -> anyhow::Result<Share<ResiduePoly<Z128>>> {
-            self.large_preproc.next_random(session)
+        fn next_random(&mut self) -> anyhow::Result<Share<ResiduePoly<Z128>>> {
+            self.large_preproc.next_random()
         }
 
         fn next_random_vec(
             &mut self,
             amount: usize,
-            session: &mut L,
         ) -> anyhow::Result<Vec<Share<ResiduePoly<Z128>>>> {
-            self.large_preproc.next_random_vec(amount, session)
+            self.large_preproc.next_random_vec(amount)
         }
     }
 
@@ -836,5 +813,47 @@ mod tests {
         };
 
         test_offline_strategies(params, malicious_offline);
+    }
+
+    // Test what happens when no more triples are present
+    #[test]
+    fn test_no_more_elements() {
+        let parties = 5;
+        let threshold = 1;
+
+        async fn task(
+            mut session: LargeSession,
+        ) -> (
+            LargeSession,
+            Vec<Triple<ResiduePoly<Z128>>>,
+            Vec<Share<ResiduePoly<Z128>>>,
+        ) {
+            let mut preproc = LargePreprocessing::<TrueSingleSharing, TrueDoubleSharing>::init(
+                &mut session,
+                None,
+                TrueSingleSharing::default(),
+                TrueDoubleSharing::default(),
+            )
+            .await
+            .unwrap();
+            let mut triple_res = preproc.next_triple_vec(TRIPLE_BATCH_SIZE - 1).unwrap();
+            triple_res.push(preproc.next_triple().unwrap());
+            let mut rand_res = preproc.next_random_vec(RANDOM_BATCH_SIZE - 1).unwrap();
+            rand_res.push(preproc.next_random().unwrap());
+            // We have now used the entire batch of values and should thus fail
+            assert!(preproc.next_triple().is_err());
+            let err = preproc.next_triple().unwrap_err().to_string();
+            assert!(err.contains("available_triple is empty"));
+            let err = preproc.next_random().unwrap_err().to_string();
+            assert!(err.contains("available_random is empty"));
+            (session, triple_res, rand_res)
+        }
+
+        let result = execute_protocol_large(parties, threshold, &mut task);
+
+        for (_session, res_trip, res_rand) in result.iter() {
+            assert_eq!(res_trip.len(), TRIPLE_BATCH_SIZE);
+            assert_eq!(res_rand.len(), RANDOM_BATCH_SIZE);
+        }
     }
 }

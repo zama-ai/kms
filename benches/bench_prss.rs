@@ -9,7 +9,7 @@ use distributed_decryption::{
     execution::{
         agree_random::DummyAgreeRandom,
         party::{Identity, Role},
-        session::{SessionParameters, SmallSession},
+        session::{SessionParameters, SmallSession, SmallSessionStruct},
         small_execution::prss::PRSSSetup,
     },
     networking::local::LocalNetworkingProducer,
@@ -26,12 +26,19 @@ fn bench_prss(c: &mut Criterion) {
 
     let sid = SessionId::from(42);
 
-    let sess = get_small_session_for_parties(num_parties, threshold, Role::indexed_by_one(1));
+    let mut sess = get_small_session_for_parties(num_parties, threshold, Role::indexed_by_one(1));
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
     let prss = rt
-        .block_on(async { PRSSSetup::init_with_abort::<DummyAgreeRandom>(&sess).await })
+        .block_on(async {
+            PRSSSetup::init_with_abort::<
+                DummyAgreeRandom,
+                ChaCha20Rng,
+                SmallSessionStruct<ChaCha20Rng, SessionParameters>,
+            >(&mut sess)
+            .await
+        })
         .unwrap();
 
     let mut state = prss.new_prss_session_state(sid);

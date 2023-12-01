@@ -245,7 +245,12 @@ pub trait ToBaseSession<R: RngCore + Send + Sync, B: BaseSessionHandles<R>> {
 
 pub type SmallSession = SmallSessionStruct<ChaCha20Rng, SessionParameters>;
 pub trait SmallSessionHandles<R: RngCore>: BaseSessionHandles<R> {
-    fn prss(&mut self) -> &mut Option<PRSSState>;
+    /// Return the mutable prss state as an [Option]
+    fn prss_as_mut(&mut self) -> anyhow::Result<&mut PRSSState>;
+    /// Returns the non-mutable prss state if it exists or return an error
+    fn prss(&self) -> anyhow::Result<PRSSState>;
+    /// Set the prss state
+    fn set_prss(&mut self, state: Option<PRSSState>);
 }
 
 #[derive(Clone)]
@@ -336,15 +341,38 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R
     }
 
     fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool> {
-        Ok(self.corrupt_roles.insert(role))
+        // Observe we never add ourself to the list of corrupt parties to keep the execution going
+        // This is logically the attack model we expect and hence make testing malicious behaviour easier
+        if role != self.my_role()? {
+            Ok(self.corrupt_roles.insert(role))
+        } else {
+            Ok(false)
+        }
     }
 }
 
 impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> SmallSessionHandles<R>
     for SmallSessionStruct<R, P>
 {
-    fn prss(&mut self) -> &mut Option<PRSSState> {
-        &mut self.prss_state
+    fn prss_as_mut(&mut self) -> anyhow::Result<&mut PRSSState> {
+        match self.prss_state {
+            Some(ref mut state) => Ok(state),
+            None => Err(anyhow_error_and_log("No PRSS state exist".to_string())),
+        }
+    }
+
+    fn prss(&self) -> anyhow::Result<PRSSState> {
+        let state = match &self.prss_state {
+            Some(state) => state,
+            None => {
+                return Err(anyhow_error_and_log("No PRSS state exist".to_string()));
+            }
+        };
+        Ok(state.to_owned())
+    }
+
+    fn set_prss(&mut self, state: Option<PRSSState>) {
+        self.prss_state = state;
     }
 }
 
@@ -606,6 +634,7 @@ impl DisputeSet {
 mod tests {
     use super::SessionParameters;
     use crate::execution::party::Role;
+    use crate::{execution::session::BaseSessionHandles, tests::helper::tests::get_small_session};
     use crate::{
         execution::session::{
             DisputeSet, LargeSession, LargeSessionHandles, LargeSessionStruct, ParameterHandles,
@@ -834,5 +863,13 @@ mod tests {
             assert!(res.is_ok());
             assert!(session.corrupt_roles.contains(&Role::indexed_by_one(1)));
         });
+    }
+
+    #[test]
+    fn wont_add_self_to_corrupt() {
+        let mut session = get_small_session();
+        // Check that I cannot add myself to the corruption set directly
+        assert!(!session.add_corrupt(session.my_role().unwrap()).unwrap());
+        assert_eq!(0, session.corrupt_roles().len());
     }
 }

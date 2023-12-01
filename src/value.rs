@@ -9,6 +9,7 @@ use crate::{
 };
 use crate::{error::error_handler::anyhow_error_and_log, residue_poly::F_DEG};
 use crate::{Zero, Z128, Z64};
+use itertools::Itertools;
 use num_traits::ToBytes;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -117,8 +118,64 @@ pub enum BroadcastValue {
     LocalDoubleShare(crate::sharing::local_double_share::MapsDoubleSharesChallenges),
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
+impl From<u64> for BroadcastValue {
+    fn from(value: u64) -> Self {
+        BroadcastValue::RingValue(Value::Ring64(Wrapping(value)))
+    }
+}
+impl From<u128> for BroadcastValue {
+    fn from(value: u128) -> Self {
+        BroadcastValue::RingValue(Value::Ring128(Wrapping(value)))
+    }
+}
+impl From<ResiduePoly<Z64>> for BroadcastValue {
+    fn from(value: ResiduePoly<Z64>) -> Self {
+        BroadcastValue::RingValue(Value::Poly64(value))
+    }
+}
+impl From<ResiduePoly<Z128>> for BroadcastValue {
+    fn from(value: ResiduePoly<Z128>) -> Self {
+        BroadcastValue::RingValue(Value::Poly128(value))
+    }
+}
 
+impl From<Vec<u64>> for BroadcastValue {
+    fn from(value: Vec<u64>) -> Self {
+        BroadcastValue::RingVector(
+            value
+                .iter()
+                .map(|cur| Value::Ring64(Wrapping(*cur)))
+                .collect_vec(),
+        )
+    }
+}
+impl From<Vec<u128>> for BroadcastValue {
+    fn from(value: Vec<u128>) -> Self {
+        BroadcastValue::RingVector(
+            value
+                .iter()
+                .map(|cur| Value::Ring128(Wrapping(*cur)))
+                .collect_vec(),
+        )
+    }
+}
+impl From<Vec<ResiduePoly<Z64>>> for BroadcastValue {
+    fn from(value: Vec<ResiduePoly<Z64>>) -> Self {
+        BroadcastValue::RingVector(
+            value
+                .iter()
+                .map(|cur: &ResiduePoly<Wrapping<u64>>| Value::Poly64(*cur))
+                .collect_vec(),
+        )
+    }
+}
+impl From<Vec<ResiduePoly<Z128>>> for BroadcastValue {
+    fn from(value: Vec<ResiduePoly<Z128>>) -> Self {
+        BroadcastValue::RingVector(value.iter().map(|cur| Value::Poly128(*cur)).collect_vec())
+    }
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
 pub enum AgreeRandomValue {
     CommitmentValue(Vec<Commitment>),
     KeyOpenValue(Vec<(PrfKey, Opening)>),
@@ -162,7 +219,6 @@ pub fn err_reconstruct(
             "Input to reconstruction is empty".to_string(),
         ));
     }
-
     match expected_type {
         RingType::GalExtRing64 => {
             let stripped_shares: Vec<_> = shares

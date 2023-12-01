@@ -1,4 +1,3 @@
-use super::broadcast::send_to_all;
 use super::{
     agree_random::{AgreeRandom, DummyAgreeRandom},
     session::{
@@ -7,7 +6,8 @@ use super::{
     },
     small_execution::prss::PRSSSetup,
 };
-use crate::error::error_handler::anyhow_error_and_log;
+use super::{broadcast::send_to_all, session::SmallSessionStruct};
+use crate::error::error_handler::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use crate::execution::broadcast::generic_receive_from_all;
 use crate::execution::party::{Identity, Role, RoleAssignment};
 use crate::execution::{constants::INPUT_PARTY_ID, session::ToBaseSession};
@@ -111,7 +111,14 @@ impl DistributedTestRuntime {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         let prss_setup = rt
-            .block_on(async { PRSSSetup::init_with_abort::<DummyAgreeRandom>(session).await })
+            .block_on(async {
+                PRSSSetup::init_with_abort::<
+                    DummyAgreeRandom,
+                    ChaCha20Rng,
+                    SmallSessionStruct<ChaCha20Rng, SessionParameters>,
+                >(session)
+                .await
+            })
             .unwrap();
         session.prss_state = Some(prss_setup.new_prss_session_state(session.session_id()));
     }
@@ -298,7 +305,12 @@ pub async fn setup_prss_sess<A: AgreeRandom + Send>(
 
     for sess in sessions.clone() {
         jobs.spawn(async move {
-            let epoc = PRSSSetup::init_with_abort::<A>(&sess).await;
+            let epoc = PRSSSetup::init_with_abort::<
+                A,
+                ChaCha20Rng,
+                SmallSessionStruct<ChaCha20Rng, SessionParameters>,
+            >(&mut sess.clone())
+            .await;
             (sess.my_role().unwrap().zero_based(), epoc)
         });
     }
@@ -485,7 +497,7 @@ pub fn reconstruct_w_errors_sync(
         );
         return Ok(Some(opened));
     } else if degree + 2 * threshold >= num_parties {
-        return Err(anyhow_error_and_log(format!("Can NOT reconstruct with degree {degree}, threshold {threshold} and num_parties {num_parties}")));
+        return Err(anyhow_error_and_warn_log(format!("Can NOT reconstruct with degree {degree}, threshold {threshold} and num_parties {num_parties}")));
     }
 
     Ok(None)
@@ -1305,7 +1317,14 @@ pub async fn initialize_key_material(
     params: ThresholdLWEParameters,
 ) -> anyhow::Result<(SecretKeyShare, PubConKeyPair, Option<PRSSSetup>)> {
     let prss_setup = if setup_mode == SetupMode::AllProtos {
-        Some(PRSSSetup::init_with_abort::<DummyAgreeRandom>(session).await?)
+        Some(
+            PRSSSetup::init_with_abort::<
+                DummyAgreeRandom,
+                ChaCha20Rng,
+                SmallSessionStruct<ChaCha20Rng, SessionParameters>,
+            >(session)
+            .await?,
+        )
     } else {
         None
     };

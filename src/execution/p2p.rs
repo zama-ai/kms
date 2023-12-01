@@ -10,8 +10,7 @@ use crate::value::NetworkValue;
 use super::{
     party::Role,
     session::{
-        BaseSession, BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
-        ToBaseSession,
+        BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles, ToBaseSession,
     },
 };
 
@@ -143,9 +142,9 @@ pub async fn send_distinct_to_parties<R: RngCore, B: BaseSessionHandles<R>>(
 /// Receive specific values to specific parties.
 /// The list of parties to receive from is given in `senders`.
 /// Returns [`NetworkValue::Bot`] in case of failure to receive but without adding parties to the corruption or dispute sets.
-pub async fn receive_from_parties(
+pub async fn receive_from_parties<R: RngCore, S: BaseSessionHandles<R>>(
     senders: &Vec<Role>,
-    session: &BaseSession,
+    session: &S,
 ) -> anyhow::Result<HashMap<Role, NetworkValue>> {
     let mut receive_job = JoinSet::new();
     internal_receive_from_parties(&mut receive_job, senders, session, &check_talking_to_myself)?;
@@ -229,7 +228,7 @@ pub async fn exchange_values(
     session.network().increase_round_counter().await?;
     send_to_honest_parties(values_to_send, &session.to_base_session()).await?;
     let roles = values_to_send.keys().cloned().collect_vec();
-    let received_values = receive_from_parties(&roles, &session.to_base_session()).await?;
+    let received_values = receive_from_parties(&roles, session).await?;
     let mut res = HashMap::with_capacity(received_values.len());
     let mut disputed_parties = Vec::new();
     for (sender_role, sender_data) in received_values {
