@@ -6,19 +6,28 @@ service KmsEndpoint {
   rpc Reencrypt(ReencryptionRequest) returns (ReencryptionResponse);
 }
 
+enum FheType {
+  Bool = 0;
+  Euint8 = 1;
+  Euint16 = 2;
+  Euint32 = 3;
+}
+
 message Proof {
   uint32 height = 1;
   bytes merkle_patricia_proof = 2;
 }
 
 message DecryptionRequest {
-  bytes ciphertext = 1;
-  Proof proof = 2;
+  FheType fhe_type = 1;
+  bytes ciphertext = 2;
+  Proof proof = 3;
 }
 
 message DecryptionResponse {
-  uint32 plaintext = 1;
-  bytes signature = 2;
+  bytes signature = 1;
+  FheType fhe_type = 2;
+  uint32 plaintext = 3;
 }
 
 message ReencryptionRequest {

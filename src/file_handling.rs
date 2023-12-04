@@ -1,9 +1,18 @@
-use std::{fs::File, io::Write};
+use std::{
+    fs::{self, File},
+    io::Write,
+    path::Path,
+};
 
 use serde::{de::DeserializeOwned, Serialize};
 
 pub fn write_as_json<T: serde::Serialize>(file_path: String, to_store: &T) -> anyhow::Result<()> {
     let json_data = serde_json::to_string(&to_store)?;
+    let path = Path::new(&file_path);
+    // Create the parent directories of the file path of they don't exist
+    if let Some(p) = path.parent() {
+        fs::create_dir_all(p)?
+    };
     let mut file = File::create(file_path)?;
     file.write_all(json_data.as_bytes())?;
     Ok(())
@@ -18,6 +27,11 @@ pub fn read_as_json<T: DeserializeOwned>(file_path: String) -> anyhow::Result<T>
 pub fn write_element<T: serde::Serialize>(file_path: String, element: &T) -> anyhow::Result<()> {
     let mut serialized_data = Vec::new();
     let _ = bincode::serialize_into(&mut serialized_data, &element);
+    let path = Path::new(&file_path);
+    // Create the parent directories of the file path of they don't exist
+    if let Some(p) = path.parent() {
+        fs::create_dir_all(p)?
+    };
     let mut file = File::create(file_path)?;
     file.write_all(serialized_data.as_slice())?;
     Ok(())
