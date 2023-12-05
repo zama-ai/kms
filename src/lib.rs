@@ -7,11 +7,12 @@ pub mod kms {
 }
 pub mod core {
     pub mod der_types;
-    pub mod dummy;
+    pub mod kms_core;
     pub mod request;
     mod signcryption;
 }
 pub mod file_handling;
+pub mod kms_handles;
 pub mod rpc_types;
 
 #[track_caller]
