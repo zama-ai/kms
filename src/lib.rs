@@ -2,8 +2,17 @@ use std::panic::Location;
 
 use anyhow::anyhow;
 
-pub mod encryption;
+pub mod kms {
+    tonic::include_proto!("kms"); // The string specified here must match the proto package name
+}
+pub mod core {
+    pub mod der_types;
+    pub mod dummy;
+    mod encryption;
+    mod signature;
+}
 pub mod file_handling;
+pub mod rpc_types;
 
 #[track_caller]
 pub fn anyhow_error_and_log(msg: String) -> anyhow::Error {

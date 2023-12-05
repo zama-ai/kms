@@ -1,13 +1,9 @@
 use ::kms::file_handling::read_element;
-use dummy::{DummyKms, KmsKeys, DEFAULT_KMS_KEY_PATH};
-use kms::kms_endpoint_server::KmsEndpointServer;
+use kms::{
+    core::dummy::{DummyKms, KmsKeys, DEFAULT_KMS_KEY_PATH},
+    kms::kms_endpoint_server::KmsEndpointServer,
+};
 use tonic::transport::Server;
-
-pub mod kms {
-    tonic::include_proto!("kms"); // The string specified here must match the proto package name
-}
-pub mod dummy;
-pub mod types;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

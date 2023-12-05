@@ -1,12 +1,12 @@
-use kms::encryption::ClientRequest;
 use serde::Deserialize;
 use tendermint::block::signed_header::SignedHeader;
 
-use crate::kms::{
-    DecryptionRequest, DecryptionResponse, FheType, ReencryptionRequest, ReencryptionResponse,
+use crate::{
+    core::der_types::ClientRequest,
+    kms::{
+        DecryptionRequest, DecryptionResponse, FheType, ReencryptionRequest, ReencryptionResponse,
+    },
 };
-
-pub type Signature = Vec<u8>;
 
 /// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
 pub trait Kms {

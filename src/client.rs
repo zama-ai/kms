@@ -1,11 +1,4 @@
-use kms::kms_endpoint_client::KmsEndpointClient;
-use kms::{DecryptionRequest, Proof};
-
-use crate::kms::FheType;
-
-pub mod kms {
-    tonic::include_proto!("kms");
-}
+use kms::kms::{kms_endpoint_client::KmsEndpointClient, DecryptionRequest, FheType, Proof};
 
 /// This client serves test purposes.
 #[tokio::main]

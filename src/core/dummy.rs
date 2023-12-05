@@ -1,14 +1,22 @@
-use std::{
-    fmt,
-    sync::{Arc, Mutex},
+use crate::{
+    kms::{
+        kms_endpoint_server::KmsEndpoint, DecryptionRequest, DecryptionResponse, FheType, Proof,
+        ReencryptionRequest, ReencryptionResponse,
+    },
+    rpc_types::{Kms, LightClientCommitResponse},
 };
 
+use super::der_types::{ClientRequest, PrivateSigKey, PublicSigKey};
+use super::encryption::{sign, signcrypt};
 use k256::ecdsa::SigningKey;
-use kms::encryption::{sign, signcrypt, ClientRequest, PrivateSigKey, PublicSigKey};
 use rand::SeedableRng;
 use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::{from_bytes, to_vec};
+use std::{
+    fmt,
+    sync::{Arc, Mutex},
+};
 use tendermint::AppHash;
 use tfhe::{
     generate_keys, prelude::FheDecrypt, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint8,
@@ -16,16 +24,6 @@ use tfhe::{
 };
 
 use tonic::{Code, Request, Response, Status};
-
-use crate::{
-    kms::{
-        kms_endpoint_server::KmsEndpoint, DecryptionRequest, DecryptionResponse, FheType, Proof,
-        ReencryptionRequest, ReencryptionResponse,
-    },
-    types::Kms,
-};
-
-use crate::types::LightClientCommitResponse;
 
 pub const DEFAULT_KMS_KEY_PATH: &str = "temp/kms-keys.bin";
 
@@ -315,10 +313,7 @@ mod tests {
     use std::path::Path;
 
     use ctor::ctor;
-    use kms::{
-        encryption::{validate_and_decrypt, Cipher, ClientRequest},
-        file_handling::{read_element, write_element},
-    };
+
     use prost::Message;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
@@ -326,9 +321,14 @@ mod tests {
     use tfhe::{prelude::FheEncrypt, ConfigBuilder, FheUint8};
 
     use crate::{
-        dummy::{gen_sig_keys, vec_to_plaintext, DummyKms},
+        core::{
+            der_types::{Cipher, ClientRequest},
+            dummy::{gen_sig_keys, vec_to_plaintext, DummyKms},
+            encryption::validate_and_decrypt,
+        },
+        file_handling::{read_element, write_element},
         kms::{DecryptionRequest, FheType, ReencryptionRequest},
-        types::Kms,
+        rpc_types::Kms,
     };
 
     use super::{gen_kms_keys, KmsKeys, DEFAULT_KMS_KEY_PATH};
