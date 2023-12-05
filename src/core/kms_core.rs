@@ -1,9 +1,8 @@
 use crate::{
     kms::{
-        kms_endpoint_server::KmsEndpoint, DecryptionRequest, DecryptionResponse, FheType, Proof,
-        ReencryptionRequest, ReencryptionResponse,
+        DecryptionRequest, DecryptionResponse, FheType, ReencryptionRequest, ReencryptionResponse,
     },
-    rpc_types::{Kms, LightClientCommitResponse},
+    rpc_types::Kms,
 };
 
 use super::{
@@ -17,19 +16,11 @@ use rand::SeedableRng;
 use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::{from_bytes, to_vec};
-use std::{
-    fmt,
-    sync::{Arc, Mutex},
-};
-use tendermint::AppHash;
+use std::sync::{Arc, Mutex};
 use tfhe::{
     generate_keys, prelude::FheDecrypt, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint8,
     PublicKey, ServerKey,
 };
-
-use tonic::{Code, Request, Response, Status};
-
-pub const DEFAULT_KMS_KEY_PATH: &str = "temp/kms-keys.bin";
 
 pub type FhePublicKey = tfhe::PublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
@@ -64,16 +55,16 @@ pub struct KmsKeys {
     pub sig_sk: PrivateSigKey,
 }
 
-/// KMS which does not do signatures or encryption of requests or responses but only does FHE decryption
+/// Software based KMS where keys are stored in a local file
 #[derive(Debug)]
-pub struct DummyKms {
+pub struct SoftwareKms {
     pub config: Config,
     fhe_dec_key: ClientKey,
     sig_key: PrivateSigKey,
     rng: Arc<Mutex<ChaCha20Rng>>,
 }
 
-impl Kms for DummyKms {
+impl Kms for SoftwareKms {
     fn validate_and_reencrypt(
         &self,
         request: &ReencryptionRequest,
@@ -150,9 +141,9 @@ impl Kms for DummyKms {
     }
 }
 
-impl DummyKms {
+impl SoftwareKms {
     pub fn new(config: Config, fhe_dec_key: ClientKey, sig_key: PrivateSigKey) -> Self {
-        DummyKms {
+        SoftwareKms {
             config,
             rng: Arc::new(Mutex::new(ChaCha20Rng::from_entropy())),
             fhe_dec_key,
@@ -208,110 +199,6 @@ fn vec_to_plaintext(msg: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
     })
 }
 
-#[tonic::async_trait]
-impl KmsEndpoint for DummyKms {
-    async fn validate_and_reencrypt(
-        &self,
-        request: Request<ReencryptionRequest>,
-    ) -> Result<Response<ReencryptionResponse>, Status> {
-        let req = request.into_inner();
-
-        verify_proof(req.clone().proof.unwrap()).await?;
-        // TODO the request needs to have the type
-        let res = Kms::validate_and_reencrypt(self, &req);
-        process_response(res)
-    }
-
-    async fn validate_and_decrypt(
-        &self,
-        request: Request<DecryptionRequest>,
-    ) -> Result<Response<DecryptionResponse>, Status> {
-        let req = request.into_inner();
-
-        verify_proof(req.clone().proof.unwrap()).await?;
-        // TODO the request needs to have the type
-        let res = Kms::validate_and_decrypt(self, &req);
-        process_response(res)
-    }
-
-    async fn decrypt(
-        &self,
-        request: Request<DecryptionRequest>,
-    ) -> Result<Response<DecryptionResponse>, Status> {
-        let req = request.into_inner();
-
-        verify_proof(req.proof.unwrap()).await?;
-        // TODO the request needs to have the type
-        let res = Kms::decrypt(self, &req.ciphertext, FheType::Euint8);
-
-        Ok(Response::new(res.unwrap()))
-    }
-
-    async fn reencrypt(
-        &self,
-        request: Request<ReencryptionRequest>,
-    ) -> Result<Response<ReencryptionResponse>, Status> {
-        let req = request.into_inner();
-        let internal_request: ClientRequest = match from_bytes(&req.request) {
-            Ok(client_request) => client_request,
-            Err(e) => {
-                tracing::error!("{}", e);
-                return Err(tonic::Status::new(
-                    tonic::Code::Aborted,
-                    "Invalid request".to_string(),
-                ));
-            }
-        };
-        verify_proof(req.proof.unwrap()).await?;
-
-        let res = Kms::reencrypt(self, &req.ciphertext, FheType::Euint8, &internal_request);
-        process_response(res)
-    }
-}
-
-fn process_response<T: fmt::Debug>(req: anyhow::Result<Option<T>>) -> Result<Response<T>, Status> {
-    match req {
-        Ok(None) => {
-            tracing::warn!("The following request failed validation: {:?}", req);
-            Err(tonic::Status::new(
-                tonic::Code::Aborted,
-                "The request failed validation".to_string(),
-            ))
-        }
-        Ok(Some(resp)) => Ok(Response::new(resp)),
-        Err(e) => {
-            tracing::error!("{}", e);
-            Err(tonic::Status::new(
-                tonic::Code::Aborted,
-                "Internal server error".to_string(),
-            ))
-        }
-    }
-}
-
-async fn verify_proof(proof: Proof) -> Result<(), Status> {
-    let _root: AppHash = get_state_root(proof.height).await?;
-    // TODO: verify `proof` against `root`
-    Ok(())
-}
-
-async fn get_state_root(height: u32) -> Result<AppHash, Status> {
-    let response = reqwest::get(format!("http://127.0.0.1:8888/commit?height={}", height)) // assumes light client local service is up and running
-        .await
-        .or(Err(Status::new(
-            Code::Unavailable,
-            "unable to reach light client",
-        )))?
-        .json::<LightClientCommitResponse>()
-        .await
-        .or(Err(Status::new(
-            Code::Unavailable,
-            "unable to deserialize light client response",
-        )))?;
-
-    Ok(response.result.signed_header.header.app_hash)
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -327,7 +214,7 @@ mod tests {
     use crate::{
         core::{
             der_types::Cipher,
-            dummy::{gen_sig_keys, vec_to_plaintext, DummyKms},
+            kms_core::{gen_sig_keys, vec_to_plaintext, SoftwareKms},
             request::ClientRequest,
             signcryption::validate_and_decrypt,
         },
@@ -336,18 +223,20 @@ mod tests {
         rpc_types::Kms,
     };
 
-    use super::{gen_kms_keys, KmsKeys, DEFAULT_KMS_KEY_PATH};
+    use super::{gen_kms_keys, KmsKeys};
+
+    pub const TEST_KMS_KEY_PATH: &str = "temp/kms-keys.bin";
 
     #[ctor]
     #[test]
     fn ensure_keys_exist() {
-        if !Path::new(DEFAULT_KMS_KEY_PATH).exists() {
+        if !Path::new(TEST_KMS_KEY_PATH).exists() {
             let mut rng = ChaCha20Rng::seed_from_u64(1);
             let config = ConfigBuilder::all_disabled()
                 .enable_default_integers()
                 .build();
             write_element(
-                DEFAULT_KMS_KEY_PATH.to_string(),
+                TEST_KMS_KEY_PATH.to_string(),
                 &gen_kms_keys(config, &mut rng),
             )
             .unwrap();
@@ -357,8 +246,8 @@ mod tests {
     #[test]
     fn sunshine_decrypt() {
         let msg = 42_u8;
-        let keys: KmsKeys = read_element(DEFAULT_KMS_KEY_PATH.to_string()).unwrap();
-        let kms = DummyKms::new(keys.config, keys.fhe_sk.clone(), keys.sig_sk);
+        let keys: KmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();
+        let kms = SoftwareKms::new(keys.config, keys.fhe_sk.clone(), keys.sig_sk);
         let ct = FheUint8::encrypt(msg, &keys.fhe_sk);
         let mut serialized_ct = Vec::new();
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
@@ -371,8 +260,8 @@ mod tests {
     #[test]
     fn sunshine_rencrypt() {
         let msg = 42_u8;
-        let kms_keys: KmsKeys = read_element(DEFAULT_KMS_KEY_PATH.to_string()).unwrap();
-        let kms = DummyKms::new(kms_keys.config, kms_keys.fhe_sk.clone(), kms_keys.sig_sk);
+        let kms_keys: KmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();
+        let kms = SoftwareKms::new(kms_keys.config, kms_keys.fhe_sk.clone(), kms_keys.sig_sk);
         let ct = FheUint8::encrypt(msg, &kms_keys.fhe_sk);
         let mut serialized_ct = Vec::new();
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
@@ -403,8 +292,8 @@ mod tests {
     fn sunshine_validate_decrypt() {
         let msg = 42_u8;
         let mut rng = ChaCha20Rng::seed_from_u64(1);
-        let keys: KmsKeys = read_element(DEFAULT_KMS_KEY_PATH.to_string()).unwrap();
-        let kms = DummyKms::new(keys.config, keys.fhe_sk.clone(), keys.sig_sk);
+        let keys: KmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();
+        let kms = SoftwareKms::new(keys.config, keys.fhe_sk.clone(), keys.sig_sk);
         let ct = FheUint8::encrypt(msg, &keys.fhe_sk);
         let mut serialized_ct = Vec::new();
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
@@ -430,8 +319,8 @@ mod tests {
     fn sunshine_validate_reencrypt() {
         let msg = 42_u8;
         let mut rng = ChaCha20Rng::seed_from_u64(1);
-        let kms_keys: KmsKeys = read_element(DEFAULT_KMS_KEY_PATH.to_string()).unwrap();
-        let kms = DummyKms::new(kms_keys.config, kms_keys.fhe_sk.clone(), kms_keys.sig_sk);
+        let kms_keys: KmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();
+        let kms = SoftwareKms::new(kms_keys.config, kms_keys.fhe_sk.clone(), kms_keys.sig_sk);
         let ct = FheUint8::encrypt(msg, &kms_keys.fhe_sk);
         let mut serialized_ct = Vec::new();
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
