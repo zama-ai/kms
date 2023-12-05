@@ -19,6 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             merkle_patricia_proof: vec![],
         }),
         fhe_type: FheType::Euint8.into(),
+        request: vec![],
     });
 
     let response = client.decrypt(request).await?;

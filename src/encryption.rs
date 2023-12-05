@@ -89,7 +89,7 @@ pub type PrivateEncKey = crypto_box::SecretKey;
 // Struct wrapping signature verification key used by both the client and server
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PublicSigKey {
-    pk: k256::ecdsa::VerifyingKey,
+    pub pk: k256::ecdsa::VerifyingKey,
 }
 /// Serialize the public key using SEC1
 impl Serialize for PublicSigKey {
@@ -133,7 +133,41 @@ impl<'de> Visitor<'de> for PublicSigKeyVisitor {
 // Strcut wrapping signature signing key used by both the client and server to authenticate their messages to one another
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PrivateSigKey {
-    sk: k256::ecdsa::SigningKey,
+    pub sk: k256::ecdsa::SigningKey,
+}
+impl Serialize for PrivateSigKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(self.sk.to_bytes().as_bytes())
+    }
+}
+impl<'de> Deserialize<'de> for PrivateSigKey {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_bytes(PrivateSigKeyVisitor)
+    }
+}
+struct PrivateSigKeyVisitor;
+impl<'de> Visitor<'de> for PrivateSigKeyVisitor {
+    type Value = PrivateSigKey;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("A public verification key for ECDSA signatures using secp256k1")
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        match k256::ecdsa::SigningKey::from_bytes(v.into()) {
+            Ok(sk) => Ok(PrivateSigKey { sk }),
+            Err(e) => Err(E::custom(format!("Could not decode signing key: {:?}", e))),
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -206,15 +240,15 @@ impl<'de> Visitor<'de> for SignatureVisitor {
 /// DER encoding of the request as a SEQUENCE of ClientPayload and signature ( r||s in big endian encoded using OCTET STRINGS)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct ClientRequest {
-    payload: ClientPayload,
-    signature: Signature,
+    pub payload: ClientPayload,
+    pub signature: Signature,
 }
 /// Structure for DER encoding as a SEQUENCE of client_signcryption_key and digest (as OCTET STRING)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct ClientPayload {
-    client_signcryption_key: SigncryptionPubKey, // The client's public keys needed for signcryption
-    digest: Vec<u8>, // Digest of the fhe_cipher the client wish to have decrypted
-    sig_randomization: Vec<u8>, // Randomness to concatenate to the encrypted message to ensure EU-CMA security, see https://link.springer.com/content/pdf/10.1007/3-540-36492-7_1.pdf
+    pub client_signcryption_key: SigncryptionPubKey, // The client's public keys needed for signcryption
+    pub digest: Vec<u8>, // Digest of the fhe_cipher the client wish to have decrypted
+    pub sig_randomization: Vec<u8>, // Randomness to concatenate to the encrypted message to ensure EU-CMA security, see https://link.springer.com/content/pdf/10.1007/3-540-36492-7_1.pdf
 }
 impl ClientRequest {
     /// Constructs a new signcryption request for a message `msg` by sampling necesary ephemeral keys and returning the aggegrated signcryption keys
@@ -298,6 +332,36 @@ impl ClientRequest {
 pub fn encryption_key_generation(rng: &mut impl CryptoRngCore) -> (PublicEncKey, PrivateEncKey) {
     let sk = SecretKey::generate(rng);
     (PublicEncKey(sk.public_key()), sk)
+}
+
+/// Method for computing the signature on a payload, `msg`, based on the server's signing key `server_sig_key`.
+/// Returns the signed message as a vector of bytes/
+/// Concretely r || s
+pub fn sign<T>(msg: &T, server_sig_key: &PrivateSigKey) -> anyhow::Result<Signature>
+where
+    T: Serialize + AsRef<[u8]>,
+{
+    let sig: k256::ecdsa::Signature = server_sig_key.sk.sign(msg.as_ref());
+    // Normalize s value to ensure a consistant signature and protect against malleability
+    sig.normalize_s();
+    Ok(Signature { sig })
+}
+
+/// Method method for performing the necesary checks on a plain signature.
+/// Returns true if the signature is ok and false otherwise
+pub fn verify_sig(msg: Vec<u8>, sig: &Signature, server_verf_key: &PublicSigKey) -> bool {
+    // Check that the signature is normalized
+    if !check_normalized(sig) {
+        return false;
+    }
+
+    // Verify signature
+    if server_verf_key.pk.verify(&msg[..], &sig.sig).is_err() {
+        tracing::warn!("Signature {:X?} is not valid", sig.sig);
+        return false;
+    }
+
+    true
 }
 
 /// Method for computing the signcryption of a payload, `msg`, based on the necessary public keys `client_pk`
@@ -487,8 +551,8 @@ mod tests {
     use tracing_test::traced_test;
 
     use crate::encryption::{
-        check_signature, encryption_key_generation, hash_element, parse_msg, signcrypt,
-        validate_and_decrypt, Signature, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
+        check_signature, encryption_key_generation, hash_element, parse_msg, sign, signcrypt,
+        validate_and_decrypt, verify_sig, Signature, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
     };
 
     use super::{ClientRequest, PrivateSigKey, PublicSigKey, SigncryptionPair};
@@ -561,7 +625,7 @@ mod tests {
     #[test]
     fn sunshine_encoding_decoding() {
         let (mut rng, request, client_signcryption_keys, _fhe_cipher) = test_setup();
-        let (_server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
+        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A message".as_bytes();
         let cipher = signcrypt(
             &mut rng,
@@ -580,6 +644,21 @@ mod tests {
         let enc_cipher = to_vec(&cipher).unwrap();
         let dec_cipher = from_bytes(&enc_cipher).unwrap();
         assert_eq!(cipher, dec_cipher);
+        let enc_sig_key = to_vec(&server_sig_key).unwrap();
+        let dec_sig_key: PrivateSigKey = from_bytes(&enc_sig_key).unwrap();
+        assert_eq!(server_sig_key, dec_sig_key);
+        let enc_verf_key = to_vec(&server_verf_key).unwrap();
+        let dec_verf_key: PublicSigKey = from_bytes(&enc_verf_key).unwrap();
+        assert_eq!(server_verf_key, dec_verf_key);
+    }
+
+    #[test]
+    fn plain_signing() {
+        let mut rng = ChaCha20Rng::seed_from_u64(1);
+        let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
+        let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
+        let sig = sign(&msg, &server_sig_key).unwrap();
+        assert!(verify_sig(msg.to_vec(), &sig, &server_verf_key));
     }
 
     #[test]
