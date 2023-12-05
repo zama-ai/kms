@@ -1,4 +1,4 @@
-use kms::encryption::{ClientRequest, SigncryptionPubKey};
+use kms::encryption::ClientRequest;
 use serde::Deserialize;
 use tendermint::block::signed_header::SignedHeader;
 

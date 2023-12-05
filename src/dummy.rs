@@ -12,7 +12,7 @@ use serde_asn1_der::{from_bytes, to_vec};
 use tendermint::AppHash;
 use tfhe::{
     generate_keys, prelude::FheDecrypt, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint8,
-    PublicKey,
+    PublicKey, ServerKey,
 };
 
 use tonic::{Code, Request, Response, Status};
@@ -27,7 +27,7 @@ use crate::{
 
 use crate::types::LightClientCommitResponse;
 
-pub const DEFAULT_KEY_PATH: &str = "temp/keys.bin";
+pub const DEFAULT_KMS_KEY_PATH: &str = "temp/kms-keys.bin";
 
 pub type FhePublicKey = tfhe::PublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
@@ -39,7 +39,7 @@ pub fn gen_sig_keys(rng: &mut impl CryptoRngCore) -> (PublicSigKey, PrivateSigKe
 }
 
 pub fn gen_kms_keys(config: Config, rng: &mut impl CryptoRngCore) -> KmsKeys {
-    let (fhe_sk, _fhe_server_key) = generate_keys(config.clone());
+    let (fhe_sk, fhe_server_key) = generate_keys(config.clone());
     let fhe_pk = PublicKey::new(&fhe_sk);
     let (sig_pk, sig_sk) = gen_sig_keys(rng);
     KmsKeys {
@@ -48,7 +48,7 @@ pub fn gen_kms_keys(config: Config, rng: &mut impl CryptoRngCore) -> KmsKeys {
         fhe_sk,
         sig_pk,
         sig_sk,
-        // fhe_server_key,
+        fhe_server_key,
     }
 }
 
@@ -57,7 +57,7 @@ pub struct KmsKeys {
     pub config: Config,
     pub fhe_pk: FhePublicKey,
     pub fhe_sk: FhePrivateKey,
-    // pub fhe_server_key: ServerKey,
+    pub fhe_server_key: ServerKey,
     pub sig_pk: PublicSigKey,
     pub sig_sk: PrivateSigKey,
 }
@@ -101,7 +101,7 @@ impl Kms for DummyKms {
         } else {
             let mut resp = Kms::decrypt(self, &request.ciphertext, request.fhe_type())?;
             let sig = sign(
-                &Self::plaintext_to_vec(resp.plaintext, request.fhe_type()),
+                &plaintext_to_vec(resp.plaintext, request.fhe_type()),
                 &self.sig_key,
             )?;
             resp.signature = to_vec(&sig)?;
@@ -110,7 +110,7 @@ impl Kms for DummyKms {
     }
 
     fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<DecryptionResponse> {
-        let plaintext = self.get_plaintext(ct, fhe_type)?;
+        let plaintext = self.raw_decryption(ct, fhe_type)?;
         Ok(DecryptionResponse {
             signature: Vec::new(),
             fhe_type: fhe_type.into(),
@@ -129,7 +129,7 @@ impl Kms for DummyKms {
             return Ok(None);
         }
         let dec_resp = Kms::decrypt(self, ct, fhe_type)?;
-        let msg = Self::plaintext_to_vec(dec_resp.plaintext, fhe_type);
+        let msg = plaintext_to_vec(dec_resp.plaintext, fhe_type);
         // TODO what is the right way of doing this without panic
         let mut current_rng = self.rng.lock().unwrap();
         let mut rng_clone = current_rng.clone();
@@ -158,29 +158,7 @@ impl DummyKms {
         }
     }
 
-    fn plaintext_to_vec(plaintext: u32, fhe_type: FheType) -> Vec<u8> {
-        match fhe_type {
-            FheType::Bool => {
-                vec![plaintext as u8]
-            }
-            FheType::Euint8 => {
-                vec![plaintext as u8]
-            }
-            FheType::Euint16 => plaintext.to_be_bytes().to_vec(),
-            FheType::Euint32 => plaintext.to_be_bytes().to_vec(),
-        }
-    }
-
-    fn vec_to_plaintext(msg: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
-        Ok(match fhe_type {
-            FheType::Bool => msg[0] as u32,
-            FheType::Euint8 => msg[0] as u32,
-            FheType::Euint16 => u16::from_be_bytes(msg.try_into()?) as u32,
-            FheType::Euint32 => u32::from_be_bytes(msg.try_into()?),
-        })
-    }
-
-    fn get_plaintext(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
+    fn raw_decryption(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
         Ok(match fhe_type {
             FheType::Bool => {
                 let cipher: FheBool = bincode::deserialize(ct)?;
@@ -205,6 +183,28 @@ impl DummyKms {
         })
     }
 }
+fn plaintext_to_vec(plaintext: u32, fhe_type: FheType) -> Vec<u8> {
+    match fhe_type {
+        FheType::Bool => {
+            vec![plaintext as u8]
+        }
+        FheType::Euint8 => {
+            vec![plaintext as u8]
+        }
+        FheType::Euint16 => plaintext.to_be_bytes().to_vec(),
+        FheType::Euint32 => plaintext.to_be_bytes().to_vec(),
+    }
+}
+
+#[allow(dead_code)]
+fn vec_to_plaintext(msg: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
+    Ok(match fhe_type {
+        FheType::Bool => msg[0] as u32,
+        FheType::Euint8 => msg[0] as u32,
+        FheType::Euint16 => u16::from_be_bytes(msg.try_into()?) as u32,
+        FheType::Euint32 => u32::from_be_bytes(msg.try_into()?),
+    })
+}
 
 #[tonic::async_trait]
 impl KmsEndpoint for DummyKms {
@@ -217,23 +217,7 @@ impl KmsEndpoint for DummyKms {
         verify_proof(req.clone().proof.unwrap()).await?;
         // TODO the request needs to have the type
         let res = Kms::validate_and_reencrypt(self, &req);
-        match res {
-            Ok(None) => {
-                tracing::warn!("The following request failed validation: {:?}", req);
-                Err(tonic::Status::new(
-                    tonic::Code::Aborted,
-                    "The request failed validation".to_string(),
-                ))
-            }
-            Ok(Some(resp)) => Ok(Response::new(resp)),
-            Err(e) => {
-                tracing::error!("{}", e);
-                Err(tonic::Status::new(
-                    tonic::Code::Aborted,
-                    "Internal server error".to_string(),
-                ))
-            }
-        }
+        process_response(res)
     }
 
     async fn validate_and_decrypt(
@@ -342,23 +326,23 @@ mod tests {
     use tfhe::{prelude::FheEncrypt, ConfigBuilder, FheUint8};
 
     use crate::{
-        dummy::{gen_sig_keys, DummyKms},
-        kms::{DecryptionRequest, FheType},
+        dummy::{gen_sig_keys, vec_to_plaintext, DummyKms},
+        kms::{DecryptionRequest, FheType, ReencryptionRequest},
         types::Kms,
     };
 
-    use super::{gen_kms_keys, KmsKeys, DEFAULT_KEY_PATH};
+    use super::{gen_kms_keys, KmsKeys, DEFAULT_KMS_KEY_PATH};
 
     #[ctor]
     #[test]
     fn ensure_keys_exist() {
-        if !Path::new(DEFAULT_KEY_PATH).exists() {
+        if !Path::new(DEFAULT_KMS_KEY_PATH).exists() {
             let mut rng = ChaCha20Rng::seed_from_u64(1);
             let config = ConfigBuilder::all_disabled()
                 .enable_default_integers()
                 .build();
             write_element(
-                DEFAULT_KEY_PATH.to_string(),
+                DEFAULT_KMS_KEY_PATH.to_string(),
                 &gen_kms_keys(config, &mut rng),
             )
             .unwrap();
@@ -368,7 +352,7 @@ mod tests {
     #[test]
     fn sunshine_decrypt() {
         let msg = 42_u8;
-        let keys: KmsKeys = read_element(DEFAULT_KEY_PATH.to_string()).unwrap();
+        let keys: KmsKeys = read_element(DEFAULT_KMS_KEY_PATH.to_string()).unwrap();
         let kms = DummyKms::new(keys.config, keys.fhe_sk.clone(), keys.sig_sk);
         let ct = FheUint8::encrypt(msg, &keys.fhe_sk);
         let mut serialized_ct = Vec::new();
@@ -382,7 +366,7 @@ mod tests {
     #[test]
     fn sunshine_rencrypt() {
         let msg = 42_u8;
-        let kms_keys: KmsKeys = read_element(DEFAULT_KEY_PATH.to_string()).unwrap();
+        let kms_keys: KmsKeys = read_element(DEFAULT_KMS_KEY_PATH.to_string()).unwrap();
         let kms = DummyKms::new(kms_keys.config, kms_keys.fhe_sk.clone(), kms_keys.sig_sk);
         let ct = FheUint8::encrypt(msg, &kms_keys.fhe_sk);
         let mut serialized_ct = Vec::new();
@@ -400,7 +384,7 @@ mod tests {
 
         assert_eq!(response.fhe_type, FheType::Euint8 as i32);
         let cipher: Cipher = from_bytes(&response.reencrypted_ciphertext).unwrap();
-        let decrypted_msg = DummyKms::vec_to_plaintext(
+        let decrypted_msg = vec_to_plaintext(
             &validate_and_decrypt(&cipher, &client_keys, &kms_keys.sig_pk)
                 .unwrap()
                 .unwrap(),
@@ -414,7 +398,7 @@ mod tests {
     fn sunshine_validate_decrypt() {
         let msg = 42_u8;
         let mut rng = ChaCha20Rng::seed_from_u64(1);
-        let keys: KmsKeys = read_element(DEFAULT_KEY_PATH.to_string()).unwrap();
+        let keys: KmsKeys = read_element(DEFAULT_KMS_KEY_PATH.to_string()).unwrap();
         let kms = DummyKms::new(keys.config, keys.fhe_sk.clone(), keys.sig_sk);
         let ct = FheUint8::encrypt(msg, &keys.fhe_sk);
         let mut serialized_ct = Vec::new();
@@ -435,5 +419,42 @@ mod tests {
             kms.validate_and_decrypt(&request).unwrap().unwrap();
         assert_eq!(response.fhe_type, FheType::Euint8 as i32);
         assert_eq!(response.plaintext as u8, msg);
+    }
+
+    #[test]
+    fn sunshine_validate_reencrypt() {
+        let msg = 42_u8;
+        let mut rng = ChaCha20Rng::seed_from_u64(1);
+        let kms_keys: KmsKeys = read_element(DEFAULT_KMS_KEY_PATH.to_string()).unwrap();
+        let kms = DummyKms::new(kms_keys.config, kms_keys.fhe_sk.clone(), kms_keys.sig_sk);
+        let ct = FheUint8::encrypt(msg, &kms_keys.fhe_sk);
+        let mut serialized_ct = Vec::new();
+        bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
+
+        let (_client_pk, client_sk) = gen_sig_keys(&mut rng);
+        let (client_request, client_keys) =
+            ClientRequest::new(&serialized_ct, &client_sk, &mut rng).unwrap();
+
+        let request = ReencryptionRequest {
+            fhe_type: FheType::Euint8.into(),
+            ciphertext: serialized_ct,
+            request: to_vec(&client_request).unwrap(),
+            proof: None,
+        };
+        let mut buf = Vec::new();
+        request.encode(&mut buf).unwrap();
+
+        let response: crate::kms::ReencryptionResponse =
+            kms.validate_and_reencrypt(&request).unwrap().unwrap();
+        assert_eq!(response.fhe_type, FheType::Euint8 as i32);
+        let cipher: Cipher = from_bytes(&response.reencrypted_ciphertext).unwrap();
+        let decrypted_msg = vec_to_plaintext(
+            &validate_and_decrypt(&cipher, &client_keys, &kms_keys.sig_pk)
+                .unwrap()
+                .unwrap(),
+            response.fhe_type(),
+        )
+        .unwrap();
+        assert_eq!(decrypted_msg as u8, msg);
     }
 }
