@@ -208,21 +208,3 @@ impl<'de> Visitor<'de> for SignatureVisitor {
         }
     }
 }
-
-/// Struct reflecting the client's decryption request of FHE ciphertext.
-/// Concretely containing the client's public keys and a signature on the ephemeral encryption key (in reality a cryptobox
-/// from libsodium for ECIES based on ECDH with curve 25519 and using Salsa for hybrid encryptoin).
-/// DER encoding of the request as a SEQUENCE of ClientPayload and signature ( r||s in big endian encoded using OCTET STRINGS)
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
-pub struct ClientRequest {
-    pub payload: ClientPayload,
-    pub signature: Signature,
-}
-
-/// Structure for DER encoding as a SEQUENCE of client_signcryption_key and digest (as OCTET STRING)
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
-pub struct ClientPayload {
-    pub client_signcryption_key: SigncryptionPubKey, // The client's public keys needed for signcryption
-    pub digest: Vec<u8>, // Digest of the fhe_cipher the client wish to have decrypted
-    pub sig_randomization: Vec<u8>, // Randomness to concatenate to the encrypted message to ensure EU-CMA security, see https://link.springer.com/content/pdf/10.1007/3-540-36492-7_1.pdf
-}

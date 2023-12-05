@@ -6,8 +6,12 @@ use crate::{
     rpc_types::{Kms, LightClientCommitResponse},
 };
 
-use super::der_types::{ClientRequest, PrivateSigKey, PublicSigKey};
-use super::encryption::{sign, signcrypt};
+use super::{
+    der_types::{PrivateSigKey, PublicSigKey},
+    request::ClientRequest,
+    signcryption::{sign, signcrypt},
+};
+
 use k256::ecdsa::SigningKey;
 use rand::SeedableRng;
 use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
@@ -322,9 +326,10 @@ mod tests {
 
     use crate::{
         core::{
-            der_types::{Cipher, ClientRequest},
+            der_types::Cipher,
             dummy::{gen_sig_keys, vec_to_plaintext, DummyKms},
-            encryption::validate_and_decrypt,
+            request::ClientRequest,
+            signcryption::validate_and_decrypt,
         },
         file_handling::{read_element, write_element},
         kms::{DecryptionRequest, FheType, ReencryptionRequest},

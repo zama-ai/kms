@@ -2,7 +2,7 @@ use serde::Deserialize;
 use tendermint::block::signed_header::SignedHeader;
 
 use crate::{
-    core::der_types::ClientRequest,
+    core::request::ClientRequest,
     kms::{
         DecryptionRequest, DecryptionResponse, FheType, ReencryptionRequest, ReencryptionResponse,
     },

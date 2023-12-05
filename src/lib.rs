@@ -8,8 +8,8 @@ pub mod kms {
 pub mod core {
     pub mod der_types;
     pub mod dummy;
-    mod encryption;
-    mod signature;
+    pub mod request;
+    mod signcryption;
 }
 pub mod file_handling;
 pub mod rpc_types;
