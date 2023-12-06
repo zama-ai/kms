@@ -1,6 +1,6 @@
 use super::der_types::{
-    Cipher, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
-    SigncryptionPubKey,
+    Cipher, KeyAddress, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature,
+    SigncryptionPair, SigncryptionPubKey, BYTES_IN_ADDRESS,
 };
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use ::signature::{Signer, Verifier};
@@ -72,23 +72,20 @@ pub fn verify_sig(msg: Vec<u8>, sig: &Signature, server_verf_key: &PublicSigKey)
 /// WARNING: It is assumed that the client's public key HAS been validated to come from a valid [ClientRequest] and
 /// validated to be consistent with the blockchain identity of the client BEFORE calling this method.
 /// IF THIS HAS NOT BEEN DONE THEN ANYONE CAN IMPERSONATE ANY CLIENT!!!
+/// TODO update comments
 pub fn signcrypt<T>(
     rng: &mut impl CryptoRngCore,
     msg: &T,
-    client_pk: &SigncryptionPubKey,
+    client_pk: &PublicEncKey,
+    client_add: &KeyAddress,
     server_sig_key: &PrivateSigKey,
 ) -> anyhow::Result<Cipher>
 where
     T: Serialize + AsRef<[u8]>,
 {
     // Adds the hash digest of the receivers public encryption key to the message to sign
-    // Sign msg || H(client_verification_key) || H(client_enc_key)
-    let to_sign = [
-        msg.as_ref(),
-        &hash_element(&client_pk.verification_key.pk.to_sec1_bytes())[..],
-        &hash_element(&client_pk.enc_key)[..],
-    ]
-    .concat();
+    // Sign msg || address || H(client_enc_key)
+    let to_sign = [msg.as_ref(), client_add, &hash_element(&client_pk)[..]].concat();
     let sig: k256::ecdsa::Signature = server_sig_key.sk.sign(to_sign.as_ref());
     // Normalize s value to ensure a consistant signature and protect against malleability
     sig.normalize_s();
@@ -109,7 +106,7 @@ where
     ]
     .concat();
 
-    let enc_box = SalsaBox::new(&client_pk.enc_key.0, &server_enc_sk);
+    let enc_box = SalsaBox::new(&client_pk.0, &server_enc_sk);
     let nonce = SalsaBox::generate_nonce(rng);
     let ciphertext = match enc_box.encrypt(&nonce, &to_encrypt[..]) {
         Ok(ciphertext) => ciphertext,
@@ -198,7 +195,7 @@ fn check_signature(
     // What should be signed is msg || H(client_verification_key) || H(client_enc_key)
     let msg_signed = [
         msg,
-        hash_element(&client_pk.verification_key.pk.to_sec1_bytes()[..]),
+        address(&client_pk.verification_key).to_vec(),
         hash_element(client_pk.enc_key.as_ref()),
     ]
     .concat();
@@ -231,6 +228,16 @@ pub(crate) fn check_normalized(sig: &Signature) -> bool {
     };
     true
 }
+
+pub(crate) fn address(key: &PublicSigKey) -> KeyAddress {
+    // TODO should this be updated to use keccak to make the address notion compatible with ethereum
+    let mut digest = hash_element(&key.pk.to_sec1_bytes()[..]);
+    digest.truncate(BYTES_IN_ADDRESS);
+    let mut res = [0_u8; BYTES_IN_ADDRESS];
+    res[..BYTES_IN_ADDRESS].copy_from_slice(&digest[..BYTES_IN_ADDRESS]);
+    res
+}
+
 pub(crate) fn hash_element<T>(element: &T) -> Vec<u8>
 where
     T: ?Sized + AsRef<[u8]>,
@@ -253,10 +260,10 @@ mod tests {
 
     use crate::core::{
         der_types::Signature,
-        request::ClientRequest,
+        request::{ephemeral_key_generation, ClientRequest},
         signcryption::{
-            check_signature, encryption_key_generation, hash_element, parse_msg, sign, signcrypt,
-            validate_and_decrypt, verify_sig, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
+            address, check_signature, encryption_key_generation, hash_element, parse_msg, sign,
+            signcrypt, validate_and_decrypt, verify_sig, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
         },
     };
 
@@ -292,7 +299,8 @@ mod tests {
         let cipher = signcrypt(
             &mut rng,
             &msg,
-            &client_signcryption_keys.pk,
+            &client_signcryption_keys.pk.enc_key,
+            &[0_u8; 20],
             &server_sig_key,
         )
         .unwrap();
@@ -314,7 +322,8 @@ mod tests {
         let cipher = signcrypt(
             &mut rng,
             &msg,
-            &client_signcryption_keys.pk,
+            &client_signcryption_keys.pk.enc_key,
+            &address(&client_signcryption_keys.pk.verification_key),
             &server_sig_key,
         )
         .unwrap();
@@ -333,7 +342,8 @@ mod tests {
         let cipher = signcrypt(
             &mut rng,
             &msg,
-            &client_signcryption_keys.pk,
+            &client_signcryption_keys.pk.enc_key,
+            &[0_u8; 20],
             &server_sig_key,
         )
         .unwrap();
@@ -401,7 +411,8 @@ mod tests {
         let mut cipher = signcrypt(
             &mut rng,
             &msg,
-            &client_signcryption_keys.pk,
+            &client_signcryption_keys.pk.enc_key,
+            &[0_u8; 20],
             &server_sig_key,
         )
         .unwrap();
@@ -475,18 +486,11 @@ mod tests {
         let client_sig_key = PrivateSigKey {
             sk: SigningKey::random(&mut rng),
         };
-        let client_signcryption_keys =
-            ClientRequest::ephemeral_key_generation(&mut rng, &client_sig_key);
+        let client_signcryption_keys = ephemeral_key_generation(&mut rng, &client_sig_key);
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let to_sign = [
             msg,
-            &hash_element(
-                &client_signcryption_keys
-                    .pk
-                    .verification_key
-                    .pk
-                    .to_sec1_bytes(),
-            )[..],
+            &address(&client_signcryption_keys.pk.verification_key),
             &hash_element(&client_signcryption_keys.pk.enc_key)[..],
         ]
         .concat();

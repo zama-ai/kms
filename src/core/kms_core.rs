@@ -1,8 +1,7 @@
 use crate::{kms::FheType, rpc_types::Kms};
 
 use super::{
-    der_types::{PrivateSigKey, PublicSigKey},
-    request::ClientRequest,
+    der_types::{KeyAddress, PrivateSigKey, PublicEncKey, PublicSigKey},
     signcryption::{sign, signcrypt},
 };
 
@@ -64,14 +63,11 @@ impl Kms for SoftwareKms {
         &self,
         ct: &[u8],
         fhe_type: FheType,
-        client_req: &ClientRequest,
+        client_enc_key: &PublicEncKey,
+        address: &KeyAddress,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        if !client_req.verify(&ct)? {
-            // TODO do we want a signed repsonse of failure linked to the request??
-            Ok(None)
-        } else {
-            Ok(Kms::reencrypt(self, ct, fhe_type, client_req)?)
-        }
+        // TODO validate
+        Kms::reencrypt(self, ct, fhe_type, client_enc_key, address)
     }
 
     fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<(Vec<u8>, u32)> {
@@ -85,23 +81,15 @@ impl Kms for SoftwareKms {
         &self,
         ct: &[u8],
         fhe_type: FheType,
-        client_req: &ClientRequest,
+        client_enc_key: &PublicEncKey,
+        address: &KeyAddress,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        if !client_req.verify(&ct)? {
-            // TODO do we want a signed repsonse of failure linked to the request??
-            return Ok(None);
-        }
         let (sig, plaintext) = Kms::decrypt(self, ct, fhe_type)?;
         let msg = plaintext_to_vec(plaintext, fhe_type);
         // TODO what is the right way of doing this without panic
         let mut current_rng = self.rng.lock().unwrap();
         let mut rng_clone = current_rng.clone();
-        let enc_res = signcrypt(
-            &mut rng_clone,
-            &msg,
-            &client_req.payload.client_signcryption_key,
-            &self.sig_key,
-        )?;
+        let enc_res = signcrypt(&mut rng_clone, &msg, client_enc_key, address, &self.sig_key)?;
         *current_rng = rng_clone;
 
         Ok(Some(to_vec(&enc_res)?))
@@ -179,8 +167,8 @@ mod tests {
         core::{
             der_types::Cipher,
             kms_core::{gen_sig_keys, vec_to_plaintext, SoftwareKms},
-            request::ClientRequest,
-            signcryption::validate_and_decrypt,
+            request::ephemeral_key_generation,
+            signcryption::{address, validate_and_decrypt},
         },
         file_handling::{read_element, write_element},
         kms::FheType,
@@ -217,12 +205,16 @@ mod tests {
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
 
         let mut rng = ChaCha20Rng::seed_from_u64(1);
-        let (_client_pk, client_sk) = gen_sig_keys(&mut rng);
-        let (client_request, client_keys) =
-            ClientRequest::new(&serialized_ct, &client_sk, &mut rng).unwrap();
+        let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
+        let client_keys = ephemeral_key_generation(&mut rng, &client_sig_key);
 
         let raw_cipher = kms
-            .reencrypt(&serialized_ct, FheType::Euint8, &client_request)
+            .reencrypt(
+                &serialized_ct,
+                FheType::Euint8,
+                &client_keys.pk.enc_key,
+                &address(&client_keys.pk.verification_key),
+            )
             .unwrap()
             .unwrap();
 
@@ -260,12 +252,15 @@ mod tests {
         let mut serialized_ct = Vec::new();
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
 
-        let (_client_pk, client_sk) = gen_sig_keys(&mut rng);
-        let (client_request, client_keys) =
-            ClientRequest::new(&serialized_ct, &client_sk, &mut rng).unwrap();
-
+        let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
+        let client_keys = ephemeral_key_generation(&mut rng, &client_sig_key);
         let raw_cipher = kms
-            .validate_and_reencrypt(&serialized_ct, FheType::Euint8, &client_request)
+            .validate_and_reencrypt(
+                &serialized_ct,
+                FheType::Euint8,
+                &client_keys.pk.enc_key,
+                &address(&client_keys.pk.verification_key),
+            )
             .unwrap()
             .unwrap();
         let cipher: Cipher = from_bytes(&raw_cipher).unwrap();

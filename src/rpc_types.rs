@@ -1,7 +1,10 @@
 use serde::Deserialize;
 use tendermint::block::signed_header::SignedHeader;
 
-use crate::{core::request::ClientRequest, kms::FheType};
+use crate::{
+    core::der_types::{KeyAddress, PublicEncKey},
+    kms::FheType,
+};
 
 /// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
 pub trait Kms {
@@ -10,13 +13,16 @@ pub trait Kms {
         &self,
         ct: &[u8],
         fhe_type: FheType,
-        client_req: &ClientRequest,
+        enc_key: &PublicEncKey,
+        address: &KeyAddress,
     ) -> anyhow::Result<Option<Vec<u8>>>;
+    // TODO add digest of decrypted cipher
     fn reencrypt(
         &self,
         ct: &[u8],
         ct_type: FheType,
-        client_req: &ClientRequest,
+        enc_key: &PublicEncKey,
+        address: &KeyAddress,
     ) -> anyhow::Result<Option<Vec<u8>>>;
 }
 
