@@ -77,15 +77,15 @@ pub fn signcrypt<T>(
     rng: &mut impl CryptoRngCore,
     msg: &T,
     client_pk: &PublicEncKey,
-    client_add: &KeyAddress,
+    client_sig_add: &KeyAddress,
     server_sig_key: &PrivateSigKey,
 ) -> anyhow::Result<Cipher>
 where
     T: Serialize + AsRef<[u8]>,
 {
     // Adds the hash digest of the receivers public encryption key to the message to sign
-    // Sign msg || address || H(client_enc_key)
-    let to_sign = [msg.as_ref(), client_add, &hash_element(&client_pk)[..]].concat();
+    // Sign msg || client_sig_address || H(client_enc_key)
+    let to_sign = [msg.as_ref(), client_sig_add, &hash_element(&client_pk)[..]].concat();
     let sig: k256::ecdsa::Signature = server_sig_key.sk.sign(to_sign.as_ref());
     // Normalize s value to ensure a consistant signature and protect against malleability
     sig.normalize_s();
@@ -96,12 +96,12 @@ where
     // Encrypt msg || sig || H(server_verification_key) || H(server_enc_key)
     // OBSERVE: serialization is simply r concatenated with s. That is, NOT an Ethereum compatible signature since we preclude the v value
     // The verification key is serialized based on the SEC1 standard
-    let server_verification_key =
-        &SigningKey::verifying_key(&server_sig_key.sk).to_sec1_bytes()[..];
     let to_encrypt = [
         msg.as_ref(),
         &sig.to_bytes(),
-        &hash_element(server_verification_key),
+        &address(&PublicSigKey {
+            pk: SigningKey::verifying_key(&server_sig_key.sk).to_owned(),
+        }),
         &hash_element(server_enc_pk.as_ref()),
     ]
     .concat();
@@ -159,15 +159,15 @@ fn parse_msg(
     server_verf_key: &PublicSigKey,
 ) -> anyhow::Result<(Vec<u8>, Signature)> {
     // The plaintext contains msg || sig || H(server_verification_key) || H(server_enc_key)
-    let msg_len = decrypted_plaintext.len() - 2 * DIGEST_BYTES - SIG_SIZE;
+    let msg_len = decrypted_plaintext.len() - BYTES_IN_ADDRESS - DIGEST_BYTES - SIG_SIZE;
     let msg = &decrypted_plaintext[..msg_len];
     let sig_bytes = &decrypted_plaintext[msg_len..(msg_len + SIG_SIZE)];
     let server_ver_key_digest =
-        &decrypted_plaintext[(msg_len + SIG_SIZE)..(msg_len + SIG_SIZE + DIGEST_BYTES)];
-    let server_enc_key_digest = &decrypted_plaintext
-        [(msg_len + SIG_SIZE + DIGEST_BYTES)..(msg_len + 2 * DIGEST_BYTES + SIG_SIZE)];
+        &decrypted_plaintext[(msg_len + SIG_SIZE)..(msg_len + SIG_SIZE + BYTES_IN_ADDRESS)];
+    let server_enc_key_digest = &decrypted_plaintext[(msg_len + SIG_SIZE + BYTES_IN_ADDRESS)
+        ..(msg_len + BYTES_IN_ADDRESS + DIGEST_BYTES + SIG_SIZE)];
     // Verify verification key digest
-    if hash_element(&server_verf_key.pk.to_sec1_bytes()) != server_ver_key_digest {
+    if address(server_verf_key) != server_ver_key_digest {
         return Err(anyhow_error_and_warn_log(format!(
             "Unexpected verification key digest {:X?} was part of the decryption",
             server_ver_key_digest
@@ -259,7 +259,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use crate::core::{
-        der_types::Signature,
+        der_types::{Signature, BYTES_IN_ADDRESS},
         request::{ephemeral_key_generation, ClientRequest},
         signcryption::{
             address, check_signature, encryption_key_generation, hash_element, parse_msg, sign,
@@ -343,7 +343,7 @@ mod tests {
             &mut rng,
             &msg,
             &client_signcryption_keys.pk.enc_key,
-            &[0_u8; 20],
+            &address(&client_signcryption_keys.pk.verification_key),
             &server_sig_key,
         )
         .unwrap();
@@ -412,7 +412,7 @@ mod tests {
             &mut rng,
             &msg,
             &client_signcryption_keys.pk.enc_key,
-            &[0_u8; 20],
+            &address(&client_signcryption_keys.pk.verification_key),
             &server_sig_key,
         )
         .unwrap();
@@ -431,7 +431,7 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
         let (sever_enc_key, _server_dec_key) = encryption_key_generation(&mut rng);
-        let to_encrypt = [0_u8; 1 + 2 * DIGEST_BYTES + SIG_SIZE];
+        let to_encrypt = [0_u8; 1 + BYTES_IN_ADDRESS + DIGEST_BYTES + SIG_SIZE];
         let res = parse_msg(to_encrypt.to_vec(), &sever_enc_key, &server_verf_key);
         assert!(logs_contain("Unexpected verification key digest"));
         // unwrapping fails
@@ -444,11 +444,11 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
         let (server_enc_key, _server_dec_key) = encryption_key_generation(&mut rng);
-        let mut to_encrypt = [0_u8; 1 + 2 * DIGEST_BYTES + SIG_SIZE].to_vec();
-        let key_digest = hash_element(&server_verf_key.pk.to_sec1_bytes()[..]);
+        let mut to_encrypt = [0_u8; 1 + BYTES_IN_ADDRESS + DIGEST_BYTES + SIG_SIZE].to_vec();
+        let key_digest = address(&server_verf_key);
         // Set the correct verification key so that part of `parse_msg` won't fail
         to_encrypt.splice(
-            1 + SIG_SIZE..1 + SIG_SIZE + DIGEST_BYTES,
+            1 + SIG_SIZE..1 + SIG_SIZE + BYTES_IN_ADDRESS,
             key_digest.iter().cloned(),
         );
         let res = parse_msg(to_encrypt.to_vec(), &server_enc_key, &server_verf_key);
