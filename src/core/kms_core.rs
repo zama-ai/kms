@@ -1,9 +1,4 @@
-use crate::{
-    kms::{
-        DecryptionRequest, DecryptionResponse, FheType, ReencryptionRequest, ReencryptionResponse,
-    },
-    rpc_types::Kms,
-};
+use crate::{kms::FheType, rpc_types::Kms};
 
 use super::{
     der_types::{PrivateSigKey, PublicSigKey},
@@ -15,7 +10,7 @@ use k256::ecdsa::SigningKey;
 use rand::SeedableRng;
 use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
 use serde::{Deserialize, Serialize};
-use serde_asn1_der::{from_bytes, to_vec};
+use serde_asn1_der::to_vec;
 use std::sync::{Arc, Mutex};
 use tfhe::{
     generate_keys, prelude::FheDecrypt, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint8,
@@ -67,48 +62,23 @@ pub struct SoftwareKms {
 impl Kms for SoftwareKms {
     fn validate_and_reencrypt(
         &self,
-        request: &ReencryptionRequest,
-    ) -> anyhow::Result<Option<ReencryptionResponse>> {
-        let internal_request: ClientRequest = from_bytes(&request.request)?;
-        if !internal_request.verify(&request.ciphertext)? {
+        ct: &[u8],
+        fhe_type: FheType,
+        client_req: &ClientRequest,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        if !client_req.verify(&ct)? {
             // TODO do we want a signed repsonse of failure linked to the request??
             Ok(None)
         } else {
-            Ok(Kms::reencrypt(
-                self,
-                &request.ciphertext,
-                request.fhe_type(),
-                &internal_request,
-            )?)
+            Ok(Kms::reencrypt(self, ct, fhe_type, client_req)?)
         }
     }
 
-    fn validate_and_decrypt(
-        &self,
-        request: &DecryptionRequest,
-    ) -> anyhow::Result<Option<DecryptionResponse>> {
-        let internal_request: ClientRequest = from_bytes(&request.request)?;
-        if !internal_request.verify(&request.ciphertext)? {
-            // TODO do we want a signed repsonse of failure linked to the request??
-            Ok(None)
-        } else {
-            let mut resp = Kms::decrypt(self, &request.ciphertext, request.fhe_type())?;
-            let sig = sign(
-                &plaintext_to_vec(resp.plaintext, request.fhe_type()),
-                &self.sig_key,
-            )?;
-            resp.signature = to_vec(&sig)?;
-            Ok(Some(resp))
-        }
-    }
-
-    fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<DecryptionResponse> {
+    fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<(Vec<u8>, u32)> {
         let plaintext = self.raw_decryption(ct, fhe_type)?;
-        Ok(DecryptionResponse {
-            signature: Vec::new(),
-            fhe_type: fhe_type.into(),
-            plaintext,
-        })
+        // TODO sign type as well!!!
+        let sig = sign(&plaintext_to_vec(plaintext, fhe_type), &self.sig_key)?;
+        Ok((to_vec(&sig)?, plaintext))
     }
 
     fn reencrypt(
@@ -116,13 +86,13 @@ impl Kms for SoftwareKms {
         ct: &[u8],
         fhe_type: FheType,
         client_req: &ClientRequest,
-    ) -> anyhow::Result<Option<ReencryptionResponse>> {
+    ) -> anyhow::Result<Option<Vec<u8>>> {
         if !client_req.verify(&ct)? {
             // TODO do we want a signed repsonse of failure linked to the request??
             return Ok(None);
         }
-        let dec_resp = Kms::decrypt(self, ct, fhe_type)?;
-        let msg = plaintext_to_vec(dec_resp.plaintext, fhe_type);
+        let (sig, plaintext) = Kms::decrypt(self, ct, fhe_type)?;
+        let msg = plaintext_to_vec(plaintext, fhe_type);
         // TODO what is the right way of doing this without panic
         let mut current_rng = self.rng.lock().unwrap();
         let mut rng_clone = current_rng.clone();
@@ -134,10 +104,7 @@ impl Kms for SoftwareKms {
         )?;
         *current_rng = rng_clone;
 
-        Ok(Some(ReencryptionResponse {
-            reencrypted_ciphertext: to_vec(&enc_res)?,
-            fhe_type: fhe_type.into(),
-        }))
+        Ok(Some(to_vec(&enc_res)?))
     }
 }
 
@@ -201,14 +168,11 @@ fn vec_to_plaintext(msg: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use ctor::ctor;
-
-    use prost::Message;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
-    use serde_asn1_der::{from_bytes, to_vec};
+    use serde_asn1_der::from_bytes;
+    use std::path::Path;
     use tfhe::{prelude::FheEncrypt, ConfigBuilder, FheUint8};
 
     use crate::{
@@ -219,7 +183,7 @@ mod tests {
             signcryption::validate_and_decrypt,
         },
         file_handling::{read_element, write_element},
-        kms::{DecryptionRequest, FheType, ReencryptionRequest},
+        kms::FheType,
         rpc_types::Kms,
     };
 
@@ -244,20 +208,6 @@ mod tests {
     }
 
     #[test]
-    fn sunshine_decrypt() {
-        let msg = 42_u8;
-        let keys: KmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();
-        let kms = SoftwareKms::new(keys.config, keys.fhe_sk.clone(), keys.sig_sk);
-        let ct = FheUint8::encrypt(msg, &keys.fhe_sk);
-        let mut serialized_ct = Vec::new();
-        bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
-
-        let response = kms.decrypt(&serialized_ct, FheType::Euint8).unwrap();
-        assert_eq!(response.fhe_type, FheType::Euint8 as i32);
-        assert_eq!(response.plaintext as u8, msg);
-    }
-
-    #[test]
     fn sunshine_rencrypt() {
         let msg = 42_u8;
         let kms_keys: KmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();
@@ -271,48 +221,33 @@ mod tests {
         let (client_request, client_keys) =
             ClientRequest::new(&serialized_ct, &client_sk, &mut rng).unwrap();
 
-        let response = kms
+        let raw_cipher = kms
             .reencrypt(&serialized_ct, FheType::Euint8, &client_request)
             .unwrap()
             .unwrap();
 
-        assert_eq!(response.fhe_type, FheType::Euint8 as i32);
-        let cipher: Cipher = from_bytes(&response.reencrypted_ciphertext).unwrap();
+        let cipher: Cipher = from_bytes(&raw_cipher).unwrap();
         let decrypted_msg = vec_to_plaintext(
             &validate_and_decrypt(&cipher, &client_keys, &kms_keys.sig_pk)
                 .unwrap()
                 .unwrap(),
-            response.fhe_type(),
+            FheType::Euint8,
         )
         .unwrap();
         assert_eq!(decrypted_msg as u8, msg);
     }
 
     #[test]
-    fn sunshine_validate_decrypt() {
+    fn sunshine_decrypt() {
         let msg = 42_u8;
-        let mut rng = ChaCha20Rng::seed_from_u64(1);
         let keys: KmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();
         let kms = SoftwareKms::new(keys.config, keys.fhe_sk.clone(), keys.sig_sk);
         let ct = FheUint8::encrypt(msg, &keys.fhe_sk);
         let mut serialized_ct = Vec::new();
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
 
-        let (_client_pk, client_sk) = gen_sig_keys(&mut rng);
-        let (client_request, _client_keys) =
-            ClientRequest::new(&serialized_ct, &client_sk, &mut rng).unwrap();
-        let request = DecryptionRequest {
-            fhe_type: FheType::Euint8.into(),
-            ciphertext: serialized_ct,
-            request: to_vec(&client_request).unwrap(),
-            proof: None,
-        };
-        let mut buf = Vec::new();
-        request.encode(&mut buf).unwrap();
-        let response: crate::kms::DecryptionResponse =
-            kms.validate_and_decrypt(&request).unwrap().unwrap();
-        assert_eq!(response.fhe_type, FheType::Euint8 as i32);
-        assert_eq!(response.plaintext as u8, msg);
+        let (sig, plaintext) = kms.decrypt(&serialized_ct, FheType::Euint8).unwrap();
+        assert_eq!(plaintext as u8, msg);
     }
 
     #[test]
@@ -329,24 +264,16 @@ mod tests {
         let (client_request, client_keys) =
             ClientRequest::new(&serialized_ct, &client_sk, &mut rng).unwrap();
 
-        let request = ReencryptionRequest {
-            fhe_type: FheType::Euint8.into(),
-            ciphertext: serialized_ct,
-            request: to_vec(&client_request).unwrap(),
-            proof: None,
-        };
-        let mut buf = Vec::new();
-        request.encode(&mut buf).unwrap();
-
-        let response: crate::kms::ReencryptionResponse =
-            kms.validate_and_reencrypt(&request).unwrap().unwrap();
-        assert_eq!(response.fhe_type, FheType::Euint8 as i32);
-        let cipher: Cipher = from_bytes(&response.reencrypted_ciphertext).unwrap();
+        let raw_cipher = kms
+            .validate_and_reencrypt(&serialized_ct, FheType::Euint8, &client_request)
+            .unwrap()
+            .unwrap();
+        let cipher: Cipher = from_bytes(&raw_cipher).unwrap();
         let decrypted_msg = vec_to_plaintext(
             &validate_and_decrypt(&cipher, &client_keys, &kms_keys.sig_pk)
                 .unwrap()
                 .unwrap(),
-            response.fhe_type(),
+            FheType::Euint8,
         )
         .unwrap();
         assert_eq!(decrypted_msg as u8, msg);

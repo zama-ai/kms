@@ -2,10 +2,9 @@ syntax = "proto3";
 package kms;
 
 service KmsEndpoint {
-  rpc Validate_and_decrypt(DecryptionRequest) returns (DecryptionResponse);
-  rpc Validate_and_reencrypt(ReencryptionRequest) returns (ReencryptionResponse);
   rpc Decrypt(DecryptionRequest) returns (DecryptionResponse);
   rpc Reencrypt(ReencryptionRequest) returns (ReencryptionResponse);
+  rpc Validate_and_reencrypt(ReencryptionRequest) returns (ReencryptionResponse);
 }
 
 enum FheType {
@@ -23,8 +22,7 @@ message Proof {
 message DecryptionRequest {
   FheType fhe_type = 1;
   bytes ciphertext = 2;
-  bytes request = 3;
-  Proof proof = 4;
+  Proof proof = 3;
 }
 
 message DecryptionResponse {

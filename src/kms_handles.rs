@@ -21,21 +21,26 @@ impl KmsEndpoint for SoftwareKms {
         let req = request.into_inner();
 
         verify_proof(req.clone().proof.unwrap()).await?;
-        // TODO the request needs to have the type
-        let res = Kms::validate_and_reencrypt(self, &req);
-        process_response(res)
-    }
-
-    async fn validate_and_decrypt(
-        &self,
-        request: Request<DecryptionRequest>,
-    ) -> Result<Response<DecryptionResponse>, Status> {
-        let req = request.into_inner();
-
-        verify_proof(req.clone().proof.unwrap()).await?;
-        // TODO the request needs to have the type
-        let res = Kms::validate_and_decrypt(self, &req);
-        process_response(res)
+        let internal_request: ClientRequest = match from_bytes(&req.request) {
+            Ok(client_request) => client_request,
+            Err(e) => {
+                tracing::error!("{}", e);
+                return Err(tonic::Status::new(
+                    tonic::Code::Aborted,
+                    "Invalid request".to_string(),
+                ));
+            }
+        };
+        let return_cipher = process_response(Kms::validate_and_reencrypt(
+            self,
+            &req.ciphertext,
+            req.fhe_type(),
+            &internal_request,
+        ))?;
+        Ok(Response::new(ReencryptionResponse {
+            reencrypted_ciphertext: return_cipher,
+            fhe_type: req.fhe_type,
+        }))
     }
 
     async fn decrypt(
@@ -45,10 +50,13 @@ impl KmsEndpoint for SoftwareKms {
         let req = request.into_inner();
 
         verify_proof(req.proof.unwrap()).await?;
-        // TODO the request needs to have the type
-        let res = Kms::decrypt(self, &req.ciphertext, FheType::Euint8);
-
-        Ok(Response::new(res.unwrap()))
+        let (sig, plaintext) =
+            handle_potential_err(Kms::decrypt(self, &req.ciphertext, FheType::Euint8))?;
+        Ok(Response::new(DecryptionResponse {
+            signature: sig,
+            fhe_type: req.fhe_type,
+            plaintext,
+        }))
     }
 
     async fn reencrypt(
@@ -68,23 +76,44 @@ impl KmsEndpoint for SoftwareKms {
         };
         verify_proof(req.proof.unwrap()).await?;
 
-        let res = Kms::reencrypt(self, &req.ciphertext, FheType::Euint8, &internal_request);
-        process_response(res)
+        let return_cipher = process_response(Kms::reencrypt(
+            self,
+            &req.ciphertext,
+            FheType::Euint8,
+            &internal_request,
+        ))?;
+        Ok(Response::new(ReencryptionResponse {
+            reencrypted_ciphertext: return_cipher,
+            fhe_type: req.fhe_type,
+        }))
     }
 }
 
-fn process_response<T: fmt::Debug>(req: anyhow::Result<Option<T>>) -> Result<Response<T>, Status> {
-    match req {
+fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Result<T, Status> {
+    match resp {
         Ok(None) => {
-            tracing::warn!("The following request failed validation: {:?}", req);
+            tracing::warn!("A request failed validation");
             Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "The request failed validation".to_string(),
             ))
         }
-        Ok(Some(resp)) => Ok(Response::new(resp)),
+        Ok(Some(resp)) => Ok(resp),
         Err(e) => {
-            tracing::error!("{}", e);
+            tracing::error!("An internal error happened while handle a request: {}", e);
+            Err(tonic::Status::new(
+                tonic::Code::Aborted,
+                "Internal server error".to_string(),
+            ))
+        }
+    }
+}
+
+fn handle_potential_err<T: fmt::Debug>(resp: anyhow::Result<T>) -> Result<T, Status> {
+    match resp {
+        Ok(resp) => Ok(resp),
+        Err(e) => {
+            tracing::error!("An internal error happened while handle a request: {}", e);
             Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "Internal server error".to_string(),

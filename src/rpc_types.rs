@@ -1,31 +1,23 @@
 use serde::Deserialize;
 use tendermint::block::signed_header::SignedHeader;
 
-use crate::{
-    core::request::ClientRequest,
-    kms::{
-        DecryptionRequest, DecryptionResponse, FheType, ReencryptionRequest, ReencryptionResponse,
-    },
-};
+use crate::{core::request::ClientRequest, kms::FheType};
 
 /// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
 pub trait Kms {
-    fn validate_and_decrypt(
-        &self,
-        request: &DecryptionRequest,
-    ) -> anyhow::Result<Option<DecryptionResponse>>;
+    fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<(Vec<u8>, u32)>;
     fn validate_and_reencrypt(
         &self,
-        request: &ReencryptionRequest,
-    ) -> anyhow::Result<Option<ReencryptionResponse>>;
-    /// Decrypt directly without validation
-    fn decrypt(&self, ct: &[u8], ct_type: FheType) -> anyhow::Result<DecryptionResponse>;
+        ct: &[u8],
+        fhe_type: FheType,
+        client_req: &ClientRequest,
+    ) -> anyhow::Result<Option<Vec<u8>>>;
     fn reencrypt(
         &self,
         ct: &[u8],
         ct_type: FheType,
         client_req: &ClientRequest,
-    ) -> anyhow::Result<Option<ReencryptionResponse>>;
+    ) -> anyhow::Result<Option<Vec<u8>>>;
 }
 
 #[derive(Debug, Deserialize)]
