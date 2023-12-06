@@ -28,11 +28,6 @@ pub struct RealAgreeRandom {}
 fn check_rcv_len(rcv_len: usize, expect_len: usize, tstr: &str) -> anyhow::Result<()> {
     // check that we have all expected responses
     if rcv_len != expect_len {
-        tracing::error!(
-            "have received {} {tstr}, but expected {}",
-            rcv_len,
-            expect_len
-        );
         return Err(anyhow_error_and_log(format!(
             "have received {} {tstr}, but expected {}",
             rcv_len, expect_len
@@ -41,63 +36,94 @@ fn check_rcv_len(rcv_len: usize, expect_len: usize, tstr: &str) -> anyhow::Resul
     Ok(())
 }
 
-fn check_and_unpack_coms(
-    received_coms: &HashMap<Role, NetworkValue>,
+/// Generic function to check the types of received values and unpack into a vector.
+fn check_and_unpack<T>(
+    received_values: &HashMap<Role, NetworkValue>,
     num_parties: usize,
-) -> anyhow::Result<Vec<Vec<Commitment>>> {
-    check_rcv_len(received_coms.len(), num_parties - 1, "commitments")?;
+    variant_match: fn(&AgreeRandomValue) -> Option<&Vec<T>>,
+    type_str: &str,
+) -> anyhow::Result<Vec<Vec<T>>>
+where
+    T: Clone,
+{
+    check_rcv_len(received_values.len(), num_parties - 1, type_str)?;
 
-    // unpack received commitments and check message types
-    let mut rcv_coms: Vec<Vec<Commitment>> = vec![Vec::new(); num_parties]; //even though we only receive n-1 values, we currently need a vec with size n for indexing and mutating below.
-    for (sender_role, sender_data) in received_coms {
-        match sender_data {
-            NetworkValue::AgreeRandom(AgreeRandomValue::CommitmentValue(cv)) => {
-                rcv_coms[sender_role.zero_based()] = cv.to_vec();
-            }
-            _ => {
+    let mut rcv_values: Vec<Vec<T>> = vec![Vec::new(); num_parties];
+    for (sender_role, sender_data) in received_values {
+        if let NetworkValue::AgreeRandom(ar_value) = sender_data {
+            if let Some(value) = variant_match(ar_value) {
+                rcv_values[sender_role.zero_based()] = value.to_vec();
+            } else {
                 return Err(anyhow_error_and_log(format!(
-                    "Have not received a CommitmentValue from role {sender_role}!"
+                    "Have not received a {} from role {}!",
+                    type_str, sender_role
                 )));
             }
+        } else {
+            return Err(anyhow_error_and_log(format!(
+                "Have not received an AgreeRandomValue from role {}!",
+                sender_role
+            )));
         }
     }
 
-    Ok(rcv_coms)
+    Ok(rcv_values)
 }
 
-fn check_and_unpack_keys(
-    received_keys: &HashMap<Role, NetworkValue>,
+/// Helper function to extract CommitmentValue from AgreeRandomValue.
+fn match_com_val(value: &AgreeRandomValue) -> Option<&Vec<Commitment>> {
+    match value {
+        AgreeRandomValue::CommitmentValue(cv) => Some(cv),
+        _ => None,
+    }
+}
+
+/// Helper function to extract KeyOpenValue from AgreeRandomValue.
+fn match_key_open_val(value: &AgreeRandomValue) -> Option<&Vec<(PrfKey, Opening)>> {
+    match value {
+        AgreeRandomValue::KeyOpenValue(kov) => Some(kov),
+        _ => None,
+    }
+}
+
+/// Helper function to extract KeyValue from AgreeRandomValue.
+fn match_key_val(value: &AgreeRandomValue) -> Option<&Vec<PrfKey>> {
+    match value {
+        AgreeRandomValue::KeyValue(kv) => Some(kv),
+        _ => None,
+    }
+}
+
+/// check the types of the received CommitmentValues and unpack into Vector<Commitment>
+fn check_and_unpack_coms(
+    rcv_coms: &HashMap<Role, NetworkValue>,
+    num_parties: usize,
+) -> anyhow::Result<Vec<Vec<Commitment>>> {
+    check_and_unpack(rcv_coms, num_parties, match_com_val, "CommitmentValue")
+}
+
+/// check the types of the received KeyOpenValues and unpack into Vector<(PrfKey, Opening)>
+fn check_and_unpack_keys_openings(
+    rcv_ko: &HashMap<Role, NetworkValue>,
     num_parties: usize,
 ) -> anyhow::Result<Vec<Vec<(PrfKey, Opening)>>> {
-    check_rcv_len(received_keys.len(), num_parties - 1, "keys/openings")?;
-
-    // unpack received keys and openings and check message types
-    let mut rcv_keys_opens: Vec<Vec<(PrfKey, Opening)>> = vec![Vec::new(); num_parties]; //even though we only receive n-1 values, we currently need a vec with size n for indexing and mutating below.
-    for (sender_role, sender_data) in received_keys {
-        match sender_data {
-            NetworkValue::AgreeRandom(AgreeRandomValue::KeyOpenValue(kov)) => {
-                rcv_keys_opens[sender_role.zero_based()] = kov.to_vec();
-            }
-            _ => {
-                return {
-                    Err(anyhow_error_and_log(format!(
-                        "Have not received a KeyOpenValue value from role {sender_role}!"
-                    )))
-                }
-            }
-        }
-    }
-
-    Ok(rcv_keys_opens)
+    check_and_unpack(rcv_ko, num_parties, match_key_open_val, "KeyOpenValue")
 }
 
-/// verifies that the commitments on the received keys are valid and that all received keys are identical
+/// check the types of the received KeyValues and unpack into Vector<PrfKey>
+fn check_and_unpack_keys(
+    rcv_k: &HashMap<Role, NetworkValue>,
+    num_parties: usize,
+) -> anyhow::Result<Vec<Vec<PrfKey>>> {
+    check_and_unpack(rcv_k, num_parties, match_key_val, "KeyValue")
+}
+
+/// verifies that the received keys are identical
 fn verify_keys_equal(
     party_id: usize,
     party_sets: &mut Vec<Vec<usize>>,
-    keys_opens: &mut [Vec<(PrfKey, Opening)>],
-    rcv_keys_opens: &mut [Vec<(PrfKey, Opening)>],
-    rcv_coms: &mut [Vec<Commitment>],
+    keys: &mut [Vec<PrfKey>],
+    rcv_keys: &mut [Vec<PrfKey>],
 ) -> anyhow::Result<Vec<PrfKey>> {
     // reverse the list of sets so we can pop the received values afterwards
     party_sets.reverse();
@@ -105,30 +131,19 @@ fn verify_keys_equal(
     let mut r_a_keys: Vec<PrfKey> = Vec::new();
 
     for set in party_sets {
-        let mykey = &keys_opens[party_id - 1]
+        let mykey = &keys[party_id - 1]
             .pop()
-            .with_context(|| "could not find my own key!")?
-            .0;
+            .with_context(|| "could not find my own key!")?;
 
         // for each party in the set, xor the received randomness s
         for p in set {
             // check values received from the other parties
             if *p != party_id {
-                let ko = rcv_keys_opens[*p - 1]
+                let k = rcv_keys[*p - 1]
                     .pop()
-                    .with_context(|| format!("could not find key/opening value for party {p}!"))?;
-                let com = rcv_coms[*p - 1]
-                    .pop()
-                    .with_context(|| format!("could not find commitment for party {p}!"))?;
+                    .with_context(|| format!("could not find key value for party {p}!"))?;
 
-                // check that randomnes was properly committed to in the first round
-                if !verify(&ko.0 .0, &com, &ko.1) {
-                    return Err(anyhow_error_and_log(format!(
-                        "Commitment verification has failed for party {p}!"
-                    )));
-                }
-
-                if &ko.0 != mykey {
+                if &k != mykey {
                     return Err(anyhow_error_and_log(format!(
                         "received a key from party {p} that does not match my own!"
                     )));
@@ -177,10 +192,10 @@ fn verify_and_xor_keys(
             } else {
                 let ko = rcv_keys_opens[*p - 1]
                     .pop()
-                    .with_context(|| format!("could not find key/opening value for party {p}!"))?;
+                    .with_context(|| format!("could not find KeyOpenValue for party {p}!"))?;
                 let com = rcv_coms[*p - 1]
                     .pop()
-                    .with_context(|| format!("could not find commitment for party {p}!"))?;
+                    .with_context(|| format!("could not find CommitmentValue for party {p}!"))?;
 
                 // check that randomnes was properly committed to in the first round
                 if !verify(&ko.0 .0, &com, &ko.1) {
@@ -203,7 +218,7 @@ fn verify_and_xor_keys(
     Ok(r_a_keys)
 }
 
-/// does the (identical) communication for both RealAgreeRandom and RealAgreeRandomWithAbort and returns the unpacked commitments and keys/openings
+/// does the communication for RealAgreeRandom and returns the unpacked commitments and keys/openings
 async fn agree_random_communication<R: RngCore, S: BaseSessionHandles<R>>(
     session: &mut S,
     coms: &[Vec<Commitment>],
@@ -251,7 +266,7 @@ async fn agree_random_communication<R: RngCore, S: BaseSessionHandles<R>>(
     // receive keys and openings from other parties
     let received_keys = receive_from_parties(&receive_from_roles, session).await?;
 
-    let rcv_keys_opens = check_and_unpack_keys(&received_keys, num_parties)?;
+    let rcv_keys_opens = check_and_unpack_keys_openings(&received_keys, num_parties)?;
 
     Ok((rcv_coms, rcv_keys_opens))
 }
@@ -308,6 +323,7 @@ impl AgreeRandom for RealAgreeRandomWithAbort {
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.amount_of_parties();
+        let party_id = session.my_role()?.one_based();
 
         let mut party_sets = compute_party_sets(
             session.my_role()?,
@@ -320,28 +336,35 @@ impl AgreeRandom for RealAgreeRandomWithAbort {
 
         debug_assert_eq!(ars.len(), party_sets.len());
 
-        let mut keys_opens: Vec<Vec<(PrfKey, Opening)>> = vec![Vec::new(); num_parties];
-        let mut coms: Vec<Vec<Commitment>> = vec![Vec::new(); num_parties];
+        let mut keys: Vec<Vec<PrfKey>> = vec![Vec::new(); num_parties];
 
-        // commit to agreed randomness and hold on to all values in vectors
+        // put all agreed randomness in vector for sending, grouped by party
         for (idx, set) in party_sets.iter().enumerate() {
-            let (c, o) = commit(&ars[idx].0, &mut session.rng());
             for p in set {
-                keys_opens[p - 1].push((ars[idx].clone(), o));
-                coms[p - 1].push(c);
+                keys[p - 1].push(ars[idx].clone());
             }
         }
 
-        let (mut rcv_coms, mut rcv_keys_opens) =
-            agree_random_communication(session, &coms, &keys_opens).await?;
+        // send keys to all other parties. Each party gets the values for _all_ sets that they are member of at once to avoid multiple comm rounds
+        let mut key_to_send: HashMap<Role, NetworkValue> = HashMap::new();
+        for p in 1..=num_parties {
+            if p != party_id {
+                key_to_send.insert(
+                    Role::indexed_by_one(p),
+                    NetworkValue::AgreeRandom(AgreeRandomValue::KeyValue(keys[p - 1].clone())),
+                );
+            }
+        }
 
-        let r_a_keys = verify_keys_equal(
-            session.my_role()?.one_based(),
-            &mut party_sets,
-            &mut keys_opens,
-            &mut rcv_keys_opens,
-            &mut rcv_coms,
-        )?;
+        // communication (send all keys, then receive all keys)
+        session.network().increase_round_counter().await?;
+        send_to_honest_parties(&key_to_send, session).await?;
+        let receive_from_roles = key_to_send.keys().cloned().collect_vec();
+        let received_keys = receive_from_parties(&receive_from_roles, session).await?;
+
+        let mut rcv_keys = check_and_unpack_keys(&received_keys, num_parties)?;
+
+        let r_a_keys = verify_keys_equal(party_id, &mut party_sets, &mut keys, &mut rcv_keys)?;
 
         Ok(r_a_keys)
     }
@@ -384,15 +407,14 @@ impl AgreeRandom for DummyAgreeRandom {
     }
 }
 
-// helper function that compute bit-wise xor of two byte arrays in place (overwriting the first argument `arr1`)
+/// helper function that compute bit-wise xor of two byte arrays in place (overwriting the first argument `arr1`)
 pub(crate) fn xor_u8_arr_in_place(arr1: &mut [u8; KEY_BYTE_LEN], arr2: &[u8; KEY_BYTE_LEN]) {
     for i in 0..KEY_BYTE_LEN {
         arr1[i] ^= arr2[i];
     }
 }
 
-// helper function returns the all the subsets of party IDs of size n-t of which the given party is a member
-
+/// helper function returns the all the subsets of party IDs of size n-t of which the given party is a member
 fn compute_party_sets(my_role: Role, parties: usize, threshold: usize) -> Vec<Vec<usize>> {
     let party_id = my_role.one_based();
     create_sets(parties, threshold)
@@ -411,7 +433,10 @@ mod tests {
         commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN},
         computation::SessionId,
         execution::{
-            agree_random::{check_and_unpack_keys, verify_keys_equal},
+            agree_random::{
+                check_and_unpack_keys, check_and_unpack_keys_openings, compute_party_sets,
+                verify_keys_equal,
+            },
             distributed::DistributedTestRuntime,
             party::Role,
             session::{ParameterHandles, SmallSession},
@@ -543,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Have not received a CommitmentValue from role 1!")]
+    #[should_panic(expected = "Have not received an AgreeRandomValue from role 1!")]
     fn test_real_agree_random_no_reply() {
         let num_parties = 7;
         let threshold = 2;
@@ -598,12 +623,14 @@ mod tests {
         check_rcv_len(0, 0, "").unwrap();
         let err = check_rcv_len(23, 42, "things").unwrap_err().to_string();
         assert!(err.contains("have received 23 things, but expected 42"));
+        let err = check_rcv_len(42, 23, "bars").unwrap_err().to_string();
+        assert!(err.contains("have received 42 bars, but expected 23"));
     }
 
     #[test]
     fn test_check_and_unpack_coms() {
         // test normal behavior
-        let mut num_parties = 3;
+        let num_parties = 3;
         let mut rc: HashMap<Role, NetworkValue> = HashMap::new();
         let c1 = Commitment([12_u8; COMMITMENT_BYTE_LEN]);
         let c2 = Commitment([42_u8; COMMITMENT_BYTE_LEN]);
@@ -612,6 +639,12 @@ mod tests {
             Role::indexed_by_one(3),
             NetworkValue::AgreeRandom(AgreeRandomValue::CommitmentValue(vec![c1])),
         );
+
+        let r = check_and_unpack_coms(&rc, num_parties)
+            .unwrap_err()
+            .to_string();
+        assert!(r.contains("have received 1 CommitmentValue, but expected 2"));
+
         rc.insert(
             Role::indexed_by_one(1),
             NetworkValue::AgreeRandom(AgreeRandomValue::CommitmentValue(vec![c2])),
@@ -623,22 +656,27 @@ mod tests {
 
         // Test Error when receiving wrong number of values
         rc.insert(
-            Role::indexed_by_one(4),
+            Role::indexed_by_one(2),
             NetworkValue::AgreeRandom(AgreeRandomValue::CommitmentValue(vec![c2])),
         );
 
         let r = check_and_unpack_coms(&rc, num_parties)
             .unwrap_err()
             .to_string();
-        assert!(r.contains("have received 3 commitments, but expected 2"));
+        assert!(r.contains("have received 3 CommitmentValue, but expected 2"));
+    }
+
+    #[test]
+    fn test_check_and_unpack_coms_type() {
+        let num_parties = 2;
+        let mut rc: HashMap<Role, NetworkValue> = HashMap::new();
 
         // Test Error when receiving a wrong AR value
         let ko = (
             PrfKey([42_u8; KEY_BYTE_LEN]),
             Opening([42_u8; KEY_BYTE_LEN]),
         );
-        num_parties = 2;
-        rc = HashMap::new();
+
         rc.insert(
             Role::indexed_by_one(2),
             NetworkValue::AgreeRandom(AgreeRandomValue::KeyOpenValue(vec![ko])),
@@ -650,19 +688,18 @@ mod tests {
         assert!(r.contains("Have not received a CommitmentValue from role 2!"));
 
         // Test Error when receiving Bot
-        rc = HashMap::new();
-        rc.insert(Role::indexed_by_one(1), NetworkValue::Bot);
+        rc.insert(Role::indexed_by_one(2), NetworkValue::Bot);
 
         let r = check_and_unpack_coms(&rc, num_parties)
             .unwrap_err()
             .to_string();
-        assert!(r.contains("Have not received a CommitmentValue from role 1!"));
+        assert!(r.contains("Have not received an AgreeRandomValue from role 2!"));
     }
 
     #[test]
-    fn test_check_and_unpack_keys() {
+    fn test_check_and_unpack_keys_openings() {
         // test normal behavior
-        let mut num_parties = 3;
+        let num_parties = 3;
         let mut rc: HashMap<Role, NetworkValue> = HashMap::new();
         let ko1 = (PrfKey([1_u8; KEY_BYTE_LEN]), Opening([2_u8; KEY_BYTE_LEN]));
         let ko2 = (
@@ -678,7 +715,7 @@ mod tests {
             Role::indexed_by_one(1),
             NetworkValue::AgreeRandom(AgreeRandomValue::KeyOpenValue(vec![ko2.clone()])),
         );
-        let r = check_and_unpack_keys(&rc, num_parties).unwrap();
+        let r = check_and_unpack_keys_openings(&rc, num_parties).unwrap();
 
         let expect = vec![
             vec![ko2.clone()],
@@ -689,28 +726,94 @@ mod tests {
 
         // Test Error when receiving wrong number of values
         rc.insert(
-            Role::indexed_by_one(4),
-            NetworkValue::AgreeRandom(AgreeRandomValue::KeyOpenValue(vec![ko2])),
+            Role::indexed_by_one(2),
+            NetworkValue::AgreeRandom(AgreeRandomValue::KeyOpenValue(vec![ko2.clone()])),
         );
 
-        let r = check_and_unpack_keys(&rc, num_parties)
+        let r = check_and_unpack_keys_openings(&rc, num_parties)
             .unwrap_err()
             .to_string();
-        assert!(r.contains("have received 3 keys/openings, but expected 2"));
+        assert!(r.contains("have received 3 KeyOpenValue, but expected 2"));
+    }
 
+    #[test]
+    fn test_check_and_unpack_keys_openings_type() {
+        let num_parties = 2;
+        let mut rc: HashMap<Role, NetworkValue> = HashMap::new();
         // Test Error when receiving a wrong AR value
         let c = Commitment([12_u8; COMMITMENT_BYTE_LEN]);
-        num_parties = 2;
-        rc = HashMap::new();
+
         rc.insert(
             Role::indexed_by_one(2),
             NetworkValue::AgreeRandom(AgreeRandomValue::CommitmentValue(vec![c])),
         );
 
+        let r = check_and_unpack_keys_openings(&rc, num_parties)
+            .unwrap_err()
+            .to_string();
+        assert!(r.contains("Have not received a KeyOpenValue from role 2!"));
+
+        // Test Error when receiving Bot
+        rc = HashMap::new();
+        rc.insert(Role::indexed_by_one(1), NetworkValue::Bot);
+
+        let r = check_and_unpack_keys_openings(&rc, num_parties)
+            .unwrap_err()
+            .to_string();
+        assert!(r.contains("Have not received an AgreeRandomValue from role 1!"));
+    }
+
+    #[test]
+    fn test_check_and_unpack_keys() {
+        // test normal behavior
+        let num_parties = 3;
+        let mut rc: HashMap<Role, NetworkValue> = HashMap::new();
+        let key1 = PrfKey([1_u8; KEY_BYTE_LEN]);
+        let key2 = PrfKey([42_u8; KEY_BYTE_LEN]);
+
+        rc.insert(
+            Role::indexed_by_one(3),
+            NetworkValue::AgreeRandom(AgreeRandomValue::KeyValue(vec![key1.clone()])),
+        );
+        rc.insert(
+            Role::indexed_by_one(1),
+            NetworkValue::AgreeRandom(AgreeRandomValue::KeyValue(vec![key2.clone()])),
+        );
+        let r = check_and_unpack_keys(&rc, num_parties).unwrap();
+
+        let expect = vec![vec![key2.clone()], Vec::<PrfKey>::new(), vec![key1]];
+        assert_eq!(r, expect);
+
+        // Test Error when receiving wrong number of values
+        rc.insert(
+            Role::indexed_by_one(2),
+            NetworkValue::AgreeRandom(AgreeRandomValue::KeyValue(vec![key2])),
+        );
+
         let r = check_and_unpack_keys(&rc, num_parties)
             .unwrap_err()
             .to_string();
-        assert!(r.contains("Have not received a KeyOpenValue value from role 2!"));
+        assert!(r.contains("have received 3 KeyValue, but expected 2"));
+    }
+
+    #[test]
+    fn test_check_and_unpack_keys_type() {
+        // Test Error when receiving a wrong AR value
+        let num_parties = 2;
+        let mut rc: HashMap<Role, NetworkValue> = HashMap::new();
+
+        rc.insert(
+            Role::indexed_by_one(2),
+            NetworkValue::AgreeRandom(AgreeRandomValue::KeyOpenValue(vec![(
+                PrfKey([1_u8; KEY_BYTE_LEN]),
+                Opening([2_u8; KEY_BYTE_LEN]),
+            )])),
+        );
+
+        let r = check_and_unpack_keys(&rc, num_parties)
+            .unwrap_err()
+            .to_string();
+        assert!(r.contains("Have not received a KeyValue from role 2!"));
 
         // Test Error when receiving Bot
         rc = HashMap::new();
@@ -719,11 +822,11 @@ mod tests {
         let r = check_and_unpack_keys(&rc, num_parties)
             .unwrap_err()
             .to_string();
-        assert!(r.contains("Have not received a KeyOpenValue value from role 1!"));
+        assert!(r.contains("Have not received an AgreeRandomValue from role 1!"));
     }
 
     #[test]
-    fn test_verify_and_xor() {
+    fn test_verify_and_xor_keys() {
         let party_id = 2;
         let party_sets = vec![vec![1_usize, 2]];
 
@@ -780,75 +883,81 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_randomness_equal() {
+    fn test_verify_keys_equal_2p() {
         let party_id = 2;
         let party_sets = vec![vec![1_usize, 2]];
 
         // received keys/openings
         let key1 = PrfKey([42_u8; KEY_BYTE_LEN]);
-        let opening1 = Opening([69_u8; KEY_BYTE_LEN]);
-        let ko1 = (key1.clone(), opening1);
-        let rcv_keys_opens = vec![vec![ko1.clone()], Vec::<(PrfKey, Opening)>::new()];
-
-        // compute commitment for received key
-        let mut com_buf = [0u8; COMMITMENT_BYTE_LEN];
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&opening1.0);
-        hasher.update(&key1.0);
-        let mut or = hasher.finalize_xof();
-        or.fill(&mut com_buf);
-        let commitment1 = Commitment(com_buf);
-        let rcv_coms = vec![vec![commitment1], Vec::<Commitment>::new()];
-
-        // my own keys/openings (identical to above)
-        let ko2 = (key1.clone(), opening1);
-        let keys_opens = vec![Vec::<(PrfKey, Opening)>::new(), vec![ko2]];
+        let rcv_keys = vec![vec![key1.clone()], Vec::<PrfKey>::new()];
+        let my_keys = vec![Vec::<PrfKey>::new(), vec![key1]];
 
         // test correctly working verification and key generation
         let res = verify_keys_equal(
             party_id,
             &mut party_sets.clone(),
-            &mut keys_opens.clone(),
-            &mut rcv_keys_opens.clone(),
-            &mut rcv_coms.clone(),
+            &mut my_keys.clone(),
+            &mut rcv_keys.clone(),
         )
         .unwrap();
 
         // test that resulting key is the same same as the input key = 42
         assert_eq!(res, vec![PrfKey([42_u8; KEY_BYTE_LEN])]);
 
-        // test failing commitment verification
-        let rcv_coms_fail = vec![
-            vec![Commitment([0_u8; COMMITMENT_BYTE_LEN])],
-            Vec::<Commitment>::new(),
-        ];
+        // set my own key to sth else, so that the received key does not match my own
+        let key2 = PrfKey([1_u8; KEY_BYTE_LEN]);
+        let keys_fail = vec![Vec::<PrfKey>::new(), vec![key2]];
 
         let r = verify_keys_equal(
             party_id,
             &mut party_sets.clone(),
-            &mut keys_opens.clone(),
-            &mut rcv_keys_opens.clone(),
-            &mut rcv_coms_fail.clone(),
-        )
-        .unwrap_err()
-        .to_string();
-
-        assert!(r.contains("Commitment verification has failed for party 1!"));
-
-        // set my own key to sth else, so that the received key (with a valid commitment) does not match my own
-        let ko2 = (PrfKey([1_u8; KEY_BYTE_LEN]), Opening([23_u8; KEY_BYTE_LEN]));
-        let keys_opens_fail = vec![Vec::<(PrfKey, Opening)>::new(), vec![ko2]];
-
-        let r = verify_keys_equal(
-            party_id,
-            &mut party_sets.clone(),
-            &mut keys_opens_fail.clone(),
-            &mut rcv_keys_opens.clone(),
-            &mut rcv_coms.clone(),
+            &mut keys_fail.clone(),
+            &mut rcv_keys.clone(),
         )
         .unwrap_err()
         .to_string();
 
         assert!(r.contains("received a key from party 1 that does not match my own!"))
+    }
+
+    #[test]
+    fn test_verify_keys_equal_3p() {
+        let party_id = 1;
+        let party_sets = compute_party_sets(Role::indexed_by_one(1), 3, 1);
+
+        // received keys/openings
+        let set_keys = vec![PrfKey([12_u8; KEY_BYTE_LEN]), PrfKey([13_u8; KEY_BYTE_LEN])];
+        let rcv_keys = vec![
+            Vec::<PrfKey>::new(),
+            vec![set_keys[0].clone()],
+            vec![set_keys[1].clone()],
+        ];
+        let my_keys = vec![set_keys.clone(), Vec::<PrfKey>::new(), Vec::<PrfKey>::new()];
+
+        // test correctly working verification and key generation
+        let res = verify_keys_equal(
+            party_id,
+            &mut party_sets.clone(),
+            &mut my_keys.clone(),
+            &mut rcv_keys.clone(),
+        )
+        .unwrap();
+
+        // test that resulting key is the same same as the input key = 42
+        assert_eq!(res, set_keys);
+
+        // set received key of p2 to sth else, so that the it does not match my own
+        let key2 = PrfKey([234_u8; KEY_BYTE_LEN]);
+        let keys_fail = vec![Vec::<PrfKey>::new(), vec![key2], vec![set_keys[1].clone()]];
+
+        let r = verify_keys_equal(
+            party_id,
+            &mut party_sets.clone(),
+            &mut my_keys.clone(),
+            &mut keys_fail.clone(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(r.contains("received a key from party 2 that does not match my own!"))
     }
 }

@@ -179,6 +179,7 @@ impl From<Vec<ResiduePoly<Z128>>> for BroadcastValue {
 pub enum AgreeRandomValue {
     CommitmentValue(Vec<Commitment>),
     KeyOpenValue(Vec<(PrfKey, Opening)>),
+    KeyValue(Vec<PrfKey>),
 }
 
 impl From<Value> for BroadcastValue {
