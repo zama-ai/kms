@@ -2,7 +2,7 @@ use crate::{kms::FheType, rpc_types::Kms};
 
 use super::{
     der_types::{KeyAddress, PrivateSigKey, PublicEncKey, PublicSigKey},
-    signcryption::{sign, signcrypt},
+    signcryption::{sign, signcrypt, verify_sig},
 };
 
 use k256::ecdsa::SigningKey;
@@ -10,7 +10,10 @@ use rand::SeedableRng;
 use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::to_vec;
-use std::sync::{Arc, Mutex};
+use std::{
+    fmt,
+    sync::{Arc, Mutex},
+};
 use tfhe::{
     generate_keys, prelude::FheDecrypt, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint8,
     PublicKey, ServerKey,
@@ -93,6 +96,30 @@ impl Kms for SoftwareKms {
         *current_rng = rng_clone;
 
         Ok(Some(to_vec(&enc_res)?))
+    }
+
+    fn verify_sig<T>(
+        &self,
+        payload: &T,
+        signature: &super::der_types::Signature,
+        address: &KeyAddress,
+    ) -> bool
+    where
+        T: fmt::Debug + Serialize,
+    {
+        let msg = match to_vec(&payload) {
+            Ok(msg) => msg,
+            Err(e) => {
+                tracing::warn!("Could not encode payload {:?}", payload);
+                return false;
+            }
+        };
+        // TODO refactor
+        verify_sig(&msg, signature, &signature.pk)
+    }
+
+    fn sign(&self, msg: &[u8]) -> anyhow::Result<super::der_types::Signature> {
+        sign(&msg.to_vec(), &self.sig_key)
     }
 }
 

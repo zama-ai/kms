@@ -2,7 +2,7 @@ use std::fmt::{self};
 
 use crate::{
     core::{
-        der_types::{KeyAddress, PublicEncKey},
+        der_types::{KeyAddress, PublicEncKey, Signature},
         kms_core::SoftwareKms,
     },
     kms::{
@@ -28,6 +28,7 @@ impl KmsEndpoint for SoftwareKms {
             req.payload,
             format!("The request {:?} does not have a payload", req_clone),
         )?;
+        let payload_clone = payload.clone();
         let fhe_type = payload.fhe_type();
         let address: KeyAddress = handle_potential_err(
             payload.address.try_into(),
@@ -46,11 +47,22 @@ impl KmsEndpoint for SoftwareKms {
         )?)
         .await?;
 
+        let signature: Signature = handle_potential_err(
+            from_bytes(&payload.ciphertext),
+            format!("Invalid key in request {:?}", req_clone),
+        )?;
+
+        if !Kms::verify_sig(self, &payload_clone, &signature, &address) {
+            return Err(tonic::Status::new(
+                tonic::Code::Aborted,
+                "Invalid request".to_string(),
+            ));
+        }
+
         let client_enc_key: PublicEncKey = handle_potential_err(
             from_bytes(&payload.enc_key),
             format!("Invalid key in request {:?}", req_clone),
         )?;
-
         let return_cipher = process_response(Kms::validate_and_reencrypt(
             self,
             &payload.ciphertext,
@@ -156,7 +168,7 @@ impl KmsEndpoint for SoftwareKms {
     }
 }
 
-fn verify_client_address(address: &KeyAddress) -> bool {
+fn verify_client_address(_address: &KeyAddress) -> bool {
     // TODO
     true
 }
@@ -197,7 +209,7 @@ fn some_or_err<T: fmt::Debug>(input: Option<T>, error: String) -> Result<T, Stat
 fn handle_potential_err<T: fmt::Debug, E>(resp: Result<T, E>, error: String) -> Result<T, Status> {
     match resp {
         Ok(resp) => Ok(resp),
-        Err(e) => {
+        Err(_) => {
             tracing::warn!(error);
             Err(tonic::Status::new(
                 tonic::Code::Aborted,

@@ -25,7 +25,7 @@ use sha3::{Digest, Sha3_256};
 /// NOTE This may change in the future to be more compatible with NIST standardized schemes.
 ///
 const DIGEST_BYTES: usize = 256 / 8; // SHA3-256 digest
-const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
+pub(crate) const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 pub(crate) const RND_SIZE: usize = 256 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
 
 /// Generate ephemeral keys used for encryption
@@ -42,22 +42,30 @@ pub fn sign<T>(msg: &T, server_sig_key: &PrivateSigKey) -> anyhow::Result<Signat
 where
     T: Serialize + AsRef<[u8]>,
 {
-    let sig: k256::ecdsa::Signature = server_sig_key.sk.sign(msg.as_ref());
+    let sig: k256::ecdsa::Signature = server_sig_key.sk.try_sign(msg.as_ref())?;
     // Normalize s value to ensure a consistant signature and protect against malleability
     sig.normalize_s();
-    Ok(Signature { sig })
+    Ok(Signature {
+        sig,
+        pk: PublicSigKey {
+            pk: SigningKey::verifying_key(&server_sig_key.sk).to_owned(),
+        },
+    })
 }
 
 /// Method method for performing the necesary checks on a plain signature.
 /// Returns true if the signature is ok and false otherwise
-pub fn verify_sig(msg: Vec<u8>, sig: &Signature, server_verf_key: &PublicSigKey) -> bool {
+pub fn verify_sig<T>(msg: &T, sig: &Signature, server_verf_key: &PublicSigKey) -> bool
+where
+    T: Serialize + AsRef<[u8]>,
+{
     // Check that the signature is normalized
     if !check_normalized(sig) {
         return false;
     }
 
     // Verify signature
-    if server_verf_key.pk.verify(&msg[..], &sig.sig).is_err() {
+    if server_verf_key.pk.verify(msg.as_ref(), &sig.sig).is_err() {
         tracing::warn!("Signature {:X?} is not valid", sig.sig);
         return false;
     }
@@ -181,7 +189,13 @@ fn parse_msg(
         )));
     }
     let sig = k256::ecdsa::Signature::from_slice(sig_bytes)?;
-    Ok((msg.to_vec(), Signature { sig }))
+    Ok((
+        msg.to_vec(),
+        Signature {
+            sig,
+            pk: server_verf_key.clone(),
+        },
+    ))
 }
 
 /// Helper method for performing the necesary checks on a signcryption signature.
@@ -371,7 +385,7 @@ mod tests {
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
         let sig = sign(&msg, &server_sig_key).unwrap();
-        assert!(verify_sig(msg.to_vec(), &sig, &server_verf_key));
+        assert!(verify_sig(&msg.to_vec(), &sig, &server_verf_key));
     }
 
     #[test]
@@ -383,6 +397,7 @@ mod tests {
                 .signing_key
                 .sk
                 .sign("not a key".as_ref()),
+            pk: client_signcryption_keys.pk.verification_key,
         };
         request.signature = wrong_sig;
         assert!(!request.verify(&fhe_cipher).unwrap())
@@ -465,6 +480,7 @@ mod tests {
         let msg = "Some message".as_bytes();
         let sig = Signature {
             sig: server_sig_key.sk.sign(msg),
+            pk: client_signcryption_keys.pk.clone().verification_key,
         };
         // Fails as the correct key digets are not included in the message whose signature gets checked
         let res = check_signature(
@@ -496,13 +512,17 @@ mod tests {
         .concat();
         let sig = Signature {
             sig: server_sig_key.sk.sign(to_sign.as_ref()),
+            pk: server_verf_key.clone(),
         };
         // Ensure the signature is normalized
         let internal_sig = sig.sig.normalize_s().unwrap_or(sig.sig);
         // Ensure the signature is ok
         assert!(check_signature(
             msg.to_vec(),
-            &Signature { sig: internal_sig },
+            &Signature {
+                sig: internal_sig,
+                pk: server_verf_key.clone(),
+            },
             &server_verf_key,
             &client_signcryption_keys.pk,
         ));
@@ -512,7 +532,10 @@ mod tests {
                 .unwrap();
         let res = check_signature(
             msg.to_vec(),
-            &Signature { sig: bad_sig },
+            &Signature {
+                sig: bad_sig,
+                pk: server_verf_key.clone(),
+            },
             &server_verf_key,
             &client_signcryption_keys.pk,
         );

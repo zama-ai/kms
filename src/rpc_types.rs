@@ -1,13 +1,22 @@
-use serde::Deserialize;
+use serde::{ser::Error, Deserialize, Serialize};
+use serde_asn1_der::to_vec;
+use std::fmt;
 use tendermint::block::signed_header::SignedHeader;
 
 use crate::{
-    core::der_types::{KeyAddress, PublicEncKey},
-    kms::FheType,
+    core::der_types::{KeyAddress, PublicEncKey, Signature},
+    kms::{FheType, Proof, ReencryptionRequestPayload},
 };
 
 /// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
 pub trait Kms {
+    fn verify_sig<T: fmt::Debug + Serialize>(
+        &self,
+        payload: &T,
+        signature: &Signature,
+        address: &KeyAddress,
+    ) -> bool;
+    fn sign(&self, msg: &[u8]) -> anyhow::Result<Signature>;
     fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<(Vec<u8>, u32)>;
     fn validate_and_reencrypt(
         &self,
@@ -36,4 +45,35 @@ pub struct LightClientCommitResponse {
 #[derive(Debug, Deserialize)]
 pub struct SignedHeaderWrapper {
     pub signed_header: SignedHeader,
+}
+
+impl serde::Serialize for Proof {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // TODO use proper encoding
+        let mut to_ser = Vec::new();
+        to_ser.append(&mut self.height.to_be_bytes().to_vec());
+        to_ser.append(&mut self.merkle_patricia_proof.to_vec());
+        serializer.serialize_bytes(&to_ser)
+    }
+}
+
+impl serde::Serialize for ReencryptionRequestPayload {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // TODO use proper encoding
+        let mut to_ser = Vec::new();
+        to_ser.append(&mut self.address.to_vec());
+        to_ser.append(&mut self.enc_key.to_vec());
+        to_ser.append(&mut self.fhe_type.to_be_bytes().to_vec());
+        to_ser.append(&mut self.ciphertext.to_vec());
+        let mut proof = to_vec(&self.proof).map_err(Error::custom)?;
+        to_ser.append(&mut proof);
+        to_ser.append(&mut self.randomness.to_vec());
+        serializer.serialize_bytes(&to_ser)
+    }
 }

@@ -50,6 +50,7 @@ impl ClientRequest {
         // Sign the public key and digest of the message
         let signature: Signature = Signature {
             sig: keys.sk.signing_key.sk.sign(&to_sign[..]),
+            pk: keys.pk.verification_key.clone(),
         };
         Ok((ClientRequest { payload, signature }, keys))
     }
