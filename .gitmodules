@@ -1,0 +1,6 @@
+[submodule "cometbft"]
+	path = cometbft
+	url = https://github.com/cometbft/cometbft.git
+[submodule "zbc-ethermint"]
+	path = zbc-ethermint
+	url = https://github.com/zama-ai/zbc-ethermint.git

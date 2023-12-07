@@ -1,0 +1,20 @@
+version: "3"
+
+services:
+  kms_endpoint:
+    build: .
+    ports:
+      - "50051:50051"
+
+  full_node:
+    build: zbc-ethermint
+    ports:
+      - "26657:26657"
+
+  light_node:
+    build:
+      context: cometbft
+      dockerfile: DOCKER/Dockerfile
+    depends_on:
+      - full_node
+    entrypoint: "sleep 10 && cometbft light ethermint_9000-1 -p http://full_node:26657 -w http://full_node:26657 --height 1 --sequential --laddr tcp://0.0.0.0:8888"
