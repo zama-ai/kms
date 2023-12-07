@@ -1,10 +1,8 @@
-use crate::{kms::FheType, rpc_types::Kms};
-
 use super::{
-    der_types::{KeyAddress, PrivateSigKey, PublicEncKey, PublicSigKey},
-    signcryption::{sign, signcrypt, verify_sig},
+    der_types::{KeyAddress, PrivateSigKey, PublicEncKey, PublicSigKey, BYTES_IN_ADDRESS},
+    signcryption::{hash_element, sign, signcrypt, verify_sig},
 };
-
+use crate::{anyhow_error_and_warn_log, kms::FheType, rpc_types::Kms};
 use k256::ecdsa::SigningKey;
 use rand::SeedableRng;
 use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
@@ -32,6 +30,7 @@ pub fn gen_kms_keys(config: Config, rng: &mut impl CryptoRngCore) -> KmsKeys {
     let (fhe_sk, fhe_server_key) = generate_keys(config.clone());
     let fhe_pk = PublicKey::new(&fhe_sk);
     let (sig_pk, sig_sk) = gen_sig_keys(rng);
+    // TODO do we need this to be a mutex as well to allow for parallel queries
     KmsKeys {
         config,
         fhe_pk,
@@ -62,78 +61,7 @@ pub struct SoftwareKms {
 }
 
 impl Kms for SoftwareKms {
-    fn validate_and_reencrypt(
-        &self,
-        ct: &[u8],
-        fhe_type: FheType,
-        client_enc_key: &PublicEncKey,
-        address: &KeyAddress,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
-        // TODO validate
-        Kms::reencrypt(self, ct, fhe_type, client_enc_key, address)
-    }
-
-    fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<(Vec<u8>, u32)> {
-        let plaintext = self.raw_decryption(ct, fhe_type)?;
-        // TODO sign type as well!!!
-        let sig = sign(&plaintext_to_vec(plaintext, fhe_type), &self.sig_key)?;
-        Ok((to_vec(&sig)?, plaintext))
-    }
-
-    fn reencrypt(
-        &self,
-        ct: &[u8],
-        fhe_type: FheType,
-        client_enc_key: &PublicEncKey,
-        address: &KeyAddress,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
-        let (sig, plaintext) = Kms::decrypt(self, ct, fhe_type)?;
-        let msg = plaintext_to_vec(plaintext, fhe_type);
-        // TODO what is the right way of doing this without panic
-        let mut current_rng = self.rng.lock().unwrap();
-        let mut rng_clone = current_rng.clone();
-        let enc_res = signcrypt(&mut rng_clone, &msg, client_enc_key, address, &self.sig_key)?;
-        *current_rng = rng_clone;
-
-        Ok(Some(to_vec(&enc_res)?))
-    }
-
-    fn verify_sig<T>(
-        &self,
-        payload: &T,
-        signature: &super::der_types::Signature,
-        address: &KeyAddress,
-    ) -> bool
-    where
-        T: fmt::Debug + Serialize,
-    {
-        let msg = match to_vec(&payload) {
-            Ok(msg) => msg,
-            Err(e) => {
-                tracing::warn!("Could not encode payload {:?}", payload);
-                return false;
-            }
-        };
-        // TODO refactor
-        verify_sig(&msg, signature, &signature.pk)
-    }
-
-    fn sign(&self, msg: &[u8]) -> anyhow::Result<super::der_types::Signature> {
-        sign(&msg.to_vec(), &self.sig_key)
-    }
-}
-
-impl SoftwareKms {
-    pub fn new(config: Config, fhe_dec_key: ClientKey, sig_key: PrivateSigKey) -> Self {
-        SoftwareKms {
-            config,
-            rng: Arc::new(Mutex::new(ChaCha20Rng::from_entropy())),
-            fhe_dec_key,
-            sig_key,
-        }
-    }
-
-    fn raw_decryption(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
+    fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
         Ok(match fhe_type {
             FheType::Bool => {
                 let cipher: FheBool = bincode::deserialize(ct)?;
@@ -157,8 +85,114 @@ impl SoftwareKms {
             }
         })
     }
+
+    // TODO add link so this can be linked to digest
+    fn reencrypt(
+        &self,
+        ct: &[u8],
+        fhe_type: FheType,
+        client_enc_key: &PublicEncKey,
+        address: &KeyAddress,
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let plaintext = Kms::decrypt(self, ct, fhe_type)?;
+        let msg = plaintext_to_vec(plaintext, fhe_type);
+        // TODO what is the right way of doing this without panic
+        let mut current_rng = self.rng.lock().unwrap();
+        let mut rng_clone = current_rng.clone();
+        let enc_res = signcrypt(&mut rng_clone, &msg, client_enc_key, address, &self.sig_key)?;
+        *current_rng = rng_clone;
+        let res = to_vec(&enc_res)?;
+        // TODO make logs everywhere. In particular make sure to log errors before throwing the error back up
+        tracing::info!("Completed renecyption of ciphertext {:?} with type {:?} to client with address {:?} under public key {:?}", ct, fhe_type, address, client_enc_key.0);
+        Ok(Some(res))
+    }
+
+    fn verify_sig<T>(
+        &self,
+        payload: &T,
+        signature: &super::der_types::Signature,
+        address: &KeyAddress,
+    ) -> bool
+    where
+        T: fmt::Debug + Serialize,
+    {
+        let msg = match to_vec(&payload) {
+            Ok(msg) => msg,
+            Err(_) => {
+                tracing::warn!(
+                    "Could not encode payload for signature verification {:?}",
+                    payload
+                );
+                return false;
+            }
+        };
+        // TODO refactor
+        if !verify_sig(&msg, signature, &signature.pk) {
+            return false;
+        }
+        address != &get_address(&signature.pk)
+    }
+
+    fn sign<T>(&self, msg: &T) -> anyhow::Result<super::der_types::Signature>
+    where
+        T: fmt::Debug + Serialize,
+    {
+        let to_sign = match to_vec(&msg) {
+            Ok(to_sign) => to_sign,
+            Err(_) => {
+                return Err(anyhow_error_and_warn_log(format!(
+                    "Could not encode message for signing {:?}",
+                    msg
+                )))
+            }
+        };
+        sign(&to_sign, &self.sig_key)
+    }
+
+    fn digest<T>(&self, msg: &T) -> anyhow::Result<Vec<u8>>
+    where
+        T: fmt::Debug + Serialize,
+    {
+        let to_hash = match to_vec(&msg) {
+            Ok(to_sign) => to_sign,
+            Err(_) => {
+                return Err(anyhow_error_and_warn_log(format!(
+                    "Could not encode message for signing {:?}",
+                    msg
+                )))
+            }
+        };
+        Ok(hash_element(&to_hash))
+    }
+
+    fn get_verf_key(&self) -> PublicSigKey {
+        PublicSigKey {
+            pk: SigningKey::verifying_key(&self.sig_key.sk).to_owned(),
+        }
+    }
 }
-fn plaintext_to_vec(plaintext: u32, fhe_type: FheType) -> Vec<u8> {
+
+impl SoftwareKms {
+    pub fn new(config: Config, fhe_dec_key: ClientKey, sig_key: PrivateSigKey) -> Self {
+        SoftwareKms {
+            config,
+            rng: Arc::new(Mutex::new(ChaCha20Rng::from_entropy())),
+            fhe_dec_key,
+            sig_key,
+        }
+    }
+}
+
+pub(crate) fn get_address(key: &PublicSigKey) -> KeyAddress {
+    // TODO should this be updated to use keccak to make the address notion compatible with ethereum
+    let mut digest = hash_element(&key.pk.to_sec1_bytes()[..]);
+    digest.truncate(BYTES_IN_ADDRESS);
+    let mut res = [0_u8; BYTES_IN_ADDRESS];
+    res[..BYTES_IN_ADDRESS].copy_from_slice(&digest[..BYTES_IN_ADDRESS]);
+    res
+}
+
+pub(crate) fn plaintext_to_vec(plaintext: u32, fhe_type: FheType) -> Vec<u8> {
     match fhe_type {
         FheType::Bool => {
             vec![plaintext as u8]
@@ -193,9 +227,9 @@ mod tests {
     use crate::{
         core::{
             der_types::Cipher,
-            kms_core::{gen_sig_keys, vec_to_plaintext, SoftwareKms},
+            kms_core::{gen_sig_keys, get_address, vec_to_plaintext, SoftwareKms},
             request::ephemeral_key_generation,
-            signcryption::{address, validate_and_decrypt},
+            signcryption::validate_and_decrypt,
         },
         file_handling::{read_element, write_element},
         kms::FheType,
@@ -240,7 +274,7 @@ mod tests {
                 &serialized_ct,
                 FheType::Euint8,
                 &client_keys.pk.enc_key,
-                &address(&client_keys.pk.verification_key),
+                &get_address(&client_keys.pk.verification_key),
             )
             .unwrap()
             .unwrap();
@@ -265,7 +299,7 @@ mod tests {
         let mut serialized_ct = Vec::new();
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
 
-        let (sig, plaintext) = kms.decrypt(&serialized_ct, FheType::Euint8).unwrap();
+        let plaintext = kms.decrypt(&serialized_ct, FheType::Euint8).unwrap();
         assert_eq!(plaintext as u8, msg);
     }
 
@@ -282,11 +316,11 @@ mod tests {
         let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
         let client_keys = ephemeral_key_generation(&mut rng, &client_sig_key);
         let raw_cipher = kms
-            .validate_and_reencrypt(
+            .reencrypt(
                 &serialized_ct,
                 FheType::Euint8,
                 &client_keys.pk.enc_key,
-                &address(&client_keys.pk.verification_key),
+                &get_address(&client_keys.pk.verification_key),
             )
             .unwrap()
             .unwrap();

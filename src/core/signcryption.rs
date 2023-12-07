@@ -1,6 +1,9 @@
-use super::der_types::{
-    Cipher, KeyAddress, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature,
-    SigncryptionPair, SigncryptionPubKey, BYTES_IN_ADDRESS,
+use super::{
+    der_types::{
+        Cipher, KeyAddress, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature,
+        SigncryptionPair, SigncryptionPubKey, BYTES_IN_ADDRESS,
+    },
+    kms_core::get_address,
 };
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use ::signature::{Signer, Verifier};
@@ -107,7 +110,7 @@ where
     let to_encrypt = [
         msg.as_ref(),
         &sig.to_bytes(),
-        &address(&PublicSigKey {
+        &get_address(&PublicSigKey {
             pk: SigningKey::verifying_key(&server_sig_key.sk).to_owned(),
         }),
         &hash_element(server_enc_pk.as_ref()),
@@ -175,7 +178,7 @@ fn parse_msg(
     let server_enc_key_digest = &decrypted_plaintext[(msg_len + SIG_SIZE + BYTES_IN_ADDRESS)
         ..(msg_len + BYTES_IN_ADDRESS + DIGEST_BYTES + SIG_SIZE)];
     // Verify verification key digest
-    if address(server_verf_key) != server_ver_key_digest {
+    if get_address(server_verf_key) != server_ver_key_digest {
         return Err(anyhow_error_and_warn_log(format!(
             "Unexpected verification key digest {:X?} was part of the decryption",
             server_ver_key_digest
@@ -209,7 +212,7 @@ fn check_signature(
     // What should be signed is msg || H(client_verification_key) || H(client_enc_key)
     let msg_signed = [
         msg,
-        address(&client_pk.verification_key).to_vec(),
+        get_address(&client_pk.verification_key).to_vec(),
         hash_element(client_pk.enc_key.as_ref()),
     ]
     .concat();
@@ -243,15 +246,6 @@ pub(crate) fn check_normalized(sig: &Signature) -> bool {
     true
 }
 
-pub(crate) fn address(key: &PublicSigKey) -> KeyAddress {
-    // TODO should this be updated to use keccak to make the address notion compatible with ethereum
-    let mut digest = hash_element(&key.pk.to_sec1_bytes()[..]);
-    digest.truncate(BYTES_IN_ADDRESS);
-    let mut res = [0_u8; BYTES_IN_ADDRESS];
-    res[..BYTES_IN_ADDRESS].copy_from_slice(&digest[..BYTES_IN_ADDRESS]);
-    res
-}
-
 pub(crate) fn hash_element<T>(element: &T) -> Vec<u8>
 where
     T: ?Sized + AsRef<[u8]>,
@@ -276,7 +270,7 @@ mod tests {
         der_types::{Signature, BYTES_IN_ADDRESS},
         request::{ephemeral_key_generation, ClientRequest},
         signcryption::{
-            address, check_signature, encryption_key_generation, hash_element, parse_msg, sign,
+            check_signature, encryption_key_generation, get_address, hash_element, parse_msg, sign,
             signcrypt, validate_and_decrypt, verify_sig, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
         },
     };
@@ -337,7 +331,7 @@ mod tests {
             &mut rng,
             &msg,
             &client_signcryption_keys.pk.enc_key,
-            &address(&client_signcryption_keys.pk.verification_key),
+            &get_address(&client_signcryption_keys.pk.verification_key),
             &server_sig_key,
         )
         .unwrap();
@@ -357,7 +351,7 @@ mod tests {
             &mut rng,
             &msg,
             &client_signcryption_keys.pk.enc_key,
-            &address(&client_signcryption_keys.pk.verification_key),
+            &get_address(&client_signcryption_keys.pk.verification_key),
             &server_sig_key,
         )
         .unwrap();
@@ -427,7 +421,7 @@ mod tests {
             &mut rng,
             &msg,
             &client_signcryption_keys.pk.enc_key,
-            &address(&client_signcryption_keys.pk.verification_key),
+            &get_address(&client_signcryption_keys.pk.verification_key),
             &server_sig_key,
         )
         .unwrap();
@@ -460,7 +454,7 @@ mod tests {
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
         let (server_enc_key, _server_dec_key) = encryption_key_generation(&mut rng);
         let mut to_encrypt = [0_u8; 1 + BYTES_IN_ADDRESS + DIGEST_BYTES + SIG_SIZE].to_vec();
-        let key_digest = address(&server_verf_key);
+        let key_digest = get_address(&server_verf_key);
         // Set the correct verification key so that part of `parse_msg` won't fail
         to_encrypt.splice(
             1 + SIG_SIZE..1 + SIG_SIZE + BYTES_IN_ADDRESS,
@@ -506,7 +500,7 @@ mod tests {
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let to_sign = [
             msg,
-            &address(&client_signcryption_keys.pk.verification_key),
+            &get_address(&client_signcryption_keys.pk.verification_key),
             &hash_element(&client_signcryption_keys.pk.enc_key)[..],
         ]
         .concat();

@@ -4,7 +4,6 @@ package kms;
 service KmsEndpoint {
   rpc Decrypt(DecryptionRequest) returns (DecryptionResponse);
   rpc Reencrypt(ReencryptionRequest) returns (ReencryptionResponse);
-  rpc Validate_and_reencrypt(ReencryptionRequest) returns (ReencryptionResponse);
 }
 
 enum FheType {
