@@ -11,7 +11,7 @@ pub mod types;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "[::1]:50051".parse()?;
+    let addr: std::net::SocketAddr = "0.0.0.0:50051".parse()?;
     let kms = DummyKms::default();
 
     Server::builder()
