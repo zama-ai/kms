@@ -1,0 +1,22 @@
+version: "3"
+
+services:
+  kms_endpoint:
+    build: .
+    ports:
+      - "50051:50051"
+
+  full_node:
+    build: zbc-ethermint
+    ports:
+      - "26657:26657"
+
+  light_node:
+    build:
+      context: cometbft
+      dockerfile: DOCKER/Dockerfile
+    depends_on:
+      - full_node
+    entrypoint: "/bin/bash"
+    command: -c "sleep 10;str=`cometbft light ethermint_9000-1 -p http://full_node:26657 -w http://full_node:26657 --hash 1CA45D5771EB525E86CA9AC3F67E588804400518F9E61FD0F5EFD4E6AA4F7B50 2>&1 | tail -n1`; hash=$${str:104:64};cometbft light ethermint_9000-1 -p http://full_node:26657 -w http://full_node:26657 --hash $$hash --laddr tcp://0.0.0.0:8888 --sequential"
+

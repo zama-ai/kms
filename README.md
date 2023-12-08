@@ -24,6 +24,7 @@ sequenceDiagram
     KMS->>KMS: Verify `proof` against `root`
     KMS->>KMS: Decrypt
     KMS->>KMS: Encrypt result under `pubkey`
+    KMS->>KMS: Sign encrypted result
     KMS->>-Full Node: {`reencryped_ciphertext`, `sig`}
     Full Node->>Full Node: Verify `sig`
     Full Node->>-Wallet: `reencryped_ciphertext`
@@ -44,6 +45,6 @@ The rest of the communication is defined by existing standards and uses JSON-RPC
 For the light client, we currently use CometBFT's [light](https://pkg.go.dev/github.com/cometbft/cometbft/light) package, which provides a service that connects to any CometBFT full node to serve trusted state roots on-demand. 
 The light client package handles the logic of sequentially verifying block headers.
 
-## Usage
-
-The server relies on a CometBFT light client listening on `localhost:8888`.
+## Next steps
+- [ ] Full Node ->> KMS Reencryption request should contain user signature on `pubkey` and an `ACL` object.
+- [ ] KMS should verify the user signature on `pubkey` against the values of permissible decryptors in `ACL`.
