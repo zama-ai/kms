@@ -1,9 +1,4 @@
-use kms::kms_endpoint_client::KmsEndpointClient;
-use kms::{DecryptionRequest, Proof};
-
-pub mod kms {
-    tonic::include_proto!("kms");
-}
+use kms::kms::{kms_endpoint_client::KmsEndpointClient, DecryptionRequest, FheType, Proof};
 
 /// This client serves test purposes.
 #[tokio::main]
@@ -16,6 +11,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             height: 666,
             merkle_patricia_proof: vec![],
         }),
+        fhe_type: FheType::Euint8.into(),
+        request: vec![],
     });
 
     let response = client.decrypt(request).await?;
