@@ -175,8 +175,8 @@ pub struct SigncryptionPair {
 /// Wrapper struct for a digital signature
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Signature {
-    pub(crate) sig: k256::ecdsa::Signature,
-    pub(crate) pk: PublicSigKey, // TODO use a library to handle this from the signature using ethereum sigs
+    pub sig: k256::ecdsa::Signature,
+    pub pk: PublicSigKey, // TODO use a library to handle this from the signature using ethereum sigs
 }
 /// Serialize a signature as a 64 bytes sequence of big endian bytes, consisting of r followed by s
 impl Serialize for Signature {

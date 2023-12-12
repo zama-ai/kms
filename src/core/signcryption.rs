@@ -45,6 +45,7 @@ pub fn sign<T>(msg: &T, server_sig_key: &PrivateSigKey) -> anyhow::Result<Signat
 where
     T: Serialize + AsRef<[u8]>,
 {
+    //TODO should be der serialized
     let sig: k256::ecdsa::Signature = server_sig_key.sk.try_sign(msg.as_ref())?;
     // Normalize s value to ensure a consistant signature and protect against malleability
     sig.normalize_s();

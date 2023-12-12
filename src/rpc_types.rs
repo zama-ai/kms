@@ -136,7 +136,7 @@ impl serde::Serialize for DecryptionResponsePayload {
         // TODO use proper encoding
         let mut to_ser = Vec::new();
         to_ser.append(&mut self.address.to_vec());
-        to_ser.append(&mut to_vec(&self.fhe_type).map_err(Error::custom)?);
+        to_ser.append(&mut self.fhe_type.to_be_bytes().to_vec());
         to_ser.append(&mut self.plaintext.to_be_bytes().to_vec());
         to_ser.append(&mut self.digest.to_vec());
         to_ser.append(&mut self.randomness.to_vec());

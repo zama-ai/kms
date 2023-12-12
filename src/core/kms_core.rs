@@ -35,12 +35,10 @@ pub fn gen_sig_keys(rng: &mut impl CryptoRngCore) -> (PublicSigKey, PrivateSigKe
 
 pub fn gen_kms_keys(config: Config, rng: &mut impl CryptoRngCore) -> KmsKeys {
     let (fhe_sk, fhe_server_key) = generate_keys(config.clone());
-    let fhe_pk = PublicKey::new(&fhe_sk);
     let (sig_pk, sig_sk) = gen_sig_keys(rng);
     // TODO do we need this to be a mutex as well to allow for parallel queries
     KmsKeys {
         config,
-        fhe_pk,
         fhe_sk,
         sig_pk,
         sig_sk,
@@ -51,7 +49,6 @@ pub fn gen_kms_keys(config: Config, rng: &mut impl CryptoRngCore) -> KmsKeys {
 #[derive(Serialize, Deserialize)]
 pub struct KmsKeys {
     pub config: Config,
-    pub fhe_pk: FhePublicKey,
     pub fhe_sk: FhePrivateKey,
     pub fhe_server_key: ServerKey,
     pub sig_pk: PublicSigKey,
@@ -120,7 +117,7 @@ impl Kms for SoftwareKms {
         *current_rng = rng_clone;
         let res = to_vec(&enc_res)?;
         // TODO make logs everywhere. In particular make sure to log errors before throwing the error back up
-        tracing::info!("Completed renecyption of ciphertext {:?} with type {:?} to client with address {:?} under public key {:?}", ct, fhe_type, address, client_enc_key.0);
+        tracing::info!("Completed reencyption of ciphertext {:?} with type {:?} to client with address {:?} under public key {:?}", ct, fhe_type, address, client_enc_key.0);
         Ok(Some(res))
     }
 
@@ -147,7 +144,7 @@ impl Kms for SoftwareKms {
         if !verify_sig(&msg, signature, &signature.pk) {
             return false;
         }
-        address != &get_address(&signature.pk)
+        address == &get_address(&signature.pk)
     }
 
     fn sign<T>(&self, msg: &T) -> anyhow::Result<super::der_types::Signature>
@@ -224,7 +221,7 @@ pub fn decrypt_signcryption(
     Ok(Some((signcrypted_msg.plaintext, signcrypted_msg.fhe_type)))
 }
 
-pub(crate) fn get_address(key: &PublicSigKey) -> KeyAddress {
+pub fn get_address(key: &PublicSigKey) -> KeyAddress {
     // TODO should this be updated to use keccak to make the address notion compatible with ethereum
     let mut digest = hash_element(&key.pk.to_sec1_bytes()[..]);
     digest.truncate(BYTES_IN_ADDRESS);

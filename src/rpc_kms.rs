@@ -48,8 +48,8 @@ impl KmsEndpoint for SoftwareKms {
         .await?;
 
         let signature: Signature = handle_potential_err(
-            from_bytes(&payload.ciphertext),
-            format!("Invalid key in request {:?}", req_clone),
+            from_bytes(&req_clone.signature),
+            format!("Invalid signature in request {:?}", req_clone),
         )?;
         if !Kms::verify_sig(self, &payload_clone, &signature, &client_address) {
             return Err(tonic::Status::new(
@@ -87,6 +87,7 @@ impl KmsEndpoint for SoftwareKms {
         &self,
         request: Request<DecryptionRequest>,
     ) -> Result<Response<DecryptionResponse>, Status> {
+        tracing::info!("Received a new request!");
         let req = request.into_inner();
         let req_clone = req.clone();
         let payload = some_or_err(
@@ -112,8 +113,8 @@ impl KmsEndpoint for SoftwareKms {
         )?)
         .await?;
         let signature: Signature = handle_potential_err(
-            from_bytes(&payload.ciphertext),
-            format!("Invalid key in request {:?}", req_clone),
+            from_bytes(&req_clone.signature),
+            format!("Invalid signature in request {:?}", req_clone),
         )?;
         if !Kms::verify_sig(self, &payload_clone, &signature, &address) {
             return Err(tonic::Status::new(
@@ -201,7 +202,7 @@ fn handle_potential_err<T: fmt::Debug, E>(resp: Result<T, E>, error: String) -> 
 }
 
 async fn verify_proof(proof: Proof) -> Result<(), Status> {
-    let _root: AppHash = get_state_root(proof.height).await?;
+    // let _root: AppHash = get_state_root(proof.height).await?;
     // TODO: verify `proof` against `root`
     Ok(())
 }

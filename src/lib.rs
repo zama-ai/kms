@@ -9,11 +9,12 @@ pub mod core {
     pub mod der_types;
     pub mod kms_core;
     pub mod request;
-    mod signcryption;
+    pub mod signcryption;
 }
 pub mod file_handling;
 pub mod rpc_kms;
 pub mod rpc_types;
+
 
 #[track_caller]
 pub fn anyhow_error_and_log(msg: String) -> anyhow::Error {
