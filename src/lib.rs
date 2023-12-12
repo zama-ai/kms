@@ -12,8 +12,10 @@ pub mod core {
     pub mod signcryption;
 }
 pub mod file_handling;
-pub mod rpc_kms;
-pub mod rpc_types;
+pub mod rpc{
+    pub mod kms_rpc;
+    pub mod rpc_types;
+}
 
 
 #[track_caller]

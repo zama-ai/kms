@@ -8,7 +8,7 @@ use super::{
 use crate::{
     anyhow_error_and_warn_log,
     kms::FheType,
-    rpc_types::{Kms, SigncryptionPayload},
+    rpc::rpc_types::{Kms, SigncryptionPayload},
 };
 use k256::ecdsa::SigningKey;
 use rand::SeedableRng;
@@ -21,7 +21,7 @@ use std::{
 };
 use tfhe::{
     generate_keys, prelude::FheDecrypt, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint8,
-    PublicKey, ServerKey,
+     ServerKey,
 };
 
 pub type FhePublicKey = tfhe::PublicKey;
@@ -262,7 +262,7 @@ mod tests {
         },
         file_handling::{read_element, write_element},
         kms::FheType,
-        rpc_types::Kms,
+        rpc::rpc_types::Kms,
     };
     use ctor::ctor;
     use rand::SeedableRng;

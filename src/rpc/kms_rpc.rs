@@ -1,5 +1,4 @@
 use std::fmt::{self};
-
 use crate::{
     core::{
         der_types::{KeyAddress, PublicEncKey, Signature},
@@ -8,8 +7,7 @@ use crate::{
     kms::{
         kms_endpoint_server::KmsEndpoint, DecryptionRequest, DecryptionResponse,
         DecryptionResponsePayload, FheType, Proof, ReencryptionRequest, ReencryptionResponse,
-    },
-    rpc_types::{Kms, LightClientCommitResponse},
+    }, rpc::rpc_types::{Kms, LightClientCommitResponse},
 };
 use serde_asn1_der::from_bytes;
 use tendermint::AppHash;
