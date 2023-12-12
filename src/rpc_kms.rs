@@ -62,18 +62,19 @@ impl KmsEndpoint for SoftwareKms {
             from_bytes(&payload.enc_key),
             format!("Invalid key in request {:?}", req_clone),
         )?;
+        let req_digest = handle_potential_err(
+            Kms::digest(self, &req_clone),
+            format!("Could not hash request {:?}", req_clone),
+        )?;
         let server_add = get_address(&Kms::get_verf_key(self));
         let return_cipher = process_response(Kms::reencrypt(
             self,
             &payload.ciphertext,
             fhe_type,
+            req_digest.clone(),
             &client_enc_key,
             &server_add,
         ))?;
-        let req_digest = handle_potential_err(
-            Kms::digest(self, &req_clone),
-            format!("Could not hash request {:?}", req_clone),
-        )?;
         Ok(Response::new(ReencryptionResponse {
             signcrypted_ciphertext: return_cipher,
             fhe_type: fhe_type.into(),

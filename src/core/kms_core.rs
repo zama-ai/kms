@@ -1,13 +1,20 @@
 use super::{
-    der_types::{KeyAddress, PrivateSigKey, PublicEncKey, PublicSigKey, BYTES_IN_ADDRESS},
-    signcryption::{hash_element, sign, signcrypt, verify_sig},
+    der_types::{
+        Cipher, KeyAddress, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair,
+        BYTES_IN_ADDRESS,
+    },
+    signcryption::{hash_element, sign, signcrypt, validate_and_decrypt, verify_sig},
 };
-use crate::{anyhow_error_and_warn_log, kms::FheType, rpc_types::Kms};
+use crate::{
+    anyhow_error_and_warn_log,
+    kms::FheType,
+    rpc_types::{Kms, SigncryptionPayload},
+};
 use k256::ecdsa::SigningKey;
 use rand::SeedableRng;
 use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
 use serde::{Deserialize, Serialize};
-use serde_asn1_der::to_vec;
+use serde_asn1_der::{from_bytes, to_vec};
 use std::{
     fmt,
     sync::{Arc, Mutex},
@@ -86,20 +93,30 @@ impl Kms for SoftwareKms {
         })
     }
 
-    // TODO add link so this can be linked to digest
     fn reencrypt(
         &self,
         ct: &[u8],
         fhe_type: FheType,
+        digest: Vec<u8>,
         client_enc_key: &PublicEncKey,
         address: &KeyAddress,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        let plaintext = Kms::decrypt(self, ct, fhe_type)?;
-        let msg = plaintext_to_vec(plaintext, fhe_type);
+        let plaintext: u32 = Kms::decrypt(self, ct, fhe_type)?;
+        let signcryption_msg = SigncryptionPayload {
+            fhe_type,
+            plaintext,
+            digest,
+        };
         // TODO what is the right way of doing this without panic
         let mut current_rng = self.rng.lock().unwrap();
         let mut rng_clone = current_rng.clone();
-        let enc_res = signcrypt(&mut rng_clone, &msg, client_enc_key, address, &self.sig_key)?;
+        let enc_res = signcrypt(
+            &mut rng_clone,
+            &serde_asn1_der::to_vec(&signcryption_msg)?,
+            client_enc_key,
+            address,
+            &self.sig_key,
+        )?;
         *current_rng = rng_clone;
         let res = to_vec(&enc_res)?;
         // TODO make logs everywhere. In particular make sure to log errors before throwing the error back up
@@ -183,6 +200,30 @@ impl SoftwareKms {
     }
 }
 
+/// TODO should be moved to client
+pub fn decrypt_signcryption(
+    cipher: Vec<u8>,
+    link: Vec<u8>,
+    client_keys: &SigncryptionPair,
+    server_verf_key: &PublicSigKey,
+) -> anyhow::Result<Option<(u32, FheType)>> {
+    let cipher: Cipher = from_bytes(&cipher)?;
+    let decrypted_signcryption = match validate_and_decrypt(&cipher, client_keys, server_verf_key)?
+    {
+        Some(decrypted_signcryption) => decrypted_signcryption,
+        None => {
+            tracing::warn!("Signcryption validation failed");
+            return Ok(None);
+        }
+    };
+    let signcrypted_msg: SigncryptionPayload = serde_asn1_der::from_bytes(&decrypted_signcryption)?;
+    if link != signcrypted_msg.digest {
+        tracing::warn!("Link validation for signcryption failed");
+        return Ok(None);
+    }
+    Ok(Some((signcrypted_msg.plaintext, signcrypted_msg.fhe_type)))
+}
+
 pub(crate) fn get_address(key: &PublicSigKey) -> KeyAddress {
     // TODO should this be updated to use keccak to make the address notion compatible with ethereum
     let mut digest = hash_element(&key.pk.to_sec1_bytes()[..]);
@@ -217,24 +258,20 @@ fn vec_to_plaintext(msg: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
 
 #[cfg(test)]
 mod tests {
-    use ctor::ctor;
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
-    use serde_asn1_der::from_bytes;
-    use std::path::Path;
-    use tfhe::{prelude::FheEncrypt, ConfigBuilder, FheUint8};
-
     use crate::{
         core::{
-            der_types::Cipher,
-            kms_core::{gen_sig_keys, get_address, vec_to_plaintext, SoftwareKms},
+            kms_core::{decrypt_signcryption, gen_sig_keys, get_address, SoftwareKms},
             request::ephemeral_key_generation,
-            signcryption::validate_and_decrypt,
         },
         file_handling::{read_element, write_element},
         kms::FheType,
         rpc_types::Kms,
     };
+    use ctor::ctor;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha20Rng;
+    use std::path::Path;
+    use tfhe::{prelude::FheEncrypt, ConfigBuilder, FheUint8};
 
     use super::{gen_kms_keys, KmsKeys};
 
@@ -273,20 +310,17 @@ mod tests {
             .reencrypt(
                 &serialized_ct,
                 FheType::Euint8,
+                Vec::new(),
                 &client_keys.pk.enc_key,
                 &get_address(&client_keys.pk.verification_key),
             )
             .unwrap()
             .unwrap();
-
-        let cipher: Cipher = from_bytes(&raw_cipher).unwrap();
-        let decrypted_msg = vec_to_plaintext(
-            &validate_and_decrypt(&cipher, &client_keys, &kms_keys.sig_pk)
+        let (decrypted_msg, fhe_type) =
+            decrypt_signcryption(raw_cipher, Vec::new(), &client_keys, &kms_keys.sig_pk)
                 .unwrap()
-                .unwrap(),
-            FheType::Euint8,
-        )
-        .unwrap();
+                .unwrap();
+        assert_eq!(fhe_type, FheType::Euint8);
         assert_eq!(decrypted_msg as u8, msg);
     }
 
@@ -304,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn sunshine_validate_reencrypt() {
+    fn sunshine_reencrypt() {
         let msg = 42_u8;
         let mut rng = ChaCha20Rng::seed_from_u64(1);
         let kms_keys: KmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();
@@ -312,6 +346,7 @@ mod tests {
         let ct = FheUint8::encrypt(msg, &kms_keys.fhe_sk);
         let mut serialized_ct = Vec::new();
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
+        let link = vec![42_u8, 42, 42];
 
         let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
         let client_keys = ephemeral_key_generation(&mut rng, &client_sig_key);
@@ -319,19 +354,17 @@ mod tests {
             .reencrypt(
                 &serialized_ct,
                 FheType::Euint8,
+                link.clone(),
                 &client_keys.pk.enc_key,
                 &get_address(&client_keys.pk.verification_key),
             )
             .unwrap()
             .unwrap();
-        let cipher: Cipher = from_bytes(&raw_cipher).unwrap();
-        let decrypted_msg = vec_to_plaintext(
-            &validate_and_decrypt(&cipher, &client_keys, &kms_keys.sig_pk)
+        let (decrypted_msg, fhe_type) =
+            decrypt_signcryption(raw_cipher, link, &client_keys, &kms_keys.sig_pk)
                 .unwrap()
-                .unwrap(),
-            FheType::Euint8,
-        )
-        .unwrap();
+                .unwrap();
+        assert_eq!(fhe_type, FheType::Euint8);
         assert_eq!(decrypted_msg as u8, msg);
     }
 }

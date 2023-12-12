@@ -157,7 +157,9 @@ pub fn validate_and_decrypt(
         Ok((msg, sig)) => (msg, sig),
         Err(_) => return Ok(None),
     };
+
     if !check_signature(msg.clone(), &sig, server_verf_key, &client_keys.pk) {
+        tracing::warn!("The signature did not validate");
         return Ok(None);
     }
     Ok(Some(msg))
