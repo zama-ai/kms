@@ -1,4 +1,3 @@
-use std::fmt::{self};
 use crate::{
     core::{
         der_types::{KeyAddress, PublicEncKey, Signature},
@@ -6,10 +5,12 @@ use crate::{
     },
     kms::{
         kms_endpoint_server::KmsEndpoint, DecryptionRequest, DecryptionResponse,
-        DecryptionResponsePayload, FheType, Proof, ReencryptionRequest, ReencryptionResponse,
-    }, rpc::rpc_types::{Kms, LightClientCommitResponse},
+        DecryptionResponsePayload, Proof, ReencryptionRequest, ReencryptionResponse,
+    },
+    rpc::rpc_types::{Kms, LightClientCommitResponse},
 };
-use serde_asn1_der::from_bytes;
+use serde_asn1_der::{from_bytes, to_vec};
+use std::fmt::{self};
 use tendermint::AppHash;
 use tonic::{Code, Request, Response, Status};
 
@@ -60,19 +61,23 @@ impl KmsEndpoint for SoftwareKms {
             from_bytes(&payload.enc_key),
             format!("Invalid key in request {:?}", req_clone),
         )?;
-        let req_digest = handle_potential_err(
-            Kms::digest(self, &req_clone),
-            format!("Could not hash request {:?}", req_clone),
+        let payload_serialized = handle_potential_err(
+            to_vec(&payload_clone),
+            format!("Could not serialize payload {:?}", req_clone),
         )?;
-        let server_add = get_address(&Kms::get_verf_key(self));
+        let req_digest = handle_potential_err(
+            SoftwareKms::digest(&payload_serialized),
+            format!("Could not hash payload {:?}", req_clone),
+        )?;
         let return_cipher = process_response(Kms::reencrypt(
             self,
             &payload.ciphertext,
             fhe_type,
             req_digest.clone(),
             &client_enc_key,
-            &server_add,
+            &client_address,
         ))?;
+        let server_add = get_address(&Kms::get_verf_key(self));
         Ok(Response::new(ReencryptionResponse {
             signcrypted_ciphertext: return_cipher,
             fhe_type: fhe_type.into(),
@@ -122,12 +127,16 @@ impl KmsEndpoint for SoftwareKms {
         }
 
         let server_add = get_address(&Kms::get_verf_key(self));
+        let payload_serialized = handle_potential_err(
+            to_vec(&payload_clone),
+            format!("Could not serialize payload {:?}", req_clone),
+        )?;
         let req_digest = handle_potential_err(
-            Kms::digest(self, &req_clone),
-            format!("Could not hash request {:?}", req_clone),
+            SoftwareKms::digest(&payload_serialized),
+            format!("Could not hash payload {:?}", req_clone),
         )?;
         let plaintext = handle_potential_err(
-            Kms::decrypt(self, &payload.ciphertext, FheType::Euint8),
+            Kms::decrypt(self, &payload.ciphertext, payload_clone.fhe_type()),
             format!("Decryption failed for request {:?}", req),
         )?;
         let payload_resp = DecryptionResponsePayload {
@@ -173,7 +182,7 @@ fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Result<T,
     }
 }
 
-fn some_or_err<T: fmt::Debug>(input: Option<T>, error: String) -> Result<T, Status> {
+pub fn some_or_err<T: fmt::Debug>(input: Option<T>, error: String) -> Result<T, Status> {
     match input {
         Some(input) => Ok(input),
         None => {
@@ -199,7 +208,7 @@ fn handle_potential_err<T: fmt::Debug, E>(resp: Result<T, E>, error: String) -> 
     }
 }
 
-async fn verify_proof(proof: Proof) -> Result<(), Status> {
+async fn verify_proof(_proof: Proof) -> Result<(), Status> {
     // let _root: AppHash = get_state_root(proof.height).await?;
     // TODO: verify `proof` against `root`
     Ok(())

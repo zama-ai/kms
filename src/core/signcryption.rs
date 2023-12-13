@@ -29,7 +29,7 @@ use sha3::{Digest, Sha3_256};
 ///
 const DIGEST_BYTES: usize = 256 / 8; // SHA3-256 digest
 pub(crate) const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
-pub(crate) const RND_SIZE: usize = 256 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
+pub const RND_SIZE: usize = 256 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
 
 /// Generate ephemeral keys used for encryption
 /// Concretely it involves generating ECDH keys for curve 25519 to be used in ECIES for hybrid encryption using Salsa
@@ -97,6 +97,7 @@ where
 {
     // Adds the hash digest of the receivers public encryption key to the message to sign
     // Sign msg || client_sig_address || H(client_enc_key)
+    //TODO what we sign should be the same we decrypt
     let to_sign = [msg.as_ref(), client_sig_add, &hash_element(&client_pk)[..]].concat();
     let sig: k256::ecdsa::Signature = server_sig_key.sk.sign(to_sign.as_ref());
     // Normalize s value to ensure a consistant signature and protect against malleability

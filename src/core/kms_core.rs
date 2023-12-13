@@ -21,7 +21,7 @@ use std::{
 };
 use tfhe::{
     generate_keys, prelude::FheDecrypt, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint8,
-     ServerKey,
+    ServerKey,
 };
 
 pub type FhePublicKey = tfhe::PublicKey;
@@ -163,22 +163,6 @@ impl Kms for SoftwareKms {
         sign(&to_sign, &self.sig_key)
     }
 
-    fn digest<T>(&self, msg: &T) -> anyhow::Result<Vec<u8>>
-    where
-        T: fmt::Debug + Serialize,
-    {
-        let to_hash = match to_vec(&msg) {
-            Ok(to_sign) => to_sign,
-            Err(_) => {
-                return Err(anyhow_error_and_warn_log(format!(
-                    "Could not encode message for signing {:?}",
-                    msg
-                )))
-            }
-        };
-        Ok(hash_element(&to_hash))
-    }
-
     fn get_verf_key(&self) -> PublicSigKey {
         PublicSigKey {
             pk: SigningKey::verifying_key(&self.sig_key.sk).to_owned(),
@@ -194,6 +178,22 @@ impl SoftwareKms {
             fhe_dec_key,
             sig_key,
         }
+    }
+
+    pub fn digest<T>(msg: &T) -> anyhow::Result<Vec<u8>>
+    where
+        T: fmt::Debug + Serialize,
+    {
+        let to_hash = match to_vec(&msg) {
+            Ok(to_sign) => to_sign,
+            Err(_) => {
+                return Err(anyhow_error_and_warn_log(format!(
+                    "Could not encode message for signing {:?}",
+                    msg
+                )))
+            }
+        };
+        Ok(hash_element(&to_hash))
     }
 }
 
@@ -230,6 +230,7 @@ pub fn get_address(key: &PublicSigKey) -> KeyAddress {
     res
 }
 
+// TODO should be replaced with calls to serialization
 pub(crate) fn plaintext_to_vec(plaintext: u32, fhe_type: FheType) -> Vec<u8> {
     match fhe_type {
         FheType::Bool => {
@@ -244,7 +245,7 @@ pub(crate) fn plaintext_to_vec(plaintext: u32, fhe_type: FheType) -> Vec<u8> {
 }
 
 #[allow(dead_code)]
-fn vec_to_plaintext(msg: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
+pub fn vec_to_plaintext(msg: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
     Ok(match fhe_type {
         FheType::Bool => msg[0] as u32,
         FheType::Euint8 => msg[0] as u32,

@@ -1,6 +1,5 @@
-use std::panic::Location;
-
 use anyhow::anyhow;
+use std::panic::Location;
 
 pub mod kms {
     tonic::include_proto!("kms"); // The string specified here must match the proto package name
@@ -12,11 +11,10 @@ pub mod core {
     pub mod signcryption;
 }
 pub mod file_handling;
-pub mod rpc{
+pub mod rpc {
     pub mod kms_rpc;
     pub mod rpc_types;
 }
-
 
 #[track_caller]
 pub fn anyhow_error_and_log(msg: String) -> anyhow::Error {

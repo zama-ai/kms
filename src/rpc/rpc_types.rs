@@ -30,16 +30,15 @@ pub trait Kms {
         enc_key: &PublicEncKey,
         address: &KeyAddress,
     ) -> anyhow::Result<Option<Vec<u8>>>;
-    fn digest<T: fmt::Debug + Serialize>(&self, msg: &T) -> anyhow::Result<Vec<u8>>;
     fn get_verf_key(&self) -> PublicSigKey;
 }
 
 /// Representation of the data stored in a signcryption, needed to facilitate FHE decryption and request linking
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
 pub struct SigncryptionPayload {
-    pub(crate) plaintext: u32,
-    pub(crate) fhe_type: FheType,
-    pub(crate) digest: Vec<u8>,
+    pub plaintext: u32,
+    pub fhe_type: FheType,
+    pub digest: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -152,8 +152,8 @@ pub struct Cipher {
 #[allow(dead_code)]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SigncryptionPrivKey {
-    pub(crate) signing_key: PrivateSigKey,
-    pub(crate) decryption_key: PrivateEncKey,
+    pub signing_key: PrivateSigKey,
+    pub decryption_key: PrivateEncKey,
 }
 
 /// Structure for public keys for signcryption that can get DER encoded as follows:
@@ -161,15 +161,15 @@ pub struct SigncryptionPrivKey {
 ///     enc_key, (Montgomery point following libsodium serialization as OCTET STRING)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct SigncryptionPubKey {
-    pub(crate) verification_key: PublicSigKey,
-    pub(crate) enc_key: PublicEncKey,
+    pub verification_key: PublicSigKey,
+    pub enc_key: PublicEncKey,
 }
 
 /// Structure for private keys for signcryption
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SigncryptionPair {
-    pub(crate) sk: SigncryptionPrivKey,
-    pub(crate) pk: SigncryptionPubKey,
+    pub sk: SigncryptionPrivKey,
+    pub pk: SigncryptionPubKey,
 }
 
 /// Wrapper struct for a digital signature
