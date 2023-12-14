@@ -106,7 +106,7 @@ where
     // Generate the server part of the key agreement
     // Oberve that we don't need to keep the secret key as we don't need the client to send the server messages
     let (server_enc_pk, server_enc_sk) = encryption_key_generation(rng);
-    // Encrypt msg || sig || H(server_verification_key) || H(server_enc_key)
+    // Encrypt msg || sig || address(server_verification_key) || H(server_enc_key)
     // OBSERVE: serialization is simply r concatenated with s. That is, NOT an Ethereum compatible signature since we preclude the v value
     // The verification key is serialized based on the SEC1 standard
     let to_encrypt = [
@@ -167,13 +167,13 @@ pub fn validate_and_decrypt(
     Ok(Some(msg))
 }
 
-/// Helper method for parsing a signcrypted message consisting of the _true_ msg || sig || H(server_verification_key) || H(server_enc_key)
+/// Helper method for parsing a signcrypted message consisting of the _true_ msg || sig || address(server_verification_key) || H(server_enc_key)
 fn parse_msg(
     decrypted_plaintext: Vec<u8>,
     server_enc_key: &PublicEncKey,
     server_verf_key: &PublicSigKey,
 ) -> anyhow::Result<(Vec<u8>, Signature)> {
-    // The plaintext contains msg || sig || H(server_verification_key) || H(server_enc_key)
+    // The plaintext contains msg || sig || address(server_verification_key) || H(server_enc_key)
     let msg_len = decrypted_plaintext.len() - BYTES_IN_ADDRESS - DIGEST_BYTES - SIG_SIZE;
     let msg = &decrypted_plaintext[..msg_len];
     let sig_bytes = &decrypted_plaintext[msg_len..(msg_len + SIG_SIZE)];
@@ -213,7 +213,7 @@ fn check_signature(
     server_verf_key: &PublicSigKey,
     client_pk: &SigncryptionPubKey,
 ) -> bool {
-    // What should be signed is msg || H(client_verification_key) || H(client_enc_key)
+    // What should be signed is msg || address(client_verification_key) || H(client_enc_key)
     let msg_signed = [
         msg,
         get_address(&client_pk.verification_key).to_vec(),

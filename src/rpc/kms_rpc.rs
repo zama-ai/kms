@@ -183,29 +183,17 @@ fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Result<T,
 }
 
 pub fn some_or_err<T: fmt::Debug>(input: Option<T>, error: String) -> Result<T, Status> {
-    match input {
-        Some(input) => Ok(input),
-        None => {
-            tracing::warn!(error);
-            Err(tonic::Status::new(
-                tonic::Code::Aborted,
-                "Invalid request".to_string(),
-            ))
-        }
-    }
+    input.ok_or_else(|| {
+        tracing::warn!(error);
+        tonic::Status::new(tonic::Code::Aborted, "Invalid request".to_string())
+    })
 }
 
 fn handle_potential_err<T: fmt::Debug, E>(resp: Result<T, E>, error: String) -> Result<T, Status> {
-    match resp {
-        Ok(resp) => Ok(resp),
-        Err(_) => {
-            tracing::warn!(error);
-            Err(tonic::Status::new(
-                tonic::Code::Aborted,
-                "Invalid request".to_string(),
-            ))
-        }
-    }
+    resp.map_err(|_| {
+        tracing::warn!(error);
+        tonic::Status::new(tonic::Code::Aborted, "Invalid request".to_string())
+    })
 }
 
 async fn verify_proof(_proof: Proof) -> Result<(), Status> {
