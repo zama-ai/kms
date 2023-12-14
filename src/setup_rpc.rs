@@ -1,3 +1,10 @@
+use kms::{
+    core::kms_core::{KmsKeys, SoftwareKms},
+    file_handling::read_element,
+    kms::kms_endpoint_server::KmsEndpointServer,
+};
+use tonic::transport::Server;
+
 #[allow(dead_code)]
 pub const DEFAULT_KMS_KEY_PATH: &str = "temp/kms-keys.bin";
 #[allow(dead_code)]
@@ -9,9 +16,21 @@ pub const DEFAULT_CLIENT_KEY_PATH: &str = "temp/priv-client-key.bin";
 #[allow(dead_code)]
 pub const DEFAULT_CIPHER_PATH: &str = "temp/cipher.bin";
 
+pub async fn server_handle(url: String, key_path: String) {
+    let socket: std::net::SocketAddr = url.parse().unwrap();
+    let keys: KmsKeys = read_element(key_path.to_string()).unwrap();
+    let kms = SoftwareKms::new(keys.config, keys.fhe_sk, keys.sig_sk);
+    tracing::info!("Starting KMS server ...");
+    Server::builder()
+        .add_service(KmsEndpointServer::new(kms))
+        .serve(socket)
+        .await
+        .unwrap();
+}
+
 #[cfg(test)]
-mod tests {
-    use crate::key_setup::{
+pub(crate) mod tests {
+    use crate::setup_rpc::{
         DEFAULT_CIPHER_PATH, DEFAULT_CLIENT_KEY_PATH, DEFAULT_FHE_KEY_PATH, DEFAULT_KMS_KEY_PATH,
         DEFAULT_SERVER_KEY_PATH,
     };
@@ -25,6 +44,9 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use std::path::Path;
     use tfhe::{prelude::FheEncrypt, ConfigBuilder, FheUint8, PublicKey};
+
+    pub const DEFAULT_MSG: u8 = 42;
+    pub const DEFAULT_FHE_TYPE: FheType = FheType::Euint8;
 
     #[ctor]
     #[test]
@@ -66,7 +88,7 @@ mod tests {
                 ensure_kms_keys_exist();
             }
             let fhe_pk: FhePublicKey = read_element(DEFAULT_FHE_KEY_PATH.to_string()).unwrap();
-            let ct = FheUint8::encrypt(42_u8, &fhe_pk);
+            let ct = FheUint8::encrypt(DEFAULT_MSG, &fhe_pk);
             let mut serialized_ct = Vec::new();
             bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
             assert!(write_element(

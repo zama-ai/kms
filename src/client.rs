@@ -1,3 +1,4 @@
+use crate::setup_rpc::{DEFAULT_CIPHER_PATH, DEFAULT_CLIENT_KEY_PATH, DEFAULT_SERVER_KEY_PATH};
 use kms::{
     core::{
         der_types::{Cipher, PublicEncKey, SigncryptionPair},
@@ -32,10 +33,7 @@ use rand::{RngCore, SeedableRng};
 use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
 use serde_asn1_der::{from_bytes, to_vec};
 
-use crate::key_setup::{DEFAULT_CIPHER_PATH, DEFAULT_CLIENT_KEY_PATH, DEFAULT_SERVER_KEY_PATH};
-
-mod key_setup;
-
+mod setup_rpc;
 /// This client serves test purposes.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -261,5 +259,86 @@ impl Client {
             }
         };
         Ok(Some((plaintext, resp.fhe_type())))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use kms::{
+        file_handling::read_element,
+        kms::{kms_endpoint_client::KmsEndpointClient, FheType},
+    };
+    use tokio::task::JoinHandle;
+    use tonic::transport::Channel;
+
+    use crate::{
+        setup_rpc::{
+            server_handle,
+            tests::{DEFAULT_FHE_TYPE, DEFAULT_MSG},
+            DEFAULT_CIPHER_PATH, DEFAULT_KMS_KEY_PATH,
+        },
+        Client,
+    };
+
+    static TEST_URL: &str = "0.0.0.0:50051";
+    static TEST_URL_PROT: &str = "http://0.0.0.0:50051";
+
+    async fn setup() -> (JoinHandle<()>, KmsEndpointClient<Channel>) {
+        let server_handle = tokio::spawn(async {
+            server_handle(TEST_URL.to_string(), DEFAULT_KMS_KEY_PATH.to_string()).await;
+        });
+        // Wait for the server to start
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let channel = Channel::from_static(TEST_URL_PROT).connect().await.unwrap();
+        let client = KmsEndpointClient::new(channel);
+        (server_handle, client)
+    }
+
+    #[tokio::test]
+    async fn test_decryption() {
+        let (kms_server, mut kms_client) = setup().await;
+        let (ct, fhe_type): (Vec<u8>, FheType) =
+            read_element(DEFAULT_CIPHER_PATH.to_string()).unwrap();
+        let mut internal_client = Client::default();
+
+        let req = internal_client
+            .decryption_request(ct.clone(), fhe_type)
+            .unwrap();
+        let response = kms_client
+            .decrypt(tonic::Request::new(req.clone()))
+            .await
+            .unwrap();
+
+        let (plaintext, return_type) = internal_client
+            .validate_decryption(Some(req), response.into_inner())
+            .unwrap()
+            .unwrap();
+        assert_eq!(DEFAULT_FHE_TYPE, return_type);
+        assert_eq!(DEFAULT_MSG as u32, plaintext);
+
+        kms_server.abort();
+    }
+
+    #[tokio::test]
+    async fn test_reencryption() {
+        let (kms_server, mut kms_client) = setup().await;
+        let (ct, fhe_type): (Vec<u8>, FheType) =
+            read_element(DEFAULT_CIPHER_PATH.to_string()).unwrap();
+        let mut internal_client = Client::default();
+
+        let (req, enc_pk, enc_sk) = internal_client.reencyption_request(ct, fhe_type).unwrap();
+        let response = kms_client
+            .reencrypt(tonic::Request::new(req.clone()))
+            .await
+            .unwrap();
+
+        let (plaintext, return_type) = internal_client
+            .validate_reencryption(Some(req), response.into_inner(), &enc_pk, &enc_sk)
+            .unwrap()
+            .unwrap();
+        assert_eq!(DEFAULT_FHE_TYPE, return_type);
+        assert_eq!(DEFAULT_MSG as u32, plaintext);
+
+        kms_server.abort();
     }
 }
