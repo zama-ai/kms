@@ -1,16 +1,16 @@
 use super::prss::PRSSState;
+use crate::algebra::residue_poly::ResiduePoly;
+use crate::algebra::residue_poly::ResiduePoly128;
+use crate::algebra::structure_traits::Zero;
 use crate::execution::constants::BD1;
 use crate::lwe::{
     gen_single_party_share, Ciphertext128, Ciphertext128Block, Ciphertext64, Ciphertext64Block,
     CiphertextParameters, SecretKeyShare,
 };
-use crate::residue_poly::ResiduePoly;
-use crate::value::Value;
 use crate::{
     execution::constants::{LOG_BD, POW},
     lwe::BootstrappingKey,
 };
-use crate::{Zero, Z128};
 use rand::RngCore;
 use std::num::Wrapping;
 use tfhe::core_crypto::prelude::*;
@@ -23,14 +23,13 @@ use tfhe::shortint::prelude::PolynomialSize;
 fn partial_decrypt(
     sk_share: &SecretKeyShare,
     ct: &Ciphertext128Block,
-) -> anyhow::Result<ResiduePoly<Z128>> {
-    // NOTE eventually this secret key share will be a vector of ResiduePoly<Z128> elements
+) -> anyhow::Result<ResiduePoly128> {
+    // NOTE eventually this secret key share will be a vector of ResiduePoly128 elements
     let (mask, body) = ct.get_mask_and_body();
-    let a_time_s =
-        (0..sk_share.input_key_share.len()).fold(ResiduePoly::<Z128>::ZERO, |acc, column| {
-            acc + sk_share.input_key_share[column]
-                * ResiduePoly::from_scalar(Wrapping(mask.as_ref()[column]))
-        });
+    let a_time_s = (0..sk_share.input_key_share.len()).fold(ResiduePoly128::ZERO, |acc, column| {
+        acc + sk_share.input_key_share[column]
+            * ResiduePoly::from_scalar(Wrapping(mask.as_ref()[column]))
+    });
     // b-<a, s>
     let res = ResiduePoly::from_scalar(Wrapping(*body.data)) - a_time_s;
     Ok(res)
@@ -42,7 +41,7 @@ pub fn ddec_prep<R: RngCore>(
     threshold: usize,
     sk_share: &SecretKeyShare,
     ct: &Ciphertext128Block,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<ResiduePoly128> {
     let partial_dec = partial_decrypt(sk_share, ct)?;
 
     // sample shared bits
@@ -54,23 +53,23 @@ pub fn ddec_prep<R: RngCore>(
         })
         .collect::<anyhow::Result<Vec<_>, _>>()?;
 
-    let composed_bits = (0..b).fold(ResiduePoly::<Z128>::ZERO, |acc, index| {
+    let composed_bits = (0..b).fold(ResiduePoly128::ZERO, |acc, index| {
         acc + (shared_bits[index] + shared_bits[b + index]) * (Wrapping(1_u128) << index)
     });
 
-    Ok(Value::Poly128(partial_dec + composed_bits))
+    Ok(partial_dec + composed_bits)
 }
 
 pub fn prss_prep(
     party_id: usize,
-    prss_state: &mut PRSSState,
+    prss_state: &mut PRSSState<ResiduePoly128>,
     sk_share: &SecretKeyShare,
     ct: &Ciphertext128Block,
-) -> anyhow::Result<Value> {
+) -> anyhow::Result<ResiduePoly128> {
     let partial_dec = partial_decrypt(sk_share, ct)?;
     let composed_bits = prss_state.mask_next(party_id, BD1)?;
 
-    Ok(Value::Poly128(partial_dec + composed_bits))
+    Ok(partial_dec + composed_bits)
 }
 
 // TODO is this the general correct formula? should be:
@@ -87,7 +86,6 @@ where
 /// Converts a ciphertext over a 64 bit domain to a ciphertext over a 128 bit domain (which is needed for secure threshold decryption).
 /// Convertion is done using a precreated convertion key [ck].
 /// Observe that the decryption key will be different after convertion, since [ck] is actually a key-switching key.
-#[allow(dead_code)]
 pub fn to_large_ciphertext(ck: &BootstrappingKey, small_ct: &Ciphertext64) -> Ciphertext128 {
     let mut res = Vec::with_capacity(small_ct.len());
     for current_block in small_ct {
@@ -241,24 +239,25 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::circuit::{Circuit, Operation, Operator};
-    use crate::execution::distributed::DistributedTestRuntime;
-    use crate::execution::party::Identity;
-
+    use crate::computation::SessionId;
+    use crate::execution::endpoints::decryption::threshold_decrypt;
     use crate::execution::random::get_rng;
-    use crate::execution::session::DecryptionMode;
+    use crate::execution::runtime::party::{Identity, Role};
+    use crate::execution::runtime::session::DecryptionMode;
+    use crate::execution::runtime::test_runtime::{
+        generate_fixed_identities, DistributedTestRuntime,
+    };
+    use crate::execution::sharing::shamir::ShamirSharing;
+    use crate::execution::sharing::share::Share;
     use crate::execution::small_execution::prss::PRSSSetup;
     use crate::file_handling::{read_as_json, read_element};
     use crate::lwe::{
         keygen_all_party_shares, keygen_single_party_share, value_to_message, KeyPair, KeySet,
         ThresholdLWEParameters,
     };
-
     use crate::tests::test_data_setup::tests::{
         DEFAULT_KEY_PATH, DEFAULT_PARAM_PATH, TEST_KEY_PATH, TEST_PARAM_PATH,
     };
-    use crate::value::{IndexedValue, RingType};
-    use crate::{computation::SessionId, value::err_reconstruct};
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
@@ -270,18 +269,14 @@ mod tests {
             keygen_all_party_shares(&keyset, &mut AesRng::seed_from_u64(0), parties, 1).unwrap();
         let mut first_bit_shares = Vec::with_capacity(parties);
         (0..parties).for_each(|i| {
-            first_bit_shares.push(IndexedValue {
-                party_id: i + 1,
-                value: Value::Poly128(*shares[i].input_key_share.get(0).unwrap()),
-            });
+            first_bit_shares.push(Share::new(
+                Role::indexed_by_zero(i),
+                *shares[i].input_key_share.get(0).unwrap(),
+            ));
         });
-
-        let rec: Value =
-            err_reconstruct(&first_bit_shares, 1, 0, &RingType::GalExtRing128).unwrap();
-        let inner_rec = match rec {
-            Value::Poly128(v) => Z128::try_from(v).unwrap(),
-            _ => unimplemented!(),
-        };
+        let first_bit_sharing = ShamirSharing::create(first_bit_shares);
+        let rec = first_bit_sharing.err_reconstruct(1, 0).unwrap();
+        let inner_rec = rec.to_scalar().unwrap();
         assert_eq!(
             keyset.sk.lwe_secret_key_128.into_container()[0],
             inner_rec.0
@@ -305,9 +300,9 @@ mod tests {
             .map(|party_id| {
                 // TODO this only works with static seed
                 let mut rng = AesRng::seed_from_u64(1);
-                IndexedValue {
-                    party_id,
-                    value: ddec_prep(
+                Share::new(
+                    Role::indexed_by_one(party_id),
+                    ddec_prep(
                         &mut rng,
                         party_id,
                         threshold,
@@ -315,10 +310,15 @@ mod tests {
                         &large_ct,
                     )
                     .unwrap(),
-                }
+                )
             })
             .collect();
-        let rec = err_reconstruct(&preps, threshold, 0, &RingType::GalExtRing128).unwrap();
+        let sharing = ShamirSharing::create(preps);
+        let rec = sharing
+            .err_reconstruct(threshold, 0)
+            .unwrap()
+            .to_scalar()
+            .unwrap();
         let recovered_message =
             value_to_message(rec, params.input_cipher_parameters.message_modulus_log.0);
         assert_eq!(recovered_message.unwrap().0, message as u128);
@@ -345,13 +345,18 @@ mod tests {
                 let mut state = prss_setup.new_prss_session_state(sid);
                 let sks =
                     keygen_single_party_share(&keyset, &mut rng, party_id, threshold).unwrap();
-                IndexedValue {
-                    party_id,
-                    value: prss_prep(party_id, &mut state, &sks, &large_ct).unwrap(),
-                }
+                Share::new(
+                    Role::indexed_by_one(party_id),
+                    prss_prep(party_id, &mut state, &sks, &large_ct).unwrap(),
+                )
             })
             .collect();
-        let rec = err_reconstruct(&preps, threshold, 0, &RingType::GalExtRing128).unwrap();
+        let sharing = ShamirSharing::create(preps);
+        let rec = sharing
+            .err_reconstruct(threshold, 0)
+            .unwrap()
+            .to_scalar()
+            .unwrap();
         let recovered_message =
             value_to_message(rec, params.input_cipher_parameters.message_modulus_log.0);
         assert_eq!(recovered_message.unwrap().0, message as u128);
@@ -363,43 +368,8 @@ mod tests {
         let num_parties = 10;
         let msg: u8 = 3;
         let keyset: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
-        let circuit = Circuit {
-            operations: vec![
-                Operation {
-                    operator: Operator::DistPrep,
-                    operands: vec![String::from("s0"), String::from("678")], // Use a random value for seed (678) in the distprep taking the message as input
-                },
-                Operation {
-                    operator: Operator::Open,
-                    operands: vec![
-                        String::from("3"),     // Ignored
-                        String::from("false"), // Ignored
-                        String::from("c0"),    // Register we store in
-                        String::from("s0"),    // Register we read
-                    ],
-                },
-                Operation {
-                    operator: Operator::ShrCIRound, // Rounded right shift
-                    // Stores the result in c1, reads from c0, and shifts it 123=127-2*2 to restore the actual message in the 4 bit-plaintext supported by a single ciphertext
-                    operands: vec![String::from("c1"), String::from("c0"), String::from("123")],
-                },
-                Operation {
-                    operator: Operator::PrintRegPlain, // Output the value
-                    operands: vec![
-                        String::from("c1"), // From index c1
-                        keyset
-                            .pk
-                            .threshold_lwe_parameters
-                            .input_cipher_parameters
-                            .usable_message_modulus_log
-                            .0
-                            .to_string(), // Bits in message
-                    ],
-                },
-            ],
-            input_wires: vec![],
-        };
-        let identities = DistributedTestRuntime::generate_fixed_identities(num_parties);
+
+        let identities = generate_fixed_identities(num_parties);
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
@@ -408,25 +378,18 @@ mod tests {
         let ct = keyset.pk.encrypt_w_bitlimit(&mut rng, msg, 2);
         let large_ct = to_large_ciphertext(&keyset.ck, &ct);
 
-        let mut runtime = DistributedTestRuntime::new(identities, threshold as u8);
+        let mut runtime =
+            DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold as u8);
 
         runtime.setup_keys(key_shares);
 
-        // test DDec2 with circuit evaluation
-        let results_circ = runtime
-            .evaluate_circuit(&circuit, Some(large_ct.clone()))
-            .unwrap();
-        let out_circ = &results_circ[&Identity("localhost:5000".to_string())];
-
         // test DDec2 with decryption endpoint
-        let results_dec = runtime
-            .threshold_decrypt(large_ct, DecryptionMode::Proto2Decrypt)
-            .unwrap();
+        let results_dec =
+            threshold_decrypt(&runtime, large_ct, DecryptionMode::Proto2Decrypt).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
-        let ref_res = Value::Ring128(std::num::Wrapping(msg as u128));
+        let ref_res = std::num::Wrapping(msg as u64);
         assert_eq!(out_dec[0], ref_res);
-        assert!(out_circ[0] == ref_res);
     }
 
     #[test]

@@ -1,13 +1,13 @@
-use super::{
-    p2p::{receive_from_parties, send_to_honest_parties},
-    party::Role,
-    session::BaseSessionHandles,
-    small_execution::prss::{create_sets, PrfKey},
-};
 use crate::{
+    algebra::structure_traits::Ring,
     commitment::{commit, verify, Commitment, Opening, KEY_BYTE_LEN},
     error::error_handler::anyhow_error_and_log,
-    value::{AgreeRandomValue, NetworkValue},
+    execution::{
+        communication::p2p::{receive_from_parties, send_to_honest_parties},
+        runtime::party::Role,
+        runtime::session::BaseSessionHandles,
+    },
+    networking::value::{AgreeRandomValue, NetworkValue},
 };
 use anyhow::Context;
 use async_trait::async_trait;
@@ -15,10 +15,12 @@ use itertools::Itertools;
 use rand::RngCore;
 use std::collections::HashMap;
 
+use super::prss::{create_sets, PrfKey};
+
 #[async_trait]
 pub trait AgreeRandom {
     /// agree on a random value, as seen from a single party's view (determined by the session)
-    async fn agree_random<R: RngCore, S: BaseSessionHandles<R>>(
+    async fn agree_random<Z: Ring, R: RngCore, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>>;
 }
@@ -37,8 +39,8 @@ fn check_rcv_len(rcv_len: usize, expect_len: usize, tstr: &str) -> anyhow::Resul
 }
 
 /// Generic function to check the types of received values and unpack into a vector.
-fn check_and_unpack<T>(
-    received_values: &HashMap<Role, NetworkValue>,
+fn check_and_unpack<Z: Ring, T>(
+    received_values: &HashMap<Role, NetworkValue<Z>>,
     num_parties: usize,
     variant_match: fn(&AgreeRandomValue) -> Option<&Vec<T>>,
     type_str: &str,
@@ -95,24 +97,24 @@ fn match_key_val(value: &AgreeRandomValue) -> Option<&Vec<PrfKey>> {
 }
 
 /// check the types of the received CommitmentValues and unpack into Vector<Commitment>
-fn check_and_unpack_coms(
-    rcv_coms: &HashMap<Role, NetworkValue>,
+fn check_and_unpack_coms<Z: Ring>(
+    rcv_coms: &HashMap<Role, NetworkValue<Z>>,
     num_parties: usize,
 ) -> anyhow::Result<Vec<Vec<Commitment>>> {
     check_and_unpack(rcv_coms, num_parties, match_com_val, "CommitmentValue")
 }
 
 /// check the types of the received KeyOpenValues and unpack into Vector<(PrfKey, Opening)>
-fn check_and_unpack_keys_openings(
-    rcv_ko: &HashMap<Role, NetworkValue>,
+fn check_and_unpack_keys_openings<Z: Ring>(
+    rcv_ko: &HashMap<Role, NetworkValue<Z>>,
     num_parties: usize,
 ) -> anyhow::Result<Vec<Vec<(PrfKey, Opening)>>> {
     check_and_unpack(rcv_ko, num_parties, match_key_open_val, "KeyOpenValue")
 }
 
 /// check the types of the received KeyValues and unpack into Vector<PrfKey>
-fn check_and_unpack_keys(
-    rcv_k: &HashMap<Role, NetworkValue>,
+fn check_and_unpack_keys<Z: Ring>(
+    rcv_k: &HashMap<Role, NetworkValue<Z>>,
     num_parties: usize,
 ) -> anyhow::Result<Vec<Vec<PrfKey>>> {
     check_and_unpack(rcv_k, num_parties, match_key_val, "KeyValue")
@@ -219,7 +221,7 @@ fn verify_and_xor_keys(
 }
 
 /// does the communication for RealAgreeRandom and returns the unpacked commitments and keys/openings
-async fn agree_random_communication<R: RngCore, S: BaseSessionHandles<R>>(
+async fn agree_random_communication<Z: Ring, R: RngCore, S: BaseSessionHandles<R>>(
     session: &mut S,
     coms: &[Vec<Commitment>],
     keys_opens: &[Vec<(PrfKey, Opening)>],
@@ -228,7 +230,7 @@ async fn agree_random_communication<R: RngCore, S: BaseSessionHandles<R>>(
     let party_id = session.my_role()?.one_based();
 
     // send commitments to all other parties. Each party gets the commitment for _all_ sets that they are member of at once to avoid multiple comm rounds
-    let mut coms_to_send: HashMap<Role, NetworkValue> = HashMap::new();
+    let mut coms_to_send: HashMap<Role, NetworkValue<Z>> = HashMap::new();
     for p in 1..=num_parties {
         if p != party_id {
             coms_to_send.insert(
@@ -242,7 +244,7 @@ async fn agree_random_communication<R: RngCore, S: BaseSessionHandles<R>>(
 
     // receive commitments from other parties
     let receive_from_roles = coms_to_send.keys().cloned().collect_vec();
-    let received_coms = receive_from_parties(&receive_from_roles, session).await?;
+    let received_coms = receive_from_parties::<Z, R, S>(&receive_from_roles, session).await?;
 
     let rcv_coms = check_and_unpack_coms(&received_coms, num_parties)?;
 
@@ -250,7 +252,7 @@ async fn agree_random_communication<R: RngCore, S: BaseSessionHandles<R>>(
     session.network().increase_round_counter().await?;
 
     // send keys and openings to all other parties. Each party gets the values for _all_ sets that they are member of at once to avoid multiple comm rounds
-    let mut key_open_to_send: HashMap<Role, NetworkValue> = HashMap::new();
+    let mut key_open_to_send: HashMap<Role, NetworkValue<Z>> = HashMap::new();
     for p in 1..=num_parties {
         if p != party_id {
             key_open_to_send.insert(
@@ -264,7 +266,7 @@ async fn agree_random_communication<R: RngCore, S: BaseSessionHandles<R>>(
     send_to_honest_parties(&key_open_to_send, session).await?;
 
     // receive keys and openings from other parties
-    let received_keys = receive_from_parties(&receive_from_roles, session).await?;
+    let received_keys = receive_from_parties::<Z, R, S>(&receive_from_roles, session).await?;
 
     let rcv_keys_opens = check_and_unpack_keys_openings(&received_keys, num_parties)?;
 
@@ -273,7 +275,7 @@ async fn agree_random_communication<R: RngCore, S: BaseSessionHandles<R>>(
 
 #[async_trait]
 impl AgreeRandom for RealAgreeRandom {
-    async fn agree_random<R: RngCore, S: BaseSessionHandles<R>>(
+    async fn agree_random<Z: Ring, R: RngCore, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.amount_of_parties();
@@ -301,7 +303,7 @@ impl AgreeRandom for RealAgreeRandom {
         }
 
         let (mut rcv_coms, mut rcv_keys_opens) =
-            agree_random_communication(session, &coms, &keys_opens).await?;
+            agree_random_communication::<Z, R, S>(session, &coms, &keys_opens).await?;
 
         let r_a_keys = verify_and_xor_keys(
             party_id,
@@ -319,7 +321,7 @@ pub struct RealAgreeRandomWithAbort {}
 
 #[async_trait]
 impl AgreeRandom for RealAgreeRandomWithAbort {
-    async fn agree_random<R: RngCore, S: BaseSessionHandles<R>>(
+    async fn agree_random<Z: Ring, R: RngCore, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.amount_of_parties();
@@ -332,7 +334,7 @@ impl AgreeRandom for RealAgreeRandomWithAbort {
         );
 
         // run plain AgreeRandom to determine random keys as a first step
-        let ars = RealAgreeRandom::agree_random(session).await?;
+        let ars = RealAgreeRandom::agree_random::<Z, R, S>(session).await?;
 
         debug_assert_eq!(ars.len(), party_sets.len());
 
@@ -346,7 +348,7 @@ impl AgreeRandom for RealAgreeRandomWithAbort {
         }
 
         // send keys to all other parties. Each party gets the values for _all_ sets that they are member of at once to avoid multiple comm rounds
-        let mut key_to_send: HashMap<Role, NetworkValue> = HashMap::new();
+        let mut key_to_send: HashMap<Role, NetworkValue<Z>> = HashMap::new();
         for p in 1..=num_parties {
             if p != party_id {
                 key_to_send.insert(
@@ -360,7 +362,7 @@ impl AgreeRandom for RealAgreeRandomWithAbort {
         session.network().increase_round_counter().await?;
         send_to_honest_parties(&key_to_send, session).await?;
         let receive_from_roles = key_to_send.keys().cloned().collect_vec();
-        let received_keys = receive_from_parties(&receive_from_roles, session).await?;
+        let received_keys = receive_from_parties::<Z, R, S>(&receive_from_roles, session).await?;
 
         let mut rcv_keys = check_and_unpack_keys(&received_keys, num_parties)?;
 
@@ -374,7 +376,7 @@ pub struct DummyAgreeRandom {}
 
 #[async_trait]
 impl AgreeRandom for DummyAgreeRandom {
-    async fn agree_random<R: RngCore, S: BaseSessionHandles<R>>(
+    async fn agree_random<Z, R: RngCore, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
         let party_sets = compute_party_sets(
@@ -430,21 +432,24 @@ mod tests {
         AgreeRandom, DummyAgreeRandom, RealAgreeRandom, RealAgreeRandomWithAbort,
     };
     use crate::{
+        algebra::residue_poly::ResiduePoly128,
         commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN},
         computation::SessionId,
         execution::{
-            agree_random::{
-                check_and_unpack_keys, check_and_unpack_keys_openings, compute_party_sets,
-                verify_keys_equal,
+            runtime::party::Role,
+            runtime::session::{ParameterHandles, SmallSession},
+            runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+            small_execution::{
+                agree_random::{
+                    check_and_unpack_keys, check_and_unpack_keys_openings, compute_party_sets,
+                    verify_keys_equal,
+                },
+                prss::{create_sets, PrfKey},
             },
-            distributed::DistributedTestRuntime,
-            party::Role,
-            session::{ParameterHandles, SmallSession},
-            small_execution::prss::{create_sets, PrfKey},
         },
+        networking::value::{AgreeRandomValue, NetworkValue},
         tests::helper::tests::get_small_session_for_parties,
         tests::helper::tests_and_benches::execute_protocol_small,
-        value::{AgreeRandomValue, NetworkValue},
     };
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
@@ -494,12 +499,17 @@ mod tests {
         let mut allkeys: Vec<VecDeque<PrfKey>> = Vec::new();
 
         for p in 1..=num_parties {
-            let mut sess =
-                get_small_session_for_parties(num_parties, threshold, Role::indexed_by_one(p));
+            let mut sess = get_small_session_for_parties::<ResiduePoly128>(
+                num_parties,
+                threshold,
+                Role::indexed_by_one(p),
+            );
 
             let _guard = rt.enter();
             let keys = rt
-                .block_on(async { DummyAgreeRandom::agree_random(&mut sess).await })
+                .block_on(async {
+                    DummyAgreeRandom::agree_random::<ResiduePoly128, _, _>(&mut sess).await
+                })
                 .unwrap();
 
             let vd = VecDeque::from(keys);
@@ -535,8 +545,10 @@ mod tests {
         let num_parties = 7;
         let threshold = 2;
 
-        async fn task<A: AgreeRandom>(mut session: SmallSession) -> (Role, VecDeque<PrfKey>) {
-            let keys = A::agree_random(&mut session).await;
+        async fn task<A: AgreeRandom>(
+            mut session: SmallSession<ResiduePoly128>,
+        ) -> (Role, VecDeque<PrfKey>) {
+            let keys = A::agree_random::<ResiduePoly128, _, _>(&mut session).await;
             let vd = VecDeque::from(keys.unwrap());
             (session.my_role().unwrap(), vd)
         }
@@ -573,17 +585,14 @@ mod tests {
         let num_parties = 7;
         let threshold = 2;
 
-        let identities =
-            crate::execution::distributed::DistributedTestRuntime::generate_fixed_identities(
-                num_parties,
-            );
+        let identities = generate_fixed_identities(num_parties);
 
         assert_eq!(identities.len(), num_parties);
 
         let runtime = DistributedTestRuntime::new(identities, threshold as u8);
 
         // create sessions for each prss party, except party 0, which does not respond in this case
-        let sessions: Vec<SmallSession> = (1..num_parties)
+        let sessions: Vec<SmallSession<ResiduePoly128>> = (1..num_parties)
             .map(|p| {
                 let num = p as u8;
                 runtime
@@ -604,7 +613,9 @@ mod tests {
         for sess in sessions.iter() {
             let mut ss = sess.clone();
 
-            jobs.spawn(async move { RealAgreeRandom::agree_random(&mut ss).await });
+            jobs.spawn(async move {
+                RealAgreeRandom::agree_random::<ResiduePoly128, _, _>(&mut ss).await
+            });
         }
 
         rt.block_on(async {
@@ -631,7 +642,7 @@ mod tests {
     fn test_check_and_unpack_coms() {
         // test normal behavior
         let num_parties = 3;
-        let mut rc: HashMap<Role, NetworkValue> = HashMap::new();
+        let mut rc: HashMap<Role, NetworkValue<ResiduePoly128>> = HashMap::new();
         let c1 = Commitment([12_u8; COMMITMENT_BYTE_LEN]);
         let c2 = Commitment([42_u8; COMMITMENT_BYTE_LEN]);
 
@@ -669,7 +680,7 @@ mod tests {
     #[test]
     fn test_check_and_unpack_coms_type() {
         let num_parties = 2;
-        let mut rc: HashMap<Role, NetworkValue> = HashMap::new();
+        let mut rc: HashMap<Role, NetworkValue<ResiduePoly128>> = HashMap::new();
 
         // Test Error when receiving a wrong AR value
         let ko = (
@@ -700,7 +711,7 @@ mod tests {
     fn test_check_and_unpack_keys_openings() {
         // test normal behavior
         let num_parties = 3;
-        let mut rc: HashMap<Role, NetworkValue> = HashMap::new();
+        let mut rc: HashMap<Role, NetworkValue<ResiduePoly128>> = HashMap::new();
         let ko1 = (PrfKey([1_u8; KEY_BYTE_LEN]), Opening([2_u8; KEY_BYTE_LEN]));
         let ko2 = (
             PrfKey([42_u8; KEY_BYTE_LEN]),
@@ -739,7 +750,7 @@ mod tests {
     #[test]
     fn test_check_and_unpack_keys_openings_type() {
         let num_parties = 2;
-        let mut rc: HashMap<Role, NetworkValue> = HashMap::new();
+        let mut rc: HashMap<Role, NetworkValue<ResiduePoly128>> = HashMap::new();
         // Test Error when receiving a wrong AR value
         let c = Commitment([12_u8; COMMITMENT_BYTE_LEN]);
 
@@ -767,7 +778,7 @@ mod tests {
     fn test_check_and_unpack_keys() {
         // test normal behavior
         let num_parties = 3;
-        let mut rc: HashMap<Role, NetworkValue> = HashMap::new();
+        let mut rc: HashMap<Role, NetworkValue<ResiduePoly128>> = HashMap::new();
         let key1 = PrfKey([1_u8; KEY_BYTE_LEN]);
         let key2 = PrfKey([42_u8; KEY_BYTE_LEN]);
 
@@ -800,7 +811,7 @@ mod tests {
     fn test_check_and_unpack_keys_type() {
         // Test Error when receiving a wrong AR value
         let num_parties = 2;
-        let mut rc: HashMap<Role, NetworkValue> = HashMap::new();
+        let mut rc: HashMap<Role, NetworkValue<ResiduePoly128>> = HashMap::new();
 
         rc.insert(
             Role::indexed_by_one(2),

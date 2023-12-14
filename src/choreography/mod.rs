@@ -1,6 +1,6 @@
 use crate::computation::SessionId;
-use crate::execution::party::{Identity, Role, RoleAssignment};
-use crate::{circuit::Circuit, execution::session::NetworkingImpl};
+use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
+use crate::execution::runtime::session::NetworkingImpl;
 use serde::Deserialize;
 use std::path::Path;
 use std::str::FromStr;
@@ -43,7 +43,7 @@ impl FromStr for SessionConfig {
 
 pub fn parse_session_config_file_with_computation(
     session_config_file: &Path,
-) -> Result<(RoleAssignment, Circuit, u8), Box<dyn std::error::Error>> {
+) -> Result<(RoleAssignment, u8), Box<dyn std::error::Error>> {
     let session_config = SessionConfig::from_str(&std::fs::read_to_string(session_config_file)?)?;
 
     let role_assignment: RoleAssignment = session_config
@@ -58,8 +58,5 @@ pub fn parse_session_config_file_with_computation(
 
     let threshold = session_config.security.threshold;
 
-    let comp_bytes = std::fs::read(&session_config.computation.path)?;
-    let circuit = Circuit::try_from(&comp_bytes[..]).unwrap();
-
-    Ok((role_assignment, circuit, threshold))
+    Ok((role_assignment, threshold))
 }

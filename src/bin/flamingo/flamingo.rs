@@ -5,9 +5,9 @@ use distributed_decryption::file_handling::read_as_json;
 use distributed_decryption::lwe::ThresholdLWEParameters;
 use distributed_decryption::{
     choreography::{choreographer::ChoreoRuntime, parse_session_config_file_with_computation},
-    execution::session::DecryptionMode,
+    execution::runtime::session::DecryptionMode,
 };
-use distributed_decryption::{computation::SessionId, execution::session::SetupMode};
+use distributed_decryption::{computation::SessionId, execution::runtime::session::SetupMode};
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
 use std::path::PathBuf;
@@ -60,11 +60,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let tls_config = None;
 
-    let (role_assignments, computation, threshold) =
+    let (role_assignments, threshold) =
         parse_session_config_file_with_computation(&args.session_config)?;
     let runtime = ChoreoRuntime::new(role_assignments, tls_config)?;
-
-    tracing::debug!("launching flamingo with: {:?}", &computation);
 
     let pk = if args.no_keygen {
         // retrieve previously generated pubkey

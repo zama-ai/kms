@@ -10,10 +10,9 @@ use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
 use crate::computation::SessionId;
 use crate::error::error_handler::anyhow_error_and_log;
-use crate::execution::party::{Identity, RoleAssignment};
+use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::networking::constants;
 use crate::networking::Networking;
-use crate::value::NetworkValue;
 use async_trait::async_trait;
 use backoff::future::retry;
 use backoff::ExponentialBackoff;
@@ -103,7 +102,7 @@ impl GrpcNetworking {
 impl Networking for GrpcNetworking {
     async fn send(
         &self,
-        value: NetworkValue,
+        value: Vec<u8>,
         receiver: &Identity,
         _session_id: &SessionId,
     ) -> anyhow::Result<(), anyhow::Error> {
@@ -120,8 +119,7 @@ impl Networking for GrpcNetworking {
                 ..Default::default()
             },
             || async {
-                let tagged_value = TaggedValue {
-                    value: value.clone(),
+                let tagged_value = Tag {
                     sender: self.owner.clone(),
                     session_id: self.session_id,
                     round_counter: ctr,
@@ -131,7 +129,8 @@ impl Networking for GrpcNetworking {
                     anyhow_error_and_log(format!("networking error: {:?}", e.to_string()))
                 })?;
                 let request = SendValueRequest {
-                    tagged_value: bytes,
+                    tag: bytes,
+                    value: value.clone(),
                 };
                 let channel = self.channel(receiver)?;
                 let mut client = GnetworkingClient::new(channel);
@@ -151,11 +150,7 @@ impl Networking for GrpcNetworking {
         .await
     }
 
-    async fn receive(
-        &self,
-        sender: &Identity,
-        _session_id: &SessionId,
-    ) -> anyhow::Result<NetworkValue> {
+    async fn receive(&self, sender: &Identity, _session_id: &SessionId) -> anyhow::Result<Vec<u8>> {
         if !self.message_queues.contains_key(&self.session_id) {
             return Err(anyhow_error_and_log(
                 "Did not have session id key for message storage inside receive call".to_string(),
@@ -208,7 +203,7 @@ impl Networking for GrpcNetworking {
 // so that messages that haven't been pickup up using receive() calls will get dropped
 #[derive(Debug)]
 struct NetworkRoundValue {
-    pub value: NetworkValue,
+    pub value: Vec<u8>,
     pub round_counter: usize,
 }
 
@@ -238,27 +233,26 @@ impl Gnetworking for NetworkingImpl {
             .map(Identity::from);
 
         let request = request.into_inner();
-        let tagged_value =
-            bincode::deserialize::<TaggedValue>(&request.tagged_value).map_err(|_e| {
-                tonic::Status::new(tonic::Code::Aborted, "failed to parse value".to_string())
-            })?;
+        let tag = bincode::deserialize::<Tag>(&request.tag).map_err(|_e| {
+            tonic::Status::new(tonic::Code::Aborted, "failed to parse value".to_string())
+        })?;
 
         if let Some(sender) = tls_sender {
-            if tagged_value.sender != sender {
+            if tag.sender != sender {
                 return Err(tonic::Status::new(
                     tonic::Code::Unauthenticated,
                     format!(
                         "wrong sender: expected {:?} but got {:?}",
-                        tagged_value.sender, sender
+                        tag.sender, sender
                     ),
                 ));
             }
         }
 
-        if self.message_queues.contains_key(&tagged_value.session_id) {
+        if self.message_queues.contains_key(&tag.session_id) {
             let session_store = self
                 .message_queues
-                .get(&tagged_value.session_id)
+                .get(&tag.session_id)
                 .ok_or_else(|| {
                     anyhow_error_and_log(
                         "couldn't retrieve session store from message stores".to_string(),
@@ -267,7 +261,7 @@ impl Gnetworking for NetworkingImpl {
                 .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?;
 
             let channels = session_store
-                .get(&tagged_value.sender)
+                .get(&tag.sender)
                 .ok_or_else(|| {
                     anyhow_error_and_log(
                         "couldn't retrieve channels from session store".to_string(),
@@ -279,8 +273,8 @@ impl Gnetworking for NetworkingImpl {
 
             let _ = tx
                 .send(NetworkRoundValue {
-                    value: tagged_value.value,
-                    round_counter: tagged_value.round_counter,
+                    value: request.value,
+                    round_counter: tag.round_counter,
                 })
                 .await;
 
@@ -326,9 +320,8 @@ fn extract_sender<T>(request: &tonic::Request<T>) -> Result<Option<String>, Stri
 }
 
 #[derive(Serialize, Deserialize)]
-struct TaggedValue {
+struct Tag {
     session_id: SessionId,
     sender: Identity,
-    value: NetworkValue,
     round_counter: usize,
 }

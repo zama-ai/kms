@@ -1,30 +1,26 @@
 //! Networking traits and implementations.
 
 use crate::computation::SessionId;
-use crate::execution::party::Identity;
-use crate::value::NetworkValue;
+use crate::execution::runtime::party::Identity;
 use async_trait::async_trait;
 use tokio::time::Instant;
 
 pub mod constants;
 pub mod grpc;
 pub mod local;
+pub mod value;
 
 /// Requirements for networking interface.
 #[async_trait]
 pub trait Networking {
     async fn send(
         &self,
-        value: NetworkValue,
+        value: Vec<u8>,
         receiver: &Identity,
         session_id: &SessionId,
     ) -> anyhow::Result<()>;
 
-    async fn receive(
-        &self,
-        sender: &Identity,
-        session_id: &SessionId,
-    ) -> anyhow::Result<NetworkValue>;
+    async fn receive(&self, sender: &Identity, session_id: &SessionId) -> anyhow::Result<Vec<u8>>;
 
     async fn increase_round_counter(&self) -> anyhow::Result<()>;
 

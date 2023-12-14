@@ -1,7 +1,10 @@
+use crate::algebra::structure_traits::Ring;
 use crate::error::error_handler::anyhow_error_and_log;
-use crate::execution::party::Role;
-use crate::value::BroadcastValue;
-use crate::value::NetworkValue;
+use crate::execution::runtime::party::Identity;
+use crate::execution::runtime::party::Role;
+use crate::execution::runtime::session::BaseSessionHandles;
+use crate::networking::value::BroadcastValue;
+use crate::networking::value::NetworkValue;
 use itertools::Itertools;
 use rand::RngCore;
 use std::collections::HashMap;
@@ -11,15 +14,12 @@ use tokio::task::JoinSet;
 use tokio::time::error::Elapsed;
 use tokio::time::timeout_at;
 
-use super::party::Identity;
-use super::session::BaseSessionHandles;
+type RoleValueMap<Z> = HashMap<Role, BroadcastValue<Z>>;
 
-type RoleValueMap = HashMap<Role, BroadcastValue>;
-
-pub async fn send_to_all<R: RngCore, B: BaseSessionHandles<R>>(
+pub async fn send_to_all<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
     sender: &Role,
-    msg: NetworkValue,
+    msg: NetworkValue<Z>,
 ) {
     let mut jobs = JoinSet::new();
     for (other_role, other_identity) in session.role_assignments().iter() {
@@ -29,7 +29,9 @@ pub async fn send_to_all<R: RngCore, B: BaseSessionHandles<R>>(
         let other_id = other_identity.clone();
         if sender != other_role {
             jobs.spawn(async move {
-                let _ = networking.send(msg, &other_id, &session_id).await;
+                let _ = networking
+                    .send(msg.to_network(), &other_id, &session_id)
+                    .await;
             });
         }
     }
@@ -43,13 +45,13 @@ pub async fn send_to_all<R: RngCore, B: BaseSessionHandles<R>>(
 /// On the receiving end, a party processes a message of a single variant of the [NetworkValue] enum
 /// and errors out if message is of a different form. This is helpful so that we can peel the message
 /// from the inside enum.
-pub fn generic_receive_from_all_senders<V, R: RngCore, B: BaseSessionHandles<R>>(
+pub fn generic_receive_from_all_senders<V, Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &B,
     receiver: &Role,
     sender_list: &Vec<Role>,
     non_answering_parties: Option<&HashSet<Role>>,
-    match_network_value_fn: fn(network_value: NetworkValue, id: &Identity) -> anyhow::Result<V>,
+    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Identity) -> anyhow::Result<V>,
 ) -> anyhow::Result<()>
 where
     V: std::marker::Send + 'static,
@@ -75,9 +77,8 @@ where
             let session_id = session.session_id();
             let identity = session.own_identity();
             let task = async move {
-                let stripped_message = networking
-                    .receive(&sender_id, &session_id)
-                    .await
+                let stripped_message = networking.receive(&sender_id, &session_id).await;
+                let stripped_message = NetworkValue::<Z>::from_network(stripped_message)
                     .map_or_else(|e| Err(e), |x| match_network_value_fn(x, &identity));
                 (sender, stripped_message)
             };
@@ -91,12 +92,12 @@ where
 }
 
 ///Wrapper around [generic_receive_from_all_senders] where the sender list is all the parties.
-pub fn generic_receive_from_all<V, R: RngCore, B: BaseSessionHandles<R>>(
+pub fn generic_receive_from_all<V, Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &B,
     receiver: &Role,
     non_answering_parties: Option<&HashSet<Role>>,
-    match_network_value_fn: fn(network_value: NetworkValue, id: &Identity) -> anyhow::Result<V>,
+    match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Identity) -> anyhow::Result<V>,
 ) -> anyhow::Result<()>
 where
     V: std::marker::Send + 'static,
@@ -112,16 +113,16 @@ where
     )
 }
 
-async fn receive_from_all_senders<R: RngCore, B: BaseSessionHandles<R>>(
-    round1_data: &mut HashMap<Role, BroadcastValue>,
+async fn receive_from_all_senders<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+    round1_data: &mut RoleValueMap<Z>,
     session: &B,
     receiver: &Role,
     sender_list: &Vec<Role>,
     non_answering_parties: &mut HashSet<Role>,
 ) -> anyhow::Result<()> {
-    let mut jobs = JoinSet::<Result<(Role, anyhow::Result<BroadcastValue>), Elapsed>>::new();
+    let mut jobs = JoinSet::<Result<(Role, anyhow::Result<BroadcastValue<Z>>), Elapsed>>::new();
     //The error we propagate here is if sender ids and roles cannot be tied together.
-    generic_receive_from_all_senders::<BroadcastValue, R, B>(
+    generic_receive_from_all_senders(
         &mut jobs,
         session,
         receiver,
@@ -169,14 +170,15 @@ async fn receive_from_all_senders<R: RngCore, B: BaseSessionHandles<R>>(
     Ok(())
 }
 
-async fn receive_from_all_echo_batch<R: RngCore, B: BaseSessionHandles<R>>(
+type JobType<Z> = (Role, anyhow::Result<RoleValueMap<Z>>);
+async fn receive_from_all_echo_batch<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
     receiver: &Role,
     non_answering_parties: &mut HashSet<Role>,
-    echoed_data: &mut HashMap<(Role, BroadcastValue), u32>,
-) -> anyhow::Result<HashMap<(Role, BroadcastValue), u32>> {
-    let mut jobs = JoinSet::<Result<(Role, anyhow::Result<RoleValueMap>), Elapsed>>::new();
-    generic_receive_from_all::<RoleValueMap, R, B>(
+    echoed_data: &mut HashMap<(Role, BroadcastValue<Z>), u32>,
+) -> anyhow::Result<HashMap<(Role, BroadcastValue<Z>), u32>> {
+    let mut jobs = JoinSet::<Result<JobType<Z>, Elapsed>>::new();
+    generic_receive_from_all(
         &mut jobs,
         session,
         receiver,
@@ -203,13 +205,13 @@ async fn receive_from_all_echo_batch<R: RngCore, B: BaseSessionHandles<R>>(
     Ok(registered_votes)
 }
 
-fn receive_from_all_votes<R: RngCore, B: BaseSessionHandles<R>>(
-    jobs: &mut JoinSet<Result<(Role, anyhow::Result<RoleValueMap>), Elapsed>>,
+fn receive_from_all_votes<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+    jobs: &mut JoinSet<Result<JobType<Z>, Elapsed>>,
     session: &B,
     receiver: &Role,
     non_answering_parties: &HashSet<Role>,
 ) -> anyhow::Result<()> {
-    generic_receive_from_all::<RoleValueMap, R, B>(
+    generic_receive_from_all(
         jobs,
         session,
         receiver,
@@ -225,10 +227,10 @@ fn receive_from_all_votes<R: RngCore, B: BaseSessionHandles<R>>(
     )
 }
 
-async fn internal_process_echos_or_votes(
+async fn internal_process_echos_or_votes<Z: Ring>(
     receiver: &Role,
-    rcv_tasks: &mut JoinSet<Result<(Role, anyhow::Result<RoleValueMap>), Elapsed>>,
-    map_data: &mut HashMap<(Role, BroadcastValue), u32>,
+    rcv_tasks: &mut JoinSet<Result<JobType<Z>, Elapsed>>,
+    map_data: &mut HashMap<(Role, BroadcastValue<Z>), u32>,
     num_parties: usize,
     non_answering_parties: &mut HashSet<Role>,
 ) -> anyhow::Result<()> {
@@ -269,14 +271,14 @@ async fn internal_process_echos_or_votes(
 
 /// Process Echo messages one by one, starting with the own echoed_data
 /// If enough echoes >=(N-T) then player can cast a vote
-async fn process_echos(
+async fn process_echos<Z: Ring>(
     receiver: &Role,
-    echo_recv_tasks: &mut JoinSet<Result<(Role, anyhow::Result<RoleValueMap>), Elapsed>>,
-    echoed_data: &mut HashMap<(Role, BroadcastValue), u32>,
+    echo_recv_tasks: &mut JoinSet<Result<JobType<Z>, Elapsed>>,
+    echoed_data: &mut HashMap<(Role, BroadcastValue<Z>), u32>,
     num_parties: usize,
     threshold: usize,
     non_answering_parties: &mut HashSet<Role>,
-) -> anyhow::Result<HashMap<(Role, BroadcastValue), u32>> {
+) -> anyhow::Result<HashMap<(Role, BroadcastValue<Z>), u32>> {
     let mut registered_votes = HashMap::new();
 
     internal_process_echos_or_votes(
@@ -298,13 +300,13 @@ async fn process_echos(
 }
 
 /// Sender casts a vote only for messages m in registered_votes for which #m >= threshold
-async fn cast_threshold_vote<R: RngCore, B: BaseSessionHandles<R>>(
+async fn cast_threshold_vote<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
     sender: &Role,
-    registered_votes: &HashMap<(Role, BroadcastValue), u32>,
+    registered_votes: &HashMap<(Role, BroadcastValue<Z>), u32>,
     threshold: u32,
 ) {
-    let vote_data: HashMap<Role, BroadcastValue> = registered_votes
+    let vote_data: RoleValueMap<Z> = registered_votes
         .iter()
         .filter_map(|(k, f)| {
             if *f >= threshold {
@@ -317,7 +319,7 @@ async fn cast_threshold_vote<R: RngCore, B: BaseSessionHandles<R>>(
     //Send empty msg to avoid waiting on timeouts on rcver side
     if vote_data.is_empty() {
         tracing::debug!("I am {sender}, sending an empty message");
-        send_to_all(session, sender, NetworkValue::Empty).await;
+        send_to_all(session, sender, NetworkValue::<Z>::Empty).await;
     } else {
         send_to_all(session, sender, NetworkValue::VoteBatch(vote_data)).await;
     }
@@ -326,10 +328,10 @@ async fn cast_threshold_vote<R: RngCore, B: BaseSessionHandles<R>>(
 /// Sender gathers votes from all the other parties.
 /// If enough votes >=(T+R) and sender hasn't voted then vote
 /// If enough votes >=(N-T) then stop the computation
-async fn gather_votes<R: RngCore, B: BaseSessionHandles<R>>(
+async fn gather_votes<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
     sender: &Role,
-    registered_votes: &mut HashMap<(Role, BroadcastValue), u32>,
+    registered_votes: &mut HashMap<(Role, BroadcastValue<Z>), u32>,
     casted: &mut HashMap<Role, bool>,
     non_answering_parties: &mut HashSet<Role>,
 ) -> anyhow::Result<()> {
@@ -357,7 +359,7 @@ async fn gather_votes<R: RngCore, B: BaseSessionHandles<R>>(
         }
 
         //Here propagate error if my own casted hashmap does not contain the expected party's id
-        let mut round_registered_votes = HashMap::<(Role, BroadcastValue), u32>::new();
+        let mut round_registered_votes = HashMap::<(Role, BroadcastValue<Z>), u32>::new();
         for ((role, m), num_votes) in registered_votes.iter_mut() {
             if *num_votes as usize >= (threshold + round)
                 && !*(casted.get(role).ok_or_else(|| {
@@ -391,11 +393,11 @@ async fn gather_votes<R: RngCore, B: BaseSessionHandles<R>>(
 /// Here Pi = sender and  vi = Vi
 /// Function returns a map bcast_data: Role => Value such that
 /// all players have the broadcasted values inside the map: bcast_data[Pj] = Vj for all j in [n]
-pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
+pub async fn reliable_broadcast<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
     sender_list: &Vec<Role>,
-    vi: Option<BroadcastValue>,
-) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
+    vi: Option<BroadcastValue<Z>>,
+) -> anyhow::Result<RoleValueMap<Z>> {
     let num_parties = session.amount_of_parties();
     if sender_list.is_empty() {
         return Err(anyhow_error_and_log(
@@ -408,7 +410,7 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
 
     let my_role = session.my_role()?;
     let is_sender = sender_list.contains(&my_role);
-    let mut bcast_data: HashMap<Role, BroadcastValue> = sender_list
+    let mut bcast_data: RoleValueMap<Z> = sender_list
         .iter()
         .map(|role| (*role, BroadcastValue::Bot))
         .collect();
@@ -418,7 +420,7 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
     // Communication round 1
     // Sender parties send the message they intend to broadcast to others
     // The send calls are followed by receive to get the incoming messages from the others
-    let mut round1_data = HashMap::<Role, BroadcastValue>::new();
+    let mut round1_data = HashMap::<Role, BroadcastValue<Z>>::new();
     session.network().increase_round_counter().await?;
     match (vi, is_sender) {
         (Some(vi), true) => {
@@ -452,7 +454,7 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
     let msg = round1_data;
     send_to_all(session, &my_role, NetworkValue::EchoBatch(msg.clone())).await;
     // adding own echo to the map
-    let mut echos: HashMap<(Role, BroadcastValue), u32> =
+    let mut echos: HashMap<(Role, BroadcastValue<Z>), u32> =
         msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
     // retrieve echos from all parties
     let mut registered_votes =
@@ -498,10 +500,10 @@ pub async fn reliable_broadcast<R: RngCore, B: BaseSessionHandles<R>>(
     Ok(bcast_data)
 }
 
-pub async fn reliable_broadcast_all<R: RngCore, B: BaseSessionHandles<R>>(
+pub async fn reliable_broadcast_all<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
-    vi: Option<BroadcastValue>,
-) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
+    vi: Option<BroadcastValue<Z>>,
+) -> anyhow::Result<RoleValueMap<Z>> {
     let sender_list = session.role_assignments().clone().into_keys().collect();
     reliable_broadcast(session, &sender_list, vi).await
 }
@@ -509,10 +511,10 @@ pub async fn reliable_broadcast_all<R: RngCore, B: BaseSessionHandles<R>>(
 /// Execute a [reliable_broadcast_all] in the presence of corrupt parties.
 /// Parties in `corrupt_roles` are ignored during the execution and if any new corruptions are detected then they are added to `corrupt_roles`
 /// WARNING: It is CRUCIAL that the corrupt roles are ignored, as otherwise they could cause a DoS attack with the current logic of the functions using this method.
-pub async fn broadcast_with_corruption<R: RngCore, Ses: BaseSessionHandles<R>>(
+pub async fn broadcast_with_corruption<Z: Ring, R: RngCore, Ses: BaseSessionHandles<R>>(
     session: &mut Ses,
-    vi: BroadcastValue,
-) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
+    vi: BroadcastValue<Z>,
+) -> anyhow::Result<RoleValueMap<Z>> {
     // Remove corrupt parties from the current session
     let old_role_assignments = session.role_assignments().clone();
     let mut new_role_assignments = session.role_assignments().clone();
@@ -544,34 +546,33 @@ pub async fn broadcast_with_corruption<R: RngCore, Ses: BaseSessionHandles<R>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::distributed::DistributedTestRuntime;
-    use crate::execution::party::Identity;
-    use crate::execution::session::{LargeSession, ParameterHandles};
-    use crate::{computation::SessionId, value::Value};
+    use crate::algebra::residue_poly::ResiduePoly128;
+    use crate::computation::SessionId;
+    use crate::execution::runtime::session::ParameterHandles;
+    use crate::execution::runtime::test_runtime::{
+        generate_fixed_identities, DistributedTestRuntime,
+    };
+    use crate::execution::sharing::shamir::ShamirRing;
     use itertools::Itertools;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
     use std::num::Wrapping;
 
-    fn legitimate_broadcast(
+    fn legitimate_broadcast<Z: ShamirRing>(
         sender_parties: &Vec<Role>,
-    ) -> (
-        Vec<Identity>,
-        Vec<BroadcastValue>,
-        Vec<HashMap<Role, BroadcastValue>>,
-    ) {
-        let identities = DistributedTestRuntime::generate_fixed_identities(4);
+    ) -> (Vec<Identity>, Vec<BroadcastValue<Z>>, Vec<RoleValueMap<Z>>) {
+        let identities = generate_fixed_identities(4);
 
         let input_values = vec![
-            BroadcastValue::from(Value::Ring128(Wrapping(1))),
-            BroadcastValue::from(Value::Ring128(Wrapping(2))),
-            BroadcastValue::from(Value::Ring128(Wrapping(3))),
-            BroadcastValue::from(Value::Ring128(Wrapping(4))),
+            BroadcastValue::from(Z::ONE),
+            BroadcastValue::from(Z::ONE + Z::ONE),
+            BroadcastValue::from(Z::ONE + Z::ONE + Z::ONE),
+            BroadcastValue::from(Z::ONE + Z::ONE + Z::ONE + Z::ONE),
         ];
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
+        let runtime = DistributedTestRuntime::<Z>::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -636,7 +637,8 @@ mod tests {
     #[test]
     fn test_broadcast_all() {
         let sender_parties = (0..4).map(Role::indexed_by_zero).collect();
-        let (identities, input_values, results) = legitimate_broadcast(&sender_parties);
+        let (identities, input_values, results) =
+            legitimate_broadcast::<ResiduePoly128>(&sender_parties);
 
         // check that we have exactly n bcast outputs, for each party
         assert_eq!(results.len(), identities.len());
@@ -656,7 +658,8 @@ mod tests {
     #[test]
     fn test_broadcast_p3() {
         let sender_parties = vec![Role::indexed_by_zero(3)];
-        let (identities, input_values, results) = legitimate_broadcast(&sender_parties);
+        let (identities, input_values, results) =
+            legitimate_broadcast::<ResiduePoly128>(&sender_parties);
 
         // check that we have exactly n bcast outputs, for each party
         assert_eq!(results.len(), identities.len());
@@ -677,7 +680,8 @@ mod tests {
     #[test]
     fn test_broadcast_p0_p2() {
         let sender_parties = vec![Role::indexed_by_one(1), Role::indexed_by_one(3)];
-        let (identities, input_values, results) = legitimate_broadcast(&sender_parties);
+        let (identities, input_values, results) =
+            legitimate_broadcast::<ResiduePoly128>(&sender_parties);
         // check that we have exactly n bcast outputs, for each party
         assert_eq!(results.len(), identities.len());
 
@@ -699,18 +703,18 @@ mod tests {
 
     #[test]
     fn test_broadcast_dropout() {
-        let identities = DistributedTestRuntime::generate_fixed_identities(4);
+        let identities = generate_fixed_identities(4);
 
         let input_values = vec![
-            BroadcastValue::from(Value::Ring128(Wrapping(1))),
-            BroadcastValue::from(Value::Ring128(Wrapping(2))),
-            BroadcastValue::from(Value::Ring128(Wrapping(3))),
-            BroadcastValue::from(Value::Ring128(Wrapping(4))),
+            BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(1))),
+            BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(2))),
+            BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(3))),
+            BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(4))),
         ];
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities, threshold);
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -761,13 +765,13 @@ mod tests {
     #[test]
     fn broadcast_w_corruption() {
         let num_parties = 4;
-        let msg = BroadcastValue::from(Value::U64(42));
-        let identities = DistributedTestRuntime::generate_fixed_identities(num_parties);
+        let msg = BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(42)));
+        let identities = generate_fixed_identities(num_parties);
         let parties = identities.len();
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -783,8 +787,7 @@ mod tests {
                 let cur_msg = msg.clone();
 
                 set.spawn(async move {
-                    let res =
-                        broadcast_with_corruption::<_, LargeSession>(&mut session, cur_msg).await;
+                    let res = broadcast_with_corruption(&mut session, cur_msg).await;
                     // Check no new corruptions are added to the honest parties view
                     if party_id != corrupt_role.zero_based() {
                         assert_eq!(1, session.corrupt_roles().len());
@@ -829,11 +832,11 @@ mod tests {
     //In this strategy, the cheater broadcast something different to all the parties,
     //and then votes for something whenever it has the opportunity
     //this behavior is expected to NOT come to any output for this sender
-    async fn cheater_broadcast_strategy_1<R: RngCore, B: BaseSessionHandles<R>>(
+    async fn cheater_broadcast_strategy_1<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
         session: &B,
         sender_list: &Vec<Role>,
-        vec_vi: Option<Vec<BroadcastValue>>,
-    ) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
+        vec_vi: Option<Vec<BroadcastValue<Z>>>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
         let num_parties = session.amount_of_parties();
         if sender_list.is_empty() {
             return Err(anyhow_error_and_log(
@@ -854,7 +857,7 @@ mod tests {
         // Communication round 1
         // As a cheater I send a different message to all the parties
         // The send calls are followed by receive to get the incoming messages from the others
-        let mut round1_data = HashMap::<Role, BroadcastValue>::new();
+        let mut round1_data = HashMap::<Role, BroadcastValue<Z>>::new();
         session.network().increase_round_counter().await?;
         match (vec_vi.clone(), is_sender) {
             (Some(vec_vi), true) => {
@@ -872,7 +875,9 @@ mod tests {
                     let other_id = other_identity.clone();
                     if &my_role != other_role {
                         jobs.spawn(async move {
-                            let _ = networking.send(msg, &other_id, &session_id).await;
+                            let _ = networking
+                                .send(msg.to_network(), &other_id, &session_id)
+                                .await;
                         });
                     }
                 }
@@ -903,7 +908,7 @@ mod tests {
         let msg = round1_data;
         send_to_all(session, &my_role, NetworkValue::EchoBatch(msg.clone())).await;
         // adding own echo to the map
-        let mut echos: HashMap<(Role, BroadcastValue), u32> =
+        let mut echos: HashMap<(Role, BroadcastValue<Z>), u32> =
             msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
         // retrieve echos from all parties
         let mut registered_votes =
@@ -956,16 +961,16 @@ mod tests {
     //Test bcast with one actively malicious party
     #[test]
     fn broadcast_w_malicious_1() {
-        let msg = BroadcastValue::from(Value::U64(42));
+        let msg = BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(42)));
         let corrupt_msg = (0..5)
-            .map(|i| BroadcastValue::from(Value::U64(43 + i)))
+            .map(|i| BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(43 + i))))
             .collect_vec();
-        let identities = DistributedTestRuntime::generate_fixed_identities(5);
+        let identities = generate_fixed_identities(5);
         let parties = identities.len();
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1033,11 +1038,11 @@ mod tests {
     //In this strategy, the cheater sends m0 to P2 and m1 to P3 and P4,
     //it then echoes m to P3 an P4 but echoes m0 to P2 and does not vote for anything
     //we thus expect that P2,P3,P4 will end up agreeing on m1 at the end of round5
-    async fn cheater_broadcast_strategy_2<R: RngCore, B: BaseSessionHandles<R>>(
+    async fn cheater_broadcast_strategy_2<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
         session: &B,
         sender_list: &Vec<Role>,
-        vec_vi: Option<Vec<BroadcastValue>>,
-    ) -> anyhow::Result<HashMap<Role, BroadcastValue>> {
+        vec_vi: Option<Vec<BroadcastValue<Z>>>,
+    ) -> anyhow::Result<RoleValueMap<Z>> {
         if sender_list.is_empty() {
             return Err(anyhow_error_and_log(
                 "We expect at least one party as sender in reliable broadcast".to_string(),
@@ -1054,7 +1059,7 @@ mod tests {
         // Communication round 1
         // As a cheater I send a different message to all the parties
         // The send calls are followed by receive to get the incoming messages from the others
-        let mut round1_data = HashMap::<Role, BroadcastValue>::new();
+        let mut round1_data = HashMap::<Role, BroadcastValue<Z>>::new();
         session.network().increase_round_counter().await?;
         match (vec_vi.clone(), is_sender) {
             (Some(vec_vi), true) => {
@@ -1068,12 +1073,16 @@ mod tests {
                     if &my_role != other_role && other_role.one_based() > 2 {
                         let msg = NetworkValue::Send(vec_vi[1].clone());
                         jobs.spawn(async move {
-                            let _ = networking.send(msg, &other_id, &session_id).await;
+                            let _ = networking
+                                .send(msg.to_network(), &other_id, &session_id)
+                                .await;
                         });
                     } else if other_role.one_based() == 2 {
                         let msg = NetworkValue::Send(vec_vi[0].clone());
                         jobs.spawn(async move {
-                            let _ = networking.send(msg, &other_id, &session_id).await;
+                            let _ = networking
+                                .send(msg.to_network(), &other_id, &session_id)
+                                .await;
                         });
                     }
                 }
@@ -1112,19 +1121,23 @@ mod tests {
             if &my_role != other_role && other_role.one_based() > 2 {
                 let msg = NetworkValue::EchoBatch(msg_to_others.clone());
                 jobs.spawn(async move {
-                    let _ = networking.send(msg, &other_id, &session_id).await;
+                    let _ = networking
+                        .send(msg.to_network(), &other_id, &session_id)
+                        .await;
                 });
             } else if other_role.one_based() == 2 {
                 let msg = NetworkValue::EchoBatch(msg_to_p2.clone());
                 jobs.spawn(async move {
-                    let _ = networking.send(msg, &other_id, &session_id).await;
+                    let _ = networking
+                        .send(msg.to_network(), &other_id, &session_id)
+                        .await;
                 });
             }
         }
         while (jobs.join_next().await).is_some() {}
         let msg = msg_to_others;
         // adding own echo to the map
-        let mut echos: HashMap<(Role, BroadcastValue), u32> =
+        let mut echos: HashMap<(Role, BroadcastValue<Z>), u32> =
             msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
         // retrieve echos from all parties
         let _ =
@@ -1139,16 +1152,16 @@ mod tests {
     //Test bcast with one actively malicious party
     #[test]
     fn broadcast_w_malicious_2() {
-        let msg = BroadcastValue::from(Value::U64(42));
+        let msg = BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(42)));
         let corrupt_msg = (0..5)
-            .map(|i| BroadcastValue::from(Value::U64(43 + i)))
+            .map(|i| BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(43 + i))))
             .collect_vec();
-        let identities = DistributedTestRuntime::generate_fixed_identities(4);
+        let identities = generate_fixed_identities(4);
         let parties = identities.len();
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::new(identities.clone(), threshold);
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();

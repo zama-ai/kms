@@ -1,10 +1,10 @@
-use super::local_single_share::LocalSingleShare;
+use super::local_single_share::{Derive, LocalSingleShare};
 use crate::{
     algebra::bivariate::{compute_powers, MatrixMul},
+    algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
-    execution::{party::Role, session::LargeSessionHandles},
-    residue_poly::ResiduePoly,
-    Sample, Z128,
+    execution::sharing::shamir::ShamirRing,
+    execution::{runtime::party::Role, runtime::session::LargeSessionHandles},
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -13,7 +13,7 @@ use rand::RngCore;
 use std::collections::HashMap;
 
 #[async_trait]
-pub trait SingleSharing: Send + Default + Clone {
+pub trait SingleSharing<Z: Ring>: Send + Default + Clone {
     async fn init<R: RngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -22,22 +22,22 @@ pub trait SingleSharing: Send + Default + Clone {
     async fn next<R: RngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
-    ) -> anyhow::Result<ResiduePoly<Z128>>;
+    ) -> anyhow::Result<Z>;
 }
 
 //Might want to store the dispute set at the output of the lsl call
 //as that'll influence how to reconstruct stuff later on
 #[derive(Clone, Default)]
-pub struct RealSingleSharing<S: LocalSingleShare> {
+pub struct RealSingleSharing<Z, S: LocalSingleShare> {
     local_single_share: S,
-    available_lsl: Vec<ArrayD<ResiduePoly<Z128>>>,
-    available_shares: Vec<ResiduePoly<Z128>>,
+    available_lsl: Vec<ArrayD<Z>>,
+    available_shares: Vec<Z>,
     max_num_iterations: usize,
-    vdm_matrix: ArrayD<ResiduePoly<Z128>>,
+    vdm_matrix: ArrayD<Z>,
 }
 
 #[async_trait]
-impl<S: LocalSingleShare> SingleSharing for RealSingleSharing<S> {
+impl<Z: ShamirRing + Derive, S: LocalSingleShare> SingleSharing<Z> for RealSingleSharing<Z, S> {
     async fn init<R: RngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -47,16 +47,14 @@ impl<S: LocalSingleShare> SingleSharing for RealSingleSharing<S> {
             return Ok(());
         }
 
-        let my_secrets = (0..l)
-            .map(|_| ResiduePoly::<Z128>::sample(session.rng()))
-            .collect_vec();
+        let my_secrets = (0..l).map(|_| Z::sample(session.rng())).collect_vec();
 
-        self.available_lsl = format_for_next(
-            self.local_single_share
-                .execute(session, &my_secrets)
-                .await?,
-            l,
-        )?;
+        let shares = self
+            .local_single_share
+            .execute(session, &my_secrets)
+            .await?;
+
+        self.available_lsl = format_for_next(shares, l)?;
         self.max_num_iterations = l;
 
         //Init vdm matrix only once or when dim changes
@@ -74,7 +72,7 @@ impl<S: LocalSingleShare> SingleSharing for RealSingleSharing<S> {
     async fn next<R: RngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
-    ) -> anyhow::Result<ResiduePoly<Z128>> {
+    ) -> anyhow::Result<Z> {
         if self.available_shares.is_empty() {
             if self.available_lsl.is_empty() {
                 self.init(session, self.max_num_iterations).await?;
@@ -88,14 +86,14 @@ impl<S: LocalSingleShare> SingleSharing for RealSingleSharing<S> {
     }
 }
 
-pub fn init_vdm(height: usize, width: usize) -> anyhow::Result<ArrayD<ResiduePoly<Z128>>> {
-    let invertible_points: Vec<ResiduePoly<Z128>> = (0..height)
-        .map(|inv_idx| ResiduePoly::<Z128>::embed(inv_idx + 1))
+pub fn init_vdm<Z: ShamirRing>(height: usize, width: usize) -> anyhow::Result<ArrayD<Z>> {
+    let invertible_points: Vec<Z> = (0..height)
+        .map(|inv_idx| Z::embed_exceptional_set(inv_idx + 1))
         .try_collect()?;
 
-    let powers_of_invertible_points: Vec<ResiduePoly<Z128>> = invertible_points
+    let powers_of_invertible_points: Vec<Z> = invertible_points
         .into_iter()
-        .fold(Vec::<ResiduePoly<Z128>>::new(), |acc, point| {
+        .fold(Vec::<Z>::new(), |acc, point| {
             [acc, compute_powers(point, width - 1)].concat()
         });
 
@@ -106,10 +104,10 @@ pub fn init_vdm(height: usize, width: usize) -> anyhow::Result<ArrayD<ResiduePol
 //role_i -> [<x_1^{(i)}>_{self}, ... , <x_l^{(i)}>_{self}]
 //to a map appropriate for the randomness extraction with keys j in [l]
 // j -> [<x_j^{(1)}>_{self}, ..., <x_j^{(n)}>_{self}]
-fn format_for_next(
-    local_single_shares: HashMap<Role, Vec<ResiduePoly<Z128>>>,
+fn format_for_next<Z: Ring>(
+    local_single_shares: HashMap<Role, Vec<Z>>,
     l: usize,
-) -> anyhow::Result<Vec<ArrayD<ResiduePoly<Z128>>>> {
+) -> anyhow::Result<Vec<ArrayD<Z>>> {
     let num_parties = local_single_shares.len();
     let mut res = Vec::with_capacity(l);
     for i in 0..l {
@@ -128,10 +126,10 @@ fn format_for_next(
     Ok(res)
 }
 
-fn compute_next_batch(
-    formated_lsl: &mut Vec<ArrayD<ResiduePoly<Z128>>>,
-    vdm: &ArrayD<ResiduePoly<Z128>>,
-) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
+fn compute_next_batch<Z: Ring>(
+    formated_lsl: &mut Vec<ArrayD<Z>>,
+    vdm: &ArrayD<Z>,
+) -> anyhow::Result<Vec<Z>> {
     let res = formated_lsl
         .pop()
         .ok_or_else(|| anyhow_error_and_log("Can not pop empty formated_lsl vector".to_string()))?
@@ -141,50 +139,53 @@ fn compute_next_batch(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::init_vdm;
+    use super::{init_vdm, RealSingleSharing};
     use crate::{
-        execution::{
-            coinflip::RealCoinflip,
-            large_execution::share_dispute::RealShareDispute,
-            party::Role,
-            session::{LargeSession, ParameterHandles},
+        algebra::{
+            residue_poly::ResiduePoly,
+            structure_traits::{Ring, Sample},
         },
-        residue_poly::ResiduePoly,
-        shamir::ShamirGSharings,
-        sharing::{
-            local_single_share::{LocalSingleShare, RealLocalSingleShare},
-            single_sharing::{RealSingleSharing, SingleSharing},
-            vss::RealVss,
+        execution::{
+            large_execution::{
+                coinflip::RealCoinflip,
+                local_single_share::{Derive, LocalSingleShare, RealLocalSingleShare},
+                share_dispute::RealShareDispute,
+                single_sharing::SingleSharing,
+                vss::RealVss,
+            },
+            runtime::party::Role,
+            runtime::session::{LargeSession, ParameterHandles},
+            sharing::{
+                shamir::{ShamirRing, ShamirSharing},
+                share::Share,
+            },
         },
         tests::helper::tests_and_benches::execute_protocol_large,
-        Sample, Zero, Z128,
     };
     use ndarray::Ix2;
+    use rstest::rstest;
     use std::num::Wrapping;
-    use tracing_test::traced_test;
 
+    use crate::algebra::residue_poly::ResiduePoly128;
+    use crate::algebra::residue_poly::ResiduePoly64;
     type TrueLocalSingleShare = RealLocalSingleShare<RealCoinflip<RealVss>, RealShareDispute>;
 
-    pub(crate) fn create_real_single_sharing<L: LocalSingleShare>(
+    pub(crate) fn create_real_single_sharing<Z: Ring, L: LocalSingleShare>(
         lsl_strategy: L,
-    ) -> RealSingleSharing<L> {
+    ) -> RealSingleSharing<Z, L> {
         RealSingleSharing {
             local_single_share: lsl_strategy,
             ..Default::default()
         }
     }
 
-    #[traced_test]
-    #[test]
-    fn test_singlesharing() {
-        let parties = 4;
-        let threshold = 1;
-
-        async fn task(mut session: LargeSession) -> (Role, [u8; 32], Vec<ResiduePoly<Z128>>) {
+    //#[test]
+    fn test_singlesharing<Z: ShamirRing + Derive>(parties: usize, threshold: usize) {
+        let mut task = |mut session: LargeSession| async move {
             let lsl_batch_size = 10_usize;
             let extracted_size = session.amount_of_parties() - session.threshold() as usize;
-            let mut res = Vec::<ResiduePoly<Z128>>::new();
-            let mut single_sharing = RealSingleSharing::<TrueLocalSingleShare>::default();
+            let mut res = Vec::<Z>::new();
+            let mut single_sharing = RealSingleSharing::<Z, TrueLocalSingleShare>::default();
             single_sharing
                 .init(&mut session, lsl_batch_size)
                 .await
@@ -193,9 +194,9 @@ pub(crate) mod tests {
                 res.push(single_sharing.next(&mut session).await.unwrap());
             }
             (session.my_role().unwrap(), session.rng.get_seed(), res)
-        }
+        };
 
-        let result = execute_protocol_large(parties, threshold, &mut task);
+        let result = execute_protocol_large::<Z, _, _>(parties, threshold, &mut task);
 
         //Check we can reconstruct
         let lsl_batch_size = 10_usize;
@@ -203,16 +204,29 @@ pub(crate) mod tests {
         let num_output = lsl_batch_size * extracted_size + 1;
         assert_eq!(result[0].2.len(), num_output);
         for value_idx in 0..num_output {
-            let mut res_vec = vec![(0_usize, ResiduePoly::<Z128>::ZERO); parties];
+            let mut res_vec = Vec::new();
             for (role, _, res) in result.iter() {
-                res_vec[role.zero_based()] = (role.one_based(), res[value_idx]);
+                res_vec.push(Share::new(*role, res[value_idx]));
             }
-            let shamir_sharing = ShamirGSharings { shares: res_vec };
+            let shamir_sharing = ShamirSharing::create(res_vec);
             let res = shamir_sharing.reconstruct(threshold);
             assert!(res.is_ok());
         }
     }
 
+    #[rstest]
+    #[case(4, 1)]
+    #[case(7, 2)]
+    fn test_singlesharing_z128(#[case] num_parties: usize, #[case] threshold: usize) {
+        test_singlesharing::<ResiduePoly128>(num_parties, threshold);
+    }
+
+    #[rstest]
+    #[case(4, 1)]
+    #[case(7, 2)]
+    fn test_singlesharing_z64(#[case] num_parties: usize, #[case] threshold: usize) {
+        test_singlesharing::<ResiduePoly64>(num_parties, threshold);
+    }
     //P2 dropout, but gives random value for reconstruction.
     // expect to see it as corrupt but able to reconstruct
     #[test]
@@ -220,12 +234,13 @@ pub(crate) mod tests {
         let parties = 4;
         let threshold = 1;
 
-        async fn task(mut session: LargeSession) -> (Role, [u8; 32], Vec<ResiduePoly<Z128>>) {
+        async fn task(mut session: LargeSession) -> (Role, [u8; 32], Vec<ResiduePoly128>) {
             let lsl_batch_size = 10_usize;
             let extracted_size = session.amount_of_parties() - session.threshold() as usize;
-            let mut res = Vec::<ResiduePoly<Z128>>::new();
+            let mut res = Vec::<ResiduePoly128>::new();
             if session.my_role().unwrap().one_based() != 2 {
-                let mut single_sharing = RealSingleSharing::<TrueLocalSingleShare>::default();
+                let mut single_sharing =
+                    RealSingleSharing::<ResiduePoly128, TrueLocalSingleShare>::default();
                 single_sharing
                     .init(&mut session, lsl_batch_size)
                     .await
@@ -236,13 +251,13 @@ pub(crate) mod tests {
                 assert!(session.corrupt_roles.contains(&Role::indexed_by_one(2)));
             } else {
                 for _ in 0..lsl_batch_size * extracted_size + 1 {
-                    res.push(ResiduePoly::<Z128>::sample(&mut session.rng));
+                    res.push(ResiduePoly128::sample(&mut session.rng));
                 }
             }
             (session.my_role().unwrap(), session.rng.get_seed(), res)
         }
 
-        let result = execute_protocol_large(parties, threshold, &mut task);
+        let result = execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, &mut task);
 
         //Check we can reconstruct
         let lsl_batch_size = 10_usize;
@@ -250,11 +265,11 @@ pub(crate) mod tests {
         let num_output = lsl_batch_size * extracted_size + 1;
         assert_eq!(result[0].2.len(), num_output);
         for value_idx in 0..num_output {
-            let mut res_vec = vec![(0_usize, ResiduePoly::<Z128>::ZERO); parties];
+            let mut res_vec = Vec::new();
             for (role, _, res) in result.iter() {
-                res_vec[role.zero_based()] = (role.one_based(), res[value_idx]);
+                res_vec.push(Share::new(*role, res[value_idx]));
             }
-            let shamir_sharing = ShamirGSharings { shares: res_vec };
+            let shamir_sharing = ShamirSharing::create(res_vec);
             //Expect max 1 error coming from dropout
             let res = shamir_sharing.err_reconstruct(threshold, 1);
             assert!(res.is_ok());

@@ -487,7 +487,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use crate::{
-        execution::reencryption::{
+        execution::endpoints::reencryption::{
             check_signature, encryption_key_generation, hash_element, parse_msg, signcrypt,
             validate_and_decrypt, ClientRequest, Signature, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
         },

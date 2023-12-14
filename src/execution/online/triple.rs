@@ -1,29 +1,26 @@
 use crate::{
+    algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
-    execution::{distributed::robust_opens_to_all, session::BaseSessionHandles},
-    poly::Ring,
-    value::{self, Value},
+    execution::{
+        runtime::session::BaseSessionHandles,
+        sharing::open::robust_opens_to_all,
+        sharing::{shamir::ShamirRing, share::Share},
+    },
 };
 use anyhow::Context;
 use itertools::Itertools;
 use rand::RngCore;
 
-use super::share::Share;
-
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Triple<R>
 where
-    R: Ring + std::convert::From<value::Value> + Send + Sync,
-    value::Value: std::convert::From<R>,
+    R: Ring + Send + Sync,
 {
     pub a: Share<R>,
     pub b: Share<R>,
     pub c: Share<R>,
 }
-impl<R: Ring + std::convert::From<value::Value> + Send + Sync> Triple<R>
-where
-    value::Value: std::convert::From<R>,
-{
+impl<R: Ring + Send + Sync> Triple<R> {
     pub fn new(a: Share<R>, b: Share<R>, c: Share<R>) -> Self {
         Self { a, b, c }
     }
@@ -39,19 +36,12 @@ where
 ///     [rho]       =[y]+[triple.b]
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
-pub async fn mult<
-    R: Ring + std::convert::From<value::Value> + Send + Sync,
-    Rnd: RngCore + Send + Sync,
-    Ses: BaseSessionHandles<Rnd>,
->(
-    x: Share<R>,
-    y: Share<R>,
-    triple: Triple<R>,
+pub async fn mult<Z: ShamirRing, Rnd: RngCore + Send + Sync, Ses: BaseSessionHandles<Rnd>>(
+    x: Share<Z>,
+    y: Share<Z>,
+    triple: Triple<Z>,
     session: &Ses,
-) -> anyhow::Result<Share<R>>
-where
-    value::Value: std::convert::From<R>,
-{
+) -> anyhow::Result<Share<Z>> {
     let res = mult_list(&[x], &[y], vec![triple], session).await?;
     match res.first() {
         Some(res) => Ok(*res),
@@ -67,19 +57,12 @@ where
 ///     [rho]       =[y]+[triple.b]
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
-pub async fn mult_list<
-    R: Ring + std::convert::From<value::Value> + Send + Sync,
-    Rnd: RngCore + Send + Sync,
-    Ses: BaseSessionHandles<Rnd>,
->(
-    x_vec: &[Share<R>],
-    y_vec: &[Share<R>],
-    triples: Vec<Triple<R>>,
+pub async fn mult_list<Z: ShamirRing, Rnd: RngCore + Send + Sync, Ses: BaseSessionHandles<Rnd>>(
+    x_vec: &[Share<Z>],
+    y_vec: &[Share<Z>],
+    triples: Vec<Triple<Z>>,
     session: &Ses,
-) -> anyhow::Result<Vec<Share<R>>>
-where
-    value::Value: std::convert::From<R>,
-{
+) -> anyhow::Result<Vec<Share<Z>>> {
     let amount = x_vec.len();
     if amount != y_vec.len() || amount != triples.len() {
         return Err(anyhow_error_and_log(format!(
@@ -134,17 +117,10 @@ where
 }
 
 // Open a single share
-pub async fn open<
-    R: Ring + std::convert::From<value::Value> + Send + Sync,
-    Rnd: RngCore + Send + Sync,
-    Ses: BaseSessionHandles<Rnd>,
->(
-    to_open: Share<R>,
+pub async fn open<Z: ShamirRing, Rnd: RngCore + Send + Sync, Ses: BaseSessionHandles<Rnd>>(
+    to_open: Share<Z>,
     session: &Ses,
-) -> anyhow::Result<R>
-where
-    value::Value: std::convert::From<R>,
-{
+) -> anyhow::Result<Z> {
     let res = open_list(&[to_open], session).await?;
     match res.first() {
         Some(res) => Ok(*res),
@@ -155,28 +131,18 @@ where
 }
 
 /// Opens a list of shares to all parties
-pub async fn open_list<
-    R: Ring + std::convert::From<value::Value> + Send + Sync,
-    Rnd: RngCore + Send + Sync,
-    Ses: BaseSessionHandles<Rnd>,
->(
-    to_open: &[Share<R>],
+pub async fn open_list<Z: ShamirRing, Rnd: RngCore + Send + Sync, Ses: BaseSessionHandles<Rnd>>(
+    to_open: &[Share<Z>],
     session: &Ses,
-) -> anyhow::Result<Vec<R>>
-where
-    value::Value: std::convert::From<R>,
-{
+) -> anyhow::Result<Vec<Z>> {
     let parsed_to_open = to_open
         .iter()
-        .map(|cur_open| Value::from(cur_open.value()))
+        .map(|cur_open| cur_open.value())
         .collect_vec();
     // TODO should be updated to the async one when #217 is complete
-    let opened_vals: Vec<R> =
+    let opened_vals: Vec<Z> =
         match robust_opens_to_all(session, &parsed_to_open, session.threshold() as usize).await? {
-            Some(opened_vals) => opened_vals
-                .iter()
-                .map(|cur_opened| R::from(cur_opened.clone()))
-                .collect_vec(),
+            Some(opened_vals) => opened_vals,
             None => return Err(anyhow_error_and_log("Could not open shares".to_string())),
         };
     Ok(opened_vals)
@@ -186,17 +152,19 @@ where
 mod tests {
     use super::Share;
     use crate::{
+        algebra::{
+            base_ring::{Z128, Z64},
+            residue_poly::ResiduePoly,
+        },
         execution::{
             online::{
                 preprocessing::{DummyPreprocessing, Preprocessing},
                 triple::{mult, mult_list, open_list},
             },
-            party::Role,
-            session::{ParameterHandles, SmallSession},
+            runtime::party::Role,
+            runtime::session::{ParameterHandles, SmallSession},
         },
-        residue_poly::ResiduePoly,
         tests::helper::tests_and_benches::execute_protocol_small,
-        Z128, Z64,
     };
     use paste::paste;
     use rand_chacha::ChaCha20Rng;
@@ -210,8 +178,8 @@ mod tests {
                 fn [<mult_sunshine_ $z:lower>]() {
                     let parties = 4;
                     let threshold = 1;
-                    async fn task(session: SmallSession) -> Vec<ResiduePoly<Wrapping<$u>>> {
-                        let mut preprocessing = DummyPreprocessing::<$z, ChaCha20Rng, SmallSession>::new(42, session.clone());
+                    async fn task(session: SmallSession<ResiduePoly<$z>>) -> Vec<ResiduePoly<$z>> {
+                        let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, ChaCha20Rng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
                         let cur_a = preprocessing.next_random().unwrap();
                         let cur_b = preprocessing.next_random().unwrap();
                         let trip = preprocessing.next_triple().unwrap();
@@ -237,13 +205,13 @@ mod tests {
                     let threshold = 1;
                     const AMOUNT: usize = 3;
                     async fn task(
-                        session: SmallSession,
+                        session: SmallSession<ResiduePoly<$z>>,
                     ) -> (
-                        Vec<ResiduePoly<Wrapping<$u>>>,
-                        Vec<ResiduePoly<Wrapping<$u>>>,
-                        Vec<ResiduePoly<Wrapping<$u>>>,
+                        Vec<ResiduePoly<$z>>,
+                        Vec<ResiduePoly<$z>>,
+                        Vec<ResiduePoly<$z>>,
                     ) {
-                        let mut preprocessing = DummyPreprocessing::<$z, ChaCha20Rng, SmallSession>::new(42, session.clone());
+                        let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, ChaCha20Rng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
                         let mut a_vec = Vec::with_capacity(AMOUNT);
                         let mut b_vec = Vec::with_capacity(AMOUNT);
                         let mut trip_vec = Vec::with_capacity(AMOUNT);
@@ -277,9 +245,9 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_by_one(4);
-                    let mut task = |session: SmallSession| async move {
+                    let mut task = |session: SmallSession<ResiduePoly<$z>>| async move {
                         if session.my_role().unwrap() != bad_role {
-                            let mut preprocessing = DummyPreprocessing::<$z, ChaCha20Rng, SmallSession>::new(42, session.clone());
+                            let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, ChaCha20Rng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
                             let cur_a = preprocessing.next_random().unwrap();
                             let cur_b = preprocessing.next_random().unwrap();
                             let trip = preprocessing.next_triple().unwrap();
@@ -314,8 +282,8 @@ mod tests {
                     let parties = 4;
                     let threshold = 1;
                     let bad_role: Role = Role::indexed_by_one(4);
-                    let mut task = |session: SmallSession| async move {
-                        let mut preprocessing = DummyPreprocessing::<$z, ChaCha20Rng, SmallSession>::new(42, session.clone());
+                    let mut task = |session: SmallSession<ResiduePoly<$z>>| async move {
+                        let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, ChaCha20Rng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
                         let cur_a = preprocessing.next_random().unwrap();
                         let cur_b = match session.my_role().unwrap() {
                             role if role == bad_role  => Share::new(bad_role, ResiduePoly::<$z>::from_scalar(Wrapping(42))),

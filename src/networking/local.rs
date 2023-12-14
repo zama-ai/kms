@@ -103,7 +103,7 @@ type SimulatedPairwiseChannels = Arc<
 impl Networking for LocalNetworking {
     async fn send(
         &self,
-        val: NetworkValue,
+        val: Vec<u8>,
         receiver: &Identity,
         _session_id: &SessionId,
     ) -> anyhow::Result<(), anyhow::Error> {
@@ -155,11 +155,7 @@ impl Networking for LocalNetworking {
         tx.send(tagged_value).await.map_err(|e| e.into())
     }
 
-    async fn receive(
-        &self,
-        sender: &Identity,
-        _session_id: &SessionId,
-    ) -> anyhow::Result<NetworkValue> {
+    async fn receive(&self, sender: &Identity, _session_id: &SessionId) -> anyhow::Result<Vec<u8>> {
         let (_, rx) = self
             .pairwise_channels
             .get(&(sender.clone(), self.owner.clone()))
@@ -211,13 +207,14 @@ impl Networking for LocalNetworking {
 
 #[derive(Debug, Clone)]
 struct LocalTaggedValue {
-    value: NetworkValue,
+    value: Vec<u8>,
     send_counter: usize,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::value::Value;
+
+    use crate::networking::value::NetworkValue;
 
     use super::*;
     use std::num::Wrapping;
@@ -233,14 +230,16 @@ mod tests {
         let task1 = tokio::spawn(async move {
             let recv = net_bob.receive(&"alice".into(), &123_u128.into()).await;
             assert_eq!(
-                recv.unwrap(),
-                NetworkValue::RingValue(Value::Ring64(Wrapping::<u64>(1234)))
+                NetworkValue::from_network(recv).unwrap(),
+                NetworkValue::RingValue(Wrapping::<u64>(1234))
             );
         });
 
         let task2 = tokio::spawn(async move {
-            let value = NetworkValue::RingValue(Value::Ring64(Wrapping::<u64>(1234)));
-            net_alice.send(value, &"bob".into(), &123_u128.into()).await
+            let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
+            net_alice
+                .send(value.to_network(), &"bob".into(), &123_u128.into())
+                .await
         });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
@@ -254,10 +253,12 @@ mod tests {
 
         let net_alice = net_producer.user_net("alice".into());
 
-        let value = NetworkValue::RingValue(Value::Ring64(Wrapping::<u64>(1234)));
+        let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
         let _ = net_alice
-            .send(value.clone(), &"bob".into(), &123_u128.into())
+            .send(value.clone().to_network(), &"bob".into(), &123_u128.into())
             .await;
-        let _ = net_alice.send(value, &"bob".into(), &123_u128.into()).await;
+        let _ = net_alice
+            .send(value.to_network(), &"bob".into(), &123_u128.into())
+            .await;
     }
 }

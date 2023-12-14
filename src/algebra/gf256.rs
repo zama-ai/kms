@@ -1,8 +1,9 @@
-use crate::{
-    poly::{gao_decoding, Field, Poly, Ring},
-    One, Sample, Zero,
+use super::{
+    poly::{gao_decoding, Poly},
+    structure_traits::{Field, One, Ring, Sample, Zero},
 };
 use g2p::{g2p, GaloisField};
+use serde::{Deserialize, Serialize};
 
 g2p!(
     GF256,
@@ -31,9 +32,48 @@ impl Sample for GF256 {
         GF256::from(candidate[0])
     }
 }
+impl Default for GF256 {
+    fn default() -> Self {
+        <GF256 as Zero>::ZERO
+    }
+}
+
+impl Serialize for GF256 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for GF256 {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(GF256(u8::deserialize(deserializer)?))
+    }
+}
+
+impl std::hash::Hash for GF256 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
+impl std::iter::Sum for GF256 {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(<GF256 as Zero>::ZERO, |acc, x| acc + x)
+    }
+}
 
 impl Ring for GF256 {
     const BIT_LENGTH: usize = 8;
+
+    fn to_byte_vec(&self) -> Vec<u8> {
+        self.0.to_le_bytes().to_vec()
+    }
 }
 impl Field for GF256 {}
 

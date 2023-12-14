@@ -1,14 +1,14 @@
-use crate::error::error_handler::anyhow_error_and_log;
+use crate::algebra::base_ring::Z128;
+use crate::algebra::poly::Poly;
+use crate::algebra::residue_poly::ResiduePoly;
+use crate::algebra::residue_poly::ResiduePoly128;
+use crate::algebra::structure_traits::BaseRing;
+use crate::algebra::structure_traits::Zero;
 use crate::execution::random::get_rng;
 use crate::execution::random::secret_rng_from_seed;
 use crate::execution::random::seed_from_rng;
+use crate::execution::sharing::shamir::ShamirRing;
 use crate::file_handling::read_as_json;
-use crate::poly::Poly;
-use crate::residue_poly::ResiduePoly;
-use crate::value::Value;
-use crate::Sample;
-use crate::Z128;
-use crate::{One, Zero};
 use aligned_vec::ABox;
 use core::fmt;
 use core::fmt::Debug;
@@ -20,7 +20,6 @@ use rand::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
 use std::num::Wrapping;
-use std::ops::{Add, Mul};
 use tfhe::core_crypto::commons::ciphertext_modulus::CiphertextModulus;
 use tfhe::core_crypto::commons::generators::DeterministicSeeder;
 use tfhe::core_crypto::prelude::allocate_and_generate_new_binary_glwe_secret_key;
@@ -79,22 +78,18 @@ pub struct ThresholdLWEParameters {
     pub output_cipher_parameters: CiphertextParameters<u128>,
 }
 
-pub fn gen_single_party_share<R: RngCore, Z>(
+pub(crate) fn gen_single_party_share<R: RngCore, Z>(
     rng: &mut R,
     secret: Z,
     threshold: usize,
     party_id: usize,
 ) -> anyhow::Result<ResiduePoly<Z>>
 where
-    Z: Zero + One,
-    ResiduePoly<Z>: Add<ResiduePoly<Z>, Output = ResiduePoly<Z>>,
-    ResiduePoly<Z>: Mul<ResiduePoly<Z>, Output = ResiduePoly<Z>>,
-    Z: Copy,
-    Z: Sample,
+    Z: BaseRing,
 {
     let embedded_secret = ResiduePoly::from_scalar(secret);
     let poly = Poly::sample_random(rng, embedded_secret, threshold);
-    let share = poly.eval(&ResiduePoly::embed(party_id)?);
+    let share = poly.eval(&ResiduePoly::embed_exceptional_set(party_id)?);
     Ok(share)
 }
 
@@ -135,16 +130,8 @@ pub(crate) fn to_expanded_msg(message: u64, message_mod_bits: usize) -> Plaintex
 
 /// Map a distributedly decrypting ring element from Z_{2^128}[X] to its message.
 /// That is, take the constant term of the polynomial and divide by the appropriate delta.
-pub fn value_to_message(rec_value: Value, message_mod_bits: usize) -> anyhow::Result<Z128> {
-    match rec_value {
-        Value::Poly128(value) => {
-            let value_scalar = Z128::try_from(value)?;
-            Ok(from_expanded_msg(value_scalar.0, message_mod_bits))
-        }
-        _other => Err(anyhow_error_and_log(
-            "Expected decrypted element to be a Ring128 element, but it was not!".to_string(),
-        )),
-    }
+pub fn value_to_message(rec_value: Z128, message_mod_bits: usize) -> anyhow::Result<Z128> {
+    Ok(from_expanded_msg(rec_value.0, message_mod_bits))
 }
 
 pub fn gen_key_set<R: RngCore>(
@@ -279,7 +266,7 @@ pub fn gen_key_set<R: RngCore>(
 
 #[derive(Clone)]
 pub struct SecretKeyShare {
-    pub input_key_share: Array1<ResiduePoly<Z128>>,
+    pub input_key_share: Array1<ResiduePoly128>,
     pub threshold_lwe_parameters: ThresholdLWEParameters,
 }
 
@@ -543,7 +530,7 @@ pub fn keygen_all_party_shares<R: RngCore>(
 ) -> anyhow::Result<Vec<SecretKeyShare>> {
     let s_vector = keyset.sk.lwe_secret_key_128.clone().into_container();
     let s_length = s_vector.len();
-    let mut vv: Vec<Vec<ResiduePoly<Z128>>> = vec![Vec::with_capacity(s_length); num_parties];
+    let mut vv: Vec<Vec<ResiduePoly128>> = vec![Vec::with_capacity(s_length); num_parties];
 
     // for each bit in the secret key generate all parties shares
     for (i, bit) in s_vector.iter().enumerate() {
@@ -551,7 +538,10 @@ pub fn keygen_all_party_shares<R: RngCore>(
         let poly = Poly::sample_random(rng, embedded_secret, threshold);
 
         for (party_id, v) in vv.iter_mut().enumerate().take(num_parties) {
-            v.insert(i, poly.eval(&ResiduePoly::embed(party_id + 1)?));
+            v.insert(
+                i,
+                poly.eval(&ResiduePoly::embed_exceptional_set(party_id + 1)?),
+            );
         }
     }
 
@@ -569,6 +559,7 @@ pub fn keygen_all_party_shares<R: RngCore>(
 #[cfg(test)]
 mod tests {
     use crate::{
+        algebra::base_ring::Z128,
         execution::small_execution::prep::to_large_ciphertext_block,
         file_handling::{read_as_json, read_element},
         lwe::{
@@ -576,7 +567,6 @@ mod tests {
             KeySet, ThresholdLWEParameters,
         },
         tests::test_data_setup::tests::{TEST_KEY_PATH, TEST_PARAM_PATH},
-        Z128,
     };
     use aes_prng::AesRng;
     use num_traits::AsPrimitive;

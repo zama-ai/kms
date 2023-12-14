@@ -20,3 +20,11 @@
 *.whl
 *.so
 *.bin
+
+#coverage
+lcov.info
+*.profdata
+coverage/*
+
+#bench
+flamegraph.svg

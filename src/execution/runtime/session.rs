@@ -9,15 +9,17 @@ use std::{
 };
 
 use crate::{
-    computation::SessionId, error::error_handler::anyhow_error_and_log, networking::Networking,
-    value::BroadcastValue,
+    algebra::structure_traits::Ring,
+    computation::SessionId,
+    error::error_handler::anyhow_error_and_log,
+    execution::{
+        sharing::shamir::ShamirRing,
+        small_execution::prss::{PRSSSetup, PRSSState},
+    },
+    networking::Networking,
 };
 
-use super::{
-    broadcast::broadcast_with_corruption,
-    party::{Identity, Role},
-    small_execution::prss::{PRSSSetup, PRSSState},
-};
+use super::party::{Identity, Role};
 
 pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
 
@@ -80,6 +82,7 @@ impl SessionParameters {
         Ok(res)
     }
 }
+
 impl ParameterHandles for SessionParameters {
     fn my_role(&self) -> anyhow::Result<Role> {
         // Note that if `new` has been used and data has not been modified this should never result in an error
@@ -243,31 +246,31 @@ pub trait ToBaseSession<R: RngCore + Send + Sync, B: BaseSessionHandles<R>> {
     fn to_base_session(&self) -> B;
 }
 
-pub type SmallSession = SmallSessionStruct<ChaCha20Rng, SessionParameters>;
-pub trait SmallSessionHandles<R: RngCore>: BaseSessionHandles<R> {
+pub type SmallSession<Z> = SmallSessionStruct<Z, ChaCha20Rng, SessionParameters>;
+pub trait SmallSessionHandles<Z: Ring, R: RngCore>: BaseSessionHandles<R> {
     /// Return the mutable prss state as an [Option]
-    fn prss_as_mut(&mut self) -> anyhow::Result<&mut PRSSState>;
+    fn prss_as_mut(&mut self) -> anyhow::Result<&mut PRSSState<Z>>;
     /// Returns the non-mutable prss state if it exists or return an error
-    fn prss(&self) -> anyhow::Result<PRSSState>;
+    fn prss(&self) -> anyhow::Result<PRSSState<Z>>;
     /// Set the prss state
-    fn set_prss(&mut self, state: Option<PRSSState>);
+    fn set_prss(&mut self, state: Option<PRSSState<Z>>);
 }
 
 #[derive(Clone)]
-pub struct SmallSessionStruct<R: RngCore + Send + Sync, P: ParameterHandles> {
+pub struct SmallSessionStruct<Z: Ring, R: RngCore + Send + Sync, P: ParameterHandles> {
     pub parameters: P,
     pub network: NetworkingImpl,
     pub rng: R,
     pub corrupt_roles: HashSet<Role>,
-    pub prss_state: Option<PRSSState>,
+    pub prss_state: Option<PRSSState<Z>>,
 }
-impl SmallSession {
+impl<Z: ShamirRing> SmallSession<Z> {
     pub fn new(
         session_id: SessionId,
         role_assignments: HashMap<Role, Identity>,
         network: NetworkingImpl,
         threshold: u8,
-        prss_setup: Option<PRSSSetup>,
+        prss_setup: Option<PRSSSetup<Z>>,
         own_identity: Identity,
         rng: Option<ChaCha20Rng>,
     ) -> anyhow::Result<Self> {
@@ -286,8 +289,8 @@ impl SmallSession {
     }
 }
 
-impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
-    for SmallSessionStruct<R, P>
+impl<Z: Ring, R: RngCore + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
+    for SmallSessionStruct<Z, R, P>
 {
     fn my_role(&self) -> anyhow::Result<Role> {
         self.parameters.my_role()
@@ -325,8 +328,8 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
     }
 }
 
-impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
-    for SmallSessionStruct<R, P>
+impl<Z: Ring, R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
+    for SmallSessionStruct<Z, R, P>
 {
     fn rng(&mut self) -> &mut R {
         &mut self.rng
@@ -351,17 +354,17 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R
     }
 }
 
-impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> SmallSessionHandles<R>
-    for SmallSessionStruct<R, P>
+impl<Z: Ring, R: RngCore + Sync + Send + Clone, P: ParameterHandles> SmallSessionHandles<Z, R>
+    for SmallSessionStruct<Z, R, P>
 {
-    fn prss_as_mut(&mut self) -> anyhow::Result<&mut PRSSState> {
+    fn prss_as_mut(&mut self) -> anyhow::Result<&mut PRSSState<Z>> {
         match self.prss_state {
             Some(ref mut state) => Ok(state),
             None => Err(anyhow_error_and_log("No PRSS state exist".to_string())),
         }
     }
 
-    fn prss(&self) -> anyhow::Result<PRSSState> {
+    fn prss(&self) -> anyhow::Result<PRSSState<Z>> {
         let state = match &self.prss_state {
             Some(state) => state,
             None => {
@@ -371,13 +374,13 @@ impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles> SmallSessionHandles<
         Ok(state.to_owned())
     }
 
-    fn set_prss(&mut self, state: Option<PRSSState>) {
+    fn set_prss(&mut self, state: Option<PRSSState<Z>>) {
         self.prss_state = state;
     }
 }
 
-impl<R: RngCore + Sync + Send + Clone, P: ParameterHandles>
-    ToBaseSession<R, BaseSessionStruct<R, P>> for SmallSessionStruct<R, P>
+impl<Z: Ring, R: RngCore + Sync + Send + Clone, P: ParameterHandles>
+    ToBaseSession<R, BaseSessionStruct<R, P>> for SmallSessionStruct<Z, R, P>
 {
     fn to_base_session(&self) -> BaseSessionStruct<R, P> {
         BaseSessionStruct {
@@ -407,7 +410,8 @@ pub trait LargeSessionHandles<R: RngCore>: BaseSessionHandles<R> {
     fn disputed_roles(&self) -> &DisputeSet;
     fn my_disputes(&self) -> anyhow::Result<&BTreeSet<Role>>;
     fn add_dispute(&mut self, party_a: &Role, party_b: &Role) -> anyhow::Result<()>;
-    async fn add_dispute_and_bcast(&mut self, disputed_parties: &[Role]) -> anyhow::Result<()>;
+    //NOTE: REMOVED EVERYTHING WHICH HAS TO DO WITH add_dispute_and_bcast AS IT IS NOT USED ANYWHERE
+    //async fn add_dispute_and_bcast(&mut self, disputed_parties: &[Role]) -> anyhow::Result<()>;
 }
 #[derive(Clone)]
 pub struct LargeSessionStruct<R: RngCore + Sync + Send + Clone, P: ParameterHandles> {
@@ -528,49 +532,6 @@ impl<R: RngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync
         self.sync_dispute_corrupt(party_b)?;
         Ok(())
     }
-
-    //Is this actually used ? Cant see where in the nist paper
-    ///Add a list of dispute parties and broadcast it
-    async fn add_dispute_and_bcast(&mut self, disputed_parties: &[Role]) -> anyhow::Result<()> {
-        if self.corrupt_roles.contains(&self.my_role()?) {
-            return Ok(());
-        }
-        let mut payload = DisputePayload {
-            msg: DisputeMsg::OK,
-            disputes: vec![],
-        };
-        if !disputed_parties.is_empty() {
-            payload = DisputePayload {
-                msg: DisputeMsg::CORRUPTION,
-                disputes: disputed_parties.to_vec(),
-            };
-            for cur_role in disputed_parties {
-                self.disputed_roles.add(&self.my_role()?, cur_role)?;
-            }
-        }
-        let bcast_data: HashMap<Role, BroadcastValue> =
-            broadcast_with_corruption(self, BroadcastValue::AddDispute(payload)).await?;
-        for (cur_role, cur_payload) in bcast_data.into_iter() {
-            if cur_role != self.my_role()? && !self.corrupt_roles().contains(&cur_role) {
-                let payload = match cur_payload {
-                    BroadcastValue::AddDispute(payload) => payload,
-                    _ => {
-                        return Err(anyhow_error_and_log(
-                            "Unexpected data received from broadcast".to_string(),
-                        ))
-                    }
-                };
-                if payload.msg != DisputeMsg::OK {
-                    for dispute_role in payload.disputes {
-                        self.disputed_roles.add(&cur_role, &dispute_role)?;
-                        // Check whether each party in the dispute set has more than [threshold] disputes and if so add them to the corrupt set
-                        self.sync_dispute_corrupt(&dispute_role)?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 impl<R: RngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync>
@@ -633,22 +594,15 @@ impl DisputeSet {
 #[cfg(test)]
 mod tests {
     use super::SessionParameters;
-    use crate::execution::party::Role;
-    use crate::{execution::session::BaseSessionHandles, tests::helper::tests::get_small_session};
+    use crate::algebra::residue_poly::ResiduePoly128;
+    use crate::execution::runtime::party::Role;
     use crate::{
-        execution::session::{
-            DisputeSet, LargeSession, LargeSessionHandles, LargeSessionStruct, ParameterHandles,
-        },
-        networking::local::LocalNetworkingProducer,
-        tests::helper::tests::{
-            get_dummy_parameters, get_dummy_parameters_for_parties, get_large_session,
-        },
-        tests::helper::tests_and_benches::execute_protocol_large,
+        execution::runtime::session::BaseSessionHandles, tests::helper::tests::get_small_session,
     };
-    use itertools::Itertools;
-    use rand::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
-    use std::{collections::HashSet, sync::Arc};
+    use crate::{
+        execution::runtime::session::ParameterHandles,
+        tests::helper::tests::get_dummy_parameters_for_parties,
+    };
 
     #[test]
     fn too_large_threshold() {
@@ -681,193 +635,8 @@ mod tests {
     }
 
     #[test]
-    fn add_dispute_sunshine() {
-        let parties: usize = 4;
-        let dispute_role: Role = Role::indexed_by_one(2);
-
-        let mut task = |mut session: LargeSession| async move {
-            session
-                .add_dispute_and_bcast(&Vec::from([dispute_role]))
-                .await
-                .unwrap();
-            session
-        };
-
-        let results = execute_protocol_large(parties, 1, &mut task);
-
-        assert_eq!(results.len(), parties);
-        // check they agree on the disputed party
-        for cur_session in results {
-            if cur_session.my_role().unwrap() != dispute_role {
-                for cur_role_id in 1..=parties {
-                    let cur_dispute_set = cur_session
-                        .disputed_roles
-                        .get(&Role::indexed_by_one(cur_role_id))
-                        .unwrap();
-                    // Check that the view of each honest party is consistant with all parties in dispute with the same party
-                    if cur_role_id != dispute_role.one_based() {
-                        // Check there is only one dispute
-                        assert_eq!(1, cur_dispute_set.len());
-                        // Check the identity of the dispute
-                        assert!(cur_dispute_set.contains(&dispute_role));
-                    } else {
-                        // And that the party in dispute is disagreeing with everyone else (except themself)
-                        assert_eq!(parties - 1, cur_dispute_set.len());
-                    }
-                }
-            }
-        }
-    }
-
-    /// Tests what happens when a party drops out of broadcast
-    /// NOTE non-responding parties which act as senders in a broadcast ARE considered corrupt
-    /// TODO this is probably NOT the logic we actually want, in which case this test needs updating
-    /// In large session, adding a party to corrupt will always make it in dispute with everyone
-
-    #[test]
-    fn party_not_responding() {
-        let parties = 4;
-        let non_response_role: Role = Role::indexed_by_one(2);
-        let mut task = |mut session: LargeSession| async move {
-            if session.parameters.my_role().unwrap() != non_response_role {
-                session.add_dispute_and_bcast(&Vec::new()).await.unwrap();
-            }
-            session
-        };
-
-        let results = execute_protocol_large(parties, 1, &mut task);
-
-        // Check that the party that did not respond does get marked as a dispute
-        for cur_session in results {
-            if cur_session.my_role().unwrap() != non_response_role {
-                for cur_role_id in 1..=parties {
-                    let cur_dispute_set = cur_session
-                        .disputed_roles
-                        .get(&Role::indexed_by_one(cur_role_id))
-                        .unwrap();
-                    // Check there is the exepected number of disputes
-                    if cur_role_id != non_response_role.one_based() {
-                        assert_eq!(1, cur_dispute_set.len());
-                    } else {
-                        assert_eq!(parties - 1, cur_dispute_set.len());
-                    }
-                }
-                // And there is one corruption
-                assert_eq!(1, cur_session.corrupt_roles.len());
-            }
-        }
-    }
-
-    /// Tests what happens when the calling party is the one being added to the set of disputes when calling `add_dispute`
-    #[test]
-    fn test_i_am_dispute() {
-        let mut session = get_large_session();
-        let my_role = session.my_role().unwrap();
-        assert_eq!(0, session.corrupt_roles.len());
-        assert_eq!(0, session.my_disputes().unwrap().len());
-
-        let set_of_self = vec![my_role];
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-        rt.block_on(async {
-            let res = session.add_dispute_and_bcast(&set_of_self).await;
-            assert!(res.is_ok());
-            assert_eq!(0, session.corrupt_roles.len());
-            // I cannot be in dispute with myself
-            assert_eq!(0, session.my_disputes().unwrap().len());
-        });
-    }
-
-    /// Tests what happens when there a party gets added to the dispute set using `add_dispute`
-    #[test]
-    fn test_dispute() {
-        let parameters = get_dummy_parameters();
-        let id = parameters.own_identity.clone();
-        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-        let mut session = LargeSessionStruct {
-            parameters,
-            network: Arc::new(net_producer.user_net(id)),
-            rng: ChaCha20Rng::seed_from_u64(42),
-            corrupt_roles: HashSet::new(),
-            disputed_roles: DisputeSet::new(43),
-        };
-        let set_of_other = vec![Role::indexed_by_one(42)];
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-        rt.block_on(async {
-            let res = session.add_dispute_and_bcast(&set_of_other).await;
-            assert!(res.is_ok());
-            assert_eq!(0, session.corrupt_roles.len());
-            // Check that only one party is in dispute
-            assert_eq!(1, session.my_disputes().unwrap().len());
-            // Check that party 42 is in dispute
-            assert!(session
-                .disputed_roles
-                .get(&session.parameters.my_role().unwrap())
-                .unwrap()
-                .contains(&Role::indexed_by_one(42)));
-        });
-    }
-
-    /// Tests what happens when more than `threshold` parties gets added to the dispute set using `add_dispute`.
-    #[test]
-    fn too_many_disputes() {
-        let parties = 6;
-        let dispute_roles: [Role; 2] = [Role::indexed_by_one(2), Role::indexed_by_one(3)];
-        let mut task = |mut session: LargeSession| async move {
-            session
-                .add_dispute_and_bcast(&Vec::from(dispute_roles))
-                .await
-                .unwrap();
-            session
-        };
-
-        let results = execute_protocol_large(parties, 1, &mut task);
-
-        assert_eq!(results.len(), parties);
-        // check that honest parties agree on the corrupt party
-        for cur_session in results {
-            for cur_role_id in 1..=parties {
-                let cur_dispute_set = cur_session
-                    .disputed_roles
-                    .get(&Role::indexed_by_one(cur_role_id))
-                    .unwrap();
-                // Check that the view of each honest party is consistant with all parties in dispute with the same party
-                if !dispute_roles.contains(&Role::indexed_by_one(cur_role_id)) {
-                    // Check there are 2 disputes
-                    assert_eq!(2, cur_dispute_set.len());
-                    // Check that these are also considered corrupted (since everyone agrees they are in dispute)
-                    assert!(cur_session.corrupt_roles.contains(&dispute_roles[0]));
-                    assert!(cur_session.corrupt_roles.contains(&dispute_roles[1]));
-                } else {
-                    // And that the party in dispute is disagreeing with everyone else (except themself)
-                    assert_eq!(parties - 1, cur_dispute_set.len());
-                }
-            }
-        }
-    }
-
-    /// Tests what happens when the calling party is on the list of corrupt parties and `add_dispute` is executed.
-    /// The expected result is that things go ok and that the calling party will stay on the list of corruptions.
-    #[test]
-    fn test_i_am_corrupt() {
-        let set_of_self = HashSet::from([Role::indexed_by_one(1)]);
-        let mut session = get_large_session();
-        session.corrupt_roles = set_of_self.clone();
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-        rt.block_on(async {
-            let res = session
-                .add_dispute_and_bcast(&set_of_self.into_iter().collect_vec())
-                .await;
-            assert!(res.is_ok());
-            assert!(session.corrupt_roles.contains(&Role::indexed_by_one(1)));
-        });
-    }
-
-    #[test]
     fn wont_add_self_to_corrupt() {
-        let mut session = get_small_session();
+        let mut session = get_small_session::<ResiduePoly128>();
         // Check that I cannot add myself to the corruption set directly
         assert!(!session.add_corrupt(session.my_role().unwrap()).unwrap());
         assert_eq!(0, session.corrupt_roles().len());

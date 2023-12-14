@@ -1,20 +1,16 @@
 use crate::{
+    algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::{
-        distributed::robust_opens_to_all,
         online::{
             preprocessing::{
                 BasePreprocessing, Preprocessing, RANDOM_BATCH_SIZE, TRIPLE_BATCH_SIZE,
             },
-            share::Share,
             triple::Triple,
         },
-        session::LargeSessionHandles,
+        runtime::session::LargeSessionHandles,
+        sharing::{open::robust_opens_to_all, shamir::ShamirRing, share::Share},
     },
-    residue_poly::ResiduePoly,
-    sharing::{double_sharing::DoubleSharing, single_sharing::SingleSharing},
-    value::Value,
-    Z128,
 };
 use itertools::Itertools;
 use rand::RngCore;
@@ -35,15 +31,15 @@ impl Default for BatchParams {
 }
 
 #[derive(Default, Clone)]
-pub struct LargePreprocessing<S: SingleSharing, D: DoubleSharing> {
+pub struct LargePreprocessing<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> {
     triple_batch_size: usize,
     random_batch_size: usize,
     single_sharing_handle: S,
     double_sharing_handle: D,
-    elements: BasePreprocessing<ResiduePoly<Z128>>,
+    elements: BasePreprocessing<Z>,
 }
 
-impl<S: SingleSharing, D: DoubleSharing> LargePreprocessing<S, D> {
+impl<Z: ShamirRing, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing<Z, S, D> {
     /// Initializes the preprocessing for a new epoch, by preprocessing a batch
     /// NOTE: if None is passed for the option, we use the constants, which should at some point
     /// be set to give an optimized offline phase for ddec.
@@ -109,10 +105,7 @@ impl<S: SingleSharing, D: DoubleSharing> LargePreprocessing<S, D> {
             .iter()
             .zip(vec_share_y.iter())
             .zip(vec_double_share_v.iter())
-            .map(|((x, y), v)| {
-                let res = x * y + v.degree_2t;
-                Value::Poly128(res)
-            })
+            .map(|((x, y), v)| *x * *y + v.degree_2t)
             .collect_vec();
 
         session.network().increase_round_counter().await?;
@@ -130,17 +123,8 @@ impl<S: SingleSharing, D: DoubleSharing> LargePreprocessing<S, D> {
         let vec_shares_z: Vec<_> = recons_vec_share_d
             .into_iter()
             .zip(vec_double_share_v.iter())
-            .map(|(d, v)| {
-                if let Value::Poly128(d) = d {
-                    Ok(d - v.degree_t)
-                } else {
-                    Err(anyhow_error_and_log(
-                        "Reconstructed value of incorrect type in offline triple generation"
-                            .to_string(),
-                    ))
-                }
-            })
-            .try_collect()?;
+            .map(|(d, v)| d - v.degree_t)
+            .collect_vec();
 
         let my_role = session.my_role()?;
         let mut res = vec_share_x
@@ -178,51 +162,67 @@ impl<S: SingleSharing, D: DoubleSharing> LargePreprocessing<S, D> {
     }
 }
 
-impl<S, D> Preprocessing<ResiduePoly<Z128>> for LargePreprocessing<S, D>
+impl<Z: Ring, S, D> Preprocessing<Z> for LargePreprocessing<Z, S, D>
 where
-    S: SingleSharing,
-    D: DoubleSharing,
+    S: SingleSharing<Z>,
+    D: DoubleSharing<Z>,
 {
-    fn next_triple(&mut self) -> anyhow::Result<Triple<ResiduePoly<Z128>>> {
+    fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
         self.elements.next_triple()
     }
 
-    fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<ResiduePoly<Z128>>>> {
+    fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
         self.elements.next_triple_vec(amount)
     }
 
-    fn next_random(&mut self) -> anyhow::Result<Share<ResiduePoly<Z128>>> {
+    fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
         self.elements.next_random()
     }
 
-    fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<ResiduePoly<Z128>>>> {
+    fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
         self.elements.next_random_vec(amount)
     }
 }
 
-use crate::execution::coinflip::RealCoinflip;
 use crate::execution::large_execution::share_dispute::RealShareDispute;
-use crate::sharing::{
-    double_sharing::RealDoubleSharing, local_double_share::RealLocalDoubleShare,
-    local_single_share::RealLocalSingleShare, single_sharing::RealSingleSharing, vss::RealVss,
+
+use super::{
+    coinflip::RealCoinflip,
+    double_sharing::{DoubleSharing, RealDoubleSharing},
+    local_double_share::RealLocalDoubleShare,
+    local_single_share::RealLocalSingleShare,
+    single_sharing::{RealSingleSharing, SingleSharing},
+    vss::RealVss,
 };
 
-pub type TrueSingleSharing =
-    RealSingleSharing<RealLocalSingleShare<RealCoinflip<RealVss>, RealShareDispute>>;
-pub type TrueDoubleSharing =
-    RealDoubleSharing<RealLocalDoubleShare<RealCoinflip<RealVss>, RealShareDispute>>;
+pub type TrueSingleSharing<Z> =
+    RealSingleSharing<Z, RealLocalSingleShare<RealCoinflip<RealVss>, RealShareDispute>>;
+pub type TrueDoubleSharing<Z> =
+    RealDoubleSharing<Z, RealLocalDoubleShare<RealCoinflip<RealVss>, RealShareDispute>>;
 
 #[cfg(test)]
 mod tests {
     use super::{BatchParams, TrueDoubleSharing, TrueSingleSharing};
     use crate::{
+        algebra::{
+            residue_poly::{ResiduePoly128, ResiduePoly64},
+            structure_traits::Ring,
+        },
         execution::{
-            coinflip::{
-                tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
-                Coinflip, RealCoinflip,
-            },
-            distributed::robust_opens_to_all,
             large_execution::{
+                coinflip::{
+                    tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
+                    Coinflip, RealCoinflip,
+                },
+                double_sharing::{tests::create_real_double_sharing, DoubleSharing},
+                local_double_share::{
+                    tests::{MaliciousReceiverLocalDoubleShare, MaliciousSenderLocalDoubleShare},
+                    LocalDoubleShare, RealLocalDoubleShare,
+                },
+                local_single_share::{
+                    tests::{MaliciousReceiverLocalSingleShare, MaliciousSenderLocalSingleShare},
+                    Derive, LocalSingleShare, RealLocalSingleShare,
+                },
                 offline::LargePreprocessing,
                 share_dispute::{
                     tests::{
@@ -230,49 +230,42 @@ mod tests {
                     },
                     RealShareDispute, ShareDispute,
                 },
+                single_sharing::{tests::create_real_single_sharing, SingleSharing},
+                vss::{
+                    tests::{
+                        DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart,
+                        MaliciousVssR1,
+                    },
+                    RealVss, Vss,
+                },
             },
             online::{
                 preprocessing::{Preprocessing, RANDOM_BATCH_SIZE, TRIPLE_BATCH_SIZE},
-                share::Share,
                 triple::Triple,
             },
-            session::{BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles},
-        },
-        residue_poly::ResiduePoly,
-        shamir::ShamirGSharings,
-        sharing::{
-            double_sharing::{tests::create_real_double_sharing, DoubleSharing},
-            local_double_share::{
-                tests::{MaliciousReceiverLocalDoubleShare, MaliciousSenderLocalDoubleShare},
-                LocalDoubleShare, RealLocalDoubleShare,
+            runtime::session::{
+                BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
             },
-            local_single_share::{
-                tests::{MaliciousReceiverLocalSingleShare, MaliciousSenderLocalSingleShare},
-                LocalSingleShare, RealLocalSingleShare,
-            },
-            single_sharing::{tests::create_real_single_sharing, SingleSharing},
-            vss::{
-                tests::{
-                    DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
-                },
-                RealVss, Vss,
+            sharing::{
+                open::robust_opens_to_all,
+                shamir::{ShamirRing, ShamirSharing},
+                share::Share,
             },
         },
         tests::helper::{
             tests::{execute_protocol_w_disputes_and_malicious, TestingParameters},
             tests_and_benches::execute_protocol_large,
         },
-        value::Value,
-        Sample, Z128,
     };
     use async_trait::async_trait;
     use itertools::Itertools;
     use rstest::rstest;
 
     fn test_offline_strategies<
-        S: SingleSharing,
-        D: DoubleSharing,
-        P: GenericMaliciousPreprocessing<S, D> + 'static,
+        Z: Ring + Derive + ShamirRing,
+        S: SingleSharing<Z>,
+        D: DoubleSharing<Z>,
+        P: GenericMaliciousPreprocessing<Z, S, D> + 'static,
     >(
         params: TestingParameters,
         malicious_offline: P,
@@ -285,14 +278,15 @@ mod tests {
             let mut res_random = Vec::new();
 
             for _ in 0..nb_batches {
-                let mut real_preproc = LargePreprocessing::init(
-                    &mut session,
-                    Some(batch_sizes),
-                    TrueSingleSharing::default(),
-                    TrueDoubleSharing::default(),
-                )
-                .await
-                .unwrap();
+                let mut real_preproc =
+                    LargePreprocessing::<Z, TrueSingleSharing<Z>, TrueDoubleSharing<Z>>::init(
+                        &mut session,
+                        Some(batch_sizes),
+                        TrueSingleSharing::default(),
+                        TrueDoubleSharing::default(),
+                    )
+                    .await
+                    .unwrap();
 
                 res_triples.append(
                     &mut real_preproc
@@ -322,7 +316,7 @@ mod tests {
             session.my_role().unwrap()
         };
 
-        let (result_honest, _) = execute_protocol_w_disputes_and_malicious(
+        let (result_honest, _) = execute_protocol_w_disputes_and_malicious::<Z, _, _, _, _, _>(
             params.num_parties,
             params.threshold as u8,
             &params.dispute_pairs,
@@ -368,14 +362,14 @@ mod tests {
             for (_, res, _, _) in result_honest.iter() {
                 let (x, y, z) = res.0[triple_idx].take();
                 let r = res.1[triple_idx];
-                vec_x.push((x.owner().one_based(), x.value()));
-                vec_y.push((y.owner().one_based(), y.value()));
-                vec_z.push((z.owner().one_based(), z.value()));
-                vec_r.push((r.owner().one_based(), r.value()));
+                vec_x.push(x);
+                vec_y.push(y);
+                vec_z.push(z);
+                vec_r.push(r);
             }
-            let shamir_sharing_x = ShamirGSharings { shares: vec_x };
-            let shamir_sharing_y = ShamirGSharings { shares: vec_y };
-            let shamir_sharing_z = ShamirGSharings { shares: vec_z };
+            let shamir_sharing_x = ShamirSharing::create(vec_x);
+            let shamir_sharing_y = ShamirSharing::create(vec_y);
+            let shamir_sharing_z = ShamirSharing::create(vec_z);
             let x = shamir_sharing_x.reconstruct(params.threshold);
             let y = shamir_sharing_y.reconstruct(params.threshold);
             let z = shamir_sharing_z.reconstruct(params.threshold);
@@ -384,15 +378,18 @@ mod tests {
             assert!(z.is_ok());
             assert_eq!(x.unwrap() * y.unwrap(), z.unwrap());
 
-            let shamir_sharing_r = ShamirGSharings { shares: vec_r };
+            let shamir_sharing_r = ShamirSharing::create(vec_r);
             let r = shamir_sharing_r.reconstruct(params.threshold);
             assert!(r.is_ok());
         }
     }
 
     #[async_trait]
-    trait GenericMaliciousPreprocessing<S: SingleSharing, D: DoubleSharing>:
-        Preprocessing<ResiduePoly<Z128>> + Clone + Send
+    trait GenericMaliciousPreprocessing<
+        Z: ShamirRing + Derive,
+        S: SingleSharing<Z>,
+        D: DoubleSharing<Z>,
+    >: Preprocessing<Z> + Clone + Send
     {
         async fn init(
             &mut self,
@@ -408,26 +405,34 @@ mod tests {
     #[derive(Default, Clone)]
     ///Malicious strategy that introduces an error in the reconstruction of beaver
     /// NOTE: Expect to fill single_sharing and double_sharing at creation
-    pub(crate) struct CheatingLargePreprocessing<S: SingleSharing, D: DoubleSharing> {
+    pub(crate) struct CheatingLargePreprocessing<
+        Z: ShamirRing + Derive,
+        S: SingleSharing<Z>,
+        D: DoubleSharing<Z>,
+    > {
         triple_batch_size: usize,
         random_batch_size: usize,
         single_sharing_handle: S,
         double_sharing_handle: D,
-        available_triples: Vec<Triple<ResiduePoly<Z128>>>,
-        available_randoms: Vec<Share<ResiduePoly<Z128>>>,
+        available_triples: Vec<Triple<Z>>,
+        available_randoms: Vec<Share<Z>>,
     }
 
     #[derive(Default, Clone)]
     ///Acts as a wrapper around the acutal protocol, needed because of the trait design around preprocessing
-    pub(crate) struct HonestLargePreprocessing<S: SingleSharing, D: DoubleSharing> {
+    pub(crate) struct HonestLargePreprocessing<
+        Z: ShamirRing + Derive,
+        S: SingleSharing<Z>,
+        D: DoubleSharing<Z>,
+    > {
         single_sharing_handle: S,
         double_sharing_handle: D,
-        large_preproc: LargePreprocessing<S, D>,
+        large_preproc: LargePreprocessing<Z, S, D>,
     }
 
     #[async_trait]
-    impl<S: SingleSharing, D: DoubleSharing> GenericMaliciousPreprocessing<S, D>
-        for CheatingLargePreprocessing<S, D>
+    impl<Z: ShamirRing + Derive, S: SingleSharing<Z>, D: DoubleSharing<Z>>
+        GenericMaliciousPreprocessing<Z, S, D> for CheatingLargePreprocessing<Z, S, D>
     {
         async fn init(
             &mut self,
@@ -476,8 +481,8 @@ mod tests {
                 .zip(vec_share_y.iter())
                 .zip(vec_double_share_v.iter())
                 .map(|((x, y), v)| {
-                    let res = x * y + v.degree_2t + ResiduePoly::<Z128>::sample(session.rng());
-                    Value::Poly128(res)
+                    let res = *x * *y + v.degree_2t + Z::sample(session.rng());
+                    res
                 })
                 .collect_vec();
             network_vec_share_d.pop();
@@ -495,13 +500,7 @@ mod tests {
             let vec_share_z: Vec<_> = recons_vec_share_d
                 .into_iter()
                 .zip(vec_double_share_v.iter())
-                .map(|(d, v)| {
-                    if let Value::Poly128(d) = d {
-                        d - v.degree_t
-                    } else {
-                        ResiduePoly::default()
-                    }
-                })
+                .map(|(d, v)| d - v.degree_t)
                 .collect_vec();
 
             let my_role = session.my_role()?;
@@ -535,18 +534,16 @@ mod tests {
         }
     }
 
-    impl<S, D> Preprocessing<ResiduePoly<Z128>> for CheatingLargePreprocessing<S, D>
+    impl<Z, S, D> Preprocessing<Z> for CheatingLargePreprocessing<Z, S, D>
     where
-        S: SingleSharing,
-        D: DoubleSharing,
+        Z: ShamirRing + Derive,
+        S: SingleSharing<Z>,
+        D: DoubleSharing<Z>,
     {
-        fn next_triple(&mut self) -> anyhow::Result<Triple<ResiduePoly<Z128>>> {
+        fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
             Ok(self.available_triples.pop().unwrap())
         }
-        fn next_triple_vec(
-            &mut self,
-            amount: usize,
-        ) -> anyhow::Result<Vec<Triple<ResiduePoly<Z128>>>> {
+        fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
             if self.available_triples.len() >= amount {
                 let mut res = Vec::with_capacity(amount);
                 for _ in 0..amount {
@@ -557,14 +554,11 @@ mod tests {
                 Ok(Vec::new())
             }
         }
-        fn next_random(&mut self) -> anyhow::Result<Share<ResiduePoly<Z128>>> {
+        fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
             Ok(self.available_randoms.pop().unwrap())
         }
 
-        fn next_random_vec(
-            &mut self,
-            amount: usize,
-        ) -> anyhow::Result<Vec<Share<ResiduePoly<Z128>>>> {
+        fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
             if self.available_randoms.len() >= amount {
                 let mut res = Vec::with_capacity(amount);
                 for _ in 0..amount {
@@ -579,15 +573,15 @@ mod tests {
 
     //Needed because LargePreprocessing doesnt implement a specific trait
     #[async_trait]
-    impl<S: SingleSharing, D: DoubleSharing> GenericMaliciousPreprocessing<S, D>
-        for HonestLargePreprocessing<S, D>
+    impl<Z: ShamirRing + Derive, S: SingleSharing<Z>, D: DoubleSharing<Z>>
+        GenericMaliciousPreprocessing<Z, S, D> for HonestLargePreprocessing<Z, S, D>
     {
         async fn init(
             &mut self,
             session: &mut LargeSession,
             batch_sizes: Option<BatchParams>,
         ) -> anyhow::Result<()> {
-            self.large_preproc = LargePreprocessing::<S, D>::init(
+            self.large_preproc = LargePreprocessing::<Z, S, D>::init(
                 session,
                 batch_sizes,
                 self.single_sharing_handle.clone(),
@@ -607,28 +601,23 @@ mod tests {
         }
     }
 
-    impl<S, D> Preprocessing<ResiduePoly<Z128>> for HonestLargePreprocessing<S, D>
+    impl<Z, S, D> Preprocessing<Z> for HonestLargePreprocessing<Z, S, D>
     where
-        S: SingleSharing,
-        D: DoubleSharing,
+        Z: ShamirRing + Derive,
+        S: SingleSharing<Z>,
+        D: DoubleSharing<Z>,
     {
-        fn next_triple(&mut self) -> anyhow::Result<Triple<ResiduePoly<Z128>>> {
+        fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
             self.large_preproc.next_triple()
         }
-        fn next_triple_vec(
-            &mut self,
-            amount: usize,
-        ) -> anyhow::Result<Vec<Triple<ResiduePoly<Z128>>>> {
+        fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
             self.large_preproc.next_triple_vec(amount)
         }
-        fn next_random(&mut self) -> anyhow::Result<Share<ResiduePoly<Z128>>> {
+        fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
             self.large_preproc.next_random()
         }
 
-        fn next_random_vec(
-            &mut self,
-            amount: usize,
-        ) -> anyhow::Result<Vec<Share<ResiduePoly<Z128>>>> {
+        fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
             self.large_preproc.next_random_vec(amount)
         }
     }
@@ -636,9 +625,25 @@ mod tests {
     #[rstest]
     #[case(TestingParameters::init_honest(5, 1))]
     #[case(TestingParameters::init_honest(9, 2))]
-    fn test_large_offline(#[case] params: TestingParameters) {
-        let malicious_offline =
-            HonestLargePreprocessing::<TrueSingleSharing, TrueDoubleSharing>::default();
+    fn test_large_offline_z128(#[case] params: TestingParameters) {
+        let malicious_offline = HonestLargePreprocessing::<
+            ResiduePoly128,
+            TrueSingleSharing<ResiduePoly128>,
+            TrueDoubleSharing<ResiduePoly128>,
+        >::default();
+
+        test_offline_strategies(params, malicious_offline);
+    }
+
+    #[rstest]
+    #[case(TestingParameters::init_honest(5, 1))]
+    #[case(TestingParameters::init_honest(9, 2))]
+    fn test_large_offline_z64(#[case] params: TestingParameters) {
+        let malicious_offline = HonestLargePreprocessing::<
+            ResiduePoly64,
+            TrueSingleSharing<ResiduePoly64>,
+            TrueDoubleSharing<ResiduePoly64>,
+        >::default();
 
         test_offline_strategies(params, malicious_offline);
     }
@@ -653,6 +658,246 @@ mod tests {
     >(
         #[values(
                 TestingParameters::init(5,1,&[2],&[0,3],&[],true),
+            )]
+        params: TestingParameters,
+        #[values(
+                DroppingVssFromStart::default(),
+                DroppingVssAfterR1::default(),
+                MaliciousVssR1::init(&params.roles_to_lie_to)
+            )]
+        _vss_strategy: V,
+        #[values(
+                RealCoinflip::init(_vss_strategy.clone()),
+                DroppingCoinflipAfterVss::init(_vss_strategy.clone())
+            )]
+        _coinflip_strategy: C,
+        #[values(
+                RealShareDispute::default(),
+                DroppingShareDispute::default(),
+                WrongShareDisputeRecons::default(),
+                MaliciousShareDisputeRecons::init(&params.roles_to_lie_to)
+
+            )]
+        _share_dispute_strategy: S,
+        #[values(
+                RealLocalSingleShare::init(
+                    _coinflip_strategy.clone(),
+                    _share_dispute_strategy.clone()
+                )
+            )]
+        lsl_strategy: LSL,
+        #[values(
+                RealLocalDoubleShare::init(
+                    _coinflip_strategy.clone(),
+                    _share_dispute_strategy.clone()
+                )
+            )]
+        ldl_strategy: LDL,
+    ) {
+        let shh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
+        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let malicious_offline = HonestLargePreprocessing {
+            single_sharing_handle: shh,
+            double_sharing_handle: dsh,
+            large_preproc: LargePreprocessing::default(),
+        };
+        test_offline_strategies(params.clone(), malicious_offline);
+
+        let shh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
+        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let malicious_offline = HonestLargePreprocessing {
+            single_sharing_handle: shh,
+            double_sharing_handle: dsh,
+            large_preproc: LargePreprocessing::default(),
+        };
+        test_offline_strategies(params.clone(), malicious_offline);
+    }
+
+    #[rstest]
+    fn test_large_offline_malicious_subprotocols_caught_bis<
+        V: Vss,
+        C: Coinflip,
+        S: ShareDispute,
+        LSL: LocalSingleShare + 'static,
+        LDL: LocalDoubleShare + 'static,
+    >(
+        #[values(
+                TestingParameters::init(5,1,&[2],&[0,3],&[],true),
+            )]
+        params: TestingParameters,
+        #[values(RealVss::default())] _vss_strategy: V,
+        #[values(
+                RealCoinflip::init(_vss_strategy.clone()),
+                DroppingCoinflipAfterVss::init(_vss_strategy.clone())
+            )]
+        _coinflip_strategy: C,
+        #[values(
+                RealShareDispute::default(),
+                DroppingShareDispute::default(),
+                WrongShareDisputeRecons::default(),
+                MaliciousShareDisputeRecons::init(&params.roles_to_lie_to)
+            )]
+        _share_dispute_strategy: S,
+        #[values(
+                MaliciousSenderLocalSingleShare::init(
+                    _coinflip_strategy.clone(),
+                    _share_dispute_strategy.clone(),
+                    &params.roles_to_lie_to
+                )
+            )]
+        lsl_strategy: LSL,
+        #[values(
+                MaliciousSenderLocalDoubleShare::init(
+                    _coinflip_strategy.clone(),
+                    _share_dispute_strategy.clone(),
+                    &params.roles_to_lie_to
+                )
+            )]
+        ldl_strategy: LDL,
+    ) {
+        let shh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
+        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let malicious_offline = HonestLargePreprocessing {
+            single_sharing_handle: shh,
+            double_sharing_handle: dsh,
+            large_preproc: LargePreprocessing::default(),
+        };
+        test_offline_strategies(params.clone(), malicious_offline);
+
+        let shh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
+        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let malicious_offline = HonestLargePreprocessing {
+            single_sharing_handle: shh,
+            double_sharing_handle: dsh,
+            large_preproc: LargePreprocessing::default(),
+        };
+        test_offline_strategies(params.clone(), malicious_offline);
+    }
+
+    #[rstest]
+    fn test_large_offline_malicious_subprotocols_not_caught<
+        V: Vss,
+        C: Coinflip,
+        S: ShareDispute,
+        LSL: LocalSingleShare + 'static,
+        LDL: LocalDoubleShare + 'static,
+    >(
+        #[values(
+                TestingParameters::init(5,1,&[2],&[0],&[],false),
+            )]
+        params: TestingParameters,
+        #[values(
+                RealVss::default(),
+                DroppingVssAfterR2::default(),
+                MaliciousVssR1::init(&params.roles_to_lie_to)
+            )]
+        _vss_strategy: V,
+        #[values(
+                RealCoinflip::init(_vss_strategy.clone()),
+                MaliciousCoinflipRecons::init(_vss_strategy.clone()),
+            )]
+        _coinflip_strategy: C,
+        #[values(RealShareDispute::default())] _share_dispute_strategy: S,
+        #[values(
+                RealLocalSingleShare::init(
+                    _coinflip_strategy.clone(),
+                    _share_dispute_strategy.clone()
+                ),
+                MaliciousReceiverLocalSingleShare::init(
+                    _coinflip_strategy.clone(),
+                    _share_dispute_strategy.clone(),
+                    &params.roles_to_lie_to
+                )
+            )]
+        lsl_strategy: LSL,
+        #[values(
+                RealLocalDoubleShare::init(
+                    _coinflip_strategy.clone(),
+                    _share_dispute_strategy.clone()
+                ),
+                MaliciousReceiverLocalDoubleShare::init(
+                    _coinflip_strategy.clone(),
+                    _share_dispute_strategy.clone(),
+                    &params.roles_to_lie_to
+                )
+            )]
+        ldl_strategy: LDL,
+    ) {
+        let shh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
+        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let malicious_offline = CheatingLargePreprocessing {
+            single_sharing_handle: shh,
+            double_sharing_handle: dsh,
+            ..Default::default()
+        };
+        test_offline_strategies(params.clone(), malicious_offline);
+
+        let shh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
+        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let malicious_offline = CheatingLargePreprocessing {
+            single_sharing_handle: shh,
+            double_sharing_handle: dsh,
+            ..Default::default()
+        };
+        test_offline_strategies(params.clone(), malicious_offline);
+    }
+
+    // Test what happens when no more triples are present
+    #[test]
+    fn test_no_more_elements() {
+        let parties = 5;
+        let threshold = 1;
+
+        async fn task(
+            mut session: LargeSession,
+        ) -> (
+            LargeSession,
+            Vec<Triple<ResiduePoly128>>,
+            Vec<Share<ResiduePoly128>>,
+        ) {
+            let mut preproc = LargePreprocessing::<
+                ResiduePoly128,
+                TrueSingleSharing<ResiduePoly128>,
+                TrueDoubleSharing<ResiduePoly128>,
+            >::init(
+                &mut session,
+                None,
+                TrueSingleSharing::default(),
+                TrueDoubleSharing::default(),
+            )
+            .await
+            .unwrap();
+            let mut triple_res = preproc.next_triple_vec(TRIPLE_BATCH_SIZE - 1).unwrap();
+            triple_res.push(preproc.next_triple().unwrap());
+            let mut rand_res = preproc.next_random_vec(RANDOM_BATCH_SIZE - 1).unwrap();
+            rand_res.push(preproc.next_random().unwrap());
+            // We have now used the entire batch of values and should thus fail
+            assert!(preproc.next_triple().is_err());
+            let err = preproc.next_triple().unwrap_err().to_string();
+            assert!(err.contains("available_triple is empty"));
+            let err = preproc.next_random().unwrap_err().to_string();
+            assert!(err.contains("available_random is empty"));
+            (session, triple_res, rand_res)
+        }
+
+        let result = execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, &mut task);
+
+        for (_session, res_trip, res_rand) in result.iter() {
+            assert_eq!(res_trip.len(), TRIPLE_BATCH_SIZE);
+            assert_eq!(res_rand.len(), RANDOM_BATCH_SIZE);
+        }
+    }
+
+    #[cfg(feature = "extensive_testing")]
+    #[rstest]
+    fn test_large_offline_malicious_subprotocols_caught_9p<
+        V: Vss,
+        C: Coinflip,
+        S: ShareDispute,
+        LSL: LocalSingleShare + 'static,
+        LDL: LocalDoubleShare + 'static,
+    >(
+        #[values(
                 TestingParameters::init(9,2,&[1,4],&[0,2,5,6],&[],true)
             )]
         params: TestingParameters,
@@ -672,6 +917,7 @@ mod tests {
                 DroppingShareDispute::default(),
                 WrongShareDisputeRecons::default(),
                 MaliciousShareDisputeRecons::init(&params.roles_to_lie_to)
+
             )]
         _share_dispute_strategy: S,
         #[values(
@@ -689,19 +935,28 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let shh = create_real_single_sharing(lsl_strategy);
-        let dsh = create_real_double_sharing(ldl_strategy);
+        let shh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
+        let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
             single_sharing_handle: shh,
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
+        test_offline_strategies(params.clone(), malicious_offline);
 
-        test_offline_strategies(params, malicious_offline);
+        let shh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
+        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let malicious_offline = HonestLargePreprocessing {
+            single_sharing_handle: shh,
+            double_sharing_handle: dsh,
+            large_preproc: LargePreprocessing::default(),
+        };
+        test_offline_strategies(params.clone(), malicious_offline);
     }
 
+    #[cfg(feature = "extensive_testing")]
     #[rstest]
-    fn test_large_offline_malicious_subprotocols_caught_bis<
+    fn test_large_offline_malicious_subprotocols_caught_bis_9p<
         V: Vss,
         C: Coinflip,
         S: ShareDispute,
@@ -709,7 +964,6 @@ mod tests {
         LDL: LocalDoubleShare + 'static,
     >(
         #[values(
-                TestingParameters::init(5,1,&[2],&[0,3],&[],true),
                 TestingParameters::init(9,2,&[1,4],&[0,2,5,6],&[],true)
             )]
         params: TestingParameters,
@@ -743,19 +997,28 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let shh = create_real_single_sharing(lsl_strategy);
-        let dsh = create_real_double_sharing(ldl_strategy);
+        let shh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
+        let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
             single_sharing_handle: shh,
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
+        test_offline_strategies(params.clone(), malicious_offline);
 
-        test_offline_strategies(params, malicious_offline);
+        let shh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
+        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let malicious_offline = HonestLargePreprocessing {
+            single_sharing_handle: shh,
+            double_sharing_handle: dsh,
+            large_preproc: LargePreprocessing::default(),
+        };
+        test_offline_strategies(params.clone(), malicious_offline);
     }
 
+    #[cfg(feature = "extensive_testing")]
     #[rstest]
-    fn test_large_offline_malicious_subprotocols_not_caught<
+    fn test_large_offline_malicious_subprotocols_not_caught_9p<
         V: Vss,
         C: Coinflip,
         S: ShareDispute,
@@ -763,7 +1026,6 @@ mod tests {
         LDL: LocalDoubleShare + 'static,
     >(
         #[values(
-                TestingParameters::init(5,1,&[2],&[0],&[],false),
                 TestingParameters::init(9,2,&[1,4],&[0,2],&[],false)
             )]
         params: TestingParameters,
@@ -804,56 +1066,22 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let shh = create_real_single_sharing(lsl_strategy);
-        let dsh = create_real_double_sharing(ldl_strategy);
+        let shh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
+        let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = CheatingLargePreprocessing {
             single_sharing_handle: shh,
             double_sharing_handle: dsh,
             ..Default::default()
         };
+        test_offline_strategies(params.clone(), malicious_offline);
 
-        test_offline_strategies(params, malicious_offline);
-    }
-
-    // Test what happens when no more triples are present
-    #[test]
-    fn test_no_more_elements() {
-        let parties = 5;
-        let threshold = 1;
-
-        async fn task(
-            mut session: LargeSession,
-        ) -> (
-            LargeSession,
-            Vec<Triple<ResiduePoly<Z128>>>,
-            Vec<Share<ResiduePoly<Z128>>>,
-        ) {
-            let mut preproc = LargePreprocessing::<TrueSingleSharing, TrueDoubleSharing>::init(
-                &mut session,
-                None,
-                TrueSingleSharing::default(),
-                TrueDoubleSharing::default(),
-            )
-            .await
-            .unwrap();
-            let mut triple_res = preproc.next_triple_vec(TRIPLE_BATCH_SIZE - 1).unwrap();
-            triple_res.push(preproc.next_triple().unwrap());
-            let mut rand_res = preproc.next_random_vec(RANDOM_BATCH_SIZE - 1).unwrap();
-            rand_res.push(preproc.next_random().unwrap());
-            // We have now used the entire batch of values and should thus fail
-            assert!(preproc.next_triple().is_err());
-            let err = preproc.next_triple().unwrap_err().to_string();
-            assert!(err.contains("available_triple is empty"));
-            let err = preproc.next_random().unwrap_err().to_string();
-            assert!(err.contains("available_random is empty"));
-            (session, triple_res, rand_res)
-        }
-
-        let result = execute_protocol_large(parties, threshold, &mut task);
-
-        for (_session, res_trip, res_rand) in result.iter() {
-            assert_eq!(res_trip.len(), TRIPLE_BATCH_SIZE);
-            assert_eq!(res_rand.len(), RANDOM_BATCH_SIZE);
-        }
+        let shh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
+        let dsh = create_real_double_sharing(ldl_strategy.clone());
+        let malicious_offline = CheatingLargePreprocessing {
+            single_sharing_handle: shh,
+            double_sharing_handle: dsh,
+            ..Default::default()
+        };
+        test_offline_strategies(params.clone(), malicious_offline);
     }
 }

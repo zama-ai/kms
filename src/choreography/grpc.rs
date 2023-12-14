@@ -7,51 +7,70 @@ pub mod gen {
 
 use self::gen::choreography_server::{Choreography, ChoreographyServer};
 use self::gen::{
-    DecryptionResponse, KeygenRequest, KeygenResponse, LaunchComputationRequest,
-    LaunchComputationResponse, PubkeyRequest, PubkeyResponse, RetrieveResultsRequest,
-    RetrieveResultsResponse,
+    DecryptionResponse, KeygenRequest, KeygenResponse, PubkeyRequest, PubkeyResponse,
+    RetrieveResultsRequest, RetrieveResultsResponse,
 };
-use crate::execution::distributed::{initialize_key_material, run_circuit_operations_debug};
-use crate::execution::party::Role;
+use crate::algebra::base_ring::Z64;
+use crate::algebra::residue_poly::ResiduePoly128;
+use crate::algebra::residue_poly::ResiduePoly64;
+use crate::execution::endpoints::decryption::run_decryption;
+use crate::execution::endpoints::keygen::initialize_key_material;
 use crate::execution::random::get_rng;
-use crate::execution::{
-    distributed::run_decryption, small_execution::prep::to_large_ciphertext_block,
-};
-use crate::execution::{party::Identity, session::SessionParameters};
+use crate::execution::runtime::party::{Identity, Role};
+use crate::execution::runtime::session::{SessionParameters, SmallSessionStruct};
+use crate::execution::small_execution::prep::to_large_ciphertext_block;
 use crate::file_handling::read_as_json;
 use crate::lwe::{
     gen_key_set, Ciphertext64, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters,
 };
-use crate::value::Value;
-use crate::{choreography::grpc::gen::DecryptionRequest, execution::session::SmallSession};
-use crate::{choreography::NetworkingStrategy, execution::session::SetupMode};
+use crate::{
+    choreography::grpc::gen::DecryptionRequest, execution::runtime::session::SmallSession,
+};
+use crate::{choreography::NetworkingStrategy, execution::runtime::session::SetupMode};
 use crate::{computation::SessionId, execution::small_execution::prss::PRSSSetup};
 use async_cell::sync::AsyncCell;
 use async_trait::async_trait;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use itertools::Itertools;
-use rand_chacha::ChaCha12Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+///Used to store results of decryption
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 pub struct ComputationOutputs {
-    pub outputs: HashMap<String, Vec<Value>>,
+    pub outputs: HashMap<String, Vec<Z64>>,
     pub elapsed_time: Option<Duration>,
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum SupportedRing {
+    //NOTE: For now we never deal with ResiduePoly64 option
+    #[allow(dead_code)]
+    ResiduePoly64,
+    ResiduePoly128,
+}
+
 #[derive(Clone)]
-pub struct SetupInfo {
+enum SupportedPRSSSetup {
+    //NOTE: For now we never deal with ResiduePoly64 option
+    #[allow(dead_code)]
+    ResiduePoly64(Option<PRSSSetup<ResiduePoly64>>),
+    ResiduePoly128(Option<PRSSSetup<ResiduePoly128>>),
+}
+
+#[derive(Clone)]
+struct SetupInfo {
     pub secret_key_share: SecretKeyShare,
-    pub prss_setup: Option<PRSSSetup>,
+    pub prss_setup: HashMap<SupportedRing, SupportedPRSSSetup>,
 }
 
 type ResultStores = DashMap<SessionId, Arc<AsyncCell<ComputationOutputs>>>;
 type SetupStore = DashMap<SessionId, Arc<AsyncCell<SetupInfo>>>;
 
+///Store results of decryptions (Z64) and setups for PRSS128 and PRSS64
 pub struct GrpcChoreography {
     own_identity: Identity,
     result_stores: Arc<ResultStores>,
@@ -62,10 +81,7 @@ pub struct GrpcChoreography {
 }
 
 impl GrpcChoreography {
-    pub fn new(
-        own_identity: Identity,
-        networking_strategy: NetworkingStrategy,
-    ) -> GrpcChoreography {
+    pub fn new(own_identity: Identity, networking_strategy: NetworkingStrategy) -> Self {
         let default_params: ThresholdLWEParameters =
             read_as_json("parameters/default_params.json".to_string()).unwrap();
         GrpcChoreography {
@@ -88,139 +104,8 @@ impl GrpcChoreography {
 
 #[async_trait]
 impl Choreography for GrpcChoreography {
-    async fn launch_computation_debug(
-        &self,
-        request: tonic::Request<LaunchComputationRequest>,
-    ) -> Result<tonic::Response<LaunchComputationResponse>, tonic::Status> {
-        tracing::info!("Launching computation");
-        let request = request.into_inner();
-        let ct: Ciphertext64 =
-            bincode::deserialize::<Ciphertext64>(&request.ciphertext).map_err(|_e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    "failed to parse ciphertext".to_string(),
-                )
-            })?;
-        let computation = bincode::deserialize(&request.computation).map_err(|_e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                "failed to parse computation".to_string(),
-            )
-        })?;
-
-        let threshold: u8 = bincode::deserialize(&request.threshold).map_err(|_e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                "failed to parse threshold".to_string(),
-            )
-        })?;
-
-        let role_assignments: HashMap<Role, Identity> =
-            bincode::deserialize(&request.role_assignment).map_err(|_e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    "failed to parse role assignment".to_string(),
-                )
-            })?;
-
-        let session_id = SessionId::new(&ct).map_err(|_e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                "failed to construct session ID".to_string(),
-            )
-        })?;
-        let setup_epoch_id = &self.setup_epoch_id.try_get();
-
-        match (self.result_stores.entry(session_id), setup_epoch_id) {
-            (Entry::Occupied(_), _) => Err(tonic::Status::new(
-                tonic::Code::Aborted,
-                "session id exists already or inconsistent metric and result map".to_string(),
-            )),
-            (Entry::Vacant(_), None) => Err(tonic::Status::new(
-                tonic::Code::Aborted,
-                "No key share ID set!".to_string(),
-            )),
-            (Entry::Vacant(result_stores_entry), Some(se_id)) => {
-                tracing::debug!("I've launched a new computation");
-                let ksarc = self.setup_store.get(se_id).unwrap();
-                let setup_info = ksarc.value().get().await;
-
-                let result_cell = AsyncCell::shared();
-                result_stores_entry.insert(result_cell);
-
-                let own_identity = self.own_identity.clone();
-                let networking = (self.networking_strategy)(session_id, role_assignments.clone());
-
-                tracing::debug!("own identity: {:?}", own_identity);
-
-                let mut session =  SmallSession::new(
-                    session_id,
-                    role_assignments,
-                    Arc::clone(&networking),
-                    threshold,
-                    setup_info.prss_setup,
-                    own_identity.clone(),
-                    None,
-                )
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        format!("could not make a valid session with current parameters. Failed with error \"{:?}\"", e).to_string(),
-                    )
-                })?;
-
-                let execution_start_timer = Instant::now();
-                let result_stores = Arc::clone(&self.result_stores);
-                let pks = Arc::clone(&self.pubkey_store);
-                let pkl = pks.lock().unwrap().clone();
-                let ct_large = ct
-                    .iter()
-                    .map(|ct_block| to_large_ciphertext_block(&pkl.ck, ct_block))
-                    .collect_vec();
-
-                tokio::spawn(async move {
-                    // maximum one output per party
-                    let mut results = HashMap::with_capacity(1);
-                    let outputs: Vec<Value> = run_circuit_operations_debug::<ChaCha12Rng>(
-                        &mut session,
-                        &computation,
-                        Some(&setup_info.secret_key_share),
-                        Some(&ct_large),
-                    )
-                    .await
-                    .unwrap();
-
-                    tracing::info!("Results in session {:?} ready: {:?}", session_id, outputs);
-                    results.insert(format!("{session_id}"), outputs);
-
-                    let result_cell = result_stores
-                        .get(&session_id)
-                        .expect("session disappeared unexpectedly");
-
-                    let execution_stop_timer = Instant::now();
-                    let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
-                    result_cell.set(ComputationOutputs {
-                        outputs: results,
-                        elapsed_time: Some(elapsed_time),
-                    });
-                    tracing::info!(
-                        "Online time was {:?} microseconds",
-                        (elapsed_time).as_micros()
-                    );
-                });
-                let serialized_session_id = bincode::serialize(&se_id).map_err(|_e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        "Could not serialize session id".to_string(),
-                    )
-                })?;
-                Ok(tonic::Response::new(LaunchComputationResponse {
-                    session_id: serialized_session_id,
-                }))
-            }
-        }
-    }
-
+    ///NOTE: For now we only do threshold decrypt with Ctxt lifting, but we may want to propose both options
+    /// (that's why we have setup_store contain a map for both options)
     async fn threshold_decrypt(
         &self,
         request: tonic::Request<DecryptionRequest>,
@@ -287,13 +172,16 @@ impl Choreography for GrpcChoreography {
                 let networking = (self.networking_strategy)(session_id, role_assignments.clone());
 
                 tracing::debug!("own identity: {:?}", own_identity);
-
+                let prss_setup = match setup_info.prss_setup.get(&SupportedRing::ResiduePoly128) {
+                    Some(SupportedPRSSSetup::ResiduePoly128(v)) => v.clone(),
+                    _ => None,
+                };
                 let mut session = SmallSession::new(
                     session_id,
                     role_assignments,
                     Arc::clone(&networking),
                     threshold,
-                    setup_info.prss_setup,
+                    prss_setup,
                     own_identity.clone(),
                     None,
                 )
@@ -390,6 +278,7 @@ impl Choreography for GrpcChoreography {
         Ok(tonic::Response::new(RetrieveResultsResponse { values }))
     }
 
+    ///Note: For now assumes keygen works with PRSS128, but we dont really have a protocol yet so...
     async fn keygen(
         &self,
         request: tonic::Request<KeygenRequest>,
@@ -450,7 +339,7 @@ impl Choreography for GrpcChoreography {
 
                 tracing::debug!("own identity: {:?}", own_identity);
 
-                let mut session: crate::execution::session::SmallSessionStruct<rand_chacha::ChaCha20Rng, SessionParameters> = SmallSession::new(
+                let mut session: SmallSessionStruct<ResiduePoly128,rand_chacha::ChaCha20Rng, SessionParameters> = SmallSession::new(
                     epoch_id, role_assignments, Arc::clone(&networking), threshold, None, own_identity, None,)
                 .map_err(|e| {
                     tonic::Status::new(
@@ -471,9 +360,15 @@ impl Choreography for GrpcChoreography {
                     let setup_result_cell = setup_store
                         .get(&epoch_id)
                         .expect("Epoch key store disappeared unexpectedly");
+                    let mut map_setup = HashMap::new();
+                    map_setup.insert(
+                        SupportedRing::ResiduePoly128,
+                        SupportedPRSSSetup::ResiduePoly128(prss_setup),
+                    );
+
                     setup_result_cell.set(SetupInfo {
                         secret_key_share: sk,
-                        prss_setup,
+                        prss_setup: map_setup,
                     });
 
                     *pks.lock().unwrap() = pk;

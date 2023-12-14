@@ -5,12 +5,12 @@ use std::{
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
+    algebra::{residue_poly::ResiduePoly128, structure_traits::Ring},
     computation::SessionId,
     execution::{
-        agree_random::DummyAgreeRandom,
-        party::{Identity, Role},
-        session::{SessionParameters, SmallSession, SmallSessionStruct},
-        small_execution::prss::PRSSSetup,
+        runtime::party::{Identity, Role},
+        runtime::session::{SessionParameters, SmallSession, SmallSessionStruct},
+        small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
     },
     networking::local::LocalNetworkingProducer,
 };
@@ -35,7 +35,7 @@ fn bench_prss(c: &mut Criterion) {
             PRSSSetup::init_with_abort::<
                 DummyAgreeRandom,
                 ChaCha20Rng,
-                SmallSessionStruct<ChaCha20Rng, SessionParameters>,
+                SmallSessionStruct<ResiduePoly128, ChaCha20Rng, SessionParameters>,
             >(&mut sess)
             .await
         })
@@ -54,7 +54,11 @@ fn bench_prss(c: &mut Criterion) {
     }
 }
 
-pub fn get_small_session_for_parties(amount: usize, threshold: u8, role: Role) -> SmallSession {
+pub fn get_small_session_for_parties<Z: Ring>(
+    amount: usize,
+    threshold: u8,
+    role: Role,
+) -> SmallSession<Z> {
     let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
     let id = parameters.own_identity.clone();
     let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);

@@ -1,16 +1,17 @@
 use criterion::Throughput;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use distributed_decryption::algebra::residue_poly::ResiduePoly128;
+use distributed_decryption::algebra::residue_poly::ResiduePoly64;
+use distributed_decryption::execution::large_execution::double_sharing::DoubleSharing;
 use distributed_decryption::execution::large_execution::offline::{
     BatchParams, LargePreprocessing,
 };
 use distributed_decryption::execution::large_execution::offline::{
     TrueDoubleSharing, TrueSingleSharing,
 };
-use distributed_decryption::execution::online::gen_bits::Solve;
-use distributed_decryption::execution::session::LargeSession;
-use distributed_decryption::sharing::double_sharing::DoubleSharing;
+use distributed_decryption::execution::online::gen_bits::{BitGenEven, RealBitGenEven};
+use distributed_decryption::execution::runtime::session::LargeSession;
 use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_large;
-use distributed_decryption::Z128;
 
 use pprof::criterion::{Output, PProfProfiler};
 
@@ -33,8 +34,8 @@ impl std::fmt::Display for OneShotConfig {
     }
 }
 
-fn triple(c: &mut Criterion) {
-    let mut group = c.benchmark_group("triple_generation");
+fn triple_z128(c: &mut Criterion) {
+    let mut group = c.benchmark_group("triple_generation_z128");
 
     let params = vec![
         OneShotConfig::new(5, 1, 100),
@@ -61,7 +62,11 @@ fn triple(c: &mut Criterion) {
             |b, &config| {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
-                        let _ = LargePreprocessing::<TrueSingleSharing, TrueDoubleSharing>::init(
+                        let _ = LargePreprocessing::<
+                            ResiduePoly128,
+                            TrueSingleSharing<ResiduePoly128>,
+                            TrueDoubleSharing<ResiduePoly128>,
+                        >::init(
                             &mut session,
                             Some(BatchParams {
                                 triple_batch_size: config.batch_size,
@@ -73,7 +78,67 @@ fn triple(c: &mut Criterion) {
                         .await
                         .unwrap();
                     };
-                    let _result = execute_protocol_large(config.n, config.t, &mut computation);
+                    let _result = execute_protocol_large::<ResiduePoly128, _, _>(
+                        config.n,
+                        config.t,
+                        &mut computation,
+                    );
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn triple_z64(c: &mut Criterion) {
+    let mut group = c.benchmark_group("triple_generation_z64");
+
+    let params = vec![
+        OneShotConfig::new(5, 1, 100),
+        OneShotConfig::new(5, 1, 200),
+        OneShotConfig::new(5, 1, 500),
+        OneShotConfig::new(5, 1, 1000),
+        OneShotConfig::new(10, 2, 100),
+        OneShotConfig::new(10, 2, 200),
+        OneShotConfig::new(10, 2, 500),
+        OneShotConfig::new(10, 2, 1000),
+        OneShotConfig::new(13, 3, 100),
+        OneShotConfig::new(13, 3, 200),
+        OneShotConfig::new(13, 3, 500),
+        OneShotConfig::new(13, 3, 1000),
+    ];
+
+    group.sample_size(10);
+    group.sampling_mode(criterion::SamplingMode::Flat);
+    for config in params {
+        group.throughput(Throughput::Elements(config.batch_size as u64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(config),
+            &config,
+            |b, &config| {
+                b.iter(|| {
+                    let mut computation = |mut session: LargeSession| async move {
+                        let _ = LargePreprocessing::<
+                            ResiduePoly64,
+                            TrueSingleSharing<ResiduePoly64>,
+                            TrueDoubleSharing<ResiduePoly64>,
+                        >::init(
+                            &mut session,
+                            Some(BatchParams {
+                                triple_batch_size: config.batch_size,
+                                random_batch_size: 0,
+                            }),
+                            TrueSingleSharing::default(),
+                            TrueDoubleSharing::default(),
+                        )
+                        .await
+                        .unwrap();
+                    };
+                    let _result = execute_protocol_large::<ResiduePoly64, _, _>(
+                        config.n,
+                        config.t,
+                        &mut computation,
+                    );
                 });
             },
         );
@@ -109,7 +174,11 @@ fn random_sharing(c: &mut Criterion) {
             |b, &config| {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
-                        let _ = LargePreprocessing::<TrueSingleSharing, TrueDoubleSharing>::init(
+                        let _ = LargePreprocessing::<
+                            ResiduePoly128,
+                            TrueSingleSharing<ResiduePoly128>,
+                            TrueDoubleSharing<ResiduePoly128>,
+                        >::init(
                             &mut session,
                             Some(BatchParams {
                                 triple_batch_size: 0,
@@ -121,7 +190,11 @@ fn random_sharing(c: &mut Criterion) {
                         .await
                         .unwrap();
                     };
-                    let _result = execute_protocol_large(config.n, config.t, &mut computation);
+                    let _result = execute_protocol_large::<ResiduePoly128, _, _>(
+                        config.n,
+                        config.t,
+                        &mut computation,
+                    );
                 });
             },
         );
@@ -156,10 +229,14 @@ fn double_sharing(c: &mut Criterion) {
             |b, &config| {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
-                        let mut dsh = TrueDoubleSharing::default();
+                        let mut dsh = TrueDoubleSharing::<ResiduePoly128>::default();
                         dsh.init(&mut session, config.batch_size).await.unwrap();
                     };
-                    let _result = execute_protocol_large(config.n, config.t, &mut computation);
+                    let _result = execute_protocol_large::<ResiduePoly128, _, _>(
+                        config.n,
+                        config.t,
+                        &mut computation,
+                    );
                 });
             },
         );
@@ -194,19 +271,22 @@ fn bitgen_nlarge(c: &mut Criterion) {
             |b, &config| {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
-                        let mut large_preprocessing =
-                            LargePreprocessing::<TrueSingleSharing, TrueDoubleSharing>::init(
-                                &mut session,
-                                Some(BatchParams {
-                                    triple_batch_size: config.batch_size,
-                                    random_batch_size: config.batch_size,
-                                }),
-                                TrueSingleSharing::default(),
-                                TrueDoubleSharing::default(),
-                            )
-                            .await
-                            .unwrap();
-                        let _ = Solve::<Z128>::gen_bits_even(
+                        let mut large_preprocessing = LargePreprocessing::<
+                            ResiduePoly128,
+                            TrueSingleSharing<ResiduePoly128>,
+                            TrueDoubleSharing<ResiduePoly128>,
+                        >::init(
+                            &mut session,
+                            Some(BatchParams {
+                                triple_batch_size: config.batch_size,
+                                random_batch_size: config.batch_size,
+                            }),
+                            TrueSingleSharing::default(),
+                            TrueDoubleSharing::default(),
+                        )
+                        .await
+                        .unwrap();
+                        let _ = RealBitGenEven::gen_bits_even(
                             config.batch_size,
                             &mut large_preprocessing,
                             &mut session,
@@ -214,7 +294,11 @@ fn bitgen_nlarge(c: &mut Criterion) {
                         .await
                         .unwrap();
                     };
-                    let _result = execute_protocol_large(config.n, config.t, &mut computation);
+                    let _result = execute_protocol_large::<ResiduePoly128, _, _>(
+                        config.n,
+                        config.t,
+                        &mut computation,
+                    );
                 });
             },
         );
@@ -222,7 +306,7 @@ fn bitgen_nlarge(c: &mut Criterion) {
 }
 
 fn batch_decode2t(c: &mut Criterion) {
-    use distributed_decryption::shamir::ShamirGSharings;
+    use distributed_decryption::execution::sharing::shamir::ShamirSharing;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha20Rng;
     use std::num::Wrapping;
@@ -251,10 +335,15 @@ fn batch_decode2t(c: &mut Criterion) {
 
         let mut rng = ChaCha20Rng::seed_from_u64(0);
 
-        let prep: Vec<ShamirGSharings<_>> = (0..config.batch_size)
+        let prep: Vec<ShamirSharing<_>> = (0..config.batch_size)
             .map(|idx| {
-                ShamirGSharings::<Z128>::share(&mut rng, Wrapping(idx as u128), config.n, degree)
-                    .unwrap()
+                ShamirSharing::share(
+                    &mut rng,
+                    ResiduePoly128::from_scalar(Wrapping(idx as u128)),
+                    config.n,
+                    degree,
+                )
+                .unwrap()
             })
             .collect();
 
@@ -275,7 +364,7 @@ fn batch_decode2t(c: &mut Criterion) {
 criterion_group! {
     name = prep;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = batch_decode2t, triple, random_sharing, double_sharing, bitgen_nlarge
+    targets = batch_decode2t, triple_z128, triple_z64, random_sharing, double_sharing, bitgen_nlarge
 }
 
 criterion_main!(prep);

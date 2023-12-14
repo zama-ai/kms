@@ -1,6 +1,6 @@
 use clap::Parser;
 use distributed_decryption::choreography::grpc::GrpcChoreography;
-use distributed_decryption::execution::party::Identity;
+use distributed_decryption::execution::runtime::party::Identity;
 use distributed_decryption::networking::grpc::GrpcNetworkingManager;
 use tonic::transport::Server;
 use tracing_subscriber::layer::SubscriberExt;

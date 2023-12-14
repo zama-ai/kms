@@ -1,16 +1,27 @@
-use crate::gf256::GF256;
-use crate::poly::Ring;
-use crate::{error::error_handler::anyhow_error_and_log, value::Value};
-use crate::{One, Sample, ZConsts, Zero, Z128, Z64};
+use super::{
+    gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing, GF256},
+    poly::Poly,
+    structure_traits::{BaseRing, One, Ring, Sample, ZConsts, Zero},
+};
+use crate::{
+    algebra::base_ring::{Z128, Z64},
+    execution::{
+        large_execution::local_single_share::Derive,
+        runtime::party::Role,
+        sharing::shamir::{ShamirRing, ShamirSharing},
+        small_execution::prf::PRSSConversions,
+    },
+};
+use crate::{error::error_handler::anyhow_error_and_log, execution::online::gen_bits::Solve};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use std::ops::MulAssign;
 use std::{
+    collections::HashMap,
     fmt::Display,
     iter::Sum,
-    num::Wrapping,
     ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign},
 };
+use std::{num::Wrapping, ops::MulAssign};
 
 pub const F_DEG: usize = 8; // degree of irreducible polynomial F = x8 + x4 + x3 + x + 1
 
@@ -23,83 +34,30 @@ pub struct ResiduePoly<Z> {
     pub coefs: [Z; F_DEG], // TODO(Daniel) can this be a slice instead of an array?
 }
 
-impl<Z> Ring for ResiduePoly<Z>
+impl<Z: BaseRing> Ring for ResiduePoly<Z>
 where
-    Z: Ring + ZConsts,
     ResiduePoly<Z>: ReductionTable<Z>,
 {
     const BIT_LENGTH: usize = Z::BIT_LENGTH * F_DEG;
+
+    fn to_byte_vec(&self) -> Vec<u8> {
+        let size = Self::BIT_LENGTH >> 3;
+        let mut res = Vec::with_capacity(size);
+        for coef in self.coefs {
+            coef.to_byte_vec()
+                .into_iter()
+                .for_each(|byte| res.push(byte));
+        }
+        res
+    }
 }
-impl TryFrom<ResiduePoly<Z128>> for Z128 {
+
+//Cant do TryInto with generics, see https://github.com/rust-lang/rust/issues/50133#issuecomment-646908391
+pub struct TryFromWrapper<Z>(pub Z);
+impl<Z: Ring + std::fmt::Display> TryFrom<ResiduePoly<Z>> for TryFromWrapper<Z> {
     type Error = anyhow::Error;
-    fn try_from(poly: ResiduePoly<Z128>) -> Result<Z128, Self::Error> {
-        poly.to_scalar()
-    }
-}
-
-impl TryFrom<ResiduePoly<Z64>> for Z64 {
-    type Error = anyhow::Error;
-    fn try_from(poly: ResiduePoly<Z64>) -> Result<Z64, Self::Error> {
-        poly.to_scalar()
-    }
-}
-
-impl From<Value> for ResiduePoly<Z128> {
-    fn from(value: Value) -> Self {
-        match value {
-            Value::Poly64(v) => {
-                tracing::warn!("Trying to convert a polynomial over Z128 to one over Z64. Mathematical relations will probably not be kept");
-                let mut coefs = [Z128::ZERO; F_DEG];
-                for i in 0..v.coefs.len() {
-                    coefs[i] = Wrapping(v.coefs[i].0 as u128);
-                }
-                ResiduePoly { coefs }
-            }
-            Value::Poly128(v) => v,
-            Value::Ring64(v) => ResiduePoly::from_scalar(Wrapping(v.0 as u128)),
-            Value::Ring128(v) => ResiduePoly::from_scalar(Wrapping(v.0)),
-            Value::U64(v) => ResiduePoly::from_scalar(Wrapping(v as u128)),
-            Value::Empty => ResiduePoly::ZERO, //Default to 0
-        }
-    }
-}
-
-impl From<Value> for ResiduePoly<Z64> {
-    fn from(value: Value) -> Self {
-        match value {
-            Value::Poly64(v) => v,
-            Value::Poly128(v) => {
-                tracing::warn!("Trying to convert a polynomial over Z128 to one over Z64. Mathematical relations will probably not be kept");
-                let mut coefs = [Z64::ZERO; F_DEG];
-                for i in 0..v.coefs.len() {
-                    // Observe that `as` truncates, i.e. since the coefficient is unsigned, this corresponds to modulo u64::MAX+1
-                    coefs[i] = Wrapping(v.coefs[i].0 as u64);
-                }
-                ResiduePoly { coefs }
-            }
-            Value::Ring64(v) => ResiduePoly::from_scalar(Wrapping(v.0)),
-            Value::Ring128(v) => {
-                tracing::warn!("Trying to convert an over Z64 to a polynomial over Z128. Mathematical relations will probably not be kept");
-                // Observe that `as` truncates, i.e. since the coefficient is unsigned, this corresponds to modulo u64::MAX+1
-                ResiduePoly::from_scalar(Wrapping(v.0 as u64))
-            }
-            Value::U64(v) => ResiduePoly::from_scalar(Wrapping(v)),
-            Value::Empty => ResiduePoly::ZERO, //Default to 0
-        }
-    }
-}
-
-impl ResiduePoly<Z128> {
-    pub fn from_bytes(bytes: &[u8; ResiduePoly::<Z128>::BIT_LENGTH >> 3]) -> Self {
-        let mut coefs = [Z128::default(); F_DEG];
-        const Z128_SIZE_BYTE: usize = Z128::BIT_LENGTH >> 3;
-        for (i, coef) in coefs.iter_mut().enumerate() {
-            let curr_index = Z128_SIZE_BYTE * i;
-            let mut coef_byte = [0_u8; Z128_SIZE_BYTE];
-            coef_byte[..].copy_from_slice(&bytes[curr_index..curr_index + Z128_SIZE_BYTE]);
-            *coef = Wrapping::<u128>(u128::from_le_bytes(coef_byte));
-        }
-        ResiduePoly { coefs }
+    fn try_from(poly: ResiduePoly<Z>) -> Result<TryFromWrapper<Z>, Self::Error> {
+        Ok(TryFromWrapper(poly.to_scalar()?))
     }
 }
 
@@ -602,24 +560,136 @@ where
     }
 }
 
-impl<Z> ResiduePoly<Z>
-where
-    Z: Zero + One,
-{
-    /// embed party index to ResiduePoly
-    /// This is done by taking the bitwise representation of the index and map each bit to each coefficient
-    /// For eg, suppose x = sum(2^i * x_i); Then ResiduePoly = (x_0, ..., x_7) where x_i \in Z
-    pub fn embed(x: usize) -> anyhow::Result<ResiduePoly<Z>> {
-        if x >= (1 << F_DEG) {
+/// Represents an element Z_{2^bitlen}[X]/F with implicit F = x8 + x4 + x3 + x + 1
+///
+/// Comes with fixed evaluation points lifted from GF(2^8).
+/// This is also the 'value' of a single ShamirShare.
+impl<Z: BaseRing> ResiduePoly<Z> {
+    pub fn bit_compose(&self, idx_bit: usize) -> GF256 {
+        let x: u8 = self
+            .coefs
+            .iter()
+            .enumerate()
+            .fold(0_u8, |acc, (i, element)| {
+                let shifted_entry = (*element).extract_bit(idx_bit) << i;
+                acc + shifted_entry
+            });
+        GF256::from(x)
+    }
+
+    pub fn multiple_pow2(&self, exp: usize) -> bool {
+        assert!(exp <= Z::BIT_LENGTH);
+        if exp == Z::BIT_LENGTH {
+            return self.is_zero();
+        }
+        let bit_checks: Vec<_> = self
+            .coefs
+            .iter()
+            .filter_map(|c| {
+                let bit = (*c) & ((Z::ONE << exp) - Z::ONE);
+                if bit == Z::ZERO {
+                    None
+                } else {
+                    Some(bit)
+                }
+            })
+            .collect();
+
+        bit_checks.is_empty()
+    }
+}
+
+impl<Z: BaseRing> ResiduePoly<Z> {
+    pub fn bit_lift(x: GF256, pos: usize) -> anyhow::Result<ResiduePoly<Z>> {
+        let c8: u8 = x.into();
+        let shifted_coefs: Vec<_> = (0..F_DEG)
+            .map(|i| Z::from_u128(((c8 >> i) & 1) as u128) << pos)
+            .collect();
+        ResiduePoly::<Z>::from_vec(shifted_coefs)
+    }
+}
+
+impl<Z: BaseRing> ReductionTable<Z> for ResiduePoly<Z> {
+    const REDUCTION_TABLES: ReductionTablesGF256<Z> = ReductionTablesGF256::<Z>::new();
+}
+
+impl<Z: BaseRing> ShamirRing for ResiduePoly<Z> {
+    fn decode(
+        sharing: &ShamirSharing<ResiduePoly<Z>>,
+        threshold: usize,
+        max_error_count: usize,
+    ) -> anyhow::Result<Poly<ResiduePoly<Z>>> {
+        // threshold is the degree of the shamir polynomial
+        let ring_size: usize = Z::BIT_LENGTH;
+
+        let mut y: Vec<_> = sharing.shares.iter().map(|x| x.value()).collect();
+        let parties: Vec<_> = sharing
+            .shares
+            .iter()
+            .map(|x| x.owner().one_based())
+            .collect();
+        let mut ring_polys = Vec::new();
+
+        for bit_idx in 0..ring_size {
+            let z: Vec<ShamirZ2Sharing> = parties
+                .iter()
+                .zip(y.iter())
+                .map(|(party_id, sh)| ShamirZ2Sharing {
+                    share: sh.bit_compose(bit_idx),
+                    party_id: *party_id as u8,
+                })
+                .collect();
+
+            // apply error correction on z
+            // fi(X) = a0 + ... a_t * X^t where a0 is the secret bit corresponding to position i
+            let fi_mod2 = error_correction(&z, threshold, max_error_count)?;
+            let fi = ResiduePoly::<Z>::shamir_bit_lift(&fi_mod2, bit_idx)?;
+
+            // compute fi(\gamma_1) ..., fi(\gamma_n) \in GF(256)
+            let ring_eval: Vec<ResiduePoly<Z>> = parties
+                .iter()
+                .map(|party_id| {
+                    let embedded_xi = ResiduePoly::embed_exceptional_set(*party_id)?;
+                    Ok(fi.eval(&embedded_xi))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+
+            ring_polys.push(fi);
+
+            // remove LSBs computed from error correction in GF(256)
+            for (j, item) in y.iter_mut().enumerate() {
+                *item -= ring_eval[j];
+            }
+
+            // check that LSBs were removed correctly
+            let _errs: Vec<_> = y
+                .iter()
+                .map(|yj| {
+                    // see if yj is divisible by 2^{i+1}
+                    // different (and more expensive) check if we want to check divisibility by 2^{128} due to overflow
+                    // bitwise operation to check that 2^{i+1} | yj
+                    yj.multiple_pow2(bit_idx + 1)
+                })
+                .collect();
+        }
+
+        let result = ring_polys
+            .into_iter()
+            .fold(Poly::<ResiduePoly<Z>>::zero(), |acc, x| acc + x);
+        Ok(result)
+    }
+
+    fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self> {
+        if idx >= (1 << F_DEG) {
             return Err(anyhow_error_and_log(format!(
-                "Value {x} is too large to be embedded!"
+                "Value {idx} is too large to be embedded!"
             )));
         }
 
         let mut coefs: [Z; F_DEG] = [Z::ZERO; F_DEG];
 
         for (i, val) in coefs.iter_mut().enumerate().take(F_DEG) {
-            let b = (x >> i) & 1;
+            let b = (idx >> i) & 1;
             if b > 0 {
                 *val = Z::ONE;
             }
@@ -627,112 +697,270 @@ where
 
         Ok(ResiduePoly { coefs })
     }
+
+    /// invert and lift an Integer to the large Ring
+    fn invert(self) -> anyhow::Result<Self> {
+        if self == Self::ZERO {
+            return Err(anyhow_error_and_log("Cannot invert 0".to_string()));
+        }
+
+        let alpha_k = self.bit_compose(0);
+        let ainv = GF256::from(1) / alpha_k;
+        let mut x0 = Self::embed_exceptional_set(ainv.0 as usize)?;
+
+        // compute Newton-Raphson iterations
+        for _ in 0..Z::BIT_LENGTH.ilog2() {
+            x0 *= Self::TWO - self * x0;
+        }
+
+        debug_assert_eq!(x0 * self, ResiduePoly::ONE);
+
+        Ok(x0)
+    }
 }
 
-macro_rules! impl_share_type {
-    ($z:ty, $u:ty) => {
-        /// Represents an element Z_{2^bitlen}[X]/F with implicit F = x8 + x4 + x3 + x + 1
-        ///
-        /// Comes with fixed evaluation points lifted from GF(2^8).
-        /// This is also the 'value' of a single ShamirShare.
-        impl ResiduePoly<$z> {
-            pub fn bit_compose(&self, idx_bit: usize) -> GF256 {
-                let x: u8 = self
-                    .coefs
-                    .iter()
-                    .enumerate()
-                    .fold(0_u8, |acc, (i, element)| {
-                        let shifted_entry = ((element.0 >> idx_bit & 1) as u8) << i;
-                        acc + shifted_entry
-                    });
-                GF256::from(x)
-            }
+impl<Z: BaseRing> ResiduePoly<Z> {
+    pub fn shamir_bit_lift(x: &ShamirZ2Poly, pos: usize) -> anyhow::Result<Poly<ResiduePoly<Z>>> {
+        let coefs: Vec<ResiduePoly<Z>> = x
+            .coefs
+            .iter()
+            .map(|coef_2| Self::bit_lift(*coef_2, pos))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(Poly::from_coefs(coefs))
+    }
 
-            /// invert and lift an Integer to the large Ring
-            pub fn invert(gamma: ResiduePoly<$z>) -> anyhow::Result<ResiduePoly<$z>> {
-                if gamma == ResiduePoly::<$z>::ZERO {
-                    return Err(anyhow_error_and_log(format!("Cannot invert 0")));
-                }
-
-                let alpha_k = gamma.bit_compose(0);
-                let ainv = GF256::from(1) / alpha_k;
-                let mut x0 = ResiduePoly::embed(ainv.0 as usize)?;
-
-                // compute Newton-Raphson iterations
-                for _ in 0..<$z>::BIT_LENGTH.ilog2() {
-                    x0 *= ResiduePoly::TWO - gamma * x0;
-                }
-
-                debug_assert_eq!(x0 * gamma, ResiduePoly::ONE);
-
-                Ok(x0)
-            }
-
-            /// invert and lift an Integer to the large Ring
-            pub fn lift_and_invert(p: usize) -> anyhow::Result<ResiduePoly<$z>> {
-                Self::invert(ResiduePoly::<$z>::ZERO - ResiduePoly::embed(p)?)
-            }
-
-            pub fn multiple_pow2(&self, exp: usize) -> bool {
-                assert!(exp <= <$z>::BIT_LENGTH);
-                if exp == <$z>::BIT_LENGTH {
-                    return self.is_zero();
-                }
-                let bit_checks: Vec<_> = self
-                    .coefs
-                    .iter()
-                    .filter_map(|c| {
-                        let bit = c & ((<$z>::ONE << exp) - <$z>::ONE);
-                        match bit {
-                            Wrapping(0) => None,
-                            _ => Some(bit),
-                        }
-                    })
-                    .collect();
-
-                bit_checks.len() == 0
-            }
+    fn solve_1(v: &Self) -> anyhow::Result<Self> {
+        let mut res = GF256::from(0);
+        let v = Self::bit_compose(v, 0);
+        let v_powers = two_powers(v, F_DEG - 1);
+        for i in 0..(F_DEG - 1) {
+            res += INNER_LOOP[i] * v_powers[i];
         }
-
-        impl ResiduePoly<$z> {
-            pub fn bit_lift(x: GF256, pos: usize) -> anyhow::Result<ResiduePoly<$z>> {
-                let c8: u8 = x.into();
-                let shifted_coefs: Vec<_> = (0..F_DEG)
-                    .map(|i| Wrapping(((c8 >> i) & 1) as $u) << pos)
-                    .collect();
-                ResiduePoly::<$z>::from_vec(shifted_coefs)
-            }
-        }
-
-        impl ReductionTable<$z> for ResiduePoly<$z> {
-            const REDUCTION_TABLES: ReductionTablesGF256<$z> = ReductionTablesGF256::<$z>::new();
-        }
-    };
+        Self::embed_exceptional_set(res.0 as usize)
+    }
 }
 
-impl_share_type!(Z128, u128);
-impl_share_type!(Z64, u64);
+/// Computes the vector which is input ^ (2^i) for i=0..max_power.
+/// I.e. input, input^2, input^4, input^8, ...
+fn two_powers(input: GF256, max_power: usize) -> Vec<GF256> {
+    let mut res = Vec::with_capacity(max_power);
+    let mut temp = input;
+    res.push(temp);
+    for _i in 1..max_power {
+        temp = temp * temp;
+        res.push(temp);
+    }
+    res
+}
+
+// Expansion of inner loop needed for computing the initial value of x for Newton-Raphson.
+// Computed using the following code:
+// const TRACE_ONE: GF256 = GF256(42); // ... which is an element with trace 1
+// fn compute_inner_loop() -> [GF256; 7] {
+//     let delta_powers = two_powers(TRACE_ONE, D);
+//     let mut inner_loop: [GF256; (D - 1) as usize] = [GF256(0); (D - 1) as usize];
+//     for i in 0..(D - 1) {
+//         let mut inner_temp = GF256::from(0);
+//         for j in i + 1..D {
+//             inner_temp += delta_powers[j as usize];
+//         }
+//         inner_loop[i as usize] = inner_temp;
+//     }
+//     inner_loop
+// }
+static INNER_LOOP: [GF256; 7] = [
+    GF256(43),
+    GF256(3),
+    GF256(47),
+    GF256(19),
+    GF256(52),
+    GF256(77),
+    GF256(208),
+];
+
+impl<Z: BaseRing> Solve for ResiduePoly<Z> {
+    ///***NOTE: CAREFUL WHEN NOT USING Z64 OR Z128 AS BASE RING***
+    fn solve(v: &Self) -> anyhow::Result<Self> {
+        //Check to help detect if we forgot about the note above
+        debug_assert_eq!(1 << Z::BIT_LENGTH.ilog2(), Z::BIT_LENGTH);
+        debug_assert!(
+            Z::MAX.to_byte_vec() == <Z64 as ZConsts>::MAX.to_byte_vec()
+                || Z::MAX.to_byte_vec() == <Z128 as ZConsts>::MAX.to_byte_vec()
+        );
+
+        let one: ResiduePoly<Z> = ResiduePoly::ONE;
+        let two: ResiduePoly<Z> = ResiduePoly::TWO;
+        let mut x = Self::solve_1(v)?;
+        let mut y = one;
+        // Do outer Newton Raphson
+        for _i in 1..=Z::BIT_LENGTH.ilog2() {
+            // Do inner Newton Raphson to compute inverse of 1+2*x
+            // Observe that because we use modulo 2^64 and 2^128, which are 2^2^i values
+            // Hence there is no need to do the modulo operation of m as described in the NIST document.
+            let z = one + two * x;
+            y = y * (two - z * y);
+            y = y * (two - z * y);
+            x = (x * x + *v) * y;
+        }
+        // Validate the result, i.e. x+x^2 = input
+        if v != &(x + x * x) {
+            return Err(anyhow_error_and_log(
+                "The outer Newton Raphson inversion computation in solve() failed".to_string(),
+            ));
+        }
+        Ok(x)
+    }
+}
+
+pub type ResiduePoly128 = ResiduePoly<Z128>;
+
+impl ResiduePoly128 {
+    pub fn from_bytes(bytes: &[u8; Self::BIT_LENGTH >> 3]) -> Self {
+        let mut coefs = [Z128::default(); F_DEG];
+        const Z128_SIZE_BYTE: usize = Z128::BIT_LENGTH >> 3;
+        for (i, coef) in coefs.iter_mut().enumerate() {
+            let curr_index = Z128_SIZE_BYTE * i;
+            let mut coef_byte = [0_u8; Z128_SIZE_BYTE];
+            coef_byte[..].copy_from_slice(&bytes[curr_index..curr_index + Z128_SIZE_BYTE]);
+            *coef = Wrapping(u128::from_le_bytes(coef_byte));
+        }
+        ResiduePoly { coefs }
+    }
+}
+
+impl Derive for ResiduePoly128 {
+    fn derive_challenges_from_coinflip(
+        x: &Self,
+        g: usize,
+        l: usize,
+        roles: &[Role],
+    ) -> HashMap<Role, Vec<Self>> {
+        let mut hasher = blake3::Hasher::new();
+        //Update hasher with x
+        for x_coef in x.coefs {
+            hasher.update(&x_coef.0.to_le_bytes());
+        }
+        hasher.update(&g.to_le_bytes());
+
+        roles
+            .iter()
+            .map(|role| {
+                let mut hasher_cloned = hasher.clone();
+                hasher_cloned.update(&role.one_based().to_le_bytes());
+                let mut output_reader = hasher_cloned.finalize_xof();
+                let mut challenges = vec![Self::ZERO; l];
+                for challenge in challenges.iter_mut() {
+                    let mut bytes_res_poly = [0u8; Self::BIT_LENGTH >> 3];
+                    output_reader.fill(&mut bytes_res_poly);
+                    *challenge = Self::from_bytes(&bytes_res_poly);
+                }
+                (*role, challenges)
+            })
+            .collect()
+    }
+}
+
+impl PRSSConversions for ResiduePoly128 {
+    fn from_u128_chunks(coefs: Vec<u128>) -> Self {
+        assert_eq!(coefs.len(), F_DEG);
+        let mut poly_coefs = [Z128::ZERO; F_DEG];
+        for (idx, coef) in coefs.into_iter().enumerate() {
+            poly_coefs[idx] = Wrapping(coef);
+        }
+        Self { coefs: poly_coefs }
+    }
+    fn from_i128(value: i128) -> Self {
+        Self::from_scalar(Wrapping(value as u128))
+    }
+}
+
+pub type ResiduePoly64 = ResiduePoly<Z64>;
+
+impl ResiduePoly64 {
+    pub fn from_bytes(bytes: &[u8; Self::BIT_LENGTH >> 3]) -> Self {
+        let mut coefs = [Z64::default(); F_DEG];
+        const Z64_SIZE_BYTE: usize = Z64::BIT_LENGTH >> 3;
+        for (i, coef) in coefs.iter_mut().enumerate() {
+            let curr_index = Z64_SIZE_BYTE * i;
+            let mut coef_byte = [0_u8; Z64_SIZE_BYTE];
+            coef_byte[..].copy_from_slice(&bytes[curr_index..curr_index + Z64_SIZE_BYTE]);
+            *coef = Wrapping(u64::from_le_bytes(coef_byte));
+        }
+        ResiduePoly { coefs }
+    }
+}
+
+impl Derive for ResiduePoly64 {
+    fn derive_challenges_from_coinflip(
+        x: &Self,
+        g: usize,
+        l: usize,
+        roles: &[Role],
+    ) -> std::collections::HashMap<Role, Vec<Self>> {
+        let mut hasher = blake3::Hasher::new();
+        //Update hasher with x
+        for x_coef in x.coefs {
+            hasher.update(&x_coef.0.to_le_bytes());
+        }
+        hasher.update(&g.to_le_bytes());
+
+        roles
+            .iter()
+            .map(|role| {
+                let mut hasher_cloned = hasher.clone();
+                hasher_cloned.update(&role.one_based().to_le_bytes());
+                let mut output_reader = hasher_cloned.finalize_xof();
+                let mut challenges = vec![Self::ZERO; l];
+                for challenge in challenges.iter_mut() {
+                    let mut bytes_res_poly = [0u8; Self::BIT_LENGTH >> 3];
+                    output_reader.fill(&mut bytes_res_poly);
+                    *challenge = Self::from_bytes(&bytes_res_poly);
+                }
+                (*role, challenges)
+            })
+            .collect()
+    }
+}
+
+impl PRSSConversions for ResiduePoly64 {
+    fn from_u128_chunks(coefs: Vec<u128>) -> Self {
+        assert_eq!(coefs.len(), F_DEG / 2);
+        let mut poly_coefs = [Z64::ZERO; F_DEG];
+        for (idx, coef) in coefs.into_iter().enumerate() {
+            poly_coefs[2 * idx] = Wrapping(coef as u64);
+            poly_coefs[2 * idx + 1] = Wrapping((coef >> 64) as u64);
+        }
+        Self { coefs: poly_coefs }
+    }
+
+    fn from_i128(value: i128) -> Self {
+        Self::from_scalar(Wrapping(value as u64))
+    }
+}
 
 #[cfg(test)]
 mod tests {
+    use crate::algebra::base_ring::{Z128, Z64};
+
     use super::*;
+    use itertools::Itertools;
     use paste::paste;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha12Rng;
+    use rand_chacha::{ChaCha12Rng, ChaCha20Rng};
     use std::num::Wrapping;
 
     #[test]
     fn test_is_zero() {
         let mut rng = ChaCha12Rng::seed_from_u64(0);
 
-        let mut z128poly: ResiduePoly<Z128> = ResiduePoly {
+        let mut z128poly: ResiduePoly128 = ResiduePoly {
             coefs: [Wrapping(0); 8],
         };
         assert!(z128poly.is_zero());
-        z128poly = ResiduePoly::<Z128>::sample(&mut rng);
+        z128poly = ResiduePoly128::sample(&mut rng);
         assert!(!z128poly.is_zero());
 
-        let mut z64poly: ResiduePoly<Z64> = ResiduePoly {
+        let mut z64poly: ResiduePoly64 = ResiduePoly {
             coefs: [Wrapping(0); 8],
         };
         assert!(z64poly.is_zero());
@@ -982,13 +1210,13 @@ mod tests {
     fn embed_sunshine() {
         let mut input: usize;
         let mut reference = ResiduePoly::ZERO;
-        let mut res: ResiduePoly<Z128>;
+        let mut res: ResiduePoly128;
 
         // Set the polynomial to 1+x, i.e. 0b00000011 = 3
         input = 3;
         reference.coefs[0] = Wrapping(1);
         reference.coefs[1] = Wrapping(1);
-        res = ResiduePoly::embed(input).unwrap();
+        res = ResiduePoly::embed_exceptional_set(input).unwrap();
         assert_eq!(reference, res);
 
         // Set the polynomial to x^2+x^5+x^6, i.e. 0b01100100 = 100
@@ -1002,14 +1230,68 @@ mod tests {
         reference.coefs[5] = Wrapping(1);
         reference.coefs[6] = Wrapping(1);
         reference.coefs[7] = Wrapping(0);
-        res = ResiduePoly::embed(input).unwrap();
+        res = ResiduePoly::embed_exceptional_set(input).unwrap();
         assert_eq!(reference, res);
 
         // Set the polynomial to x^7, i.e. 0b10000000 = 128
         input = 128;
         reference = ResiduePoly::ZERO;
         reference.coefs[7] = Wrapping(1);
-        res = ResiduePoly::embed(input).unwrap();
+        res = ResiduePoly::embed_exceptional_set(input).unwrap();
         assert_eq!(reference, res);
+    }
+
+    #[test]
+    fn two_power_sunshine() {
+        let input = GF256::from(42);
+        let powers = two_powers(input, 8);
+        assert_eq!(8, powers.len());
+        assert_eq!(42, powers[0].0);
+        assert_eq!(input * input, powers[1]);
+        assert_eq!(input * input * input * input, powers[2]);
+        assert_eq!(
+            input * input * input * input * input * input * input * input,
+            powers[3]
+        );
+    }
+
+    #[test]
+    fn test_from_u128_chunks_z128() {
+        let rpoly = ResiduePoly128::sample(&mut ChaCha20Rng::from_seed([0_u8; 32]));
+        let coefs = rpoly.coefs.into_iter().map(|x| x.0).collect_vec();
+        let rpoly_test = ResiduePoly128::from_u128_chunks(coefs);
+
+        assert_eq!(rpoly, rpoly_test);
+    }
+
+    #[test]
+    fn test_to_from_bytes_z128() {
+        let rpoly = ResiduePoly128::sample(&mut ChaCha20Rng::from_seed([0_u8; 32]));
+        let byte_vec: [u8; ResiduePoly128::BIT_LENGTH >> 3] =
+            rpoly.to_byte_vec().try_into().unwrap();
+        let rpoly_test = ResiduePoly128::from_bytes(&byte_vec);
+        assert_eq!(rpoly, rpoly_test);
+    }
+
+    #[test]
+    fn test_from_u128_chunks_z64() {
+        let rpoly = ResiduePoly64::sample(&mut ChaCha20Rng::from_seed([0_u8; 32]));
+        let coefs = rpoly.coefs.into_iter().map(|x| x.0).collect_vec();
+        let mut new_coefs = Vec::new();
+        for coef in coefs.chunks(2) {
+            new_coefs.push((coef[0] as u128) + ((coef[1] as u128) << 64));
+        }
+        let rpoly_test = ResiduePoly64::from_u128_chunks(new_coefs);
+
+        assert_eq!(rpoly, rpoly_test);
+    }
+
+    #[test]
+    fn test_to_from_bytes_z64() {
+        let rpoly = ResiduePoly64::sample(&mut ChaCha20Rng::from_seed([0_u8; 32]));
+        let byte_vec: [u8; ResiduePoly64::BIT_LENGTH >> 3] =
+            rpoly.to_byte_vec().try_into().unwrap();
+        let rpoly_test = ResiduePoly64::from_bytes(&byte_vec);
+        assert_eq!(rpoly, rpoly_test);
     }
 }

@@ -12,8 +12,9 @@ pub mod tests_and_benches {
     use crate::{
         computation::SessionId,
         execution::{
-            distributed::DistributedTestRuntime,
-            session::{BaseSessionHandles, LargeSession, SmallSession},
+            runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
+            runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+            sharing::shamir::ShamirRing,
         },
     };
 
@@ -21,18 +22,17 @@ pub mod tests_and_benches {
     /// The `task` argument contains the code to be execute per party which returns a value of type [OutputT].
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
-    #[allow(dead_code)]
-    pub fn execute_protocol_small<TaskOutputT, OutputT>(
+    pub fn execute_protocol_small<Z: ShamirRing, TaskOutputT, OutputT>(
         parties: usize,
         threshold: u8,
-        task: &mut dyn FnMut(SmallSession) -> TaskOutputT,
+        task: &mut dyn FnMut(SmallSession<Z>) -> TaskOutputT,
     ) -> Vec<OutputT>
     where
         TaskOutputT: Future<Output = OutputT>,
         TaskOutputT: Send + 'static,
         OutputT: Send + 'static,
     {
-        let identities = DistributedTestRuntime::generate_fixed_identities(parties);
+        let identities = generate_fixed_identities(parties);
         let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
@@ -63,8 +63,7 @@ pub mod tests_and_benches {
     /// The `task` argument contains the code to be execute per party which returns a value of type [OutputT].
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
-    #[allow(dead_code)]
-    pub fn execute_protocol_large<TaskOutputT, OutputT>(
+    pub fn execute_protocol_large<Z: ShamirRing, TaskOutputT, OutputT>(
         parties: usize,
         threshold: usize,
         task: &mut dyn FnMut(LargeSession) -> TaskOutputT,
@@ -74,8 +73,8 @@ pub mod tests_and_benches {
         TaskOutputT: Send + 'static,
         OutputT: Send + 'static,
     {
-        let identities = DistributedTestRuntime::generate_fixed_identities(parties);
-        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold as u8);
+        let identities = generate_fixed_identities(parties);
+        let test_runtime = DistributedTestRuntime::<Z>::new(identities.clone(), threshold as u8);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -116,14 +115,16 @@ pub mod tests {
     use tokio::task::{JoinError, JoinSet};
 
     use crate::{
+        algebra::structure_traits::Ring,
         computation::SessionId,
         execution::{
-            distributed::DistributedTestRuntime,
-            party::{Identity, Role},
-            session::{
+            runtime::party::{Identity, Role},
+            runtime::session::{
                 BaseSessionHandles, DisputeSet, LargeSession, LargeSessionHandles,
                 ParameterHandles, SessionParameters, SmallSession,
             },
+            runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+            sharing::shamir::ShamirRing,
         },
         file_handling::read_element,
         lwe::{gen_key_set, Ciphertext64, KeySet, ThresholdLWEParameters},
@@ -131,7 +132,7 @@ pub mod tests {
         tests::test_data_setup::tests::{DEFAULT_SEED, TEST_KEY_PATH},
     };
 
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     pub struct TestingParameters {
         pub num_parties: usize,
         pub threshold: usize,
@@ -305,7 +306,7 @@ pub mod tests {
     }
 
     /// Returns a small session to be used with a single party, with role 1, suitable for testing with dummy constructs
-    pub fn get_small_session() -> SmallSession {
+    pub fn get_small_session<Z: Ring>() -> SmallSession<Z> {
         let parameters = get_dummy_parameters();
         let id = parameters.own_identity.clone();
         let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
@@ -319,7 +320,11 @@ pub mod tests {
     }
 
     /// Returns a small session to be used with multiple parties
-    pub fn get_small_session_for_parties(amount: usize, threshold: u8, role: Role) -> SmallSession {
+    pub fn get_small_session_for_parties<Z: Ring>(
+        amount: usize,
+        threshold: u8,
+        role: Role,
+    ) -> SmallSession<Z> {
         let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
         let id = parameters.own_identity.clone();
         let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
@@ -370,6 +375,7 @@ pub mod tests {
     ///
     ///**NOTE: FOR ALL TESTS THE RNG SEED OF A PARTY IS ITS PARTY_ID, THIS IS ACTUALLY USED IN SOME TESTS TO CHECK CORRECTNESS.**
     pub fn execute_protocol_w_disputes_and_malicious<
+        Z: ShamirRing,
         TaskOutputT,
         OutputT,
         TaskOutputM,
@@ -392,8 +398,8 @@ pub mod tests {
         TaskOutputM: Send + 'static,
         OutputM: Send + 'static,
     {
-        let identities = DistributedTestRuntime::generate_fixed_identities(parties);
-        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
+        let identities = generate_fixed_identities(parties);
+        let test_runtime = DistributedTestRuntime::<Z>::new(identities.clone(), threshold);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();

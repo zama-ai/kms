@@ -1,14 +1,19 @@
+use crate::algebra::structure_traits::Ring;
 use crate::computation::SessionId;
 use crate::error::error_handler::anyhow_error_and_log;
-use crate::execution::agree_random::xor_u8_arr_in_place;
 use crate::execution::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
 use crate::execution::small_execution::prss::PrfKey;
-use crate::residue_poly::{ResiduePoly, F_DEG};
-use crate::{Zero, Z128};
 use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
-use std::num::Wrapping;
+
+use super::agree_random::xor_u8_arr_in_place;
+
+///Trait required for PRSS executions
+pub trait PRSSConversions {
+    fn from_u128_chunks(coefs: Vec<u128>) -> Self;
+    fn from_i128(value: i128) -> Self;
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct PhiAes {
@@ -111,7 +116,7 @@ pub(crate) fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
 
 /// Function Psi that generates bounded randomness for PRSS.next()
 /// This currently assumes that q is 2^128
-pub(crate) fn psi(pa: &PsiAes, ctr: u128) -> anyhow::Result<ResiduePoly<Z128>> {
+pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::Result<Z> {
     // check ctr is smaller 2^112, so nothing gets overwritten by setting the indices in inner_psi
     if ctr >= 1 << 112 {
         return Err(anyhow_error_and_log(format!(
@@ -119,18 +124,22 @@ pub(crate) fn psi(pa: &PsiAes, ctr: u128) -> anyhow::Result<ResiduePoly<Z128>> {
         )));
     }
 
-    let mut coefs = [Z128::ZERO; F_DEG];
+    let mut coefs = vec![0_u128; Z::BIT_LENGTH.div_ceil(128)];
 
-    for (i, c) in coefs.iter_mut().enumerate().take(F_DEG) {
+    for (i, c) in coefs
+        .iter_mut()
+        .enumerate()
+        .take(Z::BIT_LENGTH.div_ceil(128))
+    {
         *c = inner_psi(pa, ctr, i as u8);
     }
 
-    Ok(ResiduePoly::<Z128> { coefs })
+    Ok(Z::from_u128_chunks(coefs))
 }
 
 /// Inner function Psi^(i) that generates bounded randomness for PRSS.next()
 /// This currently assumes that q = 2^128
-fn inner_psi(pa: &PsiAes, ctr: u128, i: u8) -> Z128 {
+fn inner_psi(pa: &PsiAes, ctr: u128, i: u8) -> u128 {
     let mut ctr_bytes = ctr.to_le_bytes();
 
     // pad/truncate ctr value and put v and i in the MSBs
@@ -138,32 +147,35 @@ fn inner_psi(pa: &PsiAes, ctr: u128, i: u8) -> Z128 {
     ctr_bytes[14] = i; // i - the dimension index
     let mut to_enc = GenericArray::from(ctr_bytes);
     pa.aes.encrypt_block(&mut to_enc);
-    let out = u128::from_le_bytes(to_enc.into());
-
-    Wrapping(out)
+    //NOTE: Is it ok to always outpout 128 random bit, or do we want to sometime output less?
+    u128::from_le_bytes(to_enc.into())
 }
 
 /// Function Chi that generates bounded randomness for PRZS.next()
 /// This currently assumes that q = 2^128
-pub(crate) fn chi(pa: &ChiAes, ctr: u128, j: u8) -> anyhow::Result<ResiduePoly<Z128>> {
+pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> anyhow::Result<Z> {
     // check ctr is smaller 2^104, so nothing gets overwritten by setting the indices in inner_chi
     if ctr >= 1 << 104 {
         return Err(anyhow_error_and_log(format!(
             "ctr in chi must be smaller than 2^104 but was {ctr}."
         )));
     }
-    let mut coefs = [Z128::ZERO; F_DEG];
+    let mut coefs = vec![0_u128; Z::BIT_LENGTH.div_ceil(128)];
 
-    for (i, c) in coefs.iter_mut().enumerate().take(F_DEG) {
+    for (i, c) in coefs
+        .iter_mut()
+        .enumerate()
+        .take(Z::BIT_LENGTH.div_ceil(128))
+    {
         *c = inner_chi(pa, ctr, i as u8, j);
     }
 
-    Ok(ResiduePoly::<Z128> { coefs })
+    Ok(Z::from_u128_chunks(coefs))
 }
 
 /// Inner function Chi^(i) that generates bounded randomness for PRZS.next()
 /// This currently assumes that q is 2^128
-fn inner_chi(pa: &ChiAes, ctr: u128, i: u8, j: u8) -> Z128 {
+fn inner_chi(pa: &ChiAes, ctr: u128, i: u8, j: u8) -> u128 {
     let mut ctr_bytes = ctr.to_le_bytes();
 
     // pad/truncate ctr value and put v and i in the MSBs, and j in the LSBs
@@ -172,15 +184,17 @@ fn inner_chi(pa: &ChiAes, ctr: u128, i: u8, j: u8) -> Z128 {
     ctr_bytes[13] = j; // j - the threshold index
     let mut to_enc = GenericArray::from(ctr_bytes);
     pa.aes.encrypt_block(&mut to_enc);
-    let out = u128::from_le_bytes(to_enc.into());
-
-    Wrapping(out)
+    //NOTE: Is it ok to always outpout 128 random bit, or do we want to sometime output less?
+    u128::from_le_bytes(to_enc.into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::execution::constants::{BD1, LOG_BD, STATSEC};
+    use crate::{
+        algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
+        execution::constants::{BD1, LOG_BD, STATSEC},
+    };
 
     #[test]
     fn test_phi() {
@@ -223,42 +237,59 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_psi() {
+    fn test_psi<Z: Ring + PRSSConversions>() {
         let key = PrfKey([23_u8; 16]);
         let aes = PsiAes::new(&key, SessionId(0));
-        assert_ne!(psi(&aes, 0).unwrap(), psi(&aes, 1).unwrap());
-        assert_eq!(psi(&aes, 0).unwrap(), psi(&aes, 0).unwrap());
+        assert_ne!(psi::<Z>(&aes, 0).unwrap(), psi(&aes, 1).unwrap());
+        assert_eq!(psi::<Z>(&aes, 0).unwrap(), psi(&aes, 0).unwrap());
 
         let aes_2 = PsiAes::new(&key, SessionId(2));
-        assert_ne!(psi(&aes, 0).unwrap(), psi(&aes_2, 0).unwrap());
+        assert_ne!(psi::<Z>(&aes, 0).unwrap(), psi(&aes_2, 0).unwrap());
 
-        let err_ctr = psi(&aes, 1 << 123).unwrap_err().to_string();
+        let err_ctr = psi::<Z>(&aes, 1 << 123).unwrap_err().to_string();
         assert!(err_ctr.contains(
             "ctr in psi must be smaller than 2^112 but was 10633823966279326983230456482242756608."
         ));
     }
 
     #[test]
-    fn test_chi() {
+    fn test_pi_z128() {
+        test_psi::<ResiduePoly128>();
+    }
+
+    #[test]
+    fn test_pi_64() {
+        test_psi::<ResiduePoly64>();
+    }
+
+    fn test_chi<Z: Ring + PRSSConversions>() {
         let key = PrfKey([23_u8; 16]);
         let aes = ChiAes::new(&key, SessionId(0));
-        assert_ne!(chi(&aes, 0, 0).unwrap(), chi(&aes, 1, 0).unwrap());
-        assert_ne!(chi(&aes, 0, 0).unwrap(), chi(&aes, 0, 1).unwrap());
-        assert_eq!(chi(&aes, 0, 0).unwrap(), chi(&aes, 0, 0).unwrap());
+        assert_ne!(chi::<Z>(&aes, 0, 0).unwrap(), chi(&aes, 1, 0).unwrap());
+        assert_ne!(chi::<Z>(&aes, 0, 0).unwrap(), chi(&aes, 0, 1).unwrap());
+        assert_eq!(chi::<Z>(&aes, 0, 0).unwrap(), chi(&aes, 0, 0).unwrap());
 
         let aes_2 = ChiAes::new(&key, SessionId(2));
-        assert_ne!(chi(&aes, 0, 0).unwrap(), chi(&aes_2, 0, 0).unwrap());
+        assert_ne!(chi::<Z>(&aes, 0, 0).unwrap(), chi(&aes_2, 0, 0).unwrap());
 
-        let err_ctr = chi(&aes, 1 << 123, 0).unwrap_err().to_string();
+        let err_ctr = chi::<Z>(&aes, 1 << 123, 0).unwrap_err().to_string();
         assert!(err_ctr.contains(
             "ctr in chi must be smaller than 2^104 but was 10633823966279326983230456482242756608."
         ));
     }
 
-    /// check that all three PRFs cause different encryptions, even when initialized from the same key
     #[test]
-    fn test_all_prfs_differ() {
+    fn test_chi_z128() {
+        test_chi::<ResiduePoly128>();
+    }
+
+    #[test]
+    fn test_chi_z64() {
+        test_chi::<ResiduePoly128>();
+    }
+
+    /// check that all three PRFs cause different encryptions, even when initialized from the same key
+    fn test_all_prfs_differ<Z: Ring + PRSSConversions>() {
         // init PRFs with identical key
         let key = PrfKey([123_u8; 16]);
         let chiaes = ChiAes::new(&key, SessionId(0));
@@ -266,7 +297,7 @@ mod tests {
         let phiaes = PhiAes::new(&key, SessionId(0));
 
         // test direct PRF calls
-        assert_ne!(chi(&chiaes, 0, 0).unwrap(), psi(&psiaes, 0).unwrap());
+        assert_ne!(chi::<Z>(&chiaes, 0, 0).unwrap(), psi(&psiaes, 0).unwrap());
 
         // initialize identical 128-bit block
         let mut chi_block = GenericArray::from([42u8; 16]);
@@ -282,5 +313,15 @@ mod tests {
         assert_ne!(chi_block, psi_block);
         assert_ne!(chi_block, phi_block);
         assert_ne!(phi_block, psi_block);
+    }
+
+    #[test]
+    fn test_all_prfs_differ_z128() {
+        test_all_prfs_differ::<ResiduePoly128>();
+    }
+
+    #[test]
+    fn test_all_prfs_differ_z64() {
+        test_all_prfs_differ::<ResiduePoly64>();
     }
 }

@@ -1,19 +1,18 @@
 use crate::{
+    algebra::base_ring::Z64,
     choreography::grpc::gen::{
-        choreography_client::ChoreographyClient, DecryptionRequest, KeygenRequest,
-        LaunchComputationRequest, PubkeyRequest, RetrieveResultsRequest,
+        choreography_client::ChoreographyClient, DecryptionRequest, KeygenRequest, PubkeyRequest,
+        RetrieveResultsRequest,
     },
-    circuit::Circuit,
     computation::SessionId,
     execution::{
         constants::INPUT_PARTY_ID,
-        party::{Identity, Role},
+        runtime::party::{Identity, Role},
     },
     lwe::{Ciphertext64, PublicKey},
-    value::Value,
 };
-use crate::{choreography::grpc::ComputationOutputs, execution::session::DecryptionMode};
-use crate::{execution::session::SetupMode, lwe::ThresholdLWEParameters};
+use crate::{choreography::grpc::ComputationOutputs, execution::runtime::session::DecryptionMode};
+use crate::{execution::runtime::session::SetupMode, lwe::ThresholdLWEParameters};
 use std::{collections::HashMap, time::Duration};
 use tonic::transport::{Channel, ClientTlsConfig, Uri};
 
@@ -24,7 +23,7 @@ pub struct ChoreoRuntime {
 
 #[derive(Debug)]
 pub struct GrpcOutputs {
-    pub outputs: HashMap<String, Vec<Value>>,
+    pub outputs: HashMap<String, Vec<Z64>>,
     pub elapsed_times: Option<HashMap<Role, Vec<Duration>>>,
 }
 
@@ -51,34 +50,6 @@ impl ChoreoRuntime {
             role_assignments,
             channels,
         })
-    }
-
-    pub async fn initiate_launch_computation_debug(
-        &self,
-        computation: &Circuit,
-        threshold: u8,
-        ct: &Ciphertext64,
-    ) -> anyhow::Result<SessionId> {
-        let computation = bincode::serialize(computation)?;
-        let role_assignment = bincode::serialize(&self.role_assignments)?;
-        let threshold = bincode::serialize(&threshold)?;
-        let ciphertext = bincode::serialize(ct)?;
-
-        for channel in self.channels.values() {
-            let mut client = ChoreographyClient::new(channel.clone());
-
-            let request = LaunchComputationRequest {
-                computation: computation.clone(),
-                role_assignment: role_assignment.clone(),
-                threshold: threshold.clone(),
-                ciphertext: ciphertext.clone(),
-            };
-
-            tracing::debug!("launching the computation to {:?}", channel);
-            let _response = client.launch_computation_debug(request).await?;
-        }
-
-        SessionId::new(ct)
     }
 
     pub async fn initiate_threshold_decryption(
@@ -130,7 +101,6 @@ impl ChoreoRuntime {
                 session_id: session_id.clone(),
                 session_range,
             };
-
             let response = client.retrieve_results(request).await?;
 
             for co in bincode::deserialize::<Vec<ComputationOutputs>>(&response.get_ref().values)? {

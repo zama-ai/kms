@@ -1,0 +1,121 @@
+use crate::algebra::structure_traits::{Ring, Zero};
+use crate::error::error_handler::anyhow_error_and_log;
+use crate::execution::large_execution::local_double_share::MapsDoubleSharesChallenges;
+use crate::execution::large_execution::local_single_share::MapsSharesChallenges;
+use crate::execution::large_execution::vss::{
+    ExchangedDataRound1, ValueOrPoly, VerificationValues,
+};
+use crate::execution::{runtime::party::Role, small_execution::prss::PartySet};
+use crate::lwe::PubConKeyPair;
+use crate::{
+    commitment::{Commitment, Opening},
+    execution::{runtime::session::DisputePayload, small_execution::prss::PrfKey},
+};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
+
+/// Captures network values which can (and sometimes should) be broadcast
+#[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
+pub enum BroadcastValue<Z: Eq + Zero> {
+    Bot,
+    RingVector(Vec<Z>),
+    RingValue(Z),
+    PRSSVotes(Vec<(PartySet, Vec<Z>)>),
+    AddDispute(DisputePayload),
+    Round2VSS(Vec<VerificationValues<Z>>),
+    Round3VSS(BTreeMap<(usize, Role, Role), Z>),
+    Round4VSS(BTreeMap<(usize, Role), ValueOrPoly<Z>>),
+    LocalSingleShare(MapsSharesChallenges<Z>),
+    LocalDoubleShare(MapsDoubleSharesChallenges<Z>),
+}
+
+impl<Z: Ring> From<Z> for BroadcastValue<Z> {
+    fn from(value: Z) -> Self {
+        BroadcastValue::RingValue(value)
+    }
+}
+
+impl<Z: Ring> From<Vec<Z>> for BroadcastValue<Z> {
+    fn from(value: Vec<Z>) -> Self {
+        BroadcastValue::RingVector(value)
+    }
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
+pub enum AgreeRandomValue {
+    CommitmentValue(Vec<Commitment>),
+    KeyOpenValue(Vec<(PrfKey, Opening)>),
+    KeyValue(Vec<PrfKey>),
+}
+
+/// a value that is sent via network
+#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
+pub enum NetworkValue<Z: Eq + Zero> {
+    PubKey(Box<PubConKeyPair>),
+    RingValue(Z),
+    VecRingValue(Vec<Z>),
+    VecPairRingValue(Vec<(Z, Z)>),
+    Send(BroadcastValue<Z>),
+    EchoBatch(HashMap<Role, BroadcastValue<Z>>),
+    VoteBatch(HashMap<Role, BroadcastValue<Z>>),
+    AgreeRandom(AgreeRandomValue),
+    Bot,
+    Empty,
+    Round1VSS(ExchangedDataRound1<Z>),
+}
+
+impl<Z: Ring> NetworkValue<Z> {
+    pub fn to_network(&self) -> Vec<u8> {
+        bincode::serialize(self).unwrap()
+    }
+
+    pub fn from_network(serialized: anyhow::Result<Vec<u8>>) -> anyhow::Result<Self> {
+        bincode::deserialize::<Self>(&serialized?)
+            .map_err(|_e| anyhow_error_and_log("failed to parse value".to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        algebra::base_ring::Z128,
+        execution::runtime::party::Identity,
+        file_handling::read_element,
+        lwe::{KeySet, PubConKeyPair},
+        networking::{local::LocalNetworkingProducer, Networking},
+        tests::test_data_setup::tests::TEST_KEY_PATH,
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_box_sending() {
+        let keys: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let pck = PubConKeyPair::new(keys);
+        let value = NetworkValue::<Z128>::PubKey(Box::new(pck.clone()));
+
+        let identities: Vec<Identity> = vec!["alice".into(), "bob".into()];
+        let net_producer = LocalNetworkingProducer::from_ids(&identities);
+
+        let net_alice = net_producer.user_net("alice".into());
+        let net_bob = net_producer.user_net("bob".into());
+
+        let task1 = tokio::spawn(async move {
+            let recv = net_bob.receive(&"alice".into(), &123_u128.into()).await;
+            let received_key = match NetworkValue::<Z128>::from_network(recv) {
+                Ok(NetworkValue::PubKey(key)) => key,
+                _ => panic!(),
+            };
+            assert_eq!(received_key.pk, pck.pk);
+            assert_eq!(received_key.ck, pck.ck);
+        });
+
+        let task2 = tokio::spawn(async move {
+            net_alice
+                .send(value.to_network(), &"bob".into(), &123_u128.into())
+                .await
+        });
+
+        let _ = tokio::try_join!(task1, task2).unwrap();
+    }
+}

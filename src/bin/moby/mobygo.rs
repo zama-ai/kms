@@ -3,12 +3,11 @@ use aes_prng::AesRng;
 use clap::{Parser, Subcommand};
 use distributed_decryption::{
     choreography::choreographer::ChoreoRuntime,
-    circuit::Circuit,
     computation::SessionId,
     error::error_handler::anyhow_error_and_log,
     execution::{
-        party::{Identity, Role, RoleAssignment},
-        session::{DecryptionMode, SetupMode},
+        runtime::party::{Identity, Role, RoleAssignment},
+        runtime::session::{DecryptionMode, SetupMode},
     },
     file_handling::read_as_json,
     lwe::{PublicKey, ThresholdLWEParameters},
@@ -33,28 +32,6 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Launch circuit computation on cluster of mobys (non-blocking)
-    Launch {
-        /// Circuit path to use
-        #[clap(long)]
-        circuit_path: String,
-
-        #[clap(long, default_value_t = 1)]
-        /// Session range to use
-        session_range: u32,
-
-        #[clap(short)]
-        /// Threshold (max. number of dishonest parties)
-        threshold: u8,
-
-        #[clap(short, default_value_t = 1)]
-        /// Message to encrypt
-        message: u8,
-
-        #[clap(long, default_value = "pk.bin")]
-        /// Filename of the public key
-        pubkey: String,
-    },
     /// Decrypt on cluster of mobys (non-blocking)
     Decrypt {
         #[clap(short, long)]
@@ -125,41 +102,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     match args.command {
-        Commands::Launch {
-            circuit_path,
-            session_range,
-            threshold,
-            message,
-            pubkey,
-        } => {
-            let runtime = ChoreoRuntime::new(docker_role_assignments, tls_config)?;
-            let comp_bytes = std::fs::read(&circuit_path)?;
-            let computation = Circuit::try_from(&comp_bytes[..]).unwrap();
-
-            tracing::info!(
-                "Launching mobygo: computation: {:?}, iterations: {}, parties: {}, threshold: {}",
-                &computation,
-                session_range,
-                args.n_parties,
-                threshold,
-            );
-
-            // read pk from file (Init must have been called before)
-            let pk_serialized = std::fs::read(pubkey.as_str())?;
-            let pk: PublicKey = bincode::deserialize(&pk_serialized)?;
-
-            let ct = pk.encrypt(&mut rng, message);
-
-            // run multiple iterations of benchmarks in a row
-            for _i in 0..session_range {
-                if let Ok(sid) = runtime
-                    .initiate_launch_computation_debug(&computation, threshold, &ct)
-                    .await
-                {
-                    tracing::info!("Session id: {:?}", sid);
-                }
-            }
-        }
         Commands::Init {
             epoch,
             certs: _certs,

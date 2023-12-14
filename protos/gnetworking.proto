@@ -7,7 +7,8 @@ service gnetworking {
 }
 
 message SendValueRequest {
-    bytes tagged_value = 1;
+    bytes tag = 1;
+    bytes value = 2;
 }
 
 message SendValueResponse {}

@@ -1,36 +1,54 @@
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
+use std::ops::{Add, Div, Mul};
 
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-use crate::{error::error_handler::anyhow_error_and_log, One, Sample, Zero};
+use crate::{error::error_handler::anyhow_error_and_log, execution::sharing::shamir::ShamirRing};
 
-pub trait Ring
-where
-    Self: Sized,
-    Self: Copy,
-    Self: Eq,
-    Self: PartialEq,
-    Self: Sample,
-    Self: Zero + One,
-    Self: Mul<Self, Output = Self>,
-    Self: Add<Self, Output = Self>,
-    Self: Add<Self, Output = Self> + AddAssign<Self>,
-    Self: Sub<Self, Output = Self> + SubAssign<Self>,
-    Self: Mul<Self, Output = Self> + MulAssign<Self>,
-{
-    const BIT_LENGTH: usize;
-}
-
-pub trait Field
-where
-    Self: Ring + Div<Self, Output = Self> + DivAssign<Self>,
-{
-}
+use super::structure_traits::{Field, One, Ring, Sample, Zero};
 
 #[derive(Serialize, Deserialize, Hash, Clone, Default, Debug)]
 pub struct Poly<F> {
     pub coefs: Vec<F>,
+}
+
+impl<Z: ShamirRing> Poly<Z> {
+    ///Outputs a vector of the monomials (X - embed(party_id))/(party_id)
+    /// for all party_id in \[num_parties\]
+    /// as well as the vector of party's points
+    ///
+    /// **NOTE: THE VECTOR IS ZERO INDEXED**
+    pub fn normalized_parties_root(num_parties: usize) -> anyhow::Result<(Vec<Self>, Vec<Z>)> {
+        // compute lifted, negated and inverted gamma values once, i.e. Lagrange coefficients
+        //TODO: This could be memoized
+        let mut inv_coefs = (1..=num_parties)
+            .map(|idx| {
+                let gamma = Z::embed_exceptional_set(idx)?;
+                Z::invert(Z::ZERO - gamma)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        inv_coefs.insert(0, Z::ZERO);
+
+        // embed party IDs as invertable x-points on the polynomial
+        //TODO: This could be memoized
+        let x_coords: Vec<_> = (0..=num_parties)
+            .map(Z::embed_exceptional_set)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // compute additive inverse of embedded party IDs
+        //TODO: This could be memoized
+        let neg_parties: Vec<_> = (0..=num_parties)
+            .map(|p| Self::from_coefs(vec![Z::ZERO - x_coords[p]]))
+            .collect::<Vec<_>>();
+
+        // make a polynomial F(X)=X
+        let x = Self::from_coefs(vec![Z::ZERO, Z::ONE]);
+        let mut res = Vec::<Self>::with_capacity(num_parties);
+        for p in 1..=num_parties {
+            res.push((x.clone() + neg_parties[p].clone()) * Self::from_coefs(vec![inv_coefs[p]]))
+        }
+        Ok((res, x_coords))
+    }
 }
 
 impl<R> Poly<R> {
@@ -38,9 +56,8 @@ impl<R> Poly<R> {
         Poly { coefs }
     }
 }
-// TODO shouldn't poly also implement the Ring trait itself?
 
-impl<R: Ring> PartialEq for Poly<R> {
+impl<R: PartialEq + Zero> PartialEq for Poly<R> {
     fn eq(&self, other: &Self) -> bool {
         let common_len = usize::min(self.coefs.len(), other.coefs.len());
         for i in 0..common_len {
@@ -62,7 +79,7 @@ impl<R: Ring> PartialEq for Poly<R> {
     }
 }
 
-impl<R: Ring> Eq for Poly<R> {}
+impl<R: Eq + Zero> Eq for Poly<R> {}
 
 impl<F> Poly<F>
 where
@@ -389,9 +406,19 @@ pub fn gao_decoding<F: Field>(
     // yi ~= G(xi))
     // where deg(G) <= k-1
     let n = points.len();
-    let d = n - k + 1;
-    assert!(2 * max_error_count < d);
-    assert_eq!(values.len(), points.len());
+    let d = (n + 1)
+        .checked_sub(k)
+        .ok_or_else(|| anyhow_error_and_log("overflow computing d".to_string()))?;
+
+    //Note: Changed assert to error because we dont want to panic here
+    //assert!(2 * max_error_count < d);
+    //assert_eq!(values.len(), points.len());
+    if 2 * max_error_count >= d || values.len() != points.len() {
+        return Err(anyhow_error_and_log(
+            "Gao decoding failure, too many errors or missmatch between values and points size "
+                .to_string(),
+        ));
+    }
 
     // R \in GF(256)[X] such that R(xi) = yi
     let r = lagrange_interpolation(points, values);
@@ -435,7 +462,7 @@ pub fn gao_decoding<F: Field>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gf256::GF256;
+    use crate::algebra::gf256::GF256;
     use proptest::prelude::*;
     use rstest::rstest;
 

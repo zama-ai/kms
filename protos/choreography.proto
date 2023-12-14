@@ -3,22 +3,10 @@ syntax = "proto3";
 package ddec_choreography;
 
 service Choreography {
-    rpc LaunchComputationDebug(LaunchComputationRequest) returns(LaunchComputationResponse);
     rpc RetrieveResults(RetrieveResultsRequest) returns(RetrieveResultsResponse);
     rpc Keygen(KeygenRequest) returns(KeygenResponse);
     rpc RetrievePubkey(PubkeyRequest) returns(PubkeyResponse);
     rpc ThresholdDecrypt(DecryptionRequest) returns(DecryptionResponse);
-}
-
-message LaunchComputationRequest {
-    bytes role_assignment = 1;
-    bytes computation = 2;
-    bytes threshold = 3;
-    bytes ciphertext = 4;
-}
-
-message LaunchComputationResponse {
-    bytes session_id = 1;
 }
 
 message DecryptionRequest {

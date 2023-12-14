@@ -1,9 +1,10 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
-    gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing, GF256},
-    residue_poly::ResiduePoly,
-    shamir::ShamirGSharings,
-    Zero, Z128, Z64,
+    algebra::{
+        gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing, GF256},
+        residue_poly::{ResiduePoly128, ResiduePoly64},
+    },
+    execution::sharing::shamir::ShamirSharing,
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha12Rng;
@@ -56,14 +57,14 @@ fn bench_decode_z128(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("decode", p_str), |b| {
             let mut rng = ChaCha12Rng::seed_from_u64(0);
-            let secret: Z128 = Wrapping(23425);
-            let sharings =
-                ShamirGSharings::<Z128>::share(&mut rng, secret, num_parties, threshold).unwrap();
+            let secret = ResiduePoly128::from_scalar(Wrapping(23425));
+            let sharing = ShamirSharing::share(&mut rng, secret, num_parties, threshold).unwrap();
 
             b.iter(|| {
-                let recon = sharings.decode(threshold, max_err).unwrap();
-                let f_zero = recon.eval(&ResiduePoly::ZERO);
-                assert_eq!(f_zero.to_scalar().unwrap(), secret);
+                //let recon = sharings.decode(threshold, max_err).unwrap();
+                //let f_zero = recon.eval(&ResiduePoly::ZERO);
+                let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
+                assert_eq!(f_zero.to_scalar().unwrap(), secret.to_scalar().unwrap());
             });
         });
     }
@@ -81,14 +82,12 @@ fn bench_decode_z64(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("decode", p_str), |b| {
             let mut rng = ChaCha12Rng::seed_from_u64(0);
-            let secret: Z64 = Wrapping(23425);
-            let sharings =
-                ShamirGSharings::<Z64>::share(&mut rng, secret, num_parties, threshold).unwrap();
+            let secret = ResiduePoly64::from_scalar(Wrapping(23425));
+            let sharing = ShamirSharing::share(&mut rng, secret, num_parties, threshold).unwrap();
 
             b.iter(|| {
-                let recon = sharings.decode(threshold, max_err).unwrap();
-                let f_zero = recon.eval(&ResiduePoly::ZERO);
-                assert_eq!(f_zero.to_scalar().unwrap(), secret);
+                let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
+                assert_eq!(f_zero.to_scalar().unwrap(), secret.to_scalar().unwrap());
             });
         });
     }
