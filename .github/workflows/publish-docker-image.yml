@@ -1,0 +1,4 @@
+name: Publish kms image
+
+on:
+  workflow_dispatch:
