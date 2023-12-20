@@ -29,6 +29,7 @@ macro_rules! ring_impl {
 
         impl Ring for $z {
             const BIT_LENGTH: usize = $l;
+            const CHAR_LOG2: usize = $l;
             fn to_byte_vec(&self) -> Vec<u8> {
                 self.0.to_le_bytes().to_vec()
             }

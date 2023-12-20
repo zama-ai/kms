@@ -33,6 +33,7 @@ pub mod large_execution {
     pub mod vss;
 }
 pub mod online {
+    pub mod bit_manipulation;
     pub mod gen_bits;
     pub mod preprocessing;
     pub mod triple;

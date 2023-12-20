@@ -70,6 +70,7 @@ impl std::iter::Sum for GF256 {
 
 impl Ring for GF256 {
     const BIT_LENGTH: usize = 8;
+    const CHAR_LOG2: usize = 1;
 
     fn to_byte_vec(&self) -> Vec<u8> {
         self.0.to_le_bytes().to_vec()

@@ -44,6 +44,8 @@ where
     Self: std::iter::Sum,
 {
     const BIT_LENGTH: usize;
+    // Base 2 log of characteristic of the ring
+    const CHAR_LOG2: usize;
     fn to_byte_vec(&self) -> Vec<u8>;
 }
 

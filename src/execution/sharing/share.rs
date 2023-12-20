@@ -31,60 +31,83 @@ impl<Z: Ring> Share<Z> {
 impl<Z: Ring> Add for Share<Z> {
     type Output = Self;
 
-    fn add(self, other: Self) -> Self {
-        if self.owner != other.owner {
-            tracing::warn!("Trying to add two shares with different owners. This will always result in an incorrect share");
-        }
+    fn add(self, rhs: Share<Z>) -> Self {
+        debug_assert_eq!(self.owner, rhs.owner);
         Self {
-            value: self.value + other.value,
+            value: self.value + rhs.value,
             owner: self.owner,
         }
     }
 }
-impl<Z: Ring> AddAssign for Share<Z> {
-    fn add_assign(&mut self, rhs: Self) {
-        if self.owner != rhs.owner {
-            tracing::warn!("Trying to add two shares with different owners. This will always result in an incorrect share");
+
+impl<Z: Ring> Add<&Share<Z>> for &Share<Z> {
+    type Output = Share<Z>;
+    fn add(self, rhs: &Share<Z>) -> Self::Output {
+        debug_assert_eq!(self.owner, rhs.owner);
+        Share::<Z> {
+            value: self.value + rhs.value,
+            owner: self.owner,
         }
+    }
+}
+
+impl<Z: Ring> Add<Z> for Share<Z> {
+    type Output = Share<Z>;
+    fn add(self, rhs: Z) -> Self::Output {
+        Self {
+            value: self.value + rhs,
+            owner: self.owner,
+        }
+    }
+}
+
+impl<Z: Ring> Add<&Z> for &Share<Z> {
+    type Output = Share<Z>;
+    fn add(self, rhs: &Z) -> Self::Output {
+        Share::<Z> {
+            value: self.value + *rhs,
+            owner: self.owner,
+        }
+    }
+}
+
+impl<Z: Ring> AddAssign for Share<Z> {
+    fn add_assign(&mut self, rhs: Share<Z>) {
+        debug_assert_eq!(self.owner, rhs.owner);
         self.value += rhs.value;
     }
 }
-impl<Z: Ring> Add<Z> for Share<Z> {
-    type Output = Share<Z>;
-    fn add(self, other: Z) -> Self::Output {
-        Self {
-            value: self.value + other,
-            owner: self.owner,
-        }
-    }
-}
+
 impl<Z: Ring> AddAssign<Z> for Share<Z> {
-    fn add_assign(&mut self, other: Z) {
-        self.value += other;
+    fn add_assign(&mut self, rhs: Z) {
+        self.value += rhs;
     }
 }
 
 impl<Z: Ring> Sub for Share<Z> {
     type Output = Self;
 
-    fn sub(self, other: Self) -> Self {
-        if self.owner != other.owner {
-            tracing::warn!("Trying to subtract two shares with different owners. This will always result in an incorrect share");
-        }
+    fn sub(self, rhs: Share<Z>) -> Self {
+        debug_assert_eq!(self.owner, rhs.owner);
         Self {
-            value: self.value - other.value,
+            value: self.value - rhs.value,
             owner: self.owner,
         }
     }
 }
-impl<Z: Ring> SubAssign for Share<Z> {
-    fn sub_assign(&mut self, rhs: Self) {
-        if self.owner != rhs.owner {
-            tracing::warn!("Trying to subtract two shares with different owners. This will always result in an incorrect share");
+
+impl<Z: Ring> Sub<&Share<Z>> for &Share<Z> {
+    type Output = Share<Z>;
+
+    fn sub(self, rhs: &Share<Z>) -> Self::Output {
+        debug_assert_eq!(self.owner, rhs.owner);
+        Share::<Z> {
+            value: self.value - rhs.value,
+            owner: self.owner,
         }
-        self.value -= rhs.value;
     }
 }
+
 impl<Z: Ring> Sub<Z> for Share<Z> {
     type Output = Share<Z>;
     fn sub(self, rhs: Z) -> Self::Output {
@@ -92,6 +115,13 @@ impl<Z: Ring> Sub<Z> for Share<Z> {
             value: self.value - rhs,
             owner: self.owner,
         }
+    }
+}
+
+impl<Z: Ring> SubAssign for Share<Z> {
+    fn sub_assign(&mut self, rhs: Self) {
+        debug_assert_eq!(self.owner, rhs.owner);
+        self.value -= rhs.value;
     }
 }
 impl<Z: Ring> SubAssign<Z> for Share<Z> {
@@ -108,6 +138,17 @@ impl<Z: Ring> Mul<Z> for Share<Z> {
         }
     }
 }
+
+impl<Z: Ring> Mul<Z> for &Share<Z> {
+    type Output = Share<Z>;
+    fn mul(self, rhs: Z) -> Self::Output {
+        Share::<Z> {
+            value: self.value * rhs,
+            owner: self.owner,
+        }
+    }
+}
+
 impl<Z: Ring> MulAssign<Z> for Share<Z> {
     fn mul_assign(&mut self, rhs: Z) {
         self.value *= rhs;

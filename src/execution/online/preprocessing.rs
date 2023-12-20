@@ -98,8 +98,8 @@ impl<Z: Ring> Preprocessing<Z> for BasePreprocessing<Z> {
 pub struct DummyPreprocessing<Z, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> {
     seed: u64,
     session: Ses,
-    rnd_ctr: u64,
-    trip_ctr: u64,
+    pub rnd_ctr: u64,
+    pub trip_ctr: u64,
     _phantom: std::marker::PhantomData<Z>,
     _phantom2: std::marker::PhantomData<Rnd>,
 }

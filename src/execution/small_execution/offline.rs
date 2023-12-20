@@ -29,8 +29,8 @@ use super::{agree_random::AgreeRandom, prf::PRSSConversions};
 /// Struct expressing the amount of triples to preprocess in a batch
 #[derive(Debug, Clone, Copy)]
 pub struct SmallBatch {
-    triples: usize,
-    randoms: usize,
+    pub triples: usize,
+    pub randoms: usize,
 }
 impl Default for SmallBatch {
     fn default() -> Self {

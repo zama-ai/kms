@@ -19,7 +19,7 @@ use std::{
     collections::HashMap,
     fmt::Display,
     iter::Sum,
-    ops::{Add, AddAssign, Mul, Neg, Sub, SubAssign},
+    ops::{Add, AddAssign, Mul, Neg, Shl, Sub, SubAssign},
 };
 use std::{num::Wrapping, ops::MulAssign};
 
@@ -39,6 +39,7 @@ where
     ResiduePoly<Z>: ReductionTable<Z>,
 {
     const BIT_LENGTH: usize = Z::BIT_LENGTH * F_DEG;
+    const CHAR_LOG2: usize = Z::CHAR_LOG2;
 
     fn to_byte_vec(&self) -> Vec<u8> {
         let size = Self::BIT_LENGTH >> 3;
@@ -322,6 +323,24 @@ where
         // add const only to free term:
         let mut coefs = self.coefs;
         coefs[0] += other;
+        ResiduePoly { coefs }
+    }
+}
+
+/// Compute R << i which translates to left shifting by i each coefficient of the ResiduePoly
+/// If i >= Z::CHAR_LOG2 then it computes R << (i % Z::CHAR_LOG2)
+impl<Z> Shl<usize> for ResiduePoly<Z>
+where
+    Z: Ring + ZConsts,
+    Z: std::ops::Shl<usize, Output = Z>,
+{
+    type Output = ResiduePoly<Z>;
+
+    fn shl(self, rhs: usize) -> Self {
+        let mut coefs = self.coefs;
+        for coef in &mut coefs {
+            *coef = *coef << rhs;
+        }
         ResiduePoly { coefs }
     }
 }
@@ -1199,7 +1218,36 @@ mod tests {
                 p5 -= p5;
                 assert_eq!(p5, ResiduePoly::ZERO);
             }
-
+            #[test]
+            fn [<test_shift_ $z:lower>]() {
+                assert_eq!(
+                    ResiduePoly::<$z>::embed_exceptional_set(42).unwrap(),
+                    ResiduePoly::<$z>::embed_exceptional_set(42).unwrap() << 0
+                );
+                assert_eq!(
+                    ResiduePoly::<$z>::from_scalar(Wrapping(152)),
+                    ResiduePoly::<$z>::from_scalar(Wrapping(19)) << 3
+                );
+                assert_eq!(
+                    ResiduePoly::<$z>::from_scalar(Wrapping(2)),
+                    ResiduePoly::<$z>::from_scalar(Wrapping(1)) << 1
+                );
+                // Observe the embedding of 2 is 0, 1, 0, 0, 0, 0, 0, 0
+                assert_eq!(
+                    ResiduePoly::<$z>::from_vec(vec![
+                        $z::ZERO,
+                        Wrapping(2),
+                        $z::ZERO,
+                        $z::ZERO,
+                        $z::ZERO,
+                        $z::ZERO,
+                        $z::ZERO,
+                        $z::ZERO
+                    ])
+                    .unwrap(),
+                    ResiduePoly::<$z>::embed_exceptional_set(2).unwrap() << 1
+                );
+            }
             }
         };
     }

@@ -104,6 +104,10 @@ harness = false
 name = "prep"
 harness = false
 
+[[bench]]
+name = "bit_dec"
+harness = false
+
 [profile.bench]
 debug = true
 
