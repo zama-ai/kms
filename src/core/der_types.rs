@@ -9,11 +9,6 @@ pub type KeyAddress = [u8; BYTES_IN_ADDRESS];
 // Alias wrapping the ephemeral public encryption key the client constructs and the server uses to encrypt its payload
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct PublicEncKey(pub(crate) crypto_box::PublicKey);
-impl AsRef<[u8]> for PublicEncKey {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_bytes()
-    }
-}
 impl Serialize for PublicEncKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -176,7 +171,6 @@ pub struct SigncryptionPair {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Signature {
     pub sig: k256::ecdsa::Signature,
-    pub pk: PublicSigKey, // TODO use a library to handle this from the signature using ethereum sigs
 }
 /// Serialize a signature as a 64 bytes sequence of big endian bytes, consisting of r followed by s
 impl Serialize for Signature {
@@ -186,7 +180,7 @@ impl Serialize for Signature {
     {
         let mut to_ser = Vec::new();
         to_ser.append(&mut self.sig.to_vec());
-        to_ser.append(&mut self.pk.pk.to_sec1_bytes().to_vec());
+        // to_ser.append(&mut self.pk.pk.to_sec1_bytes().to_vec());
         serializer.serialize_bytes(&to_ser)
     }
 }
@@ -214,16 +208,6 @@ impl<'de> Visitor<'de> for SignatureVisitor {
             Ok(sig) => sig,
             Err(e) => Err(E::custom(format!("Could not decode signature: {:?}", e)))?,
         };
-        let pk = match k256::ecdsa::VerifyingKey::from_sec1_bytes(&v[SIG_SIZE..]) {
-            Ok(pk) => pk,
-            Err(e) => Err(E::custom(format!(
-                "Could not decode public key part of signature: {:?}",
-                e
-            )))?,
-        };
-        Ok(Signature {
-            sig,
-            pk: PublicSigKey { pk },
-        })
+        Ok(Signature { sig })
     }
 }

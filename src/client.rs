@@ -1,4 +1,5 @@
 use crate::setup_rpc::{DEFAULT_CIPHER_PATH, DEFAULT_CLIENT_KEY_PATH, DEFAULT_SERVER_KEY_PATH};
+use kms::{core::signcryption::encryption_key_generation, kms::DecryptionResponse};
 use kms::{
     core::{
         der_types::{Cipher, PublicEncKey, SigncryptionPair},
@@ -23,10 +24,6 @@ use kms::{
         signcryption::RND_SIZE,
     },
     kms::ReencryptionRequest,
-};
-use kms::{
-    core::{kms_core::get_address, signcryption::encryption_key_generation},
-    kms::DecryptionResponse,
 };
 use kms::{file_handling::read_element, kms::ReencryptionRequestPayload};
 use rand::{RngCore, SeedableRng};
@@ -108,10 +105,10 @@ impl Client {
         ct: Vec<u8>,
         fhe_type: FheType,
     ) -> anyhow::Result<DecryptionRequest> {
-        let mut randomness = Vec::with_capacity(RND_SIZE);
+        let mut randomness: Vec<u8> = Vec::with_capacity(RND_SIZE);
         self.rng.fill_bytes(&mut randomness);
         let payload = DecryptionRequestPayload {
-            address: get_address(&self.client_pk).to_vec(),
+            verification_key: to_vec(&self.client_pk)?,
             fhe_type: fhe_type.into(),
             ciphertext: ct,
             proof: Some(Proof {
@@ -137,7 +134,7 @@ impl Client {
         self.rng.fill_bytes(&mut randomness);
         let payload = ReencryptionRequestPayload {
             enc_key: to_vec(&enc_pk)?,
-            address: get_address(&self.client_pk).to_vec(),
+            verification_key: to_vec(&self.client_pk)?,
             fhe_type: fhe_type.into(),
             ciphertext: ct,
             proof: Some(Proof {
@@ -172,8 +169,8 @@ impl Client {
                         );
                         return Ok(None);
                     }
-                    if get_address(&self.server_pk).to_vec() != resp_payload.address {
-                        tracing::warn!("Server address is incorrect in decryption request");
+                    if to_vec(&self.server_pk)? != resp_payload.verification_key {
+                        tracing::warn!("Server key is incorrect in decryption request");
                         return Ok(None);
                     }
                     if SoftwareKms::digest(&to_vec(&req_payload)?)? != resp_payload.digest {
@@ -195,7 +192,6 @@ impl Client {
         }
         let sig = Signature {
             sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
-            pk: self.server_pk.clone(),
         };
         if !verify_sig(&to_vec(&resp_payload)?, &sig, &self.server_pk) {
             tracing::warn!("Signature on received response is not valid!");
@@ -214,8 +210,8 @@ impl Client {
         if let Some(req) = request {
             match req.payload {
                 Some(req_payload) => {
-                    if get_address(&self.server_pk).to_vec() != resp.address {
-                        tracing::warn!("Server address is incorrect in reencryption request");
+                    if to_vec(&self.server_pk)? != resp.verification_key {
+                        tracing::warn!("Server key is incorrect in reencryption request");
                         return Ok(None);
                     }
                     if SoftwareKms::digest(&to_vec(&req_payload)?)? != resp.digest {

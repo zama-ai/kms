@@ -19,7 +19,7 @@ message Proof {
 }
 
 message DecryptionRequestPayload {
-  bytes address = 1;
+  bytes verification_key = 1;
   FheType fhe_type = 2;
   bytes ciphertext = 3;
   Proof proof = 4;
@@ -32,7 +32,7 @@ message DecryptionRequest {
 }
 
 message DecryptionResponsePayload {
-  bytes address = 1;
+  bytes verification_key = 1;
   FheType fhe_type = 2;
   uint32 plaintext = 3;
   bytes digest = 4;
@@ -45,7 +45,7 @@ message DecryptionResponse {
 }
 
 message ReencryptionRequestPayload {
-  bytes address = 1;
+  bytes verification_key = 1;
   bytes enc_key = 2;
   FheType fhe_type = 3;
   bytes ciphertext = 4;
@@ -59,7 +59,7 @@ message ReencryptionRequest {
 }
 
 message ReencryptionResponse {
-  bytes address = 1;
+  bytes verification_key = 1;
   FheType fhe_type = 2;
   bytes signcrypted_ciphertext = 3;
   bytes digest = 4;

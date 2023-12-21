@@ -96,7 +96,7 @@ impl Kms for SoftwareKms {
         fhe_type: FheType,
         digest: Vec<u8>,
         client_enc_key: &PublicEncKey,
-        address: &KeyAddress,
+        client_verf_key: &PublicSigKey,
     ) -> anyhow::Result<Option<Vec<u8>>> {
         let plaintext: u32 = Kms::decrypt(self, ct, fhe_type)?;
         let signcryption_msg = SigncryptionPayload {
@@ -111,13 +111,13 @@ impl Kms for SoftwareKms {
             &mut rng_clone,
             &serde_asn1_der::to_vec(&signcryption_msg)?,
             client_enc_key,
-            address,
+            client_verf_key,
             &self.sig_key,
         )?;
         *current_rng = rng_clone;
         let res = to_vec(&enc_res)?;
         // TODO make logs everywhere. In particular make sure to log errors before throwing the error back up
-        tracing::info!("Completed reencyption of ciphertext {:?} with type {:?} to client with address {:?} under public key {:?}", ct, fhe_type, address, client_enc_key.0);
+        tracing::info!("Completed reencyption of ciphertext {:?} with type {:?} to client verification key {:?} under client encryption key {:?}", ct, fhe_type, client_verf_key.pk, client_enc_key.0);
         Ok(Some(res))
     }
 
@@ -125,7 +125,7 @@ impl Kms for SoftwareKms {
         &self,
         payload: &T,
         signature: &super::der_types::Signature,
-        address: &KeyAddress,
+        key: &PublicSigKey,
     ) -> bool
     where
         T: fmt::Debug + Serialize,
@@ -140,11 +140,10 @@ impl Kms for SoftwareKms {
                 return false;
             }
         };
-        // TODO refactor
-        if !verify_sig(&msg, signature, &signature.pk) {
+        if !verify_sig(&msg, signature, key) {
             return false;
         }
-        address == &get_address(&signature.pk)
+        true
     }
 
     fn sign<T>(&self, msg: &T) -> anyhow::Result<super::der_types::Signature>
@@ -230,35 +229,11 @@ pub fn get_address(key: &PublicSigKey) -> KeyAddress {
     res
 }
 
-// TODO should be replaced with calls to serialization
-pub(crate) fn plaintext_to_vec(plaintext: u32, fhe_type: FheType) -> Vec<u8> {
-    match fhe_type {
-        FheType::Bool => {
-            vec![plaintext as u8]
-        }
-        FheType::Euint8 => {
-            vec![plaintext as u8]
-        }
-        FheType::Euint16 => plaintext.to_be_bytes().to_vec(),
-        FheType::Euint32 => plaintext.to_be_bytes().to_vec(),
-    }
-}
-
-#[allow(dead_code)]
-pub fn vec_to_plaintext(msg: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
-    Ok(match fhe_type {
-        FheType::Bool => msg[0] as u32,
-        FheType::Euint8 => msg[0] as u32,
-        FheType::Euint16 => u16::from_be_bytes(msg.try_into()?) as u32,
-        FheType::Euint32 => u32::from_be_bytes(msg.try_into()?),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
         core::{
-            kms_core::{decrypt_signcryption, gen_sig_keys, get_address, SoftwareKms},
+            kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms},
             request::ephemeral_key_generation,
         },
         file_handling::{read_element, write_element},
@@ -310,7 +285,7 @@ mod tests {
                 FheType::Euint8,
                 Vec::new(),
                 &client_keys.pk.enc_key,
-                &get_address(&client_keys.pk.verification_key),
+                &client_keys.pk.verification_key,
             )
             .unwrap()
             .unwrap();
@@ -354,7 +329,7 @@ mod tests {
                 FheType::Euint8,
                 link.clone(),
                 &client_keys.pk.enc_key,
-                &get_address(&client_keys.pk.verification_key),
+                &client_keys.pk.verification_key,
             )
             .unwrap()
             .unwrap();

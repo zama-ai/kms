@@ -1,7 +1,7 @@
 use crate::{
     core::{
-        der_types::{KeyAddress, PublicEncKey, Signature},
-        kms_core::{get_address, SoftwareKms},
+        der_types::{PublicEncKey, PublicSigKey, Signature},
+        kms_core::SoftwareKms,
     },
     kms::{
         kms_endpoint_server::KmsEndpoint, DecryptionRequest, DecryptionResponse,
@@ -29,11 +29,11 @@ impl KmsEndpoint for SoftwareKms {
         )?;
         let payload_clone = payload.clone();
         let fhe_type = payload.fhe_type();
-        let client_address: KeyAddress = handle_potential_err(
-            payload.address.try_into(),
-            format!("Invalid address in request {:?}", req_clone),
+        let client_verf_key: PublicSigKey = handle_potential_err(
+            from_bytes(&payload.verification_key),
+            format!("Invalid verification key in request {:?}", req_clone),
         )?;
-        if !verify_client_address(&client_address) {
+        if !verify_client_key(&client_verf_key) {
             tracing::warn!("Request invalid since client is not permitted to decrypt specific ciphertext in request {:?}", req_clone);
             return Err(tonic::Status::new(
                 tonic::Code::Aborted,
@@ -50,7 +50,7 @@ impl KmsEndpoint for SoftwareKms {
             from_bytes(&req_clone.signature),
             format!("Invalid signature in request {:?}", req_clone),
         )?;
-        if !Kms::verify_sig(self, &payload_clone, &signature, &client_address) {
+        if !Kms::verify_sig(self, &payload_clone, &signature, &client_verf_key) {
             return Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "Invalid request".to_string(),
@@ -75,14 +75,16 @@ impl KmsEndpoint for SoftwareKms {
             fhe_type,
             req_digest.clone(),
             &client_enc_key,
-            &client_address,
+            &client_verf_key,
         ))?;
-        let server_add = get_address(&Kms::get_verf_key(self));
         Ok(Response::new(ReencryptionResponse {
             signcrypted_ciphertext: return_cipher,
             fhe_type: fhe_type.into(),
             digest: req_digest,
-            address: server_add.to_vec(),
+            verification_key: handle_potential_err(
+                to_vec(&Kms::get_verf_key(self)),
+                "Could not serialize server verification key".to_string(),
+            )?,
         }))
     }
 
@@ -99,11 +101,11 @@ impl KmsEndpoint for SoftwareKms {
         )?;
         let payload_clone = payload.clone();
         let fhe_type = payload.fhe_type();
-        let address: KeyAddress = handle_potential_err(
-            payload.address.try_into(),
-            format!("Invalid address in request {:?}", req_clone),
+        let client_verf_key: PublicSigKey = handle_potential_err(
+            from_bytes(&payload.verification_key),
+            format!("Invalid client verification key in request {:?}", req_clone),
         )?;
-        if !verify_client_address(&address) {
+        if !verify_client_key(&client_verf_key) {
             tracing::warn!("Request invalid since client is not permitted to decrypt specific ciphertext in request {:?}", req_clone);
             return Err(tonic::Status::new(
                 tonic::Code::Aborted,
@@ -119,14 +121,12 @@ impl KmsEndpoint for SoftwareKms {
             from_bytes(&req_clone.signature),
             format!("Invalid signature in request {:?}", req_clone),
         )?;
-        if !Kms::verify_sig(self, &payload_clone, &signature, &address) {
+        if !Kms::verify_sig(self, &payload_clone, &signature, &client_verf_key) {
             return Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "Invalid request".to_string(),
             ));
         }
-
-        let server_add = get_address(&Kms::get_verf_key(self));
         let payload_serialized = handle_potential_err(
             to_vec(&payload_clone),
             format!("Could not serialize payload {:?}", req_clone),
@@ -139,10 +139,14 @@ impl KmsEndpoint for SoftwareKms {
             Kms::decrypt(self, &payload.ciphertext, payload_clone.fhe_type()),
             format!("Decryption failed for request {:?}", req),
         )?;
+        let server_verf_key = handle_potential_err(
+            to_vec(&Kms::get_verf_key(self)),
+            "Could not serialize server verification key".to_string(),
+        )?;
         let payload_resp = DecryptionResponsePayload {
             fhe_type: fhe_type.into(),
             plaintext,
-            address: server_add.to_vec(),
+            verification_key: server_verf_key,
             digest: req_digest,
             randomness: payload_clone.randomness,
         };
@@ -157,7 +161,7 @@ impl KmsEndpoint for SoftwareKms {
     }
 }
 
-fn verify_client_address(_address: &KeyAddress) -> bool {
+fn verify_client_key(_address: &PublicSigKey) -> bool {
     // TODO
     true
 }

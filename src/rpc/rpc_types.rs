@@ -4,7 +4,7 @@ use std::fmt;
 use tendermint::block::signed_header::SignedHeader;
 
 use crate::{
-    core::der_types::{KeyAddress, PublicEncKey, PublicSigKey, Signature},
+    core::der_types::{PublicEncKey, PublicSigKey, Signature},
     kms::{
         DecryptionRequest, DecryptionRequestPayload, DecryptionResponsePayload, FheType, Proof,
         ReencryptionRequest, ReencryptionRequestPayload,
@@ -17,7 +17,7 @@ pub trait Kms {
         &self,
         payload: &T,
         signature: &Signature,
-        address: &KeyAddress,
+        verification_key: &PublicSigKey,
     ) -> bool;
     fn sign<T: fmt::Debug + Serialize>(&self, msg: &T) -> anyhow::Result<Signature>;
     fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<u32>;
@@ -28,7 +28,7 @@ pub trait Kms {
         ct_type: FheType,
         digest_link: Vec<u8>,
         enc_key: &PublicEncKey,
-        address: &KeyAddress,
+        pub_verf_key: &PublicSigKey,
     ) -> anyhow::Result<Option<Vec<u8>>>;
     fn get_verf_key(&self) -> PublicSigKey;
 }
@@ -73,7 +73,7 @@ impl serde::Serialize for ReencryptionRequestPayload {
     {
         // TODO use proper encoding
         let mut to_ser = Vec::new();
-        to_ser.append(&mut self.address.to_vec());
+        to_ser.append(&mut self.verification_key.to_vec());
         to_ser.append(&mut self.enc_key.to_vec());
         to_ser.append(&mut to_vec(&self.proof).map_err(Error::custom)?);
         to_ser.append(&mut self.ciphertext.to_vec());
@@ -104,7 +104,7 @@ impl serde::Serialize for DecryptionRequestPayload {
     {
         // TODO use proper encoding
         let mut to_ser = Vec::new();
-        to_ser.append(&mut self.address.to_vec());
+        to_ser.append(&mut self.verification_key.to_vec());
         to_ser.append(&mut to_vec(&self.proof).map_err(Error::custom)?);
         to_ser.append(&mut self.ciphertext.to_vec());
         let mut proof = to_vec(&self.proof).map_err(Error::custom)?;
@@ -134,7 +134,7 @@ impl serde::Serialize for DecryptionResponsePayload {
     {
         // TODO use proper encoding
         let mut to_ser = Vec::new();
-        to_ser.append(&mut self.address.to_vec());
+        to_ser.append(&mut self.verification_key.to_vec());
         to_ser.append(&mut self.fhe_type.to_be_bytes().to_vec());
         to_ser.append(&mut self.plaintext.to_be_bytes().to_vec());
         to_ser.append(&mut self.digest.to_vec());

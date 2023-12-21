@@ -1,6 +1,6 @@
 use super::{
     der_types::{
-        Cipher, KeyAddress, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature,
+        Cipher, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature,
         SigncryptionPair, SigncryptionPubKey, BYTES_IN_ADDRESS,
     },
     kms_core::get_address,
@@ -15,6 +15,7 @@ use k256::ecdsa::SigningKey;
 use nom::AsBytes;
 use rand_chacha::rand_core::CryptoRngCore;
 use serde::Serialize;
+use serde_asn1_der::to_vec;
 use sha3::{Digest, Sha3_256};
 
 ///
@@ -45,16 +46,10 @@ pub fn sign<T>(msg: &T, server_sig_key: &PrivateSigKey) -> anyhow::Result<Signat
 where
     T: Serialize + AsRef<[u8]>,
 {
-    //TODO should be der serialized
     let sig: k256::ecdsa::Signature = server_sig_key.sk.try_sign(msg.as_ref())?;
     // Normalize s value to ensure a consistant signature and protect against malleability
     sig.normalize_s();
-    Ok(Signature {
-        sig,
-        pk: PublicSigKey {
-            pk: SigningKey::verifying_key(&server_sig_key.sk).to_owned(),
-        },
-    })
+    Ok(Signature { sig })
 }
 
 /// Method method for performing the necesary checks on a plain signature.
@@ -89,16 +84,21 @@ pub fn signcrypt<T>(
     rng: &mut impl CryptoRngCore,
     msg: &T,
     client_pk: &PublicEncKey,
-    client_sig_add: &KeyAddress,
+    client_verf_key: &PublicSigKey,
     server_sig_key: &PrivateSigKey,
 ) -> anyhow::Result<Cipher>
 where
     T: Serialize + AsRef<[u8]>,
 {
     // Adds the hash digest of the receivers public encryption key to the message to sign
-    // Sign msg || client_sig_address || H(client_enc_key)
+    // Sign msg || H(client_verf_key) || H(client_enc_key)
     //TODO what we sign should be the same we decrypt
-    let to_sign = [msg.as_ref(), client_sig_add, &hash_element(&client_pk)[..]].concat();
+    let to_sign = [
+        msg.as_ref(),
+        &hash_element(&to_vec(client_verf_key)?),
+        &hash_element(&to_vec(client_pk)?),
+    ]
+    .concat();
     let sig: k256::ecdsa::Signature = server_sig_key.sk.sign(to_sign.as_ref());
     // Normalize s value to ensure a consistant signature and protect against malleability
     sig.normalize_s();
@@ -115,7 +115,7 @@ where
         &get_address(&PublicSigKey {
             pk: SigningKey::verifying_key(&server_sig_key.sk).to_owned(),
         }),
-        &hash_element(server_enc_pk.as_ref()),
+        &hash_element(&to_vec(&server_enc_pk)?),
     ]
     .concat();
 
@@ -189,20 +189,14 @@ fn parse_msg(
         )));
     }
     // Verify encryption key digest
-    if hash_element(server_enc_key.as_ref()) != server_enc_key_digest {
+    if hash_element(&to_vec(server_enc_key)?) != server_enc_key_digest {
         return Err(anyhow_error_and_warn_log(format!(
             "Unexpected encryption key digest {:X?} was part of the decryption",
             server_enc_key
         )));
     }
     let sig = k256::ecdsa::Signature::from_slice(sig_bytes)?;
-    Ok((
-        msg.to_vec(),
-        Signature {
-            sig,
-            pk: server_verf_key.clone(),
-        },
-    ))
+    Ok((msg.to_vec(), Signature { sig }))
 }
 
 /// Helper method for performing the necesary checks on a signcryption signature.
@@ -213,11 +207,28 @@ fn check_signature(
     server_verf_key: &PublicSigKey,
     client_pk: &SigncryptionPubKey,
 ) -> bool {
-    // What should be signed is msg || address(client_verification_key) || H(client_enc_key)
+    let verf_key_digest = match to_vec(&client_pk.verification_key) {
+        Ok(verf_key_digest) => verf_key_digest,
+        Err(_) => {
+            tracing::warn!(
+                "Could not serialize verification key {:?}",
+                client_pk.verification_key
+            );
+            return false;
+        }
+    };
+    let enc_key_digest = match to_vec(&client_pk.enc_key) {
+        Ok(enc_key_digest) => enc_key_digest,
+        Err(_) => {
+            tracing::warn!("Could not serialize encryption key {:?}", client_pk.enc_key);
+            return false;
+        }
+    };
+    // What should be signed is msg || H(client_verification_key) || H(client_enc_key)
     let msg_signed = [
         msg,
-        get_address(&client_pk.verification_key).to_vec(),
-        hash_element(client_pk.enc_key.as_ref()),
+        hash_element(&verf_key_digest),
+        hash_element(&enc_key_digest),
     ]
     .concat();
 
@@ -312,7 +323,7 @@ mod tests {
             &mut rng,
             &msg,
             &client_signcryption_keys.pk.enc_key,
-            &[0_u8; 20],
+            &request.payload.client_signcryption_key.verification_key,
             &server_sig_key,
         )
         .unwrap();
@@ -335,7 +346,7 @@ mod tests {
             &mut rng,
             &msg,
             &client_signcryption_keys.pk.enc_key,
-            &get_address(&client_signcryption_keys.pk.verification_key),
+            &client_signcryption_keys.pk.verification_key,
             &server_sig_key,
         )
         .unwrap();
@@ -355,7 +366,7 @@ mod tests {
             &mut rng,
             &msg,
             &client_signcryption_keys.pk.enc_key,
-            &get_address(&client_signcryption_keys.pk.verification_key),
+            &client_signcryption_keys.pk.verification_key,
             &server_sig_key,
         )
         .unwrap();
@@ -395,7 +406,6 @@ mod tests {
                 .signing_key
                 .sk
                 .sign("not a key".as_ref()),
-            pk: client_signcryption_keys.pk.verification_key,
         };
         request.signature = wrong_sig;
         assert!(!request.verify(&fhe_cipher).unwrap())
@@ -425,7 +435,7 @@ mod tests {
             &mut rng,
             &msg,
             &client_signcryption_keys.pk.enc_key,
-            &get_address(&client_signcryption_keys.pk.verification_key),
+            &client_signcryption_keys.pk.verification_key,
             &server_sig_key,
         )
         .unwrap();
@@ -478,7 +488,7 @@ mod tests {
         let msg = "Some message".as_bytes();
         let sig = Signature {
             sig: server_sig_key.sk.sign(msg),
-            pk: client_signcryption_keys.pk.clone().verification_key,
+            // pk: client_signcryption_keys.pk.clone().verification_key,
         };
         // Fails as the correct key digets are not included in the message whose signature gets checked
         let res = check_signature(
@@ -504,23 +514,19 @@ mod tests {
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let to_sign = [
             msg,
-            &get_address(&client_signcryption_keys.pk.verification_key),
-            &hash_element(&client_signcryption_keys.pk.enc_key)[..],
+            &hash_element(&to_vec(&client_signcryption_keys.pk.verification_key).unwrap()),
+            &hash_element(&to_vec(&client_signcryption_keys.pk.enc_key).unwrap()),
         ]
         .concat();
         let sig = Signature {
             sig: server_sig_key.sk.sign(to_sign.as_ref()),
-            pk: server_verf_key.clone(),
         };
         // Ensure the signature is normalized
         let internal_sig = sig.sig.normalize_s().unwrap_or(sig.sig);
         // Ensure the signature is ok
         assert!(check_signature(
             msg.to_vec(),
-            &Signature {
-                sig: internal_sig,
-                pk: server_verf_key.clone(),
-            },
+            &Signature { sig: internal_sig },
             &server_verf_key,
             &client_signcryption_keys.pk,
         ));
@@ -530,10 +536,7 @@ mod tests {
                 .unwrap();
         let res = check_signature(
             msg.to_vec(),
-            &Signature {
-                sig: bad_sig,
-                pk: server_verf_key.clone(),
-            },
+            &Signature { sig: bad_sig },
             &server_verf_key,
             &client_signcryption_keys.pk,
         );
