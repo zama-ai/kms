@@ -1,8 +1,5 @@
 use super::{
-    der_types::{
-        Cipher, KeyAddress, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair,
-        BYTES_IN_ADDRESS,
-    },
+    der_types::{Cipher, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair},
     signcryption::{hash_element, sign, signcrypt, validate_and_decrypt, verify_sig},
 };
 use crate::{
@@ -214,15 +211,6 @@ pub fn decrypt_signcryption(
         return Ok(None);
     }
     Ok(Some(signcrypted_msg.plaintext))
-}
-
-pub fn get_address(key: &PublicSigKey) -> KeyAddress {
-    // TODO should this be updated to use keccak to make the address notion compatible with ethereum
-    let mut digest = hash_element(&key.pk.to_sec1_bytes()[..]);
-    digest.truncate(BYTES_IN_ADDRESS);
-    let mut res = [0_u8; BYTES_IN_ADDRESS];
-    res[..BYTES_IN_ADDRESS].copy_from_slice(&digest[..BYTES_IN_ADDRESS]);
-    res
 }
 
 #[cfg(test)]

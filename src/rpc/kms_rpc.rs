@@ -163,7 +163,7 @@ impl KmsEndpoint for SoftwareKms {
     }
 }
 
-fn verify_client_key(_address: &PublicSigKey) -> bool {
+fn verify_client_key(_key: &PublicSigKey) -> bool {
     // TODO
     true
 }

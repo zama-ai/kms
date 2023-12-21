@@ -3,9 +3,6 @@ use k256::ecdsa::VerifyingKey;
 use nom::AsBytes;
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
 
-pub const BYTES_IN_ADDRESS: usize = 20;
-pub type KeyAddress = [u8; BYTES_IN_ADDRESS];
-
 // Alias wrapping the ephemeral public encryption key the client constructs and the server uses to encrypt its payload
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct PublicEncKey(pub(crate) crypto_box::PublicKey);

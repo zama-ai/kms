@@ -1,9 +1,6 @@
-use super::{
-    der_types::{
-        Cipher, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature,
-        SigncryptionPair, SigncryptionPubKey, BYTES_IN_ADDRESS,
-    },
-    kms_core::get_address,
+use super::der_types::{
+    Cipher, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
+    SigncryptionPubKey,
 };
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use ::signature::{Signer, Verifier};
@@ -22,8 +19,7 @@ use sha3::{Digest, Sha3_256};
 /// This file is supposed to implemente the necesary methods required for secure client communication in relation to decryption requests.
 /// This means that the client sends a request to the server which it validates against the client's ECDSA secp256k1 key.
 /// Based on the request the server does sign-then-encrypt to securely encrypt a payload for the client.
-/// Signing for the server is also carried out using ECDSA with secp256k1 and the client can validate this against the server's public key
-///  assoicated with its blockchain address.
+/// Signing for the server is also carried out using ECDSA with secp256k1 and the client can validate this against the server's public key.
 ///
 /// For encryption a hybrid encryption is used based on ECIES using Libsodium. More specifically using ECDH with curve 25519 and Salsa.
 /// NOTE This may change in the future to be more compatible with NIST standardized schemes.
@@ -106,15 +102,15 @@ where
     // Generate the server part of the key agreement
     // Oberve that we don't need to keep the secret key as we don't need the client to send the server messages
     let (server_enc_pk, server_enc_sk) = encryption_key_generation(rng);
-    // Encrypt msg || sig || address(server_verification_key) || H(server_enc_key)
+    // Encrypt msg || sig || H(server_verification_key) || H(server_enc_key)
     // OBSERVE: serialization is simply r concatenated with s. That is, NOT an Ethereum compatible signature since we preclude the v value
     // The verification key is serialized based on the SEC1 standard
     let to_encrypt = [
         msg.as_ref(),
         &sig.to_bytes(),
-        &get_address(&PublicSigKey {
+        &hash_element(&to_vec(&PublicSigKey {
             pk: SigningKey::verifying_key(&server_sig_key.sk).to_owned(),
-        }),
+        })?),
         &hash_element(&to_vec(&server_enc_pk)?),
     ]
     .concat();
@@ -167,22 +163,22 @@ pub fn validate_and_decrypt(
     Ok(Some(msg))
 }
 
-/// Helper method for parsing a signcrypted message consisting of the _true_ msg || sig || address(server_verification_key) || H(server_enc_key)
+/// Helper method for parsing a signcrypted message consisting of the _true_ msg || sig || H(server_verification_key) || H(server_enc_key)
 fn parse_msg(
     decrypted_plaintext: Vec<u8>,
     server_enc_key: &PublicEncKey,
     server_verf_key: &PublicSigKey,
 ) -> anyhow::Result<(Vec<u8>, Signature)> {
-    // The plaintext contains msg || sig || address(server_verification_key) || H(server_enc_key)
-    let msg_len = decrypted_plaintext.len() - BYTES_IN_ADDRESS - DIGEST_BYTES - SIG_SIZE;
+    // The plaintext contains msg || sig || H(server_verification_key) || H(server_enc_key)
+    let msg_len = decrypted_plaintext.len() - 2 * DIGEST_BYTES - SIG_SIZE;
     let msg = &decrypted_plaintext[..msg_len];
     let sig_bytes = &decrypted_plaintext[msg_len..(msg_len + SIG_SIZE)];
     let server_ver_key_digest =
-        &decrypted_plaintext[(msg_len + SIG_SIZE)..(msg_len + SIG_SIZE + BYTES_IN_ADDRESS)];
-    let server_enc_key_digest = &decrypted_plaintext[(msg_len + SIG_SIZE + BYTES_IN_ADDRESS)
-        ..(msg_len + BYTES_IN_ADDRESS + DIGEST_BYTES + SIG_SIZE)];
+        &decrypted_plaintext[(msg_len + SIG_SIZE)..(msg_len + SIG_SIZE + DIGEST_BYTES)];
+    let server_enc_key_digest = &decrypted_plaintext
+        [(msg_len + SIG_SIZE + DIGEST_BYTES)..(msg_len + 2 * DIGEST_BYTES + SIG_SIZE)];
     // Verify verification key digest
-    if get_address(server_verf_key) != server_ver_key_digest {
+    if hash_element(&to_vec(server_verf_key)?) != server_ver_key_digest {
         return Err(anyhow_error_and_warn_log(format!(
             "Unexpected verification key digest {:X?} was part of the decryption",
             server_ver_key_digest
@@ -282,11 +278,11 @@ mod tests {
     use tracing_test::traced_test;
 
     use crate::core::{
-        der_types::{Signature, BYTES_IN_ADDRESS},
+        der_types::Signature,
         request::{ephemeral_key_generation, ClientRequest},
         signcryption::{
-            check_signature, encryption_key_generation, get_address, hash_element, parse_msg, sign,
-            signcrypt, validate_and_decrypt, verify_sig, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
+            check_signature, encryption_key_generation, hash_element, parse_msg, sign, signcrypt,
+            validate_and_decrypt, verify_sig, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
         },
     };
 
@@ -454,7 +450,7 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
         let (sever_enc_key, _server_dec_key) = encryption_key_generation(&mut rng);
-        let to_encrypt = [0_u8; 1 + BYTES_IN_ADDRESS + DIGEST_BYTES + SIG_SIZE];
+        let to_encrypt = [0_u8; 1 + 2 * DIGEST_BYTES + SIG_SIZE];
         let res = parse_msg(to_encrypt.to_vec(), &sever_enc_key, &server_verf_key);
         assert!(logs_contain("Unexpected verification key digest"));
         // unwrapping fails
@@ -467,11 +463,11 @@ mod tests {
         let mut rng = ChaCha20Rng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
         let (server_enc_key, _server_dec_key) = encryption_key_generation(&mut rng);
-        let mut to_encrypt = [0_u8; 1 + BYTES_IN_ADDRESS + DIGEST_BYTES + SIG_SIZE].to_vec();
-        let key_digest = get_address(&server_verf_key);
+        let mut to_encrypt = [0_u8; 1 + 2 * DIGEST_BYTES + SIG_SIZE].to_vec();
+        let key_digest = hash_element(&to_vec(&server_verf_key).unwrap());
         // Set the correct verification key so that part of `parse_msg` won't fail
         to_encrypt.splice(
-            1 + SIG_SIZE..1 + SIG_SIZE + BYTES_IN_ADDRESS,
+            1 + SIG_SIZE..1 + SIG_SIZE + DIGEST_BYTES,
             key_digest.iter().cloned(),
         );
         let res = parse_msg(to_encrypt.to_vec(), &server_enc_key, &server_verf_key);
