@@ -8,7 +8,7 @@ use super::{
 use crate::{
     anyhow_error_and_warn_log,
     kms::FheType,
-    rpc::rpc_types::{Kms, SigncryptionPayload},
+    rpc::rpc_types::{Kms, Plaintext, SigncryptionPayload},
 };
 use k256::ecdsa::SigningKey;
 use rand::SeedableRng;
@@ -65,27 +65,27 @@ pub struct SoftwareKms {
 }
 
 impl Kms for SoftwareKms {
-    fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<u32> {
+    fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<Plaintext> {
         Ok(match fhe_type {
             FheType::Bool => {
                 let cipher: FheBool = bincode::deserialize(ct)?;
                 let plaintext: bool = cipher.decrypt(&self.fhe_dec_key);
-                plaintext as u32
+                Plaintext::from_bool(plaintext)
             }
             FheType::Euint8 => {
                 let cipher: FheUint8 = bincode::deserialize(ct)?;
                 let plaintext: u8 = cipher.decrypt(&self.fhe_dec_key);
-                plaintext as u32
+                Plaintext::from_u8(plaintext)
             }
             FheType::Euint16 => {
                 let cipher: FheUint16 = bincode::deserialize(ct)?;
                 let plaintext: u16 = cipher.decrypt(&self.fhe_dec_key);
-                plaintext as u32
+                Plaintext::from_u16(plaintext)
             }
             FheType::Euint32 => {
                 let cipher: FheUint32 = bincode::deserialize(ct)?;
                 let plaintext: u32 = cipher.decrypt(&self.fhe_dec_key);
-                plaintext as u32
+                Plaintext::from_u32(plaintext)
             }
         })
     }
@@ -98,12 +98,8 @@ impl Kms for SoftwareKms {
         client_enc_key: &PublicEncKey,
         client_verf_key: &PublicSigKey,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        let plaintext: u32 = Kms::decrypt(self, ct, fhe_type)?;
-        let signcryption_msg = SigncryptionPayload {
-            fhe_type,
-            plaintext,
-            digest,
-        };
+        let plaintext = Kms::decrypt(self, ct, fhe_type)?;
+        let signcryption_msg = SigncryptionPayload { plaintext, digest };
         // TODO what is the right way of doing this without panic
         let mut current_rng = self.rng.lock().unwrap();
         let mut rng_clone = current_rng.clone();
@@ -202,7 +198,7 @@ pub fn decrypt_signcryption(
     link: Vec<u8>,
     client_keys: &SigncryptionPair,
     server_verf_key: &PublicSigKey,
-) -> anyhow::Result<Option<(u32, FheType)>> {
+) -> anyhow::Result<Option<Plaintext>> {
     let cipher: Cipher = from_bytes(&cipher)?;
     let decrypted_signcryption = match validate_and_decrypt(&cipher, client_keys, server_verf_key)?
     {
@@ -217,7 +213,7 @@ pub fn decrypt_signcryption(
         tracing::warn!("Link validation for signcryption failed");
         return Ok(None);
     }
-    Ok(Some((signcrypted_msg.plaintext, signcrypted_msg.fhe_type)))
+    Ok(Some(signcrypted_msg.plaintext))
 }
 
 pub fn get_address(key: &PublicSigKey) -> KeyAddress {
@@ -289,12 +285,12 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        let (decrypted_msg, fhe_type) =
+        let decrypted_msg =
             decrypt_signcryption(raw_cipher, Vec::new(), &client_keys, &kms_keys.sig_pk)
                 .unwrap()
                 .unwrap();
-        assert_eq!(fhe_type, FheType::Euint8);
-        assert_eq!(decrypted_msg as u8, msg);
+        assert_eq!(decrypted_msg.fhe_type(), FheType::Euint8);
+        assert_eq!(decrypted_msg.as_u8().unwrap(), msg);
     }
 
     #[test]
@@ -307,7 +303,7 @@ mod tests {
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
 
         let plaintext = kms.decrypt(&serialized_ct, FheType::Euint8).unwrap();
-        assert_eq!(plaintext as u8, msg);
+        assert_eq!(plaintext.as_u8().unwrap(), msg);
     }
 
     #[test]
@@ -333,11 +329,10 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        let (decrypted_msg, fhe_type) =
-            decrypt_signcryption(raw_cipher, link, &client_keys, &kms_keys.sig_pk)
-                .unwrap()
-                .unwrap();
-        assert_eq!(fhe_type, FheType::Euint8);
-        assert_eq!(decrypted_msg as u8, msg);
+        let decrypted_msg = decrypt_signcryption(raw_cipher, link, &client_keys, &kms_keys.sig_pk)
+            .unwrap()
+            .unwrap();
+        assert_eq!(decrypted_msg.fhe_type(), FheType::Euint8);
+        assert_eq!(decrypted_msg.as_u8().unwrap(), msg);
     }
 }

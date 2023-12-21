@@ -100,7 +100,6 @@ impl KmsEndpoint for SoftwareKms {
             format!("The request {:?} does not have a payload", req_clone),
         )?;
         let payload_clone = payload.clone();
-        let fhe_type = payload.fhe_type();
         let client_verf_key: PublicSigKey = handle_potential_err(
             from_bytes(&payload.verification_key),
             format!("Invalid client verification key in request {:?}", req_clone),
@@ -139,13 +138,16 @@ impl KmsEndpoint for SoftwareKms {
             Kms::decrypt(self, &payload.ciphertext, payload_clone.fhe_type()),
             format!("Decryption failed for request {:?}", req),
         )?;
+        let plaintext_bytes = handle_potential_err(
+            to_vec(&plaintext),
+            format!("Could not convert plaintext to bytes in  request {:?}", req),
+        )?;
         let server_verf_key = handle_potential_err(
             to_vec(&Kms::get_verf_key(self)),
             "Could not serialize server verification key".to_string(),
         )?;
         let payload_resp = DecryptionResponsePayload {
-            fhe_type: fhe_type.into(),
-            plaintext,
+            plaintext: plaintext_bytes,
             verification_key: server_verf_key,
             digest: req_digest,
             randomness: payload_clone.randomness,

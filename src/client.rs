@@ -1,5 +1,8 @@
 use crate::setup_rpc::{DEFAULT_CIPHER_PATH, DEFAULT_CLIENT_KEY_PATH, DEFAULT_SERVER_KEY_PATH};
-use kms::{core::signcryption::encryption_key_generation, kms::DecryptionResponse};
+use kms::{
+    core::signcryption::encryption_key_generation, kms::DecryptionResponse,
+    rpc::rpc_types::Plaintext,
+};
 use kms::{
     core::{
         der_types::{Cipher, PublicEncKey, SigncryptionPair},
@@ -43,10 +46,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response = kms_client.decrypt(tonic::Request::new(req.clone())).await?;
     tracing::debug!("DECRYPT RESPONSE={:?}", response);
     match internal_client.validate_decryption(Some(req), response.into_inner()) {
-        Ok(Some((plaintext, return_type))) => {
+        Ok(Some(plaintext)) => {
             println!(
                 "Decryption response is ok: {:?} of type {:?}",
-                plaintext, return_type
+                plaintext.as_u32(),
+                plaintext.fhe_type()
             )
         }
         _ => println!("Decryption response is NOT valid"),
@@ -60,10 +64,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::debug!("REENCRYPT RESPONSE={:?}", response);
     match internal_client.validate_reencryption(Some(req), response.into_inner(), &enc_pk, &enc_sk)
     {
-        Ok(Some((plaintext, return_type))) => {
+        Ok(Some(plaintext)) => {
             println!(
                 "Reencryption response is ok: {:?} of type {:?}",
-                plaintext, return_type
+                plaintext.as_u32(),
+                plaintext.fhe_type()
             )
         }
         _ => println!("Reencryption response is NOT valid"),
@@ -158,8 +163,9 @@ impl Client {
         &self,
         request: Option<DecryptionRequest>,
         resp: DecryptionResponse,
-    ) -> anyhow::Result<Option<(u32, FheType)>> {
+    ) -> anyhow::Result<Option<Plaintext>> {
         let resp_payload = some_or_err(resp.payload, "No payload present in response".to_string())?;
+        let plaintext: Plaintext = from_bytes(&resp_payload.plaintext)?;
         if let Some(req) = request {
             match req.payload {
                 Some(req_payload) => {
@@ -179,7 +185,7 @@ impl Client {
                         );
                         return Ok(None);
                     }
-                    if req_payload.fhe_type() != resp_payload.fhe_type() {
+                    if req_payload.fhe_type() != plaintext.fhe_type() {
                         tracing::warn!("Fhe type in the decryption response is incorrect");
                         return Ok(None);
                     }
@@ -197,7 +203,7 @@ impl Client {
             tracing::warn!("Signature on received response is not valid!");
             return Ok(None);
         }
-        Ok(Some((resp_payload.plaintext, resp_payload.fhe_type())))
+        Ok(Some(plaintext))
     }
 
     pub fn validate_reencryption(
@@ -206,7 +212,7 @@ impl Client {
         resp: ReencryptionResponse,
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
-    ) -> anyhow::Result<Option<(u32, FheType)>> {
+    ) -> anyhow::Result<Option<Plaintext>> {
         if let Some(req) = request {
             match req.payload {
                 Some(req_payload) => {
@@ -254,7 +260,7 @@ impl Client {
                 return Ok(None);
             }
         };
-        Ok(Some((plaintext, resp.fhe_type())))
+        Ok(Some(plaintext))
     }
 }
 
@@ -264,6 +270,7 @@ mod tests {
         file_handling::read_element,
         kms::{kms_endpoint_client::KmsEndpointClient, FheType},
     };
+    use serial_test::serial;
     use tokio::task::JoinHandle;
     use tonic::transport::Channel;
 
@@ -291,6 +298,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_decryption() {
         let (kms_server, mut kms_client) = setup().await;
         let (ct, fhe_type): (Vec<u8>, FheType) =
@@ -305,17 +313,18 @@ mod tests {
             .await
             .unwrap();
 
-        let (plaintext, return_type) = internal_client
+        let plaintext = internal_client
             .validate_decryption(Some(req), response.into_inner())
             .unwrap()
             .unwrap();
-        assert_eq!(DEFAULT_FHE_TYPE, return_type);
-        assert_eq!(DEFAULT_MSG as u32, plaintext);
+        assert_eq!(DEFAULT_FHE_TYPE, plaintext.fhe_type());
+        assert_eq!(DEFAULT_MSG, plaintext.as_u8().unwrap());
 
         kms_server.abort();
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_reencryption() {
         let (kms_server, mut kms_client) = setup().await;
         let (ct, fhe_type): (Vec<u8>, FheType) =
@@ -328,12 +337,12 @@ mod tests {
             .await
             .unwrap();
 
-        let (plaintext, return_type) = internal_client
+        let plaintext = internal_client
             .validate_reencryption(Some(req), response.into_inner(), &enc_pk, &enc_sk)
             .unwrap()
             .unwrap();
-        assert_eq!(DEFAULT_FHE_TYPE, return_type);
-        assert_eq!(DEFAULT_MSG as u32, plaintext);
+        assert_eq!(DEFAULT_FHE_TYPE, plaintext.fhe_type());
+        assert_eq!(DEFAULT_MSG, plaintext.as_u8().unwrap());
 
         kms_server.abort();
     }
