@@ -93,6 +93,10 @@ name = "mobygo"
 path = "src/bin/moby/mobygo.rs"
 
 [[bench]]
+name = "ddec"
+harness = false
+
+[[bench]]
 name = "decoding"
 harness = false
 

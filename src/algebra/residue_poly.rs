@@ -1,7 +1,7 @@
 use super::{
     gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing, GF256},
     poly::Poly,
-    structure_traits::{BaseRing, One, Ring, Sample, ZConsts, Zero},
+    structure_traits::{BaseRing, FromU128, One, Ring, Sample, ZConsts, Zero},
 };
 use crate::{
     algebra::base_ring::{Z128, Z64},
@@ -50,6 +50,12 @@ where
                 .for_each(|byte| res.push(byte));
         }
         res
+    }
+}
+
+impl<Z: BaseRing> FromU128 for ResiduePoly<Z> {
+    fn from_u128(value: u128) -> Self {
+        Self::from_scalar(Z::from_u128(value))
     }
 }
 

@@ -660,7 +660,7 @@ mod tests {
         commitment::KEY_BYTE_LEN,
         execution::{
             constants::{BD1, LOG_BD, STATSEC},
-            endpoints::decryption::threshold_decrypt,
+            endpoints::decryption::{threshold_decrypt, to_large_ciphertext},
             large_execution::vss::RealVss,
             runtime::party::{Identity, Role},
             runtime::{
@@ -671,10 +671,7 @@ mod tests {
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
             sharing::{shamir::ShamirSharing, share::Share},
-            small_execution::{
-                agree_random::{DummyAgreeRandom, RealAgreeRandomWithAbort},
-                prep::to_large_ciphertext,
-            },
+            small_execution::agree_random::{DummyAgreeRandom, RealAgreeRandomWithAbort},
         },
         file_handling::read_element,
         lwe::{keygen_all_party_shares, KeySet},

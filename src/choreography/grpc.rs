@@ -13,12 +13,15 @@ use self::gen::{
 use crate::algebra::base_ring::Z64;
 use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
-use crate::execution::endpoints::decryption::run_decryption;
+use crate::execution::endpoints::decryption::{
+    run_decryption_large, run_decryption_small, to_large_ciphertext_block,
+};
 use crate::execution::endpoints::keygen::initialize_key_material;
 use crate::execution::random::get_rng;
 use crate::execution::runtime::party::{Identity, Role};
-use crate::execution::runtime::session::{SessionParameters, SmallSessionStruct};
-use crate::execution::small_execution::prep::to_large_ciphertext_block;
+use crate::execution::runtime::session::{
+    DecryptionMode, LargeSession, SessionParameters, SmallSessionStruct,
+};
 use crate::file_handling::read_as_json;
 use crate::lwe::{
     gen_key_set, Ciphertext64, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters,
@@ -120,6 +123,7 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
+        //Useless for now, need to integrate large threshold decrypt to grpc
         let mode = bincode::deserialize(&request.mode).map_err(|_e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
@@ -171,27 +175,6 @@ impl Choreography for GrpcChoreography {
                 let own_identity = self.own_identity.clone();
                 let networking = (self.networking_strategy)(session_id, role_assignments.clone());
 
-                tracing::debug!("own identity: {:?}", own_identity);
-                let prss_setup = match setup_info.prss_setup.get(&SupportedRing::ResiduePoly128) {
-                    Some(SupportedPRSSSetup::ResiduePoly128(v)) => v.clone(),
-                    _ => None,
-                };
-                let mut session = SmallSession::new(
-                    session_id,
-                    role_assignments,
-                    Arc::clone(&networking),
-                    threshold,
-                    prss_setup,
-                    own_identity.clone(),
-                    None,
-                )
-                .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        format!("could not make a valid session with current parameters. Failed with error \"{:?}\"", e).to_string(),
-                    )
-                })?;
-
                 let execution_start_timer = Instant::now();
                 let result_stores = Arc::clone(&self.result_stores);
                 let pks = Arc::clone(&self.pubkey_store);
@@ -201,31 +184,110 @@ impl Choreography for GrpcChoreography {
                     .map(|ct_block| to_large_ciphertext_block(&pkl.ck, ct_block))
                     .collect_vec();
 
-                tokio::spawn(async move {
-                    let mut results = HashMap::with_capacity(1);
-                    let outputs =
-                        run_decryption(&mut session, &setup_info.secret_key_share, ct_large, mode)
+                match mode {
+                    DecryptionMode::PRSSDecrypt => {
+                        tracing::debug!("own identity: {:?}", own_identity);
+                        let prss_setup =
+                            match setup_info.prss_setup.get(&SupportedRing::ResiduePoly128) {
+                                Some(SupportedPRSSSetup::ResiduePoly128(v)) => v.clone(),
+                                _ => None,
+                            };
+                        let mut session = SmallSession::new(
+                            session_id,
+                            role_assignments,
+                            Arc::clone(&networking),
+                            threshold,
+                            prss_setup,
+                            own_identity.clone(),
+                            None,
+                        )
+                        .map_err(|e| {
+                            tonic::Status::new(
+                                tonic::Code::Aborted,
+                                format!("could not make a valid session with current parameters. Failed with error \"{:?}\"", e).to_string(),
+                            )
+                        })?;
+
+                        tokio::spawn(async move {
+                            let mut results = HashMap::with_capacity(1);
+                            let outputs = run_decryption_small(
+                                &mut session,
+                                &setup_info.secret_key_share,
+                                ct_large,
+                            )
                             .await
                             .unwrap();
 
-                    tracing::info!("Results in session {:?} ready: {:?}", session_id, outputs);
-                    results.insert(format!("{session_id}"), outputs);
+                            tracing::info!(
+                                "Results in session {:?} ready: {:?}",
+                                session_id,
+                                outputs
+                            );
+                            results.insert(format!("{session_id}"), outputs);
 
-                    let result_cell = result_stores
-                        .get(&session_id)
-                        .expect("session disappeared unexpectedly");
+                            let result_cell = result_stores
+                                .get(&session_id)
+                                .expect("session disappeared unexpectedly");
 
-                    let execution_stop_timer = Instant::now();
-                    let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
-                    result_cell.set(ComputationOutputs {
-                        outputs: results,
-                        elapsed_time: Some(elapsed_time),
-                    });
-                    tracing::info!(
-                        "Online time was {:?} microseconds",
-                        (elapsed_time).as_micros()
-                    );
-                });
+                            let execution_stop_timer = Instant::now();
+                            let elapsed_time =
+                                execution_stop_timer.duration_since(execution_start_timer);
+                            result_cell.set(ComputationOutputs {
+                                outputs: results,
+                                elapsed_time: Some(elapsed_time),
+                            });
+                            tracing::info!(
+                                "Online time was {:?} microseconds",
+                                (elapsed_time).as_micros()
+                            );
+                        });
+                    }
+                    DecryptionMode::LargeDecrypt => {
+                        let session_params = SessionParameters::new(
+                            threshold,
+                            session_id,
+                            own_identity,
+                            role_assignments,
+                        )
+                        .unwrap();
+                        let mut session =
+                            LargeSession::new(session_params, Arc::clone(&networking)).unwrap();
+                        tokio::spawn(async move {
+                            let mut results = HashMap::with_capacity(1);
+                            let outputs = run_decryption_large(
+                                &mut session,
+                                &setup_info.secret_key_share,
+                                ct_large,
+                            )
+                            .await
+                            .unwrap();
+
+                            tracing::info!(
+                                "Results in session {:?} ready: {:?}",
+                                session_id,
+                                outputs
+                            );
+                            results.insert(format!("{session_id}"), outputs);
+
+                            let result_cell = result_stores
+                                .get(&session_id)
+                                .expect("session disappeared unexpectedly");
+
+                            let execution_stop_timer = Instant::now();
+                            let elapsed_time =
+                                execution_stop_timer.duration_since(execution_start_timer);
+                            result_cell.set(ComputationOutputs {
+                                outputs: results,
+                                elapsed_time: Some(elapsed_time),
+                            });
+                            tracing::info!(
+                                "Online time was {:?} microseconds",
+                                (elapsed_time).as_micros()
+                            );
+                        });
+                    }
+                }
+
                 let serialized_session_id = bincode::serialize(&session_id).map_err(|_e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,

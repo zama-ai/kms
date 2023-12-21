@@ -1,6 +1,6 @@
 use super::{
     poly::{gao_decoding, Poly},
-    structure_traits::{Field, One, Ring, Sample, Zero},
+    structure_traits::{Field, FromU128, One, Ring, Sample, Zero},
 };
 use g2p::{g2p, GaloisField};
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,12 @@ impl std::iter::Sum for GF256 {
     }
 }
 
+impl FromU128 for GF256 {
+    fn from_u128(value: u128) -> Self {
+        GF256::from(value as u8)
+    }
+}
+
 impl Ring for GF256 {
     const BIT_LENGTH: usize = 8;
     const CHAR_LOG2: usize = 1;
@@ -76,6 +82,7 @@ impl Ring for GF256 {
         self.0.to_le_bytes().to_vec()
     }
 }
+
 impl Field for GF256 {}
 
 pub type ShamirZ2Poly = Poly<GF256>;

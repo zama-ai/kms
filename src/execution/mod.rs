@@ -11,7 +11,6 @@ pub mod runtime {
 pub mod small_execution {
     pub mod agree_random;
     pub mod offline;
-    pub mod prep;
     pub mod prf;
     pub mod prss;
 }
@@ -36,6 +35,7 @@ pub mod online {
     pub mod bit_manipulation;
     pub mod gen_bits;
     pub mod preprocessing;
+    pub mod secret_distrtibutions;
     pub mod triple;
 }
 pub mod sharing {

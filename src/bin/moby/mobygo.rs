@@ -159,7 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let mode = match protocol {
                 1 => Ok(DecryptionMode::PRSSDecrypt),
-                2 => Ok(DecryptionMode::Proto2Decrypt),
+                2 => Ok(DecryptionMode::LargeDecrypt),
                 _ => Err(anyhow_error_and_log(
                     "Decryption mode not supported!".to_string(),
                 )),

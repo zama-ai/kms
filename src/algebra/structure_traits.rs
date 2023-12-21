@@ -42,6 +42,7 @@ where
     Self: Sub<Self, Output = Self> + SubAssign<Self>,
     Self: Mul<Self, Output = Self> + MulAssign<Self>,
     Self: std::iter::Sum,
+    Self: FromU128,
 {
     const BIT_LENGTH: usize;
     // Base 2 log of characteristic of the ring
@@ -59,7 +60,6 @@ pub trait BitExtract {
 
 pub trait BaseRing:
     Ring
-    + FromU128
     + BitExtract
     + ZConsts
     + std::ops::BitAnd<Self, Output = Self>

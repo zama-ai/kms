@@ -1,9 +1,6 @@
 /// log_2 of parameter Bd, computed from values in the paper
 pub(crate) const LOG_BD: u32 = 74;
 
-/// parameter pow, taken from the paper
-pub(crate) const POW: u32 = 47;
-
 /// the party ID of the party doing the reconstruction
 pub(crate) const INPUT_PARTY_ID: usize = 1;
 

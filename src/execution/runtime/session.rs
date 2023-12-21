@@ -26,7 +26,7 @@ pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
 #[derive(Clone, Serialize, Deserialize, Display)]
 pub enum DecryptionMode {
     PRSSDecrypt,
-    Proto2Decrypt,
+    LargeDecrypt,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]

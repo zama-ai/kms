@@ -199,6 +199,8 @@ pub type TrueSingleSharing<Z> =
     RealSingleSharing<Z, RealLocalSingleShare<RealCoinflip<RealVss>, RealShareDispute>>;
 pub type TrueDoubleSharing<Z> =
     RealDoubleSharing<Z, RealLocalDoubleShare<RealCoinflip<RealVss>, RealShareDispute>>;
+pub type RealLargePreprocessing<Z> =
+    LargePreprocessing<Z, TrueSingleSharing<Z>, TrueDoubleSharing<Z>>;
 
 #[cfg(test)]
 mod tests {

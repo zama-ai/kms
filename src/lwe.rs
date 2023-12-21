@@ -560,7 +560,7 @@ pub fn keygen_all_party_shares<R: RngCore>(
 mod tests {
     use crate::{
         algebra::base_ring::Z128,
-        execution::small_execution::prep::to_large_ciphertext_block,
+        execution::endpoints::decryption::to_large_ciphertext_block,
         file_handling::{read_as_json, read_element},
         lwe::{
             from_expanded_msg, get_rng, secret_rng_from_seed, seed_from_rng, to_expanded_msg,
