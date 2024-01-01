@@ -1,11 +1,8 @@
-use std::ops::{Add, Div, Mul};
-
+use super::structure_traits::{Field, One, Ring, Sample, Zero};
+use crate::{error::error_handler::anyhow_error_and_log, execution::sharing::shamir::ShamirRing};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-
-use crate::{error::error_handler::anyhow_error_and_log, execution::sharing::shamir::ShamirRing};
-
-use super::structure_traits::{Field, One, Ring, Sample, Zero};
+use std::ops::{Add, Div, Mul, Sub, SubAssign};
 
 #[derive(Serialize, Deserialize, Hash, Clone, Default, Debug)]
 pub struct Poly<F> {
@@ -127,7 +124,7 @@ where
         }
     }
 
-    fn zeros(n: usize) -> Self {
+    pub fn zeros(n: usize) -> Self {
         Poly {
             coefs: vec![F::ZERO; n],
         }
@@ -149,6 +146,23 @@ where
             } else {
                 break;
             }
+        }
+    }
+}
+
+impl<F: Field> Poly<F> {
+    pub fn formal_derivative(&self) -> Self {
+        if self.deg() > 0 {
+            let mut coefs = self.coefs[1..].to_vec();
+            let mut mul = F::ONE;
+            for c in &mut coefs {
+                *c *= mul;
+                mul += F::ONE;
+            }
+            return Poly { coefs };
+        }
+        Poly {
+            coefs: vec![F::ZERO],
         }
     }
 }
@@ -215,6 +229,27 @@ where
         }
         longest.compress();
         longest
+    }
+}
+
+impl<F> Sub<Poly<F>> for Poly<F>
+where
+    F: Copy,
+    F: Zero,
+    F: SubAssign,
+    F: PartialEq,
+{
+    type Output = Poly<F>;
+    fn sub(self, other: Poly<F>) -> Self::Output {
+        let mut res = Poly::<F>::zeros(std::cmp::max(self.coefs.len(), other.coefs.len()));
+        for (idx, coef) in self.coefs.iter().enumerate() {
+            res.coefs[idx] = *coef;
+        }
+        for (idx, coef) in other.coefs.iter().enumerate() {
+            res.coefs[idx] -= *coef;
+        }
+        res.compress();
+        res
     }
 }
 
@@ -385,13 +420,14 @@ pub fn lagrange_interpolation<F: Field>(points: &[F], values: &[F]) -> Poly<F> {
 fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly<F>) {
     let (mut r0, mut r1) = (a, b);
     let (mut t0, mut t1) = (Poly::zero(), Poly::one());
-
+    // r = gcd(a, b) = a * s + b * t
+    // note that s is not computed here
     while r1.deg() >= stop {
         let (q, _) = &r0 / &r1;
-        (r0, r1) = (r1.clone(), r0 + (&q * r1));
-        (t0, t1) = (t1.clone(), t0 + (&q * t1));
+        (r0, r1) = (r1.clone(), r0 - (&q * r1));
+        (t0, t1) = (t1.clone(), t0 - (&q * t1));
     }
-    // r = gcd(a, b) = a * s + b * t
+    // return r and t
     (r1, t1)
 }
 
@@ -402,6 +438,7 @@ pub fn gao_decoding<F: Field>(
     max_error_count: usize,
 ) -> anyhow::Result<Poly<F>> {
     // in the literature we find (n, k, d) codes
+    // parameter k is called v in the NIST doc (the RS dimension)
     // this means that n is the number of points xi for which we have some values yi
     // yi ~= G(xi))
     // where deg(G) <= k-1
@@ -420,15 +457,15 @@ pub fn gao_decoding<F: Field>(
         ));
     }
 
-    // R \in GF(256)[X] such that R(xi) = yi
+    // R \in GF(256)[X] such that R(xi) = yi. Called g_1(x) in the Gao paper.
     let r = lagrange_interpolation(points, values);
 
-    // G = prod(X - xi) where xi is party i's index
+    // G = prod(X - xi) where xi is party i's index. Called g_0(x) in the Gao paper.
     // note that deg(G) >= deg(R)
     let mut g = Poly::one();
     for xi in points.iter() {
         let fi = Poly {
-            coefs: vec![*xi, F::ONE],
+            coefs: vec![-*xi, F::ONE],
         };
         g = g * fi;
     }
@@ -436,6 +473,8 @@ pub fn gao_decoding<F: Field>(
     // apply EEA to compute q0, q1 such that
     // q1 = gcd(g, r) = g * t + r * q0
     // q1 | g, q1 | r
+    // q1 and q0 are called g(x) and v(x), respectively in the Gao paper.
+    // q0 = v(x) is the error locator polynomial. Its roots are the error positions xi.
     let gcd_stop = (n + k) / 2;
     let (q1, q0) = partial_xgcd(g, r, gcd_stop);
 
@@ -446,12 +485,14 @@ pub fn gao_decoding<F: Field>(
         ));
     }
 
+    // h is called f_1(x) in the Gao paper.
     let (h, rem) = q1 / &q0;
 
     if !rem.is_zero() {
-        Err(anyhow_error_and_log(
-            "Gao decoding failure: Division remainder is not zero but.".to_string(),
-        ))
+        Err(anyhow_error_and_log(format!(
+            "Gao decoding failure: Division remainder is not zero but {:?}.",
+            rem
+        )))
     } else if h.deg() >= k {
         Err(anyhow_error_and_log(format!("Gao decoding failure: Division result is of too high degree {}, but should be less than {}.", h.deg(), k-1)))
     } else {
@@ -469,17 +510,28 @@ mod tests {
     #[test]
     fn test_lagrange_mod2() {
         let poly = Poly {
-            coefs: vec![GF256::from(1), GF256::from(2), GF256::from(3)],
+            coefs: vec![
+                GF256::from(11),
+                GF256::from(2),
+                GF256::from(3),
+                GF256::from(22),
+                GF256::from(9),
+            ],
         };
         let xs = vec![
             GF256::from(0),
-            GF256::from(20),
+            GF256::from(21),
             GF256::from(30),
             GF256::from(40),
+            GF256::from(42),
         ];
+
+        // we need at least degree + 1 points to interpolate
+        assert!(xs.len() > poly.deg());
+
         let ys: Vec<_> = xs.iter().map(|x| poly.eval(x)).collect();
-        let g = lagrange_interpolation(&xs, &ys);
-        assert_eq!(poly, g);
+        let interpolated = lagrange_interpolation(&xs, &ys);
+        assert_eq!(poly, interpolated);
     }
 
     #[rstest]
@@ -542,11 +594,22 @@ mod tests {
             GF256::from(50),
             GF256::from(60),
             GF256::from(70),
+            GF256::from(80),
         ];
         let mut ys: Vec<_> = xs.iter().map(|x| f.eval(x)).collect();
+
+        tracing::debug!(
+            "n={}, v={}, r=detect={}, correct={}",
+            xs.len(),
+            f.coefs.len(),
+            xs.len() - f.coefs.len(),
+            (xs.len() - f.coefs.len()) / 2
+        );
+
         // add an error
         ys[0] += GF256::from(3);
-        let polynomial = gao_decoding(&xs, &ys, 3, 1).unwrap();
+        ys[1] += GF256::from(4);
+        let polynomial = gao_decoding(&xs, &ys, f.coefs.len(), 2).unwrap();
         assert_eq!(polynomial.eval(&GF256::from(0)), GF256::from(7));
     }
 
@@ -571,5 +634,30 @@ mod tests {
         assert!(r.contains(
             "Gao decoding failure: Allowed at most 1 errors but xgcd factor degree indicates 2."
         ));
+    }
+
+    #[test]
+    fn test_formal_derivative() {
+        // f(x) = 7 + 23x + 8x^2 + 2x^3
+        let f = Poly {
+            coefs: vec![
+                GF256::from(7),
+                GF256::from(23),
+                GF256::from(8),
+                GF256::from(2),
+            ],
+        };
+
+        // f'(x) = 23 + 0x + 2x^2 (Note: addition in GF256 is XOR)
+        let f1 = Poly {
+            coefs: vec![GF256::from(23), GF256::from(0), GF256::from(2)],
+        };
+
+        // f''(x) = 0
+        let f2 = Poly::zero();
+
+        assert_eq!(f1, f.formal_derivative());
+        assert_eq!(f2, f1.formal_derivative());
+        assert_eq!(f2, f2.formal_derivative()); // derivative of zero is still zero
     }
 }

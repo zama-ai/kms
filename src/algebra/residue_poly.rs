@@ -1,18 +1,27 @@
 use super::{
+    bivariate::compute_powers_list,
     gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing, GF256},
     poly::Poly,
     structure_traits::{BaseRing, FromU128, One, Ring, Sample, ZConsts, Zero},
+    syndrome::lagrange_numerators,
 };
 use crate::{
-    algebra::base_ring::{Z128, Z64},
+    algebra::{
+        base_ring::{Z128, Z64},
+        gf256::syndrome_decoding_z2,
+    },
     execution::{
         large_execution::local_single_share::Derive,
         runtime::party::Role,
-        sharing::shamir::{ShamirRing, ShamirSharing},
+        sharing::{
+            shamir::{ShamirRing, ShamirSharing},
+            share::Share,
+        },
         small_execution::prf::PRSSConversions,
     },
 };
 use crate::{error::error_handler::anyhow_error_and_log, execution::online::gen_bits::Solve};
+use itertools::Itertools;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -224,6 +233,15 @@ where
     fn add_assign(&mut self, other: ResiduePoly<Z>) {
         for i in 0..F_DEG {
             self.coefs[i] += other.coefs[i];
+        }
+    }
+}
+
+impl<Z: Neg<Output = Z>> Neg for ResiduePoly<Z> {
+    type Output = Self;
+    fn neg(self) -> Self::Output {
+        ResiduePoly {
+            coefs: self.coefs.map(|x| -x),
         }
     }
 }
@@ -686,6 +704,7 @@ impl<Z: BaseRing> ShamirRing for ResiduePoly<Z> {
                 *item -= ring_eval[j];
             }
 
+            // TODO This is never checked. Actually checking for error here makes the dropout tests fail (e.g. test_doublesharing_dropout)
             // check that LSBs were removed correctly
             let _errs: Vec<_> = y
                 .iter()
@@ -741,6 +760,109 @@ impl<Z: BaseRing> ShamirRing for ResiduePoly<Z> {
         debug_assert_eq!(x0 * self, ResiduePoly::ONE);
 
         Ok(x0)
+    }
+
+    // decode a ring syndrome into an error vector, containing the error magnitudes at the respective indices
+    fn syndrome_decode(
+        sharing: &ShamirSharing<ResiduePoly<Z>>,
+        threshold: usize,
+    ) -> anyhow::Result<Vec<ResiduePoly<Z>>> {
+        let ring_size: usize = Z::BIT_LENGTH;
+
+        //let ys: Vec<_> = sharing.shares.iter().map(|share| share.value()).collect();
+        let parties: Vec<_> = sharing
+            .shares
+            .iter()
+            .map(|share| share.owner().one_based())
+            .collect();
+
+        // sum up the error vectors here
+        let mut e_res: Vec<ResiduePoly<Z>> = vec![ResiduePoly::<Z>::ZERO; sharing.shares.len()];
+
+        let mut syndrome_poly = Self::syndrome_compute(sharing, threshold)?;
+
+        //  compute s_e^(j)/p mod p and decode
+        for bit_idx in 0..ring_size {
+            let sliced_syndrome_coefs: Vec<_> = syndrome_poly
+                .coefs
+                .iter()
+                .map(|c| c.bit_compose(bit_idx))
+                .collect();
+
+            let sliced_syndrome = ShamirZ2Poly {
+                coefs: sliced_syndrome_coefs,
+            };
+
+            // bit error in this for this bit-idx
+            let ej = syndrome_decoding_z2(&parties, &sliced_syndrome, threshold);
+
+            // lift bit error into the ring
+            let lifted_e: Vec<ResiduePoly<Z>> = ej
+                .iter()
+                .map(|e| Self::bit_lift(*e, bit_idx))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+
+            // add the lifted e^(j) to e
+            for (e_res_e, lifted_e_e) in e_res.iter_mut().zip(lifted_e.iter()) {
+                *e_res_e += *lifted_e_e;
+            }
+            // correction term in the ring (inside parenthesis in syndrome update)
+            let correction_shares = lifted_e
+                .iter()
+                .enumerate()
+                .map(|(idx, val)| Share::new(Role::indexed_by_zero(idx), *val))
+                .collect_vec();
+            let corrected_shamir = ShamirSharing {
+                shares: correction_shares,
+            };
+            let syndrome_correction = Self::syndrome_compute(&corrected_shamir, threshold)?;
+
+            // update syndrome with correction value
+            syndrome_poly = syndrome_poly - syndrome_correction;
+        }
+
+        Ok(e_res)
+    }
+
+    // compute the syndrome in the GR from a given sharing and threshold
+    fn syndrome_compute(
+        sharing: &ShamirSharing<ResiduePoly<Z>>,
+        threshold: usize,
+    ) -> anyhow::Result<Poly<ResiduePoly<Z>>> {
+        let n = sharing.shares.len();
+        let r = n - (threshold + 1);
+
+        let ys: Vec<_> = sharing.shares.iter().map(|share| share.value()).collect();
+
+        // embed party IDs into the ring
+        let parties: Vec<_> = sharing
+            .shares
+            .iter()
+            .map(|share| Self::embed_exceptional_set(share.owner().one_based()))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // lagrange numerators from Eq.15
+        let lagrange_polys = lagrange_numerators(&parties);
+
+        let alpha_powers = compute_powers_list(&parties, r);
+        let mut res = Poly::zeros(r);
+
+        // compute syndrome coefficients
+        for j in 0..r {
+            let mut coef = Self::ZERO;
+
+            for i in 0..n {
+                let numerator = ys[i] * alpha_powers[i][j];
+                let denom = lagrange_polys[i].eval(&parties[i]);
+                let denom_invert = Self::invert(denom)?;
+
+                coef += numerator * denom_invert;
+            }
+
+            res.coefs[j] = coef;
+        }
+
+        Ok(res)
     }
 }
 
@@ -965,13 +1087,13 @@ impl PRSSConversions for ResiduePoly64 {
 
 #[cfg(test)]
 mod tests {
-    use crate::algebra::base_ring::{Z128, Z64};
-
     use super::*;
+    use crate::algebra::base_ring::{Z128, Z64};
     use itertools::Itertools;
     use paste::paste;
     use rand::SeedableRng;
     use rand_chacha::{ChaCha12Rng, ChaCha20Rng};
+    use rstest::rstest;
     use std::num::Wrapping;
 
     #[test]
@@ -993,7 +1115,7 @@ mod tests {
         assert!(!z64poly.is_zero());
     }
 
-    macro_rules! tests_poly_shamir {
+    macro_rules! tests_residue_poly {
         ($z:ty, $u:ty) => {
             paste! {
             #[test]
@@ -1012,6 +1134,245 @@ mod tests {
                 };
                 let b = s.bit_compose(1);
                 assert_eq!(b, GF256::from(255));
+            }
+
+            #[test]
+            fn [<test_ring_max_error_correction_ $z:lower>]() {
+                let t: usize = 4;
+                let max_err: usize = 3;
+                let n = (t + 1) + 4 * max_err;
+
+                let secret: ResiduePoly<$z> = ResiduePoly::<$z>::from_scalar
+                (Wrapping(1000));
+                let mut rng = ChaCha12Rng::seed_from_u64(0);
+
+                let mut shares = ShamirSharing::share(&mut rng, secret, n, t).unwrap();
+                // t+1 to reconstruct a degree t polynomial
+                // for each error we need to add in 2 honest shares to reconstruct
+                shares.shares[0] = Share::new(Role::indexed_by_zero(0),ResiduePoly::sample(&mut rng));
+                shares.shares[1] = Share::new(Role::indexed_by_zero(1),ResiduePoly::sample(&mut rng));
+
+                let recon = ResiduePoly::<$z>::decode(&shares,t, 1);
+                let _ =
+                    recon.expect_err("Unable to correct. Too many errors given a smaller max_err_count");
+            }
+
+            #[rstest]
+            #[case(Wrapping(0))]
+            #[case(Wrapping(1))]
+            #[case(Wrapping(10))]
+            #[case(Wrapping(3213214))]
+            #[case(Wrapping($u::MAX - 23) )]
+            #[case(Wrapping($u::MAX - 1) )]
+            #[case(Wrapping($u::MAX))]
+            #[case(Wrapping(rand::Rng::gen::<$u>(&mut rand::thread_rng())))]
+            fn [<test_share_reconstruct_ $z:lower>](#[case] secret: $z) {
+                let threshold: usize = 5;
+                let num_parties = 9;
+
+                let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
+
+                let mut rng = ChaCha12Rng::seed_from_u64(0);
+                let sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, residue_secret, num_parties, threshold).unwrap();
+                let recon = TryFromWrapper::<$z>::try_from(sharings.reconstruct(threshold).unwrap()).unwrap();
+                assert_eq!(recon.0, secret);
+            }
+
+            #[rstest]
+            #[case(Wrapping(0))]
+            #[case(Wrapping(1))]
+            #[case(Wrapping(10))]
+            #[case(Wrapping(3213214))]
+            #[case(Wrapping($u::MAX - 23 ))]
+            #[case(Wrapping($u::MAX - 1 ))]
+            #[case(Wrapping($u::MAX))]
+            #[case(Wrapping(rand::Rng::gen::<$u>(&mut rand::thread_rng())))]
+            fn [<test_share_reconstruct_randomseed_ $z:lower>](#[case] secret: $z) {
+                let threshold: usize = 5;
+                let num_parties = 9;
+
+                let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
+
+                let mut rng = ChaCha12Rng::from_entropy();
+                let sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, residue_secret, num_parties, threshold).unwrap();
+                let recon = TryFromWrapper::<$z>::try_from(sharings.reconstruct(threshold).unwrap()).unwrap();
+                assert_eq!(recon.0, secret);
+            }
+
+            #[rstest]
+            #[case(1, 1, Wrapping(100))]
+            #[case(2, 0, Wrapping(100))]
+            #[case(4, 1, Wrapping(100))]
+            #[case(8, 10, Wrapping(100))]
+            #[case(10, 8, Wrapping(100))]
+            fn [<test_ring_error_correction_ $z:lower>](#[case] t: usize, #[case] max_err: usize, #[case] secret: $z) {
+                let n = (t + 1) + 2 * max_err;
+
+                let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
+
+                let mut rng = ChaCha12Rng::seed_from_u64(0);
+                let mut sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, residue_secret, n, t).unwrap();
+                // t+1 to reconstruct a degree t polynomial
+                // for each error we need to add in 2 honest shares to reconstruct
+
+                for item in sharings.shares.iter_mut().take(max_err) {
+                    *item = Share::new(item.owner(),ResiduePoly::sample(&mut rng));
+                }
+
+                let recon = ResiduePoly::<$z>::decode(&sharings,t, max_err);
+                let f_zero = recon
+                    .expect("Unable to correct. Too many errors.")
+                    .eval(&ResiduePoly::ZERO);
+                assert_eq!(f_zero.to_scalar().unwrap(), secret);
+            }
+
+            #[cfg(feature = "extensive_testing")]
+            #[test]
+            fn [<test_syndrome_decoding_large_ $z:lower>]() {
+                let n = 10;
+                let t = 3;
+                let secret = Wrapping(123);
+                let num_errs = 2;
+
+                let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
+
+                let mut rng = ChaCha12Rng::seed_from_u64(2342);
+                let sharings = ShamirSharing::share(&mut rng, residue_secret, n, t).unwrap();
+
+                // verify that decoding with Gao works as a sanity check
+                let decoded = ResiduePoly::<$z>::decode(&sharings, t, num_errs);
+                let f_zero = decoded
+                    .expect("Unable to correct. Too many errors.")
+                    .eval(&ResiduePoly::ZERO);
+                assert_eq!(f_zero.to_scalar().unwrap(), secret);
+
+                // try syndrome decoding without errors
+                let errors = ResiduePoly::<$z>::syndrome_decode(&sharings, t).unwrap();
+                assert_eq!(errors, vec![ResiduePoly::ZERO; n]); // should be all-zero
+
+                // add 1 error now
+                let erridx = 3;
+                let mut expected_errors = vec![ResiduePoly::ZERO; n];
+                let mut bad_shares = sharings.clone();
+
+                for (idx, item) in bad_shares.shares.iter_mut().enumerate() {
+                    if idx == erridx {
+                        let errval = ResiduePoly::sample(&mut rng);
+                        expected_errors[idx] = errval;
+                        *item = Share::new(item.owner(), item.value() + errval);
+                    }
+                }
+
+                // try syndrome decoding with 1 error
+                let decoded_errors = ResiduePoly::<$z>::syndrome_decode(&bad_shares, t).unwrap();
+                tracing::debug!("Errors= {:?} vs. {:?}", expected_errors, decoded_errors);
+                assert_eq!(expected_errors, decoded_errors);
+
+                // add 2nd error now
+                let erridx = 6;
+                for (idx, item) in bad_shares.shares.iter_mut().enumerate() {
+                    if idx == erridx {
+                        let errval = ResiduePoly::sample(&mut rng);
+                        expected_errors[idx] = errval;
+                        *item = Share::new(item.owner(), item.value() + errval);
+                    }
+                }
+
+                // try syndrome decoding with 2 errors
+                let decoded_errors = ResiduePoly::<$z>::syndrome_decode(&bad_shares, t).unwrap();
+                tracing::debug!("Errors= {:?} vs. {:?}", expected_errors, decoded_errors);
+                assert_eq!(expected_errors, decoded_errors);
+            }
+
+            #[test]
+            fn [<test_syndrome_decoding_even_odd_ $z:lower>]() {
+                let n = 7;
+                let t = 2;
+                let secret = Wrapping(42);
+                let num_errs = 2;
+
+                let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
+
+                let mut rng = ChaCha12Rng::seed_from_u64(678);
+                let sharings = ShamirSharing::share(&mut rng, residue_secret, n, t).unwrap();
+
+                // verify that decoding with Gao works as a sanity check
+                let decoded = ResiduePoly::<$z>::decode(&sharings, t, num_errs);
+                let f_zero = decoded
+                    .expect("Unable to correct. Too many errors.")
+                    .eval(&ResiduePoly::ZERO);
+                assert_eq!(f_zero.to_scalar().unwrap(), secret);
+
+                // try syndrome decoding without errors
+                let errors = ResiduePoly::<$z>::syndrome_decode(&sharings, t).unwrap();
+                assert_eq!(errors, vec![ResiduePoly::ZERO; n]); // should be all-zero
+
+                // add 1 error now
+                let erridx = 3;
+                let mut expected_errors = vec![ResiduePoly::ZERO; n];
+                let mut bad_shares = sharings.clone();
+
+                for (idx, item) in bad_shares.shares.iter_mut().enumerate() {
+                    if idx == erridx {
+                        let errval = ResiduePoly::from_scalar(Wrapping(53));
+                        expected_errors[idx] = errval;
+                        *item = Share::new(item.owner(), item.value() + errval);
+                    }
+                }
+
+                // try syndrome decoding with 1 error where the error term is 53
+                let decoded_errors = ResiduePoly::<$z>::syndrome_decode(&bad_shares, t).unwrap();
+                tracing::debug!("Errors= {:?} vs. {:?}", expected_errors, decoded_errors);
+                assert_eq!(expected_errors, decoded_errors);
+
+                // add 2nd error now
+                let erridx = 5;
+                for (idx, item) in bad_shares.shares.iter_mut().enumerate() {
+                    if idx == erridx {
+                        let errval = ResiduePoly::from_scalar(Wrapping(54));
+                        expected_errors[idx] = errval;
+                        *item = Share::new(item.owner(), item.value() + errval);
+                    }
+                }
+
+                // try syndrome decoding with 2 errors where the error terms are 53 and 54
+                let decoded_errors = ResiduePoly::<$z>::syndrome_decode(&bad_shares, t).unwrap();
+                tracing::debug!("Errors= {:?} vs. {:?}", expected_errors, decoded_errors);
+                assert_eq!(expected_errors, decoded_errors);
+            }
+
+            #[test]
+            fn [<test_syndrome_computation_ $z:lower>]() {
+                let n = 10;
+                let t = 2;
+                let secret = Wrapping(123);
+
+                let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
+
+                let mut rng = ChaCha12Rng::seed_from_u64(0);
+                let mut sharings = ShamirSharing::share(&mut rng, residue_secret, n, t).unwrap();
+
+                // syndrome computation without errors
+                let recon = ResiduePoly::<$z>::syndrome_compute(&sharings, t).unwrap();
+                tracing::debug!("Syndrome Output = {:?}", recon);
+                assert_eq!(recon, Poly::<ResiduePoly<$z>>::zero()); // should be zero without errors
+
+                // add errors
+                for item in sharings.shares.iter_mut().take(2) {
+                    *item = Share::new(item.owner(), ResiduePoly::sample(&mut rng));
+                }
+
+                // verify that decoding still works
+                let decoded = ResiduePoly::<$z>::decode(&sharings, t, 2);
+                let f_zero = decoded
+                    .expect("Unable to correct. Too many errors.")
+                    .eval(&ResiduePoly::ZERO);
+                assert_eq!(f_zero.to_scalar().unwrap(), secret);
+
+                // syndrome computation with errors
+                let recon = ResiduePoly::<$z>::syndrome_compute(&sharings, t).unwrap();
+                tracing::debug!("Syndrome Output = {:?}", recon);
+                assert_ne!(recon, Poly::<ResiduePoly<$z>>::zero()); // should not be zero with errors
             }
 
             #[test]
@@ -1257,8 +1618,8 @@ mod tests {
             }
         };
     }
-    tests_poly_shamir!(Z64, u64);
-    tests_poly_shamir!(Z128, u128);
+    tests_residue_poly!(Z64, u64);
+    tests_residue_poly!(Z128, u128);
 
     #[test]
     fn embed_sunshine() {

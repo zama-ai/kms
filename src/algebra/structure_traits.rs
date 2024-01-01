@@ -1,4 +1,4 @@
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,7 @@ where
     Self: Mul<Self, Output = Self> + MulAssign<Self>,
     Self: std::iter::Sum,
     Self: FromU128,
+    Self: Neg<Output = Self>,
 {
     const BIT_LENGTH: usize;
     // Base 2 log of characteristic of the ring

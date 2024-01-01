@@ -1,9 +1,11 @@
 use super::{
     poly::{gao_decoding, Poly},
     structure_traits::{Field, FromU128, One, Ring, Sample, Zero},
+    syndrome::decode_syndrome,
 };
 use g2p::{g2p, GaloisField};
 use serde::{Deserialize, Serialize};
+use std::ops::Neg;
 
 g2p!(
     GF256,
@@ -83,6 +85,15 @@ impl Ring for GF256 {
     }
 }
 
+impl Neg for GF256 {
+    type Output = Self;
+    fn neg(self) -> Self::Output {
+        // Subtraction and addition in GF256 are identical and just an XOR.
+        // That means we can just return the element itself when we want the additive inverse.
+        self
+    }
+}
+
 impl Field for GF256 {}
 
 pub type ShamirZ2Poly = Poly<GF256>;
@@ -95,7 +106,18 @@ pub fn error_correction(
     let xs: Vec<GF256> = shares.iter().map(|s| GF256::from(s.party_id)).collect();
     let ys: Vec<GF256> = shares.iter().map(|s| s.share).collect();
 
+    // call Gao decoding with the shares as points/values, set Gao parameter k = v = threshold+1
     gao_decoding(&xs, &ys, threshold + 1, max_error_count)
+}
+
+pub fn syndrome_decoding_z2(
+    parties: &Vec<usize>,
+    syndrome: &ShamirZ2Poly,
+    threshold: usize,
+) -> Vec<GF256> {
+    let xs: Vec<GF256> = parties.iter().map(|s| GF256::from(*s as u8)).collect();
+    let r = parties.len() - (threshold + 1);
+    decode_syndrome(syndrome, &xs, r)
 }
 
 #[cfg(test)]
@@ -105,22 +127,25 @@ mod tests {
     #[test]
     fn test_error_correction() {
         let f = ShamirZ2Poly {
-            coefs: vec![GF256::from(25), GF256::from(1), GF256::from(1)],
+            coefs: vec![GF256::from(25), GF256::from(2), GF256::from(233)],
         };
-        let party_ids = [1_u8, 2, 3, 4, 5, 6];
 
-        let mut shares: Vec<_> = party_ids
-            .iter()
+        let num_parties = 7;
+        let threshold = f.coefs.len() - 1; // = 2 here
+        let max_err = (num_parties as usize - threshold) / 2; // = 2 here
+
+        let mut shares: Vec<_> = (1..=num_parties)
             .map(|x| ShamirZ2Sharing {
-                share: f.eval(&GF256::from(*x)),
-                party_id: *x,
+                share: f.eval(&GF256::from(x)),
+                party_id: x,
             })
             .collect();
 
-        // modify share of party with index 1
-        shares[1].share += <GF256 as GaloisField>::ONE;
+        // modify shares of parties 1 and 2
+        shares[1].share += GF256::from(9);
+        shares[2].share += GF256::from(254);
 
-        let secret_poly = error_correction(&shares, 2, 1).unwrap();
+        let secret_poly = error_correction(&shares, threshold, max_err).unwrap();
         assert_eq!(secret_poly, f);
     }
 }

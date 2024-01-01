@@ -1,14 +1,15 @@
-use ndarray::Array;
-use rand::RngCore;
-
 use super::poly::Poly;
+use super::structure_traits::One;
 use super::structure_traits::Ring;
 use super::structure_traits::Sample;
 use super::structure_traits::Zero;
 use crate::error::error_handler::anyhow_error_and_log;
 use anyhow::Result;
+use ndarray::Array;
 use ndarray::ArrayD;
 use ndarray::IxDyn;
+use rand::RngCore;
+use std::ops::Mul;
 
 /// Bivariate polynomial is a matrix of coefficients of ResiduePolynomials
 /// The row view of the polynomials is the following:
@@ -36,10 +37,22 @@ impl<Z> BivariatePoly<Z> {
     }
 }
 
+/// computes powers of a list of points in F up to a given maximal exponent
+pub fn compute_powers_list<F: One + Mul<Output = F> + Copy>(
+    points: &[F],
+    max_exponent: usize,
+) -> Vec<Vec<F>> {
+    let mut alpha_powers = Vec::new();
+    for p in points {
+        alpha_powers.push(compute_powers(*p, max_exponent));
+    }
+    alpha_powers
+}
+
 /// Computes powers of a specific point up to degree: p^0, p^1,...,p^degree
-pub(crate) fn compute_powers<Z: Ring>(point: Z, degree: usize) -> Vec<Z> {
+pub(crate) fn compute_powers<Z: One + Mul<Output = Z> + Copy>(point: Z, degree: usize) -> Vec<Z> {
     let mut powers_of_point = Vec::new();
-    powers_of_point.push(Z::ONE);
+    powers_of_point.push(Z::ONE); // start with
     for i in 1..=degree {
         powers_of_point.push(powers_of_point[i - 1] * point);
     }

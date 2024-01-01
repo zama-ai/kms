@@ -3,7 +3,11 @@ use super::{
     prf::{ChiAes, PRSSConversions, PsiAes},
 };
 use crate::{
-    algebra::{bivariate::MatrixMul, poly::Poly, structure_traits::Ring},
+    algebra::{
+        bivariate::{compute_powers_list, MatrixMul},
+        poly::Poly,
+        structure_traits::Ring,
+    },
     commitment::KEY_BYTE_LEN,
     computation::SessionId,
     error::error_handler::anyhow_error_and_log,
@@ -118,25 +122,14 @@ fn party_compute_f_a_points<Z: ShamirRing>(
 
 /// Precomputes powers of embedded player ids: alpha_i^j for all i in n and all j in t.
 /// This is used in the chi prf in the PRZS
-fn compute_alpha_powers<Z: ShamirRing>(
+fn embed_parties_and_compute_alpha_powers<Z: ShamirRing>(
     num_parties: usize,
-    threshold: u8,
+    threshold: usize,
 ) -> anyhow::Result<Vec<Vec<Z>>> {
-    // embed party IDs once
     let parties: Vec<_> = (1..=num_parties)
         .map(Z::embed_exceptional_set)
         .collect::<Result<Vec<_>, _>>()?;
-
-    let mut alphas = Vec::new();
-
-    for p in parties {
-        let mut alpha_p = vec![p];
-        for t in 1..=threshold {
-            alpha_p.push(alpha_p[(t - 1) as usize] * p);
-        }
-        alphas.push(alpha_p);
-    }
-    Ok(alphas)
+    Ok(compute_powers_list(&parties, threshold))
 }
 
 impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
@@ -224,7 +217,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
                         // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points
                         let f_a = set.f_a_points[party_id - 1];
                         // power of alpha_i^j
-                        let alpha_j = self.prss_setup.alpha_powers[party_id - 1][j as usize - 1];
+                        let alpha_j = self.prss_setup.alpha_powers[party_id - 1][j as usize];
                         res += f_a * alpha_j * chi;
                     }
                 } else {
@@ -436,9 +429,9 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
         let points = party_compute_f_a_points::<Z>(&sets, param.amount_of_parties())?;
 
         let alphas = match mode {
-            ComputeShareMode::Przs => Some(compute_alpha_powers(
+            ComputeShareMode::Przs => Some(embed_parties_and_compute_alpha_powers(
                 param.amount_of_parties(),
-                param.threshold(),
+                param.threshold() as usize,
             )?),
             _ => None,
         };
@@ -469,7 +462,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
 
                                 for (idx, cv) in cur_prf_val.iter().enumerate() {
                                     if let Some(alpha) = &alphas {
-                                        cur_s += f_a * alpha[cur_role.zero_based()][idx] * *cv;
+                                        cur_s += f_a * alpha[cur_role.zero_based()][idx + 1] * *cv;
                                     } else {
                                         return Err(anyhow_error_and_log(
                                             "alphas not initialized".to_string(),
@@ -523,7 +516,8 @@ impl<Z: ShamirRing> PRSSSetup<Z> {
             .with_context(|| "AgreeRandom failed!")?;
 
         let f_a_points = party_compute_f_a_points(&party_sets, num_parties)?;
-        let alpha_powers = compute_alpha_powers(num_parties, session.threshold())?;
+        let alpha_powers =
+            embed_parties_and_compute_alpha_powers(num_parties, session.threshold() as usize)?;
 
         for (idx, set) in party_sets.iter().enumerate() {
             let pset = PrssSet {
@@ -607,7 +601,7 @@ impl<Z: ShamirRing> PRSSSetup<Z> {
 
         Ok(PRSSSetup {
             sets: party_prss_sets,
-            alpha_powers: compute_alpha_powers(n, session.threshold())?,
+            alpha_powers: embed_parties_and_compute_alpha_powers(n, session.threshold() as usize)?,
         })
     }
 }
@@ -754,7 +748,7 @@ mod tests {
                 .unwrap();
 
             let f_a_points = party_compute_f_a_points(&party_sets, num_parties)?;
-            let alpha_powers = compute_alpha_powers(num_parties, threshold as u8)?;
+            let alpha_powers = embed_parties_and_compute_alpha_powers(num_parties, threshold)?;
 
             let sets: Vec<PrssSet<Z>> = party_sets
                 .iter()

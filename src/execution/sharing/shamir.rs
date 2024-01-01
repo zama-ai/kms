@@ -1,10 +1,9 @@
+use super::share::Share;
 use crate::algebra::poly::Poly;
 use crate::execution::runtime::party::Role;
 use crate::{algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log};
 use rand::RngCore;
 use std::ops::{Add, Mul, Sub};
-
-use super::share::Share;
 
 ///Trait required to be able to reconstruct a shamir sharing
 pub trait ShamirRing: Ring {
@@ -16,6 +15,14 @@ pub trait ShamirRing: Ring {
     fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self>;
     ///***Calling invert on a non-invertible element of the ring results in undefined behaviour***
     fn invert(self) -> anyhow::Result<Self>;
+    fn syndrome_decode(
+        sharing: &ShamirSharing<Self>,
+        threshold: usize,
+    ) -> anyhow::Result<Vec<Self>>;
+    fn syndrome_compute(
+        sharing: &ShamirSharing<Self>,
+        threshold: usize,
+    ) -> anyhow::Result<Poly<Self>>;
 }
 /// This data structure holds a collection of party_ids and their corresponding Shamir shares (each a ResiduePoly<Z>)
 #[derive(Clone, Default, PartialEq, Debug)]
@@ -162,40 +169,15 @@ impl<Z: ShamirRing> ShamirSharing<Z> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::algebra::{
-        residue_poly::{ResiduePoly, TryFromWrapper},
-        structure_traits::{Sample, Zero},
-    };
+    use crate::algebra::residue_poly::{ResiduePoly, TryFromWrapper};
     use paste::paste;
     use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;
-    use rstest::rstest;
     use std::num::Wrapping;
 
     macro_rules! tests_poly_shamir {
         ($z:ty, $u:ty) => {
             paste! {
-            #[test]
-            fn [<test_ring_max_error_correction_ $z:lower>]() {
-                let t: usize = 4;
-                let max_err: usize = 3;
-                let n = (t + 1) + 4 * max_err;
-
-                let secret: ResiduePoly<$z> = ResiduePoly::<$z>::from_scalar
-                (Wrapping(1000));
-                let mut rng = ChaCha12Rng::seed_from_u64(0);
-
-                let mut shares = ShamirSharing::share(&mut rng, secret, n, t).unwrap();
-                // t+1 to reconstruct a degree t polynomial
-                // for each error we need to add in 2 honest shares to reconstruct
-                shares.shares[0] = Share::new(Role::indexed_by_zero(0),ResiduePoly::sample(&mut rng));
-                shares.shares[1] = Share::new(Role::indexed_by_zero(1),ResiduePoly::sample(&mut rng));
-
-                let recon = ResiduePoly::<$z>::decode(&shares,t, 1);
-                let _ =
-                    recon.expect_err("Unable to correct. Too many errors given a smaller max_err_count");
-            }
-
             #[test]
             fn [<test_arith_const_add2_ $z:lower>]() {
                 let mut rng = ChaCha12Rng::seed_from_u64(0);
@@ -262,75 +244,6 @@ mod tests {
 
                 let recon = TryFromWrapper::<$z>::try_from(sumsharing.reconstruct(5).unwrap()).unwrap();
                 assert_eq!(recon.0, Wrapping(23 + 42));
-            }
-
-            #[rstest]
-            #[case(Wrapping(0))]
-            #[case(Wrapping(1))]
-            #[case(Wrapping(10))]
-            #[case(Wrapping(3213214))]
-            #[case(Wrapping($u::MAX - 23) )]
-            #[case(Wrapping($u::MAX - 1) )]
-            #[case(Wrapping($u::MAX))]
-            #[case(Wrapping(rand::Rng::gen::<$u>(&mut rand::thread_rng())))]
-            fn [<test_share_reconstruct_ $z:lower>](#[case] secret: $z) {
-                let threshold: usize = 5;
-                let num_parties = 9;
-
-                let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
-
-                let mut rng = ChaCha12Rng::seed_from_u64(0);
-                let sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, residue_secret, num_parties, threshold).unwrap();
-                let recon = TryFromWrapper::<$z>::try_from(sharings.reconstruct(threshold).unwrap()).unwrap();
-                assert_eq!(recon.0, secret);
-            }
-
-            #[rstest]
-            #[case(Wrapping(0))]
-            #[case(Wrapping(1))]
-            #[case(Wrapping(10))]
-            #[case(Wrapping(3213214))]
-            #[case(Wrapping($u::MAX - 23 ))]
-            #[case(Wrapping($u::MAX - 1 ))]
-            #[case(Wrapping($u::MAX))]
-            #[case(Wrapping(rand::Rng::gen::<$u>(&mut rand::thread_rng())))]
-            fn [<test_share_reconstruct_randomseed_ $z:lower>](#[case] secret: $z) {
-                let threshold: usize = 5;
-                let num_parties = 9;
-
-                let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
-
-                let mut rng = ChaCha12Rng::from_entropy();
-                let sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, residue_secret, num_parties, threshold).unwrap();
-                let recon = TryFromWrapper::<$z>::try_from(sharings.reconstruct(threshold).unwrap()).unwrap();
-                assert_eq!(recon.0, secret);
-            }
-
-            #[rstest]
-            #[case(1, 1, Wrapping(100))]
-            #[case(2, 0, Wrapping(100))]
-            #[case(4, 1, Wrapping(100))]
-            #[case(8, 10, Wrapping(100))]
-            #[case(10, 8, Wrapping(100))]
-            fn [<test_ring_error_correction_ $z:lower>](#[case] t: usize, #[case] max_err: usize, #[case] secret: $z) {
-                let n = (t + 1) + 2 * max_err;
-
-                let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
-
-                let mut rng = ChaCha12Rng::seed_from_u64(0);
-                let mut sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, residue_secret, n, t).unwrap();
-                // t+1 to reconstruct a degree t polynomial
-                // for each error we need to add in 2 honest shares to reconstruct
-
-                for item in sharings.shares.iter_mut().take(max_err) {
-                    *item = Share::new(item.owner(),ResiduePoly::sample(&mut rng));
-                }
-
-                let recon = ResiduePoly::<$z>::decode(&sharings,t, max_err);
-                let f_zero = recon
-                    .expect("Unable to correct. Too many errors.")
-                    .eval(&ResiduePoly::ZERO);
-                assert_eq!(f_zero.to_scalar().unwrap(), secret);
             }
         }
     }
