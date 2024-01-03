@@ -1,7 +1,12 @@
 use crate::setup_rpc::{DEFAULT_CIPHER_PATH, DEFAULT_CLIENT_KEY_PATH, DEFAULT_SERVER_KEY_PATH};
+use kms::file_handling::read_element;
 use kms::{
-    core::signcryption::encryption_key_generation, kms::DecryptionResponse,
-    rpc::rpc_types::Plaintext,
+    core::signcryption::encryption_key_generation,
+    kms::DecryptionResponse,
+    rpc::rpc_types::{
+        DecryptionRequestSigPayload, DecryptionResponseSigPayload, Plaintext,
+        ReencryptionRequestSigPayload,
+    },
 };
 use kms::{
     core::{
@@ -17,8 +22,7 @@ use kms::{
         signcryption::validate_and_decrypt,
     },
     kms::{
-        kms_endpoint_client::KmsEndpointClient, DecryptionRequest, DecryptionRequestPayload,
-        FheType, Proof, ReencryptionResponse,
+        kms_endpoint_client::KmsEndpointClient, DecryptionRequest, FheType, ReencryptionResponse,
     },
 };
 use kms::{
@@ -28,7 +32,6 @@ use kms::{
     },
     kms::ReencryptionRequest,
 };
-use kms::{file_handling::read_element, kms::ReencryptionRequestPayload};
 use rand::{RngCore, SeedableRng};
 use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
 use serde_asn1_der::{from_bytes, to_vec};
@@ -112,20 +115,18 @@ impl Client {
     ) -> anyhow::Result<DecryptionRequest> {
         let mut randomness: Vec<u8> = Vec::with_capacity(RND_SIZE);
         self.rng.fill_bytes(&mut randomness);
-        let payload = DecryptionRequestPayload {
+        let sig_req = DecryptionRequestSigPayload {
             verification_key: to_vec(&self.client_pk)?,
-            fhe_type: fhe_type.into(),
+            fhe_type,
             ciphertext: ct,
-            proof: Some(Proof {
-                height: 0,
-                merkle_patricia_proof: vec![],
-            }),
             randomness,
+            height: 0,
+            merkle_patricia_proof: vec![],
         };
-        let sig = sign(&to_vec(&payload)?, &self.client_sk)?;
+        let sig = sign(&to_vec(&sig_req)?, &self.client_sk)?;
         Ok(DecryptionRequest {
             signature: to_vec(&sig)?,
-            payload: Some(payload),
+            payload: Some(sig_req.into()),
         })
     }
 
@@ -137,22 +138,20 @@ impl Client {
         let (enc_pk, enc_sk) = encryption_key_generation(&mut self.rng);
         let mut randomness = Vec::with_capacity(RND_SIZE);
         self.rng.fill_bytes(&mut randomness);
-        let payload = ReencryptionRequestPayload {
+        let sig_payload = ReencryptionRequestSigPayload {
             enc_key: to_vec(&enc_pk)?,
             verification_key: to_vec(&self.client_pk)?,
-            fhe_type: fhe_type.into(),
+            fhe_type,
             ciphertext: ct,
-            proof: Some(Proof {
-                height: 0,
-                merkle_patricia_proof: vec![],
-            }),
+            height: 0,
+            merkle_patricia_proof: vec![],
             randomness,
         };
-        let sig = sign(&to_vec(&payload)?, &self.client_sk)?;
+        let sig = sign(&to_vec(&sig_payload)?, &self.client_sk)?;
         Ok((
             ReencryptionRequest {
                 signature: to_vec(&sig)?,
-                payload: Some(payload),
+                payload: Some(sig_payload.into()),
             },
             enc_pk,
             enc_sk,
@@ -179,14 +178,15 @@ impl Client {
                         tracing::warn!("Server key is incorrect in decryption request");
                         return Ok(None);
                     }
-                    if SoftwareKms::digest(&to_vec(&req_payload)?)? != resp_payload.digest {
+                    if req_payload.fhe_type() != plaintext.fhe_type() {
+                        tracing::warn!("Fhe type in the decryption response is incorrect");
+                        return Ok(None);
+                    }
+                    let sig_payload: DecryptionRequestSigPayload = req_payload.try_into()?;
+                    if SoftwareKms::digest(&to_vec(&sig_payload)?)? != resp_payload.digest {
                         tracing::warn!(
                             "The decryption response is not linked to the correct request"
                         );
-                        return Ok(None);
-                    }
-                    if req_payload.fhe_type() != plaintext.fhe_type() {
-                        tracing::warn!("Fhe type in the decryption response is incorrect");
                         return Ok(None);
                     }
                 }
@@ -199,7 +199,9 @@ impl Client {
         let sig = Signature {
             sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
         };
-        if !verify_sig(&to_vec(&resp_payload)?, &sig, &self.server_pk) {
+
+        let sig_payload: DecryptionResponseSigPayload = resp_payload.into();
+        if !verify_sig(&to_vec(&sig_payload)?, &sig, &self.server_pk) {
             tracing::warn!("Signature on received response is not valid!");
             return Ok(None);
         }
@@ -220,14 +222,15 @@ impl Client {
                         tracing::warn!("Server key is incorrect in reencryption request");
                         return Ok(None);
                     }
-                    if SoftwareKms::digest(&to_vec(&req_payload)?)? != resp.digest {
+                    if req_payload.fhe_type() != resp.fhe_type() {
+                        tracing::warn!("Fhe type in the reencryption response is incorrect");
+                        return Ok(None);
+                    }
+                    let sig_payload: ReencryptionRequestSigPayload = req_payload.try_into()?;
+                    if SoftwareKms::digest(&to_vec(&sig_payload)?)? != resp.digest {
                         tracing::warn!(
                             "The reencryption response is not linked to the correct request"
                         );
-                        return Ok(None);
-                    }
-                    if req_payload.fhe_type() != resp.fhe_type() {
-                        tracing::warn!("Fhe type in the reencryption response is incorrect");
                         return Ok(None);
                     }
                 }

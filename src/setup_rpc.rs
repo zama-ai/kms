@@ -16,6 +16,7 @@ pub const DEFAULT_CLIENT_KEY_PATH: &str = "temp/priv-client-key.bin";
 #[allow(dead_code)]
 pub const DEFAULT_CIPHER_PATH: &str = "temp/cipher.bin";
 
+#[allow(dead_code)]
 pub async fn server_handle(url: String, key_path: String) {
     let socket: std::net::SocketAddr = url.parse().unwrap();
     let keys: KmsKeys = read_element(key_path.to_string()).unwrap();

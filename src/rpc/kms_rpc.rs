@@ -4,15 +4,19 @@ use crate::{
         kms_core::SoftwareKms,
     },
     kms::{
-        kms_endpoint_server::KmsEndpoint, DecryptionRequest, DecryptionResponse,
-        DecryptionResponsePayload, Proof, ReencryptionRequest, ReencryptionResponse,
+        kms_endpoint_server::KmsEndpoint, DecryptionRequest, DecryptionResponse, Proof,
+        ReencryptionRequest, ReencryptionResponse,
     },
-    rpc::rpc_types::{Kms, LightClientCommitResponse},
+    rpc::rpc_types::{
+        DecryptionRequestSigPayload, DecryptionResponseSigPayload, Kms, LightClientCommitResponse,
+    },
 };
 use serde_asn1_der::{from_bytes, to_vec};
 use std::fmt::{self};
 use tendermint::AppHash;
 use tonic::{Code, Request, Response, Status};
+
+use super::rpc_types::ReencryptionRequestSigPayload;
 
 #[tonic::async_trait]
 impl KmsEndpoint for SoftwareKms {
@@ -27,7 +31,13 @@ impl KmsEndpoint for SoftwareKms {
             req.payload,
             format!("The request {:?} does not have a payload", req_clone),
         )?;
-        let payload_clone = payload.clone();
+        let sig_payload: ReencryptionRequestSigPayload = handle_potential_err(
+            payload.clone().try_into(),
+            format!(
+                "Could not make signature payload from protobuf request {:?}",
+                req_clone
+            ),
+        )?;
         let fhe_type = payload.fhe_type();
         let client_verf_key: PublicSigKey = handle_potential_err(
             from_bytes(&payload.verification_key),
@@ -50,7 +60,7 @@ impl KmsEndpoint for SoftwareKms {
             from_bytes(&req_clone.signature),
             format!("Invalid signature in request {:?}", req_clone),
         )?;
-        if !Kms::verify_sig(self, &payload_clone, &signature, &client_verf_key) {
+        if !Kms::verify_sig(self, &sig_payload, &signature, &client_verf_key) {
             return Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "Invalid request".to_string(),
@@ -62,7 +72,7 @@ impl KmsEndpoint for SoftwareKms {
             format!("Invalid key in request {:?}", req_clone),
         )?;
         let payload_serialized = handle_potential_err(
-            to_vec(&payload_clone),
+            to_vec(&sig_payload),
             format!("Could not serialize payload {:?}", req_clone),
         )?;
         let req_digest = handle_potential_err(
@@ -96,12 +106,19 @@ impl KmsEndpoint for SoftwareKms {
         let req = request.into_inner();
         let req_clone = req.clone();
         let payload = some_or_err(
-            req.clone().payload,
+            req.payload,
             format!("The request {:?} does not have a payload", req_clone),
         )?;
-        let payload_clone = payload.clone();
+        let fhet = payload.fhe_type();
+        let sig_payload: DecryptionRequestSigPayload = handle_potential_err(
+            payload.clone().try_into(),
+            format!(
+                "Could not make signature payload from protobuf request {:?}",
+                req_clone
+            ),
+        )?;
         let client_verf_key: PublicSigKey = handle_potential_err(
-            from_bytes(&payload.verification_key),
+            from_bytes(&sig_payload.verification_key),
             format!("Invalid client verification key in request {:?}", req_clone),
         )?;
         if !verify_client_key(&client_verf_key) {
@@ -120,14 +137,14 @@ impl KmsEndpoint for SoftwareKms {
             from_bytes(&req_clone.signature),
             format!("Invalid signature in request {:?}", req_clone),
         )?;
-        if !Kms::verify_sig(self, &payload_clone, &signature, &client_verf_key) {
+        if !Kms::verify_sig(self, &sig_payload, &signature, &client_verf_key) {
             return Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "Invalid request".to_string(),
             ));
         }
         let payload_serialized = handle_potential_err(
-            to_vec(&payload_clone),
+            to_vec(&sig_payload),
             format!("Could not serialize payload {:?}", req_clone),
         )?;
         let req_digest = handle_potential_err(
@@ -135,30 +152,33 @@ impl KmsEndpoint for SoftwareKms {
             format!("Could not hash payload {:?}", req_clone),
         )?;
         let plaintext = handle_potential_err(
-            Kms::decrypt(self, &payload.ciphertext, payload_clone.fhe_type()),
-            format!("Decryption failed for request {:?}", req),
+            Kms::decrypt(self, &sig_payload.ciphertext, fhet),
+            format!("Decryption failed for request {:?}", req_clone),
         )?;
         let plaintext_bytes = handle_potential_err(
             to_vec(&plaintext),
-            format!("Could not convert plaintext to bytes in  request {:?}", req),
+            format!(
+                "Could not convert plaintext to bytes in request {:?}",
+                req_clone
+            ),
         )?;
         let server_verf_key = handle_potential_err(
             to_vec(&Kms::get_verf_key(self)),
             "Could not serialize server verification key".to_string(),
         )?;
-        let payload_resp = DecryptionResponsePayload {
+        let sig_payload = DecryptionResponseSigPayload {
             plaintext: plaintext_bytes,
             verification_key: server_verf_key,
             digest: req_digest,
-            randomness: payload_clone.randomness,
+            randomness: sig_payload.randomness,
         };
         let sig = handle_potential_err(
-            Kms::sign(self, &payload_resp),
-            format!("Could not sign payload {:?}", payload_resp),
+            Kms::sign(self, &sig_payload),
+            format!("Could not sign payload {:?}", sig_payload),
         )?;
         Ok(Response::new(DecryptionResponse {
             signature: sig.sig.to_vec(),
-            payload: Some(payload_resp),
+            payload: Some(sig_payload.into()),
         }))
     }
 }

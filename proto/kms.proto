@@ -24,7 +24,7 @@ message DecryptionRequestPayload {
   bytes ciphertext = 3;
   Proof proof = 4;
   bytes randomness = 5;
-}
+  }
 
 message DecryptionRequest {
   bytes signature = 1;
@@ -50,7 +50,7 @@ message ReencryptionRequestPayload {
   bytes ciphertext = 4;
   Proof proof = 5;
   bytes randomness = 6;
-}
+  }
 
 message ReencryptionRequest {
   bytes signature = 1;

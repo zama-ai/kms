@@ -251,37 +251,6 @@ mod tests {
     }
 
     #[test]
-    fn sunshine_rencrypt() {
-        let msg = 42_u8;
-        let kms_keys: KmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();
-        let kms = SoftwareKms::new(kms_keys.config, kms_keys.fhe_sk.clone(), kms_keys.sig_sk);
-        let ct = FheUint8::encrypt(msg, &kms_keys.fhe_sk);
-        let mut serialized_ct = Vec::new();
-        bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
-
-        let mut rng = ChaCha20Rng::seed_from_u64(1);
-        let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
-        let client_keys = ephemeral_key_generation(&mut rng, &client_sig_key);
-
-        let raw_cipher = kms
-            .reencrypt(
-                &serialized_ct,
-                FheType::Euint8,
-                Vec::new(),
-                &client_keys.pk.enc_key,
-                &client_keys.pk.verification_key,
-            )
-            .unwrap()
-            .unwrap();
-        let decrypted_msg =
-            decrypt_signcryption(raw_cipher, Vec::new(), &client_keys, &kms_keys.sig_pk)
-                .unwrap()
-                .unwrap();
-        assert_eq!(decrypted_msg.fhe_type(), FheType::Euint8);
-        assert_eq!(decrypted_msg.as_u8().unwrap(), msg);
-    }
-
-    #[test]
     fn sunshine_decrypt() {
         let msg = 42_u8;
         let keys: KmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();

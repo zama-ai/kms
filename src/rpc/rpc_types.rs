@@ -1,15 +1,16 @@
-use serde::{de::Visitor, ser::Error, Deserialize, Deserializer, Serialize};
-use serde_asn1_der::to_vec;
+use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
 use std::fmt;
 use tendermint::block::signed_header::SignedHeader;
 
 use crate::{
     core::der_types::{PublicEncKey, PublicSigKey, Signature},
     kms::{
-        DecryptionRequest, DecryptionRequestPayload, DecryptionResponsePayload, FheType, Proof,
-        ReencryptionRequest, ReencryptionRequestPayload,
+        DecryptionRequestPayload, DecryptionResponsePayload, FheType, Proof,
+        ReencryptionRequestPayload,
     },
 };
+
+use super::kms_rpc::some_or_err;
 
 /// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
 pub trait Kms {
@@ -97,7 +98,7 @@ impl Plaintext {
     }
 
     pub fn as_bool(&self) -> anyhow::Result<bool> {
-        if self.fhe_type == FheType::Euint8 {
+        if self.fhe_type == FheType::Bool {
             Ok(self.bytes[0] % 2 == 1)
         } else {
             tracing::warn!(
@@ -144,94 +145,307 @@ impl Plaintext {
     }
 }
 
-impl serde::Serialize for Proof {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // TODO use proper encoding
-        let mut to_ser = Vec::new();
-        to_ser.append(&mut self.height.to_be_bytes().to_vec());
-        to_ser.append(&mut self.merkle_patricia_proof.to_vec());
-        serializer.serialize_bytes(&to_ser)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// #[serde(remote = "DecryptionRequestPayload")]
+pub struct DecryptionRequestSigPayload {
+    pub verification_key: Vec<u8>,
+    pub fhe_type: FheType,
+    pub ciphertext: Vec<u8>,
+    pub randomness: Vec<u8>,
+    pub height: u32,
+    pub merkle_patricia_proof: Vec<u8>,
+}
+impl From<DecryptionRequestSigPayload> for DecryptionRequestPayload {
+    fn from(val: DecryptionRequestSigPayload) -> DecryptionRequestPayload {
+        DecryptionRequestPayload {
+            verification_key: val.verification_key,
+            fhe_type: val.fhe_type.into(),
+            ciphertext: val.ciphertext,
+            randomness: val.randomness,
+            proof: Some(Proof {
+                height: val.height,
+                merkle_patricia_proof: val.merkle_patricia_proof,
+            }),
+        }
+    }
+}
+impl TryFrom<DecryptionRequestPayload> for DecryptionRequestSigPayload {
+    type Error = anyhow::Error;
+
+    fn try_from(val: DecryptionRequestPayload) -> Result<Self, Self::Error> {
+        let proof = some_or_err(val.proof, "Proof not present in value".to_string())?;
+        Ok(DecryptionRequestSigPayload {
+            verification_key: val.verification_key,
+            fhe_type: val.fhe_type.try_into()?,
+            ciphertext: val.ciphertext,
+            randomness: val.randomness,
+            height: proof.height,
+            merkle_patricia_proof: proof.merkle_patricia_proof,
+        })
     }
 }
 
-impl serde::Serialize for ReencryptionRequestPayload {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // TODO use proper encoding
-        let mut to_ser = Vec::new();
-        to_ser.append(&mut self.verification_key.to_vec());
-        to_ser.append(&mut self.enc_key.to_vec());
-        to_ser.append(&mut to_vec(&self.proof).map_err(Error::custom)?);
-        to_ser.append(&mut self.ciphertext.to_vec());
-        let mut proof = to_vec(&self.proof).map_err(Error::custom)?;
-        to_ser.append(&mut proof);
-        to_ser.append(&mut self.randomness.to_vec());
-        serializer.serialize_bytes(&to_ser)
+// impl serde::Serialize for ReencryptionRequestPayload {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         // TODO use proper encoding
+//         let mut to_ser = Vec::new();
+//         to_ser.append(&mut self.verification_key.to_vec());
+//         to_ser.append(&mut self.enc_key.to_vec());
+//         to_ser.append(&mut to_vec(&self.proof).map_err(Error::custom)?);
+//         to_ser.append(&mut self.ciphertext.to_vec());
+//         let mut proof = to_vec(&self.proof).map_err(Error::custom)?;
+//         to_ser.append(&mut proof);
+//         to_ser.append(&mut self.randomness.to_vec());
+//         serializer.serialize_bytes(&to_ser)
+//     }
+//     }
+// }
+
+// impl serde::Serialize for ReencryptionRequestPayload {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         // TODO use proper encoding
+//         let mut to_ser = Vec::new();
+//         to_ser.append(&mut self.verification_key.to_vec());
+//         to_ser.append(&mut self.enc_key.to_vec());
+//         to_ser.append(&mut to_vec(&self.proof).map_err(Error::custom)?);
+//         to_ser.append(&mut self.ciphertext.to_vec());
+//         let mut proof = to_vec(&self.proof).map_err(Error::custom)?;
+//         to_ser.append(&mut proof);
+//         to_ser.append(&mut self.randomness.to_vec());
+//         serializer.serialize_bytes(&to_ser)
+//     }
+// }
+// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+// pub struct DecryptionRequestPayloadWrapper {
+//     #[serde(with = "DecryptionRequestPayloadDef")]
+//     pub payload: DecryptionRequestPayload,
+// }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// #[serde(remote = "DecryptionResponsePayload")]
+pub struct DecryptionResponseSigPayload {
+    pub verification_key: Vec<u8>,
+    pub plaintext: Vec<u8>,
+    pub digest: Vec<u8>,
+    pub randomness: Vec<u8>,
+}
+impl From<DecryptionResponseSigPayload> for DecryptionResponsePayload {
+    fn from(val: DecryptionResponseSigPayload) -> DecryptionResponsePayload {
+        DecryptionResponsePayload {
+            verification_key: val.verification_key,
+            plaintext: val.plaintext,
+            digest: val.digest,
+            randomness: val.randomness,
+        }
+    }
+}
+impl From<DecryptionResponsePayload> for DecryptionResponseSigPayload {
+    fn from(val: DecryptionResponsePayload) -> Self {
+        DecryptionResponseSigPayload {
+            verification_key: val.verification_key,
+            plaintext: val.plaintext,
+            digest: val.digest,
+            randomness: val.randomness,
+        }
     }
 }
 
-impl serde::Serialize for ReencryptionRequest {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // TODO use proper encoding
-        let mut to_ser = Vec::new();
-        to_ser.append(&mut self.signature.to_vec());
-        to_ser.append(&mut to_vec(&self.payload).map_err(Error::custom)?);
-        serializer.serialize_bytes(&to_ser)
+// impl serde::Serialize for DecryptionRequestPayload {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         // TODO use proper encoding
+//         let mut to_ser = Vec::new();
+//         to_ser.append(&mut self.verification_key.to_vec());
+//         to_ser.append(&mut to_vec(&self.proof).map_err(Error::custom)?);
+//         to_ser.append(&mut self.ciphertext.to_vec());
+//         let mut proof = to_vec(&self.proof).map_err(Error::custom)?;
+//         to_ser.append(&mut proof);
+//         to_ser.append(&mut self.randomness.to_vec());
+//         serializer.serialize_bytes(&to_ser)
+//     }
+//     }
+// }
+
+// impl serde::Serialize for DecryptionRequestPayload {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         // TODO use proper encoding
+//         let mut to_ser = Vec::new();
+//         to_ser.append(&mut self.verification_key.to_vec());
+//         to_ser.append(&mut to_vec(&self.proof).map_err(Error::custom)?);
+//         to_ser.append(&mut self.ciphertext.to_vec());
+//         let mut proof = to_vec(&self.proof).map_err(Error::custom)?;
+//         to_ser.append(&mut proof);
+//         to_ser.append(&mut self.randomness.to_vec());
+//         serializer.serialize_bytes(&to_ser)
+//     }
+// }
+// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+// pub struct DecryptionResponsePayloadWrapper {
+//     #[serde(with = "DecryptionResponsePayloadDef")]
+//     pub payload: DecryptionResponsePayload,
+// }
+// #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+// #[serde(remote = "Request")]
+// struct DecryptionRequestDef {
+//     pub signature: Vec<u8>,
+//     pub payload: Option<DecryptionRequestPayload>,
+// }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// #[serde(remote = "ReencryptionRequestPayload")]
+pub struct ReencryptionRequestSigPayload {
+    pub verification_key: Vec<u8>,
+    pub enc_key: Vec<u8>,
+    pub fhe_type: FheType,
+    pub ciphertext: Vec<u8>,
+    pub randomness: Vec<u8>,
+    pub height: u32,
+    pub merkle_patricia_proof: Vec<u8>,
+}
+impl From<ReencryptionRequestSigPayload> for ReencryptionRequestPayload {
+    fn from(val: ReencryptionRequestSigPayload) -> ReencryptionRequestPayload {
+        ReencryptionRequestPayload {
+            verification_key: val.verification_key,
+            enc_key: val.enc_key,
+            fhe_type: val.fhe_type.into(),
+            ciphertext: val.ciphertext,
+            randomness: val.randomness,
+            proof: Some(Proof {
+                height: val.height,
+                merkle_patricia_proof: val.merkle_patricia_proof,
+            }),
+        }
+    }
+}
+impl TryFrom<ReencryptionRequestPayload> for ReencryptionRequestSigPayload {
+    type Error = anyhow::Error;
+
+    fn try_from(val: ReencryptionRequestPayload) -> Result<Self, Self::Error> {
+        let proof = some_or_err(val.proof, "Proof not present in value".to_string())?;
+        Ok(ReencryptionRequestSigPayload {
+            verification_key: val.verification_key,
+            enc_key: val.enc_key,
+            fhe_type: val.fhe_type.try_into()?,
+            ciphertext: val.ciphertext,
+            randomness: val.randomness,
+            height: proof.height,
+            merkle_patricia_proof: proof.merkle_patricia_proof,
+        })
     }
 }
 
-impl serde::Serialize for DecryptionRequestPayload {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // TODO use proper encoding
-        let mut to_ser = Vec::new();
-        to_ser.append(&mut self.verification_key.to_vec());
-        to_ser.append(&mut to_vec(&self.proof).map_err(Error::custom)?);
-        to_ser.append(&mut self.ciphertext.to_vec());
-        let mut proof = to_vec(&self.proof).map_err(Error::custom)?;
-        to_ser.append(&mut proof);
-        to_ser.append(&mut self.randomness.to_vec());
-        serializer.serialize_bytes(&to_ser)
-    }
-}
+// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+// pub struct ReencryptionRequestPayloadWrapper {
+//     #[serde(with = "ReencryptionRequestPayloadDef")]
+//     pub payload: ReencryptionRequestPayload,
+// }
+// #[derive(Clone, Serialize, Deserialize, PartialEq, )]
+// #[serde(remote = "ReencryptionRequest")]
+// struct ReencryptionRequestDef {
+//     signature: Vec<u8>,
+//     payload: Option<ReencryptionRequestPayload>,
+// }
+// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+// #[serde(remote = "ReencryptionResponse")]
+// struct ReencryptionResponseDef {
+//     verification_key: Vec<u8>,
+//     fhe_type: i32,
+//     signcrypted_ciphertext: Vec<u8>,
+//     digest: Vec<u8>,
+// }
+// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+// pub struct ReencryptionResponseWrapper {
+//     #[serde(with = "ReencryptionResponseDef")]
+//     pub payload: ReencryptionResponse,
+// }
+// #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+// #[repr(i32)]
+// #[serde(remote = "FheType")]
+// enum FheTypeDef {
+//     Bool = 0,
+//     Euint8 = 1,
+//     Euint16 = 2,
+//     Euint32 = 3,
+// }
 
-impl serde::Serialize for DecryptionRequest {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // TODO use proper encoding
-        let mut to_ser = Vec::new();
-        to_ser.append(&mut self.signature.to_vec());
-        to_ser.append(&mut to_vec(&self.payload).map_err(Error::custom)?);
-        serializer.serialize_bytes(&to_ser)
-    }
-}
+// impl serde::Serialize for ReencryptionRequestPayload {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         use serde::ser::Error;
+//         let res = to_vec(self).map_err(|e| Error::custom(e.to_string()))?;
+//         res.serialize(serializer)
+//     }
+// }
 
-impl serde::Serialize for DecryptionResponsePayload {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // TODO use proper encoding
-        let mut to_ser = Vec::new();
-        to_ser.append(&mut self.verification_key.to_vec());
-        to_ser.append(&mut self.plaintext.to_vec());
-        to_ser.append(&mut self.digest.to_vec());
-        to_ser.append(&mut self.randomness.to_vec());
-        serializer.serialize_bytes(&to_ser)
-    }
-}
+// impl serde::Serialize for ReencryptionRequest {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         use serde::ser::Error;
+//         let res = to_vec(self).map_err(|e| Error::custom(e.to_string()))?;
+//         res.serialize(serializer)
+//     }
+// }
+
+// impl serde::Serialize for DecryptionRequestPayload {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         use serde::ser::Error;
+//         let res = to_vec(self).map_err(|e| Error::custom(e.to_string()))?;
+//         res.serialize(serializer)
+//     }
+// }
+
+// impl serde::Serialize for DecryptionRequest {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         use serde::ser::Error;
+//         let res = to_vec(self).map_err(|e| Error::custom(e.to_string()))?;
+//         res.serialize(serializer)
+//     }
+// }
+
+// impl serde::Serialize for DecryptionResponsePayload {
+//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+//     where
+//         S: serde::Serializer,
+//     {
+//         use serde::ser::Error;
+//         let res = to_vec(self).map_err(|e| Error::custom(e.to_string()))?;
+//         res.serialize(serializer)
+//     }
+// }
+
+// impl From<i32> for FheType {
+//     fn from(input: i32) -> FheType {
+//         if input == 0 {
+//             FheType::Bool
+//         } else if input == 1 {
+//             FheType::Euint8
+//         } else if input == 2 {
+//             FheType::Euint16
+//         } else {
+//             FheType::Euint32
+//         }
+//     }
+// }
 
 impl serde::Serialize for FheType {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -239,7 +453,7 @@ impl serde::Serialize for FheType {
         S: serde::Serializer,
     {
         // Use i32 as this is what protobuf automates to
-        serializer.serialize_bytes(&(*self as i32).to_be_bytes())
+        serializer.serialize_bytes(&(*self as i32).to_le_bytes())
     }
 }
 impl<'de> Deserialize<'de> for FheType {
@@ -262,9 +476,8 @@ impl<'de> Visitor<'de> for FheTypeVisitor {
     where
         E: serde::de::Error,
     {
-        // TODO fix potential panic
-        let res_array: [u8; 4] = v.try_into().unwrap();
-        let res_int: i32 = i32::from_be_bytes(res_array);
-        Ok(FheType::try_from(res_int).unwrap())
+        let res_array: [u8; 4] = v.try_into().map_err(serde::de::Error::custom)?;
+        let res: i32 = i32::from_le_bytes(res_array);
+        FheType::try_from(res).map_err(|_| E::custom("Error in converting i32 to FheType"))
     }
 }
