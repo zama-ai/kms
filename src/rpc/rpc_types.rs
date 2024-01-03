@@ -146,7 +146,6 @@ impl Plaintext {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-// #[serde(remote = "DecryptionRequestPayload")]
 pub struct DecryptionRequestSigPayload {
     pub verification_key: Vec<u8>,
     pub fhe_type: FheType,
@@ -185,50 +184,7 @@ impl TryFrom<DecryptionRequestPayload> for DecryptionRequestSigPayload {
     }
 }
 
-// impl serde::Serialize for ReencryptionRequestPayload {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: serde::Serializer,
-//     {
-//         // TODO use proper encoding
-//         let mut to_ser = Vec::new();
-//         to_ser.append(&mut self.verification_key.to_vec());
-//         to_ser.append(&mut self.enc_key.to_vec());
-//         to_ser.append(&mut to_vec(&self.proof).map_err(Error::custom)?);
-//         to_ser.append(&mut self.ciphertext.to_vec());
-//         let mut proof = to_vec(&self.proof).map_err(Error::custom)?;
-//         to_ser.append(&mut proof);
-//         to_ser.append(&mut self.randomness.to_vec());
-//         serializer.serialize_bytes(&to_ser)
-//     }
-//     }
-// }
-
-// impl serde::Serialize for ReencryptionRequestPayload {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: serde::Serializer,
-//     {
-//         // TODO use proper encoding
-//         let mut to_ser = Vec::new();
-//         to_ser.append(&mut self.verification_key.to_vec());
-//         to_ser.append(&mut self.enc_key.to_vec());
-//         to_ser.append(&mut to_vec(&self.proof).map_err(Error::custom)?);
-//         to_ser.append(&mut self.ciphertext.to_vec());
-//         let mut proof = to_vec(&self.proof).map_err(Error::custom)?;
-//         to_ser.append(&mut proof);
-//         to_ser.append(&mut self.randomness.to_vec());
-//         serializer.serialize_bytes(&to_ser)
-//     }
-// }
-// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-// pub struct DecryptionRequestPayloadWrapper {
-//     #[serde(with = "DecryptionRequestPayloadDef")]
-//     pub payload: DecryptionRequestPayload,
-// }
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-// #[serde(remote = "DecryptionResponsePayload")]
 pub struct DecryptionResponseSigPayload {
     pub verification_key: Vec<u8>,
     pub plaintext: Vec<u8>,
@@ -256,53 +212,7 @@ impl From<DecryptionResponsePayload> for DecryptionResponseSigPayload {
     }
 }
 
-// impl serde::Serialize for DecryptionRequestPayload {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: serde::Serializer,
-//     {
-//         // TODO use proper encoding
-//         let mut to_ser = Vec::new();
-//         to_ser.append(&mut self.verification_key.to_vec());
-//         to_ser.append(&mut to_vec(&self.proof).map_err(Error::custom)?);
-//         to_ser.append(&mut self.ciphertext.to_vec());
-//         let mut proof = to_vec(&self.proof).map_err(Error::custom)?;
-//         to_ser.append(&mut proof);
-//         to_ser.append(&mut self.randomness.to_vec());
-//         serializer.serialize_bytes(&to_ser)
-//     }
-//     }
-// }
-
-// impl serde::Serialize for DecryptionRequestPayload {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: serde::Serializer,
-//     {
-//         // TODO use proper encoding
-//         let mut to_ser = Vec::new();
-//         to_ser.append(&mut self.verification_key.to_vec());
-//         to_ser.append(&mut to_vec(&self.proof).map_err(Error::custom)?);
-//         to_ser.append(&mut self.ciphertext.to_vec());
-//         let mut proof = to_vec(&self.proof).map_err(Error::custom)?;
-//         to_ser.append(&mut proof);
-//         to_ser.append(&mut self.randomness.to_vec());
-//         serializer.serialize_bytes(&to_ser)
-//     }
-// }
-// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-// pub struct DecryptionResponsePayloadWrapper {
-//     #[serde(with = "DecryptionResponsePayloadDef")]
-//     pub payload: DecryptionResponsePayload,
-// }
-// #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
-// #[serde(remote = "Request")]
-// struct DecryptionRequestDef {
-//     pub signature: Vec<u8>,
-//     pub payload: Option<DecryptionRequestPayload>,
-// }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-// #[serde(remote = "ReencryptionRequestPayload")]
 pub struct ReencryptionRequestSigPayload {
     pub verification_key: Vec<u8>,
     pub enc_key: Vec<u8>,
@@ -343,109 +253,6 @@ impl TryFrom<ReencryptionRequestPayload> for ReencryptionRequestSigPayload {
         })
     }
 }
-
-// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-// pub struct ReencryptionRequestPayloadWrapper {
-//     #[serde(with = "ReencryptionRequestPayloadDef")]
-//     pub payload: ReencryptionRequestPayload,
-// }
-// #[derive(Clone, Serialize, Deserialize, PartialEq, )]
-// #[serde(remote = "ReencryptionRequest")]
-// struct ReencryptionRequestDef {
-//     signature: Vec<u8>,
-//     payload: Option<ReencryptionRequestPayload>,
-// }
-// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-// #[serde(remote = "ReencryptionResponse")]
-// struct ReencryptionResponseDef {
-//     verification_key: Vec<u8>,
-//     fhe_type: i32,
-//     signcrypted_ciphertext: Vec<u8>,
-//     digest: Vec<u8>,
-// }
-// #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-// pub struct ReencryptionResponseWrapper {
-//     #[serde(with = "ReencryptionResponseDef")]
-//     pub payload: ReencryptionResponse,
-// }
-// #[derive(Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
-// #[repr(i32)]
-// #[serde(remote = "FheType")]
-// enum FheTypeDef {
-//     Bool = 0,
-//     Euint8 = 1,
-//     Euint16 = 2,
-//     Euint32 = 3,
-// }
-
-// impl serde::Serialize for ReencryptionRequestPayload {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: serde::Serializer,
-//     {
-//         use serde::ser::Error;
-//         let res = to_vec(self).map_err(|e| Error::custom(e.to_string()))?;
-//         res.serialize(serializer)
-//     }
-// }
-
-// impl serde::Serialize for ReencryptionRequest {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: serde::Serializer,
-//     {
-//         use serde::ser::Error;
-//         let res = to_vec(self).map_err(|e| Error::custom(e.to_string()))?;
-//         res.serialize(serializer)
-//     }
-// }
-
-// impl serde::Serialize for DecryptionRequestPayload {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: serde::Serializer,
-//     {
-//         use serde::ser::Error;
-//         let res = to_vec(self).map_err(|e| Error::custom(e.to_string()))?;
-//         res.serialize(serializer)
-//     }
-// }
-
-// impl serde::Serialize for DecryptionRequest {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: serde::Serializer,
-//     {
-//         use serde::ser::Error;
-//         let res = to_vec(self).map_err(|e| Error::custom(e.to_string()))?;
-//         res.serialize(serializer)
-//     }
-// }
-
-// impl serde::Serialize for DecryptionResponsePayload {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: serde::Serializer,
-//     {
-//         use serde::ser::Error;
-//         let res = to_vec(self).map_err(|e| Error::custom(e.to_string()))?;
-//         res.serialize(serializer)
-//     }
-// }
-
-// impl From<i32> for FheType {
-//     fn from(input: i32) -> FheType {
-//         if input == 0 {
-//             FheType::Bool
-//         } else if input == 1 {
-//             FheType::Euint8
-//         } else if input == 2 {
-//             FheType::Euint16
-//         } else {
-//             FheType::Euint32
-//         }
-//     }
-// }
 
 impl serde::Serialize for FheType {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
