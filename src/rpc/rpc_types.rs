@@ -22,7 +22,6 @@ pub trait Kms {
     ) -> bool;
     fn sign<T: fmt::Debug + Serialize>(&self, msg: &T) -> anyhow::Result<Signature>;
     fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<Plaintext>;
-    // TODO add digest of decrypted cipher
     fn reencrypt(
         &self,
         ct: &[u8],
@@ -145,6 +144,9 @@ impl Plaintext {
     }
 }
 
+/// Observe that this seemingly redundant types are required since the Protobuf compiled types do not implement
+/// the serializable and deserializable traits. Hence [DecryptionRequestSigPayload] implement data to be asn1
+/// serialized which will be signed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DecryptionRequestSigPayload {
     pub verification_key: Vec<u8>,
@@ -184,6 +186,9 @@ impl TryFrom<DecryptionRequestPayload> for DecryptionRequestSigPayload {
     }
 }
 
+/// Observe that this seemingly redundant types are required since the Protobuf compiled types do not implement
+/// the serializable and deserializable traits. Hence [DecryptionResponseSigPayload] implement data to be asn1
+/// serialized which will be signed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DecryptionResponseSigPayload {
     pub verification_key: Vec<u8>,
@@ -212,6 +217,9 @@ impl From<DecryptionResponsePayload> for DecryptionResponseSigPayload {
     }
 }
 
+/// Observe that this seemingly redundant types are required since the Protobuf compiled types do not implement
+/// the serializable and deserializable traits. Hence [ReencryptionRequestSigPayload] implement data to be asn1
+/// serialized which will be signed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReencryptionRequestSigPayload {
     pub verification_key: Vec<u8>,

@@ -189,7 +189,6 @@ impl SoftwareKms {
     }
 }
 
-/// TODO should be moved to client
 pub fn decrypt_signcryption(
     cipher: Vec<u8>,
     link: Vec<u8>,

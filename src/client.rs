@@ -240,7 +240,6 @@ impl Client {
                 }
             }
         }
-        // TODO for negative testing ensure this works with really large requests as I ended up in an inifinate loop at some point here
         let cipher: Cipher = from_bytes(&resp.signcrypted_ciphertext)?;
         let client_keys = SigncryptionPair {
             sk: SigncryptionPrivKey {
@@ -254,7 +253,6 @@ impl Client {
         };
         let plaintext = match validate_and_decrypt(&cipher, &client_keys, &self.server_pk)? {
             Some(msg) => {
-                // TODO ensure that the content of what is signed is actually used where needed
                 let msg_payload: SigncryptionPayload = from_bytes(&msg)?;
                 msg_payload.plaintext
             }
@@ -347,6 +345,26 @@ mod tests {
         assert_eq!(DEFAULT_FHE_TYPE, plaintext.fhe_type());
         assert_eq!(DEFAULT_MSG, plaintext.as_u8().unwrap());
 
+        kms_server.abort();
+    }
+
+    // Validate bug-fix to ensure that the server fails gracefully when the ciphertext is too large
+    #[tokio::test]
+    #[serial]
+    async fn test_largecipher() {
+        let (kms_server, mut kms_client) = setup().await;
+        let ct = Vec::from([1_u8; 1000000]);
+        let fhe_type = FheType::Euint32;
+        let mut internal_client = Client::default();
+
+        let (req, _enc_pk, _enc_sk) = internal_client.reencyption_request(ct, fhe_type).unwrap();
+        let response = kms_client.reencrypt(tonic::Request::new(req.clone())).await;
+        assert!(response.is_err());
+        assert!(response
+            .err()
+            .unwrap()
+            .message()
+            .contains("Internal server error"));
         kms_server.abort();
     }
 }

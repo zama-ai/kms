@@ -75,7 +75,6 @@ where
 /// WARNING: It is assumed that the client's public key HAS been validated to come from a valid [ClientRequest] and
 /// validated to be consistent with the blockchain identity of the client BEFORE calling this method.
 /// IF THIS HAS NOT BEEN DONE THEN ANYONE CAN IMPERSONATE ANY CLIENT!!!
-/// TODO update comments
 pub fn signcrypt<T>(
     rng: &mut impl CryptoRngCore,
     msg: &T,
@@ -88,7 +87,6 @@ where
 {
     // Adds the hash digest of the receivers public encryption key to the message to sign
     // Sign msg || H(client_verf_key) || H(client_enc_key)
-    //TODO what we sign should be the same we decrypt
     let to_sign = [
         msg.as_ref(),
         &hash_element(&to_vec(client_verf_key)?),
