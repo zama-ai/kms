@@ -30,17 +30,18 @@ use pprof::criterion::{Output, PProfProfiler};
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {
     n: usize,
+    batch_size: usize,
     t: usize,
 }
 impl OneShotConfig {
-    fn new(n: usize, t: usize) -> OneShotConfig {
-        OneShotConfig { n, t }
+    fn new(n: usize, t: usize, batch_size: usize) -> OneShotConfig {
+        OneShotConfig { n, t, batch_size }
     }
 }
 
 impl std::fmt::Display for OneShotConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "n={}_t={}", self.n, self.t)?;
+        write!(f, "n={}_t={}_batch={}", self.n, self.t, self.batch_size)?;
         Ok(())
     }
 }
@@ -71,7 +72,10 @@ fn get_my_share(val: u64, n: usize, threshold: usize, my_id: usize) -> Share<Res
 fn bit_dec_online(c: &mut Criterion) {
     let mut group = c.benchmark_group("bit_dec_online");
 
-    let params = vec![OneShotConfig::new(5, 1), OneShotConfig::new(10, 2)];
+    let params = vec![
+        OneShotConfig::new(5, 1, 100),
+        OneShotConfig::new(10, 2, 100),
+    ];
 
     group.sample_size(10);
     for config in params {
@@ -113,7 +117,11 @@ fn bit_dec_online(c: &mut Criterion) {
 fn bit_dec_small_e2e_abort(c: &mut Criterion) {
     let mut group = c.benchmark_group("bit_dec_small_e2e_abort");
 
-    let params = vec![OneShotConfig::new(5, 1), OneShotConfig::new(10, 2)];
+    let params = vec![
+        OneShotConfig::new(5, 1, 5),
+        OneShotConfig::new(10, 2, 5),
+        OneShotConfig::new(13, 3, 5),
+    ];
 
     group.sample_size(10);
     for config in params {
@@ -136,8 +144,8 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                         ));
 
                         let bitdec_batch = SmallBatch {
-                            triples: OneShotBitDec::triples(),
-                            randoms: OneShotBitDec::randoms(),
+                            triples: OneShotBitDec::triples() * config.batch_size,
+                            randoms: OneShotBitDec::randoms() * config.batch_size,
                         };
 
                         let mut prep = SmallPreprocessing::<ResiduePoly64, RealAgreeRandom>::init(
@@ -153,9 +161,12 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                             session.threshold() as usize,
                             session.my_role().unwrap().zero_based(),
                         );
-                        let _bits = bit_dec::<Z64, _, _, _>(&mut session, &mut prep, input_a)
-                            .await
-                            .unwrap();
+
+                        for _ in 0..config.batch_size {
+                            let _bits = bit_dec::<Z64, _, _, _>(&mut session, &mut prep, input_a)
+                                .await
+                                .unwrap();
+                        }
                     };
 
                     let _result = execute_protocol_small::<ResiduePoly64, _, _>(
@@ -173,7 +184,11 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
 fn bit_dec_large_e2e(c: &mut Criterion) {
     let mut group = c.benchmark_group("bit_dec_large_e2e");
 
-    let params = vec![OneShotConfig::new(5, 1), OneShotConfig::new(10, 2)];
+    let params = vec![
+        OneShotConfig::new(5, 1, 5),
+        OneShotConfig::new(10, 2, 5),
+        OneShotConfig::new(13, 3, 5),
+    ];
 
     group.sample_size(10);
     for config in params {
@@ -190,8 +205,8 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                         >::init(
                             &mut session,
                             Some(BatchParams {
-                                triple_batch_size: OneShotBitDec::triples(),
-                                random_batch_size: OneShotBitDec::randoms(),
+                                triple_batch_size: OneShotBitDec::triples() * config.batch_size,
+                                random_batch_size: OneShotBitDec::randoms() * config.batch_size,
                             }),
                             TrueSingleSharing::default(),
                             TrueDoubleSharing::default(),
@@ -205,13 +220,16 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                             session.threshold() as usize,
                             session.my_role().unwrap().zero_based(),
                         );
-                        let _bits = bit_dec::<Z64, _, _, _>(
-                            &mut session,
-                            &mut large_preprocessing,
-                            input_a,
-                        )
-                        .await
-                        .unwrap();
+
+                        for _ in 0..config.batch_size {
+                            let _bits = bit_dec::<Z64, _, _, _>(
+                                &mut session,
+                                &mut large_preprocessing,
+                                input_a,
+                            )
+                            .await
+                            .unwrap();
+                        }
                     };
 
                     let _result = execute_protocol_large::<ResiduePoly64, _, _>(

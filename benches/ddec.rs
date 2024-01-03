@@ -23,12 +23,7 @@ use rand_chacha::ChaCha20Rng;
 use tfhe::core_crypto::entities::LweCiphertext;
 use tokio::task::JoinSet;
 
-pub const TEST_PARAM_PATH: &str = "temp/test_params.json";
-pub const TEST_KEY_PATH: &str = "temp/keys1.bin";
 pub const DEFAULT_KEY_PATH: &str = "temp/fullkeys.bin";
-pub const DEFAULT_PARAM_PATH: &str = "temp/default_params.json";
-pub const TEST_MESSAGE: u8 = 1;
-pub const DEFAULT_SEED: u64 = 1;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {
@@ -63,17 +58,17 @@ fn ddec_nsmall(c: &mut Criterion) {
     let mut group = c.benchmark_group("ddec_nsmall");
 
     let params = vec![
-        OneShotConfig::new(5, 1, 100, 8),
-        OneShotConfig::new(5, 1, 100, 16),
-        OneShotConfig::new(10, 2, 100, 8),
-        OneShotConfig::new(10, 2, 100, 16),
-        OneShotConfig::new(13, 3, 100, 8),
-        OneShotConfig::new(13, 3, 100, 16),
+        OneShotConfig::new(5, 1, 2, 8),
+        OneShotConfig::new(5, 1, 2, 16),
+        OneShotConfig::new(10, 2, 2, 8),
+        OneShotConfig::new(10, 2, 2, 16),
+        OneShotConfig::new(13, 3, 2, 8),
+        OneShotConfig::new(13, 3, 2, 16),
     ];
 
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
-    let keyset: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+    let keyset: KeySet = read_element(DEFAULT_KEY_PATH.to_string()).unwrap();
     let mut rng = AesRng::from_random_seed();
     for config in params {
         let messages = (0..config.batch_size)
@@ -160,16 +155,16 @@ fn ddec_nlarge(c: &mut Criterion) {
     let mut group = c.benchmark_group("ddec_nlarge");
 
     let params = vec![
-        OneShotConfig::new(5, 1, 100, 8),
-        OneShotConfig::new(5, 1, 100, 16),
-        OneShotConfig::new(10, 2, 100, 8),
-        OneShotConfig::new(10, 2, 100, 16),
-        OneShotConfig::new(13, 3, 100, 8),
-        OneShotConfig::new(13, 3, 100, 16),
+        OneShotConfig::new(5, 1, 2, 8),
+        OneShotConfig::new(5, 1, 2, 16),
+        OneShotConfig::new(10, 2, 2, 8),
+        OneShotConfig::new(10, 2, 2, 16),
+        OneShotConfig::new(13, 3, 2, 8),
+        OneShotConfig::new(13, 3, 2, 16),
     ];
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
-    let keyset: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+    let keyset: KeySet = read_element(DEFAULT_KEY_PATH.to_string()).unwrap();
     let mut rng = AesRng::from_random_seed();
     for config in params {
         let messages = (0..config.batch_size)

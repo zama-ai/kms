@@ -27,8 +27,8 @@ pub fn lagrange_numerators<F: Ring + Neg<Output = F>>(points: &[F]) -> Vec<Poly<
     polys
 }
 
-#[cfg(debug_assertions)]
 /// debug function that computes f(Z) = product_{p in points}(1 - pZ), only available in debug builds
+#[cfg(debug_assertions)]
 fn prod_alpha_z<F: Field>(points: &[F]) -> Poly<F> {
     tracing::info!("Computing check poly for points {:?}", points);
     // Empty products are treated as one
@@ -43,7 +43,6 @@ fn prod_alpha_z<F: Field>(points: &[F]) -> Poly<F> {
     poly
 }
 
-#[cfg(debug_assertions)]
 /// computes a syndrome from a list of coordinates (x: alpha_i, y: c_i) and RS degree v = t + 1 in the field F
 pub fn compute_syndrome<F: Field + std::fmt::Debug>(x_alpha: &[F], ci: &[F], v: usize) -> Poly<F> {
     assert_eq!(x_alpha.len(), ci.len());
@@ -74,8 +73,8 @@ pub fn compute_syndrome<F: Field + std::fmt::Debug>(x_alpha: &[F], ci: &[F], v: 
     syndrome
 }
 
-#[cfg(debug_assertions)]
 // sanity checks for debugging, only in debug builds
+#[cfg(debug_assertions)]
 fn sanity_check_decoding<F: Field>(
     sigma: Poly<F>,
     omega: Poly<F>,
@@ -165,9 +164,8 @@ pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) ->
     }
 
     // sanity checks for debugging, only in debug builds
-    if cfg!(debug_assertions) {
-        sanity_check_decoding(sigma, omega, r, &bs, &e, &lagrange_polys, x_alpha);
-    }
+    #[cfg(debug_assertions)]
+    sanity_check_decoding(sigma, omega, r, &bs, &e, &lagrange_polys, x_alpha);
 
     e
 }
