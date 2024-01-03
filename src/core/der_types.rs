@@ -1,6 +1,10 @@
+use super::signcryption::SIG_SIZE;
 use k256::ecdsa::VerifyingKey;
 use nom::AsBytes;
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
+
+pub const BYTES_IN_ADDRESS: usize = 20;
+pub type KeyAddress = [u8; BYTES_IN_ADDRESS];
 
 // Alias wrapping the ephemeral public encryption key the client constructs and the server uses to encrypt its payload
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
@@ -148,8 +152,8 @@ pub struct Cipher {
 #[allow(dead_code)]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SigncryptionPrivKey {
-    pub(crate) signing_key: PrivateSigKey,
-    pub(crate) decryption_key: PrivateEncKey,
+    pub signing_key: PrivateSigKey,
+    pub decryption_key: PrivateEncKey,
 }
 
 /// Structure for public keys for signcryption that can get DER encoded as follows:
@@ -157,21 +161,22 @@ pub struct SigncryptionPrivKey {
 ///     enc_key, (Montgomery point following libsodium serialization as OCTET STRING)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct SigncryptionPubKey {
-    pub(crate) verification_key: PublicSigKey,
-    pub(crate) enc_key: PublicEncKey,
+    pub verification_key: PublicSigKey,
+    pub enc_key: PublicEncKey,
 }
 
 /// Structure for private keys for signcryption
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SigncryptionPair {
-    pub(crate) sk: SigncryptionPrivKey,
-    pub(crate) pk: SigncryptionPubKey,
+    pub sk: SigncryptionPrivKey,
+    pub pk: SigncryptionPubKey,
 }
 
 /// Wrapper struct for a digital signature
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Signature {
-    pub(crate) sig: k256::ecdsa::Signature,
+    pub sig: k256::ecdsa::Signature,
+    pub pk: PublicSigKey, // TODO use a library to handle this from the signature using ethereum sigs
 }
 /// Serialize a signature as a 64 bytes sequence of big endian bytes, consisting of r followed by s
 impl Serialize for Signature {
@@ -179,7 +184,10 @@ impl Serialize for Signature {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(&self.sig.to_vec()[..])
+        let mut to_ser = Vec::new();
+        to_ser.append(&mut self.sig.to_vec());
+        to_ser.append(&mut self.pk.pk.to_sec1_bytes().to_vec());
+        serializer.serialize_bytes(&to_ser)
     }
 }
 impl<'de> Deserialize<'de> for Signature {
@@ -202,9 +210,20 @@ impl<'de> Visitor<'de> for SignatureVisitor {
     where
         E: serde::de::Error,
     {
-        match k256::ecdsa::Signature::from_slice(v) {
-            Ok(sig) => Ok(Signature { sig }),
-            Err(e) => Err(E::custom(format!("Could not decode signature: {:?}", e))),
-        }
+        let sig = match k256::ecdsa::Signature::from_slice(&v[0..SIG_SIZE]) {
+            Ok(sig) => sig,
+            Err(e) => Err(E::custom(format!("Could not decode signature: {:?}", e)))?,
+        };
+        let pk = match k256::ecdsa::VerifyingKey::from_sec1_bytes(&v[SIG_SIZE..]) {
+            Ok(pk) => pk,
+            Err(e) => Err(E::custom(format!(
+                "Could not decode public key part of signature: {:?}",
+                e
+            )))?,
+        };
+        Ok(Signature {
+            sig,
+            pk: PublicSigKey { pk },
+        })
     }
 }

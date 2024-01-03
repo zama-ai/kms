@@ -2,8 +2,6 @@ syntax = "proto3";
 package kms;
 
 service KmsEndpoint {
-  rpc Validate_and_decrypt(DecryptionRequest) returns (DecryptionResponse);
-  rpc Validate_and_reencrypt(ReencryptionRequest) returns (ReencryptionResponse);
   rpc Decrypt(DecryptionRequest) returns (DecryptionResponse);
   rpc Reencrypt(ReencryptionRequest) returns (ReencryptionResponse);
 }
@@ -20,27 +18,49 @@ message Proof {
   bytes merkle_patricia_proof = 2;
 }
 
-message DecryptionRequest {
-  FheType fhe_type = 1;
-  bytes ciphertext = 2;
-  bytes request = 3;
+message DecryptionRequestPayload {
+  bytes address = 1;
+  FheType fhe_type = 2;
+  bytes ciphertext = 3;
   Proof proof = 4;
+  bytes randomness = 5;
+}
+
+message DecryptionRequest {
+  bytes signature = 1;
+  DecryptionRequestPayload payload = 2;
+}
+
+message DecryptionResponsePayload {
+  bytes address = 1;
+  FheType fhe_type = 2;
+  uint32 plaintext = 3;
+  bytes digest = 4;
+  bytes randomness = 5;
 }
 
 message DecryptionResponse {
   bytes signature = 1;
-  FheType fhe_type = 2;
-  uint32 plaintext = 3;
+  DecryptionResponsePayload payload = 2;
+}
+
+message ReencryptionRequestPayload {
+  bytes address = 1;
+  bytes enc_key = 2;
+  FheType fhe_type = 3;
+  bytes ciphertext = 4;
+  Proof proof = 5;
+  bytes randomness = 6;
 }
 
 message ReencryptionRequest {
-  FheType fhe_type = 1;
-  bytes ciphertext = 2;
-  bytes request = 3;
-  Proof proof = 4;
+  bytes signature = 1;
+  ReencryptionRequestPayload payload = 2;
 }
 
 message ReencryptionResponse {
-  bytes reencrypted_ciphertext = 1;
+  bytes address = 1;
   FheType fhe_type = 2;
+  bytes signcrypted_ciphertext = 3;
+  bytes digest = 4;
 }

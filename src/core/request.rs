@@ -36,7 +36,7 @@ impl ClientRequest {
         client_sig_sk: &PrivateSigKey,
         rng: &mut impl CryptoRngCore,
     ) -> anyhow::Result<(Self, SigncryptionPair)> {
-        let keys = ClientRequest::ephemeral_key_generation(rng, client_sig_sk);
+        let keys = ephemeral_key_generation(rng, client_sig_sk);
         let digest = hash_element(fhe_cipher);
         let mut r = [0_u8; RND_SIZE];
         rng.fill_bytes(r.as_mut());
@@ -50,6 +50,7 @@ impl ClientRequest {
         // Sign the public key and digest of the message
         let signature: Signature = Signature {
             sig: keys.sk.signing_key.sk.sign(&to_sign[..]),
+            pk: keys.pk.verification_key.clone(),
         };
         Ok((ClientRequest { payload, signature }, keys))
     }
@@ -83,25 +84,24 @@ impl ClientRequest {
         // Check that the signature is normalized
         Ok(check_normalized(&self.signature))
     }
-
-    /// Helper method for what the client is supposed to do when generating ephemeral keys linked to the client's blockchain signing key
-    pub(crate) fn ephemeral_key_generation(
-        rng: &mut impl CryptoRngCore,
-        sig_key: &PrivateSigKey,
-    ) -> SigncryptionPair {
-        let verification_key = PublicSigKey {
-            pk: *SigningKey::verifying_key(&sig_key.sk),
-        };
-        let (enc_pk, enc_sk) = encryption_key_generation(rng);
-        SigncryptionPair {
-            sk: SigncryptionPrivKey {
-                signing_key: sig_key.clone(),
-                decryption_key: enc_sk,
-            },
-            pk: SigncryptionPubKey {
-                verification_key,
-                enc_key: enc_pk,
-            },
-        }
+}
+/// Helper method for what the client is supposed to do when generating ephemeral keys linked to the client's blockchain signing key
+pub(crate) fn ephemeral_key_generation(
+    rng: &mut impl CryptoRngCore,
+    sig_key: &PrivateSigKey,
+) -> SigncryptionPair {
+    let verification_key = PublicSigKey {
+        pk: *SigningKey::verifying_key(&sig_key.sk),
+    };
+    let (enc_pk, enc_sk) = encryption_key_generation(rng);
+    SigncryptionPair {
+        sk: SigncryptionPrivKey {
+            signing_key: sig_key.clone(),
+            decryption_key: enc_sk,
+        },
+        pk: SigncryptionPubKey {
+            verification_key,
+            enc_key: enc_pk,
+        },
     }
 }
