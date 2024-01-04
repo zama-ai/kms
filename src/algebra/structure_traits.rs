@@ -1,7 +1,7 @@
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
-
+use super::poly::Poly;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 pub trait Zero {
     const ZERO: Self;
@@ -72,4 +72,5 @@ pub trait Field
 where
     Self: Ring + Div<Self, Output = Self> + DivAssign<Self>,
 {
+    fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>>;
 }

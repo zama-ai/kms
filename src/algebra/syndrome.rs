@@ -201,7 +201,7 @@ mod tests {
         assert_eq!(syndrome, Poly::zeros(r));
 
         // with no errors we can just do plain Lagrange interpolation
-        let l_poly = lagrange_interpolation(&xs, &ys);
+        let l_poly = lagrange_interpolation(&xs, &ys).unwrap();
         for i in 1..=n {
             let l_i = l_poly.eval(&GF256::from(i));
             tracing::info!("interpolated L({i}) = {l_i:?}",);

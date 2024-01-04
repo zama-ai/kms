@@ -1,11 +1,17 @@
+use std::collections::HashMap;
+
+use crate::{algebra::poly::lagrange_polynomials, error::error_handler::anyhow_error_and_log};
+
 use super::{
     poly::{gao_decoding, Poly},
     structure_traits::{Field, FromU128, One, Ring, Sample, Zero},
     syndrome::decode_syndrome,
 };
 use g2p::{g2p, GaloisField};
+use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::ops::Neg;
+use std::sync::RwLock;
 
 g2p!(
     GF256,
@@ -94,7 +100,36 @@ impl Neg for GF256 {
     }
 }
 
-impl Field for GF256 {}
+lazy_static! {
+    static ref LAGRANGE_STORE: RwLock<HashMap<Vec<GF256>, Vec<Poly<GF256>>>> =
+        RwLock::new(HashMap::new());
+}
+
+impl Field for GF256 {
+    fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>> {
+        if let Ok(lock_lagrange_store) = LAGRANGE_STORE.read() {
+            match lock_lagrange_store.get(points) {
+                Some(v) => Ok(v.clone()),
+                None => {
+                    drop(lock_lagrange_store);
+                    if let Ok(mut lock_lagrange_store) = LAGRANGE_STORE.write() {
+                        let lagrange_pols = lagrange_polynomials(points);
+                        lock_lagrange_store.insert(points.to_vec(), lagrange_pols.clone());
+                        Ok(lagrange_pols)
+                    } else {
+                        Err(anyhow_error_and_log(
+                            "Error writing LAGRANGE_STORE".to_string(),
+                        ))
+                    }
+                }
+            }
+        } else {
+            Err(anyhow_error_and_log(
+                "Error reading LAGRANGE_STORE".to_string(),
+            ))
+        }
+    }
+}
 
 pub type ShamirZ2Poly = Poly<GF256>;
 

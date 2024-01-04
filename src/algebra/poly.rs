@@ -382,7 +382,7 @@ fn quo_rem<F: Field>(a: Poly<F>, b: &Poly<F>) -> (Poly<F>, Poly<F>) {
     (q, r)
 }
 
-fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
+pub fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
     let polys: Vec<_> = points
         .iter()
         .enumerate()
@@ -406,15 +406,15 @@ fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
     polys
 }
 
-pub fn lagrange_interpolation<F: Field>(points: &[F], values: &[F]) -> Poly<F> {
-    let ls = lagrange_polynomials(points);
+pub fn lagrange_interpolation<F: Field>(points: &[F], values: &[F]) -> anyhow::Result<Poly<F>> {
+    let ls = F::memoize_lagrange(points)?;
     assert_eq!(ls.len(), values.len());
     let mut res = Poly::zero();
     for (li, vi) in ls.into_iter().zip(values.iter()) {
         let term = li * vi;
         res = res + term;
     }
-    res
+    Ok(res)
 }
 
 fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly<F>) {
@@ -458,7 +458,7 @@ pub fn gao_decoding<F: Field>(
     }
 
     // R \in GF(256)[X] such that R(xi) = yi. Called g_1(x) in the Gao paper.
-    let r = lagrange_interpolation(points, values);
+    let r = lagrange_interpolation(points, values)?;
 
     // G = prod(X - xi) where xi is party i's index. Called g_0(x) in the Gao paper.
     // note that deg(G) >= deg(R)
@@ -531,7 +531,7 @@ mod tests {
 
         let ys: Vec<_> = xs.iter().map(|x| poly.eval(x)).collect();
         let interpolated = lagrange_interpolation(&xs, &ys);
-        assert_eq!(poly, interpolated);
+        assert_eq!(poly, interpolated.unwrap());
     }
 
     #[rstest]
