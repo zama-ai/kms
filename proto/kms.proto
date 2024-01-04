@@ -24,7 +24,7 @@ message DecryptionRequestPayload {
   bytes ciphertext = 3;
   Proof proof = 4;
   bytes randomness = 5;
-  }
+}
 
 message DecryptionRequest {
   bytes signature = 1;
@@ -32,15 +32,20 @@ message DecryptionRequest {
 }
 
 message DecryptionResponsePayload {
-  bytes verification_key = 1;
-  bytes plaintext = 2;
-  bytes digest = 3;
-  bytes randomness = 4;
+  uint32 shares_needed = 1;
+  bytes verification_key = 2;
+  bytes plaintext = 3;
+  bytes digest = 4;
+  bytes randomness = 5;
 }
 
 message DecryptionResponse {
   bytes signature = 1;
   DecryptionResponsePayload payload = 2;
+}
+
+message AggregatedDecryptionRespone {
+  repeated DecryptionResponse responses = 1;
 }
 
 message ReencryptionRequestPayload {
@@ -58,8 +63,13 @@ message ReencryptionRequest {
 }
 
 message ReencryptionResponse {
-  bytes verification_key = 1;
-  FheType fhe_type = 2;
-  bytes signcrypted_ciphertext = 3;
-  bytes digest = 4;
+  uint32 shares_needed = 1;
+  bytes verification_key = 2;
+  FheType fhe_type = 3;
+  bytes signcrypted_ciphertext = 4;
+  bytes digest = 5;
+}
+
+message AggregatedReencryptionRespone {
+  repeated ReencryptionResponse responses = 1;
 }

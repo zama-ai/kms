@@ -72,6 +72,12 @@ impl<'de> Deserialize<'de> for PublicSigKey {
         deserializer.deserialize_bytes(PublicSigKeyVisitor)
     }
 }
+impl std::hash::Hash for PublicSigKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.pk.to_sec1_bytes().hash(state);
+    }
+}
+
 struct PublicSigKeyVisitor;
 impl<'de> Visitor<'de> for PublicSigKeyVisitor {
     type Value = PublicSigKey;

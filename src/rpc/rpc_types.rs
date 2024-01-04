@@ -1,4 +1,5 @@
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
+use serde_asn1_der::from_bytes;
 use std::fmt;
 use tendermint::block::signed_header::SignedHeader;
 
@@ -6,7 +7,7 @@ use crate::{
     core::der_types::{PublicEncKey, PublicSigKey, Signature},
     kms::{
         DecryptionRequestPayload, DecryptionResponsePayload, FheType, Proof,
-        ReencryptionRequestPayload,
+        ReencryptionRequestPayload, ReencryptionResponse,
     },
 };
 
@@ -191,6 +192,7 @@ impl TryFrom<DecryptionRequestPayload> for DecryptionRequestSigPayload {
 /// serialized which will be signed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DecryptionResponseSigPayload {
+    pub shares_needed: u32,
     pub verification_key: Vec<u8>,
     pub plaintext: Vec<u8>,
     pub digest: Vec<u8>,
@@ -199,6 +201,7 @@ pub struct DecryptionResponseSigPayload {
 impl From<DecryptionResponseSigPayload> for DecryptionResponsePayload {
     fn from(val: DecryptionResponseSigPayload) -> DecryptionResponsePayload {
         DecryptionResponsePayload {
+            shares_needed: val.shares_needed,
             verification_key: val.verification_key,
             plaintext: val.plaintext,
             digest: val.digest,
@@ -209,6 +212,7 @@ impl From<DecryptionResponseSigPayload> for DecryptionResponsePayload {
 impl From<DecryptionResponsePayload> for DecryptionResponseSigPayload {
     fn from(val: DecryptionResponsePayload) -> Self {
         DecryptionResponseSigPayload {
+            shares_needed: val.shares_needed,
             verification_key: val.verification_key,
             plaintext: val.plaintext,
             digest: val.digest,
@@ -294,5 +298,58 @@ impl<'de> Visitor<'de> for FheTypeVisitor {
         let res_array: [u8; 4] = v.try_into().map_err(serde::de::Error::custom)?;
         let res: i32 = i32::from_le_bytes(res_array);
         FheType::try_from(res).map_err(|_| E::custom("Error in converting i32 to FheType"))
+    }
+}
+pub trait MetaResponse {
+    fn shares_needed(&self) -> u32;
+    fn verification_key(&self) -> Vec<u8>;
+    fn fhe_type(&self) -> FheType;
+    fn digest(&self) -> Vec<u8>;
+    fn randomness(&self) -> Option<Vec<u8>>;
+}
+
+impl MetaResponse for ReencryptionResponse {
+    fn shares_needed(&self) -> u32 {
+        self.shares_needed
+    }
+
+    fn verification_key(&self) -> Vec<u8> {
+        self.verification_key.to_owned()
+    }
+
+    fn fhe_type(&self) -> FheType {
+        self.fhe_type()
+    }
+
+    fn digest(&self) -> Vec<u8> {
+        self.digest.to_owned()
+    }
+
+    fn randomness(&self) -> Option<Vec<u8>> {
+        None
+    }
+}
+
+impl MetaResponse for DecryptionResponsePayload {
+    fn shares_needed(&self) -> u32 {
+        self.shares_needed
+    }
+
+    fn verification_key(&self) -> Vec<u8> {
+        self.verification_key.to_owned()
+    }
+
+    fn fhe_type(&self) -> FheType {
+        // TODO should be Result
+        let plaintext: Plaintext = from_bytes(&self.plaintext).unwrap();
+        plaintext.fhe_type
+    }
+
+    fn digest(&self) -> Vec<u8> {
+        self.digest.to_owned()
+    }
+
+    fn randomness(&self) -> Option<Vec<u8>> {
+        Some(self.randomness.to_owned())
     }
 }

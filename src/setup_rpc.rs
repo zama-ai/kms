@@ -8,7 +8,7 @@ use tonic::transport::Server;
 #[allow(dead_code)]
 pub const DEFAULT_KMS_KEY_PATH: &str = "temp/kms-keys.bin";
 #[allow(dead_code)]
-pub const DEFAULT_SERVER_KEY_PATH: &str = "temp/pub-server-key.bin";
+pub const DEFAULT_SERVER_KEYS_PATH: &str = "temp/pub-server-keys.bin";
 #[allow(dead_code)]
 pub const DEFAULT_FHE_KEY_PATH: &str = "temp/fhe-key.bin";
 #[allow(dead_code)]
@@ -33,7 +33,7 @@ pub async fn server_handle(url: String, key_path: String) {
 pub(crate) mod tests {
     use crate::setup_rpc::{
         DEFAULT_CIPHER_PATH, DEFAULT_CLIENT_KEY_PATH, DEFAULT_FHE_KEY_PATH, DEFAULT_KMS_KEY_PATH,
-        DEFAULT_SERVER_KEY_PATH,
+        DEFAULT_SERVER_KEYS_PATH,
     };
     use ctor::ctor;
     use kms::file_handling::{read_element, write_element};
@@ -47,6 +47,7 @@ pub(crate) mod tests {
     use tfhe::{prelude::FheEncrypt, ConfigBuilder, FheUint8, PublicKey};
 
     pub const DEFAULT_MSG: u8 = 42;
+    #[allow(dead_code)]
     pub const DEFAULT_FHE_TYPE: FheType = FheType::Euint8;
 
     #[ctor]
@@ -60,9 +61,11 @@ pub(crate) mod tests {
             let kms_keys = gen_kms_keys(config, &mut rng);
             assert!(write_element(DEFAULT_KMS_KEY_PATH.to_string(), &kms_keys,).is_ok());
         }
-        if !Path::new(DEFAULT_SERVER_KEY_PATH).exists() {
+        if !Path::new(DEFAULT_SERVER_KEYS_PATH).exists() {
             let kms_keys: KmsKeys = read_element(DEFAULT_KMS_KEY_PATH.to_string()).unwrap();
-            assert!(write_element(DEFAULT_SERVER_KEY_PATH.to_string(), &kms_keys.sig_pk).is_ok());
+            assert!(
+                write_element(DEFAULT_SERVER_KEYS_PATH.to_string(), &vec![kms_keys.sig_pk]).is_ok()
+            );
         }
         if !Path::new(DEFAULT_FHE_KEY_PATH).exists() {
             let kms_keys: KmsKeys = read_element(DEFAULT_KMS_KEY_PATH.to_string()).unwrap();

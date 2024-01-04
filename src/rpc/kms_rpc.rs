@@ -88,6 +88,7 @@ impl KmsEndpoint for SoftwareKms {
             &client_verf_key,
         ))?;
         Ok(Response::new(ReencryptionResponse {
+            shares_needed: 1,
             signcrypted_ciphertext: return_cipher,
             fhe_type: fhe_type.into(),
             digest: req_digest,
@@ -167,6 +168,7 @@ impl KmsEndpoint for SoftwareKms {
             "Could not serialize server verification key".to_string(),
         )?;
         let sig_payload = DecryptionResponseSigPayload {
+            shares_needed: 1,
             plaintext: plaintext_bytes,
             verification_key: server_verf_key,
             digest: req_digest,
