@@ -96,7 +96,6 @@ pub fn threshold_decrypt(
                 });
             }
             DecryptionMode::PRSSDecrypt => {
-                // TODO currently things only work with the static seed rng
                 set.spawn(async move {
                     let mut session = SmallSession::new(
                         session_id,
@@ -105,7 +104,7 @@ pub fn threshold_decrypt(
                         threshold,
                         prss_setup,
                         identity.clone(),
-                        Some(ChaCha20Rng::seed_from_u64(0)),
+                        Some(ChaCha20Rng::from_entropy()),
                     )
                     .unwrap();
 

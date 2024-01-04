@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
     tracing_subscriber::fmt::init();
 
-    let mut rng = AesRng::seed_from_u64(0);
+    let mut rng = AesRng::from_entropy();
     let tls_config = None;
     let port = args.port;
 
