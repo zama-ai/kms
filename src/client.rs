@@ -48,7 +48,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let req = internal_client.decryption_request(ct.clone(), fhe_type)?;
     let response = kms_client.decrypt(tonic::Request::new(req.clone())).await?;
     tracing::debug!("DECRYPT RESPONSE={:?}", response);
-    // TODO write method for this
     let responses = AggregatedDecryptionRespone {
         responses: vec![response.into_inner()],
     };
@@ -69,7 +68,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .reencrypt(tonic::Request::new(req.clone()))
         .await?;
     tracing::debug!("REENCRYPT RESPONSE={:?}", response);
-    // TODO write method for this
     let responses = AggregatedReencryptionRespone {
         responses: vec![response.into_inner()],
     };
@@ -365,7 +363,6 @@ impl Client {
                 );
                 return Ok(false);
             }
-            // TODO or is it just the inner key that should be deserialized?
             let resp_verf_key: PublicSigKey = from_bytes(&cur_resp.verification_key())?;
             if !&self.server_pks.contains(&resp_verf_key) {
                 tracing::warn!("Server key is incorrect in reencryption request");
@@ -397,8 +394,6 @@ impl Client {
             todo!()
         }
     }
-
-    // TODO method for aggregation of reencryption requests
 }
 
 #[cfg(test)]
