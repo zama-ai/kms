@@ -1046,12 +1046,12 @@ pub(crate) mod tests {
                     (
                         *r,
                         DoublePoly {
-                            share_in_x: Poly::<Z>::sample_random(
+                            share_in_x: Poly::<Z>::sample_random_with_fixed_constant(
                                 &mut rng,
                                 Z::ONE,
                                 session.threshold().into(),
                             ),
-                            share_in_y: Poly::<Z>::sample_random(
+                            share_in_y: Poly::<Z>::sample_random_with_fixed_constant(
                                 &mut rng,
                                 Z::ZERO,
                                 session.threshold().into(),

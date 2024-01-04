@@ -99,7 +99,7 @@ async fn try_reconstruct_from_shares<Z: ShamirRing, P: ParameterHandles>(
         }
     }
 
-    //If we havent yet been able to reconstruct it may be because we havent heard from all parties
+    //If we haven't yet been able to reconstruct it may be because we haven't heard from all parties
     //In which case we have to know if we knew those were already malicious.
     //If not, we have to try reconstruct with those parties considered as malicious (i.e. w/ updated threshold)
     let num_known_corrupt = session_parameters.threshold() as usize - threshold;

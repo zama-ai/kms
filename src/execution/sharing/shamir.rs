@@ -13,7 +13,7 @@ pub trait ShamirRing: Ring {
         max_error_count: usize,
     ) -> anyhow::Result<Poly<Self>>;
     fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self>;
-    ///***Calling invert on a non-invertible element of the ring results in undefined behaviour***
+    ///***Calling invert on a non-invertible element of the ring results in undefined behavior***
     fn invert(self) -> anyhow::Result<Self>;
     fn syndrome_decode(
         sharing: &ShamirSharing<Self>,
@@ -143,7 +143,7 @@ impl<Z: ShamirRing> ShamirSharing<Z> {
         num_parties: usize,
         threshold: usize,
     ) -> anyhow::Result<ShamirSharing<Z>> {
-        let poly = Poly::sample_random(rng, secret, threshold);
+        let poly = Poly::sample_random_with_fixed_constant(rng, secret, threshold);
         let shares: Vec<_> = (1..=num_parties)
             .map(|xi| {
                 let embedded_xi = Z::embed_exceptional_set(xi)?;

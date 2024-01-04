@@ -153,7 +153,7 @@ pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) ->
     let mut e = vec![F::ZERO; x_alpha.len()];
     let lagrange_polys = lagrange_numerators(x_alpha);
 
-    // compute error magnitues at indices b
+    // compute error magnitudes at indices b
     for b in bs.clone() {
         let alpha_b = x_alpha[b];
         let alpha_b_inv = F::ONE / alpha_b;
@@ -197,7 +197,7 @@ mod tests {
 
         // syndrome should be zero without error
         let syndrome = compute_syndrome(&xs, &ys, v);
-        tracing::info!("sydrome (ok): {:?}", syndrome);
+        tracing::info!("syndrome (ok): {:?}", syndrome);
         assert_eq!(syndrome, Poly::zeros(r));
 
         // with no errors we can just do plain Lagrange interpolation

@@ -29,7 +29,7 @@ use crate::{
         large_execution::offline::{
             BatchParams, RealLargePreprocessing, TrueDoubleSharing, TrueSingleSharing,
         },
-        online::secret_distrtibutions::{RealSecretDistributions, SecretDistributions},
+        online::secret_distributions::{RealSecretDistributions, SecretDistributions},
         runtime::{
             party::{Identity, Role},
             session::{
@@ -317,8 +317,8 @@ where
 }
 
 /// Converts a ciphertext over a 64 bit domain to a ciphertext over a 128 bit domain (which is needed for secure threshold decryption).
-/// Convertion is done using a precreated convertion key [ck].
-/// Observe that the decryption key will be different after convertion, since [ck] is actually a key-switching key.
+/// Conversion is done using a precreated conversion key [ck].
+/// Observe that the decryption key will be different after conversion, since [ck] is actually a key-switching key.
 pub fn to_large_ciphertext(ck: &BootstrappingKey, small_ct: &Ciphertext64) -> Ciphertext128 {
     let mut res = Vec::with_capacity(small_ct.len());
     for current_block in small_ct {
@@ -328,8 +328,8 @@ pub fn to_large_ciphertext(ck: &BootstrappingKey, small_ct: &Ciphertext64) -> Ci
 }
 
 /// Converts a single ciphertext block over a 64 bit domain to a ciphertext block over a 128 bit domain (which is needed for secure threshold decryption).
-/// Convertion is done using a precreated convertion key, [ck].
-/// Observe that the decryption key will be different after convertion, since [ck] is actually a key-switching key.
+/// Conversion is done using a precreated conversion key, [ck].
+/// Observe that the decryption key will be different after conversion, since [ck] is actually a key-switching key.
 pub fn to_large_ciphertext_block(
     ck: &BootstrappingKey,
     small_ct: &Ciphertext64Block,

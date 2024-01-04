@@ -98,7 +98,7 @@ pub mod tests {
     };
 
     // TODO based on https://github.com/zama-ai/tfhe-rs-internal/blob/noise_gap_exp/tfhe/benches/core_crypto/noise_gap_pbs-ks.rs PARAM_CGGI_BOOLEAN_COMPACT_PKE_PBS_KS_INPUT found in noise_gap.rs in noise_gap_exp
-    // Ohterwise the bootstrapping will fail due to constraints on lwe_dimention, glwe_dimens and polynomial_size. See  https://github.com/zama-ai/tfhe-rs-internal/blob/cf7a16e137f68d21ea51aef5de6503586[…]2b9e4/tfhe/src/core_crypto/algorithms/glwe_sample_extraction.rs
+    // Otherwise the bootstrapping will fail due to constraints on lwe_dimension, glwe_dimens and polynomial_size. See  https://github.com/zama-ai/tfhe-rs-internal/blob/cf7a16e137f68d21ea51aef5de6503586[…]2b9e4/tfhe/src/core_crypto/algorithms/glwe_sample_extraction.rs
     // TODO MULTIPLE PEOPLE SHOULD VALIDATE THAT THESE ARE INDEED THE PARAMETERS WE SHOULD RUN WITH!!!
     const DEFAULT_PARAMETERS: ThresholdLWEParameters = ThresholdLWEParameters {
         input_cipher_parameters: PARAM_CGGI_4_BITS_COMPACT_PKE_PBS_KS_INPUT,

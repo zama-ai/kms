@@ -16,7 +16,7 @@ use crate::{
 /// Helper function to check that senders and receivers make sense, returns [false] if they don't and adds a log.
 /// Returns true if everything is fine.
 /// By not making sense, we mean that the party is either the same as the currently executing party or that the
-/// currently executing party is in conflict with the sendder/receiver, or the sender/receiver is corrupt
+/// currently executing party is in conflict with the sender/receiver, or the sender/receiver is corrupt
 fn check_roles<R: RngCore, L: LargeSessionHandles<R>>(
     communicating_with: &Role,
     session: &L,
@@ -58,7 +58,7 @@ fn check_talking_to_myself<R: RngCore, B: BaseSessionHandles<R>>(
 }
 /// Send specific values to specific parties.
 /// I.e. not the sending party or in dispute or corrupt.
-/// Each party is supposed to receive a specfic value, mapped to their role in `values_to_send`.
+/// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
 pub async fn send_to_honest_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &B,
@@ -76,7 +76,7 @@ pub async fn send_to_honest_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R
 
 /// Send specific values to specific parties, while validating that the parties are sensible within the session.
 /// I.e. not the sending party or in dispute or corrupt.
-/// Each party is supposed to receive a specfic value, mapped to their role in `values_to_send`.
+/// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
 pub async fn send_to_parties_w_dispute<Z: Ring, R: RngCore, L: LargeSessionHandles<R>>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &L,
@@ -88,7 +88,7 @@ pub async fn send_to_parties_w_dispute<Z: Ring, R: RngCore, L: LargeSessionHandl
 }
 
 /// Add a job of sending specific values to specific parties.
-/// Each party is supposed to receive a specfic value, mapped to their role in `values_to_send`.
+/// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
 fn internal_send_to_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     jobs: &mut JoinSet<()>,
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
@@ -108,7 +108,7 @@ fn internal_send_to_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
                     .await;
             });
         } else {
-            tracing::info!("You are trying to communicate with a party that doesnt pass check");
+            tracing::info!("You are trying to communicate with a party that doesn't pass check");
             continue;
         }
     }
@@ -116,7 +116,7 @@ fn internal_send_to_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
 }
 
 /// Send specific values to specific parties.
-/// Each party is supposed to receive a specfic value, mapped to their role in `values_to_send`.
+/// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
 pub async fn send_distinct_to_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
     sender: &Role,
@@ -207,7 +207,7 @@ fn internal_receive_from_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
             });
         } else {
             tracing::info!(
-                "You are trying to communicate with a party that doesnt pass the check."
+                "You are trying to communicate with a party that doesn't pass the check."
             );
             continue;
         }

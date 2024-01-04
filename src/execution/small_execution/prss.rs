@@ -606,13 +606,13 @@ impl<Z: ShamirRing> PRSSSetup<Z> {
     }
 }
 
-/// Compute the inverse Vandemonde matrix with a_i = embed(i).
+/// Compute the inverse Vandermonde matrix with a_i = embed(i).
 /// That is:
 /// 1               1               1           ...    1
 /// a_1             a_2             a_3         ...    a_columns
 /// a_1^2           a_2^2           a_3^2       ...    a_columns^2
 /// ...
-/// a_1^{rows-1}    a_2^{rows-1}    a_3^{rows-1}...    a_colums^{rows-1}
+/// a_1^{rows-1}    a_2^{rows-1}    a_3^{rows-1}...    a_columns^{rows-1}
 fn inverse_vdm<Z: ShamirRing>(rows: usize, columns: usize) -> anyhow::Result<ArrayD<Z>> {
     Ok(init_vdm::<Z>(columns, rows)?.reversed_axes())
 }

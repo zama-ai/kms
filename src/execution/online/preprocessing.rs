@@ -125,7 +125,7 @@ impl<Z: ShamirRing, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> DummyPreprocessi
         secret: Z,
         rng: &mut impl RngCore,
     ) -> anyhow::Result<Vec<Share<Z>>> {
-        let poly = Poly::sample_random(rng, secret, threshold as usize);
+        let poly = Poly::sample_random_with_fixed_constant(rng, secret, threshold as usize);
         (1..=parties)
             .map(|xi| {
                 let embedded_xi = Z::embed_exceptional_set(xi)?;

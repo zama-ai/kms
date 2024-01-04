@@ -340,7 +340,7 @@ impl Choreography for GrpcChoreography {
         Ok(tonic::Response::new(RetrieveResultsResponse { values }))
     }
 
-    ///Note: For now assumes keygen works with PRSS128, but we dont really have a protocol yet so...
+    ///Note: For now assumes keygen works with PRSS128, but we don't really have a protocol yet so...
     async fn keygen(
         &self,
         request: tonic::Request<KeygenRequest>,

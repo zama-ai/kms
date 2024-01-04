@@ -354,7 +354,7 @@ pub fn interpolate_poly_w_punctures<Z: ShamirRing, R: RngCore>(
     }
     let degree = threshold - dispute_party_ids.len();
     // make a random polynomial of degree threshold `dispute_party_ids`
-    let base_poly = Poly::sample_random(rng, secret, degree);
+    let base_poly = Poly::sample_random_with_fixed_constant(rng, secret, degree);
     // Modify the polynomial by increasing its degree with |dispute_party_ids| and ensuring the points
     // in `dispute_party_ids` gets y-value=0 and evaluate it for 1..num_parties
     let points = evaluate_w_zero_roots(num_parties, dispute_party_ids, &base_poly)?;

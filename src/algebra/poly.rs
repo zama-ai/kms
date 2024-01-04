@@ -26,7 +26,7 @@ impl<Z: ShamirRing> Poly<Z> {
             .collect::<Result<Vec<_>, _>>()?;
         inv_coefs.insert(0, Z::ZERO);
 
-        // embed party IDs as invertable x-points on the polynomial
+        // embed party IDs as invertible x-points on the polynomial
         //TODO: This could be memoized
         let x_coords: Vec<_> = (0..=num_parties)
             .map(Z::embed_exceptional_set)
@@ -85,6 +85,7 @@ where
     F: Mul<F, Output = F>,
     F: Add<F, Output = F>,
 {
+    /// evaluate the polynomial at a given point
     pub fn eval(&self, point: &F) -> F {
         let mut res = F::ZERO;
         for coef in self.coefs.iter().rev() {
@@ -100,6 +101,7 @@ where
     F: PartialEq,
     F: Copy,
 {
+    /// the degree of the polynomial, i.e., the highest exponent of the variable whose coefficient is not zero.
     pub fn deg(&self) -> usize {
         for (i, item) in self.coefs.iter().enumerate().rev() {
             if item != &F::ZERO {
@@ -109,6 +111,7 @@ where
         0
     }
 
+    /// check if poly is all-zero
     pub fn is_zero(&self) -> bool {
         for c in self.coefs.iter() {
             if c != &F::ZERO {
@@ -118,18 +121,21 @@ where
         true
     }
 
+    /// return a poly that is constant zero
     pub fn zero() -> Self {
         Poly {
             coefs: vec![F::ZERO],
         }
     }
 
+    /// return a poly that is constant zero and has n zero coefficients
     pub fn zeros(n: usize) -> Self {
         Poly {
             coefs: vec![F::ZERO; n],
         }
     }
 
+    /// return the highest non-zero coefficient, or zero else
     fn highest_coefficient(&self) -> F {
         for c in self.coefs.iter().rev() {
             if c != &F::ZERO {
@@ -139,6 +145,7 @@ where
         F::ZERO
     }
 
+    /// remove zero-coefficients from the highest degree variables
     fn compress(&mut self) {
         while let Some(c) = self.coefs.last() {
             if c == &F::ZERO {
@@ -170,8 +177,6 @@ impl<F: Field> Poly<F> {
 impl<F> Poly<F>
 where
     F: One,
-    F: PartialEq,
-    F: Copy,
 {
     pub fn one() -> Self {
         Poly {
@@ -185,7 +190,12 @@ where
     F: Sample,
     F: Zero + One,
 {
-    pub fn sample_random<U: RngCore>(rng: &mut U, zero_coef: F, degree: usize) -> Self {
+    /// sample a random poly of given degree with `zero_coef` as fixed value for the constant term
+    pub fn sample_random_with_fixed_constant<U: RngCore>(
+        rng: &mut U,
+        zero_coef: F,
+        degree: usize,
+    ) -> Self {
         let mut coefs: Vec<_> = (0..degree).map(|_| F::sample(rng)).collect();
         coefs.insert(0, zero_coef);
         Poly { coefs }
@@ -361,6 +371,7 @@ impl<F: Field> Div<&Poly<F>> for Poly<F> {
     }
 }
 
+/// computes quotient `q` and remainder `r` for dividing `a / b`, s.t. `a = q*b + r`
 fn quo_rem<F: Field>(a: Poly<F>, b: &Poly<F>) -> (Poly<F>, Poly<F>) {
     let a_len = a.coefs.len();
     let b_len = b.coefs.len();
@@ -382,6 +393,7 @@ fn quo_rem<F: Field>(a: Poly<F>, b: &Poly<F>) -> (Poly<F>, Poly<F>) {
     (q, r)
 }
 
+/// compute Lagrange polynomials for the given list of points
 pub fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
     let polys: Vec<_> = points
         .iter()
@@ -406,6 +418,7 @@ pub fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
     polys
 }
 
+/// interpolate a polynomial through coordinates where points holds the x-coordinates and values holds the y-coordinates
 pub fn lagrange_interpolation<F: Field>(points: &[F], values: &[F]) -> anyhow::Result<Poly<F>> {
     let ls = F::memoize_lagrange(points)?;
     assert_eq!(ls.len(), values.len());
@@ -417,6 +430,7 @@ pub fn lagrange_interpolation<F: Field>(points: &[F], values: &[F]) -> anyhow::R
     Ok(res)
 }
 
+/// computes the extended Euclidean algorithm for a and b and stops when r1 reaches the stop degree or higher
 fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly<F>) {
     let (mut r0, mut r1) = (a, b);
     let (mut t0, mut t1) = (Poly::zero(), Poly::one());
@@ -431,6 +445,9 @@ fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly
     (r1, t1)
 }
 
+/// runs Gao decoding on coordinates where points holds the x-coordinates and values holds the y-coordinates
+/// k is the RS degree and usually set to threshold + 1 in our case
+/// max_error_count is used to check if the number of errors is at most as large as this value
 pub fn gao_decoding<F: Field>(
     points: &Vec<F>,
     values: &Vec<F>,
@@ -447,12 +464,9 @@ pub fn gao_decoding<F: Field>(
         .checked_sub(k)
         .ok_or_else(|| anyhow_error_and_log("overflow computing d".to_string()))?;
 
-    //Note: Changed assert to error because we dont want to panic here
-    //assert!(2 * max_error_count < d);
-    //assert_eq!(values.len(), points.len());
     if 2 * max_error_count >= d || values.len() != points.len() {
         return Err(anyhow_error_and_log(
-            "Gao decoding failure, too many errors or missmatch between values and points size "
+            "Gao decoding failure, too many errors for given parameters or mismatch between values and points size"
                 .to_string(),
         ));
     }
@@ -494,7 +508,7 @@ pub fn gao_decoding<F: Field>(
             rem
         )))
     } else if h.deg() >= k {
-        Err(anyhow_error_and_log(format!("Gao decoding failure: Division result is of too high degree {}, but should be less than {}.", h.deg(), k-1)))
+        Err(anyhow_error_and_log(format!("Gao decoding failure: Division result is of too high degree {}, but should be at most {}.", h.deg(), k-1)))
     } else {
         Ok(h)
     }

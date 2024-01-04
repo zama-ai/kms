@@ -170,7 +170,7 @@ mod tests {
     use rand_chacha::ChaCha20Rng;
     use std::num::Wrapping;
 
-    macro_rules! tests {
+    macro_rules! test_triples {
         ($z:ty, $u:ty) => {
             paste! {
                 // Multiply random values and open the random values and the result
@@ -307,6 +307,6 @@ mod tests {
             }
         };
     }
-    tests![Z64, u64];
-    tests![Z128, u128];
+    test_triples![Z64, u64];
+    test_triples![Z128, u128];
 }

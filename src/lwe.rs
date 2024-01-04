@@ -52,7 +52,7 @@ use tfhe::shortint::prelude::PolynomialSize;
 use tfhe::shortint::prelude::StandardDev;
 use tfhe::shortint::MessageModulus;
 
-// Copied from tfhe-rs lwe_noise_gap_programmable_bootstrapping since it is only speicfied in their test code
+// Copied from tfhe-rs lwe_noise_gap_programmable_bootstrapping since it is only specified in their test code
 #[derive(Serialize, Copy, Clone, Deserialize, Debug, PartialEq)]
 pub struct CiphertextParameters<S>
 where
@@ -88,7 +88,7 @@ where
     Z: BaseRing,
 {
     let embedded_secret = ResiduePoly::from_scalar(secret);
-    let poly = Poly::sample_random(rng, embedded_secret, threshold);
+    let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
     let share = poly.eval(&ResiduePoly::embed_exceptional_set(party_id)?);
     Ok(share)
 }
@@ -111,7 +111,7 @@ pub(crate) fn from_expanded_msg<Scalar: UnsignedInteger + AsPrimitive<u128>>(
     // We cannot simply do the standard modulo operation then, as this would mean the message becomes
     // 2^message_mod_bits instead of 0 as it should be.
     // However the maximal negative value it can have (without a general decryption error) is delta/2
-    // which we can compute as 1 << delta_pad_bits, since the padding already halfs the true delta
+    // which we can compute as 1 << delta_pad_bits, since the padding already halves the true delta
     if raw_plaintext.as_() > Scalar::MAX.as_() - (1 << delta_pad_bits) {
         Z128::ZERO
     } else {
@@ -272,7 +272,7 @@ pub struct SecretKeyShare {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct SecretKey {
-    // Key for decrypting ciphtertexts in the 64 bit format
+    // Key for decrypting ciphertexts in the 64 bit format
     pub lwe_secret_key_64: LweSecretKeyOwned<u64>, // only used for constructing public key and debugging
     // Key for decrypting ciphertexts in the 128 bit format
     pub lwe_secret_key_128: LweSecretKeyOwned<u128>,
@@ -535,7 +535,7 @@ pub fn keygen_all_party_shares<R: RngCore>(
     // for each bit in the secret key generate all parties shares
     for (i, bit) in s_vector.iter().enumerate() {
         let embedded_secret = ResiduePoly::from_scalar(Wrapping(*bit));
-        let poly = Poly::sample_random(rng, embedded_secret, threshold);
+        let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
 
         for (party_id, v) in vv.iter_mut().enumerate().take(num_parties) {
             v.insert(

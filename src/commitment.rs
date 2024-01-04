@@ -13,7 +13,7 @@ pub struct Commitment(pub [u8; COMMITMENT_BYTE_LEN]);
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Hash, Eq)]
 pub struct Opening(pub [u8; KEY_BYTE_LEN]);
 
-// hash the given message and opening to compute the 256-bit commitment in the ROM
+/// hash the given message and opening to compute the 256-bit commitment in the ROM
 fn commitment_inner_hash(msg: &[u8], o: &Opening) -> Commitment {
     let mut com = [0u8; COMMITMENT_BYTE_LEN];
     let mut hasher = blake3::Hasher::new();
@@ -24,7 +24,7 @@ fn commitment_inner_hash(msg: &[u8], o: &Opening) -> Commitment {
     Commitment(com)
 }
 
-// commit to msg and return a 256-bit commitment and 128-bit opening value
+/// commit to msg and return a 256-bit commitment and 128-bit opening value
 pub fn commit<R: RngCore>(msg: &[u8], rng: &mut R) -> (Commitment, Opening) {
     let mut opening = [0u8; KEY_BYTE_LEN];
     rng.fill_bytes(&mut opening);
@@ -34,7 +34,7 @@ pub fn commit<R: RngCore>(msg: &[u8], rng: &mut R) -> (Commitment, Opening) {
     (com, o)
 }
 
-// verify that commitment c can be openend with o to retrieve msg
+/// verify that commitment c can be opened with o to retrieve msg
 pub fn verify(msg: &[u8], com_to_check: &Commitment, o: &Opening) -> bool {
     let computed_commitment = commitment_inner_hash(msg, o);
     computed_commitment == *com_to_check

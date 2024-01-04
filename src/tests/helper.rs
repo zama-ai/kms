@@ -191,7 +191,7 @@ pub mod tests {
         /// - threshold
         /// - dispute pairs (starting at 0)
         ///
-        /// Everyhting else is set to default (i.e. no cheating happens)
+        /// Everything else is set to default (i.e. no cheating happens)
         pub fn init_dispute(
             num_parties: usize,
             threshold: usize,
@@ -253,7 +253,7 @@ pub mod tests {
     }
 
     /// Deterministic cipher generation.
-    /// Encrypts a small message with determistic randomness
+    /// Encrypts a small message with deterministic randomness
     pub fn generate_cipher(_key_name: &str, message: u8) -> Ciphertext64 {
         let keys: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
         let mod_log = keys
@@ -352,7 +352,7 @@ pub mod tests {
         }
     }
 
-    /// Return a large session to be used with a multiple partiess
+    /// Return a large session to be used with a multiple parties
     pub fn get_large_session_for_parties(amount: usize, threshold: u8, role: Role) -> LargeSession {
         let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
         let id = parameters.own_identity.clone();
@@ -366,7 +366,7 @@ pub mod tests {
         }
     }
 
-    /// Helper method for executing networked tests with multiple parties some honest some dishoneset.
+    /// Helper method for executing networked tests with multiple parties some honest some dishonest.
     /// The `task_honest` argument contains the code to be execute by honest parties which returns a value of type [OutputT].
     /// The `task_malicious` argument contains the code to be execute by malicious parties which returns a value of type [OutputT].
     /// The `malicious_roles` argument contains the list of roles which should execute the `task_malicious`
