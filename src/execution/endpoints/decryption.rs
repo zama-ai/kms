@@ -4,8 +4,8 @@ use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use tfhe::core_crypto::prelude::*;
 use tfhe::core_crypto::prelude::{
-    lwe_ciphertext_modulus_switch_up, programmable_bootstrap_f128_lwe_ciphertext, CastFrom,
-    GlweCiphertextOwned, GlweSize, LweCiphertext, UnsignedTorus,
+    programmable_bootstrap_f128_lwe_ciphertext, CastFrom, GlweCiphertextOwned, GlweSize,
+    LweCiphertext, UnsignedTorus,
 };
 use tfhe::integer::block_decomposition::BlockRecomposer;
 use tfhe::shortint::prelude::PolynomialSize;
@@ -433,6 +433,34 @@ where
         &accumulator_plaintext,
         ciphertext_modulus,
     )
+}
+
+/// The method below is copied verbatim from the `noise-gap-exp` branch in tfhe-rs-internal since this branch will likely not be merged in main.
+///
+/// Takes a ciphertext, `input`, of a certain domain, [InputScalar] and overwrites the content of `output`
+/// with the ciphertext converted to the [OutputScaler] domain.
+pub fn lwe_ciphertext_modulus_switch_up<InputScalar, OutputScalar, InputCont, OutputCont>(
+    output: &mut LweCiphertext<OutputCont>,
+    input: &LweCiphertext<InputCont>,
+) where
+    InputScalar: UnsignedInteger + CastInto<OutputScalar>,
+    OutputScalar: UnsignedInteger,
+    InputCont: Container<Element = InputScalar>,
+    OutputCont: ContainerMut<Element = OutputScalar>,
+{
+    assert!(input.ciphertext_modulus().is_native_modulus());
+
+    output
+        .as_mut()
+        .iter_mut()
+        .zip(input.as_ref().iter())
+        .for_each(|(dst, &src)| *dst = src.cast_into());
+    let modulus_up: CiphertextModulus<OutputScalar> = input.ciphertext_modulus().try_to().unwrap();
+
+    lwe_ciphertext_cleartext_mul_assign(
+        output,
+        Cleartext(modulus_up.get_power_of_two_scaling_to_native_torus()),
+    );
 }
 
 #[cfg(test)]
