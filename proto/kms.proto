@@ -19,7 +19,7 @@ message Proof {
 }
 
 message DecryptionRequestPayload {
-  bytes address = 1;
+  bytes verification_key = 1;
   FheType fhe_type = 2;
   bytes ciphertext = 3;
   Proof proof = 4;
@@ -32,9 +32,9 @@ message DecryptionRequest {
 }
 
 message DecryptionResponsePayload {
-  bytes address = 1;
-  FheType fhe_type = 2;
-  uint32 plaintext = 3;
+  uint32 shares_needed = 1;
+  bytes verification_key = 2;
+  bytes plaintext = 3;
   bytes digest = 4;
   bytes randomness = 5;
 }
@@ -44,14 +44,18 @@ message DecryptionResponse {
   DecryptionResponsePayload payload = 2;
 }
 
+message AggregatedDecryptionRespone {
+  repeated DecryptionResponse responses = 1;
+}
+
 message ReencryptionRequestPayload {
-  bytes address = 1;
+  bytes verification_key = 1;
   bytes enc_key = 2;
   FheType fhe_type = 3;
   bytes ciphertext = 4;
   Proof proof = 5;
   bytes randomness = 6;
-}
+  }
 
 message ReencryptionRequest {
   bytes signature = 1;
@@ -59,8 +63,13 @@ message ReencryptionRequest {
 }
 
 message ReencryptionResponse {
-  bytes address = 1;
-  FheType fhe_type = 2;
-  bytes signcrypted_ciphertext = 3;
-  bytes digest = 4;
+  uint32 shares_needed = 1;
+  bytes verification_key = 2;
+  FheType fhe_type = 3;
+  bytes signcrypted_ciphertext = 4;
+  bytes digest = 5;
+}
+
+message AggregatedReencryptionRespone {
+  repeated ReencryptionResponse responses = 1;
 }
