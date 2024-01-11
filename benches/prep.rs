@@ -81,6 +81,7 @@ fn triple_z128(c: &mut Criterion) {
                     let _result = execute_protocol_large::<ResiduePoly128, _, _>(
                         config.n,
                         config.t,
+                        None,
                         &mut computation,
                     );
                 });
@@ -137,6 +138,7 @@ fn triple_z64(c: &mut Criterion) {
                     let _result = execute_protocol_large::<ResiduePoly64, _, _>(
                         config.n,
                         config.t,
+                        None,
                         &mut computation,
                     );
                 });
@@ -193,6 +195,7 @@ fn random_sharing(c: &mut Criterion) {
                     let _result = execute_protocol_large::<ResiduePoly128, _, _>(
                         config.n,
                         config.t,
+                        None,
                         &mut computation,
                     );
                 });
@@ -235,6 +238,7 @@ fn double_sharing(c: &mut Criterion) {
                     let _result = execute_protocol_large::<ResiduePoly128, _, _>(
                         config.n,
                         config.t,
+                        None,
                         &mut computation,
                     );
                 });
@@ -297,6 +301,7 @@ fn bitgen_nlarge(c: &mut Criterion) {
                     let _result = execute_protocol_large::<ResiduePoly128, _, _>(
                         config.n,
                         config.t,
+                        None,
                         &mut computation,
                     );
                 });

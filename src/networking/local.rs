@@ -200,7 +200,19 @@ impl Networking for LocalNetworking {
         if let Ok(net_round) = self.network_round.lock() {
             Ok(self.init_time + *NETWORK_TIMEOUT * (*net_round as u32))
         } else {
-            Err(anyhow_error_and_log("Couldn't lock mutex".to_string()))
+            Err(anyhow_error_and_log(
+                "Couldn't lock network round mutex".to_string(),
+            ))
+        }
+    }
+
+    fn get_current_round(&self) -> anyhow::Result<usize> {
+        if let Ok(net_round) = self.network_round.lock() {
+            Ok(*net_round)
+        } else {
+            Err(anyhow_error_and_log(
+                "Couldn't lock network round mutex".to_string(),
+            ))
         }
     }
 }

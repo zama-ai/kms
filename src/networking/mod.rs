@@ -26,4 +26,6 @@ pub trait Networking {
 
     ///Used to compute the timeout in network functions
     fn get_timeout_current_round(&self) -> anyhow::Result<Instant>;
+
+    fn get_current_round(&self) -> anyhow::Result<usize>;
 }

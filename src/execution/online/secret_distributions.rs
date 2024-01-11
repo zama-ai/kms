@@ -79,6 +79,7 @@ mod tests {
 
     use super::{RealSecretDistributions, SecretDistributions};
 
+    // TODO these two test could be merged into a generic test and then just calles with Z64 and Z128 respectively.
     #[test]
     fn test_uniform_z128() {
         let parties = 5;
@@ -110,7 +111,26 @@ mod tests {
             (session.my_role().unwrap(), opened_res)
         };
 
-        let results = execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, &mut task);
+        // Rounds (only on the happy path here)
+        // RealPreprocessing
+        // init single sharing
+        //         share dispute = 1 round
+        //         pads =  1 round
+        //         coinflip = vss + open = (1 + 3 + threshold) + 1
+        //         verify = 1 reliable_broadcast = 3 + t rounds
+        // init double sharing
+        //         same as single sharing above (the single and double sharings are batched)
+        //  triple batch - have been precomputed, just one open = 1 round
+        //  random batch - have been precomputed = 0 rounds
+        // t_uniform generates bits (mult + open) = 2 rounds
+        // opening of the final output = 1 round
+        let rounds = 2 * (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) + 1 + 2 + 1;
+        let results = execute_protocol_large::<ResiduePoly128, _, _>(
+            parties,
+            threshold,
+            Some(rounds),
+            &mut task,
+        );
 
         //Check all parties agree and fall within expected bounds
         let ref_res = results[0].1.clone();
@@ -162,7 +182,26 @@ mod tests {
             (session.my_role().unwrap(), opened_res)
         };
 
-        let results = execute_protocol_large::<ResiduePoly64, _, _>(parties, threshold, &mut task);
+        // Rounds (only on the happy path here)
+        // RealPreprocessing
+        // init single sharing
+        //         share dispute = 1 round
+        //         pads =  1 round
+        //         coinflip = vss + open = (1 + 3 + threshold) + 1
+        //         verify = 1 reliable_broadcast = 3 + t rounds
+        // init double sharing
+        //         same as single sharing above (the single and double sharings are batched)
+        //  triple batch - have been precomputed, just one open = 1 round
+        //  random batch - have been precomputed = 0 rounds
+        // t_uniform generates bits (mult + open) = 2 rounds
+        // opening of the final output = 1 round
+        let rounds = 2 * (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) + 1 + 2 + 1;
+        let results = execute_protocol_large::<ResiduePoly64, _, _>(
+            parties,
+            threshold,
+            Some(rounds),
+            &mut task,
+        );
 
         //Check all parties agree and fall within expected bounds
         let ref_res = results[0].1.clone();

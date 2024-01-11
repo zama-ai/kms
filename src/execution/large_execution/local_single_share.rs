@@ -84,11 +84,12 @@ impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, 
                 "Passed an empty secrets vector to LocalSingleShare".to_string(),
             ));
         }
-        //Keeps executing til verification passes
+        // Keeps executing til verification passes
         loop {
-            //ShareDispute will fill shares from corrupted players with 0s
+            // ShareDispute will fill shares from corrupted players with 0s
             let mut shared_secrets = self.share_dispute.execute(session, secrets).await?;
 
+            // note that we could merge the share_pads round into the first one. This is currently discussed in the NIST doc
             let shared_pads = send_receive_pads(session, &self.share_dispute).await?;
 
             let x = self.coinflip.execute(session).await?;
@@ -565,8 +566,7 @@ pub(crate) mod tests {
         };
 
         let (result_honest, _) = execute_protocol_w_disputes_and_malicious::<Z, _, _, _, _, _>(
-            params.num_parties,
-            params.threshold as u8,
+            &params,
             &params.dispute_pairs,
             &[
                 malicious_due_to_dispute.clone(),
@@ -629,10 +629,16 @@ pub(crate) mod tests {
         }
     }
 
+    // Rounds (happy path)
+    //      share dispute = 1 round
+    //      pads =  1 round // note that we could merge this round into the first one. This is currently discussed in the NIST doc
+    //      coinflip = vss + open = (1 + 3 + t) + 1
+    //      verify = 1 reliable_broadcast = 3 + t rounds
+    // Total: 10 + 2*t rounds
     type TrueCoinFlip = RealCoinflip<RealVss>;
     #[rstest]
-    #[case(TestingParameters::init_honest(4, 1))]
-    #[case(TestingParameters::init_honest(7, 2))]
+    #[case(TestingParameters::init_honest(4, 1, Some(12)))]
+    #[case(TestingParameters::init_honest(7, 2, Some(14)))]
     fn test_lsl_z128(#[case] params: TestingParameters) {
         let malicious_lsl = RealLocalSingleShare::<TrueCoinFlip, RealShareDispute>::default();
         test_lsl_strategies::<ResiduePoly64, _>(params.clone(), malicious_lsl.clone());
@@ -647,8 +653,8 @@ pub(crate) mod tests {
         S: ShareDispute + 'static,
     >(
         #[values(
-            TestingParameters::init(4,1,&[2],&[0,3],&[],true),
-            TestingParameters::init(7,2,&[1,4],&[0,2,5,6],&[],true)
+            TestingParameters::init(4,1,&[2],&[0,3],&[],true,None),
+            TestingParameters::init(7,2,&[1,4],&[0,2,5,6],&[],true,None)
         )]
         params: TestingParameters,
         #[values(
@@ -686,8 +692,8 @@ pub(crate) mod tests {
         S: ShareDispute + 'static,
     >(
         #[values(
-            TestingParameters::init(4,1,&[2],&[0],&[],false),
-            TestingParameters::init(7,2,&[1,4],&[0,2],&[],false)
+            TestingParameters::init(4,1,&[2],&[0],&[],false,None),
+            TestingParameters::init(7,2,&[1,4],&[0,2],&[],false,None)
         )]
         params: TestingParameters,
         #[values(
@@ -714,8 +720,8 @@ pub(crate) mod tests {
 
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4,1,&[2],&[0],&[],true), TrueCoinFlip::default(), MaliciousShareDisputeRecons::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],false), MaliciousCoinflipRecons::<RealVss>::default(), RealShareDispute::default())]
+    #[case(TestingParameters::init(4,1,&[2],&[0],&[],true,None), TrueCoinFlip::default(), MaliciousShareDisputeRecons::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],false,None), MaliciousCoinflipRecons::<RealVss>::default(), RealShareDispute::default())]
     fn test_lsl_malicious_subprotocols_fine_grain<
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
@@ -743,10 +749,10 @@ pub(crate) mod tests {
         S: ShareDispute + 'static,
     >(
         #[values(
-            TestingParameters::init(4,1,&[2],&[0],&[],false),
-            TestingParameters::init(4,1,&[2],&[0,1],&[],true),
-            TestingParameters::init(7,2,&[1,4],&[0,2],&[],false),
-            TestingParameters::init(7,2,&[1,4],&[0,2,6],&[],true)
+            TestingParameters::init(4,1,&[2],&[0],&[],false,None),
+            TestingParameters::init(4,1,&[2],&[0,1],&[],true,None),
+            TestingParameters::init(7,2,&[1,4],&[0,2],&[],false,None),
+            TestingParameters::init(7,2,&[1,4],&[0,2,6],&[],true,None)
         )]
         params: TestingParameters,
         #[values(
@@ -781,10 +787,10 @@ pub(crate) mod tests {
         S: ShareDispute + 'static,
     >(
         #[values(
-            TestingParameters::init(4,1,&[2],&[0],&[],true),
-            TestingParameters::init(4,1,&[2],&[0,1],&[],true),
-            TestingParameters::init(7,2,&[1,4],&[0,6],&[],true),
-            TestingParameters::init(7,2,&[1,4],&[0,2,3,6],&[],true)
+            TestingParameters::init(4,1,&[2],&[0],&[],true,None),
+            TestingParameters::init(4,1,&[2],&[0,1],&[],true,None),
+            TestingParameters::init(7,2,&[1,4],&[0,6],&[],true,None),
+            TestingParameters::init(7,2,&[1,4],&[0,2,3,6],&[],true,None)
         )]
         params: TestingParameters,
         #[values(

@@ -112,7 +112,8 @@ mod tests {
                         open_list(&bits, &session).await.unwrap()
                     }
 
-                    let results = execute_protocol_small(parties, threshold, &mut task);
+                    // expect 3 rounds: 2 for bit gen and 1 for opening
+                    let results = execute_protocol_small(parties, threshold, Some(3), &mut task);
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }
 
@@ -153,7 +154,7 @@ mod tests {
                         open_list(&bits, &session).await.unwrap()
                     };
 
-                    let results = execute_protocol_small(parties, threshold, &mut task);
+                    let results = execute_protocol_small(parties, threshold, None, &mut task);
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }
 

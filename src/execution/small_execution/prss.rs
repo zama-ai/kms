@@ -201,7 +201,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
     }
 
     /// PRZS.Next() for a single party
-    /// `party_if`: The 1-index party ID.
+    /// `party_id`: The 1-index party ID.
     /// `t`: The threshold parameter for the session
     pub fn przs_next(&mut self, party_id: usize, threshold: u8) -> anyhow::Result<Z> {
         // party IDs start from 1
@@ -291,7 +291,6 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
             }
         }
 
-        session.network().increase_round_counter().await?;
         let broadcast_result =
             broadcast_with_corruption::<Z, R, S>(session, BroadcastValue::PRSSVotes(chi_values))
                 .await?;
@@ -1451,7 +1450,8 @@ mod tests {
             Share::new(role, state.prss_next(role.one_based()).unwrap())
         }
 
-        let result = execute_protocol_small(parties, threshold, &mut task);
+        // init with Dummyt AR does not send anything = 0 expected rounds
+        let result = execute_protocol_small(parties, threshold, Some(0), &mut task);
 
         validate_prss_init(ShamirSharing::create(result), parties, threshold as usize);
     }
@@ -1478,7 +1478,7 @@ mod tests {
 
     #[test]
     fn sunshine_robust_init() {
-        let parties = 5;
+        let parties: usize = 5;
         let threshold = 1;
 
         async fn task(mut session: LargeSession) -> Share<ResiduePoly128> {
@@ -1490,7 +1490,23 @@ mod tests {
             Share::new(role, state.prss_next(role.one_based()).unwrap())
         }
 
-        let result = execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, &mut task);
+        // Rounds in robust init:
+        // c iterations of VSS (currently not in parallel)
+        //  VSS (here: only the happy path)
+        //      Round 1: 1 sending to all = 1 round
+        //      Round 2: 1 reliable broadcast = 3 + t rounds
+        //      Round 3: no corruptions in this case = 0 rounds
+        //      Round 4: no corruptions in this case = 0 rounds
+        // 1 robust open in the end = 1 round
+        let c = num_integer::binomial(parties, threshold).div_ceil(parties - threshold);
+        let rounds = c * (1 + 3 + threshold) + 1;
+
+        let result = execute_protocol_large::<ResiduePoly128, _, _>(
+            parties,
+            threshold,
+            Some(rounds),
+            &mut task,
+        );
         let sharing = ShamirSharing::create(result);
         validate_prss_init(sharing, parties, threshold);
     }
@@ -1514,7 +1530,8 @@ mod tests {
             }
         };
 
-        let result = execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, &mut task);
+        let result =
+            execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
 
         let sharing = ShamirSharing::create(result);
         validate_prss_init(sharing, parties, threshold);

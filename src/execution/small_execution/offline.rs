@@ -442,7 +442,12 @@ mod test {
             (session, res)
         };
 
-        let result = execute_protocol_small(parties, threshold, &mut task);
+        // Rounds:
+        // PRSS-Setup with Dummy AR does not send anything = 0 rounds
+        // pre-processing without corruptions with Dummy AR does only do 1 reliable broadcast = 3 + t rounds
+        let rounds = 3 + threshold as usize;
+
+        let result = execute_protocol_small(parties, threshold, Some(rounds), &mut task);
 
         let mut first_to_recon = Vec::new();
         for (_, res) in result.iter() {
@@ -495,7 +500,12 @@ mod test {
             (session, res)
         };
 
-        let result = execute_protocol_small(parties, threshold, &mut task);
+        // Rounds:
+        // PRSS-Setup with Dummy AR does not send anything = 0 rounds
+        // pre-processing without corruptions with Dummy AR does only do 1 reliable broadcast = 3 + t rounds
+        let rounds = 3 + threshold as usize;
+
+        let result = execute_protocol_small(parties, threshold, Some(rounds), &mut task);
 
         //Check we can reconstruct everything and we do have multiplication triples
         for idx in 0..TRIPLE_BATCH_SIZE {
@@ -552,7 +562,12 @@ mod test {
             assert_eq!(batch_size.randoms, preproc.elements.available_randoms.len());
         }
 
-        let _result = execute_protocol_small(parties, threshold, &mut task);
+        // Rounds:
+        // PRSS-Setup with Dummy AR does not send anything = 0 rounds
+        // pre-processing without corruptions with Dummy AR does only do 1 reliable broadcast = 3 + t rounds
+        let rounds = 3 + threshold as usize;
+
+        let _result = execute_protocol_small(parties, threshold, Some(rounds), &mut task);
     }
 
     // Test what happens when a party send a wrong type of value
@@ -627,7 +642,7 @@ mod test {
             (session, triple_res, rand_res)
         }
 
-        let result = execute_protocol_small(parties, threshold, &mut task);
+        let result = execute_protocol_small(parties, threshold, None, &mut task);
 
         //Check we can reconstruct everything and we do have multiplication triples
         for idx in 0..TRIPLE_BATCH_SIZE {
@@ -713,7 +728,7 @@ mod test {
             (session, triple_res, rand_res)
         }
 
-        let result = execute_protocol_small(parties, threshold, &mut task);
+        let result = execute_protocol_small(parties, threshold, None, &mut task);
 
         // Check that the malicious party has been added to the list
         for (cur_ses, _, _) in result.clone() {
@@ -794,7 +809,7 @@ mod test {
             session
         }
 
-        let result = execute_protocol_small(parties, threshold, &mut task);
+        let result = execute_protocol_small(parties, threshold, None, &mut task);
 
         // Check that the malicious party has been added to the list
         for cur_ses in result.clone() {

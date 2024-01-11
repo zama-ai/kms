@@ -191,13 +191,12 @@ pub async fn robust_opens_to_all<Z: ShamirRing, R: RngCore, B: BaseSessionHandle
 ) -> anyhow::Result<Option<Vec<Z>>> {
     let own_role = session.my_role()?;
 
-    session.network().increase_round_counter().await?;
     send_to_all(
         session,
         &own_role,
         NetworkValue::VecRingValue(shares.to_vec()),
     )
-    .await;
+    .await?;
 
     let mut jobs = JoinSet::<Result<(Role, anyhow::Result<Vec<Z>>), Elapsed>>::new();
     //Note: we give the set of corrupt parties as the non_answering_parties argument
@@ -346,6 +345,8 @@ mod test {
             res
         }
 
-        let _ = execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, &mut task);
+        // expect a single round for opening
+        let _ =
+            execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, Some(1), &mut task);
     }
 }

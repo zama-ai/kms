@@ -244,8 +244,7 @@ pub(crate) mod tests {
         };
 
         let (results_honest, _) = execute_protocol_w_disputes_and_malicious::<Z, _, _, _, _, _>(
-            params.num_parties,
-            params.threshold as u8,
+            &params,
             &[],
             &params.malicious_roles,
             malicious_coinflip,
@@ -293,10 +292,11 @@ pub(crate) mod tests {
         }
     }
 
+    // Rounds: We expect 3+1+t+1 rounds on the happy path
     #[rstest]
-    #[case(TestingParameters::init_honest(4, 1))]
-    #[case(TestingParameters::init_honest(7, 2))]
-    #[case(TestingParameters::init_honest(10, 3))]
+    #[case(TestingParameters::init_honest(4, 1, Some(6)))]
+    #[case(TestingParameters::init_honest(7, 2, Some(7)))]
+    #[case(TestingParameters::init_honest(10, 3, Some(8)))]
     fn test_coinflip_honest_z128(#[case] params: TestingParameters) {
         let malicious_coinflip = RealCoinflip::<RealVss>::default();
         test_coinflip_strategies::<ResiduePoly64, _>(params.clone(), malicious_coinflip.clone());
@@ -308,13 +308,13 @@ pub(crate) mod tests {
     //We also specify whether we expect the cheating strategy to be detected, if so we check we do detect the cheaters
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false), RealVss::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true), DroppingVssAfterR1::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false), DroppingVssAfterR2::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), RealVss::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
     fn test_coinflip_dropout<V: Vss + 'static>(
         #[case] params: TestingParameters,
         #[case] malicious_vss: V,
@@ -331,13 +331,13 @@ pub(crate) mod tests {
     //We also specify whether we expect the cheating strategy to be detected, if so we check we do detect the cheaters
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true), DroppingVssFromStart::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true), DroppingVssAfterR1::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false), DroppingVssAfterR2::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssFromStart::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
     fn test_coinflip_malicious_vss<V: Vss + 'static>(
         #[case] params: TestingParameters,
         #[case] malicious_vss: V,
@@ -360,13 +360,13 @@ pub(crate) mod tests {
     //Again, we always expect the honest parties to agree on the output
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false), RealVss::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true), DroppingVssAfterR1::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false), DroppingVssAfterR2::default())]
-    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false), MaliciousVssR1::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), RealVss::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), DroppingVssAfterR2::default())]
+    #[case(TestingParameters::init(4, 1, &[1], &[2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4, 1, &[1], &[0,2], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2], &[], false, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(7, 2, &[1,3], &[0,2,4,6], &[], true, None), MaliciousVssR1::init(&params.roles_to_lie_to))]
     fn test_malicious_coinflip_malicious_vss<V: Vss + 'static>(
         #[case] params: TestingParameters,
         #[case] malicious_vss: V,

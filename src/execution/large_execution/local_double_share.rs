@@ -543,8 +543,7 @@ pub(crate) mod tests {
         };
 
         let (result_honest, _) = execute_protocol_w_disputes_and_malicious::<Z, _, _, _, _, _>(
-            params.num_parties,
-            params.threshold as u8,
+            &params,
             &params.dispute_pairs,
             &[
                 malicious_due_to_dispute.clone(),
@@ -618,9 +617,15 @@ pub(crate) mod tests {
 
     type TrueCoinFlip = RealCoinflip<RealVss>;
 
+    // Rounds (happy path)
+    //      share dispute = 1 round
+    //      pads =  1 round
+    //      coinflip = vss + open = (1 + 3 + t) + 1
+    //      verify = 1 reliable_broadcast = 3 + t rounds
+    // Total: 10 + 2*t rounds
     #[rstest]
-    #[case(TestingParameters::init_honest(4, 1))]
-    #[case(TestingParameters::init_honest(7, 2))]
+    #[case(TestingParameters::init_honest(4, 1, Some(12)))]
+    #[case(TestingParameters::init_honest(7, 2, Some(14)))]
     fn test_ldl_z128(#[case] params: TestingParameters) {
         let malicious_ldl = RealLocalDoubleShare::<TrueCoinFlip, RealShareDispute>::default();
 
@@ -636,8 +641,8 @@ pub(crate) mod tests {
         S: ShareDispute + 'static,
     >(
         #[values(
-            TestingParameters::init(4,1,&[2],&[0,3],&[],true),
-            TestingParameters::init(7,2,&[1,4],&[0,2,5,6],&[(1,5),(4,0)],true)
+            TestingParameters::init(4,1,&[2],&[0,3],&[],true,None),
+            TestingParameters::init(7,2,&[1,4],&[0,2,5,6],&[(1,5),(4,0)],true,None)
         )]
         params: TestingParameters,
         #[values(
@@ -675,8 +680,8 @@ pub(crate) mod tests {
         S: ShareDispute + 'static,
     >(
         #[values(
-            TestingParameters::init(4,1,&[2],&[0],&[],false),
-            TestingParameters::init(7,2,&[1,4],&[0,2],&[],false)
+            TestingParameters::init(4,1,&[2],&[0],&[],false,None),
+            TestingParameters::init(7,2,&[1,4],&[0,2],&[],false,None)
         )]
         params: TestingParameters,
         #[values(
@@ -702,8 +707,8 @@ pub(crate) mod tests {
 
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4,1,&[2],&[0],&[],true), TrueCoinFlip::default(), MaliciousShareDisputeRecons::init(&params.roles_to_lie_to))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[(3,0)],false), MaliciousCoinflipRecons::<RealVss>::default(), RealShareDispute::default())]
+    #[case(TestingParameters::init(4,1,&[2],&[0],&[],true,None), TrueCoinFlip::default(), MaliciousShareDisputeRecons::init(&params.roles_to_lie_to))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[(3,0)],false,None), MaliciousCoinflipRecons::<RealVss>::default(), RealShareDispute::default())]
     fn test_ldl_malicious_subprotocols_fine_grain<
         C: Coinflip + 'static,
         S: ShareDispute + 'static,
@@ -731,10 +736,10 @@ pub(crate) mod tests {
         S: ShareDispute + 'static,
     >(
         #[values(
-            TestingParameters::init(4,1,&[2],&[0],&[],false),
-            TestingParameters::init(4,1,&[2],&[0,1],&[],true),
-            TestingParameters::init(7,2,&[1,4],&[0,2],&[],false),
-            TestingParameters::init(7,2,&[1,4],&[0,2,6],&[(1,2),(4,6)],true)
+            TestingParameters::init(4,1,&[2],&[0],&[],false,None),
+            TestingParameters::init(4,1,&[2],&[0,1],&[],true,None),
+            TestingParameters::init(7,2,&[1,4],&[0,2],&[],false,None),
+            TestingParameters::init(7,2,&[1,4],&[0,2,6],&[(1,2),(4,6)],true,None)
         )]
         params: TestingParameters,
         #[values(
@@ -769,10 +774,10 @@ pub(crate) mod tests {
         S: ShareDispute + 'static,
     >(
         #[values(
-            TestingParameters::init(4,1,&[2],&[0],&[],true),
-            TestingParameters::init(4,1,&[2],&[0,1],&[],true),
-            TestingParameters::init(7,2,&[1,4],&[0,6],&[(1,5),(4,2)],true),
-            TestingParameters::init(7,2,&[1,4],&[0,2,3,6],&[(1,0),(4,0)],true)
+            TestingParameters::init(4,1,&[2],&[0],&[],true,None),
+            TestingParameters::init(4,1,&[2],&[0,1],&[],true,None),
+            TestingParameters::init(7,2,&[1,4],&[0,6],&[(1,5),(4,2)],true,None),
+            TestingParameters::init(7,2,&[1,4],&[0,2,3,6],&[(1,0),(4,0)],true,None)
         )]
         params: TestingParameters,
         #[values(

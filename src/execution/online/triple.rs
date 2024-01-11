@@ -187,7 +187,8 @@ mod tests {
                         open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap()
                     }
 
-                    let results = execute_protocol_small(parties, threshold, &mut task);
+                    // expect 2 rounds: 1 for multiplication and 1 for opening
+                    let results = execute_protocol_small(parties, threshold, Some(2), &mut task);
                     assert_eq!(results.len(), parties);
 
                     for cur_res in results {
@@ -227,7 +228,8 @@ mod tests {
                         (a_plain, b_plain, c_plain)
                     }
 
-                    let results = execute_protocol_small(parties, threshold, &mut task);
+                    // expect 4 rounds: 1 for bit multiplication and 3 for the separate openings
+                    let results = execute_protocol_small(parties, threshold, Some(4), &mut task);
                     assert_eq!(results.len(), parties);
                     for (a_vec, b_vec, c_vec) in &results {
                         for i in 0..AMOUNT {
@@ -261,7 +263,7 @@ mod tests {
                         }
                     };
 
-                    let results = execute_protocol_small(parties, threshold, &mut task);
+                    let results = execute_protocol_small(parties, threshold, None, &mut task);
                     assert_eq!(results.len(), parties);
 
                     for (cur_role, cur_res) in results {
@@ -294,7 +296,7 @@ mod tests {
                         open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap()
                     };
 
-                    let results = execute_protocol_small(parties, threshold, &mut task);
+                    let results = execute_protocol_small(parties, threshold, None, &mut task);
                     assert_eq!(results.len(), parties);
 
                     for cur_res in results {

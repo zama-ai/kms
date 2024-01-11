@@ -108,8 +108,6 @@ impl<Z: ShamirRing, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing
             .map(|((x, y), v)| *x * *y + v.degree_2t)
             .collect_vec();
 
-        session.network().increase_round_counter().await?;
-
         let recons_vec_share_d = robust_opens_to_all(
             session,
             &network_vec_share_d,
@@ -319,8 +317,7 @@ mod tests {
         };
 
         let (result_honest, _) = execute_protocol_w_disputes_and_malicious::<Z, _, _, _, _, _>(
-            params.num_parties,
-            params.threshold as u8,
+            &params,
             &params.dispute_pairs,
             &[
                 malicious_due_to_dispute.clone(),
@@ -489,8 +486,6 @@ mod tests {
                 .collect_vec();
             network_vec_share_d.pop();
 
-            session.network().increase_round_counter().await?;
-
             let recons_vec_share_d = robust_opens_to_all(
                 session,
                 &network_vec_share_d,
@@ -624,9 +619,22 @@ mod tests {
         }
     }
 
+    // Rounds (happy path)
+    // init single sharing
+    //         share dispute = 1 round
+    //         pads =  1 round
+    //         coinflip = vss + open = (1 + 3 + threshold) + 1
+    //         verify = 1 reliable_broadcast = 3 + t rounds
+    // init double sharing
+    //         same as single sharing above (single and double sharings are batched)
+    //  triple batch - have been precomputed, just one open = 1 round
+    //  random batch - have been precomputed = 0 rounds
+    // = 2 * (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) + 1
+    // = 21 + 4 * threshold (per init call)
+    // Note: 3 batches, so above rounds times 3
     #[rstest]
-    #[case(TestingParameters::init_honest(5, 1))]
-    #[case(TestingParameters::init_honest(9, 2))]
+    #[case(TestingParameters::init_honest(5, 1, Some(3 * 25)))]
+    #[case(TestingParameters::init_honest(9, 2, Some(3 * 29)))]
     fn test_large_offline_z128(#[case] params: TestingParameters) {
         let malicious_offline = HonestLargePreprocessing::<
             ResiduePoly128,
@@ -637,9 +645,10 @@ mod tests {
         test_offline_strategies(params, malicious_offline);
     }
 
+    // Rounds: same as for z128, see above
     #[rstest]
-    #[case(TestingParameters::init_honest(5, 1))]
-    #[case(TestingParameters::init_honest(9, 2))]
+    #[case(TestingParameters::init_honest(5, 1, Some(3 * 25)))]
+    #[case(TestingParameters::init_honest(9, 2, Some(3 * 29)))]
     fn test_large_offline_z64(#[case] params: TestingParameters) {
         let malicious_offline = HonestLargePreprocessing::<
             ResiduePoly64,
@@ -659,7 +668,7 @@ mod tests {
         LDL: LocalDoubleShare + 'static,
     >(
         #[values(
-                TestingParameters::init(5,1,&[2],&[0,3],&[],true),
+                TestingParameters::init(5,1,&[2],&[0,3],&[],true,None),
             )]
         params: TestingParameters,
         #[values(
@@ -724,7 +733,7 @@ mod tests {
         LDL: LocalDoubleShare + 'static,
     >(
         #[values(
-                TestingParameters::init(5,1,&[2],&[0,3],&[],true),
+                TestingParameters::init(5,1,&[2],&[0,3],&[],true,None),
             )]
         params: TestingParameters,
         #[values(RealVss::default())] _vss_strategy: V,
@@ -785,7 +794,7 @@ mod tests {
         LDL: LocalDoubleShare + 'static,
     >(
         #[values(
-                TestingParameters::init(5,1,&[2],&[0],&[],false),
+                TestingParameters::init(5,1,&[2],&[0],&[],false,None),
             )]
         params: TestingParameters,
         #[values(
@@ -882,7 +891,8 @@ mod tests {
             (session, triple_res, rand_res)
         }
 
-        let result = execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, &mut task);
+        let result =
+            execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
 
         for (_session, res_trip, res_rand) in result.iter() {
             assert_eq!(res_trip.len(), TRIPLE_BATCH_SIZE);
@@ -900,7 +910,7 @@ mod tests {
         LDL: LocalDoubleShare + 'static,
     >(
         #[values(
-                TestingParameters::init(9,2,&[1,4],&[0,2,5,6],&[],true)
+                TestingParameters::init(9,2,&[1,4],&[0,2,5,6],&[],true,None)
             )]
         params: TestingParameters,
         #[values(
@@ -966,7 +976,7 @@ mod tests {
         LDL: LocalDoubleShare + 'static,
     >(
         #[values(
-                TestingParameters::init(9,2,&[1,4],&[0,2,5,6],&[],true)
+                TestingParameters::init(9,2,&[1,4],&[0,2,5,6],&[],true,None)
             )]
         params: TestingParameters,
         #[values(RealVss::default())] _vss_strategy: V,
@@ -1028,7 +1038,7 @@ mod tests {
         LDL: LocalDoubleShare + 'static,
     >(
         #[values(
-                TestingParameters::init(9,2,&[1,4],&[0,2],&[],false)
+                TestingParameters::init(9,2,&[1,4],&[0,2],&[],false,None)
             )]
         params: TestingParameters,
         #[values(

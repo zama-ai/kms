@@ -111,7 +111,6 @@ impl Vss for DummyVss {
             .keys()
             .map(|role| (*role, NetworkValue::RingValue(*secret)))
             .collect();
-        session.network().increase_round_counter().await?;
         send_to_honest_parties(&values_to_send, session).await?;
         let mut jobs: JoinSet<Result<(Role, Result<Z, anyhow::Error>), Elapsed>> = JoinSet::new();
         generic_receive_from_all(&mut jobs, session, &own_role, None, |msg, _id| match msg {
@@ -227,7 +226,6 @@ async fn round_1<Z: Ring + 'static, R: RngCore, L: LargeSessionHandles<R>>(
         })
         .collect();
 
-    session.network().increase_round_counter().await?;
     send_to_honest_parties(&msgs_to_send, session).await?;
 
     let mut jobs = JoinSet::<ResultRound1<Z>>::new();
@@ -946,7 +944,7 @@ pub(crate) mod tests {
         }
     }
 
-    //We now define cheatin strategies, each implement the VSS trait
+    //We now define cheating strategies, each implement the VSS trait
     ///Does nothing, and output an empty Vec
     #[derive(Default, Clone)]
     pub(crate) struct DroppingVssFromStart {}
@@ -1096,8 +1094,7 @@ pub(crate) mod tests {
 
         let (results_honest, results_malicious) =
             execute_protocol_w_disputes_and_malicious::<Z, _, _, _, _, _>(
-                params.num_parties,
-                params.threshold as u8,
+                &params,
                 &[],
                 &params.malicious_roles,
                 malicious_vss,
@@ -1144,10 +1141,11 @@ pub(crate) mod tests {
     }
 
     //This is honest execution, so no malicious strategy
+    // Rounds (happy path): We expect 3+1+t rounds
     #[rstest]
-    #[case(TestingParameters::init_honest(4, 1))]
-    #[case(TestingParameters::init_honest(7, 2))]
-    #[case(TestingParameters::init_honest(10, 3))]
+    #[case(TestingParameters::init_honest(4, 1, Some(5)))]
+    #[case(TestingParameters::init_honest(7, 2, Some(6)))]
+    #[case(TestingParameters::init_honest(10, 3, Some(7)))]
     fn test_vss_honest_z128(#[case] params: TestingParameters) {
         let malicious_vss = RealVss::default();
         test_vss_strategies::<ResiduePoly64, _>(params.clone(), malicious_vss.clone());
@@ -1159,13 +1157,13 @@ pub(crate) mod tests {
     //and all other vss are fine
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4,1,&[0],&[],&[],true))]
-    #[case(TestingParameters::init(4,1,&[1],&[],&[],true))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],true))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],true))]
-    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true))]
-    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],true))]
-    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true))]
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None))]
+    #[case(TestingParameters::init(4,1,&[1],&[],&[],true,None))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],true,None))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],true,None))]
+    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true,None))]
+    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],true,None))]
+    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true,None))]
     fn test_vss_dropping_from_start(#[case] params: TestingParameters) {
         let dropping_vss_from_start = DroppingVssFromStart::default();
         test_vss_strategies::<ResiduePoly64, _>(params.clone(), dropping_vss_from_start.clone());
@@ -1177,17 +1175,17 @@ pub(crate) mod tests {
     //Otherwise, we expect everything to happen normally - dispute will settle
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4,1,&[0],&[3],&[],false))]
-    #[case(TestingParameters::init(4,1,&[1],&[0],&[],false))]
-    #[case(TestingParameters::init(4,1,&[2],&[1],&[],false))]
-    #[case(TestingParameters::init(4,1,&[3],&[2],&[],false))]
-    #[case(TestingParameters::init(4,1,&[0],&[3,1],&[],true))]
-    #[case(TestingParameters::init(4,1,&[1],&[0,2],&[],true))]
-    #[case(TestingParameters::init(4,1,&[2],&[3,0],&[],true))]
-    #[case(TestingParameters::init(4,1,&[3],&[2,1],&[],true))]
-    #[case(TestingParameters::init(7,2,&[0,2],&[3,1],&[],false))]
-    #[case(TestingParameters::init(7,2,&[1,3],&[4,2,0],&[],true))]
-    #[case(TestingParameters::init(7,2,&[5,6],&[3,1,0,2],&[],true))]
+    #[case(TestingParameters::init(4,1,&[0],&[3],&[],false,None))]
+    #[case(TestingParameters::init(4,1,&[1],&[0],&[],false,None))]
+    #[case(TestingParameters::init(4,1,&[2],&[1],&[],false,None))]
+    #[case(TestingParameters::init(4,1,&[3],&[2],&[],false,None))]
+    #[case(TestingParameters::init(4,1,&[0],&[3,1],&[],true,None))]
+    #[case(TestingParameters::init(4,1,&[1],&[0,2],&[],true,None))]
+    #[case(TestingParameters::init(4,1,&[2],&[3,0],&[],true,None))]
+    #[case(TestingParameters::init(4,1,&[3],&[2,1],&[],true,None))]
+    #[case(TestingParameters::init(7,2,&[0,2],&[3,1],&[],false,None))]
+    #[case(TestingParameters::init(7,2,&[1,3],&[4,2,0],&[],true,None))]
+    #[case(TestingParameters::init(7,2,&[5,6],&[3,1,0,2],&[],true,None))]
     fn test_vss_malicious_r1(#[case] params: TestingParameters) {
         let malicious_vss_r1 = MaliciousVssR1 {
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
@@ -1200,13 +1198,13 @@ pub(crate) mod tests {
     //We expect that adversarial parties will see their vss default to 0, all others VSS will recover
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4,1,&[0],&[],&[],true))]
-    #[case(TestingParameters::init(4,1,&[1],&[],&[],true))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],true))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],true))]
-    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true))]
-    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],true))]
-    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true))]
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None))]
+    #[case(TestingParameters::init(4,1,&[1],&[],&[],true,None))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],true,None))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],true,None))]
+    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true,None))]
+    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],true,None))]
+    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true,None))]
     fn test_vss_dropout_after_r1(#[case] params: TestingParameters) {
         let dropping_vss_after_r1 = DroppingVssAfterR1::default();
         test_vss_strategies::<ResiduePoly64, _>(params.clone(), dropping_vss_after_r1.clone());
@@ -1217,13 +1215,13 @@ pub(crate) mod tests {
     //We expect all goes fine as if honest round2, there's no further communication
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4,1,&[0],&[],&[],false))]
-    #[case(TestingParameters::init(4,1,&[1],&[],&[],false))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],false))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],false))]
-    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],false))]
-    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],false))]
-    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],false))]
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None))]
+    #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],false,None))]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],false,None))]
+    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],false,None))]
+    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],false,None))]
+    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],false,None))]
     fn test_dropout_r3(#[case] params: TestingParameters) {
         let dropping_vss_after_r2 = DroppingVssAfterR2::default();
         test_vss_strategies::<ResiduePoly64, _>(params.clone(), dropping_vss_after_r2.clone());

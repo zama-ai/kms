@@ -184,19 +184,31 @@ pub(crate) mod tests {
         let mut task = |mut session: LargeSession| async move {
             let lsl_batch_size = 10_usize;
             let extracted_size = session.amount_of_parties() - session.threshold() as usize;
+            let num_output = lsl_batch_size * extracted_size + 1;
             let mut res = Vec::<Z>::new();
             let mut single_sharing = RealSingleSharing::<Z, TrueLocalSingleShare>::default();
             single_sharing
                 .init(&mut session, lsl_batch_size)
                 .await
                 .unwrap();
-            for _ in 0..lsl_batch_size * extracted_size + 1 {
+            for _ in 0..num_output {
                 res.push(single_sharing.next(&mut session).await.unwrap());
             }
             (session.my_role().unwrap(), session.rng.get_seed(), res)
         };
 
-        let result = execute_protocol_large::<Z, _, _>(parties, threshold, &mut task);
+        // Rounds (only on the happy path here)
+        // RealPreprocessing
+        // init single sharing
+        //      share dispute = 1 round
+        //      pads =  1 round
+        //      coinflip = vss + open = (1 + 3 + threshold) + 1
+        //      verify = 1 reliable_broadcast = 3 + t rounds
+        // next() calls for the batch
+        //      We're doing one more sharing than pre-computed in the initial init (see num_output)
+        //      Thus we have one more call to init, and therefore we double the rounds from above
+        let rounds = (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) * 2;
+        let result = execute_protocol_large::<Z, _, _>(parties, threshold, Some(rounds), &mut task);
 
         //Check we can reconstruct
         let lsl_batch_size = 10_usize;
@@ -237,6 +249,7 @@ pub(crate) mod tests {
         async fn task(mut session: LargeSession) -> (Role, [u8; 32], Vec<ResiduePoly128>) {
             let lsl_batch_size = 10_usize;
             let extracted_size = session.amount_of_parties() - session.threshold() as usize;
+            let num_output = lsl_batch_size * extracted_size + 1;
             let mut res = Vec::<ResiduePoly128>::new();
             if session.my_role().unwrap().one_based() != 2 {
                 let mut single_sharing =
@@ -245,19 +258,20 @@ pub(crate) mod tests {
                     .init(&mut session, lsl_batch_size)
                     .await
                     .unwrap();
-                for _ in 0..lsl_batch_size * extracted_size + 1 {
+                for _ in 0..num_output {
                     res.push(single_sharing.next(&mut session).await.unwrap());
                 }
                 assert!(session.corrupt_roles.contains(&Role::indexed_by_one(2)));
             } else {
-                for _ in 0..lsl_batch_size * extracted_size + 1 {
+                for _ in 0..num_output {
                     res.push(ResiduePoly128::sample(&mut session.rng));
                 }
             }
             (session.my_role().unwrap(), session.rng.get_seed(), res)
         }
 
-        let result = execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, &mut task);
+        let result =
+            execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
 
         //Check we can reconstruct
         let lsl_batch_size = 10_usize;

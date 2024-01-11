@@ -105,6 +105,7 @@ fn bit_dec_online(c: &mut Criterion) {
                     let _result = execute_protocol_large::<ResiduePoly64, _, _>(
                         config.n,
                         config.t,
+                        None,
                         &mut computation,
                     );
                 });
@@ -172,6 +173,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                     let _result = execute_protocol_small::<ResiduePoly64, _, _>(
                         config.n,
                         config.t as u8,
+                        None,
                         &mut computation,
                     );
                 });
@@ -235,6 +237,7 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                     let _result = execute_protocol_large::<ResiduePoly64, _, _>(
                         config.n,
                         config.t,
+                        None,
                         &mut computation,
                     );
                 });

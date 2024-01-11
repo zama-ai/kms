@@ -342,10 +342,10 @@ mod tests {
             open_list(&bits, &session).await.unwrap()
         };
 
-        let results = execute_protocol_small(parties, threshold as u8, &mut task);
+        // we expect 2 rounds: one for the opening during multiplication, one for the opening of the output.
+        let results = execute_protocol_small(parties, threshold as u8, Some(2), &mut task);
 
         for cur_res in results {
-            // We shared values of 0 and 1, so the XOR should be 1
             for (i, cur_ref) in plain_ref.iter().enumerate() {
                 assert_eq!(*cur_ref, cur_res[i]);
             }
@@ -358,7 +358,7 @@ mod tests {
         let threshold = 1;
 
         let plain_input: [u64; 5] = [0_u64, 1, 1, 0, 1];
-        // Observe that 10110 = 22
+        // Observe that the above input bits are ordered [LSB, ..., MSB]; written in the more common form 10110_2 = 22_10
         let ref_val = 22;
 
         let mut task = |session: SmallSession<ResiduePoly<Z64>>| async move {
@@ -370,7 +370,8 @@ mod tests {
             open_list(&[bits], &session).await.unwrap()[0]
         };
 
-        let results = execute_protocol_small(parties, threshold as u8, &mut task);
+        // we expect 1 round: the opening of the output.
+        let results = execute_protocol_small(parties, threshold as u8, Some(1), &mut task);
 
         for cur_res in results {
             assert_eq!(ResiduePoly::<Z64>::from_scalar(Wrapping(ref_val)), cur_res);
@@ -414,7 +415,9 @@ mod tests {
             open_list(&[bit_sum], &session).await.unwrap()[0]
         };
 
-        let results = execute_protocol_small(parties, threshold as u8, &mut task);
+        // we expect 3 rounds for each bit of the type (log_2(64)=6), 1 for the final adder XOR and 1 final opening = 3*6 + 1 + 1 = 20 in total.
+        let rounds = 3_usize * Z64::CHAR_LOG2.ilog2() as usize + 1 + 1;
+        let results = execute_protocol_small(parties, threshold as u8, Some(rounds), &mut task);
         for cur_res in results {
             assert_eq!(ResiduePoly::<Z64>::from_scalar(ref_val), cur_res);
         }
@@ -450,7 +453,10 @@ mod tests {
             open_list(&bits, &session).await.unwrap()
         };
 
-        let results = &execute_protocol_small(parties, threshold as u8, &mut task)[0];
+        // we expect 2 rounds for generating the bits, 1 opening, 19 for the adder (see above) and 1 final opening = 23 rounds in total
+        let rounds = 2_usize + 1 + 3_usize * Z64::CHAR_LOG2.ilog2() as usize + 1 + 1;
+
+        let results = &execute_protocol_small(parties, threshold as u8, Some(rounds), &mut task)[0];
         assert_eq!(results.len(), ref_val.len());
         for i in 0..results.len() {
             assert_eq!(

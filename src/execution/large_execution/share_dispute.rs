@@ -201,7 +201,6 @@ async fn send_and_receive_share_dispute_double<Z: Ring, R: RngCore, L: LargeSess
     polypoints_map: HashMap<Role, NetworkValue<Z>>,
     num_secrets: usize,
 ) -> anyhow::Result<ShareDisputeOutputDouble<Z>> {
-    session.network().increase_round_counter().await?;
     send_to_parties_w_dispute(&polypoints_map, session).await?;
 
     let sender_list = session.role_assignments().keys().cloned().collect_vec();
@@ -282,7 +281,6 @@ async fn send_and_receive_share_dispute_single<Z: Ring, R: RngCore, L: LargeSess
     polypoints_map: HashMap<Role, NetworkValue<Z>>,
     num_secrets: usize,
 ) -> anyhow::Result<ShareDisputeOutput<Z>> {
-    session.network().increase_round_counter().await?;
     send_to_parties_w_dispute(&polypoints_map, session).await?;
 
     let sender_list = session.role_assignments().keys().cloned().collect_vec();
@@ -511,7 +509,6 @@ pub(crate) mod tests {
                     }
                 }
             }
-            session.network().increase_round_counter().await.unwrap();
             send_to_parties_w_dispute(&polypoints_map, session)
                 .await
                 .unwrap();
@@ -553,7 +550,6 @@ pub(crate) mod tests {
                     }
                 }
             }
-            session.network().increase_round_counter().await.unwrap();
             send_to_parties_w_dispute(&polypoints_map, session)
                 .await
                 .unwrap();
@@ -708,8 +704,7 @@ pub(crate) mod tests {
 
         //Execute the protocol with malicious parties and added disputes
         let (result_honest, _) = execute_protocol_w_disputes_and_malicious::<Z, _, _, _, _, _>(
-            params.num_parties,
-            params.threshold as u8,
+            &params,
             &params.dispute_pairs,
             &[
                 malicious_due_to_dispute.clone(),
@@ -830,8 +825,9 @@ pub(crate) mod tests {
         }
     }
 
+    // Rounds: 1 per share dispute (2 here, since we run single and double)
     #[rstest]
-    #[case(TestingParameters::init_honest(4, 1))]
+    #[case(TestingParameters::init_honest(4, 1, Some(2)))]
     #[case(TestingParameters::init_dispute(4, 1, &[(1,2),(0,3)]))]
     #[case(TestingParameters::init_dispute(4, 1, &[(1,2),(1,3)]))]
     #[case(TestingParameters::init_dispute(7, 2, &[(1,2),(1,3),(4,6),(0,5)]))]
@@ -849,14 +845,14 @@ pub(crate) mod tests {
 
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4, 1, &[0], &[], &[], false))]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false))]
-    #[case(TestingParameters::init(4, 1, &[2], &[], &[], false))]
-    #[case(TestingParameters::init(4, 1, &[3], &[], &[], false))]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[(1,3)], false))]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[(1,2),(0,3)], false))]
-    #[case(TestingParameters::init(4, 1, &[2], &[], &[(0,2),(1,3)], false))]
-    #[case(TestingParameters::init(7, 2, &[2,6], &[], &[(0,2),(1,3),(0,4),(1,5)], false))]
+    #[case(TestingParameters::init(4, 1, &[0], &[], &[], false, None))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None))]
+    #[case(TestingParameters::init(4, 1, &[2], &[], &[], false, None))]
+    #[case(TestingParameters::init(4, 1, &[3], &[], &[], false, None))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[(1,3)], false, None))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[(1,2),(0,3)], false, None))]
+    #[case(TestingParameters::init(4, 1, &[2], &[], &[(0,2),(1,3)], false, None))]
+    #[case(TestingParameters::init(7, 2, &[2,6], &[], &[(0,2),(1,3),(0,4),(1,5)], false, None))]
     fn test_share_dispute_dropout(#[case] params: TestingParameters) {
         let dropping_share_dispute = DroppingShareDispute::default();
         test_share_dispute_strategies::<ResiduePoly64, _>(
@@ -871,13 +867,13 @@ pub(crate) mod tests {
 
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4, 1, &[0], &[], &[], false))]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false))]
-    #[case(TestingParameters::init(4, 1, &[2], &[], &[], false))]
-    #[case(TestingParameters::init(4, 1, &[3], &[], &[], false))]
-    #[case(TestingParameters::init(4, 1, &[1], &[], &[(1,2),(0,3)], false))]
-    #[case(TestingParameters::init(4, 1, &[2], &[], &[(0,2),(1,3)], false))]
-    #[case(TestingParameters::init(7, 2, &[2,6], &[], &[(0,2),(1,3),(0,4),(1,5)], false))]
+    #[case(TestingParameters::init(4, 1, &[0], &[], &[], false, None))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None))]
+    #[case(TestingParameters::init(4, 1, &[2], &[], &[], false, None))]
+    #[case(TestingParameters::init(4, 1, &[3], &[], &[], false, None))]
+    #[case(TestingParameters::init(4, 1, &[1], &[], &[(1,2),(0,3)], false, None))]
+    #[case(TestingParameters::init(4, 1, &[2], &[], &[(0,2),(1,3)], false, None))]
+    #[case(TestingParameters::init(7, 2, &[2,6], &[], &[(0,2),(1,3),(0,4),(1,5)], false, None))]
     fn test_malicious_share_dispute(#[case] params: TestingParameters) {
         let malicious_share_dispute_recons = WrongShareDisputeRecons::default();
 

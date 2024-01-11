@@ -16,15 +16,18 @@ pub mod tests_and_benches {
             runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             sharing::shamir::ShamirRing,
         },
+        networking::Networking,
     };
 
     /// Helper method for executing networked tests with multiple parties for small session.
     /// The `task` argument contains the code to be execute per party which returns a value of type [OutputT].
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
+    /// `expected_rounds` can be used to test that the protocol needs the specified amount of comm rounds, or be set to None to allow any number of rounds
     pub fn execute_protocol_small<Z: ShamirRing, TaskOutputT, OutputT>(
         parties: usize,
         threshold: u8,
+        expected_rounds: Option<usize>,
         task: &mut dyn FnMut(SmallSession<Z>) -> TaskOutputT,
     ) -> Vec<OutputT>
     where
@@ -50,22 +53,34 @@ pub mod tests_and_benches {
                 .unwrap();
             tasks.spawn(task(session));
         }
-        rt.block_on(async {
+        let res = rt.block_on(async {
             let mut results = Vec::with_capacity(tasks.len());
             while let Some(v) = tasks.join_next().await {
                 results.push(v.unwrap());
             }
             results
-        })
+        });
+
+        // test that the number of rounds is as expected
+        if let Some(e_r) = expected_rounds {
+            for n in test_runtime.user_nets {
+                let rounds = std::sync::Arc::clone(&n).get_current_round().unwrap();
+                assert_eq!(rounds, e_r);
+            }
+        }
+
+        res
     }
 
     /// Helper method for executing networked tests with multiple parties for LargeSession.
     /// The `task` argument contains the code to be execute per party which returns a value of type [OutputT].
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
+    /// `expected_rounds` can be used to test that the protocol needs the specified amount of comm rounds, or be set to None to allow any number of rounds
     pub fn execute_protocol_large<Z: ShamirRing, TaskOutputT, OutputT>(
         parties: usize,
         threshold: usize,
+        expected_rounds: Option<usize>,
         task: &mut dyn FnMut(LargeSession) -> TaskOutputT,
     ) -> Vec<OutputT>
     where
@@ -85,17 +100,28 @@ pub mod tests_and_benches {
             let session = test_runtime
                 .large_session_for_player(session_id, party_id)
                 .unwrap();
+            // TODO why is the following cloned session needed?
             let session =
                 LargeSession::new(session.parameters.clone(), session.network().clone()).unwrap();
             tasks.spawn(task(session));
         }
-        rt.block_on(async {
+        let res = rt.block_on(async {
             let mut results = Vec::with_capacity(tasks.len());
             while let Some(v) = tasks.join_next().await {
                 results.push(v.unwrap());
             }
             results
-        })
+        });
+
+        // test that the number of rounds is as expected
+        if let Some(e_r) = expected_rounds {
+            for n in test_runtime.user_nets {
+                let rounds = std::sync::Arc::clone(&n).get_current_round().unwrap();
+                assert_eq!(rounds, e_r);
+            }
+        }
+
+        res
     }
 }
 
@@ -128,7 +154,7 @@ pub mod tests {
         },
         file_handling::read_element,
         lwe::{gen_key_set, Ciphertext64, KeySet, ThresholdLWEParameters},
-        networking::local::LocalNetworkingProducer,
+        networking::{local::LocalNetworkingProducer, Networking},
         tests::test_data_setup::tests::{DEFAULT_SEED, TEST_KEY_PATH},
     };
 
@@ -140,6 +166,7 @@ pub mod tests {
         pub roles_to_lie_to: Vec<usize>,
         pub dispute_pairs: Vec<(Role, Role)>,
         pub should_be_detected: bool,
+        pub expected_rounds: Option<usize>,
     }
 
     impl TestingParameters {
@@ -157,6 +184,7 @@ pub mod tests {
             roles_to_lie_to: &[usize],
             dispute_pairs: &[(usize, usize)],
             should_be_detected: bool,
+            expected_rounds: Option<usize>,
         ) -> Self {
             Self {
                 num_parties,
@@ -170,18 +198,25 @@ pub mod tests {
                     })
                     .collect_vec(),
                 should_be_detected,
+                expected_rounds,
             }
         }
 
         ///Init test parameters with
         /// - number of parties
         /// - threshold
+        /// - expected number of rounds (optional)
         ///
         /// Everything related to cheating is set to default (i.e. no cheating happens)
-        pub fn init_honest(num_parties: usize, threshold: usize) -> Self {
+        pub fn init_honest(
+            num_parties: usize,
+            threshold: usize,
+            expected_rounds: Option<usize>,
+        ) -> Self {
             Self {
                 num_parties,
                 threshold,
+                expected_rounds,
                 ..Default::default()
             }
         }
@@ -382,8 +417,7 @@ pub mod tests {
         OutputM,
         P: Clone,
     >(
-        parties: usize,
-        threshold: u8,
+        params: &TestingParameters,
         dispute_pairs: &[(Role, Role)],
         malicious_roles: &[Role],
         malicious_strategy: P,
@@ -398,6 +432,9 @@ pub mod tests {
         TaskOutputM: Send + 'static,
         OutputM: Send + 'static,
     {
+        let parties = params.num_parties;
+        let threshold = params.threshold as u8;
+
         let identities = generate_fixed_identities(parties);
         let test_runtime = DistributedTestRuntime::<Z>::new(identities.clone(), threshold);
         let session_id = SessionId(1);
@@ -432,7 +469,7 @@ pub mod tests {
                 honest_tasks.spawn(task_honest(session));
             }
         }
-        rt.block_on(async {
+        let res = rt.block_on(async {
             let mut results_honest = Vec::with_capacity(honest_tasks.len());
             let mut results_malicious = Vec::with_capacity(honest_tasks.len());
             while let Some(v) = honest_tasks.join_next().await {
@@ -442,6 +479,16 @@ pub mod tests {
                 results_malicious.push(v);
             }
             (results_honest, results_malicious)
-        })
+        });
+
+        // test that the number of rounds is as expected
+        if let Some(e_r) = params.expected_rounds {
+            for n in test_runtime.user_nets {
+                let rounds = std::sync::Arc::clone(&n).get_current_round().unwrap();
+                assert_eq!(rounds, e_r);
+            }
+        }
+
+        res
     }
 }

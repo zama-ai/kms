@@ -197,6 +197,10 @@ impl Networking for GrpcNetworking {
     fn get_timeout_current_round(&self) -> anyhow::Result<Instant> {
         todo!("Need to implement get_timeout_current_round for grpc")
     }
+
+    fn get_current_round(&self) -> anyhow::Result<usize> {
+        todo!("Need to implement get_current_round for grpc")
+    }
 }
 
 // we need a counter for each value sent over the local queues

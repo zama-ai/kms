@@ -239,7 +239,6 @@ async fn agree_random_communication<Z: Ring, R: RngCore, S: BaseSessionHandles<R
             );
         }
     }
-    session.network().increase_round_counter().await?;
     send_to_honest_parties(&coms_to_send, session).await?;
 
     // receive commitments from other parties
@@ -249,8 +248,6 @@ async fn agree_random_communication<Z: Ring, R: RngCore, S: BaseSessionHandles<R
     let rcv_coms = check_and_unpack_coms(&received_coms, num_parties)?;
 
     // 2nd round: openings and randomness
-    session.network().increase_round_counter().await?;
-
     // send keys and openings to all other parties. Each party gets the values for _all_ sets that they are member of at once to avoid multiple comm rounds
     let mut key_open_to_send: HashMap<Role, NetworkValue<Z>> = HashMap::new();
     for p in 1..=num_parties {
@@ -359,7 +356,6 @@ impl AgreeRandom for RealAgreeRandomWithAbort {
         }
 
         // communication (send all keys, then receive all keys)
-        session.network().increase_round_counter().await?;
         send_to_honest_parties(&key_to_send, session).await?;
         let receive_from_roles = key_to_send.keys().cloned().collect_vec();
         let received_keys = receive_from_parties::<Z, R, S>(&receive_from_roles, session).await?;
@@ -514,6 +510,9 @@ mod tests {
 
             let vd = VecDeque::from(keys);
             allkeys.push(vd);
+
+            // in this case we do not communicate, rounds should be zero
+            assert_eq!(sess.network.get_current_round().unwrap(), 0);
         }
 
         let all_party_sets: Vec<Vec<usize>> = create_sets(num_parties, threshold as usize)
@@ -533,15 +532,15 @@ mod tests {
 
     #[test]
     fn test_real_agree_random() {
-        generic_real_agree_random_test::<RealAgreeRandom>();
+        generic_real_agree_random_test::<RealAgreeRandom>(2);
     }
 
     #[test]
     fn test_real_agree_random_with_abort() {
-        generic_real_agree_random_test::<RealAgreeRandomWithAbort>();
+        generic_real_agree_random_test::<RealAgreeRandomWithAbort>(3);
     }
 
-    fn generic_real_agree_random_test<A: AgreeRandom + 'static>() {
+    fn generic_real_agree_random_test<A: AgreeRandom + 'static>(expected_rounds: usize) {
         let num_parties = 7;
         let threshold = 2;
 
@@ -553,7 +552,12 @@ mod tests {
             (session.my_role().unwrap(), vd)
         }
 
-        let res = execute_protocol_small(num_parties, threshold, &mut task::<A>);
+        let res = execute_protocol_small(
+            num_parties,
+            threshold,
+            Some(expected_rounds),
+            &mut task::<A>,
+        );
 
         // unpack results into hashmap
         let mut key_hm: HashMap<usize, VecDeque<PrfKey>> = HashMap::new();

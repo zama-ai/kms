@@ -37,7 +37,7 @@ pub trait DoubleSharing<Z: Ring>: Send + Default + Clone {
     ) -> anyhow::Result<DoubleShare<Z>>;
 }
 
-//Might want to store the dispute set at the output of the lsl call
+//Might want to store the dispute set at the output of the ldl call
 //as that'll influence how to reconstruct stuff later on
 #[derive(Clone, Default)]
 pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
@@ -191,19 +191,31 @@ pub(crate) mod tests {
         let mut task = |mut session: LargeSession| async move {
             let ldl_batch_size = 10_usize;
             let extracted_size = session.amount_of_parties() - session.threshold() as usize;
+            let num_output = ldl_batch_size * extracted_size + 1;
             let mut res = Vec::new();
             let mut double_sharing = RealDoubleSharing::<Z, TrueLocalDoubleShare>::default();
             double_sharing
                 .init(&mut session, ldl_batch_size)
                 .await
                 .unwrap();
-            for _ in 0..ldl_batch_size * extracted_size + 1 {
+            for _ in 0..num_output {
                 res.push(double_sharing.next(&mut session).await.unwrap());
             }
             (session.my_role().unwrap(), session.rng.get_seed(), res)
         };
 
-        let result = execute_protocol_large::<Z, _, _>(parties, threshold, &mut task);
+        // Rounds (only on the happy path here)
+        // RealPreprocessing
+        // init double sharing
+        //      share dispute = 1 round
+        //      pads =  1 round
+        //      coinflip = vss + open = (1 + 3 + threshold) + 1
+        //      verify = 1 reliable_broadcast = 3 + t rounds
+        // next() calls for the batch
+        //      We're doing one more sharing than pre-computed in the initial init (see num_output)
+        //      Thus we have one more call to init, and therefore we double the rounds from above
+        let rounds = (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) * 2;
+        let result = execute_protocol_large::<Z, _, _>(parties, threshold, Some(rounds), &mut task);
 
         //Check we can reconstruct both degree t and 2t, and they are equal
         let ldl_batch_size = 10_usize;
@@ -251,6 +263,7 @@ pub(crate) mod tests {
         ) -> (Role, [u8; 32], Vec<DoubleShare<ResiduePoly128>>) {
             let ldl_batch_size = 10_usize;
             let extracted_size = session.amount_of_parties() - session.threshold() as usize;
+            let num_output = ldl_batch_size * extracted_size + 1;
             let mut res = Vec::new();
             if session.my_role().unwrap().zero_based() != 1 {
                 let mut double_sharing =
@@ -259,12 +272,12 @@ pub(crate) mod tests {
                     .init(&mut session, ldl_batch_size)
                     .await
                     .unwrap();
-                for _ in 0..ldl_batch_size * extracted_size + 1 {
+                for _ in 0..num_output {
                     res.push(double_sharing.next(&mut session).await.unwrap());
                 }
                 assert!(session.corrupt_roles.contains(&Role::indexed_by_zero(1)));
             } else {
-                for _ in 0..ldl_batch_size * extracted_size + 1 {
+                for _ in 0..num_output {
                     res.push(DoubleShare {
                         degree_t: ResiduePoly128::sample(&mut session.rng),
                         degree_2t: ResiduePoly128::sample(&mut session.rng),
@@ -274,7 +287,8 @@ pub(crate) mod tests {
             (session.my_role().unwrap(), session.rng.get_seed(), res)
         }
 
-        let result = execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, &mut task);
+        let result =
+            execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
 
         //Check we can reconstruct both degree t and 2t, and they are equal
         let ldl_batch_size = 10_usize;

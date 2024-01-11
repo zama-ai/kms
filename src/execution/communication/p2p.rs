@@ -26,7 +26,7 @@ fn check_roles<R: RngCore, L: LargeSessionHandles<R>>(
         tracing::info!("You are trying to communicate with yourself.");
         return Ok(false);
     }
-    // Ensure we don't send to corrupt parties, but log it
+    // Ensure we don't send to corrupt parties
     if session.corrupt_roles().contains(communicating_with) {
         tracing::warn!(
             "You are communicating with a corrupt party: {:?}",
@@ -35,7 +35,7 @@ fn check_roles<R: RngCore, L: LargeSessionHandles<R>>(
         return Ok(false);
     }
     // Ensure we don't send to disputed parties
-    // Observe that if a party is corrupt it will also be in dispute, hence we only write the log that they are corrupt
+    // Observe that if a party is corrupt it will also be in dispute, hence we have already returned above and only write the log that they are corrupt
     if session
         .disputed_roles()
         .get(&session.my_role()?)?
@@ -56,13 +56,17 @@ fn check_talking_to_myself<R: RngCore, B: BaseSessionHandles<R>>(
 ) -> anyhow::Result<bool> {
     Ok(r != &session.my_role()?)
 }
-/// Send specific values to specific parties.
-/// I.e. not the sending party or in dispute or corrupt.
+
+/// Send specific values to all honest parties.
+/// I.e. not the sending party or corrupt parties.
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
+/// Automatically increases the round counter when called
+/// TODO: It seems the check for corrupt parties is missing.
 pub async fn send_to_honest_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &B,
 ) -> anyhow::Result<()> {
+    session.network().increase_round_counter().await?;
     let mut send_job = JoinSet::new();
     internal_send_to_parties(
         &mut send_job,
@@ -77,10 +81,12 @@ pub async fn send_to_honest_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R
 /// Send specific values to specific parties, while validating that the parties are sensible within the session.
 /// I.e. not the sending party or in dispute or corrupt.
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
+/// Automatically increases the round counter when called
 pub async fn send_to_parties_w_dispute<Z: Ring, R: RngCore, L: LargeSessionHandles<R>>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &L,
 ) -> anyhow::Result<()> {
+    session.network().increase_round_counter().await?;
     let mut send_job = JoinSet::new();
     internal_send_to_parties(&mut send_job, values_to_send, session, &check_roles)?;
     while (send_job.join_next().await).is_some() {}
@@ -96,7 +102,7 @@ fn internal_send_to_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     check_fn: &dyn Fn(&Role, &B) -> anyhow::Result<bool>,
 ) -> anyhow::Result<()> {
     for (cur_receiver, cur_value) in values_to_send.iter() {
-        // Ensure we don't send to ourself
+        // Ensure the party we want to send to passes the check we specified
         if check_fn(cur_receiver, session)? {
             let networking = Arc::clone(session.network());
             let session_id = session.session_id();

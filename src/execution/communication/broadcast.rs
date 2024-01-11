@@ -16,11 +16,13 @@ use tokio::time::timeout_at;
 
 type RoleValueMap<Z> = HashMap<Role, BroadcastValue<Z>>;
 
+/// send to all parties and automatically increase round counter
 pub async fn send_to_all<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
     sender: &Role,
     msg: NetworkValue<Z>,
-) {
+) -> anyhow::Result<()> {
+    session.network().increase_round_counter().await?;
     let mut jobs = JoinSet::new();
     for (other_role, other_identity) in session.role_assignments().iter() {
         let networking = Arc::clone(session.network());
@@ -36,6 +38,7 @@ pub async fn send_to_all<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
         }
     }
     while (jobs.join_next().await).is_some() {}
+    Ok(())
 }
 
 /// **NOTE: We do not try to receive any value from the non_answering_parties set.**
@@ -305,7 +308,7 @@ async fn cast_threshold_vote<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     sender: &Role,
     registered_votes: &HashMap<(Role, BroadcastValue<Z>), u32>,
     threshold: u32,
-) {
+) -> anyhow::Result<()> {
     let vote_data: RoleValueMap<Z> = registered_votes
         .iter()
         .filter_map(|(k, f)| {
@@ -319,10 +322,11 @@ async fn cast_threshold_vote<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     //Send empty msg to avoid waiting on timeouts on rcver side
     if vote_data.is_empty() {
         tracing::debug!("I am {sender}, sending an empty message");
-        send_to_all(session, sender, NetworkValue::<Z>::Empty).await;
+        send_to_all(session, sender, NetworkValue::<Z>::Empty).await?;
     } else {
-        send_to_all(session, sender, NetworkValue::VoteBatch(vote_data)).await;
+        send_to_all(session, sender, NetworkValue::VoteBatch(vote_data)).await?;
     }
+    Ok(())
 }
 
 /// Sender gathers votes from all the other parties.
@@ -376,16 +380,14 @@ async fn gather_votes<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
                 *num_votes += 1;
             }
         }
-        session.network().increase_round_counter().await?;
         cast_threshold_vote(
             session,
             sender,
             &round_registered_votes,
             (threshold + round) as u32,
         )
-        .await;
+        .await?;
     }
-    // increase network round as we either finished broadcast or need to go the next voting round
     Ok(())
 }
 
@@ -421,19 +423,20 @@ pub async fn reliable_broadcast<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     // Sender parties send the message they intend to broadcast to others
     // The send calls are followed by receive to get the incoming messages from the others
     let mut round1_data = HashMap::<Role, BroadcastValue<Z>>::new();
-    session.network().increase_round_counter().await?;
     match (vi, is_sender) {
         (Some(vi), true) => {
             bcast_data.insert(my_role, vi);
             round1_data.insert(my_role, bcast_data[&my_role].clone());
             let msg = NetworkValue::Send(round1_data[&my_role].clone());
-            send_to_all(session, &my_role, msg).await;
+            send_to_all(session, &my_role, msg).await?;
         }
-        (None, false) => (),
+        (None, false) => {
+            session.network().increase_round_counter().await?; // We're not sending, but we must increase the round counter to stay in sync
+        }
         (_, _) => {
             return Err(anyhow_error_and_log(
                 "A sender must have a value in reliable broadcast".to_string(),
-            ))
+            ));
         }
     }
 
@@ -450,9 +453,8 @@ pub async fn reliable_broadcast<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     // Communication round 2
     // Parties send Echo to the other parties
     // Parties receive Echo from others and process them, if there are enough Echo messages then they can cast a vote
-    session.network().increase_round_counter().await?;
     let msg = round1_data;
-    send_to_all(session, &my_role, NetworkValue::EchoBatch(msg.clone())).await;
+    send_to_all(session, &my_role, NetworkValue::EchoBatch(msg.clone())).await?;
     // adding own echo to the map
     let mut echos: HashMap<(Role, BroadcastValue<Z>), u32> =
         msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
@@ -464,11 +466,10 @@ pub async fn reliable_broadcast<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     // Communication round 3
     // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
     //Here propagate error if my own casted hashmap does not contain the expected party's id
-    session.network().increase_round_counter().await?;
     let mut casted_vote: HashMap<Role, bool> =
         sender_list.iter().map(|role| (*role, false)).collect();
 
-    cast_threshold_vote(session, &my_role, &registered_votes, 1).await;
+    cast_threshold_vote(session, &my_role, &registered_votes, 1).await?;
 
     for ((role, _), _) in registered_votes.iter() {
         let casted_vote_role = casted_vote.get_mut(role).ok_or_else(|| {
@@ -904,9 +905,8 @@ mod tests {
         // Communication round 2
         // Parties send Echo to the other parties
         // Parties receive Echo from others and process them, if there are enough Echo messages then they can cast a vote
-        session.network().increase_round_counter().await?;
         let msg = round1_data;
-        send_to_all(session, &my_role, NetworkValue::EchoBatch(msg.clone())).await;
+        send_to_all(session, &my_role, NetworkValue::EchoBatch(msg.clone())).await?;
         // adding own echo to the map
         let mut echos: HashMap<(Role, BroadcastValue<Z>), u32> =
             msg.iter().map(|(k, v)| ((*k, v.clone()), 1)).collect();
@@ -919,14 +919,13 @@ mod tests {
         // Parties try to cast the vote if received enough Echo messages (i.e. can_vote is true)
         // As cheater, voting for something even though I should not
         registered_votes.insert((Role::indexed_by_one(2), vec_vi.unwrap()[1].clone()), 1);
-        session.network().increase_round_counter().await?;
         let mut casted_vote: HashMap<Role, bool> = session
             .role_assignments()
             .keys()
             .map(|role| (*role, false))
             .collect();
         if !registered_votes.is_empty() {
-            cast_threshold_vote(session, &my_role, &registered_votes, 1).await;
+            cast_threshold_vote(session, &my_role, &registered_votes, 1).await?;
             for ((role, _), _) in registered_votes.iter() {
                 let casted_vote_role = casted_vote.get_mut(role).ok_or_else(|| {
                     anyhow_error_and_log("Can't retrieve whether I casted a vote".to_string())
