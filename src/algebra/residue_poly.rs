@@ -660,7 +660,7 @@ impl<Z: BaseRing> ShamirRing for ResiduePoly<Z> {
     fn decode(
         sharing: &ShamirSharing<ResiduePoly<Z>>,
         threshold: usize,
-        max_error_count: usize,
+        max_correctable_errs: usize,
     ) -> anyhow::Result<Poly<ResiduePoly<Z>>> {
         // threshold is the degree of the shamir polynomial
         let ring_size: usize = Z::BIT_LENGTH;
@@ -685,7 +685,7 @@ impl<Z: BaseRing> ShamirRing for ResiduePoly<Z> {
 
             // apply error correction on z
             // fi(X) = a0 + ... a_t * X^t where a0 is the secret bit corresponding to position i
-            let fi_mod2 = error_correction(&z, threshold, max_error_count)?;
+            let fi_mod2 = error_correction(&z, threshold, max_correctable_errs)?;
             let fi = ResiduePoly::<Z>::shamir_bit_lift(&fi_mod2, bit_idx)?;
 
             // compute fi(\gamma_1) ..., fi(\gamma_n) \in GF(256)

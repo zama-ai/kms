@@ -234,15 +234,21 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
                 }
             };
         }
+
         // Compute the max amount of corruptions that can be in the data. Since parties we already know are corrupted are excluded we subtract these
-        let max_corruptions = (session.threshold() as usize)
+        let mc_parties = session.amount_of_parties()
+            - min(session.amount_of_parties(), session.corrupt_roles().len());
+        let mc_threshold = (session.threshold() as usize)
             - min(session.threshold() as usize, session.corrupt_roles().len());
+
+        // we can correct up to floor((n - 2t - 1)/2) errors, but we can also not have more than mc_threshold = t-e corruptions
+        let max_errors = min((mc_parties - 2 * mc_threshold - 1) / 2, mc_threshold);
+
         Ok(collected_shares
             .into_iter()
             .map(|cur_collection| {
                 let sharing = ShamirSharing::create(cur_collection);
-                if let Ok(r) =
-                    sharing.err_reconstruct(2 * session.threshold() as usize, max_corruptions)
+                if let Ok(r) = sharing.err_reconstruct(2 * session.threshold() as usize, max_errors)
                 {
                     Some(r)
                 } else {
@@ -419,7 +425,7 @@ mod test {
     use rand_chacha::ChaCha20Rng;
 
     fn test_rand_generation<Z: ShamirRing + PRSSConversions>() {
-        let parties = 5;
+        let parties = 4;
         let threshold = 1;
 
         let mut task = |mut session: SmallSession<Z>| async move {
@@ -477,7 +483,7 @@ mod test {
     }
 
     fn test_triple_generation<Z: ShamirRing + PRSSConversions>() {
-        let parties = 5;
+        let parties = 4;
         let threshold = 1;
 
         let mut task = |mut session: SmallSession<Z>| async move {

@@ -10,7 +10,7 @@ pub trait ShamirRing: Ring {
     fn decode(
         sharing: &ShamirSharing<Self>,
         threshold: usize,
-        max_error_count: usize,
+        max_correctable_errs: usize,
     ) -> anyhow::Result<Poly<Self>>;
     fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self>;
     ///***Calling invert on a non-invertible element of the ring results in undefined behavior***
@@ -160,8 +160,12 @@ impl<Z: ShamirRing> ShamirSharing<Z> {
         self.err_reconstruct(threshold, 0)
     }
 
-    pub fn err_reconstruct(&self, threshold: usize, max_error_count: usize) -> anyhow::Result<Z> {
-        let recon = Z::decode(self, threshold, max_error_count)?;
+    pub fn err_reconstruct(
+        &self,
+        threshold: usize,
+        max_correctable_errs: usize,
+    ) -> anyhow::Result<Z> {
+        let recon = Z::decode(self, threshold, max_correctable_errs)?;
         Ok(recon.eval(&Z::ZERO))
     }
 }

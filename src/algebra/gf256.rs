@@ -136,13 +136,13 @@ pub type ShamirZ2Poly = Poly<GF256>;
 pub fn error_correction(
     shares: &[ShamirZ2Sharing],
     threshold: usize,
-    max_error_count: usize,
+    max_correctable_errs: usize,
 ) -> anyhow::Result<ShamirZ2Poly> {
     let xs: Vec<GF256> = shares.iter().map(|s| GF256::from(s.party_id)).collect();
     let ys: Vec<GF256> = shares.iter().map(|s| s.share).collect();
 
     // call Gao decoding with the shares as points/values, set Gao parameter k = v = threshold+1
-    gao_decoding(&xs, &ys, threshold + 1, max_error_count)
+    gao_decoding(&xs, &ys, threshold + 1, max_correctable_errs)
 }
 
 pub fn syndrome_decoding_z2(

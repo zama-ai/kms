@@ -447,12 +447,12 @@ fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly
 
 /// runs Gao decoding on coordinates where points holds the x-coordinates and values holds the y-coordinates
 /// k is the RS degree and usually set to threshold + 1 in our case
-/// max_error_count is used to check if the number of errors is at most as large as this value
+/// max_correctable_errs is used to check if the number of errors is at most as large as this value
 pub fn gao_decoding<F: Field>(
     points: &Vec<F>,
     values: &Vec<F>,
     k: usize,
-    max_error_count: usize,
+    max_correctable_errs: usize,
 ) -> anyhow::Result<Poly<F>> {
     // in the literature we find (n, k, d) codes
     // parameter k is called v in the NIST doc (the RS dimension)
@@ -460,14 +460,23 @@ pub fn gao_decoding<F: Field>(
     // yi ~= G(xi))
     // where deg(G) <= k-1
     let n = points.len();
-    let d = (n + 1)
-        .checked_sub(k)
-        .ok_or_else(|| anyhow_error_and_log("overflow computing d".to_string()))?;
 
-    if 2 * max_error_count >= d || values.len() != points.len() {
+    // d = n-k+1
+    let d = (n + 1).checked_sub(k).ok_or_else(|| {
+        anyhow_error_and_log("Gao decoding failure: overflow computing d".to_string())
+    })?;
+
+    // sanity checks for parameter sizes
+    if values.len() != points.len() {
         return Err(anyhow_error_and_log(
-            "Gao decoding failure, too many errors for given parameters or mismatch between values and points size"
-                .to_string(),
+            "Gao decoding failure: mismatch between number of values and points".to_string(),
+        ));
+    }
+
+    // Gao can only decode up to (d-1)/2 errors
+    if 2 * max_correctable_errs >= d {
+        return Err(anyhow_error_and_log(
+            "Gao decoding failure: expected max number of errors is too large for given code parameters".to_string(),
         ));
     }
 
@@ -493,9 +502,9 @@ pub fn gao_decoding<F: Field>(
     let (q1, q0) = partial_xgcd(g, r, gcd_stop);
 
     // abort early if we have too many errors
-    if q0.deg() > max_error_count {
+    if q0.deg() > max_correctable_errs {
         return Err(anyhow_error_and_log(
-            format!("Gao decoding failure: Allowed at most {max_error_count} errors but xgcd factor degree indicates {}.", q0.deg())
+            format!("Gao decoding failure: Allowed at most {max_correctable_errs} errors but xgcd factor degree indicates {}.", q0.deg())
         ));
     }
 
