@@ -23,7 +23,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
-        run: cargo test --features "tfhe/x86_64-unix,concrete-csprng/x86_64-unix" --all-features --workspace
+        run: cargo test --features "tfhe/x86_64-unix,concrete-csprng/x86_64-unix,concrete-csprng/generator_x86_64_aesni" --all-features --workspace
 
   rustfmt:
     name: Rustfmt
