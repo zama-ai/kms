@@ -1066,6 +1066,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "concrete-csprng",
  "crypto_box",
  "ctor",
  "k256",
