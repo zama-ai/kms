@@ -17,23 +17,13 @@ jobs:
     name: Test Suite
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      # Install protoc
-      - name: Install Protocol Buffers Compiler
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
-
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: aarch64-apple-darwin
-          override: true
-      - uses: actions-rs/cargo@v1
-        with:
-          use-cross: true
-          command: test
-          args: --target aarch64-apple-darwin --all-features --workspace
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --target aarch64-unknown-linux-gnu --all-features --workspace
 
   rustfmt:
     name: Rustfmt
