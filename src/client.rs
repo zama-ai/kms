@@ -1,39 +1,28 @@
 use std::collections::HashSet;
 
 use crate::setup_rpc::{DEFAULT_CIPHER_PATH, DEFAULT_CLIENT_KEY_PATH, DEFAULT_SERVER_KEYS_PATH};
-use kms::{
-    core::signcryption::encryption_key_generation,
-    kms::AggregatedDecryptionRespone,
-    rpc::rpc_types::{
-        DecryptionRequestSigPayload, DecryptionResponseSigPayload, MetaResponse, Plaintext,
-        ReencryptionRequestSigPayload,
-    },
+use kms::core::der_types::{
+    Cipher, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
+    SigncryptionPrivKey, SigncryptionPubKey,
 };
-use kms::{
-    core::{
-        der_types::{Cipher, PublicEncKey, SigncryptionPair},
-        kms_core::SoftwareKms,
-        signcryption::{sign, verify_sig},
-    },
-    rpc::{kms_rpc::some_or_err, rpc_types::SigncryptionPayload},
+use kms::core::kms_core::SoftwareKms;
+use kms::core::signcryption::{
+    encryption_key_generation, sign, validate_and_decrypt, verify_sig, RND_SIZE,
 };
-use kms::{
-    core::{
-        der_types::{PrivateEncKey, SigncryptionPrivKey, SigncryptionPubKey},
-        signcryption::validate_and_decrypt,
-    },
-    kms::{kms_endpoint_client::KmsEndpointClient, DecryptionRequest, FheType},
+use kms::file_handling::read_element;
+use kms::kms::kms_endpoint_client::KmsEndpointClient;
+use kms::kms::{
+    AggregatedDecryptionRespone, AggregatedReencryptionRespone, DecryptionRequest, FheType,
+    ReencryptionRequest,
 };
-use kms::{
-    core::{
-        der_types::{PrivateSigKey, PublicSigKey, Signature},
-        signcryption::RND_SIZE,
-    },
-    kms::ReencryptionRequest,
+use kms::rpc::kms_rpc::some_or_err;
+use kms::rpc::rpc_types::{
+    DecryptionRequestSigPayload, DecryptionResponseSigPayload, MetaResponse, Plaintext,
+    ReencryptionRequestSigPayload, SigncryptionPayload,
 };
-use kms::{file_handling::read_element, kms::AggregatedReencryptionRespone};
 use rand::{RngCore, SeedableRng};
-use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
+use rand_chacha::rand_core::CryptoRngCore;
+use rand_chacha::ChaCha20Rng;
 use serde_asn1_der::{from_bytes, to_vec};
 
 mod setup_rpc;
@@ -232,7 +221,8 @@ impl Client {
                 sig: k256::ecdsa::Signature::from_slice(&cur_resp.signature)?,
             };
             let sig_payload: DecryptionResponseSigPayload = cur_payload.into();
-            // Observe that it has already been verified in [validate_meta_data] that server verification key is in the set of permissble keys
+            // Observe that it has already been verified in [validate_meta_data] that server
+            // verification key is in the set of permissble keys
             let cur_verf_key: PublicSigKey = from_bytes(&sig_payload.verification_key)?;
             if !verify_sig(&to_vec(&sig_payload)?, &sig, &cur_verf_key) {
                 tracing::warn!("Signature on received response is not valid!");
@@ -298,7 +288,8 @@ impl Client {
         let mut shares = Vec::with_capacity(agg_resp.responses.len());
         for cur_resp in agg_resp.responses {
             let cur_cipher: Cipher = from_bytes(&cur_resp.signcrypted_ciphertext)?;
-            // Observe that it has already been verified in [validate_meta_data] that server verification key is in the set of permissble keys
+            // Observe that it has already been verified in [validate_meta_data] that server
+            // verification key is in the set of permissble keys
             let cur_verf_key: PublicSigKey = from_bytes(&cur_resp.verification_key)?;
             shares.push(
                 match validate_and_decrypt(&cur_cipher, &client_keys, &cur_verf_key)? {
@@ -398,25 +389,16 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    use kms::{
-        file_handling::read_element,
-        kms::{
-            kms_endpoint_client::KmsEndpointClient, AggregatedDecryptionRespone,
-            AggregatedReencryptionRespone, FheType,
-        },
-    };
+    use kms::file_handling::read_element;
+    use kms::kms::kms_endpoint_client::KmsEndpointClient;
+    use kms::kms::{AggregatedDecryptionRespone, AggregatedReencryptionRespone, FheType};
     use serial_test::serial;
     use tokio::task::JoinHandle;
     use tonic::transport::Channel;
 
-    use crate::{
-        setup_rpc::{
-            server_handle,
-            tests::{DEFAULT_FHE_TYPE, DEFAULT_MSG},
-            DEFAULT_CIPHER_PATH, DEFAULT_KMS_KEY_PATH,
-        },
-        Client,
-    };
+    use crate::setup_rpc::tests::{DEFAULT_FHE_TYPE, DEFAULT_MSG};
+    use crate::setup_rpc::{server_handle, DEFAULT_CIPHER_PATH, DEFAULT_KMS_KEY_PATH};
+    use crate::Client;
 
     static TEST_URL: &str = "0.0.0.0:50051";
     static TEST_URL_PROT: &str = "http://0.0.0.0:50051";

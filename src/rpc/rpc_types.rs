@@ -1,14 +1,13 @@
-use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
+use serde::de::Visitor;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_asn1_der::from_bytes;
 use std::fmt;
 use tendermint::block::signed_header::SignedHeader;
 
-use crate::{
-    core::der_types::{PublicEncKey, PublicSigKey, Signature},
-    kms::{
-        DecryptionRequestPayload, DecryptionResponsePayload, FheType, Proof,
-        ReencryptionRequestPayload, ReencryptionResponse,
-    },
+use crate::core::der_types::{PublicEncKey, PublicSigKey, Signature};
+use crate::kms::{
+    DecryptionRequestPayload, DecryptionResponsePayload, FheType, Proof,
+    ReencryptionRequestPayload, ReencryptionResponse,
 };
 
 use super::kms_rpc::some_or_err;
@@ -34,7 +33,8 @@ pub trait Kms {
     fn get_verf_key(&self) -> PublicSigKey;
 }
 
-/// Representation of the data stored in a signcryption, needed to facilitate FHE decryption and request linking
+/// Representation of the data stored in a signcryption, needed to facilitate FHE decryption and
+/// request linking
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
 pub struct SigncryptionPayload {
     pub plaintext: Plaintext,
@@ -59,7 +59,8 @@ pub struct Plaintext {
     fhe_type: FheType,
 }
 
-/// Little endian encoding to allow for easy serialization by allowing most significant bytes to be 0
+/// Little endian encoding to allow for easy serialization by allowing most significant bytes to be
+/// 0
 impl Plaintext {
     pub fn new(bytes: Vec<u8>, fhe_type: FheType) -> Self {
         Self { bytes, fhe_type }
@@ -145,9 +146,9 @@ impl Plaintext {
     }
 }
 
-/// Observe that this seemingly redundant types are required since the Protobuf compiled types do not implement
-/// the serializable and deserializable traits. Hence [DecryptionRequestSigPayload] implement data to be asn1
-/// serialized which will be signed.
+/// Observe that this seemingly redundant types are required since the Protobuf compiled types do
+/// not implement the serializable and deserializable traits. Hence [DecryptionRequestSigPayload]
+/// implement data to be asn1 serialized which will be signed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DecryptionRequestSigPayload {
     pub verification_key: Vec<u8>,
@@ -187,9 +188,9 @@ impl TryFrom<DecryptionRequestPayload> for DecryptionRequestSigPayload {
     }
 }
 
-/// Observe that this seemingly redundant types are required since the Protobuf compiled types do not implement
-/// the serializable and deserializable traits. Hence [DecryptionResponseSigPayload] implement data to be asn1
-/// serialized which will be signed.
+/// Observe that this seemingly redundant types are required since the Protobuf compiled types do
+/// not implement the serializable and deserializable traits. Hence [DecryptionResponseSigPayload]
+/// implement data to be asn1 serialized which will be signed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DecryptionResponseSigPayload {
     pub shares_needed: u32,
@@ -221,9 +222,9 @@ impl From<DecryptionResponsePayload> for DecryptionResponseSigPayload {
     }
 }
 
-/// Observe that this seemingly redundant types are required since the Protobuf compiled types do not implement
-/// the serializable and deserializable traits. Hence [ReencryptionRequestSigPayload] implement data to be asn1
-/// serialized which will be signed.
+/// Observe that this seemingly redundant types are required since the Protobuf compiled types do
+/// not implement the serializable and deserializable traits. Hence [ReencryptionRequestSigPayload]
+/// implement data to be asn1 serialized which will be signed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReencryptionRequestSigPayload {
     pub verification_key: Vec<u8>,

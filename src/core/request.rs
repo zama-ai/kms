@@ -3,18 +3,17 @@ use rand_chacha::rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use signature::{Signer, Verifier};
 
-use super::{
-    der_types::{
-        PrivateSigKey, PublicSigKey, Signature, SigncryptionPair, SigncryptionPrivKey,
-        SigncryptionPubKey,
-    },
-    signcryption::{check_normalized, encryption_key_generation, hash_element, RND_SIZE},
+use super::der_types::{
+    PrivateSigKey, PublicSigKey, Signature, SigncryptionPair, SigncryptionPrivKey,
+    SigncryptionPubKey,
 };
+use super::signcryption::{check_normalized, encryption_key_generation, hash_element, RND_SIZE};
 
 /// Struct reflecting the client's decryption request of FHE ciphertext.
-/// Concretely containing the client's public keys and a signature on the ephemeral encryption key (in reality a cryptobox
-/// from libsodium for ECIES based on ECDH with curve 25519 and using Salsa for hybrid encryptoin).
-/// DER encoding of the request as a SEQUENCE of ClientPayload and signature ( r||s in big endian encoded using OCTET STRINGS)
+/// Concretely containing the client's public keys and a signature on the ephemeral encryption key
+/// (in reality a cryptobox from libsodium for ECIES based on ECDH with curve 25519 and using Salsa
+/// for hybrid encryptoin). DER encoding of the request as a SEQUENCE of ClientPayload and signature
+/// ( r||s in big endian encoded using OCTET STRINGS)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct ClientRequest {
     pub payload: ClientPayload,
@@ -24,13 +23,15 @@ pub struct ClientRequest {
 /// Structure for DER encoding as a SEQUENCE of client_signcryption_key and digest (as OCTET STRING)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct ClientPayload {
-    pub client_signcryption_key: SigncryptionPubKey, // The client's public keys needed for signcryption
+    pub client_signcryption_key: SigncryptionPubKey, /* The client's public keys needed for
+                                                      * signcryption */
     pub digest: Vec<u8>, // Digest of the fhe_cipher the client wish to have decrypted
-    pub sig_randomization: Vec<u8>, // Randomness to concatenate to the encrypted message to ensure EU-CMA security, see https://link.springer.com/content/pdf/10.1007/3-540-36492-7_1.pdf
+    pub sig_randomization: Vec<u8>, /* Randomness to concatenate to the encrypted message to ensure EU-CMA security, see https://link.springer.com/content/pdf/10.1007/3-540-36492-7_1.pdf */
 }
 
 impl ClientRequest {
-    /// Constructs a new signcryption request for a message `msg` by sampling necesary ephemeral keys and returning the aggegrated signcryption keys
+    /// Constructs a new signcryption request for a message `msg` by sampling necesary ephemeral
+    /// keys and returning the aggegrated signcryption keys
     pub fn new<T: Serialize + AsRef<[u8]>>(
         fhe_cipher: &T,
         client_sig_sk: &PrivateSigKey,
@@ -55,13 +56,13 @@ impl ClientRequest {
     }
 
     /// Verify the request.
-    /// This involves validating the signature on the client's request based on the client's verification key
-    /// and that the message requested to be decrypted is as expected.
+    /// This involves validating the signature on the client's request based on the client's
+    /// verification key and that the message requested to be decrypted is as expected.
     ///
     /// Returns true if everything is ok and false otherwise.
     ///
-    /// WARNING: IT IS ASSUMED THAT THE CLIENT'S PUBLIC VERIFICATION KEY HAS BEEN CROSS-CHECKED TO BELONG TO A CLIENT
-    /// THAT IS ALLOWED TO DECRYPT `fhe_cipher`
+    /// WARNING: IT IS ASSUMED THAT THE CLIENT'S PUBLIC VERIFICATION KEY HAS BEEN CROSS-CHECKED TO
+    /// BELONG TO A CLIENT THAT IS ALLOWED TO DECRYPT `fhe_cipher`
     pub fn verify<T: Serialize + AsRef<[u8]>>(&self, fhe_cipher: &T) -> anyhow::Result<bool> {
         let digest = hash_element(fhe_cipher);
         if digest != self.payload.digest {
@@ -84,7 +85,8 @@ impl ClientRequest {
         Ok(check_normalized(&self.signature))
     }
 }
-/// Helper method for what the client is supposed to do when generating ephemeral keys linked to the client's blockchain signing key
+/// Helper method for what the client is supposed to do when generating ephemeral keys linked to the
+/// client's blockchain signing key
 pub(crate) fn ephemeral_key_generation(
     rng: &mut impl CryptoRngCore,
     sig_key: &PrivateSigKey,

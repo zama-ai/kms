@@ -1,25 +1,18 @@
-use super::{
-    der_types::{Cipher, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair},
-    signcryption::{hash_element, sign, signcrypt, validate_and_decrypt, verify_sig},
-};
-use crate::{
-    anyhow_error_and_warn_log,
-    kms::FheType,
-    rpc::rpc_types::{Kms, Plaintext, SigncryptionPayload},
-};
+use super::der_types::{Cipher, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair};
+use super::signcryption::{hash_element, sign, signcrypt, validate_and_decrypt, verify_sig};
+use crate::anyhow_error_and_warn_log;
+use crate::kms::FheType;
+use crate::rpc::rpc_types::{Kms, Plaintext, SigncryptionPayload};
 use k256::ecdsa::SigningKey;
 use rand::SeedableRng;
-use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
+use rand_chacha::rand_core::CryptoRngCore;
+use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::{from_bytes, to_vec};
-use std::{
-    fmt,
-    sync::{Arc, Mutex},
-};
-use tfhe::{
-    generate_keys, prelude::FheDecrypt, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint8,
-    ServerKey,
-};
+use std::fmt;
+use std::sync::{Arc, Mutex};
+use tfhe::prelude::FheDecrypt;
+use tfhe::{generate_keys, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint8, ServerKey};
 
 pub type FhePublicKey = tfhe::PublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
@@ -109,7 +102,8 @@ impl Kms for SoftwareKms {
         )?;
         *current_rng = rng_clone;
         let res = to_vec(&enc_res)?;
-        // TODO make logs everywhere. In particular make sure to log errors before throwing the error back up
+        // TODO make logs everywhere. In particular make sure to log errors before throwing the
+        // error back up
         tracing::info!("Completed reencyption of ciphertext {:?} with type {:?} to client verification key {:?} under client encryption key {:?}", ct, fhe_type, client_verf_key.pk, client_enc_key.0);
         Ok(Some(res))
     }
@@ -214,20 +208,17 @@ pub fn decrypt_signcryption(
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        core::{
-            kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms},
-            request::ephemeral_key_generation,
-        },
-        file_handling::{read_element, write_element},
-        kms::FheType,
-        rpc::rpc_types::Kms,
-    };
+    use crate::core::kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms};
+    use crate::core::request::ephemeral_key_generation;
+    use crate::file_handling::{read_element, write_element};
+    use crate::kms::FheType;
+    use crate::rpc::rpc_types::Kms;
     use ctor::ctor;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
     use std::path::Path;
-    use tfhe::{prelude::FheEncrypt, ConfigBuilder, FheUint8};
+    use tfhe::prelude::FheEncrypt;
+    use tfhe::{ConfigBuilder, FheUint8};
 
     use super::{gen_kms_keys, KmsKeys};
 

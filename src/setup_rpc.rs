@@ -1,8 +1,6 @@
-use kms::{
-    core::kms_core::{KmsKeys, SoftwareKms},
-    file_handling::read_element,
-    kms::kms_endpoint_server::KmsEndpointServer,
-};
+use kms::core::kms_core::{KmsKeys, SoftwareKms};
+use kms::file_handling::read_element;
+use kms::kms::kms_endpoint_server::KmsEndpointServer;
 use tonic::transport::Server;
 
 #[allow(dead_code)]
@@ -36,15 +34,14 @@ pub(crate) mod tests {
         DEFAULT_SERVER_KEYS_PATH,
     };
     use ctor::ctor;
+    use kms::core::kms_core::{gen_kms_keys, gen_sig_keys, FhePublicKey, KmsKeys};
     use kms::file_handling::{read_element, write_element};
-    use kms::{
-        core::kms_core::{gen_kms_keys, gen_sig_keys, FhePublicKey, KmsKeys},
-        kms::FheType,
-    };
+    use kms::kms::FheType;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
     use std::path::Path;
-    use tfhe::{prelude::FheEncrypt, ConfigBuilder, FheUint8, PublicKey};
+    use tfhe::prelude::FheEncrypt;
+    use tfhe::{ConfigBuilder, FheUint8, PublicKey};
 
     pub const DEFAULT_MSG: u8 = 42;
     #[allow(dead_code)]
