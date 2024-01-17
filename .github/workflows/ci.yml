@@ -70,7 +70,7 @@ jobs:
       - name: Check documentation
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --no-deps --document-private-items --features "tfhe/x86_64-unix,generator_x86_64_aesni" --workspace --examples
+        run: cargo doc --no-deps --document-private-items --features "tfhe/x86_64-unix,x86_64-unix" --workspace --examples
       - name: TODO - Deploy docs to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
       #  with:
