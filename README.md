@@ -1,5 +1,9 @@
 # Key Management System
 
+[![build-badge](https://github.com/zama-ai/kms/actions/workflows/build.yml/badge.svg)](https://nightly.link/zama-ai/kms/workflows/build/main/binaries.zip)
+[![document-badge](https://github.com/zama-ai/kms/actions/workflows/doc.yml/badge.svg)](https://10d9e.github.io/zama-ai/kms)
+[![license-badge](https://img.shields.io/badge/License-BSD-blue)](LICENSE)
+
 This repository hosts the code for the Zama Key Management System prototypes.
 
 ## MVP Specification
