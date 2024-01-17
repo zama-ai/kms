@@ -19,11 +19,19 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+
       - name: install aarch64-unknown-linux-gnu target
         run: rustup target add aarch64-unknown-linux-gnu
+      
+      - name: Install Protocol Buffers Compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libssl-dev
+
       - name: Run tests
         run: cargo test --target aarch64-unknown-linux-gnu --all-features --workspace
 
