@@ -1,10 +1,9 @@
-use std::{
-    fs::{self, File},
-    io::Write,
-    path::Path,
-};
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::Path;
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 pub fn write_as_json<T: serde::Serialize>(file_path: String, to_store: &T) -> anyhow::Result<()> {
     let json_data = serde_json::to_string(&to_store)?;

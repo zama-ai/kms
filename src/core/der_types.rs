@@ -1,9 +1,11 @@
 use super::signcryption::SIG_SIZE;
 use k256::ecdsa::VerifyingKey;
 use nom::AsBytes;
-use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
+use serde::de::Visitor;
+use serde::{Deserialize, Deserializer, Serialize};
 
-// Alias wrapping the ephemeral public encryption key the client constructs and the server uses to encrypt its payload
+// Alias wrapping the ephemeral public encryption key the client constructs and the server uses to
+// encrypt its payload
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct PublicEncKey(pub(crate) crypto_box::PublicKey);
 impl Serialize for PublicEncKey {
@@ -47,7 +49,8 @@ impl<'de> Visitor<'de> for PublicEncKeyVisitor {
     }
 }
 
-// Alias wrapping the ephemeral private decryption key the client constructs to receive the server's encrypted payload
+// Alias wrapping the ephemeral private decryption key the client constructs to receive the server's
+// encrypted payload
 pub type PrivateEncKey = crypto_box::SecretKey;
 
 // Struct wrapping signature verification key used by both the client and server
@@ -99,7 +102,8 @@ impl<'de> Visitor<'de> for PublicSigKeyVisitor {
         }
     }
 }
-// Struct wrapping signature signing key used by both the client and server to authenticate their messages to one another
+// Struct wrapping signature signing key used by both the client and server to authenticate their
+// messages to one another
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PrivateSigKey {
     pub(crate) sk: k256::ecdsa::SigningKey,

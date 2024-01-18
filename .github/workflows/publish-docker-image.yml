@@ -1,4 +1,23 @@
-name: Publish kms image
+name: Docker deploy to GHCR
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions: write-all
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v2
+
+    - name: Login to GHCR
+      run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
+        
+    - name: Build and Push Docker Image
+      run: |
+        docker build -t ghcr.io/${{ github.repository_owner }}/kms:latest -f Dockerfile .
+        docker push ghcr.io/${{ github.repository_owner }}/kms:latest

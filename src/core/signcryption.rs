@@ -4,10 +4,8 @@ use super::der_types::{
 };
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use ::signature::{Signer, Verifier};
-use crypto_box::{
-    aead::{Aead, AeadCore},
-    Nonce, SalsaBox, SecretKey,
-};
+use crypto_box::aead::{Aead, AeadCore};
+use crypto_box::{Nonce, SalsaBox, SecretKey};
 use k256::ecdsa::SigningKey;
 use nom::AsBytes;
 use rand_chacha::rand_core::CryptoRngCore;
@@ -16,27 +14,30 @@ use serde_asn1_der::to_vec;
 use sha3::{Digest, Sha3_256};
 
 ///
-/// This file is supposed to implemente the necesary methods required for secure client communication in relation to decryption requests.
-/// This means that the client sends a request to the server which it validates against the client's ECDSA secp256k1 key.
-/// Based on the request the server does sign-then-encrypt to securely encrypt a payload for the client.
-/// Signing for the server is also carried out using ECDSA with secp256k1 and the client can validate this against the server's public key.
+/// This file is supposed to implemente the necesary methods required for secure client
+/// communication in relation to decryption requests. This means that the client sends a request to
+/// the server which it validates against the client's ECDSA secp256k1 key. Based on the request the
+/// server does sign-then-encrypt to securely encrypt a payload for the client. Signing for the
+/// server is also carried out using ECDSA with secp256k1 and the client can validate this against
+/// the server's public key.
 ///
-/// For encryption a hybrid encryption is used based on ECIES using Libsodium. More specifically using ECDH with curve 25519 and Salsa.
-/// NOTE This may change in the future to be more compatible with NIST standardized schemes.
-///
+/// For encryption a hybrid encryption is used based on ECIES using Libsodium. More specifically
+/// using ECDH with curve 25519 and Salsa. NOTE This may change in the future to be more compatible
+/// with NIST standardized schemes.
 const DIGEST_BYTES: usize = 256 / 8; // SHA3-256 digest
 pub(crate) const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 pub const RND_SIZE: usize = 256 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
 
 /// Generate ephemeral keys used for encryption
-/// Concretely it involves generating ECDH keys for curve 25519 to be used in ECIES for hybrid encryption using Salsa
+/// Concretely it involves generating ECDH keys for curve 25519 to be used in ECIES for hybrid
+/// encryption using Salsa
 pub fn encryption_key_generation(rng: &mut impl CryptoRngCore) -> (PublicEncKey, PrivateEncKey) {
     let sk = SecretKey::generate(rng);
     (PublicEncKey(sk.public_key()), sk)
 }
 
-/// Method for computing the signature on a payload, `msg`, based on the server's signing key `server_sig_key`.
-/// Returns the signed message as a vector of bytes/
+/// Method for computing the signature on a payload, `msg`, based on the server's signing key
+/// `server_sig_key`. Returns the signed message as a vector of bytes/
 /// Concretely r || s
 pub fn sign<T>(msg: &T, server_sig_key: &PrivateSigKey) -> anyhow::Result<Signature>
 where
@@ -68,13 +69,13 @@ where
     true
 }
 
-/// Method for computing the signcryption of a payload, `msg`, based on the necessary public keys `client_pk`
-/// received from a client, and the server's signing key `server_sig_key`.
+/// Method for computing the signcryption of a payload, `msg`, based on the necessary public keys
+/// `client_pk` received from a client, and the server's signing key `server_sig_key`.
 /// Returns the signcrypted message.
 ///
-/// WARNING: It is assumed that the client's public key HAS been validated to come from a valid [ClientRequest] and
-/// validated to be consistent with the blockchain identity of the client BEFORE calling this method.
-/// IF THIS HAS NOT BEEN DONE THEN ANYONE CAN IMPERSONATE ANY CLIENT!!!
+/// WARNING: It is assumed that the client's public key HAS been validated to come from a valid
+/// `ClientRequest` and validated to be consistent with the blockchain identity of the client BEFORE
+/// calling this method. IF THIS HAS NOT BEEN DONE THEN ANYONE CAN IMPERSONATE ANY CLIENT!!!
 pub fn signcrypt<T>(
     rng: &mut impl CryptoRngCore,
     msg: &T,
@@ -98,11 +99,13 @@ where
     sig.normalize_s();
 
     // Generate the server part of the key agreement
-    // Oberve that we don't need to keep the secret key as we don't need the client to send the server messages
+    // Oberve that we don't need to keep the secret key as we don't need the client to send the
+    // server messages
     let (server_enc_pk, server_enc_sk) = encryption_key_generation(rng);
     // Encrypt msg || sig || H(server_verification_key) || H(server_enc_key)
-    // OBSERVE: serialization is simply r concatenated with s. That is, NOT an Ethereum compatible signature since we preclude the v value
-    // The verification key is serialized based on the SEC1 standard
+    // OBSERVE: serialization is simply r concatenated with s. That is, NOT an Ethereum compatible
+    // signature since we preclude the v value The verification key is serialized based on the
+    // SEC1 standard
     let to_encrypt = [
         msg.as_ref(),
         &sig.to_bytes(),
@@ -161,7 +164,8 @@ pub fn validate_and_decrypt(
     Ok(Some(msg))
 }
 
-/// Helper method for parsing a signcrypted message consisting of the _true_ msg || sig || H(server_verification_key) || H(server_enc_key)
+/// Helper method for parsing a signcrypted message consisting of the _true_ msg || sig ||
+/// H(server_verification_key) || H(server_enc_key)
 fn parse_msg(
     decrypted_plaintext: Vec<u8>,
     server_enc_key: &PublicEncKey,
@@ -270,18 +274,17 @@ where
 mod tests {
     use k256::ecdsa::SigningKey;
     use rand::SeedableRng;
-    use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
+    use rand_chacha::rand_core::CryptoRngCore;
+    use rand_chacha::ChaCha20Rng;
     use serde_asn1_der::{from_bytes, to_vec};
     use signature::Signer;
     use tracing_test::traced_test;
 
-    use crate::core::{
-        der_types::Signature,
-        request::{ephemeral_key_generation, ClientRequest},
-        signcryption::{
-            check_signature, encryption_key_generation, hash_element, parse_msg, sign, signcrypt,
-            validate_and_decrypt, verify_sig, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
-        },
+    use crate::core::der_types::Signature;
+    use crate::core::request::{ephemeral_key_generation, ClientRequest};
+    use crate::core::signcryption::{
+        check_signature, encryption_key_generation, hash_element, parse_msg, sign, signcrypt,
+        validate_and_decrypt, verify_sig, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
     };
 
     use super::{PrivateSigKey, PublicSigKey, SigncryptionPair};
@@ -293,8 +296,9 @@ mod tests {
         (PublicSigKey { pk: *pk }, PrivateSigKey { sk })
     }
 
-    /// Helper method that creates an rng, a valid client request (on a dummy fhe cipher) and client singcryption keys SigncryptionPair
-    /// Returns the rng, client request, client signcryption keys and the dummy fhe cipher the request is made for.
+    /// Helper method that creates an rng, a valid client request (on a dummy fhe cipher) and client
+    /// singcryption keys SigncryptionPair Returns the rng, client request, client signcryption
+    /// keys and the dummy fhe cipher the request is made for.
     fn test_setup() -> (ChaCha20Rng, ClientRequest, SigncryptionPair, Vec<u8>) {
         let cipher = [42_u8; 1];
         let mut rng = ChaCha20Rng::seed_from_u64(1);
@@ -484,7 +488,8 @@ mod tests {
             sig: server_sig_key.sk.sign(msg),
             // pk: client_signcryption_keys.pk.clone().verification_key,
         };
-        // Fails as the correct key digets are not included in the message whose signature gets checked
+        // Fails as the correct key digets are not included in the message whose signature gets
+        // checked
         let res = check_signature(
             msg.to_vec(),
             &sig,

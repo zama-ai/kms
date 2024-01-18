@@ -1,15 +1,11 @@
-use crate::{
-    core::{
-        der_types::{PublicEncKey, PublicSigKey, Signature},
-        kms_core::SoftwareKms,
-    },
-    kms::{
-        kms_endpoint_server::KmsEndpoint, DecryptionRequest, DecryptionResponse, Proof,
-        ReencryptionRequest, ReencryptionResponse,
-    },
-    rpc::rpc_types::{
-        DecryptionRequestSigPayload, DecryptionResponseSigPayload, Kms, LightClientCommitResponse,
-    },
+use crate::core::der_types::{PublicEncKey, PublicSigKey, Signature};
+use crate::core::kms_core::SoftwareKms;
+use crate::kms::kms_endpoint_server::KmsEndpoint;
+use crate::kms::{
+    DecryptionRequest, DecryptionResponse, Proof, ReencryptionRequest, ReencryptionResponse,
+};
+use crate::rpc::rpc_types::{
+    DecryptionRequestSigPayload, DecryptionResponseSigPayload, Kms, LightClientCommitResponse,
 };
 use serde_asn1_der::{from_bytes, to_vec};
 use std::fmt::{self};
@@ -230,6 +226,7 @@ async fn verify_proof(_proof: Proof) -> Result<(), Status> {
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn get_state_root(height: u32) -> Result<AppHash, Status> {
     let response = reqwest::get(format!("http://127.0.0.1:8888/commit?height={}", height)) // assumes light client local service is up and running
         .await

@@ -1,5 +1,9 @@
 # Key Management System
 
+[![CI](https://github.com/zama-ai/kms2/workflows/CI/badge.svg)](https://github.com/zama-ai/kms/actions)
+[![document-badge](https://github.com/zama-ai/kms/actions/workflows/doc.yml/badge.svg)](https://zama-ai.github.io/kms)
+[![license-badge](https://img.shields.io/badge/License-BSD-blue)](LICENSE)
+
 This repository hosts the code for the Zama Key Management System prototypes.
 
 ## MVP Specification
@@ -48,3 +52,8 @@ The light client package handles the logic of sequentially verifying block heade
 ## Next steps
 - [ ] Full Node ->> KMS Reencryption request should contain user signature on `pubkey` and an `ACL` object.
 - [ ] KMS should verify the user signature on `pubkey` against the values of permissible decryptors in `ACL`.
+
+
+## Contribution 
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
