@@ -22,8 +22,12 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install Protocol Buffers Compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
       - name: Run tests
-        run: cargo test --features "tfhe/x86_64-unix" --workspace
+        run: cargo test --workspace
 
   rustfmt:
     name: Rustfmt
@@ -62,6 +66,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # Install protoc
+      - name: Install Protocol Buffers Compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
       - name: Check documentation
         env:
           RUSTDOCFLAGS: -D warnings
