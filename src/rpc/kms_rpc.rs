@@ -226,6 +226,7 @@ async fn verify_proof(_proof: Proof) -> Result<(), Status> {
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn get_state_root(height: u32) -> Result<AppHash, Status> {
     let response = reqwest::get(format!("http://127.0.0.1:8888/commit?height={}", height)) // assumes light client local service is up and running
         .await
