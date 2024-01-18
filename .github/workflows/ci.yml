@@ -53,6 +53,10 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: clippy
+      - name: Install Protocol Buffers Compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
       - uses: Swatinem/rust-cache@v2
       - name: Clippy check
         run: cargo clippy --all-targets --workspace -- -D warnings
@@ -66,7 +70,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # Install protoc
       - name: Install Protocol Buffers Compiler
         run: |
           sudo apt-get update
@@ -76,7 +79,8 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --document-private-items --features "tfhe/x86_64-unix" --workspace
       - name: TODO - Deploy docs to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+        run: echo "TODO - Deploy docs to GitHub Pages"
+      #  uses: peaceiris/actions-gh-pages@v3
       #  with:
       #    github_token: ${{ secrets.GITHUB_TOKEN }}
       #    publish_dir: ./target/doc
