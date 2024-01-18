@@ -74,7 +74,7 @@ where
 /// Returns the signcrypted message.
 ///
 /// WARNING: It is assumed that the client's public key HAS been validated to come from a valid
-/// [ClientRequest] and validated to be consistent with the blockchain identity of the client BEFORE
+/// `ClientRequest` and validated to be consistent with the blockchain identity of the client BEFORE
 /// calling this method. IF THIS HAS NOT BEEN DONE THEN ANYONE CAN IMPERSONATE ANY CLIENT!!!
 pub fn signcrypt<T>(
     rng: &mut impl CryptoRngCore,
