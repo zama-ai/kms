@@ -24,6 +24,39 @@ cargo flamegraph --root --bench prep -- triple_generation/n=5_t=1_batch=1000
 ```
 
 
+## Building Docker image
+
+Building **distributed-decryption** Docker image requires some additional setup, because in latest version of the project there is a dependency to a private Github project. This will require to have the correct **SSH** credentials configured either locally or remotely in the case we are running this on CI/CD phase.
+
+### Local Building
+
+In order to build docker image locally you should have `ssh-agent` running and with your ssh private key added to the authentication agent.
+
+1. Run `ssh-agent`
+
+```bash
+> eval $(ssh-agent -c)
+```
+
+2. Add your key to the authentication agent. Lets supposed that your private key is under `~/.ssh/my_key`
+
+```bash
+> ssh-add ~/.ssh/my_key
+> ssh-add -l
+```
+
+> NOTE: You can add this lines of codes to your shell interpreter like zsh, bash, fish, etc. in order to not need to run these steps on each new session.
+
+3. Now you are ready to build docker image with the following command:
+
+```bash
+> docker build --ssh default -t ddec .
+```
+
+### CI/CD Building
+
+TO BE DEFINED
+
 ## Text below is outdated...
 
 To run a 10 party benchmark for distributed decryption on a local network run the following:
@@ -48,7 +81,7 @@ RUST_LOG=info mobygo -n 4 results --session-id 1
 To simulate a certain network connection on all containers run the following (replace `wan.sh` with the desired network below):
 ```sh
 # configure network on all running containers
-./docker/runinallcontainers.sh wan.sh
+./operations/docker/scripts/runinallcontainers.sh ./operations/docker/scripts/wan.sh
 # verify that ping latency has changed as desired
 docker exec distributed-decryption-p1-1 ping distributed-decryption-p2-1
 ```
@@ -63,6 +96,47 @@ The following networks are simulated using `tc`:
 | 10 Gbps LAN  | `lan10.sh`  | 0.5 ms  | 10 Gbit/s  |
 
 Note that ping RTT will be 2x the latency from the table, when the network config is set on all nodes.
+
+## Networking (gRPC) Benchmarks
+gRPC Benchmarking requires to setup a whole network inside a docker compose orchestator. This disable the possibility to integrate this kind of benchmarks with `Criterion` inside `cargo bench` running command.
+
+In order to bypass this limitation we have automate this `gRPC` benchmarks using `cargo-make` utility. This implies the following new components to easily spawn different benchmarks configurations:
+
+- `src/bin/benches/gen-docker.rs`: This new binary allows us to dynamically create a `docker-compose.yml` file based on some command line parameters. Basically this executable takes number of parties and threshold and generate a docker compose files with all the setup asked by the parameters. By default this executable leaves the compose file in `temp/experiment.yml` file. This destination output can be also overwrite with a command line argument. In order to see what are all the capabilities of this executable run `cargo run --bin docker-benches --features docker-compose-benches --help`.
+- `cargo-make`: With cargo make we are orchestating all the command line chain in order to
+  1. Run `cargo run --bin docker-benches ...` to generate docker compose file with the desired amount of parties
+  2. Start docker compose generated in step 1.
+  3. Run `cargo run --bin mobygo ... ` choreographer in order to init, decrypt and gather results based on the desired configuration.
+  4. Finally stop docker compose started in step 2.
+
+### Prerequisites for running benchmarks
+
+- Install [cargo-make](https://github.com/sagiegurari/cargo-make?tab=readme-ov-file#installation).
+
+### Run all benchmarks
+
+```bash
+> cargo make run-grpc-benchmarks
+```
+
+### New configuration
+If you want to write a new configuration to test especific parameter set, just do the following:
+
+1. Add a new environment file to `experiments` folder. You can copy one of the already existing one. Suppose that you new setup requires 5 parties, 1 threshold, 5 messages sent, protocol 1 (PRSS). So the file could be call `experiments/bench-p5_t1_msg5_prss.env`
+2. Add a section command to `Makefile.toml` file.
+
+```toml
+
+[tasks.grpc-bench-5-1-5-prss]
+env_files = [ { path = "experiments/bench-p5_t1_msg5_prss.env" } ]
+run_task = { name = ["grpc-bench"] }
+
+```
+3. Now you are able to call this benchmark or add it to the set of `run-grpc-benchmarks` task.
+
+```bash
+> cargo make grpc-bench-5-1-5-prss
+```
 
 ## AWS Benchmarks
 

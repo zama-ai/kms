@@ -19,3 +19,5 @@ data/
 *.egg-info
 *.gz
 .cache
+.github
+target/

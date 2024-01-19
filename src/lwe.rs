@@ -281,7 +281,7 @@ pub struct SecretKey {
 impl Default for SecretKey {
     fn default() -> Self {
         let default_params: ThresholdLWEParameters =
-            read_as_json("temp/default_params.json".to_string()).unwrap();
+            read_as_json("parameters/default_params.json".to_string()).unwrap();
         let keyset = gen_key_set(default_params, &mut get_rng());
         keyset.sk
     }

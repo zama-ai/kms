@@ -24,13 +24,15 @@ use tokio::time::Instant;
 use tonic::codegen::http::Uri;
 use tonic::transport::Channel;
 
-use super::constants::MESSAGE_LIMIT;
+use super::constants::{MESSAGE_LIMIT, NETWORK_TIMEOUT_LONG};
 
 pub struct GrpcNetworkingManager {
     channels: Arc<Channels>,
     message_queues: Arc<MessageQueueStores>,
     owner: Identity,
 }
+
+pub type GrpcServer = GnetworkingServer<NetworkingImpl>;
 
 impl GrpcNetworkingManager {
     pub fn new_server(&self) -> GnetworkingServer<impl Gnetworking> {
@@ -195,7 +197,11 @@ impl Networking for GrpcNetworking {
     }
 
     fn get_timeout_current_round(&self) -> anyhow::Result<Instant> {
-        todo!("Need to implement get_timeout_current_round for grpc")
+        if let Ok(net_round) = self.network_round.lock() {
+            Ok(Instant::now() + *NETWORK_TIMEOUT_LONG * (*net_round as u32))
+        } else {
+            Err(anyhow_error_and_log("Couldn't lock mutex".to_string()))
+        }
     }
 
     fn get_current_round(&self) -> anyhow::Result<usize> {
@@ -222,8 +228,8 @@ type MessageQueueStore = DashMap<
 type MessageQueueStores = DashMap<SessionId, Arc<MessageQueueStore>>;
 
 #[derive(Default)]
-struct NetworkingImpl {
-    pub message_queues: Arc<MessageQueueStores>,
+pub struct NetworkingImpl {
+    message_queues: Arc<MessageQueueStores>,
 }
 
 #[async_trait]
@@ -286,7 +292,7 @@ impl Gnetworking for NetworkingImpl {
         } else {
             Err(tonic::Status::new(
                 tonic::Code::NotFound,
-                "unknown session id".to_string(),
+                format!("unknown session id {:?} for party", tag.session_id),
             ))
         }
     }

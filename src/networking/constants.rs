@@ -3,7 +3,7 @@ use lazy_static::lazy_static;
 use std::time::Duration;
 
 /// The default incoming messages limit per party
-pub(crate) const MESSAGE_LIMIT: usize = 5;
+pub(crate) const MESSAGE_LIMIT: usize = 70;
 
 /// The default multiplier to determine the next interval between retries
 pub(crate) const MULTIPLIER: f64 = 1.1;
@@ -17,4 +17,7 @@ lazy_static! {
 
     /// maximum number of seconds that a party waits for a network message during a protocol
     pub(crate) static ref NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// maximum number of seconds that a party waits for a network message during a protocol
+    pub(crate) static ref NETWORK_TIMEOUT_LONG: Duration = Duration::from_secs(60);
 }

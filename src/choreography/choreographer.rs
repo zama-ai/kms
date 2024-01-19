@@ -10,6 +10,7 @@ use crate::{
         runtime::party::{Identity, Role},
     },
     lwe::{Ciphertext64, PublicKey},
+    networking::constants::NETWORK_TIMEOUT_LONG,
 };
 use crate::{choreography::grpc::ComputationOutputs, execution::runtime::session::DecryptionMode};
 use crate::{execution::runtime::session::SetupMode, lwe::ThresholdLWEParameters};
@@ -32,16 +33,28 @@ impl ChoreoRuntime {
         role_assignments: HashMap<Role, Identity>,
         tls_config: Option<ClientTlsConfig>,
     ) -> Result<ChoreoRuntime, Box<dyn std::error::Error>> {
+        Self::new_with_hosts(role_assignments, tls_config, HashMap::new())
+    }
+
+    pub fn new_with_hosts(
+        role_assignments: HashMap<Role, Identity>,
+        tls_config: Option<ClientTlsConfig>,
+        host_assignments: HashMap<Role, String>,
+    ) -> Result<ChoreoRuntime, Box<dyn std::error::Error>> {
         let channels = role_assignments
             .iter()
-            .map(|(role, identity)| {
+            .map(|(role, id)| {
+                let identity = host_assignments
+                    .get(role)
+                    .map(|s| Identity::from(s.to_owned()))
+                    .unwrap_or(id.clone());
                 let endpoint: Uri = format!("http://{}", identity).parse()?;
                 tracing::debug!("connecting to endpoint: {:?}", endpoint);
                 let mut channel = Channel::builder(endpoint);
                 if let Some(ref tls_config) = tls_config {
                     channel = channel.tls_config(tls_config.clone())?;
                 };
-                let channel = channel.connect_lazy();
+                let channel = channel.timeout(*NETWORK_TIMEOUT_LONG).connect_lazy();
                 Ok((*role, channel))
             })
             .collect::<Result<_, Box<dyn std::error::Error>>>()?;

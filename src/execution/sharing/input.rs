@@ -50,7 +50,6 @@ pub async fn robust_input<Z: ShamirRing, R: RngCore>(
             let networking = Arc::clone(session.network());
             let session_id = session.session_id();
             let share = indexed_share.value();
-
             set.spawn(async move {
                 let _ = networking
                     .send(

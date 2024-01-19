@@ -114,7 +114,10 @@ fn internal_send_to_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
                     .await;
             });
         } else {
-            tracing::info!("You are trying to communicate with a party that doesn't pass check");
+            tracing::info!(
+                "You are trying to communicate with a party that doesn't pass check [Receiver - {:?}]",
+                cur_receiver
+            );
             continue;
         }
     }

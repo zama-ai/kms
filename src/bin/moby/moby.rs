@@ -1,7 +1,7 @@
 use clap::Parser;
 use distributed_decryption::choreography::grpc::GrpcChoreography;
 use distributed_decryption::execution::runtime::party::{Identity, Role, RoleAssignment};
-use distributed_decryption::networking::grpc::GrpcNetworkingManager;
+use distributed_decryption::networking::grpc::{GrpcNetworkingManager, GrpcServer};
 use tonic::transport::Server;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -57,9 +57,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Box::new(move |session_id, roles| networking.new_session(session_id, roles)),
     );
 
-    let mut server = Server::builder();
+    let mut server = Server::builder().timeout(std::time::Duration::from_secs(60));
+    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+    health_reporter.set_serving::<GrpcServer>().await;
 
     let router = server
+        .add_service(health_service)
         .add_service(networking_server)
         .add_service(choreography.into_server());
 

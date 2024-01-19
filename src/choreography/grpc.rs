@@ -17,15 +17,11 @@ use crate::execution::endpoints::decryption::{
     run_decryption_large, run_decryption_small, to_large_ciphertext_block,
 };
 use crate::execution::endpoints::keygen::initialize_key_material;
-use crate::execution::random::get_rng;
 use crate::execution::runtime::party::{Identity, Role};
 use crate::execution::runtime::session::{
     DecryptionMode, LargeSession, SessionParameters, SmallSessionStruct,
 };
-use crate::file_handling::read_as_json;
-use crate::lwe::{
-    gen_key_set, Ciphertext64, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters,
-};
+use crate::lwe::{Ciphertext64, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters};
 use crate::{
     choreography::grpc::gen::DecryptionRequest, execution::runtime::session::SmallSession,
 };
@@ -79,24 +75,19 @@ pub struct GrpcChoreography {
     result_stores: Arc<ResultStores>,
     networking_strategy: NetworkingStrategy,
     setup_store: Arc<SetupStore>,
-    pubkey_store: Arc<Mutex<PubConKeyPair>>,
+    pubkey_store: Arc<Mutex<Option<PubConKeyPair>>>,
     setup_epoch_id: AsyncCell<SessionId>,
 }
 
 impl GrpcChoreography {
     pub fn new(own_identity: Identity, networking_strategy: NetworkingStrategy) -> Self {
-        let default_params: ThresholdLWEParameters =
-            read_as_json("parameters/default_params.json".to_string()).unwrap();
         GrpcChoreography {
             own_identity,
             result_stores: Arc::new(ResultStores::default()),
             networking_strategy,
             setup_store: Arc::new(SetupStore::default()),
             setup_epoch_id: AsyncCell::default(),
-            pubkey_store: Arc::new(Mutex::new(PubConKeyPair::new(gen_key_set(
-                default_params,
-                &mut get_rng(),
-            )))),
+            pubkey_store: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -179,9 +170,18 @@ impl Choreography for GrpcChoreography {
                 let result_stores = Arc::clone(&self.result_stores);
                 let pks = Arc::clone(&self.pubkey_store);
                 let pkl = pks.lock().unwrap().clone();
+                let ck = &pkl
+                    .as_ref()
+                    .ok_or_else(|| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            "No public key available for decryption".to_string(),
+                        )
+                    })?
+                    .ck;
                 let ct_large = ct
                     .iter()
-                    .map(|ct_block| to_large_ciphertext_block(&pkl.ck, ct_block))
+                    .map(|ct_block| to_large_ciphertext_block(ck, ct_block))
                     .collect_vec();
 
                 match mode {
@@ -330,7 +330,7 @@ impl Choreography for GrpcChoreography {
                 None => {
                     return Err(tonic::Status::new(
                         tonic::Code::NotFound,
-                        "unknown session id".to_string(),
+                        format!("unknown session id {:?} for choreographer", session_id.0),
                     ))
                 }
             }
@@ -433,11 +433,11 @@ impl Choreography for GrpcChoreography {
                         prss_setup: map_setup,
                     });
 
-                    *pks.lock().unwrap() = pk;
+                    *pks.lock().unwrap() = Some(pk);
                     tracing::debug!("Key material stored.");
                 });
 
-                Ok(tonic::Response::new(KeygenResponse::default()))
+                Ok(tonic::Response::new(KeygenResponse {}))
             }
         }
     }
@@ -459,7 +459,12 @@ impl Choreography for GrpcChoreography {
                 let _ = res.value().get().await;
 
                 let pks = Arc::clone(&self.pubkey_store);
-                let pkl = pks.lock().unwrap().clone();
+                let pkl = pks.lock().unwrap().clone().ok_or_else(|| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        "No public key available for decryption".to_string(),
+                    )
+                })?;
 
                 let pk_serialized = bincode::serialize(&pkl).expect("failed to serialize results");
                 tracing::debug!("Pubkey successfully retrieved.");

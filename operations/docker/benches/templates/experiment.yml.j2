@@ -1,0 +1,27 @@
+version: '3'
+services:
+{% for i in range(n_parties) %}
+  p{{ i+1 }}:
+    image: ddec:latest
+    cap_add:
+      - NET_ADMIN
+    command:
+      - "moby"
+      - "-p"
+      - "{{ i+1 }}"
+      - "-n"
+      - "{{ n_parties }}"
+    environment:
+      - RUST_LOG=info
+    volumes:
+      - ../parameters:/app/ddec/parameters
+    ports:
+      - {{ 50000 + i+1 }}:50000
+    healthcheck:
+      test: "grpc-health-probe --addr=localhost:50000"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+{% endfor %}
+
