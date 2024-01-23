@@ -21,6 +21,7 @@ use crate::execution::runtime::session::{
 };
 use crate::lwe::to_large_ciphertext_block;
 use crate::lwe::{Ciphertext64, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters};
+use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::{
     choreography::grpc::gen::DecryptionRequest, execution::runtime::session::SmallSession,
 };
@@ -92,6 +93,8 @@ impl GrpcChoreography {
 
     pub fn into_server(self) -> ChoreographyServer<impl Choreography> {
         ChoreographyServer::new(self)
+            .max_decoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
+            .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
 }
 

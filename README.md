@@ -113,6 +113,32 @@ In order to bypass this limitation we have automate this `gRPC` benchmarks using
 
 - Install [cargo-make](https://github.com/sagiegurari/cargo-make?tab=readme-ov-file#installation).
 
+### Configuration files
+Depending on the experiment, command line parameters injected to choreographer can be set using environment variables. Inside `Makefile.toml` file, it can be seen how those environment variables are injected into command line parameters.
+
+There are 2 environment variables sets:
+
+- **Default Environment**: `.env.makefile` is where all the default values are set if you dont specify anything.
+- **Specific Environment**: All `*.env` files under `experiments` folder. It is not mandatory either to name files with `.env` extension or to put it inside `experiements` folder but it is encourage to do that to preserve some convention.
+
+Default `cargo make grpc-bench` task runs taking the environment variables from `.env.makefile`. As you can see this is defined here:
+
+```toml
+env_files = [ { path = ".env.makefile", defaults_only = true } ]
+```
+
+In experiments cases like `grpc-bench-4-1-10-prss` each `cargo-make` task has its own environment file to set the proper environment variables. For example:
+
+```toml
+[tasks.grpc-bench-4-1-10-prss]
+env_files = [ { path = "experiments/bench-p4_t1_msg10_prss.env" } ]
+run_task = { name = ["grpc-bench"] }
+description = "4 parties, 1 threshold, 10 messages, PRSS"
+```
+
+Therefore if you want to change some configuration setup on some specific task either you need to create a new task with its own environment file or change the already provided task.
+
+
 ### Run all benchmarks
 
 ```bash

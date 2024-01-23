@@ -80,6 +80,10 @@ pub struct InitOptions {
     #[clap(short, long, default_value_t = 1)]
     /// Initialize decryption protocols: 1: All Protocols, 2: Only Proto2, No PRSS
     protocol: u8,
+
+    #[clap(long, default_value = "temp/test_params.json")]
+    /// Filename of the LWE parameters
+    lwe_params_file: String,
 }
 
 #[derive(Subcommand, Debug)]
@@ -103,8 +107,7 @@ async fn init_command(
         _ => Err(anyhow_error_and_log("Invalid SetupMode".to_string())),
     }?;
 
-    let default_params: ThresholdLWEParameters =
-        read_as_json("parameters/test_params.json".to_string())?;
+    let default_params: ThresholdLWEParameters = read_as_json(init_opts.lwe_params_file)?;
 
     // keys can be set once per epoch (currently stored in a SessionID)
     // TODO so far we only use the default parameters

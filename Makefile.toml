@@ -35,7 +35,7 @@ echo ""
 [tasks.choreo-init]
 env = { "RUST_LOG" = "info", RUST_BACKTRACE = "1"}
 command = "cargo"
-args = ["run", "--bin", "mobygo", "--features", "choreographer", "--", "-n", "${NUM_PARTIES}", "init", "-t", "${THRESHOLD}"]
+args = ["run", "--bin", "mobygo", "--features", "choreographer", "--", "-n", "${NUM_PARTIES}", "init", "-t", "${THRESHOLD}", "--lwe-params-file", "${LWE_PARAMS_FILE_PATH}"]
 
 [tasks.choreo-decrypt]
 env = { "RUST_LOG" = "info" }
@@ -52,7 +52,7 @@ command = "sleep"
 args = ["2"]
 
 [tasks.grpc-bench]
-run_task = { name = ["start-parties", "choreo-init", "choreo-decrypt", "experiment-name", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
+run_task = { name = ["experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
 
 [tasks.grpc-bench-4-1-10-prss]
 env_files = [ { path = "experiments/bench-p4_t1_msg10_prss.env" } ]

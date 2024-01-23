@@ -10,7 +10,7 @@ use crate::{
         runtime::party::{Identity, Role},
     },
     lwe::{Ciphertext64, PublicKey},
-    networking::constants::NETWORK_TIMEOUT_LONG,
+    networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG},
 };
 use crate::{choreography::grpc::ComputationOutputs, execution::runtime::session::DecryptionMode};
 use crate::{execution::runtime::session::SetupMode, lwe::ThresholdLWEParameters};
@@ -65,6 +65,12 @@ impl ChoreoRuntime {
         })
     }
 
+    fn new_client(&self, channel: Channel) -> ChoreographyClient<Channel> {
+        ChoreographyClient::new(channel)
+            .max_decoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
+            .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
+    }
+
     pub async fn initiate_threshold_decryption(
         &self,
         mode: &DecryptionMode,
@@ -77,7 +83,7 @@ impl ChoreoRuntime {
         let ciphertext = bincode::serialize(ct)?;
 
         for channel in self.channels.values() {
-            let mut client = ChoreographyClient::new(channel.clone());
+            let mut client = self.new_client(channel.clone());
 
             let request = DecryptionRequest {
                 mode: mode_s.clone(),
@@ -108,7 +114,7 @@ impl ChoreoRuntime {
         let mut combined_stats = HashMap::new();
 
         for (role, channel) in self.channels.iter() {
-            let mut client = ChoreographyClient::new(channel.clone());
+            let mut client = self.new_client(channel.clone());
 
             let request = RetrieveResultsRequest {
                 session_id: session_id.clone(),
@@ -158,7 +164,7 @@ impl ChoreoRuntime {
         let setup_mode = bincode::serialize(&setup_mode)?;
 
         for channel in self.channels.values() {
-            let mut client = ChoreographyClient::new(channel.clone());
+            let mut client = self.new_client(channel.clone());
 
             let request = KeygenRequest {
                 epoch_id: epoch_id.clone(),
@@ -174,7 +180,7 @@ impl ChoreoRuntime {
 
         for (role, channel) in self.channels.iter() {
             if role.one_based() == INPUT_PARTY_ID {
-                let mut client = ChoreographyClient::new(channel.clone());
+                let mut client = self.new_client(channel.clone());
                 let request = PubkeyRequest { epoch_id };
                 let response = client.retrieve_pubkey(request).await?;
                 let pk = bincode::deserialize::<PublicKey>(&response.get_ref().pubkey)?;
@@ -193,7 +199,7 @@ impl ChoreoRuntime {
 
         for (role, channel) in self.channels.iter() {
             if role.one_based() == INPUT_PARTY_ID {
-                let mut client = ChoreographyClient::new(channel.clone());
+                let mut client = self.new_client(channel.clone());
                 let request = PubkeyRequest { epoch_id };
                 let response = client.retrieve_pubkey(request).await?;
                 let pk = bincode::deserialize::<PublicKey>(&response.get_ref().pubkey)?;

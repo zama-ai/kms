@@ -55,7 +55,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let choreography = GrpcChoreography::new(
         own_identity,
         Box::new(move |session_id, roles| networking.new_session(session_id, roles)),
-    );
+    )
+    .into_server();
 
     let mut server = Server::builder().timeout(std::time::Duration::from_secs(60));
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
@@ -64,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let router = server
         .add_service(health_service)
         .add_service(networking_server)
-        .add_service(choreography.into_server());
+        .add_service(choreography);
 
     let addr = format!("0.0.0.0:{}", &opt.port).parse()?;
 

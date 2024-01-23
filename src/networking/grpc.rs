@@ -11,7 +11,7 @@ use self::gen::{SendValueRequest, SendValueResponse};
 use crate::computation::SessionId;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::{Identity, RoleAssignment};
-use crate::networking::constants;
+use crate::networking::constants::{self, MAX_EN_DECODE_MESSAGE_SIZE};
 use crate::networking::Networking;
 use async_trait::async_trait;
 use backoff::future::retry;
@@ -39,6 +39,8 @@ impl GrpcNetworkingManager {
         GnetworkingServer::new(NetworkingImpl {
             message_queues: Arc::clone(&self.message_queues),
         })
+        .max_decoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
+        .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
 
     pub fn without_tls(owner: Identity) -> Self {
@@ -92,11 +94,18 @@ impl GrpcNetworking {
                         receiver
                     ))
                 })?;
-                let channel = Channel::builder(endpoint);
+                let channel = Channel::builder(endpoint).timeout(*NETWORK_TIMEOUT_LONG);
                 Ok::<Channel, anyhow::Error>(channel.connect_lazy())
             })?
             .clone(); // cloning channels is cheap per tonic documentation
         Ok(channel)
+    }
+
+    fn new_client(&self, identity: &Identity) -> anyhow::Result<GnetworkingClient<Channel>> {
+        let channel = self.channel(identity)?;
+        Ok(GnetworkingClient::new(channel)
+            .max_decoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
+            .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE))
     }
 }
 
@@ -134,8 +143,7 @@ impl Networking for GrpcNetworking {
                     tag: bytes,
                     value: value.clone(),
                 };
-                let channel = self.channel(receiver)?;
-                let mut client = GnetworkingClient::new(channel);
+                let mut client = self.new_client(receiver)?;
                 tracing::debug!(
                     "Sending '{:?}' to {:?}, session_id {:?}",
                     value,
