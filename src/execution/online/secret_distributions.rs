@@ -68,8 +68,9 @@ mod tests {
     use crate::{
         algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
         execution::{
+            config::BatchParams,
             large_execution::offline::{
-                BatchParams, RealLargePreprocessing, TrueDoubleSharing, TrueSingleSharing,
+                RealLargePreprocessing, TrueDoubleSharing, TrueSingleSharing,
             },
             online::triple::open_list,
             runtime::session::{LargeSession, ParameterHandles},
@@ -89,12 +90,12 @@ mod tests {
 
         let mut task = |mut session: LargeSession| async move {
             let batch_sizes = BatchParams {
-                triple_batch_size: batch * (bound + 2),
-                random_batch_size: batch * (bound + 2),
+                triples: batch * (bound + 2),
+                randoms: batch * (bound + 2),
             };
             let mut large_preproc = RealLargePreprocessing::<ResiduePoly128>::init(
                 &mut session,
-                Some(batch_sizes),
+                batch_sizes,
                 TrueSingleSharing::default(),
                 TrueDoubleSharing::default(),
             )
@@ -160,12 +161,12 @@ mod tests {
 
         let mut task = |mut session: LargeSession| async move {
             let batch_sizes = BatchParams {
-                triple_batch_size: batch * (bound + 2),
-                random_batch_size: batch * (bound + 2),
+                triples: batch * (bound + 2),
+                randoms: batch * (bound + 2),
             };
             let mut large_preproc = RealLargePreprocessing::<ResiduePoly64>::init(
                 &mut session,
-                Some(batch_sizes),
+                batch_sizes,
                 TrueSingleSharing::default(),
                 TrueDoubleSharing::default(),
             )

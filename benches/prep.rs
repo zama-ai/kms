@@ -2,16 +2,22 @@ use criterion::Throughput;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
 use distributed_decryption::algebra::residue_poly::ResiduePoly64;
+use distributed_decryption::execution::config::BatchParams;
 use distributed_decryption::execution::large_execution::double_sharing::DoubleSharing;
-use distributed_decryption::execution::large_execution::offline::{
-    BatchParams, LargePreprocessing,
-};
+use distributed_decryption::execution::large_execution::offline::LargePreprocessing;
 use distributed_decryption::execution::large_execution::offline::{
     TrueDoubleSharing, TrueSingleSharing,
 };
 use distributed_decryption::execution::online::gen_bits::{BitGenEven, RealBitGenEven};
-use distributed_decryption::execution::runtime::session::LargeSession;
+use distributed_decryption::execution::runtime::session::ParameterHandles;
+use distributed_decryption::execution::runtime::session::SmallSessionHandles;
+use distributed_decryption::execution::runtime::session::{LargeSession, SmallSession128};
+use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandom;
+use distributed_decryption::execution::small_execution::offline::SmallPreprocessing;
+use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_large;
+use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_small;
+use rand_chacha::ChaCha20Rng;
 
 use pprof::criterion::{Output, PProfProfiler};
 
@@ -32,6 +38,62 @@ impl std::fmt::Display for OneShotConfig {
         write!(f, "n={}_t={}_batch={}", self.n, self.t, self.batch_size)?;
         Ok(())
     }
+}
+
+fn triple_nsmall128(c: &mut Criterion) {
+    let mut group = c.benchmark_group("triple_nsmall128");
+
+    let params = vec![
+        OneShotConfig::new(4, 1, 10000),
+        OneShotConfig::new(5, 1, 10000),
+        OneShotConfig::new(10, 2, 10000),
+        OneShotConfig::new(13, 3, 10000),
+    ];
+
+    group.sample_size(10);
+    group.sampling_mode(criterion::SamplingMode::Flat);
+    for config in params {
+        group.throughput(Throughput::Elements(config.batch_size as u64));
+        group.bench_with_input(
+            BenchmarkId::from_parameter(config),
+            &config,
+            |b, &config| {
+                b.iter(|| {
+                    let mut computation = |mut session: SmallSession128| async move {
+                        let default_batch_size = BatchParams {
+                            triples: config.batch_size,
+                            randoms: 0,
+                        };
+
+                        let prss_setup = PRSSSetup::init_with_abort::<
+                            RealAgreeRandom,
+                            ChaCha20Rng,
+                            SmallSession128,
+                        >(&mut session)
+                        .await
+                        .unwrap();
+                        session.set_prss(Some(
+                            prss_setup.new_prss_session_state(session.session_id()),
+                        ));
+
+                        let _prep = SmallPreprocessing::<_, RealAgreeRandom>::init(
+                            &mut session,
+                            default_batch_size,
+                        )
+                        .await
+                        .unwrap();
+                    };
+                    let _result = execute_protocol_small::<ResiduePoly128, _, _>(
+                        config.n,
+                        config.t as u8,
+                        None,
+                        &mut computation,
+                    );
+                });
+            },
+        );
+    }
+    group.finish();
 }
 
 fn triple_z128(c: &mut Criterion) {
@@ -68,10 +130,10 @@ fn triple_z128(c: &mut Criterion) {
                             TrueDoubleSharing<ResiduePoly128>,
                         >::init(
                             &mut session,
-                            Some(BatchParams {
-                                triple_batch_size: config.batch_size,
-                                random_batch_size: 0,
-                            }),
+                            BatchParams {
+                                triples: config.batch_size,
+                                randoms: 0,
+                            },
                             TrueSingleSharing::default(),
                             TrueDoubleSharing::default(),
                         )
@@ -125,10 +187,10 @@ fn triple_z64(c: &mut Criterion) {
                             TrueDoubleSharing<ResiduePoly64>,
                         >::init(
                             &mut session,
-                            Some(BatchParams {
-                                triple_batch_size: config.batch_size,
-                                random_batch_size: 0,
-                            }),
+                            BatchParams {
+                                triples: config.batch_size,
+                                randoms: 0,
+                            },
                             TrueSingleSharing::default(),
                             TrueDoubleSharing::default(),
                         )
@@ -182,10 +244,10 @@ fn random_sharing(c: &mut Criterion) {
                             TrueDoubleSharing<ResiduePoly128>,
                         >::init(
                             &mut session,
-                            Some(BatchParams {
-                                triple_batch_size: 0,
-                                random_batch_size: config.batch_size,
-                            }),
+                            BatchParams {
+                                triples: 0,
+                                randoms: config.batch_size,
+                            },
                             TrueSingleSharing::default(),
                             TrueDoubleSharing::default(),
                         )
@@ -281,10 +343,10 @@ fn bitgen_nlarge(c: &mut Criterion) {
                             TrueDoubleSharing<ResiduePoly128>,
                         >::init(
                             &mut session,
-                            Some(BatchParams {
-                                triple_batch_size: config.batch_size,
-                                random_batch_size: config.batch_size,
-                            }),
+                            BatchParams {
+                                triples: config.batch_size,
+                                randoms: config.batch_size,
+                            },
                             TrueSingleSharing::default(),
                             TrueDoubleSharing::default(),
                         )
@@ -313,7 +375,6 @@ fn bitgen_nlarge(c: &mut Criterion) {
 fn batch_decode2t(c: &mut Criterion) {
     use distributed_decryption::execution::sharing::shamir::ShamirSharing;
     use rand_chacha::rand_core::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
     use std::num::Wrapping;
 
     let mut group = c.benchmark_group("batch_decode2t");
@@ -369,7 +430,7 @@ fn batch_decode2t(c: &mut Criterion) {
 criterion_group! {
     name = prep;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = batch_decode2t, triple_z128, triple_z64, random_sharing, double_sharing, bitgen_nlarge
+    targets = batch_decode2t, triple_z128, triple_z64, triple_nsmall128, random_sharing, double_sharing, bitgen_nlarge
 }
 
 criterion_main!(prep);

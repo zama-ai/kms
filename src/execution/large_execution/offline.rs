@@ -1,11 +1,10 @@
+use crate::execution::config::BatchParams;
 use crate::{
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::{
         online::{
-            preprocessing::{
-                BasePreprocessing, Preprocessing, RANDOM_BATCH_SIZE, TRIPLE_BATCH_SIZE,
-            },
+            preprocessing::{BasePreprocessing, Preprocessing},
             triple::Triple,
         },
         runtime::session::LargeSessionHandles,
@@ -14,21 +13,6 @@ use crate::{
 };
 use itertools::Itertools;
 use rand::RngCore;
-
-#[derive(Clone, Copy)]
-pub struct BatchParams {
-    pub triple_batch_size: usize,
-    pub random_batch_size: usize,
-}
-
-impl Default for BatchParams {
-    fn default() -> Self {
-        Self {
-            triple_batch_size: TRIPLE_BATCH_SIZE,
-            random_batch_size: RANDOM_BATCH_SIZE,
-        }
-    }
-}
 
 #[derive(Default, Clone)]
 pub struct LargePreprocessing<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> {
@@ -50,27 +34,23 @@ impl<Z: ShamirRing, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing
     /// - batch size for random generation
     pub async fn init<R: RngCore, L: LargeSessionHandles<R>>(
         session: &mut L,
-        batch_sizes: Option<BatchParams>,
+        batch_sizes: BatchParams,
         mut shh: S,
         mut dsh: D,
     ) -> anyhow::Result<Self> {
-        let batch_sizes = batch_sizes.unwrap_or_default();
         //Init single sharing
-        shh.init(
-            session,
-            2 * batch_sizes.triple_batch_size + batch_sizes.random_batch_size,
-        )
-        .await?;
+        shh.init(session, 2 * batch_sizes.triples + batch_sizes.randoms)
+            .await?;
 
         //Init double sharing
-        dsh.init(session, batch_sizes.triple_batch_size).await?;
+        dsh.init(session, batch_sizes.triples).await?;
         let base_preprocessing = BasePreprocessing {
             available_triples: Vec::new(),
             available_randoms: Vec::new(),
         };
         let mut large_preproc = Self {
-            triple_batch_size: batch_sizes.triple_batch_size,
-            random_batch_size: batch_sizes.random_batch_size,
+            triple_batch_size: batch_sizes.triples,
+            random_batch_size: batch_sizes.randoms,
             single_sharing_handle: shh,
             double_sharing_handle: dsh,
             elements: base_preprocessing,
@@ -202,7 +182,8 @@ pub type RealLargePreprocessing<Z> =
 
 #[cfg(test)]
 mod tests {
-    use super::{BatchParams, TrueDoubleSharing, TrueSingleSharing};
+    use super::{TrueDoubleSharing, TrueSingleSharing};
+    use crate::execution::config::BatchParams;
     use crate::{
         algebra::{
             residue_poly::{ResiduePoly128, ResiduePoly64},
@@ -239,10 +220,7 @@ mod tests {
                     RealVss, Vss,
                 },
             },
-            online::{
-                preprocessing::{Preprocessing, RANDOM_BATCH_SIZE, TRIPLE_BATCH_SIZE},
-                triple::Triple,
-            },
+            online::{preprocessing::Preprocessing, triple::Triple},
             runtime::session::{
                 BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
             },
@@ -272,7 +250,10 @@ mod tests {
     ) {
         let nb_batches = 3;
         let (_, malicious_due_to_dispute) = params.get_dispute_map();
-        let batch_sizes = BatchParams::default();
+        let batch_sizes = BatchParams {
+            triples: 10,
+            randoms: 10,
+        };
         let mut task_honest = |mut session: LargeSession| async move {
             let mut res_triples = Vec::new();
             let mut res_random = Vec::new();
@@ -281,23 +262,15 @@ mod tests {
                 let mut real_preproc =
                     LargePreprocessing::<Z, TrueSingleSharing<Z>, TrueDoubleSharing<Z>>::init(
                         &mut session,
-                        Some(batch_sizes),
+                        batch_sizes,
                         TrueSingleSharing::default(),
                         TrueDoubleSharing::default(),
                     )
                     .await
                     .unwrap();
 
-                res_triples.append(
-                    &mut real_preproc
-                        .next_triple_vec(batch_sizes.triple_batch_size)
-                        .unwrap(),
-                );
-                res_random.append(
-                    &mut real_preproc
-                        .next_random_vec(batch_sizes.random_batch_size)
-                        .unwrap(),
-                );
+                res_triples.append(&mut real_preproc.next_triple_vec(batch_sizes.triples).unwrap());
+                res_random.append(&mut real_preproc.next_random_vec(batch_sizes.randoms).unwrap());
             }
 
             (
@@ -310,7 +283,7 @@ mod tests {
 
         let mut task_malicious = |mut session: LargeSession, mut malicious_offline: P| async move {
             for _ in 0..nb_batches {
-                let _ = malicious_offline.init(&mut session, None).await;
+                let _ = malicious_offline.init(&mut session, batch_sizes).await;
             }
 
             session.my_role().unwrap()
@@ -353,7 +326,7 @@ mod tests {
         }
 
         //Check that everything reconstructs, and that triples are triples
-        for triple_idx in 0..nb_batches * batch_sizes.random_batch_size {
+        for triple_idx in 0..nb_batches * batch_sizes.randoms {
             let mut vec_x = Vec::new();
             let mut vec_y = Vec::new();
             let mut vec_z = Vec::new();
@@ -393,7 +366,7 @@ mod tests {
         async fn init(
             &mut self,
             session: &mut LargeSession,
-            batch_sizes: Option<BatchParams>,
+            batch_sizes: BatchParams,
         ) -> anyhow::Result<()>;
 
         async fn next_triple_batch(&mut self, session: &mut LargeSession) -> anyhow::Result<()>;
@@ -436,24 +409,20 @@ mod tests {
         async fn init(
             &mut self,
             session: &mut LargeSession,
-            batch_sizes: Option<BatchParams>,
+            batch_sizes: BatchParams,
         ) -> anyhow::Result<()> {
-            let batch_sizes = batch_sizes.unwrap_or_default();
             //Init single sharing
             self.single_sharing_handle
-                .init(
-                    session,
-                    2 * batch_sizes.triple_batch_size + batch_sizes.random_batch_size,
-                )
+                .init(session, 2 * batch_sizes.triples + batch_sizes.randoms)
                 .await?;
 
             //Init double sharing
             self.double_sharing_handle
-                .init(session, batch_sizes.triple_batch_size)
+                .init(session, batch_sizes.triples)
                 .await?;
 
-            self.triple_batch_size = batch_sizes.triple_batch_size;
-            self.random_batch_size = batch_sizes.random_batch_size;
+            self.triple_batch_size = batch_sizes.triples;
+            self.random_batch_size = batch_sizes.randoms;
             self.available_triples.clear();
             self.available_randoms.clear();
 
@@ -576,7 +545,7 @@ mod tests {
         async fn init(
             &mut self,
             session: &mut LargeSession,
-            batch_sizes: Option<BatchParams>,
+            batch_sizes: BatchParams,
         ) -> anyhow::Result<()> {
             self.large_preproc = LargePreprocessing::<Z, S, D>::init(
                 session,
@@ -859,6 +828,9 @@ mod tests {
         let parties = 5;
         let threshold = 1;
 
+        const TRIPLE_BATCH_SIZE: usize = 10_usize;
+        const RANDOM_BATCH_SIZE: usize = 10_usize;
+
         async fn task(
             mut session: LargeSession,
         ) -> (
@@ -872,7 +844,10 @@ mod tests {
                 TrueDoubleSharing<ResiduePoly128>,
             >::init(
                 &mut session,
-                None,
+                BatchParams {
+                    triples: TRIPLE_BATCH_SIZE,
+                    randoms: RANDOM_BATCH_SIZE,
+                },
                 TrueSingleSharing::default(),
                 TrueDoubleSharing::default(),
             )

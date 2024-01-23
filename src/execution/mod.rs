@@ -44,3 +44,4 @@ pub mod sharing {
     pub mod shamir;
     pub mod share;
 }
+pub mod config;

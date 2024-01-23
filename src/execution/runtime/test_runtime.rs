@@ -9,7 +9,7 @@ use crate::{
         sharing::shamir::ShamirRing,
         small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
     },
-    lwe::SecretKeyShare,
+    lwe::{BootstrappingKey, SecretKeyShare},
     networking::local::{LocalNetworking, LocalNetworkingProducer},
 };
 
@@ -29,6 +29,7 @@ pub struct DistributedTestRuntime<Z: Ring> {
     pub keyshares: Option<Vec<SecretKeyShare>>,
     pub user_nets: Vec<Arc<LocalNetworking>>,
     pub role_assignments: RoleAssignment,
+    pub conversion_keys: Option<Arc<BootstrappingKey>>,
 }
 
 /// Generates a list of list identities, setting their addresses as localhost:5000, localhost:5001, ...
@@ -68,11 +69,20 @@ impl<Z: ShamirRing> DistributedTestRuntime<Z> {
             keyshares: None,
             user_nets,
             role_assignments,
+            conversion_keys: None,
         }
     }
 
+    pub fn get_ck(&self) -> Arc<BootstrappingKey> {
+        Arc::clone(&self.conversion_keys.clone().unwrap())
+    }
+
+    pub fn setup_cks(&mut self, cks: Arc<BootstrappingKey>) {
+        self.conversion_keys = Some(cks);
+    }
+
     // store keyshares if you want to test sth related to them
-    pub fn setup_keys(&mut self, keyshares: Vec<SecretKeyShare>) {
+    pub fn setup_sks(&mut self, keyshares: Vec<SecretKeyShare>) {
         self.keyshares = Some(keyshares);
     }
 

@@ -1,12 +1,12 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::algebra::base_ring::Z64;
 use distributed_decryption::algebra::residue_poly::ResiduePoly64;
-use distributed_decryption::execution::large_execution::offline::{
-    BatchParams, LargePreprocessing,
-};
+use distributed_decryption::execution::config::BatchParams;
+use distributed_decryption::execution::large_execution::offline::LargePreprocessing;
 use distributed_decryption::execution::large_execution::offline::{
     TrueDoubleSharing, TrueSingleSharing,
 };
+use distributed_decryption::execution::online::bit_manipulation::bit_dec_batch;
 use distributed_decryption::execution::online::preprocessing::DummyPreprocessing;
 use distributed_decryption::execution::runtime::session::ParameterHandles;
 use distributed_decryption::execution::runtime::session::SmallSessionHandles;
@@ -14,18 +14,15 @@ use distributed_decryption::execution::runtime::session::{LargeSession, SmallSes
 use distributed_decryption::execution::sharing::shamir::ShamirSharing;
 use distributed_decryption::execution::sharing::share::Share;
 use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandom;
-use distributed_decryption::execution::small_execution::offline::{SmallBatch, SmallPreprocessing};
+use distributed_decryption::execution::small_execution::offline::SmallPreprocessing;
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::tests::helper::tests_and_benches::{
     execute_protocol_large, execute_protocol_small,
 };
-
+use pprof::criterion::{Output, PProfProfiler};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::num::Wrapping;
-
-use distributed_decryption::execution::online::bit_manipulation::bit_dec;
-use pprof::criterion::{Output, PProfProfiler};
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {
@@ -97,9 +94,13 @@ fn bit_dec_online(c: &mut Criterion) {
                             session.threshold() as usize,
                             session.my_role().unwrap().zero_based(),
                         );
-                        let _bits = bit_dec::<Z64, _, _, _>(&mut session, &mut prep, input_a)
-                            .await
-                            .unwrap();
+                        let _bits = bit_dec_batch::<Z64, _, _, _>(
+                            &mut session,
+                            &mut prep,
+                            [input_a].to_vec(),
+                        )
+                        .await
+                        .unwrap();
                     };
 
                     let _result = execute_protocol_large::<ResiduePoly64, _, _>(
@@ -119,7 +120,8 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
     let mut group = c.benchmark_group("bit_dec_small_e2e_abort");
 
     let params = vec![
-        OneShotConfig::new(5, 1, 5),
+        OneShotConfig::new(5, 1, 8),
+        OneShotConfig::new(5, 1, 16),
         OneShotConfig::new(10, 2, 5),
         OneShotConfig::new(13, 3, 5),
     ];
@@ -144,30 +146,32 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                             prss_setup.new_prss_session_state(session.session_id()),
                         ));
 
-                        let bitdec_batch = SmallBatch {
+                        let bitdec_batch = BatchParams {
                             triples: OneShotBitDec::triples() * config.batch_size,
                             randoms: OneShotBitDec::randoms() * config.batch_size,
                         };
 
                         let mut prep = SmallPreprocessing::<ResiduePoly64, RealAgreeRandom>::init(
                             &mut session,
-                            Some(bitdec_batch),
+                            bitdec_batch,
                         )
                         .await
                         .unwrap();
 
-                        let input_a = get_my_share(
-                            2,
-                            session.amount_of_parties(),
-                            session.threshold() as usize,
-                            session.my_role().unwrap().zero_based(),
-                        );
+                        let inputs: Vec<_> = (0..config.batch_size)
+                            .map(|i| {
+                                get_my_share(
+                                    i as u64,
+                                    session.amount_of_parties(),
+                                    session.threshold() as usize,
+                                    session.my_role().unwrap().zero_based(),
+                                )
+                            })
+                            .collect();
 
-                        for _ in 0..config.batch_size {
-                            let _bits = bit_dec::<Z64, _, _, _>(&mut session, &mut prep, input_a)
-                                .await
-                                .unwrap();
-                        }
+                        let _bits = bit_dec_batch::<Z64, _, _, _>(&mut session, &mut prep, inputs)
+                            .await
+                            .unwrap();
                     };
 
                     let _result = execute_protocol_small::<ResiduePoly64, _, _>(
@@ -187,7 +191,8 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
     let mut group = c.benchmark_group("bit_dec_large_e2e");
 
     let params = vec![
-        OneShotConfig::new(5, 1, 5),
+        OneShotConfig::new(5, 1, 8),
+        OneShotConfig::new(5, 1, 16),
         OneShotConfig::new(10, 2, 5),
         OneShotConfig::new(13, 3, 5),
     ];
@@ -206,32 +211,34 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                             TrueDoubleSharing<ResiduePoly64>,
                         >::init(
                             &mut session,
-                            Some(BatchParams {
-                                triple_batch_size: OneShotBitDec::triples() * config.batch_size,
-                                random_batch_size: OneShotBitDec::randoms() * config.batch_size,
-                            }),
+                            BatchParams {
+                                triples: OneShotBitDec::triples() * config.batch_size,
+                                randoms: OneShotBitDec::randoms() * config.batch_size,
+                            },
                             TrueSingleSharing::default(),
                             TrueDoubleSharing::default(),
                         )
                         .await
                         .unwrap();
 
-                        let input_a = get_my_share(
-                            2,
-                            session.amount_of_parties(),
-                            session.threshold() as usize,
-                            session.my_role().unwrap().zero_based(),
-                        );
+                        let inputs: Vec<_> = (0..config.batch_size)
+                            .map(|i| {
+                                get_my_share(
+                                    i as u64,
+                                    session.amount_of_parties(),
+                                    session.threshold() as usize,
+                                    session.my_role().unwrap().zero_based(),
+                                )
+                            })
+                            .collect();
 
-                        for _ in 0..config.batch_size {
-                            let _bits = bit_dec::<Z64, _, _, _>(
-                                &mut session,
-                                &mut large_preprocessing,
-                                input_a,
-                            )
-                            .await
-                            .unwrap();
-                        }
+                        let _bits = bit_dec_batch::<Z64, _, _, _>(
+                            &mut session,
+                            &mut large_preprocessing,
+                            inputs,
+                        )
+                        .await
+                        .unwrap();
                     };
 
                     let _result = execute_protocol_large::<ResiduePoly64, _, _>(

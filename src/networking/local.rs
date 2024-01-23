@@ -107,7 +107,6 @@ impl Networking for LocalNetworking {
         receiver: &Identity,
         _session_id: &SessionId,
     ) -> anyhow::Result<(), anyhow::Error> {
-        tracing::debug!("Async sending;");
         let (tx, _) = self
             .pairwise_channels
             .get(&(self.owner.clone(), receiver.clone()))

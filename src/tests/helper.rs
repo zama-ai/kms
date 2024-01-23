@@ -65,7 +65,10 @@ pub mod tests_and_benches {
         if let Some(e_r) = expected_rounds {
             for n in test_runtime.user_nets {
                 let rounds = std::sync::Arc::clone(&n).get_current_round().unwrap();
-                assert_eq!(rounds, e_r);
+                assert_eq!(
+                    rounds, e_r,
+                    "incorrect number of expected communication rounds"
+                );
             }
         }
 

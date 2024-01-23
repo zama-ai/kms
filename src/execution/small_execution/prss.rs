@@ -653,7 +653,7 @@ mod tests {
         commitment::KEY_BYTE_LEN,
         execution::{
             constants::{BD1, LOG_BD, STATSEC},
-            endpoints::decryption::{threshold_decrypt, to_large_ciphertext},
+            endpoints::decryption::threshold_decrypt64,
             large_execution::vss::RealVss,
             runtime::party::{Identity, Role},
             runtime::{
@@ -675,6 +675,8 @@ mod tests {
             test_data_setup::tests::TEST_KEY_PATH,
         },
     };
+    use std::sync::Arc;
+
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use rand_chacha::ChaCha20Rng;
@@ -849,11 +851,11 @@ mod tests {
         // generate keys
         let key_shares = keygen_all_party_shares(&keys, &mut rng, num_parties, threshold).unwrap();
         let ct = keys.pk.encrypt(&mut rng, msg);
-        let large_ct = to_large_ciphertext(&keys.ck, &ct);
 
         let mut runtime = DistributedTestRuntime::new(identities, threshold as u8);
 
-        runtime.setup_keys(key_shares);
+        runtime.setup_sks(key_shares);
+        runtime.setup_cks(Arc::new(keys.ck.clone()));
 
         let mut seed = [0_u8; 32];
         // create sessions for each prss party
@@ -880,8 +882,12 @@ mod tests {
         runtime.setup_prss(prss_setups);
 
         // test PRSS with decryption endpoint
-        let results_dec =
-            threshold_decrypt(&runtime, large_ct.clone(), DecryptionMode::PRSSDecrypt).unwrap();
+        let results_dec = threshold_decrypt64::<ResiduePoly128>(
+            &runtime,
+            ct.clone(),
+            DecryptionMode::PRSSDecrypt,
+        )
+        .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         assert_eq!(out_dec[0], std::num::Wrapping(msg as u64));
@@ -896,7 +902,8 @@ mod tests {
 
         // test PRSS with decryption endpoint
         let results_dec =
-            threshold_decrypt(&runtime, large_ct, DecryptionMode::PRSSDecrypt).unwrap();
+            threshold_decrypt64::<ResiduePoly128>(&runtime, ct, DecryptionMode::PRSSDecrypt)
+                .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         assert_eq!(out_dec[0], std::num::Wrapping(msg as u64));

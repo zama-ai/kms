@@ -13,14 +13,13 @@ use self::gen::{
 use crate::algebra::base_ring::Z64;
 use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
-use crate::execution::endpoints::decryption::{
-    run_decryption_large, run_decryption_small, to_large_ciphertext_block,
-};
+use crate::execution::endpoints::decryption::{run_decryption_large, run_decryption_small};
 use crate::execution::endpoints::keygen::initialize_key_material;
 use crate::execution::runtime::party::{Identity, Role};
 use crate::execution::runtime::session::{
     DecryptionMode, LargeSession, SessionParameters, SmallSessionStruct,
 };
+use crate::lwe::to_large_ciphertext_block;
 use crate::lwe::{Ciphertext64, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters};
 use crate::{
     choreography::grpc::gen::DecryptionRequest, execution::runtime::session::SmallSession,
@@ -286,6 +285,8 @@ impl Choreography for GrpcChoreography {
                             );
                         });
                     }
+                    DecryptionMode::BitDecSmallDecrypt => todo!(),
+                    DecryptionMode::BitDecLargeDecrypt => todo!(),
                 }
 
                 let serialized_session_id = bincode::serialize(&session_id).map_err(|_e| {

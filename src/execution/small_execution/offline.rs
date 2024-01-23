@@ -4,14 +4,14 @@ use itertools::Itertools;
 use rand::RngCore;
 use std::{cmp::min, collections::HashMap};
 
+use super::{agree_random::AgreeRandom, prf::PRSSConversions};
+use crate::execution::config::BatchParams;
 use crate::{
     algebra::structure_traits::Ring,
     execution::{
         communication::broadcast::broadcast_with_corruption,
         online::{
-            preprocessing::{
-                BasePreprocessing, Preprocessing, RANDOM_BATCH_SIZE, TRIPLE_BATCH_SIZE,
-            },
+            preprocessing::{BasePreprocessing, Preprocessing},
             triple::Triple,
         },
         runtime::party::Role,
@@ -24,26 +24,9 @@ use crate::{
     networking::value::BroadcastValue,
 };
 
-use super::{agree_random::AgreeRandom, prf::PRSSConversions};
-
-/// Struct expressing the amount of triples to preprocess in a batch
-#[derive(Debug, Clone, Copy)]
-pub struct SmallBatch {
-    pub triples: usize,
-    pub randoms: usize,
-}
-impl Default for SmallBatch {
-    fn default() -> Self {
-        Self {
-            triples: TRIPLE_BATCH_SIZE,
-            randoms: RANDOM_BATCH_SIZE,
-        }
-    }
-}
-
 /// Preprocessing for a single small session using a specific functionality for [A] for the [AgreeRandom] trait.
 pub struct SmallPreprocessing<Z: Ring, A> {
-    batch_sizes: SmallBatch,
+    batch_sizes: BatchParams,
     elements: BasePreprocessing<Z>,
     _marker: std::marker::PhantomData<A>,
 }
@@ -55,9 +38,9 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
     /// NOTE: if None is passed for the option for `batch_sizes`, then the default values are used.
     pub async fn init<Rnd: RngCore, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
-        batch_sizes: Option<SmallBatch>,
+        batch_sizes: BatchParams,
     ) -> anyhow::Result<Self> {
-        let batch = batch_sizes.unwrap_or_default();
+        let batch = batch_sizes;
         let base_preprocessing = BasePreprocessing {
             available_triples: Vec::new(),
             available_randoms: Vec::new(),
@@ -110,6 +93,7 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
     ) -> anyhow::Result<()> {
         let prss_base_ctr = session.prss()?.prss_ctr;
         let przs_base_ctr = session.prss()?.przs_ctr;
+
         let vec_x_single = Self::prss_list(session, amount)?;
         let vec_y_single = Self::prss_list(session, amount)?;
         let vec_v_single = Self::prss_list(session, amount)?;
@@ -412,7 +396,7 @@ mod test {
             sharing::{shamir::ShamirRing, share::Share},
             small_execution::{
                 agree_random::DummyAgreeRandom,
-                offline::{SmallBatch, SmallPreprocessing, RANDOM_BATCH_SIZE, TRIPLE_BATCH_SIZE},
+                offline::{BatchParams, SmallPreprocessing},
                 prf::PRSSConversions,
                 prss::PRSSSetup,
             },
@@ -423,6 +407,8 @@ mod test {
         },
     };
     use rand_chacha::ChaCha20Rng;
+    const RANDOM_BATCH_SIZE: usize = 10;
+    const TRIPLE_BATCH_SIZE: usize = 10;
 
     fn test_rand_generation<Z: ShamirRing + PRSSConversions>() {
         let parties = 4;
@@ -438,9 +424,16 @@ mod test {
             session.set_prss(Some(
                 prss_setup.new_prss_session_state(session.session_id()),
             ));
-            let mut preproc = SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, None)
-                .await
-                .unwrap();
+
+            let default_batch_size = BatchParams {
+                triples: TRIPLE_BATCH_SIZE,
+                randoms: RANDOM_BATCH_SIZE,
+            };
+
+            let mut preproc =
+                SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, default_batch_size)
+                    .await
+                    .unwrap();
             let mut res = Vec::new();
             for _ in 0..RANDOM_BATCH_SIZE {
                 res.push(preproc.next_random().unwrap());
@@ -496,9 +489,15 @@ mod test {
             session.set_prss(Some(
                 prss_setup.new_prss_session_state(session.session_id()),
             ));
-            let mut preproc = SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, None)
-                .await
-                .unwrap();
+            let default_batch_size = BatchParams {
+                triples: TRIPLE_BATCH_SIZE,
+                randoms: RANDOM_BATCH_SIZE,
+            };
+
+            let mut preproc =
+                SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, default_batch_size)
+                    .await
+                    .unwrap();
             let mut res = Vec::new();
             for _ in 0..TRIPLE_BATCH_SIZE {
                 res.push(preproc.next_triple().unwrap());
@@ -546,7 +545,7 @@ mod test {
         let threshold = 1;
 
         async fn task(mut session: SmallSession<ResiduePoly128>) {
-            let batch_size = SmallBatch {
+            let batch_size = BatchParams {
                 triples: 3,
                 randoms: 2,
             };
@@ -560,10 +559,9 @@ mod test {
             session.set_prss(Some(
                 prss_setup.new_prss_session_state(session.session_id()),
             ));
-            let preproc =
-                SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, Some(batch_size))
-                    .await
-                    .unwrap();
+            let preproc = SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, batch_size)
+                .await
+                .unwrap();
             assert_eq!(batch_size.triples, preproc.elements.available_triples.len());
             assert_eq!(batch_size.randoms, preproc.elements.available_randoms.len());
         }
@@ -613,7 +611,6 @@ mod test {
         let parties = 5;
         let threshold = 1;
         const BAD_ID: usize = 3;
-
         async fn task(
             mut session: SmallSession<ResiduePoly128>,
         ) -> (
@@ -634,10 +631,18 @@ mod test {
                 session.set_prss(Some(
                     prss_setup.new_prss_session_state(session.session_id()),
                 ));
-                let mut preproc =
-                    SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, None)
-                        .await
-                        .unwrap();
+
+                let default_batch_size = BatchParams {
+                    triples: TRIPLE_BATCH_SIZE,
+                    randoms: RANDOM_BATCH_SIZE,
+                };
+
+                let mut preproc = SmallPreprocessing::<_, DummyAgreeRandom>::init(
+                    &mut session,
+                    default_batch_size,
+                )
+                .await
+                .unwrap();
                 for _ in 0..TRIPLE_BATCH_SIZE {
                     triple_res.push(preproc.next_triple().unwrap());
                 }
@@ -699,9 +704,13 @@ mod test {
             let mut triple_res = Vec::new();
             let mut rand_res = Vec::new();
             // Observe that 1 triple too little is made
-            let bad_batch_sizes = SmallBatch {
+            let bad_batch_sizes = BatchParams {
                 triples: TRIPLE_BATCH_SIZE - 1,
                 randoms: RANDOM_BATCH_SIZE,
+            };
+            let default_batch_size = BatchParams {
+                triples: 10,
+                randoms: 10,
             };
             let prss_setup = PRSSSetup::init_with_abort::<
                 DummyAgreeRandom,
@@ -714,10 +723,12 @@ mod test {
                 prss_setup.new_prss_session_state(session.session_id()),
             ));
             if session.my_role().unwrap() != Role::indexed_by_one(BAD_ID) {
-                let mut preproc =
-                    SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, None)
-                        .await
-                        .unwrap();
+                let mut preproc = SmallPreprocessing::<_, DummyAgreeRandom>::init(
+                    &mut session,
+                    default_batch_size,
+                )
+                .await
+                .unwrap();
                 for _ in 0..TRIPLE_BATCH_SIZE {
                     triple_res.push(preproc.next_triple().unwrap());
                 }
@@ -725,11 +736,9 @@ mod test {
                     rand_res.push(preproc.next_random().unwrap());
                 }
             } else {
-                let _ = SmallPreprocessing::<_, DummyAgreeRandom>::init(
-                    &mut session,
-                    Some(bad_batch_sizes),
-                )
-                .await;
+                let _ =
+                    SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, bad_batch_sizes)
+                        .await;
             }
             (session, triple_res, rand_res)
         }
@@ -804,8 +813,12 @@ mod test {
                 available_triples: Vec::new(),
                 available_randoms: Vec::new(),
             };
+            let default_batch = BatchParams {
+                triples: 10,
+                randoms: 10,
+            };
             let mut res = SmallPreprocessing::<_, DummyAgreeRandom> {
-                batch_sizes: SmallBatch::default(),
+                batch_sizes: default_batch,
                 elements: base_preprocessing,
                 _marker: std::marker::PhantomData,
             };

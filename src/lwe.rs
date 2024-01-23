@@ -2,6 +2,7 @@ use crate::algebra::base_ring::Z128;
 use crate::algebra::poly::Poly;
 use crate::algebra::residue_poly::ResiduePoly;
 use crate::algebra::residue_poly::ResiduePoly128;
+use crate::algebra::residue_poly::ResiduePoly64;
 use crate::algebra::structure_traits::BaseRing;
 use crate::algebra::structure_traits::Zero;
 use crate::execution::random::get_rng;
@@ -52,6 +53,13 @@ use tfhe::shortint::prelude::PolynomialSize;
 use tfhe::shortint::prelude::StandardDev;
 use tfhe::shortint::MessageModulus;
 
+use tfhe::core_crypto::prelude::*;
+use tfhe::core_crypto::prelude::{
+    programmable_bootstrap_f128_lwe_ciphertext, CastFrom, GlweCiphertextOwned, GlweSize,
+    UnsignedTorus,
+};
+use tfhe::integer::block_decomposition::BlockRecomposer;
+
 // Copied from tfhe-rs lwe_noise_gap_programmable_bootstrapping since it is only specified in their test code
 #[derive(Serialize, Copy, Clone, Deserialize, Debug, PartialEq)]
 pub struct CiphertextParameters<S>
@@ -100,11 +108,14 @@ pub(crate) fn from_expanded_msg<Scalar: UnsignedInteger + AsPrimitive<u128>>(
 ) -> Z128 {
     // delta = q/t where t is the amount of plain text bits
     // Observe we actually divide this by 2 (i.e. subtract 1 bit) to make space for padding
-    let delta_pad_bits = (Scalar::BITS as u128 - 1_u128) - message_mod_bits as u128;
+    let delta_pad_bits = (Scalar::BITS as u128) - (message_mod_bits as u128 + 1_u128);
+
+    // compute delta / 2
     let delta_pad_half = 1 << (delta_pad_bits - 1);
-    // Compute the rounding since we don't want the floor function, but general rounding
-    let rounding = (raw_plaintext.as_() & delta_pad_half) << 1;
-    let raw_msg = (raw_plaintext.as_().wrapping_add(rounding)) >> delta_pad_bits;
+
+    // add delta/2 to kill the negative noise, note this does not affect the message.
+    let raw_msg = raw_plaintext.as_().wrapping_add(delta_pad_half) >> delta_pad_bits;
+
     let msg = Wrapping(raw_msg % (1 << message_mod_bits));
     // Observe that in certain situations the computation of b-<a,s> may be negative
     // Concretely this happens when the message encrypted is 0 and randomness ends up being negative.
@@ -266,7 +277,8 @@ pub fn gen_key_set<R: RngCore>(
 
 #[derive(Clone)]
 pub struct SecretKeyShare {
-    pub input_key_share: Array1<ResiduePoly128>,
+    pub input_key_share128: Array1<ResiduePoly128>,
+    pub input_key_share64: Array1<ResiduePoly64>,
     pub threshold_lwe_parameters: ThresholdLWEParameters,
 }
 
@@ -391,7 +403,7 @@ impl PublicKey {
         let bits_in_block = self
             .threshold_lwe_parameters
             .input_cipher_parameters
-            .usable_message_modulus_log
+            .message_modulus_log
             .0;
         let decomposer = BlockDecomposer::new(message, bits_in_block as u32);
         // T::BITS
@@ -506,7 +518,7 @@ pub fn keygen_single_party_share<R: RngCore>(
     party_id: usize,
     threshold: usize,
 ) -> anyhow::Result<SecretKeyShare> {
-    let input_key_bits: Vec<_> = keyset
+    let input_key_bits128: Vec<_> = keyset
         .sk
         .lwe_secret_key_128
         .clone()
@@ -515,8 +527,18 @@ pub fn keygen_single_party_share<R: RngCore>(
         .map(|b| gen_single_party_share(rng, Wrapping(*b), threshold, party_id).unwrap())
         .collect();
 
+    let input_key_bits64: Vec<_> = keyset
+        .sk
+        .lwe_secret_key_64
+        .clone()
+        .into_container()
+        .iter()
+        .map(|b| gen_single_party_share(rng, Wrapping(*b), threshold, party_id).unwrap())
+        .collect();
+
     let shared_sk = SecretKeyShare {
-        input_key_share: Array1::from_vec(input_key_bits),
+        input_key_share128: Array1::from_vec(input_key_bits128),
+        input_key_share64: Array1::from_vec(input_key_bits64),
         threshold_lwe_parameters: keyset.pk.threshold_lwe_parameters,
     };
     Ok(shared_sk)
@@ -530,14 +552,31 @@ pub fn keygen_all_party_shares<R: RngCore>(
 ) -> anyhow::Result<Vec<SecretKeyShare>> {
     let s_vector = keyset.sk.lwe_secret_key_128.clone().into_container();
     let s_length = s_vector.len();
-    let mut vv: Vec<Vec<ResiduePoly128>> = vec![Vec::with_capacity(s_length); num_parties];
+    let mut vv128: Vec<Vec<ResiduePoly128>> = vec![Vec::with_capacity(s_length); num_parties];
 
     // for each bit in the secret key generate all parties shares
     for (i, bit) in s_vector.iter().enumerate() {
-        let embedded_secret = ResiduePoly::from_scalar(Wrapping(*bit));
+        let embedded_secret = ResiduePoly128::from_scalar(Wrapping(*bit));
         let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
 
-        for (party_id, v) in vv.iter_mut().enumerate().take(num_parties) {
+        for (party_id, v) in vv128.iter_mut().enumerate().take(num_parties) {
+            v.insert(
+                i,
+                poly.eval(&ResiduePoly::embed_exceptional_set(party_id + 1)?),
+            );
+        }
+    }
+
+    // do the same for 64 bit key
+    let s_vector64 = keyset.sk.lwe_secret_key_64.clone().into_container();
+    let s_length64 = s_vector64.len();
+    let mut vv64: Vec<Vec<ResiduePoly64>> = vec![Vec::with_capacity(s_length64); num_parties];
+    // for each bit in the secret key generate all parties shares
+    for (i, bit) in s_vector64.iter().enumerate() {
+        let embedded_secret = ResiduePoly64::from_scalar(Wrapping(*bit));
+        let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
+
+        for (party_id, v) in vv64.iter_mut().enumerate().take(num_parties) {
             v.insert(
                 i,
                 poly.eval(&ResiduePoly::embed_exceptional_set(party_id + 1)?),
@@ -548,7 +587,8 @@ pub fn keygen_all_party_shares<R: RngCore>(
     // put the individual parties shares into SecretKeyShare structs
     let shared_sks: Vec<_> = (0..num_parties)
         .map(|p| SecretKeyShare {
-            input_key_share: Array1::from_vec(vv[p].clone()),
+            input_key_share128: Array1::from_vec(vv128[p].clone()),
+            input_key_share64: Array1::from_vec(vv64[p].clone()),
             threshold_lwe_parameters: keyset.pk.threshold_lwe_parameters,
         })
         .collect();
@@ -556,11 +596,185 @@ pub fn keygen_all_party_shares<R: RngCore>(
     Ok(shared_sks)
 }
 
+// TODO is this the general correct formula? should be:
+// output_lwe_secret_key.lwe_dimension().to_lwe_size(),
+// and
+// output_lwe_secret_key_out.lwe_dimension().to_lwe_size(),
+fn pbs_cipher_size<S>(params: &CiphertextParameters<S>) -> LweSize
+where
+    S: UnsignedInteger,
+{
+    LweSize(1 + params.glwe_dimension.0 * params.polynomial_size.0)
+}
+
+/// Converts a ciphertext over a 64 bit domain to a ciphertext over a 128 bit domain (which is needed for secure threshold decryption).
+/// Conversion is done using a precreated conversion key [ck].
+/// Observe that the decryption key will be different after conversion, since [ck] is actually a key-switching key.
+pub fn to_large_ciphertext(ck: &BootstrappingKey, small_ct: &Ciphertext64) -> Ciphertext128 {
+    let mut res = Vec::with_capacity(small_ct.len());
+    for current_block in small_ct {
+        res.push(to_large_ciphertext_block(ck, current_block));
+    }
+    res
+}
+
+/// Converts a single ciphertext block over a 64 bit domain to a ciphertext block over a 128 bit domain (which is needed for secure threshold decryption).
+/// Conversion is done using a precreated conversion key, [ck].
+/// Observe that the decryption key will be different after conversion, since [ck] is actually a key-switching key.
+pub fn to_large_ciphertext_block(
+    ck: &BootstrappingKey,
+    small_ct: &Ciphertext64Block,
+) -> Ciphertext128Block {
+    // Accumulator definition
+    let delta = 1_u64
+        << (u64::BITS
+            - 1
+            - ck.threshold_lwe_parameters
+                .input_cipher_parameters
+                .message_modulus_log
+                .0 as u32);
+    let msg_modulus = 1_u64
+        << ck
+            .threshold_lwe_parameters
+            .input_cipher_parameters
+            .message_modulus_log
+            .0;
+
+    let f_out = |x: u128| x;
+    let delta_u128 = (delta as u128) << 64;
+    let accumulator_out: GlweCiphertextOwned<u128> = generate_accumulator(
+        ck.threshold_lwe_parameters
+            .output_cipher_parameters
+            .polynomial_size,
+        ck.threshold_lwe_parameters
+            .output_cipher_parameters
+            .glwe_dimension
+            .to_glwe_size(),
+        msg_modulus.cast_into(),
+        ck.threshold_lwe_parameters
+            .output_cipher_parameters
+            .ciphertext_modulus,
+        delta_u128,
+        f_out,
+    );
+
+    //MSUP
+    let mut ms_output_lwe =
+        LweCiphertext::new(0_u128, small_ct.lwe_size(), CiphertextModulus::new_native());
+    lwe_ciphertext_modulus_switch_up(&mut ms_output_lwe, small_ct);
+
+    let mut out_pbs_ct = LweCiphertext::new(
+        0_u128,
+        pbs_cipher_size(&ck.threshold_lwe_parameters.output_cipher_parameters),
+        ck.threshold_lwe_parameters
+            .output_cipher_parameters
+            .ciphertext_modulus,
+    );
+    programmable_bootstrap_f128_lwe_ciphertext(
+        &ms_output_lwe,
+        &mut out_pbs_ct,
+        &accumulator_out,
+        &ck.fbsk_out,
+    );
+    out_pbs_ct
+}
+
+// Here we will define a helper function to generate an accumulator for a PBS
+fn generate_accumulator<F, Scalar: UnsignedTorus + CastFrom<usize>>(
+    polynomial_size: PolynomialSize,
+    glwe_size: GlweSize,
+    message_modulus: usize,
+    ciphertext_modulus: CiphertextModulus<Scalar>,
+    delta: Scalar,
+    f: F,
+) -> GlweCiphertextOwned<Scalar>
+where
+    F: Fn(Scalar) -> Scalar,
+{
+    // N/(p/2) = size of each block, to correct noise from the input we introduce the
+    // notion of box, which manages redundancy to yield a denoised value
+    // for several noisy values around a true input value.
+    let box_size = polynomial_size.0 / message_modulus;
+
+    // Create the accumulator
+    let mut accumulator_scalar = vec![Scalar::ZERO; polynomial_size.0];
+
+    // Fill each box with the encoded denoised value
+    for i in 0..message_modulus {
+        let index = i * box_size;
+        accumulator_scalar[index..index + box_size]
+            .iter_mut()
+            .for_each(|a| *a = f(Scalar::cast_from(i)) * delta);
+    }
+
+    let half_box_size = box_size / 2;
+
+    // Negate the first half_box_size coefficients to manage negacyclicity and rotate
+    for a_i in accumulator_scalar[0..half_box_size].iter_mut() {
+        *a_i = (*a_i).wrapping_neg();
+    }
+
+    // Rotate the accumulator
+    accumulator_scalar.rotate_left(half_box_size);
+
+    let accumulator_plaintext = PlaintextList::from_container(accumulator_scalar);
+
+    allocate_and_trivially_encrypt_new_glwe_ciphertext(
+        glwe_size,
+        &accumulator_plaintext,
+        ciphertext_modulus,
+    )
+}
+
+/// The method below is copied verbatim from the `noise-gap-exp` branch in tfhe-rs-internal since this branch will likely not be merged in main.
+///
+/// Takes a ciphertext, `input`, of a certain domain, [InputScalar] and overwrites the content of `output`
+/// with the ciphertext converted to the [OutputScaler] domain.
+pub fn lwe_ciphertext_modulus_switch_up<InputScalar, OutputScalar, InputCont, OutputCont>(
+    output: &mut LweCiphertext<OutputCont>,
+    input: &LweCiphertext<InputCont>,
+) where
+    InputScalar: UnsignedInteger + CastInto<OutputScalar>,
+    OutputScalar: UnsignedInteger,
+    InputCont: Container<Element = InputScalar>,
+    OutputCont: ContainerMut<Element = OutputScalar>,
+{
+    assert!(input.ciphertext_modulus().is_native_modulus());
+
+    output
+        .as_mut()
+        .iter_mut()
+        .zip(input.as_ref().iter())
+        .for_each(|(dst, &src)| *dst = src.cast_into());
+    let modulus_up: CiphertextModulus<OutputScalar> = input.ciphertext_modulus().try_to().unwrap();
+
+    lwe_ciphertext_cleartext_mul_assign(
+        output,
+        Cleartext(modulus_up.get_power_of_two_scaling_to_native_torus()),
+    );
+}
+
+/// Helper function that takes a vector of decrypted plaintexts (each of [bits_in_block] plaintext bits)
+/// and combine them into the integer message (u128) of many bits.
+pub(crate) fn combine128(bits_in_block: u32, decryptions: Vec<Z128>) -> anyhow::Result<u128> {
+    let mut recomposer = BlockRecomposer::<u128>::new(bits_in_block);
+
+    for block in decryptions {
+        if !recomposer.add_unmasked(block.0) {
+            // End of T::BITS reached no need to try more
+            // recomposition
+            break;
+        };
+    }
+    Ok(recomposer.value())
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::lwe::to_large_ciphertext_block;
+    use crate::lwe::KeyPair;
     use crate::{
         algebra::base_ring::Z128,
-        execution::endpoints::decryption::to_large_ciphertext_block,
         file_handling::{read_as_json, read_element},
         lwe::{
             from_expanded_msg, get_rng, secret_rng_from_seed, seed_from_rng, to_expanded_msg,
@@ -673,5 +887,28 @@ mod tests {
 
         let msg = (raw_plaintext.as_().wrapping_add(rounding)) >> delta_bits;
         Wrapping(msg % (1 << message_mod_bits))
+    }
+
+    #[test]
+    fn sunshine_domain_switching() {
+        let keyset: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let keypair = KeyPair {
+            sk: keyset.sk,
+            pk: keyset.pk,
+        };
+        let message = (1
+            << keypair
+                .pk
+                .threshold_lwe_parameters
+                .input_cipher_parameters
+                .message_modulus_log
+                .0)
+            - 1;
+        let small_ct = keypair.pk.encrypt_block(&mut get_rng(), message);
+        let large_ct = to_large_ciphertext_block(&keyset.ck, &small_ct);
+        let res_small = keypair.sk.decrypt_block_64(&small_ct);
+        let res_large = keypair.sk.decrypt_block_128(&large_ct);
+        assert_eq!(message as u128, res_small.0);
+        assert_eq!(message as u128, res_large.0);
     }
 }

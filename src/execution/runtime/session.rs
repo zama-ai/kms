@@ -27,6 +27,8 @@ pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
 pub enum DecryptionMode {
     PRSSDecrypt,
     LargeDecrypt,
+    BitDecSmallDecrypt,
+    BitDecLargeDecrypt,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -247,6 +249,9 @@ pub trait ToBaseSession<R: RngCore + Send + Sync, B: BaseSessionHandles<R>> {
 }
 
 pub type SmallSession<Z> = SmallSessionStruct<Z, ChaCha20Rng, SessionParameters>;
+pub type SmallSession64 = SmallSession<crate::algebra::residue_poly::ResiduePoly64>;
+pub type SmallSession128 = SmallSession<crate::algebra::residue_poly::ResiduePoly128>;
+
 pub trait SmallSessionHandles<Z: Ring, R: RngCore>: BaseSessionHandles<R> {
     /// Return the mutable prss state as an [Option]
     fn prss_as_mut(&mut self) -> anyhow::Result<&mut PRSSState<Z>>;
