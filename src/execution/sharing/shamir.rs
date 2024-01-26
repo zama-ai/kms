@@ -16,7 +16,8 @@ pub trait ShamirRing: Ring {
     ///***Calling invert on a non-invertible element of the ring results in undefined behavior***
     fn invert(self) -> anyhow::Result<Self>;
     fn syndrome_decode(
-        sharing: &ShamirSharing<Self>,
+        syndrome_poly: Poly<Self>,
+        parties: &[Role],
         threshold: usize,
     ) -> anyhow::Result<Vec<Self>>;
     fn syndrome_compute(

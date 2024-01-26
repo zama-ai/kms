@@ -764,23 +764,15 @@ impl<Z: BaseRing> ShamirRing for ResiduePoly<Z> {
 
     // decode a ring syndrome into an error vector, containing the error magnitudes at the respective indices
     fn syndrome_decode(
-        sharing: &ShamirSharing<ResiduePoly<Z>>,
+        mut syndrome_poly: Poly<ResiduePoly<Z>>,
+        parties: &[Role],
         threshold: usize,
     ) -> anyhow::Result<Vec<ResiduePoly<Z>>> {
-        let ring_size: usize = Z::BIT_LENGTH;
-
-        //let ys: Vec<_> = sharing.shares.iter().map(|share| share.value()).collect();
-        let parties: Vec<_> = sharing
-            .shares
-            .iter()
-            .map(|share| share.owner().one_based())
-            .collect();
-
+        let parties = parties.iter().map(|r| r.one_based()).collect_vec();
         // sum up the error vectors here
-        let mut e_res: Vec<ResiduePoly<Z>> = vec![ResiduePoly::<Z>::ZERO; sharing.shares.len()];
+        let mut e_res: Vec<ResiduePoly<Z>> = vec![ResiduePoly::<Z>::ZERO; parties.len()];
 
-        let mut syndrome_poly = Self::syndrome_compute(sharing, threshold)?;
-
+        let ring_size: usize = Z::BIT_LENGTH;
         //  compute s_e^(j)/p mod p and decode
         for bit_idx in 0..ring_size {
             let sliced_syndrome_coefs: Vec<_> = syndrome_poly
@@ -1304,7 +1296,9 @@ mod tests {
                 assert_eq!(f_zero.to_scalar().unwrap(), secret);
 
                 // try syndrome decoding without errors
-                let errors = ResiduePoly::<$z>::syndrome_decode(&sharings, t).unwrap();
+                let parties = sharings.shares.iter().map(|s| s.owner()).collect_vec();
+                let syndrome_poly = ResiduePoly::<$z>::syndrome_compute(&sharings, t).unwrap();
+                let errors = ResiduePoly::<$z>::syndrome_decode(syndrome_poly, &parties, t).unwrap();
                 assert_eq!(errors, vec![ResiduePoly::ZERO; n]); // should be all-zero
 
                 // add 1 error now
@@ -1321,7 +1315,8 @@ mod tests {
                 }
 
                 // try syndrome decoding with 1 error where the error term is 53
-                let decoded_errors = ResiduePoly::<$z>::syndrome_decode(&bad_shares, t).unwrap();
+                let syndrome_poly = ResiduePoly::<$z>::syndrome_compute(&bad_shares, t).unwrap();
+                let decoded_errors = ResiduePoly::<$z>::syndrome_decode(syndrome_poly, &parties, t).unwrap();
                 tracing::debug!("Errors= {:?} vs. {:?}", expected_errors, decoded_errors);
                 assert_eq!(expected_errors, decoded_errors);
 
@@ -1336,7 +1331,8 @@ mod tests {
                 }
 
                 // try syndrome decoding with 2 errors where the error terms are 53 and 54
-                let decoded_errors = ResiduePoly::<$z>::syndrome_decode(&bad_shares, t).unwrap();
+                let syndrome_poly = ResiduePoly::<$z>::syndrome_compute(&bad_shares, t).unwrap();
+                let decoded_errors = ResiduePoly::<$z>::syndrome_decode(syndrome_poly, &parties, t).unwrap();
                 tracing::debug!("Errors= {:?} vs. {:?}", expected_errors, decoded_errors);
                 assert_eq!(expected_errors, decoded_errors);
             }
