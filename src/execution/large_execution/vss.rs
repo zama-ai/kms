@@ -16,7 +16,7 @@ use crate::{
         communication::broadcast::{broadcast_with_corruption, generic_receive_from_all},
         communication::p2p::send_to_honest_parties,
         runtime::party::Role,
-        runtime::session::LargeSessionHandles,
+        runtime::session::BaseSessionHandles,
         sharing::shamir::ShamirRing,
     },
     networking::value::{BroadcastValue, NetworkValue},
@@ -31,9 +31,9 @@ pub trait Vss: Send + Sync + Default + Clone {
     ///
     /// Returns
     /// - a vector of shares (share at idx i is a sharing of the secret of party i)
-    async fn execute<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
         &self,
-        session: &mut L,
+        session: &mut S,
         secret: &Z,
     ) -> anyhow::Result<Vec<Z>>;
 }
@@ -99,9 +99,9 @@ pub struct DummyVss {}
 
 #[async_trait]
 impl Vss for DummyVss {
-    async fn execute<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
         &self,
-        session: &mut L,
+        session: &mut S,
         secret: &Z,
     ) -> anyhow::Result<Vec<Z>> {
         let own_role = session.my_role()?;
@@ -149,9 +149,9 @@ pub struct RealVss {}
 
 #[async_trait]
 impl Vss for RealVss {
-    async fn execute<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
         &self,
-        session: &mut L,
+        session: &mut S,
         secret: &Z,
     ) -> anyhow::Result<Vec<Z>> {
         let (bivariate_poly, map_double_shares) = sample_secret(session, secret)?;
@@ -164,8 +164,8 @@ impl Vss for RealVss {
 
 type MapRoleDoublePoly<Z> = HashMap<Role, DoublePoly<Z>>;
 
-fn sample_secret<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
-    session: &mut L,
+fn sample_secret<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+    session: &mut S,
     secret: &Z,
 ) -> anyhow::Result<(BivariatePoly<Z>, MapRoleDoublePoly<Z>)> {
     let threshold = session.threshold() as usize;
@@ -189,8 +189,8 @@ fn sample_secret<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
     Ok((bivariate_poly, map_double_shares))
 }
 
-async fn round_1<Z: Ring + 'static, R: RngCore, L: LargeSessionHandles<R>>(
-    session: &mut L,
+async fn round_1<Z: Ring + 'static, R: RngCore, S: BaseSessionHandles<R>>(
+    session: &mut S,
     bivariate_poly: BivariatePoly<Z>,
     map_double_shares: MapRoleDoublePoly<Z>,
 ) -> anyhow::Result<Round1VSSOutput<Z>> {
@@ -255,8 +255,8 @@ async fn round_1<Z: Ring + 'static, R: RngCore, L: LargeSessionHandles<R>>(
     })
 }
 
-async fn round_2<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
-    session: &mut L,
+async fn round_2<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+    session: &mut S,
     vss: &Round1VSSOutput<Z>,
 ) -> anyhow::Result<HashMap<Role, Option<Vec<VerificationValues<Z>>>>> {
     let my_role = session.my_role()?;
@@ -309,8 +309,8 @@ async fn round_2<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
 // Role0 -> Some(v) with v = <VSS1:{<(a_00,b_00), (a_01,b_01), ...>}, VSS2:{}, ..., VSSn:{}>
 // Role1 -> None means somethings wrong happened, consider all values to be 0
 // Role2 -> Some(v) with v = <VSS1:{<(a_20,b_20), (a_21,b_21), ...>}, VSS2:{}, ..., VSSn:{}>
-async fn round_3<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
-    session: &mut L,
+async fn round_3<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+    session: &mut S,
     vss: &Round1VSSOutput<Z>,
     verification_map: &HashMap<Role, Option<Vec<VerificationValues<Z>>>>,
 ) -> anyhow::Result<Vec<HashSet<Role>>> {
@@ -354,8 +354,8 @@ async fn round_3<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
     Ok(unhappy_vec)
 }
 
-async fn round_4<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
-    session: &mut L,
+async fn round_4<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+    session: &mut S,
     vss: &Round1VSSOutput<Z>,
     unhappy_vec: Vec<HashSet<Role>>,
 ) -> anyhow::Result<Vec<Z>> {
@@ -441,7 +441,7 @@ async fn round_4<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
             if let Some(p) = maybe_eval {
                 result[vss_idx] = p;
             } else {
-                result[role_sender.zero_based()] = vss.received_vss[vss_idx]
+                result[vss_idx] = vss.received_vss[vss_idx]
                     .double_poly
                     .share_in_x
                     .eval(&Z::ZERO);
@@ -450,8 +450,8 @@ async fn round_4<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
     Ok(result)
 }
 
-fn vss_receive_round_1<Z: Ring, R: RngCore, L: LargeSessionHandles<R>>(
-    session: &L,
+fn vss_receive_round_1<Z: Ring, R: RngCore, S: BaseSessionHandles<R>>(
+    session: &S,
     jobs: &mut JoinSet<ResultRound1<Z>>,
     my_role: Role,
 ) -> anyhow::Result<()> {
@@ -683,8 +683,8 @@ fn round_4_conflict_resolution<Z: ShamirRing>(
     Ok(())
 }
 
-fn round_4_fix_conflicts<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
-    session: &mut L,
+fn round_4_fix_conflicts<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+    session: &mut S,
     unhappy_tuple: (usize, &HashSet<Role>),
     bcast_data: &HashMap<Role, BroadcastValue<Z>>,
 ) -> anyhow::Result<()> {
@@ -752,6 +752,7 @@ pub(crate) mod tests {
     use crate::algebra::residue_poly::ResiduePoly;
     use crate::algebra::residue_poly::{ResiduePoly128, ResiduePoly64};
     use crate::computation::SessionId;
+    use crate::execution::runtime::session::SmallSession;
     use crate::execution::sharing::shamir::{ShamirRing, ShamirSharing};
     use crate::execution::sharing::share::Share;
     use crate::execution::{
@@ -764,8 +765,9 @@ pub(crate) mod tests {
     #[cfg(feature = "extensive_testing")]
     use crate::tests::helper::tests::roles_from_idxs;
     use crate::tests::helper::tests::{
-        execute_protocol_w_disputes_and_malicious, TestingParameters,
+        execute_protocol_large_w_disputes_and_malicious, TestingParameters,
     };
+    use crate::tests::helper::tests_and_benches::execute_protocol_small;
     use rand::SeedableRng;
     use rand_chacha::ChaCha12Rng;
     use rstest::rstest;
@@ -963,9 +965,9 @@ pub(crate) mod tests {
     #[async_trait]
     impl Vss for DroppingVssFromStart {
         //Do nothing, and output an empty Vec
-        async fn execute<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
             &self,
-            _session: &mut L,
+            _session: &mut S,
             _secret: &Z,
         ) -> anyhow::Result<Vec<Z>> {
             Ok(Vec::new())
@@ -975,9 +977,9 @@ pub(crate) mod tests {
     #[async_trait]
     impl Vss for DroppingVssAfterR1 {
         //Do round1, and output an empty Vec
-        async fn execute<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
             &self,
-            session: &mut L,
+            session: &mut S,
             secret: &Z,
         ) -> anyhow::Result<Vec<Z>> {
             let (bivariate_poly, map_double_shares) = sample_secret(session, secret)?;
@@ -989,9 +991,9 @@ pub(crate) mod tests {
     #[async_trait]
     impl Vss for DroppingVssAfterR2 {
         //Do round1 and round2, and output an empty Vec
-        async fn execute<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
             &self,
-            session: &mut L,
+            session: &mut S,
             secret: &Z,
         ) -> anyhow::Result<Vec<Z>> {
             let (bivariate_poly, map_double_shares) = sample_secret(session, secret)?;
@@ -1013,9 +1015,9 @@ pub(crate) mod tests {
     }
     #[async_trait]
     impl Vss for MaliciousVssR1 {
-        async fn execute<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
             &self,
-            session: &mut L,
+            session: &mut S,
             secret: &Z,
         ) -> anyhow::Result<Vec<Z>> {
             //Execute a malicious round 1
@@ -1027,8 +1029,8 @@ pub(crate) mod tests {
     }
 
     //This code executes a round1 where the party sends malformed double shares for its VSS to parties in roles_to_lie_to
-    async fn malicious_round_1<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
-        session: &mut L,
+    async fn malicious_round_1<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+        session: &mut S,
         secret: &Z,
         roles_to_lie_to: &[Role],
     ) -> anyhow::Result<Round1VSSOutput<Z>> {
@@ -1070,11 +1072,55 @@ pub(crate) mod tests {
         round_1(session, bivariate_poly, map_double_shares).await
     }
 
-    fn test_vss_strategies<Z: ShamirRing, V: Vss + 'static>(
+    fn test_vss_small<Z: ShamirRing>(params: TestingParameters) {
+        let mut task_honest = |mut session: SmallSession<Z>| async move {
+            let real_vss = RealVss::default();
+            let secret = Z::sample(session.rng());
+            (
+                session.my_role().unwrap().zero_based(),
+                secret,
+                real_vss.execute(&mut session, &secret).await.unwrap(),
+                session.corrupt_roles().clone(),
+            )
+        };
+
+        let res = execute_protocol_small(
+            params.num_parties,
+            params.threshold as u8,
+            params.expected_rounds,
+            &mut task_honest,
+        );
+        let mut expected_secrets = vec![Z::ZERO; params.num_parties];
+        for (party_idx, s, _, _) in res.iter() {
+            expected_secrets[*party_idx] = *s;
+        }
+
+        for vss_idx in 0..params.num_parties {
+            let vec_shares = res
+                .iter()
+                .map(|(party_id, _, vec_shares, _)| {
+                    Share::new(Role::indexed_by_zero(*party_id), vec_shares[vss_idx])
+                })
+                .collect_vec();
+            let shamir_sharing = ShamirSharing::create(vec_shares);
+            let reconstructed_secret = shamir_sharing.reconstruct(params.threshold);
+            assert!(reconstructed_secret.is_ok());
+            assert_eq!(expected_secrets[vss_idx], reconstructed_secret.unwrap());
+        }
+    }
+
+    #[rstest]
+    #[case(TestingParameters::init_honest(4, 1, Some(5)))]
+    #[case(TestingParameters::init_honest(7, 2, Some(6)))]
+    #[case(TestingParameters::init_honest(10, 3, Some(7)))]
+    fn test_vss_small_honest(#[case] params: TestingParameters) {
+        test_vss_small::<ResiduePoly128>(params)
+    }
+
+    fn test_vss_strategies_large<Z: ShamirRing, V: Vss + 'static>(
         params: TestingParameters,
         malicious_vss: V,
     ) {
-        //async fn task_honest(mut session: LargeSession<Z>) -> (usize, Z, Vec<Z>, HashSet<Role>) {
         let mut task_honest = |mut session: LargeSession| async move {
             let real_vss = RealVss::default();
             let secret = Z::sample(session.rng());
@@ -1093,7 +1139,7 @@ pub(crate) mod tests {
         };
 
         let (results_honest, results_malicious) =
-            execute_protocol_w_disputes_and_malicious::<Z, _, _, _, _, _>(
+            execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
                 &params,
                 &[],
                 &params.malicious_roles,
@@ -1148,8 +1194,8 @@ pub(crate) mod tests {
     #[case(TestingParameters::init_honest(10, 3, Some(7)))]
     fn test_vss_honest_z128(#[case] params: TestingParameters) {
         let malicious_vss = RealVss::default();
-        test_vss_strategies::<ResiduePoly64, _>(params.clone(), malicious_vss.clone());
-        test_vss_strategies::<ResiduePoly128, _>(params.clone(), malicious_vss.clone());
+        test_vss_strategies_large::<ResiduePoly64, _>(params.clone(), malicious_vss.clone());
+        test_vss_strategies_large::<ResiduePoly128, _>(params.clone(), malicious_vss.clone());
     }
 
     //Test behaviour if a party doesn't participate in the protocol
@@ -1166,8 +1212,14 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true,None))]
     fn test_vss_dropping_from_start(#[case] params: TestingParameters) {
         let dropping_vss_from_start = DroppingVssFromStart::default();
-        test_vss_strategies::<ResiduePoly64, _>(params.clone(), dropping_vss_from_start.clone());
-        test_vss_strategies::<ResiduePoly128, _>(params.clone(), dropping_vss_from_start.clone());
+        test_vss_strategies_large::<ResiduePoly64, _>(
+            params.clone(),
+            dropping_vss_from_start.clone(),
+        );
+        test_vss_strategies_large::<ResiduePoly128, _>(
+            params.clone(),
+            dropping_vss_from_start.clone(),
+        );
     }
 
     ///Test for an adversary that sends malformed sharing in round 1 and does everything else honestly.
@@ -1190,8 +1242,8 @@ pub(crate) mod tests {
         let malicious_vss_r1 = MaliciousVssR1 {
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
         };
-        test_vss_strategies::<ResiduePoly64, _>(params.clone(), malicious_vss_r1.clone());
-        test_vss_strategies::<ResiduePoly128, _>(params.clone(), malicious_vss_r1.clone());
+        test_vss_strategies_large::<ResiduePoly64, _>(params.clone(), malicious_vss_r1.clone());
+        test_vss_strategies_large::<ResiduePoly128, _>(params.clone(), malicious_vss_r1.clone());
     }
 
     //Test for an adversary that drops out after Round1
@@ -1207,8 +1259,14 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true,None))]
     fn test_vss_dropout_after_r1(#[case] params: TestingParameters) {
         let dropping_vss_after_r1 = DroppingVssAfterR1::default();
-        test_vss_strategies::<ResiduePoly64, _>(params.clone(), dropping_vss_after_r1.clone());
-        test_vss_strategies::<ResiduePoly128, _>(params.clone(), dropping_vss_after_r1.clone());
+        test_vss_strategies_large::<ResiduePoly64, _>(
+            params.clone(),
+            dropping_vss_after_r1.clone(),
+        );
+        test_vss_strategies_large::<ResiduePoly128, _>(
+            params.clone(),
+            dropping_vss_after_r1.clone(),
+        );
     }
 
     //Test for an adversary that drops out after Round2
@@ -1224,7 +1282,13 @@ pub(crate) mod tests {
     #[case(TestingParameters::init(7,2,&[5,6],&[],&[],false,None))]
     fn test_dropout_r3(#[case] params: TestingParameters) {
         let dropping_vss_after_r2 = DroppingVssAfterR2::default();
-        test_vss_strategies::<ResiduePoly64, _>(params.clone(), dropping_vss_after_r2.clone());
-        test_vss_strategies::<ResiduePoly128, _>(params.clone(), dropping_vss_after_r2.clone());
+        test_vss_strategies_large::<ResiduePoly64, _>(
+            params.clone(),
+            dropping_vss_after_r2.clone(),
+        );
+        test_vss_strategies_large::<ResiduePoly128, _>(
+            params.clone(),
+            dropping_vss_after_r2.clone(),
+        );
     }
 }

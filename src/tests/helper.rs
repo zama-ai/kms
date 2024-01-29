@@ -413,7 +413,7 @@ pub mod tests {
     /// interactive computation.
     ///
     ///**NOTE: FOR ALL TESTS THE RNG SEED OF A PARTY IS ITS PARTY_ID, THIS IS ACTUALLY USED IN SOME TESTS TO CHECK CORRECTNESS.**
-    pub fn execute_protocol_w_disputes_and_malicious<
+    pub fn execute_protocol_large_w_disputes_and_malicious<
         Z: ShamirRing,
         TaskOutputT,
         OutputT,

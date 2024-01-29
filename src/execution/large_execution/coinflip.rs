@@ -93,7 +93,7 @@ pub(crate) mod tests {
             sharing::{open::robust_open_to_all, shamir::ShamirRing},
         },
         tests::helper::tests::{
-            execute_protocol_w_disputes_and_malicious, get_large_session_for_parties,
+            execute_protocol_large_w_disputes_and_malicious, get_large_session_for_parties,
             TestingParameters,
         },
     };
@@ -243,7 +243,7 @@ pub(crate) mod tests {
             )
         };
 
-        let (results_honest, _) = execute_protocol_w_disputes_and_malicious::<Z, _, _, _, _, _>(
+        let (results_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
             &params,
             &[],
             &params.malicious_roles,

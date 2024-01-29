@@ -335,7 +335,7 @@ pub(crate) mod tests {
             },
         },
         tests::helper::tests::{
-            execute_protocol_w_disputes_and_malicious, roles_from_idxs, TestingParameters,
+            execute_protocol_large_w_disputes_and_malicious, roles_from_idxs, TestingParameters,
         },
     };
     use async_trait::async_trait;
@@ -542,7 +542,7 @@ pub(crate) mod tests {
             )
         };
 
-        let (result_honest, _) = execute_protocol_w_disputes_and_malicious::<Z, _, _, _, _, _>(
+        let (result_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
             &params,
             &params.dispute_pairs,
             &[

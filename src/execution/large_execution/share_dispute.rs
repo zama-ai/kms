@@ -417,7 +417,9 @@ pub(crate) mod tests {
             },
         },
         networking::value::NetworkValue,
-        tests::helper::tests::{execute_protocol_w_disputes_and_malicious, TestingParameters},
+        tests::helper::tests::{
+            execute_protocol_large_w_disputes_and_malicious, TestingParameters,
+        },
     };
     use async_trait::async_trait;
     use itertools::Itertools;
@@ -703,7 +705,7 @@ pub(crate) mod tests {
         };
 
         //Execute the protocol with malicious parties and added disputes
-        let (result_honest, _) = execute_protocol_w_disputes_and_malicious::<Z, _, _, _, _, _>(
+        let (result_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
             &params,
             &params.dispute_pairs,
             &[
