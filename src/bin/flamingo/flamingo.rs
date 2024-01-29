@@ -1,5 +1,6 @@
 //! CLI tool for interacting with a group of flamins
 use clap::Parser;
+use distributed_decryption::execution::constants::REAL_PARAM_PATH;
 use distributed_decryption::execution::random::get_rng;
 use distributed_decryption::file_handling::read_as_json;
 use distributed_decryption::lwe::ThresholdLWEParameters;
@@ -72,8 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         // set keys. this can be done once per epoch
         // TODO allow for non-default parameters
-        let default_params: ThresholdLWEParameters =
-            read_as_json("parameters/default_params.json".to_string())?;
+        let default_params: ThresholdLWEParameters = read_as_json(REAL_PARAM_PATH.to_string())?;
         runtime
             .initiate_keygen(
                 &SessionId::from(args.epoch),

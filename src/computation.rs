@@ -45,32 +45,31 @@ impl From<u128> for SessionId {
 #[cfg(test)]
 mod tests {
     use crate::{
-        computation::SessionId,
-        lwe::Ciphertext64,
-        tests::{helper::tests::generate_cipher, test_data_setup::tests::TEST_KEY_PATH},
+        computation::SessionId, execution::constants::SMALL_TEST_KEY_PATH, lwe::Ciphertext64,
+        tests::helper::tests::generate_cipher,
     };
 
     #[test]
     fn sunshine() {
-        let ct = generate_cipher(TEST_KEY_PATH, 0);
+        let ct = generate_cipher(SMALL_TEST_KEY_PATH, 0);
         // Validate that session ID is sufficiently large
         assert!(SessionId::new(&ct).unwrap().0 > 2_u128.pow(100));
     }
 
     #[test]
     fn determinism() {
-        let ct_base = generate_cipher(TEST_KEY_PATH, 0);
+        let ct_base = generate_cipher(SMALL_TEST_KEY_PATH, 0);
         let base = SessionId::new(&ct_base);
-        let ct_other: Ciphertext64 = generate_cipher(TEST_KEY_PATH, 0);
+        let ct_other: Ciphertext64 = generate_cipher(SMALL_TEST_KEY_PATH, 0);
         // validate that the same input gives the same result
         assert_eq!(base.unwrap(), SessionId::new(&ct_other).unwrap());
     }
 
     #[test]
     fn uniqueness() {
-        let ct_base: Ciphertext64 = generate_cipher(TEST_KEY_PATH, 0);
+        let ct_base: Ciphertext64 = generate_cipher(SMALL_TEST_KEY_PATH, 0);
         let base = SessionId::new(&ct_base);
-        let ct_other: Ciphertext64 = generate_cipher(TEST_KEY_PATH, 1);
+        let ct_other: Ciphertext64 = generate_cipher(SMALL_TEST_KEY_PATH, 1);
         let other = SessionId::new(&ct_other);
         // Validate that a bit change results in a difference in session id
         assert_ne!(base.unwrap(), other.unwrap());

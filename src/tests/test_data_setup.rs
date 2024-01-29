@@ -1,8 +1,17 @@
 #[cfg(test)]
 pub mod tests {
-    use std::fs;
-
+    use crate::execution::constants::{
+        PARAMS_DIR, REAL_KEY_PATH, REAL_PARAM_PATH, SMALL_TEST_KEY_PATH, SMALL_TEST_PARAM_PATH,
+        TEMP_DIR,
+    };
+    use crate::file_handling::{read_element, write_element};
+    use crate::lwe::{KeySet, ThresholdLWEParameters};
+    use crate::{
+        file_handling::write_as_json, lwe::CiphertextParameters,
+        tests::helper::tests::generate_keys,
+    };
     use ctor::ctor;
+    use std::fs;
     use tfhe::core_crypto::commons::ciphertext_modulus::CiphertextModulus;
     use tfhe::shortint::{
         prelude::{
@@ -12,28 +21,16 @@ pub mod tests {
         MessageModulus,
     };
 
-    use crate::file_handling::{read_element, write_element};
-    use crate::lwe::{KeySet, ThresholdLWEParameters};
-    use crate::{
-        file_handling::write_as_json, lwe::CiphertextParameters,
-        tests::helper::tests::generate_keys,
-    };
-
-    pub const TEST_PARAM_PATH: &str = "temp/test_params.json";
-    pub const TEST_KEY_PATH: &str = "temp/keys1.bin";
-    pub const DEFAULT_KEY_PATH: &str = "temp/fullkeys.bin";
-    pub const DEFAULT_PARAM_PATH: &str = "temp/default_params.json";
-    pub const TEST_MESSAGE: u8 = 1;
     pub const DEFAULT_SEED: u64 = 1;
 
     // Very small parameters with very little noise, used in most tests to increase speed
     const TEST_PARAMETERS: ThresholdLWEParameters = ThresholdLWEParameters {
-        input_cipher_parameters: TEST_INPUT_PARAMS,
-        output_cipher_parameters: TEST_OUTPUT_PARAMS,
+        input_cipher_parameters: TEST_INPUT_PARAMS_SMALL,
+        output_cipher_parameters: TEST_OUTPUT_PARAMS_SMALL,
     };
 
     // TEST INPUT parameters
-    const TEST_INPUT_PARAMS: CiphertextParameters<u64> = CiphertextParameters {
+    const TEST_INPUT_PARAMS_SMALL: CiphertextParameters<u64> = CiphertextParameters {
         lwe_dimension: LweDimension(32),
         glwe_dimension: GlweDimension(1),
         polynomial_size: PolynomialSize(64),
@@ -49,10 +46,10 @@ pub mod tests {
     };
 
     // TEST OUTPUT decryption
-    const TEST_OUTPUT_PARAMS: CiphertextParameters<u128> = CiphertextParameters {
+    const TEST_OUTPUT_PARAMS_SMALL: CiphertextParameters<u128> = CiphertextParameters {
         lwe_dimension: LweDimension(96),
         glwe_dimension: GlweDimension(2),
-        polynomial_size: PolynomialSize(128),
+        polynomial_size: PolynomialSize(256),
         lwe_modular_std_dev: StandardDev(1.0e-37),
         glwe_modular_std_dev: StandardDev(1.0e-37),
         pbs_base_log: DecompositionBaseLog(33),
@@ -100,7 +97,7 @@ pub mod tests {
     // TODO based on https://github.com/zama-ai/tfhe-rs-internal/blob/noise_gap_exp/tfhe/benches/core_crypto/noise_gap_pbs-ks.rs PARAM_CGGI_BOOLEAN_COMPACT_PKE_PBS_KS_INPUT found in noise_gap.rs in noise_gap_exp
     // Otherwise the bootstrapping will fail due to constraints on lwe_dimension, glwe_dimens and polynomial_size. See  https://github.com/zama-ai/tfhe-rs-internal/blob/cf7a16e137f68d21ea51aef5de6503586[…]2b9e4/tfhe/src/core_crypto/algorithms/glwe_sample_extraction.rs
     // TODO MULTIPLE PEOPLE SHOULD VALIDATE THAT THESE ARE INDEED THE PARAMETERS WE SHOULD RUN WITH!!!
-    const DEFAULT_PARAMETERS: ThresholdLWEParameters = ThresholdLWEParameters {
+    const REAL_PARAMETERS: ThresholdLWEParameters = ThresholdLWEParameters {
         input_cipher_parameters: PARAM_CGGI_4_BITS_COMPACT_PKE_PBS_KS_INPUT,
         output_cipher_parameters: PARAM_4_BITS_CGGI_COMPACT_PKE_PBS_KS,
     };
@@ -108,27 +105,27 @@ pub mod tests {
     #[ctor]
     #[test]
     fn create_temp_dir() {
-        // Ensure temp dir exists
-        let _ = fs::create_dir("temp");
+        // Ensure temp dir exists to store generated keys
+        let _ = fs::create_dir(TEMP_DIR);
     }
 
     #[ctor]
     #[test]
     fn create_parameters_dir() {
-        // Ensure parameters dir exists
-        let _ = fs::create_dir("parameters");
+        // Ensure parameters dir exists to store generated parameters json files
+        let _ = fs::create_dir(PARAMS_DIR);
     }
 
     #[ctor]
     #[test]
-    fn ensure_test_keys_exist() {
-        ensure_keys_exist(DEFAULT_KEY_PATH, DEFAULT_PARAMETERS);
+    fn ensure_default_keys_exist() {
+        ensure_keys_exist(REAL_KEY_PATH, REAL_PARAMETERS);
     }
 
     #[ctor]
     #[test]
-    fn ensure_full_keys_exist() {
-        ensure_keys_exist(TEST_KEY_PATH, TEST_PARAMETERS);
+    fn ensure_small_test_keys_exist() {
+        ensure_keys_exist(SMALL_TEST_KEY_PATH, TEST_PARAMETERS);
     }
 
     fn ensure_keys_exist(path: &str, params: ThresholdLWEParameters) {
@@ -143,13 +140,13 @@ pub mod tests {
 
     #[ctor]
     #[test]
-    fn ensure_test_params_exist() {
-        write_as_json(TEST_PARAM_PATH.to_string(), &TEST_PARAMETERS).unwrap();
+    fn ensure_small_test_params_exist() {
+        write_as_json(SMALL_TEST_PARAM_PATH.to_string(), &TEST_PARAMETERS).unwrap();
     }
 
     #[ctor]
     #[test]
     fn ensure_default_params_exist() {
-        write_as_json(DEFAULT_PARAM_PATH.to_string(), &DEFAULT_PARAMETERS).unwrap();
+        write_as_json(REAL_PARAM_PATH.to_string(), &REAL_PARAMETERS).unwrap();
     }
 }

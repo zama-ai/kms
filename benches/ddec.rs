@@ -1,11 +1,10 @@
-use std::sync::Arc;
-
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
     algebra::residue_poly::ResiduePoly128,
     algebra::residue_poly::ResiduePoly64,
     execution::{
+        constants::REAL_KEY_PATH,
         endpoints::decryption::threshold_decrypt64,
         runtime::{
             session::DecryptionMode,
@@ -15,11 +14,9 @@ use distributed_decryption::{
     file_handling::read_element,
     lwe::{keygen_all_party_shares, KeySet},
 };
-
 use pprof::criterion::{Output, PProfProfiler};
 use rand::Rng;
-
-pub const DEFAULT_KEY_PATH: &str = "temp/fullkeys.bin";
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {
@@ -56,7 +53,7 @@ fn ddec_nsmall(c: &mut Criterion) {
 
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
-    let keyset: KeySet = read_element(DEFAULT_KEY_PATH.to_string()).unwrap();
+    let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
     let mut rng = AesRng::from_random_seed();
     for config in params {
         let message = rng.gen::<u64>();
@@ -103,7 +100,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
 
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
-    let keyset: KeySet = read_element(DEFAULT_KEY_PATH.to_string()).unwrap();
+    let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
     let mut rng = AesRng::from_random_seed();
     for config in params {
         let message = rng.gen::<u64>();
@@ -150,7 +147,7 @@ fn ddec_nlarge(c: &mut Criterion) {
     ];
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
-    let keyset: KeySet = read_element(DEFAULT_KEY_PATH.to_string()).unwrap();
+    let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
     let mut rng = AesRng::from_random_seed();
     for config in params {
         let message = rng.gen::<u64>();
@@ -197,7 +194,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
 
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
-    let keyset: KeySet = read_element(DEFAULT_KEY_PATH.to_string()).unwrap();
+    let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
     let mut rng = AesRng::from_random_seed();
     for config in params {
         let message = rng.gen::<u64>();

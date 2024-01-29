@@ -5,6 +5,7 @@ use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
 use crate::algebra::structure_traits::BaseRing;
 use crate::algebra::structure_traits::Zero;
+use crate::execution::constants::REAL_KEY_PATH;
 use crate::execution::random::get_rng;
 use crate::execution::random::secret_rng_from_seed;
 use crate::execution::random::seed_from_rng;
@@ -293,7 +294,7 @@ pub struct SecretKey {
 impl Default for SecretKey {
     fn default() -> Self {
         let default_params: ThresholdLWEParameters =
-            read_as_json("parameters/default_params.json".to_string()).unwrap();
+            read_as_json(REAL_KEY_PATH.to_string()).unwrap();
         let keyset = gen_key_set(default_params, &mut get_rng());
         keyset.sk
     }
@@ -771,6 +772,8 @@ pub(crate) fn combine128(bits_in_block: u32, decryptions: Vec<Z128>) -> anyhow::
 
 #[cfg(test)]
 mod tests {
+    use crate::execution::constants::SMALL_TEST_KEY_PATH;
+    use crate::execution::constants::SMALL_TEST_PARAM_PATH;
     use crate::lwe::to_large_ciphertext_block;
     use crate::lwe::KeyPair;
     use crate::{
@@ -780,7 +783,6 @@ mod tests {
             from_expanded_msg, get_rng, secret_rng_from_seed, seed_from_rng, to_expanded_msg,
             KeySet, ThresholdLWEParameters,
         },
-        tests::test_data_setup::tests::{TEST_KEY_PATH, TEST_PARAM_PATH},
     };
     use aes_prng::AesRng;
     use num_traits::AsPrimitive;
@@ -835,9 +837,10 @@ mod tests {
 
     #[test]
     fn sunshine_block() {
-        let params: ThresholdLWEParameters = read_as_json(TEST_PARAM_PATH.to_string()).unwrap();
+        let params: ThresholdLWEParameters =
+            read_as_json(SMALL_TEST_PARAM_PATH.to_string()).unwrap();
         let usable_mod_bits = params.input_cipher_parameters.usable_message_modulus_log.0;
-        let keys: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
         for msg in 0..(1 << usable_mod_bits) {
             let mut rng = ChaCha20Rng::seed_from_u64(msg);
             let small_ct = keys.pk.encrypt_block(&mut rng, msg);
@@ -854,7 +857,8 @@ mod tests {
     /// in the encryption ends up being negative
     #[test]
     fn negative_wrapping() {
-        let params: ThresholdLWEParameters = read_as_json(TEST_PARAM_PATH.to_string()).unwrap();
+        let params: ThresholdLWEParameters =
+            read_as_json(SMALL_TEST_PARAM_PATH.to_string()).unwrap();
         let delta_half = 1
             << ((u128::BITS as u128 - 1_u128)
                 - params.output_cipher_parameters.message_modulus_log.0 as u128);
@@ -891,7 +895,7 @@ mod tests {
 
     #[test]
     fn sunshine_domain_switching() {
-        let keyset: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
         let keypair = KeyPair {
             sk: keyset.sk,
             pk: keyset.pk,

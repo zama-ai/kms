@@ -6,6 +6,7 @@ use distributed_decryption::{
     computation::SessionId,
     error::error_handler::anyhow_error_and_log,
     execution::{
+        constants::SMALL_TEST_PARAM_PATH,
         runtime::party::{Identity, Role, RoleAssignment},
         runtime::session::{DecryptionMode, SetupMode},
     },
@@ -81,7 +82,7 @@ pub struct InitOptions {
     /// Initialize decryption protocols: 1: All Protocols, 2: Only Proto2, No PRSS
     protocol: u8,
 
-    #[clap(long, default_value = "temp/test_params.json")]
+    #[clap(long, default_value = SMALL_TEST_PARAM_PATH)]
     /// Filename of the LWE parameters
     lwe_params_file: String,
 }

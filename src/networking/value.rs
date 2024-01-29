@@ -79,18 +79,17 @@ impl<Z: Ring> NetworkValue<Z> {
 mod tests {
     use crate::{
         algebra::base_ring::Z128,
-        execution::runtime::party::Identity,
+        execution::{constants::SMALL_TEST_KEY_PATH, runtime::party::Identity},
         file_handling::read_element,
         lwe::{KeySet, PubConKeyPair},
         networking::{local::LocalNetworkingProducer, Networking},
-        tests::test_data_setup::tests::TEST_KEY_PATH,
     };
 
     use super::*;
 
     #[tokio::test]
     async fn test_box_sending() {
-        let keys: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
         let pck = PubConKeyPair::new(keys);
         let value = NetworkValue::<Z128>::PubKey(Box::new(pck.clone()));
 

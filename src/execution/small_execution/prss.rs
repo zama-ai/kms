@@ -652,7 +652,7 @@ mod tests {
         },
         commitment::KEY_BYTE_LEN,
         execution::{
-            constants::{BD1, LOG_BD, STATSEC},
+            constants::{BD1, LOG_BD, SMALL_TEST_KEY_PATH, STATSEC},
             endpoints::decryption::threshold_decrypt64,
             large_execution::vss::RealVss,
             runtime::party::{Identity, Role},
@@ -672,7 +672,6 @@ mod tests {
             helper::tests::get_small_session_for_parties,
             helper::tests_and_benches::execute_protocol_large,
             helper::tests_and_benches::execute_protocol_small,
-            test_data_setup::tests::TEST_KEY_PATH,
         },
     };
     use std::sync::Arc;
@@ -844,7 +843,7 @@ mod tests {
         // RNG for keys
         let mut rng = AesRng::seed_from_u64(69);
         let msg: u8 = 3;
-        let keys: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
 
         let identities = generate_fixed_identities(num_parties);
 

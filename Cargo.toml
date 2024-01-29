@@ -19,6 +19,7 @@ byteorder = "~1.5"
 blake3 = { version = "~1.5", features = ["std"] }
 clap = { version = "~4", features = ["derive", "env"] }
 concurrent-queue = "2.1.0"
+const_format = "0.2.32"
 crypto_box = {version = "~0.9.1", features = ["salsa20"]}
 dashmap = "~5"
 derive_more = "~0.99"
@@ -127,4 +128,3 @@ debug = true
 extensive_testing = []
 docker-compose-benches = ["minijinja"]
 choreographer = ["prettytable-rs"]
-

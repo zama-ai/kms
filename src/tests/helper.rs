@@ -147,6 +147,7 @@ pub mod tests {
         algebra::structure_traits::Ring,
         computation::SessionId,
         execution::{
+            constants::SMALL_TEST_KEY_PATH,
             runtime::party::{Identity, Role},
             runtime::session::{
                 BaseSessionHandles, DisputeSet, LargeSession, LargeSessionHandles,
@@ -158,7 +159,7 @@ pub mod tests {
         file_handling::read_element,
         lwe::{gen_key_set, Ciphertext64, KeySet, ThresholdLWEParameters},
         networking::{local::LocalNetworkingProducer, Networking},
-        tests::test_data_setup::tests::{DEFAULT_SEED, TEST_KEY_PATH},
+        tests::test_data_setup::tests::DEFAULT_SEED,
     };
 
     #[derive(Default, Clone)]
@@ -293,7 +294,7 @@ pub mod tests {
     /// Deterministic cipher generation.
     /// Encrypts a small message with deterministic randomness
     pub fn generate_cipher(_key_name: &str, message: u8) -> Ciphertext64 {
-        let keys: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
         let mod_log = keys
             .pk
             .threshold_lwe_parameters

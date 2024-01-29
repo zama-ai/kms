@@ -502,6 +502,7 @@ mod tests {
     use crate::{
         algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
         execution::{
+            constants::SMALL_TEST_KEY_PATH,
             endpoints::decryption::threshold_decrypt64,
             runtime::{
                 party::{Identity, Role},
@@ -512,14 +513,13 @@ mod tests {
         },
         file_handling::read_element,
         lwe::{keygen_all_party_shares, KeySet},
-        tests::test_data_setup::tests::TEST_KEY_PATH,
     };
     use std::sync::Arc;
 
     #[test]
     fn reconstruct_key() {
         let parties = 5;
-        let keyset = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let keyset = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
         let shares =
             keygen_all_party_shares(&keyset, &mut AesRng::seed_from_u64(0), parties, 1).unwrap();
         let mut first_bit_shares = Vec::with_capacity(parties);
@@ -543,7 +543,7 @@ mod tests {
         let threshold = 1;
         let num_parties = 5;
         let msg: u8 = 3;
-        let keyset: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
@@ -571,7 +571,7 @@ mod tests {
         let threshold = 1;
         let num_parties = 4;
         let msg: u8 = 3;
-        let keyset: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
@@ -599,7 +599,7 @@ mod tests {
         let threshold = 1;
         let num_parties = 5;
         let msg: u8 = 3;
-        let keyset: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
@@ -625,7 +625,7 @@ mod tests {
         let threshold = 1;
         let num_parties = 5;
         let msg: u8 = 15;
-        let keyset: KeySet = read_element(TEST_KEY_PATH.to_string()).unwrap();
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
