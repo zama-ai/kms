@@ -1230,6 +1230,7 @@ mod tests {
 
                 let mut rng = ChaCha12Rng::seed_from_u64(2342);
                 let sharings = ShamirSharing::share(&mut rng, residue_secret, n, t).unwrap();
+                let party_ids = &sharings.shares.iter().map(|s| s.owner()).collect_vec();
 
                 // verify that decoding with Gao works as a sanity check
                 let decoded = ResiduePoly::<$z>::decode(&sharings, t, num_errs);
@@ -1239,7 +1240,8 @@ mod tests {
                 assert_eq!(f_zero.to_scalar().unwrap(), secret);
 
                 // try syndrome decoding without errors
-                let errors = ResiduePoly::<$z>::syndrome_decode(&sharings, t).unwrap();
+                let syndrome_poly = ResiduePoly::<$z>::syndrome_compute(&sharings, t).unwrap();
+                let errors = ResiduePoly::<$z>::syndrome_decode(syndrome_poly, party_ids, t).unwrap();
                 assert_eq!(errors, vec![ResiduePoly::ZERO; n]); // should be all-zero
 
                 // add 1 error now
@@ -1256,7 +1258,8 @@ mod tests {
                 }
 
                 // try syndrome decoding with 1 error
-                let decoded_errors = ResiduePoly::<$z>::syndrome_decode(&bad_shares, t).unwrap();
+                let syndrome_poly = ResiduePoly::<$z>::syndrome_compute(&bad_shares, t).unwrap();
+                let decoded_errors = ResiduePoly::<$z>::syndrome_decode(syndrome_poly, party_ids, t).unwrap();
                 tracing::debug!("Errors= {:?} vs. {:?}", expected_errors, decoded_errors);
                 assert_eq!(expected_errors, decoded_errors);
 
@@ -1271,7 +1274,8 @@ mod tests {
                 }
 
                 // try syndrome decoding with 2 errors
-                let decoded_errors = ResiduePoly::<$z>::syndrome_decode(&bad_shares, t).unwrap();
+                let syndrome_poly = ResiduePoly::<$z>::syndrome_compute(&bad_shares, t).unwrap();
+                let decoded_errors = ResiduePoly::<$z>::syndrome_decode(syndrome_poly, party_ids, t).unwrap();
                 tracing::debug!("Errors= {:?} vs. {:?}", expected_errors, decoded_errors);
                 assert_eq!(expected_errors, decoded_errors);
             }
