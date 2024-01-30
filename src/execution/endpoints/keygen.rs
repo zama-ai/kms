@@ -2,7 +2,7 @@ use std::{num::Wrapping, sync::Arc};
 
 use ndarray::Array1;
 use rand_chacha::ChaCha20Rng;
-use tfhe::core_crypto::prelude::{GlweSecretKeyOwned, Numeric};
+use tfhe::core_crypto::prelude::Numeric;
 use tokio::{task::JoinSet, time::timeout_at};
 
 use crate::{
@@ -32,9 +32,8 @@ pub async fn transfer_pk<Z: Ring>(
 ) -> anyhow::Result<PubConKeyPair> {
     session.network().increase_round_counter().await?;
     if role.one_based() == input_party_id {
-        let pubkey_raw = pubkey.ok_or(anyhow_error_and_log(
-            "I have no public key to send!".to_string(),
-        ))?;
+        let pubkey_raw = pubkey
+            .ok_or_else(|| anyhow_error_and_log("I have no public key to send!".to_string()))?;
         let num_parties = session.amount_of_parties();
         let pkval = NetworkValue::<Z>::PubKey(Box::new(pubkey_raw.clone()));
 
@@ -120,12 +119,7 @@ pub async fn initialize_key_material(
             // and distribute the lwe secret key vector to the rest. Otherwise if we would have set
             // Vec::new() here, the other parties would have continued to transfer_pk and would
             // have panicked because they would have received something different from a PK.
-            GlweSecretKeyOwned::new_empty_key(
-                Numeric::ZERO,
-                params.output_cipher_parameters.glwe_dimension,
-                params.output_cipher_parameters.polynomial_size,
-            )
-            .into_container()
+            vec![Numeric::ZERO; params.input_cipher_parameters.lwe_dimension.0]
         });
 
     let sk_container128: Vec<u128> = keyset
@@ -137,12 +131,11 @@ pub async fn initialize_key_material(
             // and distribute the lwe secret key vector to the rest. Otherwise if we would have set
             // Vec::new() here, the other parties would have continued to transfer_pk and would
             // have panicked because they would have received something different from a PK.
-            GlweSecretKeyOwned::new_empty_key(
-                Numeric::ZERO,
-                params.output_cipher_parameters.glwe_dimension,
-                params.output_cipher_parameters.polynomial_size,
-            )
-            .into_container()
+            vec![
+                Numeric::ZERO;
+                params.output_cipher_parameters.polynomial_size.0
+                    * params.output_cipher_parameters.glwe_dimension.0
+            ]
         });
 
     // iterate through sk and share each element
@@ -156,9 +149,13 @@ pub async fn initialize_key_material(
             1 => Some(ResiduePoly::from_scalar(Wrapping::<u64>(cur))),
             _ => None,
         };
-        let share =
-            robust_input::<_, ChaCha20Rng>(&mut session.to_base_session(), &secret, &own_role, 1)
-                .await?; //TODO(Daniel) batch this for all big_ell
+        let share = robust_input::<_, ChaCha20Rng>(
+            &mut session.to_base_session(),
+            &secret,
+            &own_role,
+            INPUT_PARTY_ID,
+        )
+        .await?; //TODO(Daniel) batch this for all big_ell
 
         key_shares64.push(share);
     }

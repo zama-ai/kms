@@ -25,7 +25,12 @@ echo ""
 echo ""
 echo "========================================================="
 echo "=                                                       ="
-echo "             Experiment: ${EXPERIMENT_NAME}"
+echo "= Experiment: ${EXPERIMENT_NAME}                        "
+echo "=                                                       "
+echo "= Parties: ${NUM_PARTIES}                               "
+echo "= Threshold: ${THRESHOLD}                               "
+echo "= Messages: ${NUM_MESSAGES}                             "
+echo "= Protocol: ${PROTOCOL}                                 "
 echo "=                                                       ="
 echo "========================================================="
 echo ""
@@ -53,6 +58,20 @@ args = ["2"]
 
 [tasks.grpc-bench]
 run_task = { name = ["experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
+
+
+[tasks.docker-image-ci]
+command = "docker"
+args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "operations/docker/Dockerfile.ci", "-t", "ddec", "."]
+
+[tasks.ci-test]
+run_task = { name = ["docker-image-ci", "grpc-bench-4-1-1-prss"] }
+
+[tasks.grpc-bench-4-1-1-prss]
+env_files = [ { path = "experiments/bench-p4_t1_msg1_prss.env" } ]
+run_task = { name = ["grpc-bench"] }
+description = "4 parties, 1 threshold, 1 messages, PRSS"
+
 
 [tasks.grpc-bench-4-1-10-prss]
 env_files = [ { path = "experiments/bench-p4_t1_msg10_prss.env" } ]
