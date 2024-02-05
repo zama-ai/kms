@@ -6,6 +6,7 @@ use dashmap::DashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
 /// A simple implementation of networking for local execution.
 ///
@@ -17,7 +18,7 @@ pub struct LocalNetworking {
     pub send_counter: DashMap<Identity, usize>,
     pub network_round: Arc<Mutex<usize>>,
     already_sent: Arc<Mutex<HashSet<(Identity, usize)>>>,
-    init_time: Instant,
+    pub init_time: OnceLock<Instant>,
 }
 
 impl Default for LocalNetworking {
@@ -28,7 +29,7 @@ impl Default for LocalNetworking {
             send_counter: Default::default(),
             network_round: Default::default(),
             already_sent: Default::default(),
-            init_time: Instant::now(),
+            init_time: OnceLock::new(), // init_time will be initialized on first access
         }
     }
 }
@@ -174,7 +175,12 @@ impl Networking for LocalNetworking {
             .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e.to_string())))?;
 
         while tagged_value.send_counter < network_round {
-            tracing::debug!("Dropped value: {:?}", tagged_value);
+            tracing::debug!(
+                "@ round {} - dropped value {:?} from round {}",
+                network_round,
+                tagged_value.value[..16].to_vec(),
+                tagged_value.send_counter
+            );
             tagged_value = rx.recv().await?;
         }
 
@@ -197,7 +203,11 @@ impl Networking for LocalNetworking {
 
     fn get_timeout_current_round(&self) -> anyhow::Result<Instant> {
         if let Ok(net_round) = self.network_round.lock() {
-            Ok(self.init_time + *NETWORK_TIMEOUT * (*net_round as u32))
+            // initialize init_time on first access
+            // this avoids running into timeouts when large computations happen after the test runtime is set up and before the first message is received.
+            let init_time = self.init_time.get_or_init(Instant::now);
+
+            Ok(*init_time + *NETWORK_TIMEOUT * (*net_round as u32))
         } else {
             Err(anyhow_error_and_log(
                 "Couldn't lock network round mutex".to_string(),

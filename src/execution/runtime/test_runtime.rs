@@ -1,7 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
-
-use rand_chacha::ChaCha20Rng;
-
+use super::{
+    party::{Identity, Role, RoleAssignment},
+    session::{
+        LargeSession, ParameterHandles, SessionParameters, SmallSession, SmallSessionStruct,
+    },
+};
 use crate::{
     algebra::structure_traits::Ring,
     computation::SessionId,
@@ -12,13 +14,8 @@ use crate::{
     lwe::{BootstrappingKey, SecretKeyShare},
     networking::local::{LocalNetworking, LocalNetworkingProducer},
 };
-
-use super::{
-    party::{Identity, Role, RoleAssignment},
-    session::{
-        LargeSession, ParameterHandles, SessionParameters, SmallSession, SmallSessionStruct,
-    },
-};
+use rand_chacha::ChaCha20Rng;
+use std::{collections::HashMap, sync::Arc};
 
 // TODO The name and use of unwrap hints that this is a struct only to be used for testing, but it is laos used in production, e.g. in grpc.rs
 // Unsafe and test code should not be mixed with production code. See issue 173

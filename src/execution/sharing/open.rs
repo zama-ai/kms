@@ -158,13 +158,9 @@ pub fn reconstruct_w_errors_sync<Z: ShamirRing>(
 ) -> anyhow::Result<Option<Z>> {
     if degree + 2 * threshold < num_parties && sharing.shares.len() > degree + 2 * threshold {
         let opened = sharing.err_reconstruct(degree, threshold)?;
-        tracing::debug!(
-            "managed to reconstruct with given {:?} shares",
-            sharing.shares.len()
-        );
         return Ok(Some(opened));
     } else if degree + 2 * threshold >= num_parties {
-        return Err(anyhow_error_and_warn_log(format!("Can NOT reconstruct with degree {degree}, threshold {threshold} and num_parties {num_parties}")));
+        return Err(anyhow_error_and_warn_log(format!("Can NOT reconstruct with {} shares, degree {degree}, threshold {threshold} and num_parties {num_parties}", sharing.shares.len())));
     }
 
     Ok(None)

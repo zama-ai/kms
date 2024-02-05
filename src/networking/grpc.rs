@@ -217,7 +217,12 @@ impl Networking for GrpcNetworking {
 
         // drop old messages
         while local_packet.round_counter < network_round {
-            tracing::debug!("Dropped value: {:?}", local_packet);
+            tracing::debug!(
+                "@ round {} - dropped value {:?} from round {}",
+                network_round,
+                local_packet.value[..16].to_vec(),
+                local_packet.round_counter
+            );
             local_packet = rx.recv().await?;
         }
 
@@ -227,7 +232,11 @@ impl Networking for GrpcNetworking {
     async fn increase_round_counter(&self) -> anyhow::Result<()> {
         if let Ok(mut net_round) = self.network_round.lock() {
             *net_round += 1;
-            tracing::debug!("changed network round to: {:?}", *net_round);
+            tracing::debug!(
+                "changed network round to: {:?} on party: {:?}",
+                *net_round,
+                self.owner
+            );
         } else {
             return Err(anyhow_error_and_log("Couldn't lock mutex".to_string()));
         }

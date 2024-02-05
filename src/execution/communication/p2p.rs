@@ -115,7 +115,8 @@ fn internal_send_to_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
             });
         } else {
             tracing::info!(
-                "You are trying to communicate with a party that doesn't pass check [Receiver - {:?}]",
+                "I am {:?} trying to send to receiver {:?}, who doesn't pass check",
+                session.my_role()?,
                 cur_receiver
             );
             continue;
@@ -193,21 +194,25 @@ fn internal_receive_from_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
     check_fn: &dyn Fn(&Role, &B) -> anyhow::Result<bool>,
 ) -> anyhow::Result<()> {
-    for cur_receiver in senders {
-        // Ensure we don't receive from ourself
-        if check_fn(cur_receiver, session)? {
+    for cur_sender in senders {
+        // Ensure we want to receive from that sender (e.g. not from ourself or a malicious party)
+        if check_fn(cur_sender, session)? {
             let networking = Arc::clone(session.network());
             let session_id = session.session_id();
-            let receiver_identity = session.identity_from(cur_receiver)?;
-            let role_to_receive_from = *cur_receiver;
+            let sender_identity = session.identity_from(cur_sender)?;
+            let role_to_receive_from = *cur_sender;
             let deadline = session.network().get_timeout_current_round()?;
+
             jobs.spawn(async move {
-                let received = timeout_at(
-                    deadline,
-                    networking.receive(&receiver_identity, &session_id),
-                )
-                .await
-                .unwrap_or_else(|e| Err(anyhow_error_and_log(format!("Timed out : {:?}", e))));
+                let received =
+                    timeout_at(deadline, networking.receive(&sender_identity, &session_id))
+                        .await
+                        .unwrap_or_else(|e| {
+                            Err(anyhow_error_and_log(format!(
+                                "Timed out with deadline {:?} from {:?} : {:?}",
+                                deadline, role_to_receive_from, e
+                            )))
+                        });
                 match NetworkValue::<Z>::from_network(received) {
                     Ok(val) => (role_to_receive_from, val),
                     // We got an unexpected type of value from the network.
@@ -216,7 +221,9 @@ fn internal_receive_from_parties<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
             });
         } else {
             tracing::info!(
-                "You are trying to communicate with a party that doesn't pass the check."
+                "I am {:?} trying to receive from sender {:?}, who doesn't pass check",
+                session.my_role()?,
+                cur_sender
             );
             continue;
         }

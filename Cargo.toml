@@ -7,7 +7,6 @@ edition = "2021"
 
 [dependencies]
 aes = "0.8.2"
-aes-prng = "~0.2"
 aligned-vec = "~0.5"
 anyhow = "~1.0"
 async-channel = "~2.1"
@@ -15,7 +14,6 @@ async-trait = "~0.1"
 async_cell = "~0.2"
 backoff = { version = "~0.4", features = ["tokio"] }
 bincode = "~1.3"
-byteorder = "~1.5"
 blake3 = { version = "~1.5", features = ["std"] }
 clap = { version = "~4", features = ["derive", "env"] }
 concurrent-queue = "2.1.0"
@@ -48,14 +46,13 @@ serde_json = "1.0"
 serde_asn1_der = "0.8.0"
 sha3 = "~0.10.8"
 signature = "~2.2"
-static_assertions = "~1.1"
 # Ensure that "# ~/.gitconfig \n [credential] \n helper = store" is added to .gitconfig
 tfhe = { git = "ssh://git@github.com/zama-ai/tfhe-rs-internal.git", features = [
     "boolean",
     "shortint",
     "integer",
 ] }
-tokio = { version = "~1.35", features = ["full", "sync"] }
+tokio = { version = "~1.36", features = ["full", "sync"] }
 toml = "~0.8"
 tracing = { version = "~0.1", features = ["log"] }
 tracing-subscriber = { version = "~0.3.16", features = ["env-filter", "fmt"] }
@@ -69,11 +66,11 @@ tonic-build = "~0.10"
 
 
 [dev-dependencies]
+aes-prng = "~0.2"
 criterion = { version = "~0.5"}
 ctor = "~0.2"
-env_logger = "0.10"
+env_logger = "0.11"
 proptest = "~1.4"
-rand_chacha = "~0.3"
 rstest = "~0.18"
 test-log = { version = "0.2", features = ["trace"] }
 tracing-test = "0.2"

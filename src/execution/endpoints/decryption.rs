@@ -152,6 +152,18 @@ pub fn threshold_decrypt64<Z: ShamirRing>(
 
     let mut set = JoinSet::new();
 
+    // Do the Switch&Squash only once instead of having all test parties run it.
+    let large_ct = match mode {
+        DecryptionMode::PRSSDecrypt | DecryptionMode::LargeDecrypt => {
+            tracing::info!("Switch&Squash started...");
+            let keyset_ck = runtime.get_ck();
+            let large_ct = to_large_ciphertext(&keyset_ck, &ct);
+            tracing::info!("Switch&Squash done.");
+            Some(large_ct)
+        }
+        _ => None,
+    };
+
     for (index_id, identity) in runtime.identities.clone().into_iter().enumerate() {
         let role_assignments = runtime.role_assignments.clone();
         let net = Arc::clone(&runtime.user_nets[index_id]);
@@ -166,12 +178,17 @@ pub fn threshold_decrypt64<Z: ShamirRing>(
             })?;
 
         let ct = ct.clone();
+        let large_ct = large_ct.clone();
+
+        tracing::info!(
+            "{}: starting threshold decrypt with mode {}",
+            identity,
+            mode
+        );
 
         match mode {
             DecryptionMode::PRSSDecrypt => {
-                let keyset_ck = runtime.get_ck();
                 set.spawn(async move {
-                    let large_ct = to_large_ciphertext(&keyset_ck, &ct);
                     let mut session = setup_small_session::<ResiduePoly128>(
                         session_id,
                         role_assignments,
@@ -180,16 +197,15 @@ pub fn threshold_decrypt64<Z: ShamirRing>(
                         identity.clone(),
                     )
                     .await;
-                    let out = run_decryption_small(&mut session, &party_keyshare, large_ct)
-                        .await
-                        .unwrap();
+                    let out =
+                        run_decryption_small(&mut session, &party_keyshare, large_ct.unwrap())
+                            .await
+                            .unwrap();
                     (identity, out)
                 });
             }
             DecryptionMode::LargeDecrypt => {
-                let keyset_ck = runtime.get_ck();
                 set.spawn(async move {
-                    let large_ct = to_large_ciphertext(&keyset_ck, &ct);
                     let session_params = SessionParameters::new(
                         threshold,
                         session_id,
@@ -198,9 +214,10 @@ pub fn threshold_decrypt64<Z: ShamirRing>(
                     )
                     .unwrap();
                     let mut session = LargeSession::new(session_params, net).unwrap();
-                    let out = run_decryption_large(&mut session, &party_keyshare, large_ct)
-                        .await
-                        .unwrap();
+                    let out =
+                        run_decryption_large(&mut session, &party_keyshare, large_ct.unwrap())
+                            .await
+                            .unwrap();
                     (identity, out)
                 });
             }

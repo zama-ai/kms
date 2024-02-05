@@ -1,5 +1,4 @@
 //! CLI tool for interacting with a group of mobys
-use aes_prng::AesRng;
 use clap::{Parser, Subcommand};
 use distributed_decryption::{
     choreography::choreographer::ChoreoRuntime,
@@ -16,7 +15,7 @@ use distributed_decryption::{
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
 use prettytable::{Attr, Cell, Row, Table};
-use rand::{distributions::Uniform, Rng, SeedableRng};
+use rand::{distributions::Uniform, rngs::ThreadRng, Rng};
 use std::{collections::HashMap, sync::Arc};
 use tokio::task::JoinSet;
 
@@ -133,7 +132,7 @@ async fn decrypt_command(
     runtime: ChoreoRuntime,
     decrypt_opts: DecryptOptions,
     parties: usize,
-    rng: &mut AesRng,
+    rng: &mut ThreadRng,
     number_messages: Option<usize>,
 ) -> Result<Vec<SessionId>, Box<dyn std::error::Error>> {
     let possible_messages = Uniform::from(0..=255);
@@ -298,7 +297,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
     tracing_subscriber::fmt::init();
 
-    let mut rng = AesRng::from_entropy();
+    let mut rng = rand::thread_rng();
     let tls_config = None;
     let port = args.port;
     let number_messages = args.number_messages;

@@ -479,13 +479,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use k256::ecdsa::SigningKey;
-    use rand::SeedableRng;
-    use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
-    use serde_asn1_der::{from_bytes, to_vec};
-    use signature::Signer;
-    use tracing_test::traced_test;
-
+    use super::{PrivateSigKey, PublicSigKey, SigncryptionPair};
+    use crate::execution::constants::TEMP_DIR;
     use crate::{
         execution::endpoints::reencryption::{
             check_signature, encryption_key_generation, hash_element, parse_msg, signcrypt,
@@ -493,8 +488,12 @@ mod tests {
         },
         file_handling::write_element,
     };
-
-    use super::{PrivateSigKey, PublicSigKey, SigncryptionPair};
+    use k256::ecdsa::SigningKey;
+    use rand::SeedableRng;
+    use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
+    use serde_asn1_der::{from_bytes, to_vec};
+    use signature::Signer;
+    use tracing_test::traced_test;
 
     /// Helper method for generating keys for digital signatures
     pub fn signing_key_generation(rng: &mut impl CryptoRngCore) -> (PublicSigKey, PrivateSigKey) {
@@ -518,6 +517,8 @@ mod tests {
     #[cfg(test)]
     #[ctor::ctor]
     fn setup_data_for_integration() {
+        let _ = std::fs::create_dir(TEMP_DIR);
+
         let (mut rng, request, client_signcryption_keys, _fhe_cipher) = test_setup();
         let (_server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A message".as_bytes();
@@ -530,11 +531,15 @@ mod tests {
         .unwrap();
         // Dump encodings for use in client implementation validation
         let enc_req = to_vec(&request).unwrap();
-        write_element("temp/client_req.der".to_string(), &enc_req).unwrap();
+        write_element(TEMP_DIR.to_string() + "/client_req.der", &enc_req).unwrap();
         let enc_pk = to_vec(&client_signcryption_keys.pk).unwrap();
-        write_element("temp/client_signcryption_pk.der".to_string(), &enc_pk).unwrap();
+        write_element(
+            TEMP_DIR.to_string() + "/client_signcryption_pk.der",
+            &enc_pk,
+        )
+        .unwrap();
         let enc_cipher = to_vec(&cipher).unwrap();
-        write_element("temp/signcryption.der".to_string(), &enc_cipher).unwrap();
+        write_element(TEMP_DIR.to_string() + "/signcryption.der", &enc_cipher).unwrap();
     }
 
     #[test]
