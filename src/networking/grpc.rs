@@ -14,12 +14,13 @@ use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::networking::constants::{self, MAX_EN_DECODE_MESSAGE_SIZE};
 use crate::networking::Networking;
 use async_trait::async_trait;
-use backoff::future::retry;
+use backoff::future::retry_notify;
 use backoff::ExponentialBackoff;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::time::Duration;
 use tokio::time::Instant;
 use tonic::codegen::http::Uri;
 use tonic::transport::Channel;
@@ -122,42 +123,64 @@ impl Networking for GrpcNetworking {
             .lock()
             .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e)))?;
 
-        retry(
-            ExponentialBackoff {
-                max_elapsed_time: *constants::MAX_ELAPSED_TIME,
-                max_interval: *constants::MAX_INTERVAL,
-                multiplier: constants::MULTIPLIER,
-                ..Default::default()
-            },
-            || async {
-                let tagged_value = Tag {
-                    sender: self.owner.clone(),
-                    session_id: self.session_id,
-                    round_counter: ctr,
-                };
+        let send_fn = || async {
+            let tagged_value = Tag {
+                sender: self.owner.clone(),
+                session_id: self.session_id,
+                round_counter: ctr,
+            };
 
-                let bytes = bincode::serialize(&tagged_value).map_err(|e| {
-                    anyhow_error_and_log(format!("networking error: {:?}", e.to_string()))
-                })?;
-                let request = SendValueRequest {
-                    tag: bytes,
-                    value: value.clone(),
-                };
-                let mut client = self.new_client(receiver)?;
-                tracing::debug!(
-                    "Sending '{:?}' to {:?}, session_id {:?}",
-                    value,
-                    receiver,
-                    self.session_id
-                );
-                let _response = client.send_value(request).await.map_err(|e| {
-                    anyhow_error_and_log(format!("networking error: {:?}", e.to_string()))
-                })?;
+            let bytes = bincode::serialize(&tagged_value).map_err(|e| {
+                anyhow_error_and_log(format!("networking error: {:?}", e.to_string()))
+            })?;
+            let request = SendValueRequest {
+                tag: bytes,
+                value: value.clone(),
+            };
+            let mut client = self.new_client(receiver)?;
+            tracing::debug!(
+                "Sending '{:?} bytes' to {:?}, session_id {:?}",
+                value.len(),
+                receiver,
+                self.session_id
+            );
 
-                Ok(())
-            },
-        )
-        .await
+            match client.send_value(request).await {
+                Ok(_) => Ok(()),
+                Err(e) => match e.code() {
+                    tonic::Code::Unavailable => {
+                        tracing::warn!(
+                            "Party get disconnected: {:?}. Not retrying anymore",
+                            receiver
+                        );
+                        Ok(())
+                    }
+                    _ => Err(anyhow_error_and_log(format!(
+                        "networking error: {:?}",
+                        e.to_string()
+                    )))
+                    .map_err(|e| e.into()),
+                },
+            }
+        };
+
+        let exponential_backoff = ExponentialBackoff {
+            max_elapsed_time: *constants::MAX_ELAPSED_TIME,
+            max_interval: *constants::MAX_INTERVAL,
+            multiplier: constants::MULTIPLIER,
+            ..Default::default()
+        };
+
+        let notify = |e, duration: Duration| {
+            tracing::warn!(
+                "RETRY ERROR: Failed to send message: {:?} - Receiver {:?} - Duration {:?} secs",
+                e,
+                receiver,
+                duration.as_secs()
+            );
+        };
+
+        retry_notify(exponential_backoff, send_fn, notify).await
     }
 
     async fn receive(&self, sender: &Identity, _session_id: &SessionId) -> anyhow::Result<Vec<u8>> {
@@ -167,14 +190,21 @@ impl Networking for GrpcNetworking {
             ));
         }
 
-        let session_store = self.message_queues.get(&self.session_id).ok_or_else(|| {
-            anyhow_error_and_log("couldn't retrieve channels from store".to_string())
-        })?;
-
-        let channels = session_store.get(sender).ok_or_else(|| {
-            anyhow_error_and_log("couldn't retrieve session store from message stores".to_string())
-        })?;
-        let (_, rx) = channels.value();
+        let rx = self
+            .message_queues
+            .get(&self.session_id)
+            .ok_or_else(|| {
+                anyhow_error_and_log("couldn't retrieve channels from store".to_string())
+            })
+            .map(|s| {
+                s.get(sender)
+                    .ok_or_else(|| {
+                        anyhow_error_and_log(
+                            "couldn't retrieve session store from message stores".to_string(),
+                        )
+                    })
+                    .map(|s| s.value().1.clone())
+            })??;
 
         tracing::debug!("Waiting to receive from {:?}", sender);
 
@@ -268,7 +298,7 @@ impl Gnetworking for NetworkingImpl {
         }
 
         if self.message_queues.contains_key(&tag.session_id) {
-            let session_store = self
+            let tx = self
                 .message_queues
                 .get(&tag.session_id)
                 .ok_or_else(|| {
@@ -276,18 +306,17 @@ impl Gnetworking for NetworkingImpl {
                         "couldn't retrieve session store from message stores".to_string(),
                     )
                 })
-                .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?;
-
-            let channels = session_store
-                .get(&tag.sender)
-                .ok_or_else(|| {
-                    anyhow_error_and_log(
-                        "couldn't retrieve channels from session store".to_string(),
-                    )
+                .map(|s| {
+                    s.get(&tag.sender)
+                        .ok_or_else(|| {
+                            anyhow_error_and_log(
+                                "couldn't retrieve channels from session store".to_string(),
+                            )
+                        })
+                        .map(|s| s.value().0.clone())
+                        .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))
                 })
-                .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?;
-
-            let (tx, _) = channels.value();
+                .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))??;
 
             let _ = tx
                 .send(NetworkRoundValue {
@@ -295,7 +324,6 @@ impl Gnetworking for NetworkingImpl {
                     round_counter: tag.round_counter,
                 })
                 .await;
-
             Ok(tonic::Response::new(SendValueResponse::default()))
         } else {
             Err(tonic::Status::new(

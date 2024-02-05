@@ -15,6 +15,7 @@ use crate::{
 use crate::{choreography::grpc::ComputationOutputs, execution::runtime::session::DecryptionMode};
 use crate::{execution::runtime::session::SetupMode, lwe::ThresholdLWEParameters};
 use std::{collections::HashMap, time::Duration};
+use tokio::task::JoinSet;
 use tonic::transport::{Channel, ClientTlsConfig, Uri};
 
 pub struct ChoreoRuntime {
@@ -81,26 +82,36 @@ impl ChoreoRuntime {
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let threshold = bincode::serialize(&threshold)?;
         let ciphertext = bincode::serialize(ct)?;
+        self.threshold_decrypt(&mode_s, &role_assignment, &threshold, &ciphertext)
+            .await?;
+        SessionId::new(ct)
+    }
 
-        for channel in self.channels.values() {
+    async fn threshold_decrypt(
+        &self,
+        mode: &[u8],
+        role_assignment: &[u8],
+        threshold: &[u8],
+        ciphertext: &[u8],
+    ) -> anyhow::Result<()> {
+        let mut join_set = JoinSet::new();
+        self.channels.values().for_each(|channel| {
             let mut client = self.new_client(channel.clone());
 
             let request = DecryptionRequest {
-                mode: mode_s.clone(),
-                role_assignment: role_assignment.clone(),
-                threshold: threshold.clone(),
-                ciphertext: ciphertext.clone(),
+                mode: mode.to_vec(),
+                role_assignment: role_assignment.to_vec(),
+                threshold: threshold.to_vec(),
+                ciphertext: ciphertext.to_vec(),
             };
 
-            tracing::debug!(
-                "launching the decryption with proto {} to {:?}",
-                mode,
-                channel
-            );
-            let _response = client.threshold_decrypt(request).await?;
+            tracing::debug!("launching the decryption with proto to {:?}", channel);
+            join_set.spawn(async move { client.threshold_decrypt(request).await });
+        });
+        while let Some(response) = join_set.join_next().await {
+            response??;
         }
-
-        SessionId::new(ct)
+        Ok(())
     }
 
     pub async fn initiate_retrieve_results(
@@ -114,15 +125,16 @@ impl ChoreoRuntime {
         let mut combined_stats = HashMap::new();
 
         for (role, channel) in self.channels.iter() {
+            tracing::info!("Init retrieving results from {:?}", role);
             let mut client = self.new_client(channel.clone());
 
             let request = RetrieveResultsRequest {
                 session_id: session_id.clone(),
                 session_range,
             };
-            let response = client.retrieve_results(request).await?;
+            let resp = client.retrieve_results(request).await?;
 
-            for co in bincode::deserialize::<Vec<ComputationOutputs>>(&response.get_ref().values)? {
+            for co in bincode::deserialize::<Vec<ComputationOutputs>>(&resp.get_ref().values)? {
                 // only party 1 reconstructs at them moment, so ignore other outputs (they would override party 1 outputs)
                 if role.one_based() == INPUT_PARTY_ID {
                     combined_outputs.extend(co.outputs);
@@ -135,6 +147,7 @@ impl ChoreoRuntime {
                         .push(time);
                 }
             }
+            tracing::info!("Retrieved results from {:?}", role);
         }
 
         if combined_stats.is_empty() {

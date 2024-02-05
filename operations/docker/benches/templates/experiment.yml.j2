@@ -12,7 +12,8 @@ services:
       - "-n"
       - "{{ n_parties }}"
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=distributed_decryption=debug
+      - NO_COLOR=true
     volumes:
       - ../parameters:/app/ddec/parameters
     ports:

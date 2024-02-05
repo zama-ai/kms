@@ -106,7 +106,6 @@ impl Choreography for GrpcChoreography {
         &self,
         request: tonic::Request<DecryptionRequest>,
     ) -> Result<tonic::Response<DecryptionResponse>, tonic::Status> {
-        tracing::info!("Launching Decryption");
         let request = request.into_inner();
 
         let ct = bincode::deserialize::<Ciphertext64>(&request.ciphertext).map_err(|_e| {
@@ -159,36 +158,34 @@ impl Choreography for GrpcChoreography {
             (Entry::Vacant(result_stores_entry), Some(se_id)) => {
                 tracing::debug!("I've launched a new decryption");
 
-                let ksarc = self.setup_store.get(se_id).unwrap();
-                let setup_info = ksarc.value().get().await;
+                let setup_info = self
+                    .setup_store
+                    .get(se_id)
+                    .map(|ksarc| ksarc.value().clone())
+                    .ok_or_else(|| {
+                        tonic::Status::new(
+                            tonic::Code::Internal,
+                            "failed to retrieve setup info".to_string(),
+                        )
+                    })?;
+                let setup_info = setup_info.get().await;
 
                 let result_cell = AsyncCell::shared();
                 result_stores_entry.insert(result_cell);
 
                 let own_identity = self.own_identity.clone();
                 let networking = (self.networking_strategy)(session_id, role_assignments.clone());
+                tracing::debug!(
+                    "Register session_id {:?} in this party: {:?}",
+                    session_id,
+                    own_identity
+                );
 
-                let execution_start_timer = Instant::now();
                 let result_stores = Arc::clone(&self.result_stores);
                 let pks = Arc::clone(&self.pubkey_store);
                 let pkl = pks.lock().unwrap().clone();
-                let ck = &pkl
-                    .as_ref()
-                    .ok_or_else(|| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            "No public key available for decryption".to_string(),
-                        )
-                    })?
-                    .ck;
-                let ct_large = ct
-                    .iter()
-                    .map(|ct_block| to_large_ciphertext_block(ck, ct_block))
-                    .collect_vec();
-
                 match mode {
                     DecryptionMode::PRSSDecrypt => {
-                        tracing::debug!("own identity: {:?}", own_identity);
                         let prss_setup =
                             match setup_info.prss_setup.get(&SupportedRing::ResiduePoly128) {
                                 Some(SupportedPRSSSetup::ResiduePoly128(v)) => v.clone(),
@@ -211,6 +208,21 @@ impl Choreography for GrpcChoreography {
                         })?;
 
                         tokio::spawn(async move {
+                            let execution_start_timer = Instant::now();
+                            let ck = &pkl
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    tonic::Status::new(
+                                        tonic::Code::Aborted,
+                                        "No public key available for decryption".to_string(),
+                                    )
+                                })
+                                .unwrap()
+                                .ck;
+                            let ct_large = ct
+                                .iter()
+                                .map(|ct_block| to_large_ciphertext_block(ck, ct_block))
+                                .collect_vec();
                             let mut results = HashMap::with_capacity(1);
                             let outputs = run_decryption_small(
                                 &mut session,
@@ -227,17 +239,18 @@ impl Choreography for GrpcChoreography {
                             );
                             results.insert(format!("{session_id}"), outputs);
 
-                            let result_cell = result_stores
-                                .get(&session_id)
-                                .expect("session disappeared unexpectedly");
-
                             let execution_stop_timer = Instant::now();
                             let elapsed_time =
                                 execution_stop_timer.duration_since(execution_start_timer);
-                            result_cell.set(ComputationOutputs {
-                                outputs: results,
-                                elapsed_time: Some(elapsed_time),
-                            });
+                            result_stores
+                                .get(&session_id)
+                                .map(|res| {
+                                    res.set(ComputationOutputs {
+                                        outputs: results,
+                                        elapsed_time: Some(elapsed_time),
+                                    });
+                                })
+                                .expect("session disappeared unexpectedly");
                             tracing::info!(
                                 "Online time was {:?} microseconds",
                                 (elapsed_time).as_micros()
@@ -255,6 +268,21 @@ impl Choreography for GrpcChoreography {
                         let mut session =
                             LargeSession::new(session_params, Arc::clone(&networking)).unwrap();
                         tokio::spawn(async move {
+                            let execution_start_timer = Instant::now();
+                            let ck = &pkl
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    tonic::Status::new(
+                                        tonic::Code::Aborted,
+                                        "No public key available for decryption".to_string(),
+                                    )
+                                })
+                                .unwrap()
+                                .ck;
+                            let ct_large = ct
+                                .iter()
+                                .map(|ct_block| to_large_ciphertext_block(ck, ct_block))
+                                .collect_vec();
                             let mut results = HashMap::with_capacity(1);
                             let outputs = run_decryption_large(
                                 &mut session,
@@ -271,17 +299,19 @@ impl Choreography for GrpcChoreography {
                             );
                             results.insert(format!("{session_id}"), outputs);
 
-                            let result_cell = result_stores
-                                .get(&session_id)
-                                .expect("session disappeared unexpectedly");
-
                             let execution_stop_timer = Instant::now();
                             let elapsed_time =
                                 execution_stop_timer.duration_since(execution_start_timer);
-                            result_cell.set(ComputationOutputs {
-                                outputs: results,
-                                elapsed_time: Some(elapsed_time),
-                            });
+
+                            result_stores
+                                .get(&session_id)
+                                .map(|result_cell| {
+                                    result_cell.set(ComputationOutputs {
+                                        outputs: results,
+                                        elapsed_time: Some(elapsed_time),
+                                    });
+                                })
+                                .expect("session disappeared unexpectedly");
                             tracing::info!(
                                 "Online time was {:?} microseconds",
                                 (elapsed_time).as_micros()
@@ -318,6 +348,8 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
+        tracing::info!("Retrieving results for session {:?}", session_id);
+
         let session_range = request.session_range;
 
         let mut results: Vec<ComputationOutputs> = Vec::with_capacity(session_range as usize);
@@ -340,6 +372,7 @@ impl Choreography for GrpcChoreography {
             }
         }
 
+        tracing::debug!("Results retrieved for session {:?}", session_id);
         let values = bincode::serialize(&results).expect("failed to serialize results");
         Ok(tonic::Response::new(RetrieveResultsResponse { values }))
     }
@@ -349,7 +382,6 @@ impl Choreography for GrpcChoreography {
         &self,
         request: tonic::Request<KeygenRequest>,
     ) -> Result<tonic::Response<KeygenResponse>, tonic::Status> {
-        tracing::info!("Launching keygen");
         let request = request.into_inner();
 
         let epoch_id = bincode::deserialize::<SessionId>(&request.epoch_id).map_err(|_e| {
@@ -423,19 +455,21 @@ impl Choreography for GrpcChoreography {
                             .await
                             .unwrap();
 
-                    let setup_result_cell = setup_store
-                        .get(&epoch_id)
-                        .expect("Epoch key store disappeared unexpectedly");
                     let mut map_setup = HashMap::new();
                     map_setup.insert(
                         SupportedRing::ResiduePoly128,
                         SupportedPRSSSetup::ResiduePoly128(prss_setup),
                     );
 
-                    setup_result_cell.set(SetupInfo {
-                        secret_key_share: sk,
-                        prss_setup: map_setup,
-                    });
+                    setup_store
+                        .get(&epoch_id)
+                        .map(|setup_result_cell| {
+                            setup_result_cell.set(SetupInfo {
+                                secret_key_share: sk,
+                                prss_setup: map_setup,
+                            });
+                        })
+                        .expect("Epoch key store disappeared unexpectedly");
 
                     *pks.lock().unwrap() = Some(pk);
                     tracing::debug!("Key material stored.");
@@ -457,32 +491,32 @@ impl Choreography for GrpcChoreography {
             tonic::Status::new(tonic::Code::Aborted, "Failed to parse epoch id".to_string())
         })?;
 
-        match self.setup_store.get(&epoch_id) {
-            Some(res) => {
-                // make sure that key was generated completely
-                let _ = res.value().get().await;
-
-                let pks = Arc::clone(&self.pubkey_store);
-                let pkl = pks.lock().unwrap().clone().ok_or_else(|| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        "No public key available for decryption".to_string(),
-                    )
-                })?;
-
-                let pk_serialized = bincode::serialize(&pkl).expect("failed to serialize results");
-                tracing::debug!("Pubkey successfully retrieved.");
-
-                Ok(tonic::Response::new(PubkeyResponse {
-                    pubkey: pk_serialized,
-                }))
-            }
-            None => {
-                return Err(tonic::Status::new(
+        let comp = self
+            .setup_store
+            .get(&epoch_id)
+            .map(|res| res.value().clone())
+            .ok_or_else(|| {
+                tonic::Status::new(
                     tonic::Code::NotFound,
                     format!("Pubkey not found for epoch id {}.", epoch_id),
-                ))
-            }
-        }
+                )
+            })?;
+        // make sure that key was generated completely
+        comp.get().await;
+
+        let pks = Arc::clone(&self.pubkey_store);
+        let pkl = pks.lock().unwrap().clone().ok_or_else(|| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                "No public key available for decryption".to_string(),
+            )
+        })?;
+
+        let pk_serialized = bincode::serialize(&pkl).expect("failed to serialize results");
+        tracing::debug!("Pubkey successfully retrieved.");
+
+        Ok(tonic::Response::new(PubkeyResponse {
+            pubkey: pk_serialized,
+        }))
     }
 }

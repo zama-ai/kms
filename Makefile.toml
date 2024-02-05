@@ -2,15 +2,15 @@ env_files = [ { path = ".env.makefile", defaults_only = true } ]
 
 [tasks.docker-image]
 command = "docker"
-args = ["build", "--ssh", "default", "-t", "ddec", "."]
+args = ["build", "-f", "operations/docker/local.dockerfile", "--ssh", "default", "-t", "ddec", "."]
 
 [tasks.build-bench-grpc]
 command = "cargo"
 args = ["run", "--bin", "docker-benches", "--features", "docker-compose-benches", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "${OUTPUT_DOCKER_COMPOSE_FILE}"]
 
 [tasks.start-parties]
-command = "docker-compose"
-args = ["--progress=quiet", "-f", "${OUTPUT_DOCKER_COMPOSE_FILE}", "up", "--wait", "--quiet-pull"]
+command = "docker"
+args = ["compose", "--progress=quiet", "-f", "${OUTPUT_DOCKER_COMPOSE_FILE}", "up", "--wait", "--quiet-pull"]
 dependencies = ["build-bench-grpc"]
 
 [tasks.stop-parties]
@@ -48,7 +48,7 @@ command = "cargo"
 args = ["run", "--bin", "mobygo","--features", "choreographer", "--", "-n", "${NUM_PARTIES}", "--number-messages", "${NUM_MESSAGES}", "--session-store","${SESSION_STORE}", "decrypt", "-t", "${THRESHOLD}", "-p", "${PROTOCOL}"]
 
 [tasks.choreo-results]
-env = { "RUST_LOG" = "mobygo=info"}
+env = { "RUST_LOG" = "error"}
 command = "cargo"
 args = ["run", "--bin", "mobygo","--features", "choreographer", "--", "-n", "${NUM_PARTIES}", "--session-store", "${SESSION_STORE}", "results"]
 
@@ -57,12 +57,12 @@ command = "sleep"
 args = ["2"]
 
 [tasks.grpc-bench]
-run_task = { name = ["experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
+run_task = { name = ["experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "sleep", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
 
 
 [tasks.docker-image-ci]
 command = "docker"
-args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "operations/docker/Dockerfile.ci", "-t", "ddec", "."]
+args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "operations/docker/ci.dockerfile", "-t", "ddec", "."]
 
 [tasks.ci-test]
 run_task = { name = ["docker-image-ci", "grpc-bench-4-1-1-prss"] }
@@ -108,5 +108,8 @@ env_files = [ { path = "experiments/bench-p100_t10_msg40_large.env" } ]
 run_task = { name = ["grpc-bench"] }
 description = "100 parties, 10 threshold, 40 messages, LargeDecryption"
 
-[tasks.run-grpc-benchmarks]
-run_task = { name = ["docker-image", "grpc-bench-4-1-10-prss", "grpc-bench-10-2-20-prss", "grpc-bench-16-5-40-prss", "grpc-bench-5-1-10-large", "grpc-bench-10-2-20-large", "grpc-bench-100-10-40-large"] }
+[tasks.run-grpc-prss-benchmarks]
+run_task = { name = ["docker-image", "grpc-bench-4-1-10-prss", "grpc-bench-10-2-20-prss", "grpc-bench-16-5-40-prss"] }
+
+[tasks.run-grpc-large-benchmarks]
+run_task = { name = ["docker-image", "grpc-bench-5-1-10-large", "grpc-bench-10-2-20-large", "grpc-bench-100-10-40-large"] }

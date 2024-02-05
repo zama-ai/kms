@@ -16,7 +16,7 @@ lazy_static! {
     pub(crate) static ref MAX_ELAPSED_TIME: Option<Duration> = Some(Duration::from_secs(5 * 60));
 
     /// maximum number of seconds that a party waits for a network message during a protocol
-    pub(crate) static ref NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
+    pub(crate) static ref NETWORK_TIMEOUT: Duration = Duration::from_secs(10);
 
     /// maximum number of seconds that a party waits for a network message during a protocol
     pub(crate) static ref NETWORK_TIMEOUT_LONG: Duration = Duration::from_secs(60);
