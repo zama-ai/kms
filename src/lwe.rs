@@ -18,6 +18,7 @@ use ndarray::Array1;
 use num_integer::div_ceil;
 use num_traits::AsPrimitive;
 use rand::RngCore;
+use zeroize::Zeroize;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -281,6 +282,19 @@ pub struct SecretKeyShare {
     pub input_key_share128: Array1<ResiduePoly128>,
     pub input_key_share64: Array1<ResiduePoly64>,
     pub threshold_lwe_parameters: ThresholdLWEParameters,
+}
+
+// Couldn't derive Zeroize because Array1 does not implement Zeroize
+// so we manually erase the shares
+impl Zeroize for SecretKeyShare {
+    fn zeroize(&mut self) {
+        for s in &mut self.input_key_share128 {
+            s.zeroize();
+        }
+        for s in &mut self.input_key_share64 {
+            s.zeroize();
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]

@@ -35,6 +35,7 @@ pub mod online {
     pub mod bit_manipulation;
     pub mod gen_bits;
     pub mod preprocessing;
+    pub mod reshare;
     pub mod secret_distributions;
     pub mod triple;
 }

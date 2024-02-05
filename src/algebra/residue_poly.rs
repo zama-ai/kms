@@ -31,6 +31,7 @@ use std::{
     ops::{Add, AddAssign, Mul, Neg, Shl, Sub, SubAssign},
 };
 use std::{num::Wrapping, ops::MulAssign};
+use zeroize::Zeroize;
 
 pub const F_DEG: usize = 8; // degree of irreducible polynomial F = x8 + x4 + x3 + x + 1
 
@@ -38,7 +39,7 @@ pub const F_DEG: usize = 8; // degree of irreducible polynomial F = x8 + x4 + x3
 ///
 /// Comes with fixed evaluation points lifted from GF(2^8).
 /// This is also the 'value' of a single ShamirShare.
-#[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq, Hash, Eq, Debug)]
+#[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq, Hash, Eq, Debug, Zeroize)]
 pub struct ResiduePoly<Z> {
     pub coefs: [Z; F_DEG], // TODO(Daniel) can this be a slice instead of an array?
 }

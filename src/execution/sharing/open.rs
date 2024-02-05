@@ -64,16 +64,22 @@ async fn try_reconstruct_from_shares<Z: ShamirRing, P: ParameterHandles>(
 
     while let Some(v) = jobs.join_next().await {
         let joined_result = v?;
-        if let Ok((party_id, data)) = joined_result {
-            answering_parties.insert(party_id);
-            if let Ok(values) = data {
-                fill_indexed_shares(sharings, values, num_secrets, party_id)?;
-            } else if let Err(e) = data {
-                tracing::warn!(
-                    "(Share reconstruction) Received malformed data from {party_id}:  {:?}",
-                    e
-                );
-                fill_indexed_shares(sharings, [].to_vec(), num_secrets, party_id)?;
+        match joined_result {
+            Ok((party_id, data)) => {
+                answering_parties.insert(party_id);
+                if let Ok(values) = data {
+                    fill_indexed_shares(sharings, values, num_secrets, party_id)?;
+                } else if let Err(e) = data {
+                    tracing::warn!(
+                        "(Share reconstruction) Received malformed data from {party_id}:  {:?}",
+                        e
+                    );
+                    fill_indexed_shares(sharings, [].to_vec(), num_secrets, party_id)?;
+                }
+            }
+            Err(e) => {
+                // TODO can we see the party_id that correspond to the job?
+                tracing::warn!("(Share reconstruction) Failed to get result:  {:?}", e);
             }
         }
 
