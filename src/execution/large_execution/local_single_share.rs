@@ -89,7 +89,8 @@ impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, 
             // ShareDispute will fill shares from corrupted players with 0s
             let mut shared_secrets = self.share_dispute.execute(session, secrets).await?;
 
-            // note that we could merge the share_pads round into the first one. This is currently discussed in the NIST doc
+            // note that we could merge the share_pads round into the first one.
+            // This is currently discussed in the NIST doc
             let shared_pads = send_receive_pads(session, &self.share_dispute).await?;
 
             let x = self.coinflip.execute(session).await?;

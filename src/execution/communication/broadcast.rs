@@ -531,6 +531,7 @@ pub async fn broadcast_with_corruption<Z: Ring, R: RngCore, Ses: BaseSessionHand
     for role in session.corrupt_roles() {
         broadcast_res.insert(*role, BroadcastValue::Bot);
     }
+
     let role_list = session.role_assignments().keys().cloned().collect_vec();
     for role in role_list {
         // Each party that was party that was supposed to broadcast but where the parties did not consistently agree on the result

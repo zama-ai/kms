@@ -23,7 +23,7 @@ pub enum BroadcastValue<Z: Eq + Zero> {
     PRSSVotes(Vec<(PartySet, Vec<Z>)>),
     AddDispute(DisputePayload),
     Round2VSS(Vec<VerificationValues<Z>>),
-    Round3VSS(BTreeMap<(usize, Role, Role), Z>),
+    Round3VSS(BTreeMap<(usize, Role, Role), Vec<Z>>),
     Round4VSS(BTreeMap<(usize, Role), ValueOrPoly<Z>>),
     LocalSingleShare(MapsSharesChallenges<Z>),
     LocalDoubleShare(MapsDoubleSharesChallenges<Z>),

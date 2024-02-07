@@ -24,21 +24,57 @@ use crate::{
 
 #[async_trait]
 pub trait Vss: Send + Sync + Default + Clone {
-    /// Executes a batched Verifiable Secret Sharing with
+    /// Executes a Verifiable Secret Sharing with
+    /// where every party inputs one secret.
+    /// The trait provides a default implementation for [execute]
+    /// that reports *errors* if the [execute_many] implementation
+    /// gives unexpected results. This behaviour may need to be
+    /// overridden when implementating malicious VSS for testing.
     /// - session as the MPC session
     /// - secret as secret to be shared
-    /// - corrupt_set as the set of corrupted parties used for broadcast
     ///
     /// Returns
-    /// - a vector of shares (share at idx i is a sharing of the secret of party i)
+    /// - a vector of shares (share at index i is a sharing of the secret of party i)
     async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,
         secret: &Z,
-    ) -> anyhow::Result<Vec<Z>>;
+    ) -> anyhow::Result<Vec<Z>> {
+        let out_vec = self.execute_many(session, &[*secret]).await?;
+        let n = session.amount_of_parties();
+        if out_vec.len() != n {
+            return Err(anyhow_error_and_log(format!(
+                "incorrect output length, expect {n} but got {}",
+                out_vec.len()
+            )));
+        }
+        if out_vec[0].len() != 1 {
+            return Err(anyhow_error_and_log(format!(
+                "incorrect number of secrets, expect 1 but got {}",
+                out_vec[0].len()
+            )));
+        }
+        Ok(out_vec.into_iter().map(|vs| vs[0]).collect_vec())
+    }
+
+    /// Executes a batched Verifiable Secret Sharing with
+    /// where every party inputs a batch of secrets
+    /// - session as the MPC session
+    /// - secrets as secrets to be shared
+    ///
+    /// Returns
+    /// - a vector of shares (shares at index i is a sharing of the secrets of party i)
+    /// so in a successful execution shares.len() should be the number of parties
+    /// and shares[0].len() should be the number of secrets
+    async fn execute_many<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+        &self,
+        session: &mut S,
+        secrets: &[Z],
+    ) -> anyhow::Result<Vec<Vec<Z>>>;
 }
-type Challenge<Z> = Vec<Z>;
-pub(crate) type VerificationValues<Z> = Vec<(Z, Z)>;
+
+type Challenge<Z> = Vec<Vec<Z>>; // There will be num_secrets challenge for every party
+pub(crate) type VerificationValues<Z> = Vec<Vec<(Z, Z)>>;
 type ResultRound1<Z> = Result<(Role, Result<ExchangedDataRound1<Z>, anyhow::Error>), Elapsed>;
 
 #[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Hash, Debug)]
@@ -47,8 +83,8 @@ where
     Z: Eq,
     Poly<Z>: Eq,
 {
-    Value(Z),
-    Poly(Poly<Z>),
+    Value(Vec<Z>),
+    Poly(Vec<Poly<Z>>),
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Debug, Default)]
@@ -68,18 +104,23 @@ pub struct ExchangedDataRound1<Z>
 where
     Poly<Z>: Eq,
 {
-    double_poly: DoublePoly<Z>,
+    double_poly: Vec<DoublePoly<Z>>,
     challenge: Challenge<Z>,
 }
 
 impl<Z: Ring> ExchangedDataRound1<Z> {
-    pub fn default(num_parties: usize) -> Self {
+    pub fn default(num_parties: usize, num_secrets: usize) -> Self {
         Self {
-            double_poly: DoublePoly::<Z> {
-                share_in_x: Poly::default(),
-                share_in_y: Poly::default(),
-            },
-            challenge: (0..num_parties).map(|_| Z::default()).collect_vec(),
+            double_poly: vec![
+                DoublePoly::<Z> {
+                    share_in_x: Poly::default(),
+                    share_in_y: Poly::default(),
+                };
+                num_secrets
+            ],
+            challenge: (0..num_parties)
+                .map(|_| vec![Z::default(); num_secrets])
+                .collect_vec(),
         }
     }
 }
@@ -89,7 +130,7 @@ impl<Z: Ring> ExchangedDataRound1<Z> {
 pub struct Round1VSSOutput<Z: Ring> {
     sent_challenges: Vec<Challenge<Z>>,
     received_vss: Vec<ExchangedDataRound1<Z>>,
-    my_poly: BivariatePoly<Z>,
+    my_poly: Vec<BivariatePoly<Z>>,
 }
 
 ///Simply send the trivial sharing P: X -> secret (P constant polynomial)
@@ -99,29 +140,33 @@ pub struct DummyVss {}
 
 #[async_trait]
 impl Vss for DummyVss {
-    async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,
-        secret: &Z,
-    ) -> anyhow::Result<Vec<Z>> {
+        secrets: &[Z],
+    ) -> anyhow::Result<Vec<Vec<Z>>> {
         let own_role = session.my_role()?;
         let num_parties = session.amount_of_parties();
+
+        // send all secrets to all parties
         let values_to_send: HashMap<Role, NetworkValue<Z>> = session
             .role_assignments()
             .keys()
-            .map(|role| (*role, NetworkValue::RingValue(*secret)))
+            .map(|role| (*role, NetworkValue::VecRingValue(secrets.to_vec())))
             .collect();
         send_to_honest_parties(&values_to_send, session).await?;
-        let mut jobs: JoinSet<Result<(Role, Result<Z, anyhow::Error>), Elapsed>> = JoinSet::new();
+        let mut jobs: JoinSet<Result<(Role, Result<Vec<Z>, anyhow::Error>), Elapsed>> =
+            JoinSet::new();
         generic_receive_from_all(&mut jobs, session, &own_role, None, |msg, _id| match msg {
-            NetworkValue::RingValue(v) => Ok(v),
+            NetworkValue::VecRingValue(v) => Ok(v),
             _ => Err(anyhow_error_and_log(
                 "Received something else, not a galois ring element".to_string(),
             )),
         })?;
 
-        let mut res = vec![Z::ZERO; num_parties];
-        res[own_role.zero_based()] = *secret;
+        // index 0: num_parties, index 1: number of shares
+        let mut res = vec![vec![Z::ZERO; secrets.len()]; num_parties];
+        res[own_role.zero_based()] = secrets.to_vec();
         while let Some(v) = jobs.join_next().await {
             let joined_result = v?;
             match joined_result {
@@ -149,41 +194,46 @@ pub struct RealVss {}
 
 #[async_trait]
 impl Vss for RealVss {
-    async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,
-        secret: &Z,
-    ) -> anyhow::Result<Vec<Z>> {
-        let (bivariate_poly, map_double_shares) = sample_secret(session, secret)?;
-        let vss = round_1(session, bivariate_poly, map_double_shares).await?;
-        let verification_map = round_2(session, &vss).await?;
-        let unhappy_vec = round_3(session, &vss, &verification_map).await?;
-        Ok(round_4(session, &vss, unhappy_vec).await?)
+        secrets: &[Z],
+    ) -> anyhow::Result<Vec<Vec<Z>>> {
+        let num_secrets = secrets.len();
+        let (bivariate_poly, map_double_shares) = sample_secret_polys(session, secrets)?;
+        let vss = round_1(session, num_secrets, bivariate_poly, map_double_shares).await?;
+        let verification_map = round_2(session, num_secrets, &vss).await?;
+        let unhappy_vec = round_3(session, num_secrets, &vss, &verification_map).await?;
+        Ok(round_4(session, num_secrets, &vss, unhappy_vec).await?)
     }
 }
 
-type MapRoleDoublePoly<Z> = HashMap<Role, DoublePoly<Z>>;
+type MapRoleDoublePoly<Z> = HashMap<Role, Vec<DoublePoly<Z>>>;
 
-fn sample_secret<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+fn sample_secret_polys<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
     session: &mut S,
-    secret: &Z,
-) -> anyhow::Result<(BivariatePoly<Z>, MapRoleDoublePoly<Z>)> {
+    secrets: &[Z],
+) -> anyhow::Result<(Vec<BivariatePoly<Z>>, MapRoleDoublePoly<Z>)> {
     let threshold = session.threshold() as usize;
-    let bivariate_poly = BivariatePoly::from_secret(session.rng(), *secret, threshold)?;
+    let bivariate_poly = secrets
+        .iter()
+        .map(|s| BivariatePoly::from_secret(session.rng(), *s, threshold))
+        .collect::<Result<Vec<_>, _>>()?;
     let map_double_shares: MapRoleDoublePoly<Z> = session
         .role_assignments()
         .keys()
         .map(|r| {
             let embedded_role = Z::embed_exceptional_set(r.one_based())?;
-            let share_in_x = bivariate_poly.partial_y_evaluation(embedded_role)?;
-            let share_in_y = bivariate_poly.partial_x_evaluation(embedded_role)?;
-            Ok::<(Role, DoublePoly<Z>), anyhow::Error>((
-                *r,
-                DoublePoly {
+            let mut vec_map = Vec::with_capacity(bivariate_poly.len());
+            for p in &bivariate_poly {
+                let share_in_x = p.partial_y_evaluation(embedded_role)?;
+                let share_in_y = p.partial_x_evaluation(embedded_role)?;
+                vec_map.push(DoublePoly {
                     share_in_x,
                     share_in_y,
-                },
-            ))
+                });
+            }
+            Ok::<(Role, Vec<DoublePoly<Z>>), anyhow::Error>((*r, vec_map))
         })
         .try_collect()?;
     Ok((bivariate_poly, map_double_shares))
@@ -191,24 +241,23 @@ fn sample_secret<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
 
 async fn round_1<Z: Ring + 'static, R: RngCore, S: BaseSessionHandles<R>>(
     session: &mut S,
-    bivariate_poly: BivariatePoly<Z>,
+    num_secrets: usize,
+    bivariate_poly: Vec<BivariatePoly<Z>>,
     map_double_shares: MapRoleDoublePoly<Z>,
 ) -> anyhow::Result<Round1VSSOutput<Z>> {
     let my_role = session.my_role()?;
     let num_parties = session.amount_of_parties();
 
     let mut received_data: Vec<ExchangedDataRound1<Z>> =
-        vec![ExchangedDataRound1::default(num_parties); num_parties];
+        vec![ExchangedDataRound1::default(num_parties, num_secrets); num_parties];
     received_data[my_role.zero_based()].double_poly = map_double_shares[&my_role].clone();
 
     //For every party, create challenges for every VSS
     let challenges: Vec<Challenge<Z>> = (0..num_parties)
         .map(|_| {
-            {
-                (0..num_parties)
-                    .map(|_| Z::sample(session.rng()))
-                    .collect::<Challenge<Z>>()
-            }
+            (0..num_parties)
+                .map(|_| (0..num_secrets).map(|_| Z::sample(session.rng())).collect())
+                .collect::<Challenge<Z>>()
         })
         .collect();
 
@@ -236,7 +285,31 @@ async fn round_1<Z: Ring + 'static, R: RngCore, S: BaseSessionHandles<R>>(
         let joined_result = v?;
         match joined_result {
             Ok((party_id, Ok(data))) => {
-                received_data[party_id.zero_based()] = data;
+                // Do nothing if something goes wrong
+                // since received_data is initialized with default,
+                // which has the correct lengths.
+                // Consequently, the input to round 2 should never have incorrect lengths.
+                if data.challenge.len() != num_parties {
+                    tracing::error!(
+                        "challenge length error, expected {} but got {}",
+                        num_parties,
+                        data.challenge.len()
+                    );
+                } else if data.challenge[0].len() != data.double_poly.len() {
+                    tracing::error!(
+                        "challenge length does not match double_poly, expected {} but got {}",
+                        data.double_poly.len(),
+                        data.challenge[0].len()
+                    );
+                } else if data.double_poly.len() != num_secrets {
+                    tracing::error!(
+                        "wrong number of secrets, expected {} but got {}",
+                        num_secrets,
+                        data.double_poly.len()
+                    );
+                } else {
+                    received_data[party_id.zero_based()] = data;
+                }
             }
             //NOTE: received_data was init with default 0 values,
             //so no need to do anything when p2p fails
@@ -248,6 +321,7 @@ async fn round_1<Z: Ring + 'static, R: RngCore, S: BaseSessionHandles<R>>(
             }
         }
     }
+
     Ok(Round1VSSOutput {
         sent_challenges: challenges,
         received_vss: received_data,
@@ -257,6 +331,7 @@ async fn round_1<Z: Ring + 'static, R: RngCore, S: BaseSessionHandles<R>>(
 
 async fn round_2<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
     session: &mut S,
+    num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
 ) -> anyhow::Result<HashMap<Role, Option<Vec<VerificationValues<Z>>>>> {
     let my_role = session.my_role()?;
@@ -270,8 +345,13 @@ async fn round_2<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
         .map(|vss_idx| {
             (0..num_parties)
                 .map(|party_idx| {
-                    let verification_values =
-                        generate_verification_value(my_role.zero_based(), party_idx, vss_idx, vss)?;
+                    let verification_values = generate_verification_value(
+                        num_secrets,
+                        my_role.zero_based(),
+                        party_idx,
+                        vss_idx,
+                        vss,
+                    )?;
                     Ok::<_, anyhow::Error>(verification_values)
                 })
                 .try_collect()
@@ -311,6 +391,7 @@ async fn round_2<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
 // Role2 -> Some(v) with v = <VSS1:{<(a_20,b_20), (a_21,b_21), ...>}, VSS2:{}, ..., VSSn:{}>
 async fn round_3<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
     session: &mut S,
+    num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
     verification_map: &HashMap<Role, Option<Vec<VerificationValues<Z>>>>,
 ) -> anyhow::Result<Vec<HashSet<Role>>> {
@@ -341,7 +422,8 @@ async fn round_3<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
         HashMap::<Role, BroadcastValue<Z>>::new()
     };
 
-    let unhappy_vec = find_real_conflicts(&potentially_unhappy, bcast_data, num_parties);
+    let unhappy_vec =
+        find_real_conflicts(num_secrets, &potentially_unhappy, bcast_data, num_parties);
 
     tracing::info!("I am {own_role} and def. unhappy with {:?}", unhappy_vec);
 
@@ -356,15 +438,16 @@ async fn round_3<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
 
 async fn round_4<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
     session: &mut S,
+    num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
     unhappy_vec: Vec<HashSet<Role>>,
-) -> anyhow::Result<Vec<Z>> {
+) -> anyhow::Result<Vec<Vec<Z>>> {
     let mut msg = BTreeMap::<(usize, Role), ValueOrPoly<Z>>::new();
     let own_role = session.my_role()?;
+
     //For all parties Pi in unhappy, if I'm Sender OR I'm not in unhappy, help solve the conflict
     //if Sender send Fi(X) = F(X,alpha_i)
     //if not sender (Im Pj) send Gj(alpha_i)
-
     unhappy_vec
         .iter()
         .enumerate()
@@ -379,6 +462,7 @@ async fn round_4<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
             round_4_conflict_resolution(&mut msg, is_sender, unhappy_tuple, vss)?;
             Ok::<(), anyhow::Error>(())
         })?;
+
     //Broadcast_with_corruption uses broadcast_all,
     //but here we dont expect parties that are in unhappy in all vss to participate
     //For now let's just have everyone broadcast
@@ -408,14 +492,15 @@ async fn round_4<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
                 .corrupt_roles()
                 .contains(&Role::indexed_by_zero(unhappy_tuple.0))
             {
-                round_4_fix_conflicts(session, unhappy_tuple, &bcast_data)?;
+                round_4_fix_conflicts(session, num_secrets, unhappy_tuple, &bcast_data)?;
             }
             Ok::<_, anyhow::Error>(())
         })?;
+
     //Remains to output trivial 0 for all senders in corrupt and correct share for all others
     //aux result variable to insert the result in order and not rely on the arbitrary order of keys()
     let num_parties = session.amount_of_parties();
-    let mut result: Vec<Z> = vec![Z::ZERO; num_parties];
+    let mut result: Vec<Vec<Z>> = vec![vec![Z::ZERO; num_secrets]; num_parties];
     session
         .role_assignments()
         .keys()
@@ -436,15 +521,16 @@ async fn round_4<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
                         None
                     }
                 })
-                .map(|p| p.eval(&Z::ZERO));
+                .map(|p| p.iter().map(|pp| pp.eval(&Z::ZERO)).collect_vec());
 
             if let Some(p) = maybe_eval {
                 result[vss_idx] = p;
             } else {
                 result[vss_idx] = vss.received_vss[vss_idx]
                     .double_poly
-                    .share_in_x
-                    .eval(&Z::ZERO);
+                    .iter()
+                    .map(|poly| poly.share_in_x.eval(&Z::ZERO))
+                    .collect_vec();
             }
         });
     Ok(result)
@@ -471,28 +557,40 @@ fn vss_receive_round_1<Z: Ring, R: RngCore, S: BaseSessionHandles<R>>(
 }
 
 fn generate_verification_value<Z: ShamirRing>(
+    num_secrets: usize,
     my_index: usize,
     party_idx: usize,
     vss_idx: usize,
-    vss: &Round1VSSOutput<Z>,
-) -> anyhow::Result<(Z, Z)> {
-    if my_index != party_idx {
-        let alpha_other = Z::embed_exceptional_set(party_idx + 1)?;
-        let my_share_in_x_eval = vss.received_vss[vss_idx]
-            .double_poly
-            .share_in_x
-            .eval(&alpha_other);
-        let my_share_in_y_eval = vss.received_vss[vss_idx]
-            .double_poly
-            .share_in_y
-            .eval(&alpha_other);
-        Ok((
-            my_share_in_x_eval + vss.sent_challenges[party_idx][vss_idx],
-            my_share_in_y_eval + vss.received_vss[party_idx].challenge[vss_idx],
-        ))
-    } else {
-        Ok((Z::default(), Z::default()))
+    r1vss: &Round1VSSOutput<Z>,
+) -> anyhow::Result<Vec<(Z, Z)>> {
+    let dbl_poly_len = r1vss.received_vss[vss_idx].double_poly.len();
+    let len_ok = dbl_poly_len == r1vss.received_vss[party_idx].challenge[vss_idx].len()
+        && dbl_poly_len == num_secrets;
+    if !len_ok {
+        return Err(anyhow_error_and_log(
+            "incorrect input length that should have been caught in roud 1".to_string(),
+        ));
     }
+
+    let mut out = Vec::with_capacity(num_secrets);
+    for i in 0..num_secrets {
+        if my_index != party_idx {
+            let alpha_other = Z::embed_exceptional_set(party_idx + 1)?;
+            let my_share_in_x_eval = r1vss.received_vss[vss_idx].double_poly[i]
+                .share_in_x
+                .eval(&alpha_other);
+            let my_share_in_y_eval = r1vss.received_vss[vss_idx].double_poly[i]
+                .share_in_y
+                .eval(&alpha_other);
+            out.push((
+                my_share_in_x_eval + r1vss.sent_challenges[party_idx][vss_idx][i],
+                my_share_in_y_eval + r1vss.received_vss[party_idx].challenge[vss_idx][i],
+            ))
+        } else {
+            out.push((Z::default(), Z::default()))
+        }
+    }
+    Ok(out)
 }
 
 fn find_potential_conflicts_for_all_roles<Z: Ring>(
@@ -549,8 +647,11 @@ fn find_potential_conflicts_received_challenges<Z: Ring>(
                         match verification_map.get(&pj_role) {
                             //If there is value for bji AND aij neq bji add the pair to potential unhappy
                             Some(Some(v)) => {
-                                if v[idx_vss][pi_role.zero_based()].1 != aij.0 {
-                                    potentially_unhappy.insert((idx_vss, *pi_role, pj_role));
+                                for (a, b) in v[idx_vss][pi_role.zero_based()].iter().zip(aij) {
+                                    if a.1 != b.0 {
+                                        potentially_unhappy.insert((idx_vss, *pi_role, pj_role));
+                                        break;
+                                    }
                                 }
                             }
                             //If there is no value for bji, add the pair to potential unhappy
@@ -567,8 +668,8 @@ fn answer_to_potential_conflicts<Z: ShamirRing>(
     potentially_unhappy: &HashSet<(usize, Role, Role)>,
     own_role: &Role,
     vss: &Round1VSSOutput<Z>,
-) -> anyhow::Result<BTreeMap<(usize, Role, Role), Z>> {
-    let mut msg = BTreeMap::<(usize, Role, Role), Z>::new();
+) -> anyhow::Result<BTreeMap<(usize, Role, Role), Vec<Z>>> {
+    let mut msg = BTreeMap::<(usize, Role, Role), Vec<Z>>::new();
     let my_vss_idx = own_role.zero_based();
     //Can now match over the tuples of keys in potentially unhappy
     //If vss_idx is the one where I'm sender send F(alpha_j, alpha_i)
@@ -582,7 +683,10 @@ fn answer_to_potential_conflicts<Z: ShamirRing>(
                 let point_y = Z::embed_exceptional_set(pi_role.one_based())?;
                 msg.insert(
                     (*vss_idx, *pi_role, *pj_role),
-                    vss.my_poly.full_evaluation(point_x, point_y)?,
+                    vss.my_poly
+                        .iter()
+                        .map(|poly| poly.full_evaluation(point_x, point_y))
+                        .collect::<Result<Vec<_>, _>>()?,
                 );
             }
             (vss_idx, pi_role, pj_role) if pi_role == own_role => {
@@ -591,8 +695,9 @@ fn answer_to_potential_conflicts<Z: ShamirRing>(
                     (*vss_idx, *pi_role, *pj_role),
                     vss.received_vss[*vss_idx]
                         .double_poly
-                        .share_in_x
-                        .eval(&point),
+                        .iter()
+                        .map(|poly| poly.share_in_x.eval(&point))
+                        .collect(),
                 );
             }
             (vss_idx, pi_role, pj_role) if pj_role == own_role => {
@@ -601,8 +706,9 @@ fn answer_to_potential_conflicts<Z: ShamirRing>(
                     (*vss_idx, *pi_role, *pj_role),
                     vss.received_vss[*vss_idx]
                         .double_poly
-                        .share_in_y
-                        .eval(&point),
+                        .iter()
+                        .map(|poly| poly.share_in_y.eval(&point))
+                        .collect(),
                 );
             }
             _ => {}
@@ -613,6 +719,7 @@ fn answer_to_potential_conflicts<Z: ShamirRing>(
 }
 
 fn find_real_conflicts<Z: Ring>(
+    num_secrets: usize,
     potentially_unhappy: &HashSet<(usize, Role, Role)>,
     bcast_settlements: HashMap<Role, BroadcastValue<Z>>,
     num_parties: usize,
@@ -621,7 +728,7 @@ fn find_real_conflicts<Z: Ring>(
     let mut unhappy_vec = vec![HashSet::<Role>::new(); num_parties];
     for (vss_idx, role_pi, role_pj) in potentially_unhappy {
         let common_key = (*vss_idx, *role_pi, *role_pj);
-        let zero = Z::ZERO;
+        let zeros = vec![Z::ZERO; num_secrets];
         let sender_resolve = bcast_settlements
             .get(&Role::indexed_by_zero(*vss_idx))
             .and_then(|bcd| match bcd {
@@ -629,7 +736,7 @@ fn find_real_conflicts<Z: Ring>(
                 _ => None,
             })
             .and_then(|v| v.get(&common_key))
-            .unwrap_or(&zero);
+            .unwrap_or(&zeros);
 
         let pi_resolve = bcast_settlements
             .get(role_pi)
@@ -638,7 +745,7 @@ fn find_real_conflicts<Z: Ring>(
                 _ => None,
             })
             .and_then(|v| v.get(&common_key))
-            .unwrap_or(&zero);
+            .unwrap_or(&zeros);
 
         let pj_resolve = bcast_settlements
             .get(role_pj)
@@ -647,7 +754,7 @@ fn find_real_conflicts<Z: Ring>(
                 _ => None,
             })
             .and_then(|v| v.get(&common_key))
-            .unwrap_or(&zero);
+            .unwrap_or(&zeros);
 
         if pi_resolve != sender_resolve {
             unhappy_vec[*vss_idx].insert(*role_pi);
@@ -670,12 +777,18 @@ fn round_4_conflict_resolution<Z: ShamirRing>(
     for role_pi in unhappy_set.iter() {
         let point_pi = Z::embed_exceptional_set(role_pi.one_based())?;
         let msg_entry = match is_sender {
-            true => ValueOrPoly::Poly(vss.my_poly.partial_y_evaluation(point_pi)?),
+            true => ValueOrPoly::Poly(
+                vss.my_poly
+                    .iter()
+                    .map(|poly| poly.partial_y_evaluation(point_pi))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
             false => ValueOrPoly::Value(
                 vss.received_vss[vss_idx]
                     .double_poly
-                    .share_in_y
-                    .eval(&point_pi),
+                    .iter()
+                    .map(|poly| poly.share_in_y.eval(&point_pi))
+                    .collect_vec(),
             ),
         };
         msg.insert((vss_idx, *role_pi), msg_entry);
@@ -685,6 +798,7 @@ fn round_4_conflict_resolution<Z: ShamirRing>(
 
 fn round_4_fix_conflicts<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
     session: &mut S,
+    num_secrets: usize,
     unhappy_tuple: (usize, &HashSet<Role>),
     bcast_data: &HashMap<Role, BroadcastValue<Z>>,
 ) -> anyhow::Result<()> {
@@ -693,7 +807,7 @@ fn round_4_fix_conflicts<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
     let threshold = session.threshold() as usize;
 
     for role_pi in unhappy_set.iter() {
-        let non_sender_happy_values: HashMap<Role, Z> = session
+        let non_sender_happy_values: HashMap<Role, Vec<Z>> = session
             .role_assignments()
             .keys()
             .filter_map(|role_pj| {
@@ -708,13 +822,14 @@ fn round_4_fix_conflicts<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
                         })
                         .and_then(|v| v.get(&(vss_idx, *role_pi)))
                         .and_then(|v| match v {
-                            ValueOrPoly::Value(vv) => Some((*role_pj, *vv)),
+                            ValueOrPoly::Value(vv) => Some((*role_pj, vv.clone())),
                             _ => None,
                         });
-                    maybe_pair.map_or_else(|| Some((*role_pj, Z::ZERO)), Some)
+                    maybe_pair.map_or_else(|| Some((*role_pj, vec![Z::ZERO; num_secrets])), Some)
                 }
             })
             .collect();
+
         if non_sender_happy_values.len() >= 2 * threshold {
             //Retrieve sender's data from bcast related to Pi for this vss
             let maybe_poly = bcast_data
@@ -729,12 +844,17 @@ fn round_4_fix_conflicts<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
                     _ => None,
                 });
 
-            let sender_poly = maybe_poly.map_or_else(Poly::zero, |p| p.clone());
+            let sender_poly =
+                maybe_poly.map_or_else(|| vec![Poly::zero(); num_secrets], |p| p.clone());
             let mut votes_against_sender = 0_usize;
             for (role_pj, value_pj) in non_sender_happy_values {
                 let point_pj = Z::embed_exceptional_set(role_pj.one_based())?;
-                if value_pj != sender_poly.eval(&point_pj) {
-                    votes_against_sender += 1;
+                // if there is at least one failure, vote against the sender
+                for (a, b) in sender_poly.iter().map(|p| p.eval(&point_pj)).zip(value_pj) {
+                    if a != b {
+                        votes_against_sender += 1;
+                        break;
+                    }
                 }
             }
             if votes_against_sender >= 2 * threshold {
@@ -774,7 +894,10 @@ pub(crate) mod tests {
     use std::num::Wrapping;
     use tokio::task::JoinSet;
 
-    fn setup_parties_and_secret(num_parties: usize) -> (Vec<Identity>, Vec<ResiduePoly128>) {
+    fn setup_parties_and_secret(
+        num_parties: usize,
+        num_secrets: usize,
+    ) -> (Vec<Identity>, Vec<Vec<ResiduePoly128>>) {
         let identities: Vec<Identity> = (0..num_parties)
             .map(|party_nb| {
                 let mut id_str = "localhost:500".to_owned();
@@ -783,16 +906,22 @@ pub(crate) mod tests {
             })
             .collect();
 
-        let secrets: Vec<ResiduePoly128> = (0..num_parties)
-            .map(|secret| ResiduePoly128::from_scalar(Wrapping((secret + 1).try_into().unwrap())))
-            .collect();
+        let secret_f = |secret: usize| {
+            (0..num_secrets)
+                .map(|i| {
+                    ResiduePoly128::from_scalar(Wrapping(((secret + 1) * i).try_into().unwrap()))
+                })
+                .collect_vec()
+        };
+        let secrets: Vec<Vec<ResiduePoly128>> = (0..num_parties).map(secret_f).collect();
 
         (identities, secrets)
     }
 
     #[test]
     fn test_dummy() {
-        let (identities, secrets) = setup_parties_and_secret(4);
+        let num_secrets = 2;
+        let (identities, secrets) = setup_parties_and_secret(4, num_secrets);
 
         // code for session setup
         let threshold = 1;
@@ -808,10 +937,13 @@ pub(crate) mod tests {
             let mut session = runtime
                 .large_session_for_player(session_id, party_nb)
                 .unwrap();
-            let s = secrets[party_nb];
+            let s = secrets[party_nb].clone();
             set.spawn(async move {
                 let dummy_vss = DummyVss::default();
-                (party_nb, dummy_vss.execute(&mut session, &s).await.unwrap())
+                (
+                    party_nb,
+                    dummy_vss.execute_many(&mut session, &s).await.unwrap(),
+                )
             });
         }
 
@@ -827,26 +959,43 @@ pub(crate) mod tests {
         //Check that for each VSS the share IS the secret,
         //and for sanity that interpolation works
         for vss_idx in 0..=3 {
-            let vec_shares: Vec<Share<_>> = results
+            let vec_shares: Vec<Vec<Share<_>>> = results
                 .iter()
                 .map(|(party_id, vec_shares_party)| {
-                    Share::new(Role::indexed_by_zero(*party_id), vec_shares_party[vss_idx])
+                    (0..num_secrets)
+                        .map(|i| {
+                            Share::new(
+                                Role::indexed_by_zero(*party_id),
+                                vec_shares_party[vss_idx][i],
+                            )
+                        })
+                        .collect_vec()
                 })
                 .collect();
             assert_eq!(vec_shares.len(), 4);
-            for v in vec_shares.iter() {
-                assert_eq!(v.value(), secrets[vss_idx]);
+            for vs in vec_shares.iter() {
+                for (i, v) in vs.iter().enumerate() {
+                    assert_eq!(v.value(), secrets[vss_idx][i]);
+                }
             }
-            let shamir_sharing = ShamirSharing::create(vec_shares);
-            assert_eq!(
-                secrets[vss_idx],
-                shamir_sharing.reconstruct(threshold.into()).unwrap()
-            );
+
+            // we need to "transpose" vec_shares to create `ShamirSharing`
+            let shamir_sharings = (0..num_secrets)
+                .map(|i| vec_shares.iter().map(|share| share[i]).collect_vec())
+                .map(ShamirSharing::create);
+            for (secret_i, shamir_sharing) in shamir_sharings.enumerate() {
+                assert_eq!(
+                    secrets[vss_idx][secret_i],
+                    shamir_sharing.reconstruct(threshold.into()).unwrap()
+                );
+            }
         }
     }
+
     #[test]
     fn test_round_1() {
-        let (identities, secrets) = setup_parties_and_secret(4);
+        let num_secrets = 2;
+        let (identities, secrets) = setup_parties_and_secret(4, num_secrets);
 
         // code for session setup
         let threshold = 1;
@@ -859,16 +1008,15 @@ pub(crate) mod tests {
         let mut set = JoinSet::new();
 
         for (party_nb, _) in runtime.identities.iter().enumerate() {
-            //let own_role = Role::from(party_nb as u64 + 1);
             let mut session = runtime
                 .large_session_for_player(session_id, party_nb)
                 .unwrap();
-            let s = secrets[party_nb];
-            let (bivariate_poly, map_double_shares) = sample_secret(&mut session, &s).unwrap();
+            let s = &secrets[party_nb];
+            let (bivariate_poly, map_double_shares) = sample_secret_polys(&mut session, s).unwrap();
             set.spawn(async move {
                 (
                     party_nb,
-                    round_1(&mut session, bivariate_poly, map_double_shares)
+                    round_1(&mut session, num_secrets, bivariate_poly, map_double_shares)
                         .await
                         .unwrap(),
                 )
@@ -888,28 +1036,46 @@ pub(crate) mod tests {
         for (party_nb, result) in results.clone().iter() {
             let x_0 = ResiduePoly::from_scalar(Wrapping(0));
             let y_0 = ResiduePoly::from_scalar(Wrapping(0));
-            let expected_secret = secrets[*party_nb];
+            let expected_secret = &secrets[*party_nb];
             assert_eq!(
-                result.my_poly.full_evaluation(x_0, y_0).unwrap(),
-                expected_secret.clone()
+                &result
+                    .my_poly
+                    .iter()
+                    .map(|p| p.full_evaluation(x_0, y_0).unwrap())
+                    .collect_vec(),
+                expected_secret,
             );
             //Check that received share come from bivariate pol
             for (pn, r) in results.clone().iter() {
                 if pn != party_nb {
                     let embedded_pn = ResiduePoly128::embed_exceptional_set(pn + 1).unwrap();
-                    let expected_result_x =
-                        result.my_poly.partial_y_evaluation(embedded_pn).unwrap();
-                    let expected_result_y =
-                        result.my_poly.partial_x_evaluation(embedded_pn).unwrap();
+                    let expected_result_x = result
+                        .my_poly
+                        .iter()
+                        .map(|p| p.partial_y_evaluation(embedded_pn).unwrap())
+                        .collect_vec();
+                    let expected_result_y = result
+                        .my_poly
+                        .iter()
+                        .map(|p| p.partial_x_evaluation(embedded_pn).unwrap())
+                        .collect_vec();
 
                     assert_eq!(
                         expected_result_x,
-                        r.received_vss[*party_nb].double_poly.share_in_x
+                        r.received_vss[*party_nb]
+                            .double_poly
+                            .iter()
+                            .map(|p| p.share_in_x.clone())
+                            .collect_vec()
                     );
 
                     assert_eq!(
                         expected_result_y,
-                        r.received_vss[*party_nb].double_poly.share_in_y
+                        r.received_vss[*party_nb]
+                            .double_poly
+                            .iter()
+                            .map(|p| p.share_in_y.clone())
+                            .collect_vec()
                     );
                 }
             }
@@ -920,29 +1086,42 @@ pub(crate) mod tests {
             for (pn, r) in results.clone().iter() {
                 if pn != party_nb {
                     let point_pn = ResiduePoly128::embed_exceptional_set(0).unwrap();
-                    vec_x.push(Share::new(
-                        Role::indexed_by_zero(*pn),
-                        r.received_vss[*party_nb]
-                            .double_poly
-                            .share_in_x
-                            .eval(&point_pn),
-                    ));
-                    vec_y.push(Share::new(
-                        Role::indexed_by_zero(*pn),
-                        r.received_vss[*party_nb]
-                            .double_poly
-                            .share_in_y
-                            .eval(&point_pn),
-                    ));
+                    vec_x.push(
+                        (0..num_secrets)
+                            .map(|i| {
+                                Share::new(
+                                    Role::indexed_by_zero(*pn),
+                                    r.received_vss[*party_nb].double_poly[i]
+                                        .share_in_x
+                                        .eval(&point_pn),
+                                )
+                            })
+                            .collect_vec(),
+                    );
+                    vec_y.push(
+                        (0..num_secrets)
+                            .map(|i| {
+                                Share::new(
+                                    Role::indexed_by_zero(*pn),
+                                    r.received_vss[*party_nb].double_poly[i]
+                                        .share_in_y
+                                        .eval(&point_pn),
+                                )
+                            })
+                            .collect_vec(),
+                    );
                 }
             }
 
-            let ss_x = ShamirSharing::create(vec_x);
-            let ss_y = ShamirSharing::create(vec_y);
-
-            assert_eq!(expected_secret, ss_x.reconstruct(threshold.into()).unwrap());
-
-            assert_eq!(expected_secret, ss_y.reconstruct(threshold.into()).unwrap());
+            for i in 0..num_secrets {
+                let expected = expected_secret[i];
+                let xs_shares = vec_x.iter().map(|xs| xs[i]).collect_vec();
+                let ys_shares = vec_y.iter().map(|xs| xs[i]).collect_vec();
+                let ss_x = ShamirSharing::create(xs_shares);
+                let ss_y = ShamirSharing::create(ys_shares);
+                assert_eq!(expected, ss_x.reconstruct(threshold.into()).unwrap());
+                assert_eq!(expected, ss_y.reconstruct(threshold.into()).unwrap());
+            }
         }
     }
 
@@ -961,10 +1140,20 @@ pub(crate) mod tests {
     pub(crate) struct MaliciousVssR1 {
         roles_to_lie_to: Vec<Role>,
     }
+    #[derive(Default, Clone)]
+    pub(crate) struct WrongSecretLenVss {}
 
     #[async_trait]
     impl Vss for DroppingVssFromStart {
         //Do nothing, and output an empty Vec
+        async fn execute_many<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+            &self,
+            _session: &mut S,
+            _secrets: &[Z],
+        ) -> anyhow::Result<Vec<Vec<Z>>> {
+            Ok(Vec::new())
+        }
+
         async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
             &self,
             _session: &mut S,
@@ -977,13 +1166,22 @@ pub(crate) mod tests {
     #[async_trait]
     impl Vss for DroppingVssAfterR1 {
         //Do round1, and output an empty Vec
+        async fn execute_many<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+            &self,
+            session: &mut S,
+            secrets: &[Z],
+        ) -> anyhow::Result<Vec<Vec<Z>>> {
+            let (bivariate_poly, map_double_shares) = sample_secret_polys(session, secrets)?;
+            let _ = round_1(session, secrets.len(), bivariate_poly, map_double_shares).await?;
+            Ok(Vec::new())
+        }
+
         async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
             &self,
             session: &mut S,
             secret: &Z,
         ) -> anyhow::Result<Vec<Z>> {
-            let (bivariate_poly, map_double_shares) = sample_secret(session, secret)?;
-            let _ = round_1(session, bivariate_poly, map_double_shares).await?;
+            let _ = self.execute_many(session, &[*secret]).await?;
             Ok(Vec::new())
         }
     }
@@ -991,14 +1189,24 @@ pub(crate) mod tests {
     #[async_trait]
     impl Vss for DroppingVssAfterR2 {
         //Do round1 and round2, and output an empty Vec
+        async fn execute_many<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+            &self,
+            session: &mut S,
+            secrets: &[Z],
+        ) -> anyhow::Result<Vec<Vec<Z>>> {
+            let (bivariate_poly, map_double_shares) = sample_secret_polys(session, secrets)?;
+            let num_secrets = secrets.len();
+            let vss = round_1(session, num_secrets, bivariate_poly, map_double_shares).await?;
+            let _ = round_2(session, num_secrets, &vss).await?;
+            Ok(Vec::new())
+        }
+
         async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
             &self,
             session: &mut S,
             secret: &Z,
         ) -> anyhow::Result<Vec<Z>> {
-            let (bivariate_poly, map_double_shares) = sample_secret(session, secret)?;
-            let vss = round_1(session, bivariate_poly, map_double_shares).await?;
-            let _ = round_2(session, &vss).await?;
+            let _ = self.execute_many(session, &[*secret]).await?;
             Ok(Vec::new())
         }
     }
@@ -1013,73 +1221,86 @@ pub(crate) mod tests {
             }
         }
     }
+
     #[async_trait]
     impl Vss for MaliciousVssR1 {
-        async fn execute<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+        async fn execute_many<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
             &self,
             session: &mut S,
-            secret: &Z,
-        ) -> anyhow::Result<Vec<Z>> {
+            secrets: &[Z],
+        ) -> anyhow::Result<Vec<Vec<Z>>> {
             //Execute a malicious round 1
-            let vss = malicious_round_1(session, secret, &self.roles_to_lie_to).await?;
-            let verification_map = round_2(session, &vss).await?;
-            let unhappy_vec = round_3(session, &vss, &verification_map).await?;
-            Ok(round_4(session, &vss, unhappy_vec).await?)
+            let num_secrets = secrets.len();
+            let vss = malicious_round_1(session, secrets, &self.roles_to_lie_to).await?;
+            let verification_map = round_2(session, num_secrets, &vss).await?;
+            let unhappy_vec = round_3(session, num_secrets, &vss, &verification_map).await?;
+            Ok(round_4(session, num_secrets, &vss, unhappy_vec).await?)
         }
     }
 
     //This code executes a round1 where the party sends malformed double shares for its VSS to parties in roles_to_lie_to
     async fn malicious_round_1<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
         session: &mut S,
-        secret: &Z,
+        secrets: &[Z],
         roles_to_lie_to: &[Role],
     ) -> anyhow::Result<Round1VSSOutput<Z>> {
+        let num_secrets = secrets.len();
         let mut rng = ChaCha12Rng::seed_from_u64(0);
-        let bivariate_poly =
-            BivariatePoly::from_secret(&mut rng, *secret, session.threshold() as usize).unwrap();
+        let bivariate_poly = secrets
+            .iter()
+            .map(|secret| {
+                BivariatePoly::from_secret(&mut rng, *secret, session.threshold() as usize).unwrap()
+            })
+            .collect_vec();
         let map_double_shares: MapRoleDoublePoly<Z> = session
             .role_assignments()
             .keys()
             .map(|r| {
                 let embedded_role = Z::embed_exceptional_set(r.one_based()).unwrap();
+                let correct_bpolys = (0..num_secrets)
+                    .map(|i| DoublePoly {
+                        share_in_x: bivariate_poly[i]
+                            .partial_y_evaluation(embedded_role)
+                            .unwrap(),
+                        share_in_y: bivariate_poly[i]
+                            .partial_x_evaluation(embedded_role)
+                            .unwrap(),
+                    })
+                    .collect_vec();
                 if roles_to_lie_to.contains(r) {
-                    (
-                        *r,
-                        DoublePoly {
-                            share_in_x: Poly::<Z>::sample_random_with_fixed_constant(
-                                &mut rng,
-                                Z::ONE,
-                                session.threshold().into(),
-                            ),
-                            share_in_y: Poly::<Z>::sample_random_with_fixed_constant(
-                                &mut rng,
-                                Z::ZERO,
-                                session.threshold().into(),
-                            ),
-                        },
-                    )
+                    // we only lie for one of the polynomials, the first one
+                    let mut wrong_bpolys = correct_bpolys.clone();
+                    wrong_bpolys[0] = DoublePoly {
+                        share_in_x: Poly::<Z>::sample_random_with_fixed_constant(
+                            &mut rng,
+                            Z::ONE,
+                            session.threshold().into(),
+                        ),
+                        share_in_y: Poly::<Z>::sample_random_with_fixed_constant(
+                            &mut rng,
+                            Z::ZERO,
+                            session.threshold().into(),
+                        ),
+                    };
+                    (*r, wrong_bpolys)
                 } else {
-                    (
-                        *r,
-                        DoublePoly {
-                            share_in_x: bivariate_poly.partial_y_evaluation(embedded_role).unwrap(),
-                            share_in_y: bivariate_poly.partial_x_evaluation(embedded_role).unwrap(),
-                        },
-                    )
+                    (*r, correct_bpolys)
                 }
             })
             .collect();
-        round_1(session, bivariate_poly, map_double_shares).await
+        round_1(session, num_secrets, bivariate_poly, map_double_shares).await
     }
 
-    fn test_vss_small<Z: ShamirRing>(params: TestingParameters) {
+    fn test_vss_small<Z: ShamirRing>(params: TestingParameters, num_secrets: usize) {
         let mut task_honest = |mut session: SmallSession<Z>| async move {
             let real_vss = RealVss::default();
-            let secret = Z::sample(session.rng());
+            let secrets = (0..num_secrets)
+                .map(|_| Z::sample(session.rng()))
+                .collect_vec();
             (
                 session.my_role().unwrap().zero_based(),
-                secret,
-                real_vss.execute(&mut session, &secret).await.unwrap(),
+                real_vss.execute_many(&mut session, &secrets).await.unwrap(),
+                secrets,
                 session.corrupt_roles().clone(),
             )
         };
@@ -1090,52 +1311,79 @@ pub(crate) mod tests {
             params.expected_rounds,
             &mut task_honest,
         );
-        let mut expected_secrets = vec![Z::ZERO; params.num_parties];
-        for (party_idx, s, _, _) in res.iter() {
-            expected_secrets[*party_idx] = *s;
+        let mut expected_secrets = vec![vec![Z::ZERO; num_secrets]; params.num_parties];
+        for (party_idx, _, s, _) in res.iter() {
+            expected_secrets[*party_idx] = s.clone();
         }
 
-        for vss_idx in 0..params.num_parties {
-            let vec_shares = res
-                .iter()
-                .map(|(party_id, _, vec_shares, _)| {
-                    Share::new(Role::indexed_by_zero(*party_id), vec_shares[vss_idx])
-                })
-                .collect_vec();
-            let shamir_sharing = ShamirSharing::create(vec_shares);
-            let reconstructed_secret = shamir_sharing.reconstruct(params.threshold);
-            assert!(reconstructed_secret.is_ok());
-            assert_eq!(expected_secrets[vss_idx], reconstructed_secret.unwrap());
+        for i in 0..num_secrets {
+            for vss_idx in 0..params.num_parties {
+                let vec_shares = res
+                    .iter()
+                    .map(|(party_id, vec_shares, _, _)| {
+                        Share::new(Role::indexed_by_zero(*party_id), vec_shares[vss_idx][i])
+                    })
+                    .collect_vec();
+                let shamir_sharing = ShamirSharing::create(vec_shares);
+                let reconstructed_secret = shamir_sharing.reconstruct(params.threshold);
+                assert!(reconstructed_secret.is_ok());
+                assert_eq!(expected_secrets[vss_idx][i], reconstructed_secret.unwrap());
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Vss for WrongSecretLenVss {
+        // The adversary will halve the number of secrets
+        async fn execute_many<Z: ShamirRing, R: RngCore, S: BaseSessionHandles<R>>(
+            &self,
+            session: &mut S,
+            secrets: &[Z],
+        ) -> anyhow::Result<Vec<Vec<Z>>> {
+            assert!(secrets.len() > 1);
+            let num_secrets = secrets.len() / 2;
+            let (bivariate_poly, map_double_shares) =
+                sample_secret_polys(session, &secrets[..num_secrets])?;
+            let vss = round_1(session, num_secrets, bivariate_poly, map_double_shares).await?;
+            let verification_map = round_2(session, num_secrets, &vss).await?;
+            let unhappy_vec = round_3(session, num_secrets, &vss, &verification_map).await?;
+            Ok(round_4(session, num_secrets, &vss, unhappy_vec).await?)
         }
     }
 
     #[rstest]
-    #[case(TestingParameters::init_honest(4, 1, Some(5)))]
-    #[case(TestingParameters::init_honest(7, 2, Some(6)))]
-    #[case(TestingParameters::init_honest(10, 3, Some(7)))]
-    fn test_vss_small_honest(#[case] params: TestingParameters) {
-        test_vss_small::<ResiduePoly128>(params)
+    #[case(TestingParameters::init_honest(4, 1, Some(5)), 1)]
+    #[case(TestingParameters::init_honest(4, 1, Some(5)), 5)]
+    #[case(TestingParameters::init_honest(7, 2, Some(6)), 5)]
+    #[case(TestingParameters::init_honest(10, 3, Some(7)), 5)]
+    fn test_vss_small_honest(#[case] params: TestingParameters, #[case] num_secrets: usize) {
+        test_vss_small::<ResiduePoly128>(params, num_secrets)
     }
 
     fn test_vss_strategies_large<Z: ShamirRing, V: Vss + 'static>(
         params: TestingParameters,
+        num_secrets: usize,
         malicious_vss: V,
     ) {
         let mut task_honest = |mut session: LargeSession| async move {
             let real_vss = RealVss::default();
-            let secret = Z::sample(session.rng());
+            let secrets = (0..num_secrets)
+                .map(|_| Z::sample(session.rng()))
+                .collect_vec();
             (
                 session.my_role().unwrap().zero_based(),
-                secret,
-                real_vss.execute(&mut session, &secret).await.unwrap(),
+                real_vss.execute_many(&mut session, &secrets).await.unwrap(),
+                secrets,
                 session.corrupt_roles().clone(),
             )
         };
 
         let mut task_malicious = |mut session: LargeSession, malicious_vss: V| async move {
-            let secret = Z::sample(session.rng());
-            let _ = malicious_vss.execute(&mut session, &secret).await;
-            (session.my_role().unwrap().zero_based(), secret)
+            let secrets = (0..num_secrets)
+                .map(|_| Z::sample(session.rng()))
+                .collect_vec();
+            let _ = malicious_vss.execute_many(&mut session, &secrets).await;
+            (session.my_role().unwrap().zero_based(), secrets)
         };
 
         let (results_honest, results_malicious) =
@@ -1158,44 +1406,73 @@ pub(crate) mod tests {
         }
 
         //Create a vec of expected secrets
-        let mut expected_secrets = vec![Z::ZERO; params.num_parties];
-        for (party_idx, s, _, _) in results_honest.iter() {
-            expected_secrets[*party_idx] = *s;
+        let mut expected_secrets = vec![vec![Z::ZERO; num_secrets]; params.num_parties];
+        for (party_idx, _, s, _) in results_honest.iter() {
+            expected_secrets[*party_idx] = s.clone();
         }
 
         if !params.should_be_detected {
             for result_malicious in results_malicious.iter() {
                 assert!(result_malicious.is_ok());
                 let (party_idx, s) = result_malicious.as_ref().unwrap();
-                expected_secrets[*party_idx] = *s;
+                expected_secrets[*party_idx] = s.clone();
             }
         }
 
         //Reconstruct secret from honest parties and check it's correct
-        for vss_idx in 0..params.num_parties {
-            let vec_shares = results_honest
-                .iter()
-                .map(|(party_id, _, vec_shares, _)| {
-                    Share::new(Role::indexed_by_zero(*party_id), vec_shares[vss_idx])
-                })
-                .collect_vec();
-            let shamir_sharing = ShamirSharing::create(vec_shares);
-            let reconstructed_secret = shamir_sharing.reconstruct(params.threshold);
-            assert!(reconstructed_secret.is_ok());
-            assert_eq!(expected_secrets[vss_idx], reconstructed_secret.unwrap());
+        for i in 0..num_secrets {
+            for vss_idx in 0..params.num_parties {
+                let vec_shares = results_honest
+                    .iter()
+                    .map(|(party_id, vec_shares, _, _)| {
+                        Share::new(Role::indexed_by_zero(*party_id), vec_shares[vss_idx][i])
+                    })
+                    .collect_vec();
+                let shamir_sharing = ShamirSharing::create(vec_shares);
+                let reconstructed_secret = shamir_sharing.reconstruct(params.threshold);
+                assert!(reconstructed_secret.is_ok());
+                assert_eq!(expected_secrets[vss_idx][i], reconstructed_secret.unwrap());
+            }
         }
     }
 
     //This is honest execution, so no malicious strategy
     // Rounds (happy path): We expect 3+1+t rounds
     #[rstest]
-    #[case(TestingParameters::init_honest(4, 1, Some(5)))]
-    #[case(TestingParameters::init_honest(7, 2, Some(6)))]
-    #[case(TestingParameters::init_honest(10, 3, Some(7)))]
-    fn test_vss_honest_z128(#[case] params: TestingParameters) {
+    #[case(TestingParameters::init_honest(4, 1, Some(5)), 1)]
+    #[case(TestingParameters::init_honest(4, 1, Some(5)), 5)]
+    #[case(TestingParameters::init_honest(7, 2, Some(6)), 5)]
+    #[case(TestingParameters::init_honest(10, 3, Some(7)), 5)]
+    fn test_vss_honest_z128(#[case] params: TestingParameters, #[case] num_secrets: usize) {
         let malicious_vss = RealVss::default();
-        test_vss_strategies_large::<ResiduePoly64, _>(params.clone(), malicious_vss.clone());
-        test_vss_strategies_large::<ResiduePoly128, _>(params.clone(), malicious_vss.clone());
+        test_vss_strategies_large::<ResiduePoly64, _>(
+            params.clone(),
+            num_secrets,
+            malicious_vss.clone(),
+        );
+        test_vss_strategies_large::<ResiduePoly128, _>(
+            params.clone(),
+            num_secrets,
+            malicious_vss.clone(),
+        );
+    }
+
+    // Test the behaviour where the adversary does not send the correct number of secrets
+    #[rstest]
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 4)]
+    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true,None), 4)]
+    fn test_vss_wrong_secret_len(#[case] params: TestingParameters, #[case] num_secrets: usize) {
+        let wrong_secret_len_vss = WrongSecretLenVss::default();
+        test_vss_strategies_large::<ResiduePoly64, _>(
+            params.clone(),
+            num_secrets,
+            wrong_secret_len_vss.clone(),
+        );
+        test_vss_strategies_large::<ResiduePoly128, _>(
+            params.clone(),
+            num_secrets,
+            wrong_secret_len_vss.clone(),
+        );
     }
 
     //Test behaviour if a party doesn't participate in the protocol
@@ -1203,21 +1480,24 @@ pub(crate) mod tests {
     //and all other vss are fine
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None))]
-    #[case(TestingParameters::init(4,1,&[1],&[],&[],true,None))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],true,None))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],true,None))]
-    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true,None))]
-    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],true,None))]
-    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true,None))]
-    fn test_vss_dropping_from_start(#[case] params: TestingParameters) {
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 1)]
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 2)]
+    #[case(TestingParameters::init(4,1,&[1],&[],&[],true,None), 2)]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],true,None), 2)]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],true,None), 2)]
+    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true,None), 2)]
+    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],true,None), 2)]
+    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true,None), 2)]
+    fn test_vss_dropping_from_start(#[case] params: TestingParameters, #[case] num_secrets: usize) {
         let dropping_vss_from_start = DroppingVssFromStart::default();
         test_vss_strategies_large::<ResiduePoly64, _>(
             params.clone(),
+            num_secrets,
             dropping_vss_from_start.clone(),
         );
         test_vss_strategies_large::<ResiduePoly128, _>(
             params.clone(),
+            num_secrets,
             dropping_vss_from_start.clone(),
         );
     }
@@ -1227,44 +1507,56 @@ pub(crate) mod tests {
     //Otherwise, we expect everything to happen normally - dispute will settle
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4,1,&[0],&[3],&[],false,None))]
-    #[case(TestingParameters::init(4,1,&[1],&[0],&[],false,None))]
-    #[case(TestingParameters::init(4,1,&[2],&[1],&[],false,None))]
-    #[case(TestingParameters::init(4,1,&[3],&[2],&[],false,None))]
-    #[case(TestingParameters::init(4,1,&[0],&[3,1],&[],true,None))]
-    #[case(TestingParameters::init(4,1,&[1],&[0,2],&[],true,None))]
-    #[case(TestingParameters::init(4,1,&[2],&[3,0],&[],true,None))]
-    #[case(TestingParameters::init(4,1,&[3],&[2,1],&[],true,None))]
-    #[case(TestingParameters::init(7,2,&[0,2],&[3,1],&[],false,None))]
-    #[case(TestingParameters::init(7,2,&[1,3],&[4,2,0],&[],true,None))]
-    #[case(TestingParameters::init(7,2,&[5,6],&[3,1,0,2],&[],true,None))]
-    fn test_vss_malicious_r1(#[case] params: TestingParameters) {
+    #[case(TestingParameters::init(4,1,&[0],&[3],&[],false,None), 1)]
+    #[case(TestingParameters::init(4,1,&[0],&[3],&[],false,None), 2)]
+    #[case(TestingParameters::init(4,1,&[1],&[0],&[],false,None), 2)]
+    #[case(TestingParameters::init(4,1,&[2],&[1],&[],false,None), 2)]
+    #[case(TestingParameters::init(4,1,&[3],&[2],&[],false,None), 2)]
+    #[case(TestingParameters::init(4,1,&[0],&[3,1],&[],true,None), 2)]
+    #[case(TestingParameters::init(4,1,&[1],&[0,2],&[],true,None), 2)]
+    #[case(TestingParameters::init(4,1,&[2],&[3,0],&[],true,None), 2)]
+    #[case(TestingParameters::init(4,1,&[3],&[2,1],&[],true,None), 2)]
+    #[case(TestingParameters::init(7,2,&[0,2],&[3,1],&[],false,None), 2)]
+    #[case(TestingParameters::init(7,2,&[1,3],&[4,2,0],&[],true,None), 2)]
+    #[case(TestingParameters::init(7,2,&[5,6],&[3,1,0,2],&[],true,None), 2)]
+    fn test_vss_malicious_r1(#[case] params: TestingParameters, #[case] num_secrets: usize) {
         let malicious_vss_r1 = MaliciousVssR1 {
             roles_to_lie_to: roles_from_idxs(&params.roles_to_lie_to),
         };
-        test_vss_strategies_large::<ResiduePoly64, _>(params.clone(), malicious_vss_r1.clone());
-        test_vss_strategies_large::<ResiduePoly128, _>(params.clone(), malicious_vss_r1.clone());
+        test_vss_strategies_large::<ResiduePoly64, _>(
+            params.clone(),
+            num_secrets,
+            malicious_vss_r1.clone(),
+        );
+        test_vss_strategies_large::<ResiduePoly128, _>(
+            params.clone(),
+            num_secrets,
+            malicious_vss_r1.clone(),
+        );
     }
 
     //Test for an adversary that drops out after Round1
     //We expect that adversarial parties will see their vss default to 0, all others VSS will recover
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None))]
-    #[case(TestingParameters::init(4,1,&[1],&[],&[],true,None))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],true,None))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],true,None))]
-    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true,None))]
-    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],true,None))]
-    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true,None))]
-    fn test_vss_dropout_after_r1(#[case] params: TestingParameters) {
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 1)]
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 2)]
+    #[case(TestingParameters::init(4,1,&[1],&[],&[],true,None), 2)]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],true,None), 2)]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],true,None), 2)]
+    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],true,None), 2)]
+    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],true,None), 2)]
+    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],true,None), 2)]
+    fn test_vss_dropout_after_r1(#[case] params: TestingParameters, #[case] num_secrets: usize) {
         let dropping_vss_after_r1 = DroppingVssAfterR1::default();
         test_vss_strategies_large::<ResiduePoly64, _>(
             params.clone(),
+            num_secrets,
             dropping_vss_after_r1.clone(),
         );
         test_vss_strategies_large::<ResiduePoly128, _>(
             params.clone(),
+            num_secrets,
             dropping_vss_after_r1.clone(),
         );
     }
@@ -1273,21 +1565,24 @@ pub(crate) mod tests {
     //We expect all goes fine as if honest round2, there's no further communication
     #[cfg(feature = "extensive_testing")]
     #[rstest]
-    #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None))]
-    #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],false,None))]
-    #[case(TestingParameters::init(4,1,&[2],&[],&[],false,None))]
-    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],false,None))]
-    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],false,None))]
-    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],false,None))]
-    fn test_dropout_r3(#[case] params: TestingParameters) {
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 1)]
+    #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 2)]
+    #[case(TestingParameters::init(4,1,&[1],&[],&[],false,None), 2)]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],false,None), 2)]
+    #[case(TestingParameters::init(4,1,&[2],&[],&[],false,None), 2)]
+    #[case(TestingParameters::init(7,2,&[0,2],&[],&[],false,None), 2)]
+    #[case(TestingParameters::init(7,2,&[1,3],&[],&[],false,None), 2)]
+    #[case(TestingParameters::init(7,2,&[5,6],&[],&[],false,None), 2)]
+    fn test_dropout_r3(#[case] params: TestingParameters, #[case] num_secrets: usize) {
         let dropping_vss_after_r2 = DroppingVssAfterR2::default();
         test_vss_strategies_large::<ResiduePoly64, _>(
             params.clone(),
+            num_secrets,
             dropping_vss_after_r2.clone(),
         );
         test_vss_strategies_large::<ResiduePoly128, _>(
             params.clone(),
+            num_secrets,
             dropping_vss_after_r2.clone(),
         );
     }

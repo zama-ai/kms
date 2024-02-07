@@ -574,12 +574,11 @@ impl<Z: ShamirRing> PRSSSetup<Z> {
         let mut party_prss_sets: Vec<PrssSet<Z>> = Vec::new();
         let mut to_open = Vec::with_capacity(c * (n - t));
         let m_inverse = inverse_vdm(n - t, n)?;
-        for _i in 0..c {
-            let s = Z::sample(session.rng());
-            // TODO do in parallel, i.e. issue 244
-            let vss_s = vss.execute(session, &s).await?;
-            let random_val =
-                m_inverse.matmul(&ArrayD::from_shape_vec(IxDyn(&[n]), vss_s.to_owned())?)?;
+        let secrets = (0..c).map(|_| Z::sample(session.rng())).collect_vec();
+        let vss_res = vss.execute_many(session, &secrets).await?;
+        for i in 0..secrets.len() {
+            let vss_s = vss_res.iter().map(|s| s[i]).collect_vec();
+            let random_val = m_inverse.matmul(&ArrayD::from_shape_vec(IxDyn(&[n]), vss_s)?)?;
             to_open.append(&mut random_val.into_raw_vec());
         }
         let f_a_points = party_compute_f_a_points(&party_sets, n)?;
@@ -1496,6 +1495,7 @@ mod tests {
             Share::new(role, state.prss_next(role.one_based()).unwrap())
         }
 
+        // BEFORE:
         // Rounds in robust init:
         // c iterations of VSS (currently not in parallel)
         //  VSS (here: only the happy path)
@@ -1504,7 +1504,12 @@ mod tests {
         //      Round 3: no corruptions in this case = 0 rounds
         //      Round 4: no corruptions in this case = 0 rounds
         // 1 robust open in the end = 1 round
-        let c = num_integer::binomial(parties, threshold).div_ceil(parties - threshold);
+        // i.e., let c = num_integer::binomial(parties, threshold).div_ceil(parties - threshold);
+        //       let rounds = c * (1 + 3 + threshold) + 1;
+        //
+        // NOW:
+        // we're batching the vss so c is always 1
+        let c = 1;
         let rounds = c * (1 + 3 + threshold) + 1;
 
         let result = execute_protocol_large::<ResiduePoly128, _, _>(
