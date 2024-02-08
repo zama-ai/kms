@@ -52,7 +52,7 @@ pub fn generic_receive_from_all_senders<V, Z: Ring, R: RngCore, B: BaseSessionHa
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &B,
     receiver: &Role,
-    sender_list: &Vec<Role>,
+    sender_list: &[Role],
     non_answering_parties: Option<&HashSet<Role>>,
     match_network_value_fn: fn(network_value: NetworkValue<Z>, id: &Identity) -> anyhow::Result<V>,
 ) -> anyhow::Result<()>
@@ -120,7 +120,7 @@ async fn receive_from_all_senders<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>
     round1_data: &mut RoleValueMap<Z>,
     session: &B,
     receiver: &Role,
-    sender_list: &Vec<Role>,
+    sender_list: &[Role],
     non_answering_parties: &mut HashSet<Role>,
 ) -> anyhow::Result<()> {
     let mut jobs = JoinSet::<Result<(Role, anyhow::Result<BroadcastValue<Z>>), Elapsed>>::new();
@@ -397,7 +397,7 @@ async fn gather_votes<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
 /// all players have the broadcasted values inside the map: bcast_data[Pj] = Vj for all j in [n]
 pub async fn reliable_broadcast<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     session: &B,
-    sender_list: &Vec<Role>,
+    sender_list: &[Role],
     vi: Option<BroadcastValue<Z>>,
 ) -> anyhow::Result<RoleValueMap<Z>> {
     let num_parties = session.amount_of_parties();
@@ -505,7 +505,7 @@ pub async fn reliable_broadcast_all<Z: Ring, R: RngCore, B: BaseSessionHandles<R
     session: &B,
     vi: Option<BroadcastValue<Z>>,
 ) -> anyhow::Result<RoleValueMap<Z>> {
-    let sender_list = session.role_assignments().clone().into_keys().collect();
+    let sender_list: Vec<Role> = session.role_assignments().clone().into_keys().collect();
     reliable_broadcast(session, &sender_list, vi).await
 }
 
@@ -561,7 +561,7 @@ mod tests {
     use std::num::Wrapping;
 
     fn legitimate_broadcast<Z: ShamirRing>(
-        sender_parties: &Vec<Role>,
+        sender_parties: &[Role],
     ) -> (Vec<Identity>, Vec<BroadcastValue<Z>>, Vec<RoleValueMap<Z>>) {
         let identities = generate_fixed_identities(4);
 
@@ -607,7 +607,7 @@ mod tests {
                         Some(ChaCha20Rng::from_seed([0_u8; 32])),
                     )
                     .unwrap();
-                let sender_list = sender_parties.clone();
+                let sender_list = sender_parties.to_vec();
                 if sender_parties.contains(&Role::indexed_by_zero(party_no)) {
                     set.spawn(async move {
                         reliable_broadcast(&session, &sender_list, Some(my_data))
@@ -638,7 +638,7 @@ mod tests {
 
     #[test]
     fn test_broadcast_all() {
-        let sender_parties = (0..4).map(Role::indexed_by_zero).collect();
+        let sender_parties: Vec<Role> = (0..4).map(Role::indexed_by_zero).collect();
         let (identities, input_values, results) =
             legitimate_broadcast::<ResiduePoly128>(&sender_parties);
 
@@ -836,7 +836,7 @@ mod tests {
     //this behavior is expected to NOT come to any output for this sender
     async fn cheater_broadcast_strategy_1<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
         session: &B,
-        sender_list: &Vec<Role>,
+        sender_list: &[Role],
         vec_vi: Option<Vec<BroadcastValue<Z>>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
         let num_parties = session.amount_of_parties();
@@ -1040,7 +1040,7 @@ mod tests {
     //we thus expect that P2,P3,P4 will end up agreeing on m1 at the end of round5
     async fn cheater_broadcast_strategy_2<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
         session: &B,
-        sender_list: &Vec<Role>,
+        sender_list: &[Role],
         vec_vi: Option<Vec<BroadcastValue<Z>>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
         if sender_list.is_empty() {

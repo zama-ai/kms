@@ -449,8 +449,8 @@ fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly
 /// k is the RS degree and usually set to threshold + 1 in our case
 /// max_correctable_errs is used to check if the number of errors is at most as large as this value
 pub fn gao_decoding<F: Field>(
-    points: &Vec<F>,
-    values: &Vec<F>,
+    points: &[F],
+    values: &[F],
     k: usize,
     max_correctable_errs: usize,
 ) -> anyhow::Result<Poly<F>> {

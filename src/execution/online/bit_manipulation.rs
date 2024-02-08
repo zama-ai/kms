@@ -81,8 +81,8 @@ where
     }
 
     pub fn xor_list_secret_clear(
-        lhs: &Vec<SecretBitArray<Z>>,
-        rhs: &Vec<ClearBitArray<Z>>,
+        lhs: &[SecretBitArray<Z>],
+        rhs: &[ClearBitArray<Z>],
     ) -> anyhow::Result<Vec<SecretBitArray<Z>>> {
         if lhs.len() != rhs.len() {
             anyhow_error_and_log(format!(
@@ -115,8 +115,8 @@ where
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
-        lhs: &Vec<SecretBitArray<Z>>,
-        rhs: &Vec<SecretBitArray<Z>>,
+        lhs: &[SecretBitArray<Z>],
+        rhs: &[SecretBitArray<Z>],
         preproc: &mut P,
         session: &mut Ses,
     ) -> anyhow::Result<Vec<SecretBitArray<Z>>> {
@@ -145,8 +145,8 @@ where
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
-        lhs: &Vec<SecretBitArray<Z>>,
-        rhs: &Vec<SecretBitArray<Z>>,
+        lhs: &[SecretBitArray<Z>],
+        rhs: &[SecretBitArray<Z>],
         preproc: &mut P,
         session: &mut Ses,
     ) -> anyhow::Result<Vec<SecretBitArray<Z>>> {
@@ -166,8 +166,8 @@ where
     }
 
     fn and_list_secret_clear(
-        lhs: &Vec<SecretBitArray<Z>>,
-        rhs: &Vec<ClearBitArray<Z>>,
+        lhs: &[SecretBitArray<Z>],
+        rhs: &[ClearBitArray<Z>],
     ) -> anyhow::Result<Vec<SecretBitArray<Z>>> {
         if lhs.len() != rhs.len() {
             anyhow_error_and_log(format!(
@@ -231,8 +231,8 @@ where
         P: Preprocessing<Z>,
     >(
         session: &mut Ses,
-        lhs: &Vec<BitArray<Share<Z>>>,
-        rhs: &Vec<BitArray<Z>>,
+        lhs: &[BitArray<Share<Z>>],
+        rhs: &[BitArray<Z>],
         prep: &mut P,
     ) -> anyhow::Result<Vec<BitArray<Share<Z>>>>
     where

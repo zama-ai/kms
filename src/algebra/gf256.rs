@@ -146,7 +146,7 @@ pub fn error_correction(
 }
 
 pub fn syndrome_decoding_z2(
-    parties: &Vec<usize>,
+    parties: &[usize],
     syndrome: &ShamirZ2Poly,
     threshold: usize,
 ) -> Vec<GF256> {
