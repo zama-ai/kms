@@ -7,13 +7,12 @@ services:
       - NET_ADMIN
     command:
       - "moby"
-      - "-p"
-      - "{{ i+1 }}"
-      - "-n"
-      - "{{ n_parties }}"
     environment:
-      - RUST_LOG=distributed_decryption=debug
+      - RUST_LOG=distributed_decryption=debug,moby=info
       - NO_COLOR=true
+      - DDEC_PROTOCOL_HOST_ADDRESS=p{{ i+1 }}
+      - DDEC_PROTOCOL_HOST_PORT=50000
+      - DDEC_PROTOCOL_HOST_ID={{ i+1 }}
     volumes:
       - ../parameters:/app/ddec/parameters
     ports:

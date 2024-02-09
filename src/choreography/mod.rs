@@ -25,7 +25,7 @@ pub struct ComputationConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct SecurityConfig {
-    pub threshold: u8,
+    pub threshold: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,7 +43,7 @@ impl FromStr for SessionConfig {
 
 pub fn parse_session_config_file_with_computation(
     session_config_file: &Path,
-) -> Result<(RoleAssignment, u8), Box<dyn std::error::Error>> {
+) -> Result<(RoleAssignment, u32), Box<dyn std::error::Error>> {
     let session_config = SessionConfig::from_str(&std::fs::read_to_string(session_config_file)?)?;
 
     let role_assignment: RoleAssignment = session_config

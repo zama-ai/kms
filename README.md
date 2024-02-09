@@ -102,11 +102,11 @@ gRPC Benchmarking requires to setup a whole network inside a docker compose orch
 
 In order to bypass this limitation we have automate this `gRPC` benchmarks using `cargo-make` utility. This implies the following new components to easily spawn different benchmarks configurations:
 
-- `src/bin/benches/gen-docker.rs`: This new binary allows us to dynamically create a `docker-compose.yml` file based on some command line parameters. Basically this executable takes number of parties and threshold and generate a docker compose files with all the setup asked by the parameters. By default this executable leaves the compose file in `temp/experiment.yml` file. This destination output can be also overwrite with a command line argument. In order to see what are all the capabilities of this executable run `cargo run --bin docker-benches --features docker-compose-benches --help`.
+- `src/bin/benches/gen-experiment.rs`: This new binary allows us to dynamically create a new experiment setup on the fly. A new experiment will contain `docker-compose.yml` file based on some command line parameters with the setup of the network topology (parties) plus the configuration file `conf.toml` for `mobygo` command in order to know how to execute that experiment. See `cargo run --bin gen-experiment --features="templating" -- --help`.
 - `cargo-make`: With cargo make we are orchestating all the command line chain in order to
-  1. Run `cargo run --bin docker-benches ...` to generate docker compose file with the desired amount of parties
+  1. Run `cargo run --bin gen-experiment ...` to generate the desired experiment with the desired amount of parties
   2. Start docker compose generated in step 1.
-  3. Run `cargo run --bin mobygo ... ` choreographer in order to init, decrypt and gather results based on the desired configuration.
+  3. Run `cargo run --bin mobygo ... ` choreographer in order to **init, decrypt and gather results** based on the desired configuration.
   4. Finally stop docker compose started in step 2.
 
 ### Prerequisites for running benchmarks
@@ -114,29 +114,16 @@ In order to bypass this limitation we have automate this `gRPC` benchmarks using
 - Install [cargo-make](https://github.com/sagiegurari/cargo-make?tab=readme-ov-file#installation).
 
 ### Configuration files
-Depending on the experiment, command line parameters injected to choreographer can be set using environment variables. Inside `Makefile.toml` file, it can be seen how those environment variables are injected into command line parameters.
-
-There are 2 environment variables sets:
-
-- **Default Environment**: `.env.makefile` is where all the default values are set if you dont specify anything.
-- **Specific Environment**: All `*.env` files under `experiments` folder. It is not mandatory either to name files with `.env` extension or to put it inside `experiements` folder but it is encourage to do that to preserve some convention.
-
-Default `cargo make grpc-bench` task runs taking the environment variables from `.env.makefile`. As you can see this is defined here:
-
-```toml
-env_files = [ { path = ".env.makefile", defaults_only = true } ]
-```
-
-In experiments cases like `grpc-bench-4-1-10-prss` each `cargo-make` task has its own environment file to set the proper environment variables. For example:
+Depending on the experiment, command line parameters injected to choreographer can be set using configuration file. Inside `Makefile.toml` file, it can be seen how those experiments are generated.
 
 ```toml
 [tasks.grpc-bench-4-1-10-prss]
-env_files = [ { path = "experiments/bench-p4_t1_msg10_prss.env" } ]
+env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg10_prss" }
 run_task = { name = ["grpc-bench"] }
 description = "4 parties, 1 threshold, 10 messages, PRSS"
 ```
 
-Therefore if you want to change some configuration setup on some specific task either you need to create a new task with its own environment file or change the already provided task.
+Therefore if you want to create a new experiment just copy and paste this task, rename it and change the environment variables values to the desired experiment setup.
 
 
 ### Run all benchmarks
@@ -146,23 +133,24 @@ Therefore if you want to change some configuration setup on some specific task e
 ```
 
 ### New configuration
-If you want to write a new configuration to test especific parameter set, just do the following:
+If you want to write a new configuration to test specific parameter set, just do the following:
 
-1. Add a new environment file to `experiments` folder. You can copy one of the already existing one. Suppose that you new setup requires 5 parties, 1 threshold, 5 messages sent, protocol 1 (PRSS). So the file could be call `experiments/bench-p5_t1_msg5_prss.env`
-2. Add a section command to `Makefile.toml` file.
+1. Create a new task inside `Makefile.toml`. You can be based on any of the existing experiment
 
 ```toml
-
-[tasks.grpc-bench-5-1-5-prss]
-env_files = [ { path = "experiments/bench-p5_t1_msg5_prss.env" } ]
+[tasks.my-task-name]
+env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "PROTOCOL" = "1", EXPERIMENT_NAME = "my-experiment-name" }
 run_task = { name = ["grpc-bench"] }
-
+description = "my experiment description"
 ```
-3. Now you are able to call this benchmark or add it to the set of `run-grpc-benchmarks` task.
+
+2. Now just run the experiment.
 
 ```bash
-> cargo make grpc-bench-5-1-5-prss
+> cargo make my-task-name
 ```
+
+> NOTE: Perhaps you need to rebuild the docker image used by the experiment. You can do it just running `cargo make docker-image`
 
 ## AWS Benchmarks
 

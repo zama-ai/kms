@@ -8,4 +8,5 @@ pub mod networking;
 pub mod tests;
 pub use tokio;
 pub mod algebra;
+pub mod conf;
 pub mod error;

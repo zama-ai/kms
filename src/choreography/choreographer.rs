@@ -29,29 +29,34 @@ pub struct GrpcOutputs {
     pub elapsed_times: Option<HashMap<Role, Vec<Duration>>>,
 }
 
+pub type NetworkTopology = HashMap<Role, Uri>;
+
 impl ChoreoRuntime {
     pub fn new(
         role_assignments: HashMap<Role, Identity>,
         tls_config: Option<ClientTlsConfig>,
     ) -> Result<ChoreoRuntime, Box<dyn std::error::Error>> {
-        Self::new_with_hosts(role_assignments, tls_config, HashMap::new())
-    }
-
-    pub fn new_with_hosts(
-        role_assignments: HashMap<Role, Identity>,
-        tls_config: Option<ClientTlsConfig>,
-        host_assignments: HashMap<Role, String>,
-    ) -> Result<ChoreoRuntime, Box<dyn std::error::Error>> {
-        let channels = role_assignments
+        let network_topology: NetworkTopology = role_assignments
             .iter()
             .map(|(role, id)| {
-                let identity = host_assignments
-                    .get(role)
-                    .map(|s| Identity::from(s.to_owned()))
-                    .unwrap_or(id.clone());
-                let endpoint: Uri = format!("http://{}", identity).parse()?;
+                let uri: Uri = id.to_string().parse()?;
+                Ok((*role, uri))
+            })
+            .collect::<Result<NetworkTopology, Box<dyn std::error::Error>>>()?;
+        Self::new_with_net_topology(role_assignments.clone(), tls_config, network_topology)
+    }
+
+    pub fn new_with_net_topology(
+        role_assignments: HashMap<Role, Identity>,
+        tls_config: Option<ClientTlsConfig>,
+        network_topology: NetworkTopology,
+    ) -> Result<ChoreoRuntime, Box<dyn std::error::Error>> {
+        let channels = network_topology
+            .iter()
+            .map(|(role, host)| {
+                let endpoint: &Uri = host;
                 tracing::debug!("connecting to endpoint: {:?}", endpoint);
-                let mut channel = Channel::builder(endpoint);
+                let mut channel = Channel::builder(endpoint.clone());
                 if let Some(ref tls_config) = tls_config {
                     channel = channel.tls_config(tls_config.clone())?;
                 };
@@ -75,7 +80,7 @@ impl ChoreoRuntime {
     pub async fn initiate_threshold_decryption(
         &self,
         mode: &DecryptionMode,
-        threshold: u8,
+        threshold: u32,
         ct: &Ciphertext64,
     ) -> anyhow::Result<SessionId> {
         let mode_s = bincode::serialize(mode)?;
@@ -166,7 +171,7 @@ impl ChoreoRuntime {
     pub async fn initiate_keygen(
         &self,
         epoch_id: &SessionId,
-        threshold: u8,
+        threshold: u32,
         params: ThresholdLWEParameters,
         setup_mode: SetupMode,
     ) -> Result<PublicKey, Box<dyn std::error::Error>> {

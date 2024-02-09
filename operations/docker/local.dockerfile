@@ -23,6 +23,7 @@ FROM debian:stable-slim as runtime
 RUN apt update && \
     apt install -y iproute2 iputils-ping iperf net-tools dnsutils libssl-dev libprotobuf-dev curl netcat-openbsd
 WORKDIR /app/ddec
+RUN mkdir -p /app/ddec/config
 
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="$PATH:/app/ddec/bin"
@@ -38,5 +39,6 @@ RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
 # Copy the binaries from the base stage
 COPY --from=base /app/ddec/bin/ /app/ddec/bin/
+COPY ./config/default.toml /app/ddec/config/default.toml
 
 EXPOSE 50000

@@ -1,0 +1,4 @@
+[protocol.host]
+error_conf = 1
+error_log = /var/log/nginx/error.log
+

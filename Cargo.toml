@@ -17,6 +17,7 @@ bincode = "~1.3"
 blake3 = { version = "~1.5", features = ["std"] }
 clap = { version = "~4", features = ["derive", "env"] }
 concurrent-queue = "2.1.0"
+config = "0.14.0"
 const_format = "0.2.32"
 crypto_box = {version = "~0.9.1", features = ["salsa20"]}
 dashmap = "~5"
@@ -46,6 +47,8 @@ serde_json = "1.0"
 serde_asn1_der = "0.8.0"
 sha3 = "~0.10.8"
 signature = "~2.2"
+strum = "0.26"
+strum_macros = "0.26"
 # Ensure that "# ~/.gitconfig \n [credential] \n helper = store" is added to .gitconfig
 tfhe = { git = "ssh://git@github.com/zama-ai/tfhe-rs-internal.git", features = [
     "boolean",
@@ -58,6 +61,7 @@ tracing = { version = "~0.1", features = ["log"] }
 tracing-subscriber = { version = "~0.3.16", features = ["env-filter", "fmt"] }
 tonic = { version = "~0.10", features = ["tls"] }
 tonic-health = "~0.10"
+typed-builder = "0.18.1"
 x509-parser = "~0.15"
 zeroize = { version = "~1.7", features = ["zeroize_derive"] }
 
@@ -94,9 +98,9 @@ path = "src/bin/moby/mobygo.rs"
 required-features = ["choreographer"]
 
 [[bin]]
-name = "docker-benches"
-path = "src/bin/benches/gen-docker.rs"
-required-features = ["docker-compose-benches"]
+name = "gen-experiment"
+path = "src/bin/benches/gen-experiment.rs"
+required-features = ["templating"]
 
 
 [[bench]]
@@ -124,5 +128,5 @@ debug = true
 
 [features]
 extensive_testing = []
-docker-compose-benches = ["minijinja"]
+templating = ["minijinja"]
 choreographer = ["prettytable-rs"]

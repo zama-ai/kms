@@ -1,22 +1,19 @@
-env_files = [ { path = ".env.makefile", defaults_only = true } ]
-
 [tasks.docker-image]
 command = "docker"
 args = ["build", "-f", "operations/docker/local.dockerfile", "--ssh", "default", "-t", "ddec", "."]
 
-[tasks.build-bench-grpc]
+[tasks.generate-experiment]
 command = "cargo"
-args = ["run", "--bin", "docker-benches", "--features", "docker-compose-benches", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "${OUTPUT_DOCKER_COMPOSE_FILE}"]
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-m", "${PROTOCOL}", "-o", "${EXPERIMENT_NAME}", "-e", "${NUM_MESSAGES}"]
 
 [tasks.start-parties]
 command = "docker"
-args = ["compose", "--progress=quiet", "-f", "${OUTPUT_DOCKER_COMPOSE_FILE}", "up", "--wait", "--quiet-pull"]
-dependencies = ["build-bench-grpc"]
+args = ["compose", "--progress=quiet", "-f", "temp/${EXPERIMENT_NAME}.yml", "up", "--wait", "--quiet-pull"]
 
 [tasks.stop-parties]
 script = '''
-docker compose -f ${OUTPUT_DOCKER_COMPOSE_FILE} logs > ${OUTPUT_DOCKER_COMPOSE_LOG_FILE}
-docker compose --progress=quiet -f ${OUTPUT_DOCKER_COMPOSE_FILE} down
+docker compose -f temp/${EXPERIMENT_NAME}.yml logs > temp/${EXPERIMENT_NAME}.log
+docker compose --progress=quiet -f temp/${EXPERIMENT_NAME}.yml down
 '''
 
 [tasks.experiment-name]
@@ -37,27 +34,31 @@ echo ""
 echo ""
 '''
 
-[tasks.choreo-init]
-env = { "RUST_LOG" = "info", RUST_BACKTRACE = "1"}
+[tasks.choreo]
+env = { "RUST_LOG" = "info", "RUST_BACKTRACE" = "1"}
 command = "cargo"
-args = ["run", "--bin", "mobygo", "--features", "choreographer", "--", "-n", "${NUM_PARTIES}", "init", "-t", "${THRESHOLD}", "--lwe-params-file", "${LWE_PARAMS_FILE_PATH}"]
+args = ["run", "--bin", "mobygo", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "${CHOREO_COMMAND}"]
+
+
+[tasks.choreo-init]
+env = { "CHOREO_COMMAND" = "init"}
+run_task = { name = ["choreo"] }
 
 [tasks.choreo-decrypt]
-env = { "RUST_LOG" = "info" }
-command = "cargo"
-args = ["run", "--bin", "mobygo","--features", "choreographer", "--", "-n", "${NUM_PARTIES}", "--number-messages", "${NUM_MESSAGES}", "--session-store","${SESSION_STORE}", "decrypt", "-t", "${THRESHOLD}", "-p", "${PROTOCOL}"]
+env = { "CHOREO_COMMAND" = "decrypt"}
+run_task = { name = ["choreo"] }
 
 [tasks.choreo-results]
-env = { "RUST_LOG" = "error"}
-command = "cargo"
-args = ["run", "--bin", "mobygo","--features", "choreographer", "--", "-n", "${NUM_PARTIES}", "--session-store", "${SESSION_STORE}", "results"]
+env = { "CHOREO_COMMAND" = "results"}
+run_task = { name = ["choreo"] }
+
 
 [tasks.sleep]
 command = "sleep"
 args = ["2"]
 
 [tasks.grpc-bench]
-run_task = { name = ["experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "sleep", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
+run_task = { name = ["generate-experiment", "experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "sleep", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
 
 
 [tasks.docker-image-ci]
@@ -68,43 +69,42 @@ args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}",
 run_task = { name = ["docker-image-ci", "grpc-bench-4-1-1-prss"] }
 
 [tasks.grpc-bench-4-1-1-prss]
-env_files = [ { path = "experiments/bench-p4_t1_msg1_prss.env" } ]
+env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg1_prss" }
 run_task = { name = ["grpc-bench"] }
 description = "4 parties, 1 threshold, 1 messages, PRSS"
 
-
 [tasks.grpc-bench-4-1-10-prss]
-env_files = [ { path = "experiments/bench-p4_t1_msg10_prss.env" } ]
+env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg10_prss" }
 run_task = { name = ["grpc-bench"] }
 description = "4 parties, 1 threshold, 10 messages, PRSS"
 
 [tasks.grpc-bench-4-1-30-prss]
-env_files = [ { path = "experiments/bench-p4_t1_msg30_prss.env" } ]
+env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "30", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg30_prss" }
 run_task = { name = ["grpc-bench"] }
 description = "4 parties, 1 threshold, 30 messages, PRSS"
 
 [tasks.grpc-bench-10-2-20-prss]
-env_files = [ { path = "experiments/bench-p10_t2_msg20_prss.env" } ]
+env = { "NUM_PARTIES" = "10", "THRESHOLD" = "2", "NUM_MESSAGES" = "20", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p10_t2_msg20_prss" }
 run_task = { name = ["grpc-bench"] }
 description = "10 parties, 2 threshold, 20 messages, PRSS"
 
 [tasks.grpc-bench-16-5-40-prss]
-env_files = [ { path = "experiments/bench-p16_t5_msg40_prss.env" } ]
+env = { "NUM_PARTIES" = "16", "THRESHOLD" = "5", "NUM_MESSAGES" = "40", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p16_t5_msg40_prss" }
 run_task = { name = ["grpc-bench"] }
 description = "16 parties, 5 threshold, 40 messages, PRSS"
 
 [tasks.grpc-bench-5-1-10-large]
-env_files = [ { path = "experiments/bench-p5_t1_msg10_large.env" } ]
+env = { "NUM_PARTIES" = "5", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p5_t1_msg10_large" }
 run_task = { name = ["grpc-bench"] }
 description = "5 parties, 1 threshold, 10 messages, LargeDecryption"
 
 [tasks.grpc-bench-10-2-20-large]
-env_files = [ { path = "experiments/bench-p10_t2_msg20_large.env" } ]
+env = { "NUM_PARTIES" = "10", "THRESHOLD" = "2", "NUM_MESSAGES" = "20", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p10_t2_msg20_large" }
 run_task = { name = ["grpc-bench"] }
 description = "10 parties, 2 threshold, 20 messages, LargeDecryption"
 
 [tasks.grpc-bench-100-10-40-large]
-env_files = [ { path = "experiments/bench-p100_t10_msg40_large.env" } ]
+env = { "NUM_PARTIES" = "100", "THRESHOLD" = "10", "NUM_MESSAGES" = "40", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p100_t10_msg40_large" }
 run_task = { name = ["grpc-bench"] }
 description = "100 parties, 10 threshold, 40 messages, LargeDecryption"
 

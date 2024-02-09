@@ -3,12 +3,9 @@ use clap::{Parser, Subcommand};
 use distributed_decryption::{
     choreography::choreographer::ChoreoRuntime,
     computation::SessionId,
+    conf::{choreo::ChoreoConf, Settings},
     error::error_handler::anyhow_error_and_log,
-    execution::{
-        constants::SMALL_TEST_PARAM_PATH,
-        runtime::party::{Identity, Role, RoleAssignment},
-        runtime::session::{DecryptionMode, SetupMode},
-    },
+    execution::runtime::party::RoleAssignment,
     file_handling::{self, read_as_json},
     lwe::{PublicKey, ThresholdLWEParameters},
 };
@@ -16,7 +13,7 @@ use ndarray::Array1;
 use ndarray_stats::QuantileExt;
 use prettytable::{Attr, Cell, Row, Table};
 use rand::{distributions::Uniform, rngs::ThreadRng, Rng};
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 use tokio::task::JoinSet;
 
 #[derive(Parser, Debug)]
@@ -26,97 +23,35 @@ pub struct Cli {
     #[clap(subcommand)]
     command: Commands,
 
-    #[clap(short)]
-    n_parties: usize,
-
-    #[structopt(env, long, default_value_t = 50000)]
-    port: u16,
-
-    #[structopt(env, long)]
-    /// Number of messages to test
-    number_messages: Option<usize>,
-
-    #[clap(long, default_value = "temp/sessions.bin")]
-    session_store: String,
-}
-
-#[derive(Parser, Debug)]
-pub struct DecryptOptions {
-    #[clap(short, long)]
-    /// Threshold (max. number of dishonest parties)
-    threshold: u8,
-
-    #[clap(short, long, default_value_t = 2)]
-    /// decryption protocol: 1: PRSS, 2: Proto2
-    protocol: u8,
-
-    #[clap(long, default_value = "pk.bin")]
-    /// Filename of the public key
-    pubkey: String,
-}
-
-#[derive(Parser, Debug)]
-pub struct InitOptions {
-    #[clap(long, default_value_t = 1)]
-    /// Key epoch id to use
-    epoch: u128,
-
-    #[clap(long)]
-    /// Directory to read certificates from
-    certs: Option<String>,
-
-    #[clap(long)]
-    /// Own identity; `certs` must be specified
-    identity: Option<String>,
-
-    #[clap(short, long)]
-    /// Threshold (max. number of dishonest parties)
-    threshold: u8,
-
-    #[clap(long, default_value = "pk.bin")]
-    /// Filename of the public key
-    pubkey: String,
-
-    #[clap(short, long, default_value_t = 1)]
-    /// Initialize decryption protocols: 1: All Protocols, 2: Only Proto2, No PRSS
-    protocol: u8,
-
-    #[clap(long, default_value = SMALL_TEST_PARAM_PATH)]
-    /// Filename of the LWE parameters
-    lwe_params_file: String,
+    #[clap(short, long, default_value = "config/mobygo.toml")]
+    conf_file: String,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Decrypt on cluster of mobys (non-blocking)
-    Decrypt(DecryptOptions),
+    Decrypt,
 
     /// Initialize the moby workers with a key share and a PRSS setup
-    Init(InitOptions),
+    Init,
     /// Retrieve one or many results of computation from cluster of mobys
     Results,
 }
 
 async fn init_command(
     runtime: &ChoreoRuntime,
-    init_opts: InitOptions,
+    init_opts: &ChoreoConf,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let setup_mode = match init_opts.protocol {
-        1 => Ok(SetupMode::AllProtos),
-        2 => Ok(SetupMode::NoPrss),
-        _ => Err(anyhow_error_and_log("Invalid SetupMode".to_string())),
-    }?;
-
-    let default_params: ThresholdLWEParameters = read_as_json(init_opts.lwe_params_file)?;
+    let default_params: ThresholdLWEParameters = read_as_json(init_opts.params_file.to_owned())?;
 
     // keys can be set once per epoch (currently stored in a SessionID)
     // TODO so far we only use the default parameters
     let pk = runtime
         .initiate_keygen(
-            &SessionId::from(init_opts.epoch),
-            init_opts.threshold,
+            &SessionId::from(init_opts.epoch()),
+            init_opts.threshold_topology.threshold,
             default_params,
-            setup_mode,
+            init_opts.setup_mode.clone(),
         )
         .await?;
 
@@ -124,19 +59,17 @@ async fn init_command(
 
     // write received pk to file
     let serialized_pk = bincode::serialize(&pk)?;
-    std::fs::write(&init_opts.pubkey, serialized_pk)?;
+    std::fs::write(init_opts.pub_key_file(), serialized_pk)?;
     Ok(())
 }
 
 async fn decrypt_command(
     runtime: ChoreoRuntime,
-    decrypt_opts: DecryptOptions,
-    parties: usize,
+    decrypt_opts: &ChoreoConf,
     rng: &mut ThreadRng,
-    number_messages: Option<usize>,
 ) -> Result<Vec<SessionId>, Box<dyn std::error::Error>> {
     let possible_messages = Uniform::from(0..=255);
-    let number_messages = number_messages.unwrap_or_else(|| {
+    let number_messages = decrypt_opts.number_messages.unwrap_or_else(|| {
         let mut rng_msg = rand::thread_rng();
         rng_msg.gen_range(4..100)
     });
@@ -147,13 +80,13 @@ async fn decrypt_command(
 
     tracing::info!(
         "Launching mobygo decryption: parties: {}, threshold: {}, messages: {}",
-        parties,
-        decrypt_opts.threshold,
+        decrypt_opts.threshold_topology.peers.len(),
+        decrypt_opts.threshold_topology.threshold,
         number_messages
     );
 
     // read pk from file (Init must have been called before)
-    let pk_serialized = std::fs::read(decrypt_opts.pubkey.as_str())?;
+    let pk_serialized = std::fs::read(decrypt_opts.pub_key_file())?;
     let pk: PublicKey = bincode::deserialize(&pk_serialized)?;
 
     let cyphers = messages
@@ -161,23 +94,16 @@ async fn decrypt_command(
         .map(|m| pk.encrypt(rng, *m as u64))
         .collect::<Vec<_>>();
 
-    let mode = match decrypt_opts.protocol {
-        1 => Ok(DecryptionMode::PRSSDecrypt),
-        2 => Ok(DecryptionMode::LargeDecrypt),
-        _ => Err(anyhow_error_and_log(
-            "Decryption mode not supported!".to_string(),
-        )),
-    }?;
-
     let mut join_set = JoinSet::new();
 
     let rt = Arc::new(runtime);
-    let mode = Arc::new(mode);
+    let mode = Arc::new(decrypt_opts.decrypt_mode.clone());
     cyphers.into_iter().for_each(|ct| {
         let rt = rt.clone();
         let mode = mode.clone();
+        let threshold = decrypt_opts.threshold_topology.threshold;
         join_set.spawn(async move {
-            rt.initiate_threshold_decryption(&mode, decrypt_opts.threshold, ct.as_ref())
+            rt.initiate_threshold_decryption(&mode, threshold, ct.as_ref())
                 .await
         });
     });
@@ -299,50 +225,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut rng = rand::thread_rng();
     let tls_config = None;
-    let port = args.port;
-    let number_messages = args.number_messages;
+    let conf: ChoreoConf = Settings::builder()
+        .path(&args.conf_file)
+        .build()
+        .init_conf()?;
 
-    let docker_role_assignments: RoleAssignment = (1..=args.n_parties)
-        .map(|party_id| {
-            let role = Role::indexed_by_one(party_id);
-            let identity = Identity::from(&format!("p{party_id}:{port}"));
-            (role, identity)
-        })
-        .collect();
+    let topology = &conf.threshold_topology;
 
-    let host_assignments: HashMap<Role, String> = (1..=args.n_parties)
-        .map(|party_id| {
-            let role = Role::indexed_by_one(party_id);
-            (role, format!("localhost:{}", port + party_id as u16))
-        })
-        .collect();
+    let docker_role_assignments: RoleAssignment = topology.into();
+
+    let host_channels = topology.try_into()?;
 
     let runtime =
-        ChoreoRuntime::new_with_hosts(docker_role_assignments, tls_config, host_assignments)?;
+        ChoreoRuntime::new_with_net_topology(docker_role_assignments, tls_config, host_channels)?;
 
     match args.command {
-        Commands::Init(init_opts) => {
-            init_command(&runtime, init_opts).await?;
+        Commands::Init => {
+            init_command(&runtime, &conf).await?;
         }
-        Commands::Decrypt(decrypt_opts) => {
-            let session_ids = decrypt_command(
-                runtime,
-                decrypt_opts,
-                args.n_parties,
-                &mut rng,
-                number_messages,
-            )
-            .await?;
+        Commands::Decrypt => {
+            let session_ids = decrypt_command(runtime, &conf, &mut rng).await?;
             tracing::info!(
                 "Storing session ids: {:?} - into {:?}",
                 session_ids,
-                args.session_store
+                conf.session_file_path()
             );
-            file_handling::write_element(args.session_store.to_string(), &session_ids)?;
-            tracing::info!("Session ids stored in {:?}.", args.session_store);
+            file_handling::write_element(conf.session_file_path(), &session_ids)?;
+            tracing::info!("Session ids stored in {:?}.", conf.session_file_path());
         }
         Commands::Results => {
-            results_command(&runtime, args.session_store).await?;
+            results_command(&runtime, conf.session_file_path()).await?;
         }
     };
 
