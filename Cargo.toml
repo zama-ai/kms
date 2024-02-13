@@ -19,7 +19,7 @@ clap = { version = "~4", features = ["derive", "env"] }
 concurrent-queue = "2.1.0"
 config = "0.14.0"
 const_format = "0.2.32"
-crypto_box = {version = "~0.9.1", features = ["salsa20"]}
+crypto_box = { version = "~0.9.1", features = ["salsa20"] }
 dashmap = "~5"
 derive_more = "~0.99"
 digest = "0.10.7"
@@ -28,7 +28,7 @@ g2p = "1.0.1"
 itertools = "0.12"
 k256 = "0.13.1"
 lazy_static = "~1.4"
-minijinja = { version= "1.0.11", features = ["loader"], optional = true }
+minijinja = { version = "1.0.11", features = ["loader"], optional = true }
 mockall = "~0.12.1"
 ndarray = { version = "~0.15", features = ["serde"] }
 ndarray-stats = "~0.5"
@@ -71,14 +71,14 @@ tonic-build = "~0.10"
 
 [dev-dependencies]
 aes-prng = "~0.2"
-criterion = { version = "~0.5"}
+criterion = { version = "~0.5" }
 ctor = "~0.2"
 env_logger = "0.11"
 proptest = "~1.4"
+pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
 rstest = "~0.18"
 test-log = { version = "0.2", features = ["trace"] }
 tracing-test = "0.2"
-pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
 
 [[bin]]
 name = "flamin"
@@ -109,6 +109,10 @@ harness = false
 
 [[bench]]
 name = "decoding"
+harness = false
+
+[[bench]]
+name = "bench_switch_and_squash"
 harness = false
 
 [[bench]]
