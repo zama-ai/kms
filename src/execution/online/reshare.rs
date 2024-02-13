@@ -1,6 +1,6 @@
 use itertools::{izip, Itertools};
 use ndarray::Array1;
-use rand::RngCore;
+use rand_core::CryptoRngCore;
 use std::collections::HashMap;
 use zeroize::Zeroize;
 
@@ -56,7 +56,7 @@ fn delta0i<Z: BaseRing>(
 }
 
 pub async fn reshare_sk_same_sets<
-    Rnd: RngCore + Send + Sync,
+    Rnd: CryptoRngCore + Send + Sync,
     Ses: BaseSessionHandles<Rnd>,
     P128: Preprocessing<ResiduePoly128> + Send,
     P64: Preprocessing<ResiduePoly64> + Send,
@@ -78,7 +78,7 @@ pub async fn reshare_sk_same_sets<
 }
 
 pub async fn reshare_same_sets<
-    Rnd: RngCore + Send + Sync,
+    Rnd: CryptoRngCore + Send + Sync,
     Ses: BaseSessionHandles<Rnd>,
     P: Preprocessing<ResiduePoly<Z>> + Send,
     Z: BaseRing + Zeroize,
@@ -233,7 +233,7 @@ mod tests {
     use std::{collections::HashMap, fmt::Display, sync::Arc};
 
     use aes_prng::AesRng;
-    use rand_chacha::ChaCha20Rng;
+    use rand::SeedableRng;
     use tfhe::core_crypto::entities::LweSecretKey;
     use tokio::task::JoinSet;
 
@@ -327,7 +327,7 @@ mod tests {
             LweSecretKey::from_container(keyset.sk.lwe_secret_key_64.as_ref()[..8].to_vec());
 
         // generate the key shares
-        let mut rng = AesRng::from_random_seed();
+        let mut rng = AesRng::from_entropy();
         let mut key_shares =
             keygen_all_party_shares(&keyset, &mut rng, num_parties, threshold).unwrap();
 
@@ -387,15 +387,14 @@ mod tests {
                 let mut session = LargeSession::new(session_params, net).unwrap();
 
                 let mut preproc128 =
-                    DummyPreprocessing::<ResiduePoly128, ChaCha20Rng, LargeSession>::new(
+                    DummyPreprocessing::<ResiduePoly128, AesRng, LargeSession>::new(
                         42,
                         session.clone(),
                     );
-                let mut preproc64 =
-                    DummyPreprocessing::<ResiduePoly64, ChaCha20Rng, LargeSession>::new(
-                        42,
-                        session.clone(),
-                    );
+                let mut preproc64 = DummyPreprocessing::<ResiduePoly64, AesRng, LargeSession>::new(
+                    42,
+                    session.clone(),
+                );
                 let out = reshare_sk_same_sets(
                     &mut preproc128,
                     &mut preproc64,

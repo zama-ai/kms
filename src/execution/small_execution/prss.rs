@@ -27,7 +27,7 @@ use crate::{
 use anyhow::Context;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
-use rand::RngCore;
+use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -237,7 +237,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
 
     /// Compute the PRSS.check() method which returns the summed up psi value for each party based on the supplied counter `ctr`.
     /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
-    pub async fn prss_check<R: RngCore, S: SmallSessionHandles<Z, R>>(
+    pub async fn prss_check<R: CryptoRngCore, S: SmallSessionHandles<Z, R>>(
         &self,
         session: &mut S,
         ctr: u128,
@@ -270,7 +270,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
 
     /// Compute the PRZS.check() method which returns the summed up chi value for each party based on the supplied counter `ctr`.
     /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
-    pub async fn przs_check<R: RngCore, S: SmallSessionHandles<Z, R>>(
+    pub async fn przs_check<R: CryptoRngCore, S: SmallSessionHandles<Z, R>>(
         &self,
         session: &mut S,
         ctr: u128,
@@ -308,7 +308,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
     /// Helper method for counting the votes. Takes the `broadcast_result` and counts which parties has voted/replied each of the different [Value]s for each given [PrssSet].
     /// The result is a map from each unique received [PrssSet] to another map which maps from all possible received [Value]s associated
     /// with the [PrssSet] to the set of [Role]s which has voted/replied to the specific [Value] for the specific [PrssSet].
-    fn count_votes<R: RngCore, S: SmallSessionHandles<Z, R>>(
+    fn count_votes<R: CryptoRngCore, S: SmallSessionHandles<Z, R>>(
         broadcast_result: &HashMap<Role, BroadcastValue<Z>>,
         session: &mut S,
     ) -> anyhow::Result<HashMap<PartySet, ValueVotes<Z>>> {
@@ -346,7 +346,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
     /// That is, if it is not present in `value_votes` it gets added and in either case `cur_role` gets counted as having
     /// voted for `cur_prf_val`.
     /// In case `cur_role` has already voted for `cur_prf_val` they get added to the list of corrupt parties.
-    fn add_vote<R: RngCore, S: SmallSessionHandles<Z, R>>(
+    fn add_vote<R: CryptoRngCore, S: SmallSessionHandles<Z, R>>(
         value_votes: &mut ValueVotes<Z>,
         cur_prf_val: &Vec<Z>,
         cur_role: Role,
@@ -393,7 +393,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
     /// Helper method for finding the parties who did not vote for the results and add them to the corrupt set.
     /// Goes through `true_prf_vals` and find which parties did not vote for the psi values it contains.
     /// This is done by cross-referencing the votes in `count`
-    fn handle_non_voting_parties<R: RngCore, S: SmallSessionHandles<Z, R>>(
+    fn handle_non_voting_parties<R: CryptoRngCore, S: SmallSessionHandles<Z, R>>(
         true_prf_vals: &HashMap<&PartySet, &Vec<Z>>,
         count: &HashMap<PartySet, ValueVotes<Z>>,
         session: &mut S,
@@ -487,7 +487,7 @@ impl<Z: ShamirRing> PRSSSetup<Z> {
     /// initialize the PRSS setup for this epoch and a given party
     pub async fn init_with_abort<
         A: AgreeRandom + Send,
-        R: RngCore,
+        R: CryptoRngCore,
         S: SmallSessionHandles<Z, R>,
     >(
         session: &mut S,
@@ -561,7 +561,7 @@ impl<Z: ShamirRing> PRSSSetup<Z> {
         }
     }
 
-    pub async fn robust_init<V: Vss, R: RngCore, L: LargeSessionHandles<R>>(
+    pub async fn robust_init<V: Vss, R: CryptoRngCore, L: LargeSessionHandles<R>>(
         session: &mut L,
         vss: &V,
     ) -> anyhow::Result<Self> {
@@ -615,7 +615,7 @@ fn inverse_vdm<Z: ShamirRing>(rows: usize, columns: usize) -> anyhow::Result<Arr
     Ok(init_vdm::<Z>(columns, rows)?.reversed_axes())
 }
 
-async fn agree_random_robust<Z: ShamirRing, Rnd: RngCore, L: LargeSessionHandles<Rnd>>(
+async fn agree_random_robust<Z: ShamirRing, Rnd: CryptoRngCore, L: LargeSessionHandles<Rnd>>(
     session: &mut L,
     shares: Vec<Z>,
 ) -> anyhow::Result<Vec<PrfKey>> {
@@ -673,12 +673,10 @@ mod tests {
             helper::tests_and_benches::execute_protocol_small,
         },
     };
-    use std::sync::Arc;
-
     use aes_prng::AesRng;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
     use rstest::rstest;
+    use std::sync::Arc;
     use tokio::task::JoinSet;
     use tracing_test::traced_test;
 
@@ -692,8 +690,8 @@ mod tests {
             jobs.spawn(async move {
                 let epoc = PRSSSetup::init_with_abort::<
                     A,
-                    ChaCha20Rng,
-                    SmallSessionStruct<Z, ChaCha20Rng, SessionParameters>,
+                    AesRng,
+                    SmallSessionStruct<Z, AesRng, SessionParameters>,
                 >(&mut sess.clone())
                 .await;
                 (sess.my_role().unwrap().zero_based(), epoc)
@@ -855,7 +853,7 @@ mod tests {
         runtime.setup_sks(key_shares);
         runtime.setup_cks(Arc::new(keys.ck.clone()));
 
-        let mut seed = [0_u8; 32];
+        let mut seed = [0_u8; aes_prng::SEED_SIZE];
         // create sessions for each prss party
         let sessions: Vec<SmallSession<ResiduePoly128>> = (0..num_parties)
             .map(|p| {
@@ -864,7 +862,7 @@ mod tests {
                     .small_session_for_player(
                         SessionId(u128::MAX),
                         p,
-                        Some(ChaCha20Rng::from_seed(seed)),
+                        Some(AesRng::from_seed(seed)),
                     )
                     .unwrap()
             })
@@ -1117,7 +1115,7 @@ mod tests {
         let mut set = JoinSet::new();
         let mut reference_values = Vec::with_capacity(parties);
         for party_id in 1..=parties {
-            let rng = ChaCha20Rng::seed_from_u64(party_id as u64);
+            let rng = AesRng::seed_from_u64(party_id as u64);
             let mut session = runtime
                 .small_session_for_player(session_id, party_id - 1, Some(rng))
                 .unwrap();
@@ -1184,7 +1182,7 @@ mod tests {
         let mut set = JoinSet::new();
         let mut reference_values = Vec::with_capacity(parties);
         for party_id in 1..=parties {
-            let rng = ChaCha20Rng::seed_from_u64(party_id as u64);
+            let rng = AesRng::seed_from_u64(party_id as u64);
             let mut session = runtime
                 .small_session_for_player(session_id, party_id - 1, Some(rng))
                 .unwrap();
@@ -1445,7 +1443,7 @@ mod tests {
         async fn task(mut session: SmallSession<ResiduePoly128>) -> Share<ResiduePoly128> {
             let prss_setup = PRSSSetup::init_with_abort::<
                 DummyAgreeRandom,
-                ChaCha20Rng,
+                AesRng,
                 SmallSession<ResiduePoly128>,
             >(&mut session)
             .await

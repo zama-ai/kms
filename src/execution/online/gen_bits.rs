@@ -11,7 +11,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand::RngCore;
+use rand_core::CryptoRngCore;
 
 pub trait Solve: Sized + ZConsts {
     fn solve(v: &Self) -> anyhow::Result<Self>;
@@ -21,7 +21,7 @@ pub trait Solve: Sized + ZConsts {
 pub trait BitGenEven {
     async fn gen_bits_even<
         Z: ShamirRing + Solve,
-        Rnd: RngCore + Send + Sync,
+        Rnd: CryptoRngCore + Send + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
     >(
@@ -40,7 +40,7 @@ impl BitGenEven for RealBitGenEven {
     /// The code only works when the modulo of the ring used is even.
     async fn gen_bits_even<
         Z: ShamirRing + Solve,
-        Rnd: RngCore + Send + Sync,
+        Rnd: CryptoRngCore + Send + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
     >(
@@ -90,10 +90,10 @@ mod tests {
         },
         tests::helper::tests_and_benches::execute_protocol_small,
     };
+    use aes_prng::AesRng;
     use itertools::Itertools;
     use paste::paste;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
     use std::num::Wrapping;
 
     macro_rules! test_bitgen {
@@ -105,7 +105,7 @@ mod tests {
                     let threshold = 1;
                     const AMOUNT: usize = 10;
                     async fn task(mut session: SmallSession<ResiduePoly<$z>>) -> Vec<ResiduePoly<$z>> {
-                        let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, ChaCha20Rng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
+                        let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
                         let bits = RealBitGenEven::gen_bits_even(AMOUNT, &mut preprocessing, &mut session)
                             .await
                             .unwrap();
@@ -124,7 +124,7 @@ mod tests {
                     let bad_party: Role = Role::indexed_by_one(2);
                     const AMOUNT: usize = 10;
                     let mut task = |mut session: SmallSession<ResiduePoly<$z>>| async move {
-                        let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, ChaCha20Rng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
+                        let mut preprocessing = DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session.clone());
                         // Execute with dummy prepreocessing for honest parties and a mock for the bad one
                         let bits = if session.my_role().unwrap() == bad_party {
                             let mut mock =
@@ -181,7 +181,7 @@ mod tests {
 
                 #[test]
                 fn [<test_sunshine_sample_ $z:lower>]() {
-                    let mut rng = ChaCha20Rng::seed_from_u64(0);
+                    let mut rng = AesRng::seed_from_u64(0);
                     let a = ResiduePoly::<$z>::sample(&mut rng);
                     let t = a + a * a;
                     let x = match ResiduePoly::<$z>::solve(&t) {
@@ -193,7 +193,7 @@ mod tests {
 
                 #[test]
                 fn [<negative_sample_ $z:lower>]() {
-                    let mut rng = ChaCha20Rng::seed_from_u64(1);
+                    let mut rng = AesRng::seed_from_u64(1);
                     let a = ResiduePoly::<$z>::sample(&mut rng);
                     // The input not of the form a+a*a
                     let t = a + a * a - ResiduePoly::<$z>::ONE;

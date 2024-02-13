@@ -5,7 +5,7 @@ use crypto_box::{
 };
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use nom::AsBytes;
-use rand_chacha::rand_core::CryptoRngCore;
+use rand_core::CryptoRngCore;
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Sha3_256};
 
@@ -488,9 +488,10 @@ mod tests {
         },
         file_handling::write_element,
     };
+    use aes_prng::AesRng;
     use k256::ecdsa::SigningKey;
     use rand::SeedableRng;
-    use rand_chacha::{rand_core::CryptoRngCore, ChaCha20Rng};
+    use rand_core::CryptoRngCore;
     use serde_asn1_der::{from_bytes, to_vec};
     use signature::Signer;
     use tracing_test::traced_test;
@@ -504,9 +505,9 @@ mod tests {
 
     /// Helper method that creates an rng, a valid client request (on a dummy fhe cipher) and client singcryption keys SigncryptionPair
     /// Returns the rng, client request, client signcryption keys and the dummy fhe cipher the request is made for.
-    fn test_setup() -> (ChaCha20Rng, ClientRequest, SigncryptionPair, Vec<u8>) {
+    fn test_setup() -> (AesRng, ClientRequest, SigncryptionPair, Vec<u8>) {
         let cipher = [42_u8; 1];
-        let mut rng = ChaCha20Rng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(1);
         let client_sig_key = PrivateSigKey {
             sk: SigningKey::random(&mut rng),
         };
@@ -639,7 +640,7 @@ mod tests {
     #[traced_test]
     #[test]
     fn incorrect_server_verf_key() {
-        let mut rng = ChaCha20Rng::seed_from_u64(42);
+        let mut rng = AesRng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
         let (sever_enc_key, _server_dec_key) = encryption_key_generation(&mut rng);
         let to_encrypt = [0_u8; 1 + 2 * DIGEST_BYTES + SIG_SIZE];
@@ -652,7 +653,7 @@ mod tests {
     #[traced_test]
     #[test]
     fn incorrect_server_enc_key() {
-        let mut rng = ChaCha20Rng::seed_from_u64(42);
+        let mut rng = AesRng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
         let (server_enc_key, _server_dec_key) = encryption_key_generation(&mut rng);
         let mut to_encrypt = [0_u8; 1 + 2 * DIGEST_BYTES + SIG_SIZE].to_vec();
@@ -692,7 +693,7 @@ mod tests {
     #[traced_test]
     #[test]
     fn unnormalized_signature() {
-        let mut rng = ChaCha20Rng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(1);
         let msg = "some message".as_bytes();
         let client_sig_key = PrivateSigKey {
             sk: SigningKey::random(&mut rng),

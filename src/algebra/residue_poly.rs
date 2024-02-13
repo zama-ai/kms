@@ -1082,16 +1082,16 @@ impl PRSSConversions for ResiduePoly64 {
 mod tests {
     use super::*;
     use crate::algebra::base_ring::{Z128, Z64};
+    use aes_prng::AesRng;
     use itertools::Itertools;
     use paste::paste;
     use rand::SeedableRng;
-    use rand_chacha::{ChaCha12Rng, ChaCha20Rng};
     use rstest::rstest;
     use std::num::Wrapping;
 
     #[test]
     fn test_is_zero() {
-        let mut rng = ChaCha12Rng::seed_from_u64(0);
+        let mut rng = AesRng::seed_from_u64(0);
 
         let mut z128poly: ResiduePoly128 = ResiduePoly {
             coefs: [Wrapping(0); 8],
@@ -1137,7 +1137,7 @@ mod tests {
 
                 let secret: ResiduePoly<$z> = ResiduePoly::<$z>::from_scalar
                 (Wrapping(1000));
-                let mut rng = ChaCha12Rng::seed_from_u64(0);
+                let mut rng = AesRng::seed_from_u64(0);
 
                 let mut shares = ShamirSharing::share(&mut rng, secret, n, t).unwrap();
                 // t+1 to reconstruct a degree t polynomial
@@ -1165,7 +1165,7 @@ mod tests {
 
                 let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
 
-                let mut rng = ChaCha12Rng::seed_from_u64(0);
+                let mut rng = AesRng::seed_from_u64(0);
                 let sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, residue_secret, num_parties, threshold).unwrap();
                 let recon = TryFromWrapper::<$z>::try_from(sharings.reconstruct(threshold).unwrap()).unwrap();
                 assert_eq!(recon.0, secret);
@@ -1186,7 +1186,7 @@ mod tests {
 
                 let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
 
-                let mut rng = ChaCha12Rng::from_entropy();
+                let mut rng = AesRng::from_entropy();
                 let sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, residue_secret, num_parties, threshold).unwrap();
                 let recon = TryFromWrapper::<$z>::try_from(sharings.reconstruct(threshold).unwrap()).unwrap();
                 assert_eq!(recon.0, secret);
@@ -1203,7 +1203,7 @@ mod tests {
 
                 let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
 
-                let mut rng = ChaCha12Rng::seed_from_u64(0);
+                let mut rng = AesRng::seed_from_u64(0);
                 let mut sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, residue_secret, n, t).unwrap();
                 // t+1 to reconstruct a degree t polynomial
                 // for each error we need to add in 2 honest shares to reconstruct
@@ -1229,7 +1229,7 @@ mod tests {
 
                 let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
 
-                let mut rng = ChaCha12Rng::seed_from_u64(2342);
+                let mut rng = AesRng::seed_from_u64(2342);
                 let sharings = ShamirSharing::share(&mut rng, residue_secret, n, t).unwrap();
                 let party_ids = &sharings.shares.iter().map(|s| s.owner()).collect_vec();
 
@@ -1290,7 +1290,7 @@ mod tests {
 
                 let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
 
-                let mut rng = ChaCha12Rng::seed_from_u64(678);
+                let mut rng = AesRng::seed_from_u64(678);
                 let sharings = ShamirSharing::share(&mut rng, residue_secret, n, t).unwrap();
 
                 // verify that decoding with Gao works as a sanity check
@@ -1350,7 +1350,7 @@ mod tests {
 
                 let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
 
-                let mut rng = ChaCha12Rng::seed_from_u64(0);
+                let mut rng = AesRng::seed_from_u64(0);
                 let mut sharings = ShamirSharing::share(&mut rng, residue_secret, n, t).unwrap();
 
                 // syndrome computation without errors
@@ -1517,7 +1517,7 @@ mod tests {
                 assert_eq!(&p2 * &p1, p3);
 
                 // rnd multiplication
-                let mut rng = ChaCha12Rng::seed_from_u64(0);
+                let mut rng = AesRng::seed_from_u64(0);
                 let p0 = ResiduePoly::<$z>::ZERO;
                 let prnd = ResiduePoly::<$z>::sample(& mut rng);
                 let p1 = ResiduePoly::<$z>::ONE;
@@ -1673,7 +1673,7 @@ mod tests {
 
     #[test]
     fn test_from_u128_chunks_z128() {
-        let rpoly = ResiduePoly128::sample(&mut ChaCha20Rng::from_seed([0_u8; 32]));
+        let rpoly = ResiduePoly128::sample(&mut AesRng::seed_from_u64(0));
         let coefs = rpoly.coefs.into_iter().map(|x| x.0).collect_vec();
         let rpoly_test = ResiduePoly128::from_u128_chunks(coefs);
 
@@ -1682,7 +1682,7 @@ mod tests {
 
     #[test]
     fn test_to_from_bytes_z128() {
-        let rpoly = ResiduePoly128::sample(&mut ChaCha20Rng::from_seed([0_u8; 32]));
+        let rpoly = ResiduePoly128::sample(&mut AesRng::seed_from_u64(0));
         let byte_vec: [u8; ResiduePoly128::BIT_LENGTH >> 3] =
             rpoly.to_byte_vec().try_into().unwrap();
         let rpoly_test = ResiduePoly128::from_bytes(&byte_vec);
@@ -1691,7 +1691,7 @@ mod tests {
 
     #[test]
     fn test_from_u128_chunks_z64() {
-        let rpoly = ResiduePoly64::sample(&mut ChaCha20Rng::from_seed([0_u8; 32]));
+        let rpoly = ResiduePoly64::sample(&mut AesRng::seed_from_u64(0));
         let coefs = rpoly.coefs.into_iter().map(|x| x.0).collect_vec();
         let mut new_coefs = Vec::new();
         for coef in coefs.chunks(2) {
@@ -1704,7 +1704,7 @@ mod tests {
 
     #[test]
     fn test_to_from_bytes_z64() {
-        let rpoly = ResiduePoly64::sample(&mut ChaCha20Rng::from_seed([0_u8; 32]));
+        let rpoly = ResiduePoly64::sample(&mut AesRng::seed_from_u64(0));
         let byte_vec: [u8; ResiduePoly64::BIT_LENGTH >> 3] =
             rpoly.to_byte_vec().try_into().unwrap();
         let rpoly_test = ResiduePoly64::from_bytes(&byte_vec);

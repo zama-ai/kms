@@ -1,7 +1,6 @@
-use std::{collections::HashSet, sync::Arc};
-
 use itertools::Itertools;
-use rand::RngCore;
+use rand_core::CryptoRngCore;
+use std::{collections::HashSet, sync::Arc};
 use tokio::{task::JoinSet, time::error::Elapsed};
 
 use crate::{
@@ -166,7 +165,7 @@ pub fn reconstruct_w_errors_sync<Z: ShamirRing>(
     Ok(None)
 }
 
-pub async fn robust_open_to_all<Z: ShamirRing, R: RngCore, B: BaseSessionHandles<R>>(
+pub async fn robust_open_to_all<Z: ShamirRing, R: CryptoRngCore, B: BaseSessionHandles<R>>(
     session: &B,
     share: Z,
     degree: usize,
@@ -186,7 +185,7 @@ pub async fn robust_open_to_all<Z: ShamirRing, R: RngCore, B: BaseSessionHandles
 ///
 /// Output:
 /// - The reconstructed secrets if reconstruction for all was possible
-pub async fn robust_opens_to_all<Z: ShamirRing, R: RngCore, B: BaseSessionHandles<R>>(
+pub async fn robust_opens_to_all<Z: ShamirRing, R: CryptoRngCore, B: BaseSessionHandles<R>>(
     session: &B,
     shares: &[Z],
     degree: usize,
@@ -226,7 +225,7 @@ pub async fn robust_opens_to_all<Z: ShamirRing, R: RngCore, B: BaseSessionHandle
     try_reconstruct_from_shares(session, &mut sharings, degree, threshold, &mut jobs).await
 }
 
-pub async fn robust_open_to<Z: ShamirRing, R: RngCore + Send, B: BaseSessionHandles<R>>(
+pub async fn robust_open_to<Z: ShamirRing, R: CryptoRngCore + Send, B: BaseSessionHandles<R>>(
     session: &B,
     share: Z,
     degree: usize,
@@ -240,7 +239,7 @@ pub async fn robust_open_to<Z: ShamirRing, R: RngCore + Send, B: BaseSessionHand
     }
 }
 
-pub async fn robust_opens_to<Z: ShamirRing, R: RngCore + Send, B: BaseSessionHandles<R>>(
+pub async fn robust_opens_to<Z: ShamirRing, R: CryptoRngCore + Send, B: BaseSessionHandles<R>>(
     session: &B,
     shares: &[Z],
     degree: usize,
@@ -299,9 +298,9 @@ pub async fn robust_opens_to<Z: ShamirRing, R: RngCore + Send, B: BaseSessionHan
 mod test {
     use std::num::Wrapping;
 
+    use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
 
     use crate::{
         algebra::{residue_poly::ResiduePoly, residue_poly::ResiduePoly128},
@@ -321,7 +320,7 @@ mod test {
             let parties = 4;
             let threshold = 1;
             let num_secrets = 10;
-            let mut rng = ChaCha20Rng::seed_from_u64(0);
+            let mut rng = AesRng::seed_from_u64(0);
             let shares = (0..num_secrets)
                 .map(|idx| {
                     ShamirSharing::share(

@@ -1,3 +1,4 @@
+use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::algebra::base_ring::Z64;
 use distributed_decryption::algebra::residue_poly::ResiduePoly64;
@@ -20,8 +21,7 @@ use distributed_decryption::tests::helper::tests_and_benches::{
     execute_protocol_large, execute_protocol_small,
 };
 use pprof::criterion::{Output, PProfProfiler};
-use rand_chacha::rand_core::SeedableRng;
-use rand_chacha::ChaCha20Rng;
+use rand_core::SeedableRng;
 use std::num::Wrapping;
 
 #[derive(Debug, Clone, Copy)]
@@ -58,7 +58,7 @@ impl OneShotBitDec {
 ///
 /// Helper method to get a sharing of a simple u64 value
 fn get_my_share(val: u64, n: usize, threshold: usize, my_id: usize) -> Share<ResiduePoly64> {
-    let mut rng = ChaCha20Rng::seed_from_u64(val);
+    let mut rng = AesRng::seed_from_u64(val);
     let secret = ResiduePoly64::from_scalar(Wrapping(val));
     let shares = ShamirSharing::share(&mut rng, secret, n, threshold)
         .unwrap()
@@ -83,7 +83,7 @@ fn bit_dec_online(c: &mut Criterion) {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
                         let mut prep =
-                            DummyPreprocessing::<ResiduePoly64, ChaCha20Rng, LargeSession>::new(
+                            DummyPreprocessing::<ResiduePoly64, AesRng, LargeSession>::new(
                                 42,
                                 session.clone(),
                             );
@@ -136,7 +136,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                     let mut computation = |mut session: SmallSession<ResiduePoly64>| async move {
                         let prss_setup = PRSSSetup::init_with_abort::<
                             RealAgreeRandom,
-                            ChaCha20Rng,
+                            AesRng,
                             SmallSession<ResiduePoly64>,
                         >(&mut session)
                         .await

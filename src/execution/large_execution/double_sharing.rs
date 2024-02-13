@@ -13,7 +13,7 @@ use crate::{
 use async_trait::async_trait;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
-use rand::RngCore;
+use rand_core::CryptoRngCore;
 use std::collections::HashMap;
 
 type DoubleArrayShares<Z> = (ArrayD<Z>, ArrayD<Z>);
@@ -25,13 +25,13 @@ pub struct DoubleShare<Z> {
 
 #[async_trait]
 pub trait DoubleSharing<Z: Ring>: Send + Default + Clone {
-    async fn init<R: RngCore, L: LargeSessionHandles<R>>(
+    async fn init<R: CryptoRngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()>;
 
-    async fn next<R: RngCore, L: LargeSessionHandles<R>>(
+    async fn next<R: CryptoRngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<DoubleShare<Z>>;
@@ -50,7 +50,7 @@ pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
 
 #[async_trait]
 impl<Z: ShamirRing + Derive, S: LocalDoubleShare> DoubleSharing<Z> for RealDoubleSharing<Z, S> {
-    async fn init<R: RngCore, L: LargeSessionHandles<R>>(
+    async fn init<R: CryptoRngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
         l: usize,
@@ -81,7 +81,7 @@ impl<Z: ShamirRing + Derive, S: LocalDoubleShare> DoubleSharing<Z> for RealDoubl
         }
         Ok(())
     }
-    async fn next<R: RngCore, L: LargeSessionHandles<R>>(
+    async fn next<R: CryptoRngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<DoubleShare<Z>> {
@@ -201,7 +201,7 @@ pub(crate) mod tests {
             for _ in 0..num_output {
                 res.push(double_sharing.next(&mut session).await.unwrap());
             }
-            (session.my_role().unwrap(), session.rng.get_seed(), res)
+            (session.my_role().unwrap(), res)
         };
 
         // Rounds (only on the happy path here)
@@ -221,11 +221,11 @@ pub(crate) mod tests {
         let ldl_batch_size = 10_usize;
         let extracted_size = parties - threshold;
         let num_output = ldl_batch_size * extracted_size + 1;
-        assert_eq!(result[0].2.len(), num_output);
+        assert_eq!(result[0].1.len(), num_output);
         for value_idx in 0..num_output {
             let mut res_vec_t = Vec::new();
             let mut res_vec_2t = Vec::new();
-            for (role, _, res) in result.iter() {
+            for (role, res) in result.iter() {
                 res_vec_t.push(Share::new(*role, res[value_idx].degree_t));
                 res_vec_2t.push(Share::new(*role, res[value_idx].degree_2t));
             }
@@ -258,9 +258,7 @@ pub(crate) mod tests {
         let parties = 4;
         let threshold = 1;
 
-        async fn task(
-            mut session: LargeSession,
-        ) -> (Role, [u8; 32], Vec<DoubleShare<ResiduePoly128>>) {
+        async fn task(mut session: LargeSession) -> (Role, Vec<DoubleShare<ResiduePoly128>>) {
             let ldl_batch_size = 10_usize;
             let extracted_size = session.amount_of_parties() - session.threshold() as usize;
             let num_output = ldl_batch_size * extracted_size + 1;
@@ -284,7 +282,7 @@ pub(crate) mod tests {
                     })
                 }
             }
-            (session.my_role().unwrap(), session.rng.get_seed(), res)
+            (session.my_role().unwrap(), res)
         }
 
         let result =
@@ -294,11 +292,11 @@ pub(crate) mod tests {
         let ldl_batch_size = 10_usize;
         let extracted_size = parties - threshold;
         let num_output = ldl_batch_size * extracted_size + 1;
-        assert_eq!(result[0].2.len(), num_output);
+        assert_eq!(result[0].1.len(), num_output);
         for value_idx in 0..num_output {
             let mut res_vec_t = Vec::new();
             let mut res_vec_2t = Vec::new();
-            for (role, _, res) in result.iter() {
+            for (role, res) in result.iter() {
                 res_vec_t.push(Share::new(*role, res[value_idx].degree_t));
                 //Dont take into account corrupt party's share (due to pol. degree)
                 if role.zero_based() != 1 {

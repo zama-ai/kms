@@ -1,3 +1,4 @@
+use aes_prng::AesRng;
 use criterion::Throughput;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
@@ -17,9 +18,9 @@ use distributed_decryption::execution::small_execution::offline::SmallPreprocess
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_large;
 use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_small;
-use rand_chacha::ChaCha20Rng;
 
 use pprof::criterion::{Output, PProfProfiler};
+use rand_core::SeedableRng;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {
@@ -65,13 +66,12 @@ fn triple_nsmall128(c: &mut Criterion) {
                             randoms: 0,
                         };
 
-                        let prss_setup = PRSSSetup::init_with_abort::<
-                            RealAgreeRandom,
-                            ChaCha20Rng,
-                            SmallSession128,
-                        >(&mut session)
-                        .await
-                        .unwrap();
+                        let prss_setup =
+                            PRSSSetup::init_with_abort::<RealAgreeRandom, AesRng, SmallSession128>(
+                                &mut session,
+                            )
+                            .await
+                            .unwrap();
                         session.set_prss(Some(
                             prss_setup.new_prss_session_state(session.session_id()),
                         ));
@@ -374,7 +374,6 @@ fn bitgen_nlarge(c: &mut Criterion) {
 
 fn batch_decode2t(c: &mut Criterion) {
     use distributed_decryption::execution::sharing::shamir::ShamirSharing;
-    use rand_chacha::rand_core::SeedableRng;
     use std::num::Wrapping;
 
     let mut group = c.benchmark_group("batch_decode2t");
@@ -399,7 +398,7 @@ fn batch_decode2t(c: &mut Criterion) {
     for config in &params {
         let degree = config.t * 2;
 
-        let mut rng = ChaCha20Rng::seed_from_u64(0);
+        let mut rng = AesRng::seed_from_u64(0);
 
         let prep: Vec<ShamirSharing<_>> = (0..config.batch_size)
             .map(|idx| {

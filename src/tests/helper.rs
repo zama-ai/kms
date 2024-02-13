@@ -4,9 +4,9 @@
 /// TODO(Dragos) Investigate this afterwards.
 pub mod tests_and_benches {
 
+    use aes_prng::AesRng;
     use futures::Future;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
     use tokio::task::JoinSet;
 
     use crate::{
@@ -48,7 +48,7 @@ pub mod tests_and_benches {
                 .small_session_for_player(
                     session_id,
                     party_id,
-                    Some(ChaCha20Rng::seed_from_u64(party_id as u64)),
+                    Some(AesRng::seed_from_u64(party_id as u64)),
                 )
                 .unwrap();
             tasks.spawn(task(session));
@@ -140,7 +140,6 @@ pub mod tests {
     use futures::Future;
     use itertools::Itertools;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
     use tokio::task::{JoinError, JoinSet};
 
     use crate::{
@@ -352,7 +351,7 @@ pub mod tests {
         SmallSession {
             parameters,
             network: Arc::new(net_producer.user_net(id)),
-            rng: ChaCha20Rng::seed_from_u64(42),
+            rng: AesRng::seed_from_u64(42),
             corrupt_roles: HashSet::new(),
             prss_state: None,
         }
@@ -370,7 +369,7 @@ pub mod tests {
         SmallSession {
             parameters,
             network: Arc::new(net_producer.user_net(id)),
-            rng: ChaCha20Rng::seed_from_u64(42),
+            rng: AesRng::seed_from_u64(42),
             corrupt_roles: HashSet::new(),
             prss_state: None,
         }
@@ -385,7 +384,7 @@ pub mod tests {
         LargeSession {
             parameters,
             network: Arc::new(net_producer.user_net(id)),
-            rng: ChaCha20Rng::seed_from_u64(42),
+            rng: AesRng::seed_from_u64(42),
             corrupt_roles: HashSet::new(),
             disputed_roles: DisputeSet::new(parties),
         }
@@ -399,7 +398,7 @@ pub mod tests {
         LargeSession {
             parameters,
             network: Arc::new(net_producer.user_net(id)),
-            rng: ChaCha20Rng::seed_from_u64(42),
+            rng: AesRng::seed_from_u64(42),
             corrupt_roles: HashSet::new(),
             disputed_roles: DisputeSet::new(amount),
         }
@@ -453,13 +452,13 @@ pub mod tests {
                 .small_session_for_player(
                     session_id,
                     party_id,
-                    Some(ChaCha20Rng::seed_from_u64(party_id as u64)),
+                    Some(AesRng::seed_from_u64(party_id as u64)),
                 )
                 .unwrap();
             let mut session = LargeSession {
                 parameters: session.parameters.clone(),
                 network: session.network().clone(),
-                rng: ChaCha20Rng::seed_from_u64(party_id as u64),
+                rng: AesRng::seed_from_u64(party_id as u64),
                 corrupt_roles: HashSet::new(),
                 disputed_roles: DisputeSet::new(parties),
             };

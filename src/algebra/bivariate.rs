@@ -8,7 +8,7 @@ use anyhow::Result;
 use ndarray::Array;
 use ndarray::ArrayD;
 use ndarray::IxDyn;
-use rand::RngCore;
+use rand_core::CryptoRngCore;
 use std::ops::Mul;
 
 /// Bivariate polynomial is a matrix of coefficients of ResiduePolynomials
@@ -22,7 +22,7 @@ pub struct BivariatePoly<Z> {
 
 impl<Z> BivariatePoly<Z> {
     /// method for sampling random bivariate polynomial where free term is the secret
-    pub fn from_secret<R: RngCore>(rng: &mut R, secret: Z, degree: usize) -> Result<Self>
+    pub fn from_secret<R: CryptoRngCore>(rng: &mut R, secret: Z, degree: usize) -> Result<Self>
     where
         Z: Sample + Zero + Copy,
     {
@@ -167,8 +167,8 @@ mod tests {
         structure_traits::One,
     };
 
+    use aes_prng::AesRng;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha12Rng;
     use rstest::rstest;
     use std::num::Wrapping;
 
@@ -204,7 +204,7 @@ mod tests {
     #[case(10)]
     #[case(20)]
     fn test_bivariate_zero_128(#[case] degree: usize) {
-        let mut rng = ChaCha12Rng::seed_from_u64(0);
+        let mut rng = AesRng::seed_from_u64(0);
         let secret = ResiduePoly128::sample(&mut rng);
         let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
         let ev_zero = bpoly
@@ -219,7 +219,7 @@ mod tests {
     #[case(10)]
     #[case(20)]
     fn test_bivariate_zero_64(#[case] degree: usize) {
-        let mut rng = ChaCha12Rng::seed_from_u64(0);
+        let mut rng = AesRng::seed_from_u64(0);
         let secret = ResiduePoly64::sample(&mut rng);
         let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
         let ev_zero = bpoly
@@ -234,7 +234,7 @@ mod tests {
     #[case(10)]
     #[case(20)]
     fn test_bivariate_one_128(#[case] degree: usize) {
-        let mut rng = ChaCha12Rng::seed_from_u64(0);
+        let mut rng = AesRng::seed_from_u64(0);
         let secret = ResiduePoly128::sample(&mut rng);
         let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
         let ev_one = bpoly
@@ -250,7 +250,7 @@ mod tests {
     #[case(10)]
     #[case(20)]
     fn test_bivariate_one_64(#[case] degree: usize) {
-        let mut rng = ChaCha12Rng::seed_from_u64(0);
+        let mut rng = AesRng::seed_from_u64(0);
         let secret = ResiduePoly64::sample(&mut rng);
         let bpoly = BivariatePoly::from_secret(&mut rng, secret, degree).unwrap();
         let ev_one = bpoly

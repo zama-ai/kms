@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
 };
 
+use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
     algebra::{residue_poly::ResiduePoly128, structure_traits::Ring},
@@ -15,7 +16,6 @@ use distributed_decryption::{
     networking::local::LocalNetworkingProducer,
 };
 use rand::SeedableRng;
-use rand_chacha::ChaCha20Rng;
 
 fn bench_prss(c: &mut Criterion) {
     let sizes = vec![1_usize, 100, 10000];
@@ -34,8 +34,8 @@ fn bench_prss(c: &mut Criterion) {
         .block_on(async {
             PRSSSetup::init_with_abort::<
                 DummyAgreeRandom,
-                ChaCha20Rng,
-                SmallSessionStruct<ResiduePoly128, ChaCha20Rng, SessionParameters>,
+                AesRng,
+                SmallSessionStruct<ResiduePoly128, AesRng, SessionParameters>,
             >(&mut sess)
             .await
         })
@@ -65,11 +65,12 @@ pub fn get_small_session_for_parties<Z: Ring>(
     SmallSession {
         parameters,
         network: Arc::new(net_producer.user_net(id)),
-        rng: ChaCha20Rng::seed_from_u64(42),
+        rng: AesRng::seed_from_u64(42),
         corrupt_roles: HashSet::new(),
         prss_state: None,
     }
 }
+
 pub fn get_dummy_parameters_for_parties(
     amount: usize,
     threshold: u8,

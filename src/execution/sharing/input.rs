@@ -1,8 +1,3 @@
-use std::sync::Arc;
-
-use rand::RngCore;
-use tokio::{task::JoinSet, time::timeout_at};
-
 use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{
@@ -11,10 +6,13 @@ use crate::{
     },
     networking::value::NetworkValue,
 };
+use rand_core::CryptoRngCore;
+use std::sync::Arc;
+use tokio::{task::JoinSet, time::timeout_at};
 
 use super::shamir::{ShamirRing, ShamirSharing};
 
-pub async fn robust_input<Z: ShamirRing, R: RngCore>(
+pub async fn robust_input<Z: ShamirRing, R: CryptoRngCore>(
     session: &mut BaseSession,
     value: &Option<Z>,
     role: &Role,

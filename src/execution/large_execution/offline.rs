@@ -12,7 +12,7 @@ use crate::{
     },
 };
 use itertools::Itertools;
-use rand::RngCore;
+use rand_core::CryptoRngCore;
 
 #[derive(Default, Clone)]
 pub struct LargePreprocessing<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> {
@@ -32,7 +32,7 @@ impl<Z: ShamirRing, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing
     /// - batch size for single and double sharing
     /// - batch size for triple generation
     /// - batch size for random generation
-    pub async fn init<R: RngCore, L: LargeSessionHandles<R>>(
+    pub async fn init<R: CryptoRngCore, L: LargeSessionHandles<R>>(
         session: &mut L,
         batch_sizes: BatchParams,
         mut shh: S,
@@ -64,7 +64,7 @@ impl<Z: ShamirRing, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing
 
     /// Constructs a new batch of triples and appends this to the internal triple storage.
     /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
-    async fn next_triple_batch<R: RngCore, L: LargeSessionHandles<R>>(
+    async fn next_triple_batch<R: CryptoRngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<()> {
@@ -123,7 +123,7 @@ impl<Z: ShamirRing, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing
 
     /// Computes a new batch of random values and appends the new batch to the the existing stash of prepreocessing random values.
     /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
-    async fn next_random_batch<R: RngCore, L: LargeSessionHandles<R>>(
+    async fn next_random_batch<R: CryptoRngCore, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<()> {

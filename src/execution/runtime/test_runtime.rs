@@ -14,7 +14,7 @@ use crate::{
     lwe::{BootstrappingKey, SecretKeyShare},
     networking::local::{LocalNetworking, LocalNetworkingProducer},
 };
-use rand_chacha::ChaCha20Rng;
+use aes_prng::AesRng;
 use std::{collections::HashMap, sync::Arc};
 
 // TODO The name and use of unwrap hints that this is a struct only to be used for testing, but it is laos used in production, e.g. in grpc.rs
@@ -100,8 +100,8 @@ impl<Z: ShamirRing> DistributedTestRuntime<Z> {
             .block_on(async {
                 PRSSSetup::init_with_abort::<
                     DummyAgreeRandom,
-                    ChaCha20Rng,
-                    SmallSessionStruct<Z, ChaCha20Rng, SessionParameters>,
+                    AesRng,
+                    SmallSessionStruct<Z, AesRng, SessionParameters>,
                 >(session)
                 .await
             })
@@ -113,7 +113,7 @@ impl<Z: ShamirRing> DistributedTestRuntime<Z> {
         &self,
         session_id: SessionId,
         player_id: usize,
-        rng: Option<ChaCha20Rng>,
+        rng: Option<AesRng>,
     ) -> anyhow::Result<SmallSession<Z>> {
         let role_assignments = self.role_assignments.clone();
         let net = Arc::clone(&self.user_nets[player_id]);

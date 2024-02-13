@@ -6,7 +6,7 @@ use crate::execution::runtime::session::BaseSessionHandles;
 use crate::networking::value::BroadcastValue;
 use crate::networking::value::NetworkValue;
 use itertools::Itertools;
-use rand::RngCore;
+use rand_core::CryptoRngCore;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -17,7 +17,7 @@ use tokio::time::timeout_at;
 type RoleValueMap<Z> = HashMap<Role, BroadcastValue<Z>>;
 
 /// send to all parties and automatically increase round counter
-pub async fn send_to_all<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+pub async fn send_to_all<Z: Ring, R: CryptoRngCore, B: BaseSessionHandles<R>>(
     session: &B,
     sender: &Role,
     msg: NetworkValue<Z>,
@@ -48,7 +48,7 @@ pub async fn send_to_all<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
 /// On the receiving end, a party processes a message of a single variant of the [NetworkValue] enum
 /// and errors out if message is of a different form. This is helpful so that we can peel the message
 /// from the inside enum.
-pub fn generic_receive_from_all_senders<V, Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+pub fn generic_receive_from_all_senders<V, Z: Ring, R: CryptoRngCore, B: BaseSessionHandles<R>>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &B,
     receiver: &Role,
@@ -95,7 +95,7 @@ where
 }
 
 ///Wrapper around [generic_receive_from_all_senders] where the sender list is all the parties.
-pub fn generic_receive_from_all<V, Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+pub fn generic_receive_from_all<V, Z: Ring, R: CryptoRngCore, B: BaseSessionHandles<R>>(
     jobs: &mut JoinSet<Result<(Role, anyhow::Result<V>), Elapsed>>,
     session: &B,
     receiver: &Role,
@@ -116,7 +116,7 @@ where
     )
 }
 
-async fn receive_from_all_senders<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+async fn receive_from_all_senders<Z: Ring, R: CryptoRngCore, B: BaseSessionHandles<R>>(
     round1_data: &mut RoleValueMap<Z>,
     session: &B,
     receiver: &Role,
@@ -174,7 +174,7 @@ async fn receive_from_all_senders<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>
 }
 
 type JobType<Z> = (Role, anyhow::Result<RoleValueMap<Z>>);
-async fn receive_from_all_echo_batch<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+async fn receive_from_all_echo_batch<Z: Ring, R: CryptoRngCore, B: BaseSessionHandles<R>>(
     session: &B,
     receiver: &Role,
     non_answering_parties: &mut HashSet<Role>,
@@ -208,7 +208,7 @@ async fn receive_from_all_echo_batch<Z: Ring, R: RngCore, B: BaseSessionHandles<
     Ok(registered_votes)
 }
 
-fn receive_from_all_votes<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+fn receive_from_all_votes<Z: Ring, R: CryptoRngCore, B: BaseSessionHandles<R>>(
     jobs: &mut JoinSet<Result<JobType<Z>, Elapsed>>,
     session: &B,
     receiver: &Role,
@@ -303,7 +303,7 @@ async fn process_echos<Z: Ring>(
 }
 
 /// Sender casts a vote only for messages m in registered_votes for which #m >= threshold
-async fn cast_threshold_vote<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+async fn cast_threshold_vote<Z: Ring, R: CryptoRngCore, B: BaseSessionHandles<R>>(
     session: &B,
     sender: &Role,
     registered_votes: &HashMap<(Role, BroadcastValue<Z>), u32>,
@@ -332,7 +332,7 @@ async fn cast_threshold_vote<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
 /// Sender gathers votes from all the other parties.
 /// If enough votes >=(T+R) and sender hasn't voted then vote
 /// If enough votes >=(N-T) then stop the computation
-async fn gather_votes<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+async fn gather_votes<Z: Ring, R: CryptoRngCore, B: BaseSessionHandles<R>>(
     session: &B,
     sender: &Role,
     registered_votes: &mut HashMap<(Role, BroadcastValue<Z>), u32>,
@@ -395,7 +395,7 @@ async fn gather_votes<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
 /// Here Pi = sender and  vi = Vi
 /// Function returns a map bcast_data: Role => Value such that
 /// all players have the broadcasted values inside the map: bcast_data[Pj] = Vj for all j in [n]
-pub async fn reliable_broadcast<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+pub async fn reliable_broadcast<Z: Ring, R: CryptoRngCore, B: BaseSessionHandles<R>>(
     session: &B,
     sender_list: &[Role],
     vi: Option<BroadcastValue<Z>>,
@@ -501,7 +501,7 @@ pub async fn reliable_broadcast<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
     Ok(bcast_data)
 }
 
-pub async fn reliable_broadcast_all<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+pub async fn reliable_broadcast_all<Z: Ring, R: CryptoRngCore, B: BaseSessionHandles<R>>(
     session: &B,
     vi: Option<BroadcastValue<Z>>,
 ) -> anyhow::Result<RoleValueMap<Z>> {
@@ -512,7 +512,7 @@ pub async fn reliable_broadcast_all<Z: Ring, R: RngCore, B: BaseSessionHandles<R
 /// Execute a [reliable_broadcast_all] in the presence of corrupt parties.
 /// Parties in `corrupt_roles` are ignored during the execution and if any new corruptions are detected then they are added to `corrupt_roles`
 /// WARNING: It is CRUCIAL that the corrupt roles are ignored, as otherwise they could cause a DoS attack with the current logic of the functions using this method.
-pub async fn broadcast_with_corruption<Z: Ring, R: RngCore, Ses: BaseSessionHandles<R>>(
+pub async fn broadcast_with_corruption<Z: Ring, R: CryptoRngCore, Ses: BaseSessionHandles<R>>(
     session: &mut Ses,
     vi: BroadcastValue<Z>,
 ) -> anyhow::Result<RoleValueMap<Z>> {
@@ -555,9 +555,9 @@ mod tests {
         generate_fixed_identities, DistributedTestRuntime,
     };
     use crate::execution::sharing::shamir::ShamirRing;
+    use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
     use std::num::Wrapping;
 
     fn legitimate_broadcast<Z: ShamirRing>(
@@ -589,7 +589,7 @@ mod tests {
                     .small_session_for_player(
                         session_id,
                         party_no,
-                        Some(ChaCha20Rng::from_seed([num; 32])),
+                        Some(AesRng::seed_from_u64(num.into())),
                     )
                     .unwrap();
                 set.spawn(async move {
@@ -601,11 +601,7 @@ mod tests {
         } else {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
                 let session = runtime
-                    .small_session_for_player(
-                        session_id,
-                        party_no,
-                        Some(ChaCha20Rng::from_seed([0_u8; 32])),
-                    )
+                    .small_session_for_player(session_id, party_no, Some(AesRng::seed_from_u64(0)))
                     .unwrap();
                 let sender_list = sender_parties.to_vec();
                 if sender_parties.contains(&Role::indexed_by_zero(party_no)) {
@@ -725,11 +721,7 @@ mod tests {
         let mut set = JoinSet::new();
         for (party_no, my_data) in input_values.iter().cloned().enumerate() {
             let session = runtime
-                .small_session_for_player(
-                    session_id,
-                    party_no,
-                    Some(ChaCha20Rng::from_seed([0_u8; 32])),
-                )
+                .small_session_for_player(session_id, party_no, Some(AesRng::seed_from_u64(0)))
                 .unwrap();
             if party_no != 0 {
                 set.spawn(async move {
@@ -834,7 +826,7 @@ mod tests {
     //In this strategy, the cheater broadcast something different to all the parties,
     //and then votes for something whenever it has the opportunity
     //this behavior is expected to NOT come to any output for this sender
-    async fn cheater_broadcast_strategy_1<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+    async fn cheater_broadcast_strategy_1<Z: Ring, R: CryptoRngCore, B: BaseSessionHandles<R>>(
         session: &B,
         sender_list: &[Role],
         vec_vi: Option<Vec<BroadcastValue<Z>>>,
@@ -1038,7 +1030,7 @@ mod tests {
     //In this strategy, the cheater sends m0 to P2 and m1 to P3 and P4,
     //it then echoes m to P3 an P4 but echoes m0 to P2 and does not vote for anything
     //we thus expect that P2,P3,P4 will end up agreeing on m1 at the end of round5
-    async fn cheater_broadcast_strategy_2<Z: Ring, R: RngCore, B: BaseSessionHandles<R>>(
+    async fn cheater_broadcast_strategy_2<Z: Ring, R: CryptoRngCore, B: BaseSessionHandles<R>>(
         session: &B,
         sender_list: &[Role],
         vec_vi: Option<Vec<BroadcastValue<Z>>>,

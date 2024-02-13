@@ -12,9 +12,10 @@ use crate::{
         },
     },
 };
+use aes_prng::AesRng;
 use mockall::automock;
-use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha20Rng;
+use rand::SeedableRng;
+use rand_core::CryptoRngCore;
 
 /// The amount of triples required in a distributed decryption
 pub const TRIPLE_BATCH_SIZE: usize = 10_usize;
@@ -95,7 +96,7 @@ impl<Z: Ring> Preprocessing<Z> for BasePreprocessing<Z> {
 /// with `threshold` degree.
 /// Its implementation is deterministic but pseudorandomly and fully derived using the `seed`.
 #[derive(Clone)]
-pub struct DummyPreprocessing<Z, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> {
+pub struct DummyPreprocessing<Z, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>> {
     seed: u64,
     session: Ses,
     pub rnd_ctr: u64,
@@ -104,7 +105,9 @@ pub struct DummyPreprocessing<Z, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> {
     _phantom2: std::marker::PhantomData<Rnd>,
 }
 
-impl<Z: ShamirRing, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> DummyPreprocessing<Z, Rnd, Ses> {
+impl<Z: ShamirRing, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>>
+    DummyPreprocessing<Z, Rnd, Ses>
+{
     /// Dummy preprocessing which generates shares deterministically from `seed`
     pub fn new(seed: u64, session: Ses) -> Self {
         DummyPreprocessing::<Z, Rnd, Ses> {
@@ -123,7 +126,7 @@ impl<Z: ShamirRing, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> DummyPreprocessi
         parties: usize,
         threshold: u8,
         secret: Z,
-        rng: &mut impl RngCore,
+        rng: &mut impl CryptoRngCore,
     ) -> anyhow::Result<Vec<Share<Z>>> {
         let poly = Poly::sample_random_with_fixed_constant(rng, secret, threshold as usize);
         (1..=parties)
@@ -138,7 +141,7 @@ impl<Z: ShamirRing, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> DummyPreprocessi
     }
 }
 
-impl<Z: ShamirRing, Rnd: RngCore + Send + Sync + Clone, Ses: BaseSessionHandles<Rnd>>
+impl<Z: ShamirRing, Rnd: CryptoRngCore + Send + Sync + Clone, Ses: BaseSessionHandles<Rnd>>
     Preprocessing<Z> for DummyPreprocessing<Z, Rnd, Ses>
 {
     /// Computes a dummy triple deterministically constructed from the seed in [DummyPreprocessing].
@@ -146,8 +149,7 @@ impl<Z: ShamirRing, Rnd: RngCore + Send + Sync + Clone, Ses: BaseSessionHandles<
         // Used to distinguish calls to next random and next triple
         const TRIP_FLAG: u64 = 0x47873E027A425DDE;
         // Use a new RNG based on the seed and counter
-        let mut rng: ChaCha20Rng =
-            ChaCha20Rng::seed_from_u64(self.seed ^ self.trip_ctr ^ TRIP_FLAG);
+        let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.trip_ctr ^ TRIP_FLAG);
         self.trip_ctr += 1;
         let a = Z::sample(&mut rng);
         let a_vec = DummyPreprocessing::<Z, Rnd, Ses>::share(
@@ -190,7 +192,7 @@ impl<Z: ShamirRing, Rnd: RngCore + Send + Sync + Clone, Ses: BaseSessionHandles<
         // Used to distinguish calls to next random and next triple
         const RAND_FLAG: u64 = 0x818DECF7255EBCE6;
         // Use a new RNG based on the seed and counter
-        let mut rng: ChaCha20Rng = ChaCha20Rng::seed_from_u64(self.seed ^ self.rnd_ctr ^ RAND_FLAG);
+        let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.rnd_ctr ^ RAND_FLAG);
         self.rnd_ctr += 1;
         let secret = Z::sample(&mut rng);
         let all_parties_shares = DummyPreprocessing::<Z, Rnd, Ses>::share(
@@ -227,7 +229,7 @@ impl<Z: ShamirRing, Rnd: RngCore + Send + Sync + Clone, Ses: BaseSessionHandles<
 /// Dummy preprocessing struct constructed primarely for use for debugging
 /// Concretely the struct can be used _non-interactively_ since shares will all be points,
 /// i.e. sharing of threshold=0
-pub struct DummyDebugPreprocessing<Z, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> {
+pub struct DummyDebugPreprocessing<Z, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>> {
     seed: u64,
     session: Ses,
     rnd_ctr: u64,
@@ -235,7 +237,7 @@ pub struct DummyDebugPreprocessing<Z, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>
     _phantom_rnd: std::marker::PhantomData<Rnd>,
     _phantom_z: std::marker::PhantomData<Z>,
 }
-impl<Z, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> DummyDebugPreprocessing<Z, Rnd, Ses> {
+impl<Z, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>> DummyDebugPreprocessing<Z, Rnd, Ses> {
     // Dummy preprocessing which generates shares deterministically from `seed`
     pub fn new(seed: u64, session: Ses) -> Self {
         DummyDebugPreprocessing::<Z, Rnd, Ses> {
@@ -248,15 +250,14 @@ impl<Z, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> DummyDebugPreprocessing<Z, R
         }
     }
 }
-impl<Z: Ring, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> Preprocessing<Z>
+impl<Z: Ring, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>> Preprocessing<Z>
     for DummyDebugPreprocessing<Z, Rnd, Ses>
 {
     /// Computes a dummy triple deterministically constructed from the seed in [DummyPreprocessing].
     fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
         // Used to distinguish calls to next random and next triple
         const TRIP_FLAG: u64 = 0x47873E027A425DDE;
-        let mut rng: ChaCha20Rng =
-            ChaCha20Rng::seed_from_u64(self.seed ^ self.trip_ctr ^ TRIP_FLAG);
+        let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.trip_ctr ^ TRIP_FLAG);
         self.trip_ctr += 1;
         let a = Share::new(self.session.my_role()?, Z::sample(&mut rng));
         let b = Share::new(self.session.my_role()?, Z::sample(&mut rng));
@@ -269,7 +270,7 @@ impl<Z: Ring, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> Preprocessing<Z>
         // Used to distinguish calls to next random and next triple
         const RAND_FLAG: u64 = 0x818DECF7255EBCE6;
         // Construct a rng uniquely defined from the dummy seed and the ctr
-        let mut rng: ChaCha20Rng = ChaCha20Rng::seed_from_u64(self.seed ^ self.rnd_ctr ^ RAND_FLAG);
+        let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.rnd_ctr ^ RAND_FLAG);
         self.rnd_ctr += 1;
         Ok(Share::new(self.session.my_role()?, Z::sample(&mut rng)))
     }
@@ -297,7 +298,7 @@ impl<Z: Ring, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>> Preprocessing<Z>
 
 /// Helper method to reconstructs a shared ring element based on a vector of shares.
 /// Returns an error if reconstruction fails, and otherwise the reconstructed ring value.
-pub fn reconstruct<Z: ShamirRing, Rnd: RngCore, Ses: BaseSessionHandles<Rnd>>(
+pub fn reconstruct<Z: ShamirRing, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>>(
     session: &Ses,
     shares: Vec<Share<Z>>,
 ) -> anyhow::Result<Z> {
@@ -326,9 +327,9 @@ mod tests {
         },
         tests::helper::tests::{get_small_session, get_small_session_for_parties},
     };
+    use aes_prng::AesRng;
     use itertools::Itertools;
     use paste::paste;
-    use rand_chacha::ChaCha20Rng;
     use std::num::Wrapping;
 
     use super::Share;
@@ -429,7 +430,7 @@ mod tests {
                 fn [<test_threshold_dummy_share $z:lower>]() {
                     let msg = ResiduePoly::<$z>::from_scalar(Wrapping(42));
                     let mut session = get_small_session_for_parties::<ResiduePoly<$z>>(10, 3, Role::indexed_by_one(1));
-                    let shares = DummyPreprocessing::<ResiduePoly<$z>, ChaCha20Rng, SmallSession<ResiduePoly<$z>>>::share(
+                    let shares = DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::share(
                         session.amount_of_parties(),
                         session.threshold(),
                         msg,
@@ -447,7 +448,7 @@ mod tests {
                     let mut preps = Vec::new();
                     for i in 1..=parties {
                         let session = get_small_session_for_parties(parties, threshold, Role::indexed_by_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, ChaCha20Rng, SmallSession<ResiduePoly<$z>>>::new(42, session));
+                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session));
                     }
                     let recon = [<get_rand_ $z:lower>](parties, threshold, 2, &mut preps);
                     // Check that the values are different
@@ -460,7 +461,7 @@ mod tests {
                     parties: usize,
                     threshold: u8,
                     amount: usize,
-                    preps: &mut [DummyPreprocessing::<ResiduePoly<$z>, ChaCha20Rng, SmallSession<ResiduePoly<$z>>>],
+                    preps: &mut [DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>],
                 ) -> Vec<ResiduePoly<$z>> {
                     let session = get_small_session_for_parties::<ResiduePoly<$z>>(parties, threshold, Role::indexed_by_one(1));
                     let mut res = Vec::new();
@@ -488,7 +489,7 @@ mod tests {
                     let mut preps = Vec::new();
                     for i in 1..=parties {
                         let session = get_small_session_for_parties(parties, threshold, Role::indexed_by_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, ChaCha20Rng, SmallSession<ResiduePoly<$z>>>::new(42, session));
+                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session));
                     }
                     let trips = [<get_trip_ $z:lower>](parties, threshold, 2, &mut preps);
                     assert_ne!(trips[0], trips[1]);
@@ -498,7 +499,7 @@ mod tests {
                     parties: usize,
                     threshold: u8,
                     amount: usize,
-                    preps: &mut [DummyPreprocessing::<ResiduePoly<$z>, ChaCha20Rng, SmallSession<ResiduePoly<$z>>>],
+                    preps: &mut [DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>],
                 ) -> Vec<(ResiduePoly<$z>, ResiduePoly<$z>, ResiduePoly<$z>)> {
                     let session = get_small_session_for_parties::<ResiduePoly<$z>>(parties, threshold, Role::indexed_by_one(1));
                     let mut res = Vec::new();
@@ -538,7 +539,7 @@ mod tests {
                     let mut preps = Vec::new();
                     for i in 1..=parties {
                         let session = get_small_session_for_parties(parties, threshold, Role::indexed_by_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, ChaCha20Rng, SmallSession<ResiduePoly<$z>>>::new(42, session));
+                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session));
                     }
                     let rand_a = [<get_rand_ $z:lower>](parties, threshold, 1, &mut preps)[0];
                     let trip_a = [<get_trip_ $z:lower>](parties, threshold, 1, &mut preps)[0];

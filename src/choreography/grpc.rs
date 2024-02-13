@@ -437,7 +437,7 @@ impl Choreography for GrpcChoreography {
 
                 tracing::debug!("own identity: {:?}", own_identity);
 
-                let mut session: SmallSessionStruct<ResiduePoly128,rand_chacha::ChaCha20Rng, SessionParameters> = SmallSession::new(
+                let mut session: SmallSessionStruct<ResiduePoly128,aes_prng::AesRng, SessionParameters> = SmallSession::new(
                     epoch_id, role_assignments, Arc::clone(&networking), threshold, None, own_identity, None,)
                 .map_err(|e| {
                     tonic::Status::new(

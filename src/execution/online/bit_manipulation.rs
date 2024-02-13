@@ -1,10 +1,9 @@
+use rand_core::CryptoRngCore;
 use std::marker::PhantomData;
-
-use crate::execution::online::gen_bits::Solve;
-use rand::RngCore;
 
 use crate::algebra::residue_poly::ResiduePoly;
 use crate::algebra::structure_traits::{BaseRing, BitExtract, ZConsts};
+use crate::execution::online::gen_bits::Solve;
 use crate::execution::sharing::shamir::ShamirRing;
 use crate::{
     algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log,
@@ -111,7 +110,7 @@ where
     }
 
     async fn xor_list_secret_secret<
-        Rnd: RngCore + Send + Sync,
+        Rnd: CryptoRngCore + Send + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -141,7 +140,7 @@ where
     }
 
     async fn and_list_secret_secret<
-        Rnd: RngCore + Send + Sync,
+        Rnd: CryptoRngCore + Send + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -191,7 +190,7 @@ where
     /// (and_left, and_right) = lhs AND rhs
     /// Then lhs1 XOR rhs1 is computed using and_left and other (local) linear operations.
     async fn compressed_xor_and<
-        Rnd: RngCore + Send + Sync,
+        Rnd: CryptoRngCore + Send + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -226,7 +225,7 @@ where
     }
 
     async fn binary_adder_secret_clear<
-        Rnd: RngCore + Send + Sync,
+        Rnd: CryptoRngCore + Send + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -285,7 +284,7 @@ where
     /// o/w we return m
     /// Hence we do a final MUX, depending on the bit b.
     pub async fn extract_ptxts<
-        Rnd: RngCore + Send + Sync,
+        Rnd: CryptoRngCore + Send + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -346,7 +345,7 @@ where
     }
 
     pub async fn xor_list_secret_secret<
-        Rnd: RngCore + Send + Sync,
+        Rnd: CryptoRngCore + Send + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -360,7 +359,7 @@ where
     }
 
     pub async fn and_list_secret_secret<
-        Rnd: RngCore + Send + Sync,
+        Rnd: CryptoRngCore + Send + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -408,7 +407,7 @@ where
 pub async fn bit_dec_batch<
     Z,
     P: Preprocessing<ResiduePoly<Z>>,
-    Rnd: RngCore + Send + Sync,
+    Rnd: CryptoRngCore + Send + Sync,
     Ses: BaseSessionHandles<Rnd>,
 >(
     session: &mut Ses,
@@ -480,9 +479,9 @@ mod tests {
 
     use crate::algebra::structure_traits::Ring;
     use crate::execution::sharing::shamir::ShamirSharing;
+    use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
     use rstest::rstest;
 
     use crate::algebra::base_ring::Z64;
@@ -500,7 +499,7 @@ mod tests {
 
     /// Helper method to get a sharing of a simple u64 value
     fn get_my_share(val: u64, session: &SmallSession<ResiduePoly<Z64>>) -> Share<ResiduePoly<Z64>> {
-        let mut rng = ChaCha20Rng::seed_from_u64(val);
+        let mut rng = AesRng::seed_from_u64(val);
         let secret = ResiduePoly::<Z64>::from_scalar(Wrapping(val));
         let shares = ShamirSharing::share(
             &mut rng,
@@ -535,7 +534,7 @@ mod tests {
                 .collect_vec();
             let mut preprocessing = DummyPreprocessing::<
                 ResiduePoly<Z64>,
-                ChaCha20Rng,
+                AesRng,
                 SmallSession<ResiduePoly<Z64>>,
             >::new(42, session.clone());
             let bits = Bits::<ResiduePoly<Z64>>::xor_list_secret_secret(
@@ -597,7 +596,7 @@ mod tests {
         let mut task = |mut session: SmallSession<ResiduePoly<Z64>>| async move {
             let mut prep = DummyPreprocessing::<
                 ResiduePoly<Z64>,
-                ChaCha20Rng,
+                AesRng,
                 SmallSession<ResiduePoly<Z64>>,
             >::new(42, session.clone());
 
@@ -648,7 +647,7 @@ mod tests {
         let mut task = |mut session: SmallSession<ResiduePoly<Z64>>| async move {
             let mut prep = DummyPreprocessing::<
                 ResiduePoly<Z64>,
-                ChaCha20Rng,
+                AesRng,
                 SmallSession<ResiduePoly<Z64>>,
             >::new(42, session.clone());
 
@@ -770,7 +769,7 @@ mod tests {
         let mut task = |mut session: SmallSession<ResiduePoly<Z64>>| async move {
             let mut prep = DummyPreprocessing::<
                 ResiduePoly<Z64>,
-                ChaCha20Rng,
+                AesRng,
                 SmallSession<ResiduePoly<Z64>>,
             >::new(42, session.clone());
 

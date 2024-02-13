@@ -1,6 +1,7 @@
+use aes_prng::AesRng;
 use async_trait::async_trait;
-use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha12Rng;
+use rand::SeedableRng;
+use rand_core::CryptoRngCore;
 
 use crate::{
     error::error_handler::anyhow_error_and_log,
@@ -14,7 +15,7 @@ use super::vss::Vss;
 
 #[async_trait]
 pub trait Coinflip: Send + Sync + Clone + Default {
-    async fn execute<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
     ) -> anyhow::Result<Z>;
@@ -25,12 +26,12 @@ pub struct DummyCoinflip {}
 
 #[async_trait]
 impl Coinflip for DummyCoinflip {
-    async fn execute<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
         &self,
         _session: &mut L,
     ) -> anyhow::Result<Z> {
         //Everyone just generate the same randomness by calling a new rng with a fixed seed
-        let mut rng = ChaCha12Rng::seed_from_u64(0);
+        let mut rng = AesRng::seed_from_u64(0);
         Ok(Z::sample(&mut rng))
     }
 }
@@ -48,7 +49,7 @@ impl<V: Vss> RealCoinflip<V> {
 
 #[async_trait]
 impl<V: Vss> Coinflip for RealCoinflip<V> {
-    async fn execute<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
     ) -> anyhow::Result<Z> {
@@ -97,10 +98,11 @@ pub(crate) mod tests {
             TestingParameters,
         },
     };
+    use aes_prng::AesRng;
     use anyhow::anyhow;
     use async_trait::async_trait;
-    use rand::{RngCore, SeedableRng};
-    use rand_chacha::ChaCha20Rng;
+    use rand::SeedableRng;
+    use rand_core::CryptoRngCore;
     use rstest::rstest;
     use tokio::task::JoinSet;
 
@@ -179,7 +181,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<V: Vss> Coinflip for DroppingCoinflipAfterVss<V> {
-        async fn execute<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
             &self,
             session: &mut L,
         ) -> anyhow::Result<Z> {
@@ -193,7 +195,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<V: Vss> Coinflip for MaliciousCoinflipRecons<V> {
-        async fn execute<Z: ShamirRing, R: RngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
             &self,
             session: &mut L,
         ) -> anyhow::Result<Z> {
@@ -276,7 +278,7 @@ pub(crate) mod tests {
                 .contains(&Role::indexed_by_zero(party_nb))
                 && params.should_be_detected)
             {
-                let mut tmp_rng = ChaCha20Rng::seed_from_u64(party_nb as u64);
+                let mut tmp_rng = AesRng::seed_from_u64(party_nb as u64);
                 expected_res += Z::sample(&mut tmp_rng);
             }
         }

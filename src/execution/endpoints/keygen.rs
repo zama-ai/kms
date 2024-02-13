@@ -1,7 +1,7 @@
 use std::{num::Wrapping, sync::Arc};
 
+use aes_prng::AesRng;
 use ndarray::Array1;
-use rand_chacha::ChaCha20Rng;
 use tfhe::core_crypto::prelude::Numeric;
 use tokio::{task::JoinSet, time::timeout_at};
 
@@ -92,8 +92,8 @@ pub async fn initialize_key_material(
         Some(
             PRSSSetup::init_with_abort::<
                 DummyAgreeRandom,
-                ChaCha20Rng,
-                SmallSessionStruct<ResiduePoly128, ChaCha20Rng, SessionParameters>,
+                AesRng,
+                SmallSessionStruct<ResiduePoly128, AesRng, SessionParameters>,
             >(session)
             .await?,
         )
@@ -149,7 +149,7 @@ pub async fn initialize_key_material(
             1 => Some(ResiduePoly::from_scalar(Wrapping::<u64>(cur))),
             _ => None,
         };
-        let share = robust_input::<_, ChaCha20Rng>(
+        let share = robust_input::<_, AesRng>(
             &mut session.to_base_session(),
             &secret,
             &own_role,
@@ -168,7 +168,7 @@ pub async fn initialize_key_material(
             1 => Some(ResiduePoly::from_scalar(Wrapping::<u128>(cur))),
             _ => None,
         };
-        let share = robust_input::<_, ChaCha20Rng>(
+        let share = robust_input::<_, AesRng>(
             &mut session.to_base_session(),
             &secret,
             &own_role,

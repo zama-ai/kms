@@ -2,7 +2,7 @@ use super::share::Share;
 use crate::algebra::poly::Poly;
 use crate::execution::runtime::party::Role;
 use crate::{algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log};
-use rand::RngCore;
+use rand_core::CryptoRngCore;
 use std::ops::{Add, Mul, Sub};
 
 ///Trait required to be able to reconstruct a shamir sharing
@@ -138,7 +138,7 @@ impl<Z: ShamirRing> ShamirSharing<Z> {
     /// a share for party i is G(encode(i)) where
     /// G(X) = a_0 + a_1 * X + ... + a_{t-1} * X^{t-1}
     /// a_i \in Z_{2^K}/F(X) = G; deg(F) = 8
-    pub fn share<R: RngCore>(
+    pub fn share<R: CryptoRngCore>(
         rng: &mut R,
         secret: Z,
         num_parties: usize,
@@ -175,9 +175,9 @@ impl<Z: ShamirRing> ShamirSharing<Z> {
 mod tests {
     use super::*;
     use crate::algebra::residue_poly::{ResiduePoly, TryFromWrapper};
+    use aes_prng::AesRng;
     use paste::paste;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha12Rng;
     use std::num::Wrapping;
 
     macro_rules! tests_poly_shamir {
@@ -185,7 +185,7 @@ mod tests {
             paste! {
             #[test]
             fn [<test_arith_const_add2_ $z:lower>]() {
-                let mut rng = ChaCha12Rng::seed_from_u64(0);
+                let mut rng = AesRng::seed_from_u64(0);
                 let secret : ResiduePoly<$z> = ResiduePoly::<$z>::from_scalar(Wrapping(23));
                 let sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, secret, 9, 5).unwrap();
 
@@ -199,7 +199,7 @@ mod tests {
 
             #[test]
             fn [<test_arith_const_mul2_ $z:lower>]() {
-                let mut rng = ChaCha12Rng::seed_from_u64(0);
+                let mut rng = AesRng::seed_from_u64(0);
 
                 let secret : ResiduePoly<$z> = ResiduePoly::<$z>::from_scalar(Wrapping(23));
                 let sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, secret, 9, 5).unwrap();
@@ -213,7 +213,7 @@ mod tests {
 
             #[test]
             fn [<test_shamir_arithmetic_2_ $z:lower>]() {
-                let mut rng = ChaCha12Rng::seed_from_u64(0);
+                let mut rng = AesRng::seed_from_u64(0);
 
                 let secret_a = ResiduePoly::<$z>::from_scalar(Wrapping(23));
                 let secret_b = ResiduePoly::<$z>::from_scalar(Wrapping(42));
@@ -237,7 +237,7 @@ mod tests {
 
             #[test]
             fn [<test_shamir_g_arithmetic_add_ $z:lower>]() {
-                let mut rng = ChaCha12Rng::seed_from_u64(0);
+                let mut rng = AesRng::seed_from_u64(0);
 
                 let secret_a = ResiduePoly::<$z>::from_scalar(Wrapping(23));
                 let secret_b = ResiduePoly::<$z>::from_scalar(Wrapping(42));

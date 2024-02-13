@@ -1,7 +1,8 @@
 use std::{collections::HashMap, num::Wrapping, sync::Arc};
 
-use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha20Rng;
+use aes_prng::AesRng;
+use rand::SeedableRng;
+use rand_core::CryptoRngCore;
 
 use crate::execution::config::BatchParams;
 use crate::execution::large_execution::offline::LargePreprocessing;
@@ -86,12 +87,12 @@ async fn setup_small_session<Z: ShamirRing>(
         threshold,
         None,
         identity.clone(),
-        Some(ChaCha20Rng::from_entropy()),
+        Some(AesRng::from_entropy()),
     )
     .unwrap();
 
     let prss_setup =
-        PRSSSetup::init_with_abort::<RealAgreeRandom, ChaCha20Rng, SmallSession<Z>>(&mut session)
+        PRSSSetup::init_with_abort::<RealAgreeRandom, AesRng, SmallSession<Z>>(&mut session)
             .await
             .unwrap();
 
@@ -270,7 +271,7 @@ pub fn threshold_decrypt64<Z: ShamirRing>(
     Ok(results)
 }
 
-async fn open_masked_ptxts<R: RngCore + Send, S: BaseSessionHandles<R>>(
+async fn open_masked_ptxts<R: CryptoRngCore + Send, S: BaseSessionHandles<R>>(
     session: &S,
     res: Vec<ResiduePoly128>,
     keyshares: &SecretKeyShare,
@@ -311,7 +312,7 @@ async fn open_masked_ptxts<R: RngCore + Send, S: BaseSessionHandles<R>>(
     Ok(vec![Wrapping(0)])
 }
 
-async fn open_bit_composed_ptxts<R: RngCore + Send, S: BaseSessionHandles<R>>(
+async fn open_bit_composed_ptxts<R: CryptoRngCore + Send, S: BaseSessionHandles<R>>(
     session: &S,
     res: Vec<ResiduePoly64>,
 ) -> anyhow::Result<Vec<Z64>> {
@@ -428,7 +429,7 @@ pub async fn run_decryption_small(
 // run decryption with bit-decomposition
 pub async fn run_decryption_bitdec<
     P: Preprocessing<ResiduePoly64> + std::marker::Send,
-    Rnd: RngCore + Send + Sync,
+    Rnd: CryptoRngCore + Send + Sync,
     Ses: BaseSessionHandles<Rnd>,
 >(
     session: &mut Ses,

@@ -1,3 +1,4 @@
+use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
     algebra::{
@@ -6,8 +7,7 @@ use distributed_decryption::{
     },
     execution::sharing::shamir::ShamirSharing,
 };
-use rand::SeedableRng;
-use rand_chacha::ChaCha12Rng;
+use rand_core::SeedableRng;
 use std::num::Wrapping;
 
 fn bench_decode_z2(c: &mut Criterion) {
@@ -56,7 +56,7 @@ fn bench_decode_z128(c: &mut Criterion) {
         assert!(num_parties >= (threshold + 1) + 2 * max_err);
 
         group.bench_function(BenchmarkId::new("decode", p_str), |b| {
-            let mut rng = ChaCha12Rng::seed_from_u64(0);
+            let mut rng = AesRng::seed_from_u64(0);
             let secret = ResiduePoly128::from_scalar(Wrapping(23425));
             let sharing = ShamirSharing::share(&mut rng, secret, num_parties, threshold).unwrap();
 
@@ -81,7 +81,7 @@ fn bench_decode_z64(c: &mut Criterion) {
         assert!(num_parties >= (threshold + 1) + 2 * max_err);
 
         group.bench_function(BenchmarkId::new("decode", p_str), |b| {
-            let mut rng = ChaCha12Rng::seed_from_u64(0);
+            let mut rng = AesRng::seed_from_u64(0);
             let secret = ResiduePoly64::from_scalar(Wrapping(23425));
             let sharing = ShamirSharing::share(&mut rng, secret, num_parties, threshold).unwrap();
 

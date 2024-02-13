@@ -16,6 +16,7 @@ use distributed_decryption::{
 };
 use pprof::criterion::{Output, PProfProfiler};
 use rand::Rng;
+use rand_core::SeedableRng;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy)]
@@ -54,7 +55,7 @@ fn ddec_nsmall(c: &mut Criterion) {
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
     let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
-    let mut rng = AesRng::from_random_seed();
+    let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
         let key_shares = keygen_all_party_shares(&keyset, &mut rng, config.n, config.t).unwrap();
@@ -101,7 +102,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
     let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
-    let mut rng = AesRng::from_random_seed();
+    let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
         let key_shares = keygen_all_party_shares(&keyset, &mut rng, config.n, config.t).unwrap();
@@ -148,7 +149,7 @@ fn ddec_nlarge(c: &mut Criterion) {
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
     let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
-    let mut rng = AesRng::from_random_seed();
+    let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
         let key_shares = keygen_all_party_shares(&keyset, &mut rng, config.n, config.t).unwrap();
@@ -195,7 +196,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
     group.sample_size(10);
     group.sampling_mode(criterion::SamplingMode::Flat);
     let keyset: KeySet = read_element(REAL_KEY_PATH.to_string()).unwrap();
-    let mut rng = AesRng::from_random_seed();
+    let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
         let key_shares = keygen_all_party_shares(&keyset, &mut rng, config.n, config.t).unwrap();

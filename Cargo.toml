@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 aes = "0.8.2"
+aes-prng = "~0.2"
 aligned-vec = "~0.5"
 anyhow = "~1.0"
 async-channel = "~2.1"
@@ -39,8 +40,8 @@ num-traits = "0.2"
 prettytable-rs = { version = "~0.10", optional = true }
 prost = "0.12"
 paste = "1.0.12"
-rand = { version = "~0.8", features = ["std", "std_rng"] }
-rand_chacha = "~0.3"
+rand = { version = "~0.8" }
+rand_core = "0.6.4"
 regex = { version = "1", features = ["unicode-case"] }
 serde = { version = "~1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
@@ -70,7 +71,6 @@ tonic-build = "~0.10"
 
 
 [dev-dependencies]
-aes-prng = "~0.2"
 criterion = { version = "~0.5" }
 ctor = "~0.2"
 env_logger = "0.11"
