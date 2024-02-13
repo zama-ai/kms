@@ -10,6 +10,9 @@ pub mod core {
     pub mod request;
     pub mod signcryption;
 }
+pub mod threshold {
+    pub mod threshold_kms;
+}
 pub mod file_handling;
 pub mod rpc {
     pub mod kms_rpc;

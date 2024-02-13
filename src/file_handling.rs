@@ -1,10 +1,10 @@
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
-use serde::de::DeserializeOwned;
-use serde::Serialize;
-
+// TODO remove this file and use ddec instead or vice versa
 pub fn write_as_json<T: serde::Serialize>(file_path: String, to_store: &T) -> anyhow::Result<()> {
     let json_data = serde_json::to_string(&to_store)?;
     let path = Path::new(&file_path);

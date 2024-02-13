@@ -19,11 +19,12 @@ message Proof {
 }
 
 message DecryptionRequestPayload {
-  bytes verification_key = 1;
-  FheType fhe_type = 2;
-  bytes ciphertext = 3;
-  Proof proof = 4;
-  bytes randomness = 5;
+  uint32 shares_needed = 1;
+  bytes verification_key = 2;
+  FheType fhe_type = 3;
+  bytes ciphertext = 4;
+  Proof proof = 5;
+  bytes randomness = 6;
 }
 
 message DecryptionRequest {
@@ -31,6 +32,8 @@ message DecryptionRequest {
   DecryptionRequestPayload payload = 2;
 }
 
+// TODO shares_needed are not really needed since there is a link to the digest, however, it seems better to be able to handle a response without getting data from the request as well.
+// but this is also a security issue since it is possible to get meaning from the response without directly linking it to a request
 message DecryptionResponsePayload {
   uint32 shares_needed = 1;
   bytes verification_key = 2;
@@ -44,17 +47,18 @@ message DecryptionResponse {
   DecryptionResponsePayload payload = 2;
 }
 
-message AggregatedDecryptionRespone {
+message AggregatedDecryptionResponse {
   repeated DecryptionResponse responses = 1;
 }
 
 message ReencryptionRequestPayload {
-  bytes verification_key = 1;
-  bytes enc_key = 2;
-  FheType fhe_type = 3;
-  bytes ciphertext = 4;
-  Proof proof = 5;
-  bytes randomness = 6;
+  uint32 shares_needed = 1;
+  bytes verification_key = 2;
+  bytes enc_key = 3;
+  FheType fhe_type = 4;
+  bytes ciphertext = 5;
+  Proof proof = 6;
+  bytes randomness = 7;
   }
 
 message ReencryptionRequest {
@@ -70,6 +74,6 @@ message ReencryptionResponse {
   bytes digest = 5;
 }
 
-message AggregatedReencryptionRespone {
-  repeated ReencryptionResponse responses = 1;
+message AggregatedReencryptionResponse {
+  map<uint32, ReencryptionResponse> responses = 1;
 }

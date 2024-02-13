@@ -22,12 +22,14 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Setup usage of private repo
+        run: git config --global url."https://${{ secrets.CONCRETE_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
       - name: Install Protocol Buffers Compiler
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
       - name: Run tests
-        run: cargo test --features "tfhe/x86_64-unix" --workspace
+        run: cargo test --verbose --features tfhe/x86_64
 
   rustfmt:
     name: Rustfmt
@@ -40,6 +42,8 @@ jobs:
         with:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
+      - name: Setup usage of private repo
+        run: git config --global url."https://${{ secrets.CONCRETE_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
       - name: Check formatting
         run: cargo fmt --all --check
 
@@ -58,6 +62,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler
       - uses: Swatinem/rust-cache@v2
+      - name: Setup usage of private repo
+        run: git config --global url."https://${{ secrets.CONCRETE_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
       - name: Clippy check
         run: cargo clippy --all-targets --workspace -- -D warnings
 
@@ -70,6 +76,8 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Setup usage of private repo
+        run: git config --global url."https://${{ secrets.CONCRETE_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
       - name: Install Protocol Buffers Compiler
         run: |
           sudo apt-get update
@@ -84,4 +92,3 @@ jobs:
       #  with:
       #    github_token: ${{ secrets.GITHUB_TOKEN }}
       #    publish_dir: ./target/doc
-
