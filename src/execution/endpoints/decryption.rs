@@ -4,7 +4,6 @@ use aes_prng::AesRng;
 use rand::SeedableRng;
 use rand_core::CryptoRngCore;
 
-use crate::execution::config::BatchParams;
 use crate::execution::large_execution::offline::LargePreprocessing;
 use crate::execution::online::bit_manipulation::{bit_dec_batch, BatchedBits};
 use crate::execution::online::preprocessing::Preprocessing;
@@ -20,6 +19,9 @@ use crate::execution::small_execution::offline::SmallPreprocessing;
 use crate::execution::small_execution::prss::PRSSSetup;
 use crate::lwe::combine128;
 use crate::lwe::to_large_ciphertext;
+use crate::{
+    algebra::residue_poly::ResiduePoly, execution::config::BatchParams, lwe::ThresholdLWEParameters,
+};
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
@@ -287,29 +289,34 @@ async fn open_masked_ptxts<R: CryptoRngCore + Send, S: BaseSessionHandles<R>>(
     .await?;
 
     if own_role.one_based() == INPUT_PARTY_ID {
-        let message_mod_bits = keyshares
-            .threshold_lwe_parameters
-            .output_cipher_parameters
-            .message_modulus_log
-            .0;
-        // shift
-        let mut out = Vec::with_capacity(res.len());
-        match openeds {
-            Some(openeds) => {
-                for opened in openeds {
-                    let v_scalar = opened.to_scalar()?;
-                    out.push(from_expanded_msg(v_scalar.0, message_mod_bits));
-                }
-            }
-            _ => {
-                return Err(anyhow_error_and_log(
-                    "Right shift not possible - no opened value".to_string(),
-                ))
-            }
-        };
-        return Ok(out);
+        return reconstruct_message(openeds, &keyshares.threshold_lwe_parameters);
     }
     Ok(vec![Wrapping(0)])
+}
+
+/// Reconstructs a vector of plaintexts from raw, opened ciphertexts, by using the contant term of the `openeds`
+/// and mapping it down to the message space of a ciphertext block.
+pub fn reconstruct_message(
+    openeds: Option<Vec<ResiduePoly<Z128>>>,
+    params: &ThresholdLWEParameters,
+) -> anyhow::Result<Vec<Z128>> {
+    let message_mod_bits = params.output_cipher_parameters.message_modulus_log.0;
+    // shift
+    let mut out = Vec::new();
+    match openeds {
+        Some(openeds) => {
+            for opened in openeds {
+                let v_scalar = opened.to_scalar()?;
+                out.push(from_expanded_msg(v_scalar.0, message_mod_bits));
+            }
+        }
+        _ => {
+            return Err(anyhow_error_and_log(
+                "Right shift not possible - no opened value".to_string(),
+            ))
+        }
+    };
+    Ok(out)
 }
 
 async fn open_bit_composed_ptxts<R: CryptoRngCore + Send, S: BaseSessionHandles<R>>(
@@ -382,13 +389,12 @@ pub async fn run_decryption_large(
         let res = partial_decrypt + t.value();
 
         shared_masked_ptxts.push(res);
-        //partial_decrypted.push(open_masked_ptxt(session, res, keyshares).await?);
     }
     let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
     let bits_in_block = keyshares
         .threshold_lwe_parameters
         .output_cipher_parameters
-        .message_modulus_log
+        .usable_message_modulus_log
         .0;
     combine_plaintext_blocks(&own_role, bits_in_block, partial_decrypted)
 }
@@ -400,30 +406,36 @@ pub async fn run_decryption_small(
     ciphertext: Ciphertext128,
 ) -> anyhow::Result<Vec<Z64>> {
     let own_role = session.my_role()?;
+    let shared_masked_ptxts = batch_partial_decrypt(session, keyshares, ciphertext)?;
+    let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
+    // TODO there seems to be a bug somewhere since this should actuall be `usable_message_modulus_log` as bits_in_block
+    let bits_in_block = keyshares
+        .threshold_lwe_parameters
+        .output_cipher_parameters
+        .usable_message_modulus_log
+        .0;
+    combine_plaintext_blocks(&own_role, bits_in_block, partial_decrypted)
+}
 
+pub fn batch_partial_decrypt(
+    session: &mut SmallSession<ResiduePoly128>,
+    keyshares: &SecretKeyShare,
+    ciphertext: Ciphertext128,
+) -> anyhow::Result<Vec<ResiduePoly128>> {
+    let own_role = session.my_role()?;
     let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
     for current_ct_block in ciphertext {
         let prss_state = session
             .prss_state
             .as_mut()
             .ok_or_else(|| anyhow_error_and_log("PRSS_State not initialized".to_string()))?;
-
         let partial_dec = partial_decrypt128(keyshares, &current_ct_block)?;
         let composed_bits = prss_state.mask_next(own_role.one_based(), BD1)?;
         let res = partial_dec + composed_bits;
 
         shared_masked_ptxts.push(res);
     }
-
-    let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
-
-    let bits_in_block = keyshares
-        .threshold_lwe_parameters
-        .output_cipher_parameters
-        .message_modulus_log
-        .0;
-
-    combine_plaintext_blocks(&own_role, bits_in_block, partial_decrypted)
+    Ok(shared_masked_ptxts)
 }
 
 // run decryption with bit-decomposition
@@ -466,8 +478,14 @@ pub async fn run_decryption_bitdec<
         .map(|ptxt| Wrapping(ptxt.0 as u128))
         .collect();
 
+    let usable_message_mod_bits = keyshares
+        .threshold_lwe_parameters
+        .input_cipher_parameters
+        .usable_message_modulus_log
+        .0;
+
     // combine outputs to form the decrypted integer on party 0
-    combine_plaintext_blocks(&own_role, message_mod_bits, ptxts128)
+    combine_plaintext_blocks(&own_role, usable_message_mod_bits, ptxts128)
 }
 
 /// computes b - <a, s> with no rounding of the noise. This is used for noise flooding decryption

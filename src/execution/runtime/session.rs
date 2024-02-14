@@ -276,7 +276,7 @@ impl<Z: ShamirRing> SmallSession<Z> {
         role_assignments: HashMap<Role, Identity>,
         network: NetworkingImpl,
         threshold: u8,
-        prss_setup: Option<PRSSSetup<Z>>,
+        prss_setup: Option<PRSSSetup<Z>>, // TODO this will be shared a lot so maybe it should just be a box?
         own_identity: Identity,
         rng: Option<AesRng>,
     ) -> anyhow::Result<Self> {

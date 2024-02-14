@@ -36,7 +36,6 @@ use tfhe::core_crypto::prelude::Fourier128LweBootstrapKey;
 use tfhe::core_crypto::prelude::LweBootstrapKey;
 use tfhe::core_crypto::prelude::LweCiphertext;
 use tfhe::core_crypto::prelude::LweCiphertextOwned;
-use tfhe::core_crypto::prelude::LweCompactPublicKey;
 use tfhe::core_crypto::prelude::LweSecretKey;
 use tfhe::core_crypto::prelude::LweSecretKeyOwned;
 use tfhe::core_crypto::prelude::Plaintext;
@@ -175,22 +174,22 @@ pub fn gen_key_set<R: CryptoRngCore>(
     );
     let output_lwe_secret_key_out = output_glwe_secret_key_out.clone().into_lwe_secret_key();
 
+    // BSK generation
+    let intput_glwe_secret_key: GlweSecretKey<Vec<u64>> =
+        allocate_and_generate_new_binary_glwe_secret_key(
+            input_param.glwe_dimension,
+            input_param.polynomial_size,
+            &mut secret_rng,
+        );
+    // let output_lwe_secret_key = output_glwe_secret_key.clone().into_lwe_secret_key();
     let sk = SecretKey::new(
         threshold_lwe_parameters,
         input_lwe_secret_key.clone(),
+        intput_glwe_secret_key,
         output_lwe_secret_key_out,
     );
 
     // TODO OUTCOMMENTED CODE might not be needed for us
-    //BSK generation
-    // let output_glwe_secret_key: GlweSecretKey<Vec<u64>> =
-    //     allocate_and_generate_new_binary_glwe_secret_key(
-    //         input_param.glwe_dimension,
-    //         input_param.polynomial_size,
-    //         &mut secret_rng,
-    //     );
-    // let output_lwe_secret_key = output_glwe_secret_key.clone().into_lwe_secret_key();
-
     // let mut bsk_in = LweBootstrapKey::new(
     //     0_u64,
     //     input_param.glwe_dimension.to_glwe_size(),
@@ -275,7 +274,7 @@ pub fn gen_key_set<R: CryptoRngCore>(
     KeySet { pk, ck, sk }
 }
 
-#[derive(Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct SecretKeyShare {
     pub input_key_share128: Array1<ResiduePoly128>,
     pub input_key_share64: Array1<ResiduePoly64>,
@@ -299,6 +298,7 @@ impl Zeroize for SecretKeyShare {
 pub struct SecretKey {
     // Key for decrypting ciphertexts in the 64 bit format
     pub lwe_secret_key_64: LweSecretKeyOwned<u64>, // only used for constructing public key and debugging
+    pub glwe_secret_key_64: GlweSecretKeyOwned<u64>,
     // Key for decrypting ciphertexts in the 128 bit format
     pub lwe_secret_key_128: LweSecretKeyOwned<u128>,
     pub threshold_lwe_parameters: ThresholdLWEParameters,
@@ -314,12 +314,14 @@ impl Default for SecretKey {
 impl SecretKey {
     pub fn new(
         threshold_lwe_parameters: ThresholdLWEParameters,
-        input_secret_key: LweSecretKeyOwned<u64>,
-        output_secret_key: LweSecretKeyOwned<u128>,
+        lwe_secret_key_64: LweSecretKeyOwned<u64>,
+        glwe_secret_key_64: GlweSecretKeyOwned<u64>,
+        lwe_secret_key_128: LweSecretKeyOwned<u128>,
     ) -> Self {
         SecretKey {
-            lwe_secret_key_64: input_secret_key,
-            lwe_secret_key_128: output_secret_key,
+            lwe_secret_key_64,
+            glwe_secret_key_64,
+            lwe_secret_key_128,
             threshold_lwe_parameters,
         }
     }
@@ -349,16 +351,14 @@ impl SecretKey {
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct PublicKey {
-    pub lwe_compact_public_key: LweCompactPublicKey<Vec<u64>>,
+    // TODO this should be changed to the high level public key, see issue 333
+    pub public_key: LweCompactPublicKey<Vec<u64>>,
     pub threshold_lwe_parameters: ThresholdLWEParameters,
 }
+
 impl Debug for PublicKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Public key vector{:?}",
-            self.lwe_compact_public_key.clone().into_container()
-        )
+        write!(f, "Public key vector{:?}", self.public_key.clone())
     }
 }
 
@@ -382,7 +382,7 @@ impl PublicKey {
         );
 
         PublicKey {
-            lwe_compact_public_key: input_compact_lwe_public_key,
+            public_key: input_compact_lwe_public_key,
             threshold_lwe_parameters: secret_key.threshold_lwe_parameters,
         }
     }
@@ -416,7 +416,7 @@ impl PublicKey {
         let bits_in_block = self
             .threshold_lwe_parameters
             .input_cipher_parameters
-            .message_modulus_log
+            .usable_message_modulus_log
             .0;
         let decomposer = BlockDecomposer::new(message, bits_in_block as u32);
         // T::BITS
@@ -439,8 +439,8 @@ impl PublicKey {
         );
         let mut lwe_ciphertext_in: LweCiphertext<Vec<u64>> = LweCiphertext::new(
             0u64,
-            self.lwe_compact_public_key.lwe_dimension().to_lwe_size(),
-            self.lwe_compact_public_key.ciphertext_modulus(),
+            self.public_key.lwe_dimension().to_lwe_size(),
+            self.public_key.ciphertext_modulus(),
         );
 
         let mut sec_rng = secret_rng_from_seed(seed_from_rng(rng).0);
@@ -452,7 +452,7 @@ impl PublicKey {
         );
 
         encrypt_lwe_ciphertext_with_compact_public_key(
-            &self.lwe_compact_public_key,
+            &self.public_key,
             &mut lwe_ciphertext_in,
             plaintext,
             self.threshold_lwe_parameters
@@ -769,7 +769,7 @@ pub fn lwe_ciphertext_modulus_switch_up<InputScalar, OutputScalar, InputCont, Ou
 
 /// Helper function that takes a vector of decrypted plaintexts (each of [bits_in_block] plaintext bits)
 /// and combine them into the integer message (u128) of many bits.
-pub(crate) fn combine128(bits_in_block: u32, decryptions: Vec<Z128>) -> anyhow::Result<u128> {
+pub fn combine128(bits_in_block: u32, decryptions: Vec<Z128>) -> anyhow::Result<u128> {
     let mut recomposer = BlockRecomposer::<u128>::new(bits_in_block);
 
     for block in decryptions {

@@ -24,13 +24,13 @@ pub mod tests {
     pub const DEFAULT_SEED: u64 = 1;
 
     // Very small parameters with very little noise, used in most tests to increase speed
-    const TEST_PARAMETERS: ThresholdLWEParameters = ThresholdLWEParameters {
+    pub const TEST_PARAMETERS: ThresholdLWEParameters = ThresholdLWEParameters {
         input_cipher_parameters: TEST_INPUT_PARAMS_SMALL,
         output_cipher_parameters: TEST_OUTPUT_PARAMS_SMALL,
     };
 
     // TEST INPUT parameters
-    const TEST_INPUT_PARAMS_SMALL: CiphertextParameters<u64> = CiphertextParameters {
+    pub const TEST_INPUT_PARAMS_SMALL: CiphertextParameters<u64> = CiphertextParameters {
         lwe_dimension: LweDimension(32),
         glwe_dimension: GlweDimension(1),
         polynomial_size: PolynomialSize(64),

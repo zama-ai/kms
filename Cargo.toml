@@ -50,14 +50,9 @@ sha3 = "~0.10.8"
 signature = "~2.2"
 strum = "0.26"
 strum_macros = "0.26"
-# Ensure that "# ~/.gitconfig \n [credential] \n helper = store" is added to .gitconfig
-tfhe = { git = "ssh://git@github.com/zama-ai/tfhe-rs-internal.git", features = [
-    "boolean",
-    "shortint",
-    "integer",
-] }
 tokio = { version = "~1.36", features = ["full", "sync"] }
 toml = "~0.8"
+tfhe = { version = "~0.5.1", features = ["boolean", "shortint", "integer"]}
 tracing = { version = "~0.1", features = ["log"] }
 tracing-subscriber = { version = "~0.3.16", features = ["env-filter", "fmt"] }
 tonic = { version = "~0.10", features = ["tls"] }

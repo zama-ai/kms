@@ -8,6 +8,7 @@ mod gen {
 use self::gen::gnetworking_client::GnetworkingClient;
 use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
+use super::constants::{MESSAGE_LIMIT, NETWORK_TIMEOUT_LONG};
 use crate::computation::SessionId;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::{Identity, RoleAssignment};
@@ -25,8 +26,7 @@ use tokio::time::Instant;
 use tonic::codegen::http::Uri;
 use tonic::transport::Channel;
 
-use super::constants::{MESSAGE_LIMIT, NETWORK_TIMEOUT_LONG};
-
+#[derive(Debug, Clone)]
 pub struct GrpcNetworkingManager {
     channels: Arc<Channels>,
     message_queues: Arc<MessageQueueStores>,

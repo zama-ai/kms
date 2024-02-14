@@ -21,7 +21,10 @@ use super::{
     share::Share,
 };
 
-fn fill_indexed_shares<Z: Ring>(
+/// Maps `values` into [ShamirSharing]s by appending these to `sharings`.
+/// Furthermore, ensure that at least `num_values` shares are added to `sharings`.
+/// The function is useful to ensure that an indexiable vector of Shamir shares exist.
+pub fn fill_indexed_shares<Z: Ring>(
     sharings: &mut [ShamirSharing<Z>],
     values: Vec<Z>,
     num_values: usize,
@@ -81,7 +84,6 @@ async fn try_reconstruct_from_shares<Z: ShamirRing, P: ParameterHandles>(
                 tracing::warn!("(Share reconstruction) Failed to get result:  {:?}", e);
             }
         }
-
         //Note: here we keep waiting on new shares until we have all of the values opened.
         //Also, not sure we want to try reconstruct stuff before having heard from all parties
         //at least in the sync case, waiting for d+2t+1, basically means waiting for everyone.

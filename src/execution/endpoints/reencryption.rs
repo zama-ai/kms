@@ -530,6 +530,8 @@ mod tests {
             &server_sig_key,
         )
         .unwrap();
+        // Ensure temp dir exists
+        std::fs::create_dir_all(TEMP_DIR).unwrap();
         // Dump encodings for use in client implementation validation
         let enc_req = to_vec(&request).unwrap();
         write_element(TEMP_DIR.to_string() + "/client_req.der", &enc_req).unwrap();
