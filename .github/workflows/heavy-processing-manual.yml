@@ -1,0 +1,42 @@
+name: "[Heavy Process] Pipeline Run"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: ./.github/workflows/common-build.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+  integration-test:
+    uses: ./.github/workflows/common-integration-test.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+
+  benchmarks:
+    uses: ./.github/workflows/common-benchmarks.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+
+  done:
+    runs-on: ubuntu-latest
+    name: Pipeline Done
+    steps:
+      - name: Success
+        run: echo Pipeline Done
+    needs:
+      - build
+      - integration-test
+      - benchmarks

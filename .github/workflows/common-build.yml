@@ -1,0 +1,38 @@
+name: Compile Rust Project and Run Unit Tests
+
+on:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compile-rust-unit-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@v4
+
+      - name: Set up Rust.
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+
+      - name: Formatting.
+        run: cargo fmt --all -- --check
+
+      - name: Linting.
+        run: cargo clippy --all-targets -- -D warnings --no-deps
+
+      - name: Run Unit Tests
+        run: cargo test --lib --features tfhe/x86_64
+
+

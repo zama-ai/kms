@@ -55,7 +55,7 @@ In order to build docker image locally you should have `ssh-agent` running and w
 
 ### CI/CD Building
 
-TO BE DEFINED
+Check documentation [here](./doc/ci.md)
 
 ## Text below is outdated...
 

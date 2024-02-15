@@ -238,7 +238,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let runtime =
         ChoreoRuntime::new_with_net_topology(docker_role_assignments, tls_config, host_channels)?;
-
     match args.command {
         Commands::Init => {
             init_command(&runtime, &conf).await?;

@@ -1,0 +1,80 @@
+name: Run Integration Tests
+on:
+  workflow_call:
+    secrets:
+      SLAB_ACTION_TOKEN:
+        required: true
+      SLAB_BASE_URL:
+        required: true
+      JOB_SECRET:
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  start-runner:
+    name: Start self-hosted EC2 runner
+    runs-on: ubuntu-latest
+    outputs:
+      label: ${{ steps.start-ec2-runner.outputs.label }}
+      ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
+    steps:
+      - name: Start EC2 runner
+        id: start-ec2-runner
+        uses: zama-ai/slab-github-runner@f3a88ba3074b9cbf77857f6c4d8849c3b01b5ff9
+        with:
+          mode: start
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          region: eu-west-3
+          ec2-image-id: ami-0c4071c47ea5ad978
+          ec2-instance-type: m6i.4xlarge
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+
+  run-integration-tests:
+    runs-on: ${{ needs.start-runner.outputs.label }}
+
+    steps:
+      - name: Setup Home
+        run: echo "HOME=/home/ubuntu" >> ${GITHUB_ENV}
+
+      - name: Checkout Project
+        uses: actions/checkout@v4
+
+      - name: Set up Rust.
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+
+      - name: Run Integration Tests
+        run: cargo test --tests --features tfhe/x86_64
+
+  stop-runner:
+    name: Stops self-hosted EC2 runner
+    needs:
+      - start-runner
+      - integration-tests
+      - benchmarks
+    runs-on: ubuntu-latest
+    if: ${{ always() }} # required to stop the runner even if the error happened in the previous jobs
+    steps:
+      - name: Stop EC2 runner
+        uses: zama-ai/slab-github-runner@f3a88ba3074b9cbf77857f6c4d8849c3b01b5ff9
+        with:
+          mode: stop
+          github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
+          region: eu-west-3
+          label: ${{ needs.start-runner.outputs.label }}
+          slab-url: ${{ secrets.SLAB_BASE_URL }}
+          job-secret: ${{ secrets.JOB_SECRET }}
+
+

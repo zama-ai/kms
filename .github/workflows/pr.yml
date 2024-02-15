@@ -1,0 +1,32 @@
+name: "[Pull Request] Pipeline Run"
+
+on:
+  pull_request:
+    branches: ['main']
+
+jobs:
+  build:
+    uses: ./.github/workflows/common-build.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+  docker-build:
+    uses: ./.github/workflows/common-docker.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
+    with:
+      push_image: false
+
+  done:
+    runs-on: ubuntu-latest
+    name: Pipeline Done
+    steps:
+      - name: Success
+        run: echo Pipeline Done
+    needs:
+      - build
+      - docker-build
+

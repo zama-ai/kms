@@ -1,0 +1,9 @@
+desired_count = 4
+image = "ddec:latest"
+environment = "dev"
+vpc_id_private = "vpc-24988f4d"
+subnet_id_private = "subnet-a886b4c1"
+repository_arn_aws_creds = "arn:aws:secretsmanager:eu-west-3:324777464715:secret:deploy/ddec-tXKTIn"
+subnet_ids = ["subnet-0e57353b210d9651d"]
+security_group_default_id = "sg-1469e77b"
+ubuntu_ami_id = "ami-01d21b7be69801c2f"

@@ -1,0 +1,47 @@
+name: "[Release Tag] Pipeline Run"
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    uses: ./.github/workflows/common-build.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+  integration-test:
+    uses: ./.github/workflows/common-integration-test.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+
+  docker:
+    uses: ./.github/workflows/common-docker.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
+    needs:
+      - build
+
+  deploy:
+    uses: ./.github/workflows/common-deploy.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    needs:
+      - integration-test
+      - docker
+    with:
+      image_name: ${{ needs.docker.outputs.image_name }}
+    secrets:
+      AWS_ACCESS_KEY_ID_TERRAFORM: ${{ secrets.AWS_ACCESS_KEY_ID_TERRAFORM }}
+      AWS_SECRET_ACCESS_KEY_TERRAFORM: ${{ secrets.AWS_SECRET_ACCESS_KEY_TERRAFORM }}
+
+
