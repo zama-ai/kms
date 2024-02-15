@@ -516,13 +516,13 @@ pub(crate) mod tests {
         params: TestingParameters,
         malicious_ldl: LD,
     ) {
-        let nb_secrets = 10_usize;
+        let num_secrets = 10_usize;
 
         let (_, malicious_due_to_dispute) = params.get_dispute_map();
 
         let mut task_honest = |mut session: LargeSession| async move {
             let real_ldl = RealLocalDoubleShare::<TrueCoinFlip, RealShareDispute>::default();
-            let secrets = (0..nb_secrets)
+            let secrets = (0..num_secrets)
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
@@ -534,7 +534,7 @@ pub(crate) mod tests {
         };
 
         let mut task_malicious = |mut session: LargeSession, malicious_ldl: LD| async move {
-            let secrets = (0..nb_secrets)
+            let secrets = (0..num_secrets)
                 .map(|_| Z::sample(session.rng()))
                 .collect_vec();
             (
@@ -584,10 +584,10 @@ pub(crate) mod tests {
         for sender_id in 0..params.num_parties {
             let sender_role = Role::indexed_by_zero(sender_id);
             let expected_secrets = if ref_malicious_set.contains(&sender_role) {
-                (0..nb_secrets).map(|_| Z::ZERO).collect_vec()
+                (0..num_secrets).map(|_| Z::ZERO).collect_vec()
             } else {
                 let mut rng_sender = AesRng::seed_from_u64(sender_id as u64);
-                (0..nb_secrets)
+                (0..num_secrets)
                     .map(|_| Z::sample(&mut rng_sender))
                     .collect_vec()
             };

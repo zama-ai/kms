@@ -248,7 +248,7 @@ mod tests {
         params: TestingParameters,
         malicious_offline: P,
     ) {
-        let nb_batches = 3;
+        let num_batches = 3;
         let (_, malicious_due_to_dispute) = params.get_dispute_map();
         let batch_sizes = BatchParams {
             triples: 10,
@@ -258,7 +258,7 @@ mod tests {
             let mut res_triples = Vec::new();
             let mut res_random = Vec::new();
 
-            for _ in 0..nb_batches {
+            for _ in 0..num_batches {
                 let mut real_preproc =
                     LargePreprocessing::<Z, TrueSingleSharing<Z>, TrueDoubleSharing<Z>>::init(
                         &mut session,
@@ -282,7 +282,7 @@ mod tests {
         };
 
         let mut task_malicious = |mut session: LargeSession, mut malicious_offline: P| async move {
-            for _ in 0..nb_batches {
+            for _ in 0..num_batches {
                 let _ = malicious_offline.init(&mut session, batch_sizes).await;
             }
 
@@ -326,7 +326,7 @@ mod tests {
         }
 
         //Check that everything reconstructs, and that triples are triples
-        for triple_idx in 0..nb_batches * batch_sizes.randoms {
+        for triple_idx in 0..num_batches * batch_sizes.randoms {
             let mut vec_x = Vec::new();
             let mut vec_y = Vec::new();
             let mut vec_z = Vec::new();

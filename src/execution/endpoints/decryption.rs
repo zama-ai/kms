@@ -6,6 +6,7 @@ use rand_core::CryptoRngCore;
 
 use crate::execution::large_execution::offline::LargePreprocessing;
 use crate::execution::online::bit_manipulation::{bit_dec_batch, BatchedBits};
+use crate::execution::online::gen_bits::RealBitGenEven;
 use crate::execution::online::preprocessing::Preprocessing;
 use crate::execution::runtime::party::RoleAssignment;
 use crate::execution::runtime::session::NetworkingImpl;
@@ -362,13 +363,13 @@ pub async fn run_decryption_large(
 
     //Compute what we need from offline
     let bound = (STATSEC + LOG_BD) as usize;
-    let nb_ctxt = ciphertext.len();
+    let num_ctxt = ciphertext.len();
     //Need 2 uniform per ctxt, each uniform requires bound+2 bits
     //each bit requires 1 triple and 1 random
-    let nb_preproc = 2 * nb_ctxt * (bound + 2);
+    let num_preproc = 2 * num_ctxt * (bound + 2);
     let batch_size = BatchParams {
-        triples: nb_preproc,
-        randoms: nb_preproc,
+        triples: num_preproc,
+        randoms: num_preproc,
     };
     //Init nlarge offline once for all
     let mut large_preproc = RealLargePreprocessing::<ResiduePoly128>::init(
@@ -379,8 +380,13 @@ pub async fn run_decryption_large(
     )
     .await?;
     //Get all the necessary uniform random
-    let u_randoms =
-        RealSecretDistributions::t_uniform(2 * nb_ctxt, bound, &mut large_preproc, session).await?;
+    let u_randoms = RealSecretDistributions::t_uniform::<_, _, _, _, RealBitGenEven>(
+        2 * num_ctxt,
+        bound,
+        &mut large_preproc,
+        session,
+    )
+    .await?;
 
     let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
     for (idx, current_ct_block) in ciphertext.iter().enumerate() {

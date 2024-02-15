@@ -1,7 +1,10 @@
 use super::poly::Poly;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use std::{
+    fmt::Display,
+    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+};
 
 pub trait Zero {
     const ZERO: Self;
@@ -65,6 +68,7 @@ pub trait BaseRing:
     + ZConsts
     + std::ops::BitAnd<Self, Output = Self>
     + std::ops::Shl<usize, Output = Self>
+    + Display
 {
 }
 

@@ -1,5 +1,5 @@
 use super::{
-    preprocessing::Preprocessing,
+    preprocessing::{DummyPreprocessing, Preprocessing},
     triple::{mult_list, open_list},
 };
 use crate::{
@@ -9,9 +9,11 @@ use crate::{
         sharing::{shamir::ShamirRing, share::Share},
     },
 };
+use aes_prng::AesRng;
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand_core::CryptoRngCore;
+use rand::Rng;
+use rand_core::{CryptoRngCore, SeedableRng};
 
 pub trait Solve: Sized + ZConsts {
     fn solve(v: &Self) -> anyhow::Result<Self>;
@@ -31,7 +33,45 @@ pub trait BitGenEven {
     ) -> anyhow::Result<Vec<Share<Z>>>;
 }
 
+/// This is fake whatever Preprocessing we pass to it
+/// (preprocessing isn't used)
+pub struct FakeBitGenEven {}
+
+#[async_trait]
+impl BitGenEven for FakeBitGenEven {
+    async fn gen_bits_even<
+        Z: ShamirRing + Solve,
+        Rnd: CryptoRngCore + Send + Sync,
+        Ses: BaseSessionHandles<Rnd>,
+        P: Preprocessing<Z> + Send,
+    >(
+        amount: usize,
+        _preproc: &mut P,
+        session: &mut Ses,
+    ) -> anyhow::Result<Vec<Share<Z>>> {
+        //Use the amount requested as a seed (so it's common accross all parties)
+        let mut rng = AesRng::seed_from_u64(amount as u64);
+        let mut res = Vec::with_capacity(amount);
+        for _ in 0..amount {
+            let bit = rng.gen_bool(1.0 / 2.0);
+            let secret = if bit { Z::ONE } else { Z::ZERO };
+            let shared_secret = DummyPreprocessing::<Z, Rnd, Ses>::share(
+                session.amount_of_parties(),
+                session.threshold(),
+                secret,
+                &mut rng,
+            )?[session.my_role()?.zero_based()];
+            res.push(shared_secret);
+        }
+        Ok(res)
+    }
+}
+
 pub struct RealBitGenEven {}
+
+//NOTE: We could also do like we do with triples, i.e. have a generation function which is async and stores
+//the resulting bits, and then a next function that just pops them.
+//The benefit is that functions that require bits (i.e. tuniform) will not necessarily be async
 
 /// BitGen for even modulus
 #[async_trait]

@@ -1,5 +1,5 @@
 use super::{
-    gen_bits::{BitGenEven, RealBitGenEven, Solve},
+    gen_bits::{BitGenEven, Solve},
     preprocessing::Preprocessing,
 };
 use crate::execution::{
@@ -11,28 +11,7 @@ use rand_core::CryptoRngCore;
 
 #[async_trait]
 pub trait SecretDistributions {
-    async fn t_uniform<Z, Rnd, P, S>(
-        n: usize,
-        bound: usize,
-        preproc: &mut P,
-        session: &mut S,
-    ) -> anyhow::Result<Vec<Share<Z>>>
-    where
-        Z: ShamirRing + Solve,
-        Rnd: CryptoRngCore + Send + Sync,
-        S: BaseSessionHandles<Rnd>,
-        P: Preprocessing<Z> + Send;
-}
-
-/// Structures to execute the Secret Shared Distributions as described in Fig. 67 of NIST document.
-pub struct RealSecretDistributions {}
-
-#[async_trait]
-impl SecretDistributions for RealSecretDistributions {
-    /// Sample shares of a secret sampled from the TUniform(1, -2^bound, 2^bound)
-    /// that is every value in (-2^bound, 2^bound) is selected with prob 1/2^{bound+1}
-    /// and the endpoints are selected with prob 1/2^{bound+2}
-    async fn t_uniform<Z, Rnd, P, S>(
+    async fn t_uniform<Z, Rnd, P, S, BitGen>(
         n: usize,
         bound: usize,
         preproc: &mut P,
@@ -43,8 +22,31 @@ impl SecretDistributions for RealSecretDistributions {
         Rnd: CryptoRngCore + Send + Sync,
         S: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
+        BitGen: BitGenEven;
+}
+
+/// Structures to execute the Secret Shared Distributions as described in Fig. 67 of NIST document.
+pub struct RealSecretDistributions {}
+
+#[async_trait]
+impl SecretDistributions for RealSecretDistributions {
+    /// Sample shares of a secret sampled from the TUniform(1, -2^bound, 2^bound)
+    /// that is every value in (-2^bound, 2^bound) is selected with prob 1/2^{bound+1}
+    /// and the endpoints are selected with prob 1/2^{bound+2}
+    async fn t_uniform<Z, Rnd, P, S, BitGen>(
+        n: usize,
+        bound: usize,
+        preproc: &mut P,
+        session: &mut S,
+    ) -> anyhow::Result<Vec<Share<Z>>>
+    where
+        Z: ShamirRing + Solve,
+        Rnd: CryptoRngCore + Send + Sync,
+        S: BaseSessionHandles<Rnd>,
+        P: Preprocessing<Z> + Send,
+        BitGen: BitGenEven,
     {
-        let b = RealBitGenEven::gen_bits_even(n * (bound + 2), preproc, session).await?;
+        let b = BitGen::gen_bits_even(n * (bound + 2), preproc, session).await?;
 
         let mut res = Vec::with_capacity(n);
 
@@ -70,7 +72,7 @@ mod tests {
             large_execution::offline::{
                 RealLargePreprocessing, TrueDoubleSharing, TrueSingleSharing,
             },
-            online::triple::open_list,
+            online::{gen_bits::RealBitGenEven, triple::open_list},
             runtime::session::{LargeSession, ParameterHandles},
         },
         tests::helper::tests_and_benches::execute_protocol_large,
@@ -100,10 +102,14 @@ mod tests {
             .await
             .unwrap();
 
-            let res_vec =
-                RealSecretDistributions::t_uniform(batch, bound, &mut large_preproc, &mut session)
-                    .await
-                    .unwrap();
+            let res_vec = RealSecretDistributions::t_uniform::<_, _, _, _, RealBitGenEven>(
+                batch,
+                bound,
+                &mut large_preproc,
+                &mut session,
+            )
+            .await
+            .unwrap();
 
             let opened_res = open_list(&res_vec, &session).await.unwrap();
 
@@ -171,10 +177,14 @@ mod tests {
             .await
             .unwrap();
 
-            let res_vec =
-                RealSecretDistributions::t_uniform(batch, bound, &mut large_preproc, &mut session)
-                    .await
-                    .unwrap();
+            let res_vec = RealSecretDistributions::t_uniform::<_, _, _, _, RealBitGenEven>(
+                batch,
+                bound,
+                &mut large_preproc,
+                &mut session,
+            )
+            .await
+            .unwrap();
 
             let opened_res = open_list(&res_vec, &session).await.unwrap();
 

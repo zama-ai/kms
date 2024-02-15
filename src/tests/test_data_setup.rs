@@ -2,7 +2,7 @@
 pub mod tests {
     use crate::execution::constants::{
         PARAMS_DIR, REAL_KEY_PATH, REAL_PARAM_PATH, SMALL_TEST_KEY_PATH, SMALL_TEST_PARAM_PATH,
-        TEMP_DIR,
+        TEMP_DIR, TEMP_DKG_DIR,
     };
     use crate::file_handling::{read_element, write_element};
     use crate::lwe::{KeySet, ThresholdLWEParameters};
@@ -107,6 +107,13 @@ pub mod tests {
     fn create_temp_dir() {
         // Ensure temp dir exists to store generated keys
         let _ = fs::create_dir(TEMP_DIR);
+    }
+
+    #[ctor]
+    #[test]
+    fn create_temp_dkg_dir() {
+        // Ensure temp/dkg dir exists
+        let _ = fs::create_dir(TEMP_DKG_DIR);
     }
 
     #[ctor]

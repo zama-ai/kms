@@ -27,16 +27,16 @@ pub const RANDOM_BATCH_SIZE: usize = 10_usize;
 /// Trait for implementing preprocessing values
 #[automock]
 pub trait Preprocessing<R: Ring> {
-    /// Constructs a random triple
+    /// Outputs share of a random triple
     fn next_triple(&mut self) -> anyhow::Result<Triple<R>>;
 
-    /// Constructs a vector of random shares
+    /// Outputs a vector of shares of random triples
     fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<R>>>;
 
-    /// Constructs a random sharing
+    /// Outputs share of a uniformly random element of the [`Ring`]
     fn next_random(&mut self) -> anyhow::Result<Share<R>>;
 
-    /// Constructs a vector of random shares
+    /// Constructs a vector of shares of uniformly random elements of the [`Ring`]
     fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<R>>>;
 }
 

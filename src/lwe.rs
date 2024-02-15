@@ -74,8 +74,8 @@ where
     pub pbs_level: DecompositionLevelCount,
     pub ks_base_log: DecompositionBaseLog,
     pub ks_level: DecompositionLevelCount,
-    pub message_modulus_log: MessageModulus,
-    pub usable_message_modulus_log: MessageModulus,
+    pub message_modulus_log: MessageModulus, //NOTE: IN TFHE RS THIS IS NOT LOG BUT THE ACTUAL MODULUS
+    pub usable_message_modulus_log: MessageModulus, //NOTE: THIS DOES NOT EXISTS IN TFHE RS + SAME AS ABOVE
     pub ciphertext_modulus: CiphertextModulus<S>,
 }
 

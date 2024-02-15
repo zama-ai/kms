@@ -1,13 +1,12 @@
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{algebra::structure_traits::Ring, execution::runtime::party::Role};
 
 /// Generic structure for shares with non-interactive methods possible to carry out on shares.
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy)]
-pub struct Share<Z>
-where
-    Z: Ring,
-{
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, Serialize, Deserialize)]
+pub struct Share<Z> {
     value: Z,
     owner: Role,
 }

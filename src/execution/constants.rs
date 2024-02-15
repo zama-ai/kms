@@ -22,6 +22,7 @@ pub(crate) const CHI_XOR_CONSTANT: u8 = 1;
 /// param and keygen directories
 pub const PARAMS_DIR: &str = "parameters";
 pub const TEMP_DIR: &str = "temp";
+pub const TEMP_DKG_DIR: &str = "temp/dkg";
 
 pub const SMALL_TEST_PARAM_PATH: &str = concatcp!(PARAMS_DIR, "/small_test_params.json");
 pub const SMALL_TEST_KEY_PATH: &str = concatcp!(TEMP_DIR, "/small_test_keys.bin");

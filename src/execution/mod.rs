@@ -45,4 +45,19 @@ pub mod sharing {
     pub mod shamir;
     pub mod share;
 }
+
+pub mod tfhe_internals {
+    pub mod ggsw_ciphertext;
+    pub mod glwe_ciphertext;
+    pub mod glwe_key;
+    pub mod lwe_bootstrap_key;
+    pub mod lwe_bootstrap_key_generation;
+    pub mod lwe_ciphertext;
+    pub mod lwe_key;
+    pub mod lwe_keyswitch_key;
+    pub mod lwe_keyswitch_key_generation;
+    pub mod parameters;
+    pub mod randomness;
+    pub mod utils;
+}
 pub mod config;
