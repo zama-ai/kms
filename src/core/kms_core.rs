@@ -6,10 +6,9 @@ use crate::anyhow_error_and_warn_log;
 use crate::kms::FheType;
 use crate::rpc::kms_rpc::handle_potential_err;
 use crate::rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, SigncryptionPayload};
+use aes_prng::AesRng;
 use k256::ecdsa::SigningKey;
-use rand::{RngCore, SeedableRng};
-use rand_chacha::rand_core::CryptoRngCore;
-use rand_chacha::ChaCha20Rng;
+use rand::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::{from_bytes, to_vec};
 use std::fmt;
@@ -20,13 +19,13 @@ use tfhe::{generate_keys, ClientKey, Config, FheBool, FheUint16, FheUint32, FheU
 pub type FhePublicKey = tfhe::PublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
 
-pub fn gen_sig_keys(rng: &mut impl CryptoRngCore) -> (PublicSigKey, PrivateSigKey) {
+pub fn gen_sig_keys(rng: &mut (impl CryptoRng + RngCore)) -> (PublicSigKey, PrivateSigKey) {
     let sk = SigningKey::random(rng);
     let pk = SigningKey::verifying_key(&sk);
     (PublicSigKey { pk: *pk }, PrivateSigKey { sk })
 }
 
-pub fn gen_kms_keys(config: Config, rng: &mut impl CryptoRngCore) -> SoftwareKmsKeys {
+pub fn gen_kms_keys(config: Config, rng: &mut (impl CryptoRng + RngCore)) -> SoftwareKmsKeys {
     let (fhe_sk, _fhe_server_key) = generate_keys(config.clone());
     let (sig_pk, sig_sk) = gen_sig_keys(rng);
     // TODO do we need this to be a mutex as well to allow for parallel queries
@@ -38,20 +37,20 @@ pub fn gen_kms_keys(config: Config, rng: &mut impl CryptoRngCore) -> SoftwareKms
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BaseKmsStruct {
     pub(crate) sig_key: PrivateSigKey,
-    pub(crate) rng: Arc<Mutex<ChaCha20Rng>>,
+    pub(crate) rng: Arc<Mutex<AesRng>>,
 }
 impl BaseKmsStruct {
     pub fn new(sig_sk: PrivateSigKey) -> Self {
         BaseKmsStruct {
             sig_key: sig_sk,
-            rng: Arc::new(Mutex::new(ChaCha20Rng::from_entropy())),
+            rng: Arc::new(Mutex::new(AesRng::from_entropy())),
         }
     }
 
-    pub(crate) fn new_rng(&self) -> anyhow::Result<ChaCha20Rng> {
+    pub(crate) fn new_rng(&self) -> anyhow::Result<AesRng> {
         let mut seed = [0u8; RND_SIZE];
         // Make a seperate scope for the rng so that it is dropped before the lock is released
         {
@@ -59,7 +58,7 @@ impl BaseKmsStruct {
                 handle_potential_err(self.rng.lock(), "Could not lock rng".to_owned())?;
             base_rng.try_fill_bytes(seed.as_mut())?;
         }
-        Ok(ChaCha20Rng::from_seed(seed))
+        Ok(AesRng::from_seed(seed))
     }
 }
 
@@ -145,7 +144,7 @@ pub struct SoftwareKms {
 impl fmt::Debug for SoftwareKms {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SoftwareKms")
-            .field("base_kms", &self.base_kms)
+            .field("sig_key", &self.base_kms.sig_key)
             .finish() // Don't include fhe_dec_key
     }
 }
@@ -271,9 +270,9 @@ mod tests {
     use crate::file_handling::{read_element, write_element};
     use crate::kms::FheType;
     use crate::rpc::rpc_types::{Kms, Plaintext};
+    use aes_prng::AesRng;
     use ctor::ctor;
     use rand::SeedableRng;
-    use rand_chacha::ChaCha20Rng;
     use tfhe::prelude::FheEncrypt;
     use tfhe::{ConfigBuilder, FheUint8};
 
@@ -283,7 +282,7 @@ mod tests {
     #[test]
     fn ensure_keys_exist() {
         if !Path::new(TEST_KMS_KEY_PATH).exists() {
-            let mut rng = ChaCha20Rng::seed_from_u64(1);
+            let mut rng = AesRng::seed_from_u64(1);
             let config = ConfigBuilder::default().build();
             write_element(
                 TEST_KMS_KEY_PATH.to_string(),
@@ -308,7 +307,7 @@ mod tests {
     #[test]
     fn sunshine_reencrypt() {
         let msg = 42_u8;
-        let mut rng = ChaCha20Rng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(1);
         let kms_keys: SoftwareKmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();
         let kms = SoftwareKms::new(kms_keys.fhe_sk.clone(), kms_keys.sig_sk);
         let ct = FheUint8::encrypt(msg, &kms_keys.fhe_sk);

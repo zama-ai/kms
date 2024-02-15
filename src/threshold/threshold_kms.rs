@@ -13,6 +13,7 @@ use crate::rpc::kms_rpc::{
 use crate::rpc::rpc_types::{
     BaseKms, DecryptionResponseSigPayload, Plaintext, RawDecryption, SigncryptionPayload,
 };
+use aes_prng::AesRng;
 use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::residue_poly::{ResiduePoly, ResiduePoly128};
 use distributed_decryption::choreography::NetworkingStrategy;
@@ -33,7 +34,6 @@ use distributed_decryption::lwe::{
 };
 use distributed_decryption::networking::grpc::GrpcNetworkingManager;
 use itertools::Itertools;
-use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::to_vec;
 use std::fmt;
@@ -77,7 +77,7 @@ pub fn decrypted_blocks_to_raw_decryption(
     fhe_type: FheType,
     recon_blocks: Vec<Z128>,
 ) -> anyhow::Result<Plaintext> {
-    let bits_in_block = params.output_cipher_parameters.message_modulus_log.0 as u32;
+    let bits_in_block = params.output_cipher_parameters.usable_message_modulus_log.0 as u32;
     let res = match combine128(bits_in_block, recon_blocks) {
         Ok(res) => res,
         Err(error) => {
@@ -192,8 +192,8 @@ impl ThresholdKms {
         self.prss_setup = Some(
             PRSSSetup::init_with_abort::<
                 RealAgreeRandomWithAbort,
-                ChaCha20Rng,
-                SmallSessionStruct<ResiduePoly128, ChaCha20Rng, SessionParameters>,
+                AesRng,
+                SmallSessionStruct<ResiduePoly128, AesRng, SessionParameters>,
             >(&mut session)
             .await?,
         );

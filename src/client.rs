@@ -1,4 +1,5 @@
 use crate::setup_rpc::{DEFAULT_CLIENT_KEY_PATH, DEFAULT_HL_CIPHER_PATH, DEFAULT_SERVER_KEYS_PATH};
+use aes_prng::AesRng;
 use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::residue_poly::ResiduePoly;
 use distributed_decryption::error::error_handler::anyhow_error_and_log;
@@ -30,8 +31,6 @@ use kms::rpc::rpc_types::{
 };
 use kms::threshold::threshold_kms::decrypted_blocks_to_raw_decryption;
 use rand::{RngCore, SeedableRng};
-use rand_chacha::rand_core::CryptoRngCore;
-use rand_chacha::ChaCha20Rng;
 use serde_asn1_der::{from_bytes, to_vec};
 use setup_rpc::PARAM_PATH;
 use std::collections::{HashMap, HashSet};
@@ -129,7 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// and reference code for validating the KMS. The logic supplied by the client will be
 /// distributed accross the aggregator/proxy and smart contracts.
 pub struct Client {
-    rng: Box<dyn CryptoRngCore>,
+    rng: Box<AesRng>,
     server_pks: HashSet<PublicSigKey>,
     client_pk: PublicSigKey,
     client_sk: PrivateSigKey,
@@ -143,7 +142,7 @@ impl Default for Client {
             read_element(DEFAULT_CLIENT_KEY_PATH.to_string()).unwrap();
         let default_params: ThresholdLWEParameters = read_as_json(PARAM_PATH.to_owned()).unwrap();
         Self {
-            rng: Box::new(ChaCha20Rng::from_entropy()),
+            rng: Box::new(AesRng::from_entropy()),
             server_pks: read_element(DEFAULT_SERVER_KEYS_PATH.to_string()).unwrap(),
             client_pk,
             client_sk,
@@ -161,7 +160,7 @@ impl Client {
         params: ThresholdLWEParameters,
     ) -> Self {
         Client {
-            rng: Box::new(ChaCha20Rng::from_entropy()),
+            rng: Box::new(AesRng::from_entropy()),
             server_pks,
             client_pk,
             client_sk,

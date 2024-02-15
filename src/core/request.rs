@@ -1,5 +1,5 @@
 use k256::ecdsa::SigningKey;
-use rand_chacha::rand_core::CryptoRngCore;
+use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use signature::{Signer, Verifier};
 
@@ -35,7 +35,7 @@ impl ClientRequest {
     pub fn new<T: Serialize + AsRef<[u8]>>(
         fhe_cipher: &T,
         client_sig_sk: &PrivateSigKey,
-        rng: &mut impl CryptoRngCore,
+        rng: &mut (impl CryptoRng + RngCore),
     ) -> anyhow::Result<(Self, SigncryptionPair)> {
         let keys = ephemeral_key_generation(rng, client_sig_sk);
         let digest = hash_element(fhe_cipher);
@@ -88,7 +88,7 @@ impl ClientRequest {
 /// Helper method for what the client is supposed to do when generating ephemeral keys linked to the
 /// client's blockchain signing key
 pub(crate) fn ephemeral_key_generation(
-    rng: &mut impl CryptoRngCore,
+    rng: &mut (impl CryptoRng + RngCore),
     sig_key: &PrivateSigKey,
 ) -> SigncryptionPair {
     let verification_key = PublicSigKey {

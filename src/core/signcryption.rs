@@ -8,7 +8,7 @@ use crypto_box::aead::{Aead, AeadCore};
 use crypto_box::{Nonce, SalsaBox, SecretKey};
 use k256::ecdsa::SigningKey;
 use nom::AsBytes;
-use rand_chacha::rand_core::CryptoRngCore;
+use rand::{CryptoRng, RngCore};
 use serde::Serialize;
 use serde_asn1_der::to_vec;
 use sha3::{Digest, Sha3_256};
@@ -26,12 +26,14 @@ use sha3::{Digest, Sha3_256};
 /// with NIST standardized schemes.
 const DIGEST_BYTES: usize = 256 / 8; // SHA3-256 digest
 pub(crate) const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
-pub const RND_SIZE: usize = 256 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
+pub const RND_SIZE: usize = 128 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
 
 /// Generate ephemeral keys used for encryption
 /// Concretely it involves generating ECDH keys for curve 25519 to be used in ECIES for hybrid
 /// encryption using Salsa
-pub fn encryption_key_generation(rng: &mut impl CryptoRngCore) -> (PublicEncKey, PrivateEncKey) {
+pub fn encryption_key_generation(
+    rng: &mut (impl CryptoRng + RngCore),
+) -> (PublicEncKey, PrivateEncKey) {
     let sk = SecretKey::generate(rng);
     (PublicEncKey(sk.public_key()), sk)
 }
@@ -77,7 +79,7 @@ where
 /// `ClientRequest` and validated to be consistent with the blockchain identity of the client BEFORE
 /// calling this method. IF THIS HAS NOT BEEN DONE THEN ANYONE CAN IMPERSONATE ANY CLIENT!!!
 pub fn signcrypt<T>(
-    rng: &mut impl CryptoRngCore,
+    rng: &mut (impl CryptoRng + RngCore),
     msg: &T,
     client_pk: &PublicEncKey,
     client_verf_key: &PublicSigKey,
@@ -272,10 +274,9 @@ where
 
 #[cfg(test)]
 mod tests {
+    use aes_prng::AesRng;
     use k256::ecdsa::SigningKey;
-    use rand::SeedableRng;
-    use rand_chacha::rand_core::CryptoRngCore;
-    use rand_chacha::ChaCha20Rng;
+    use rand::{CryptoRng, RngCore, SeedableRng};
     use serde_asn1_der::{from_bytes, to_vec};
     use signature::Signer;
     use tracing_test::traced_test;
@@ -290,7 +291,9 @@ mod tests {
     use super::{PrivateSigKey, PublicSigKey, SigncryptionPair};
 
     /// Helper method for generating keys for digital signatures
-    pub fn signing_key_generation(rng: &mut impl CryptoRngCore) -> (PublicSigKey, PrivateSigKey) {
+    pub fn signing_key_generation(
+        rng: &mut (impl CryptoRng + RngCore),
+    ) -> (PublicSigKey, PrivateSigKey) {
         let sk = SigningKey::random(rng);
         let pk = SigningKey::verifying_key(&sk);
         (PublicSigKey { pk: *pk }, PrivateSigKey { sk })
@@ -299,9 +302,9 @@ mod tests {
     /// Helper method that creates an rng, a valid client request (on a dummy fhe cipher) and client
     /// singcryption keys SigncryptionPair Returns the rng, client request, client signcryption
     /// keys and the dummy fhe cipher the request is made for.
-    fn test_setup() -> (ChaCha20Rng, ClientRequest, SigncryptionPair, Vec<u8>) {
+    fn test_setup() -> (AesRng, ClientRequest, SigncryptionPair, Vec<u8>) {
         let cipher = [42_u8; 1];
-        let mut rng = ChaCha20Rng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(1);
         let client_sig_key = PrivateSigKey {
             sk: SigningKey::random(&mut rng),
         };
@@ -388,7 +391,7 @@ mod tests {
 
     #[test]
     fn plain_signing() {
-        let mut rng = ChaCha20Rng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(1);
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
         let sig = sign(&msg, &server_sig_key).unwrap();
@@ -449,7 +452,7 @@ mod tests {
     #[traced_test]
     #[test]
     fn incorrect_server_verf_key() {
-        let mut rng = ChaCha20Rng::seed_from_u64(42);
+        let mut rng = AesRng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
         let (sever_enc_key, _server_dec_key) = encryption_key_generation(&mut rng);
         let to_encrypt = [0_u8; 1 + 2 * DIGEST_BYTES + SIG_SIZE];
@@ -462,7 +465,7 @@ mod tests {
     #[traced_test]
     #[test]
     fn incorrect_server_enc_key() {
-        let mut rng = ChaCha20Rng::seed_from_u64(42);
+        let mut rng = AesRng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
         let (server_enc_key, _server_dec_key) = encryption_key_generation(&mut rng);
         let mut to_encrypt = [0_u8; 1 + 2 * DIGEST_BYTES + SIG_SIZE].to_vec();
@@ -504,7 +507,7 @@ mod tests {
     #[traced_test]
     #[test]
     fn unnormalized_signature() {
-        let mut rng = ChaCha20Rng::seed_from_u64(1);
+        let mut rng = AesRng::seed_from_u64(1);
         let msg = "some message".as_bytes();
         let client_sig_key = PrivateSigKey {
             sk: SigningKey::random(&mut rng),

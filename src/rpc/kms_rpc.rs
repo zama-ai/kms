@@ -250,10 +250,7 @@ pub fn some_or_err<T: fmt::Debug>(input: Option<T>, error: String) -> Result<T, 
     })
 }
 
-pub fn handle_potential_err<T: fmt::Debug, E>(
-    resp: Result<T, E>,
-    error: String,
-) -> Result<T, Status> {
+pub fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> Result<T, Status> {
     resp.map_err(|_| {
         tracing::warn!(error);
         tonic::Status::new(tonic::Code::Aborted, "Invalid request".to_string())

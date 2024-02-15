@@ -12,18 +12,18 @@ name = "kms-client"
 path = "src/client.rs"
 
 [dependencies]
+aes-prng = "~0.2"
 anyhow = "~1.0"
 bincode = "~1.3"
 crypto_box = {version = "~0.9.1", features = ["salsa20"]}
 # Run ssh-add to authenticate your SSH keys to access the private github repo below
-distributed-decryption = {git = "ssh://git@github.com/zama-ai/distributed-decryption", branch = "tore/270-kms-integration"}
+distributed-decryption = {git = "ssh://git@github.com/zama-ai/distributed-decryption"}
 ctor = "~0.2"
 itertools = "0.12"
 k256 = "0.13.3"
 nom = "7.1.3"
 prost = "0.12.3"
 rand = { version = "~0.8", features = ["std", "std_rng"] }
-rand_chacha = "~0.3"
 reqwest = { version = "0.11", features = ["json"] }
 serde = { version = "~1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
@@ -42,7 +42,7 @@ url = "2.5.0"
 
 [dev-dependencies]
 ctor = "~0.2"
-#distributed-decryption = {git = "ssh://git@github.com/zama-ai/distributed-decryption", branch = "tore/270-kms-integration", features = ["test_utils"]}
+#distributed-decryption = {git = "ssh://git@github.com/zama-ai/distributed-decryption", features = ["test_utils"]}
 
 [build-dependencies]
 tonic-build = "0.10"
