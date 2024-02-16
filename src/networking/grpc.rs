@@ -19,8 +19,8 @@ use backoff::future::retry_notify;
 use backoff::ExponentialBackoff;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::time::Instant;
 use tonic::codegen::http::Uri;
@@ -70,6 +70,7 @@ impl GrpcNetworkingManager {
             message_queues: Arc::clone(&self.message_queues),
             network_round: Arc::new(Mutex::new(0)),
             owner: self.owner.clone(),
+            init_time: OnceLock::new(),
         })
     }
 }
@@ -80,6 +81,7 @@ pub struct GrpcNetworking {
     message_queues: Arc<MessageQueueStores>,
     network_round: Arc<Mutex<usize>>,
     owner: Identity,
+    init_time: OnceLock<Instant>,
 }
 
 impl GrpcNetworking {
@@ -235,8 +237,12 @@ impl Networking for GrpcNetworking {
     }
 
     fn get_timeout_current_round(&self) -> anyhow::Result<Instant> {
+        // initialize init_time on first access
+        // this avoids running into timeouts when large computations happen after the test runtime is set up and before the first message is received.
+        let init_time = self.init_time.get_or_init(Instant::now);
+
         if let Ok(net_round) = self.network_round.lock() {
-            Ok(Instant::now() + *NETWORK_TIMEOUT_LONG * (*net_round as u32))
+            Ok(*init_time + *NETWORK_TIMEOUT_LONG * (*net_round as u32))
         } else {
             Err(anyhow_error_and_log("Couldn't lock mutex".to_string()))
         }
