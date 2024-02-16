@@ -34,7 +34,7 @@ jobs:
 
   run-integration-tests:
     runs-on: ${{ needs.start-runner.outputs.label }}
-
+    needs: start-runner
     steps:
       - name: Setup Home
         run: echo "HOME=/home/ubuntu" >> ${GITHUB_ENV}
