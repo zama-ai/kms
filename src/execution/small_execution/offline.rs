@@ -9,7 +9,7 @@ use crate::execution::config::BatchParams;
 use crate::{
     algebra::structure_traits::Ring,
     execution::{
-        communication::broadcast::broadcast_with_corruption,
+        communication::broadcast::broadcast_from_all_w_corruption,
         online::{
             preprocessing::{BasePreprocessing, Preprocessing},
             triple::Triple,
@@ -120,7 +120,8 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
             let d_double = x_single * y_single + v_double;
             vec_d_double.push(d_double)
         }
-        let broadcast_res = broadcast_with_corruption(session, vec_d_double.clone().into()).await?;
+        let broadcast_res =
+            broadcast_from_all_w_corruption(session, vec_d_double.clone().into()).await?;
         let recons_vec_d = Self::compute_d_values(session, amount, broadcast_res.clone())?;
         let mut triples = Vec::with_capacity(amount);
 

@@ -10,7 +10,7 @@ use super::{
 use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::broadcast_with_corruption, runtime::party::Role,
+        communication::broadcast::broadcast_from_all_w_corruption, runtime::party::Role,
         runtime::session::LargeSessionHandles, sharing::shamir::ShamirRing,
     },
     networking::value::BroadcastValue,
@@ -203,7 +203,7 @@ async fn verify_sharing<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSess
         //Broadcast:
         // - my share of check values on all sharing of degree t and 2t
         // - the shares of all the parties on sharing of degree t and 2t wher I am sender
-        let bcast_data = broadcast_with_corruption(
+        let bcast_data = broadcast_from_all_w_corruption(
             session,
             BroadcastValue::LocalDoubleShare((
                 map_share_check_values_t,

@@ -5,11 +5,12 @@ use crate::execution::large_execution::local_single_share::MapsSharesChallenges;
 use crate::execution::large_execution::vss::{
     ExchangedDataRound1, ValueOrPoly, VerificationValues,
 };
+use crate::execution::zk::ceremony;
 use crate::execution::{runtime::party::Role, small_execution::prss::PartySet};
 use crate::lwe::PubConKeyPair;
 use crate::{
     commitment::{Commitment, Opening},
-    execution::{runtime::session::DisputePayload, small_execution::prss::PrfKey},
+    execution::small_execution::prss::PrfKey,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -21,12 +22,12 @@ pub enum BroadcastValue<Z: Eq + Zero> {
     RingVector(Vec<Z>),
     RingValue(Z),
     PRSSVotes(Vec<(PartySet, Vec<Z>)>),
-    AddDispute(DisputePayload),
     Round2VSS(Vec<VerificationValues<Z>>),
     Round3VSS(BTreeMap<(usize, Role, Role), Vec<Z>>),
     Round4VSS(BTreeMap<(usize, Role), ValueOrPoly<Z>>),
     LocalSingleShare(MapsSharesChallenges<Z>),
     LocalDoubleShare(MapsDoubleSharesChallenges<Z>),
+    PartialProof(ceremony::PartialProof),
 }
 
 impl<Z: Ring> From<Z> for BroadcastValue<Z> {

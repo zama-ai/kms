@@ -1,9 +1,3 @@
-use itertools::{izip, Itertools};
-use ndarray::Array1;
-use rand::{CryptoRng, Rng};
-use std::collections::HashMap;
-use zeroize::Zeroize;
-
 use crate::{
     algebra::{
         poly::Poly,
@@ -13,7 +7,7 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::reliable_broadcast_all,
+        communication::broadcast::broadcast_from_all,
         online::preprocessing::Preprocessing,
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::{
@@ -25,6 +19,11 @@ use crate::{
     lwe::SecretKeyShare,
     networking::value::BroadcastValue,
 };
+use itertools::{izip, Itertools};
+use ndarray::Array1;
+use rand::{CryptoRng, Rng};
+use std::collections::HashMap;
+use zeroize::Zeroize;
 
 // this is the L_i in the spec
 fn make_lagrange_numerators<Z: BaseRing>(
@@ -150,7 +149,7 @@ pub async fn reshare_same_sets<
     // is only necessary when the two sets of parties are different
     // so we go straight to the sync-broadcast
     let broadcast_value = BroadcastValue::RingVector(vj.clone());
-    let broadcast_result = reliable_broadcast_all(session, Some(broadcast_value)).await?;
+    let broadcast_result = broadcast_from_all(session, Some(broadcast_value)).await?;
 
     // compute v_{i,j} - <r_{i,j}>^{S_2}_k, k = 0,1,...,n1-1
     let mut s_share_vec = vec![vec![]; share_count];

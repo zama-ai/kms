@@ -12,7 +12,7 @@ use crate::{
     computation::SessionId,
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::broadcast_with_corruption,
+        communication::broadcast::broadcast_from_all_w_corruption,
         constants::PRSS_SIZE_MAX,
         large_execution::{single_sharing::init_vdm, vss::Vss},
         runtime::party::Role,
@@ -254,9 +254,11 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
                 ));
             }
         }
-        let broadcast_result =
-            broadcast_with_corruption::<Z, R, S>(session, BroadcastValue::PRSSVotes(psi_values))
-                .await?;
+        let broadcast_result = broadcast_from_all_w_corruption::<Z, R, S>(
+            session,
+            BroadcastValue::PRSSVotes(psi_values),
+        )
+        .await?;
 
         // Count the votes received from the broadcast
         let count = Self::count_votes(&broadcast_result, session)?;
@@ -291,9 +293,11 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
             }
         }
 
-        let broadcast_result =
-            broadcast_with_corruption::<Z, R, S>(session, BroadcastValue::PRSSVotes(chi_values))
-                .await?;
+        let broadcast_result = broadcast_from_all_w_corruption::<Z, R, S>(
+            session,
+            BroadcastValue::PRSSVotes(chi_values),
+        )
+        .await?;
 
         // Count the votes received from the broadcast
         let count = Self::count_votes(&broadcast_result, session)?;

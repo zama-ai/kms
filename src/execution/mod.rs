@@ -61,3 +61,7 @@ pub mod tfhe_internals {
     pub mod utils;
 }
 pub mod config;
+
+pub mod zk {
+    pub mod ceremony;
+}

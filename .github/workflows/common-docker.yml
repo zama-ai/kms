@@ -2,6 +2,9 @@ name: Docker Build and Push
 
 on:
   workflow_call:
+    secrets:
+      CONCRETE_ACTIONS_TOKEN:
+        required: true
     inputs:
       push_image:
         type: boolean
@@ -48,6 +51,8 @@ jobs:
       - name: Docker Build and Push
         uses: docker/build-push-action@v5
         with:
+          build-args: |
+            CONCRETE_ACTIONS_TOKEN=${{ secrets.CONCRETE_ACTIONS_TOKEN }}
           file: operations/docker/ci.dockerfile
           push: ${{ inputs.push_image }}
           tags: ghcr.io/zama-ai/ddec:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/ddec:latest

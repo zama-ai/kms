@@ -8,6 +8,8 @@ on:
         required: true
       JOB_SECRET:
         required: true
+      CONCRETE_ACTIONS_TOKEN:
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -54,6 +56,9 @@ jobs:
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
+
+      - name: Setup usage of private repo
+        run: git config --global url."https://${{ secrets.CONCRETE_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
 
       - name: Run Integration Tests
         run: cargo test --tests --features tfhe/x86_64

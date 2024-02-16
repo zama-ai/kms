@@ -404,11 +404,6 @@ pub enum DisputeMsg {
     CORRUPTION,
 }
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Hash, Clone, Debug)]
-pub struct DisputePayload {
-    msg: DisputeMsg,
-    disputes: Vec<Role>,
-}
 pub type LargeSession = LargeSessionStruct<AesRng, SessionParameters>;
 
 #[async_trait]

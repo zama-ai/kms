@@ -13,7 +13,7 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::{broadcast_with_corruption, generic_receive_from_all},
+        communication::broadcast::{broadcast_from_all_w_corruption, generic_receive_from_all},
         communication::p2p::send_to_honest_parties,
         runtime::party::Role,
         runtime::session::BaseSessionHandles,
@@ -363,7 +363,8 @@ async fn round_2<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session.corrupt_roles()
     );
     let bcast_data =
-        broadcast_with_corruption(session, BroadcastValue::Round2VSS(verification_vector)).await?;
+        broadcast_from_all_w_corruption(session, BroadcastValue::Round2VSS(verification_vector))
+            .await?;
 
     //Do we want to use a filter map instead of a map to Option?
     let mut casted_bcast_data: HashMap<Role, Option<Vec<VerificationValues<Z>>>> = bcast_data
@@ -417,7 +418,7 @@ async fn round_3<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 
     //Only broadcast if msg is not empty
     let bcast_data: HashMap<Role, BroadcastValue<Z>> = if !potentially_unhappy.is_empty() {
-        broadcast_with_corruption(session, BroadcastValue::Round3VSS(msg)).await?
+        broadcast_from_all_w_corruption(session, BroadcastValue::Round3VSS(msg)).await?
     } else {
         HashMap::<Role, BroadcastValue<Z>>::new()
     };
@@ -476,7 +477,7 @@ async fn round_4<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         .fold(true, |acc, v| acc & v);
 
     let bcast_data = if !unhappy_vec_is_empty {
-        broadcast_with_corruption(session, BroadcastValue::Round4VSS(msg)).await?
+        broadcast_from_all_w_corruption(session, BroadcastValue::Round4VSS(msg)).await?
     } else {
         HashMap::<Role, BroadcastValue<Z>>::new()
     };

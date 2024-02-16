@@ -7,7 +7,7 @@ use crate::{
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::broadcast_with_corruption,
+        communication::broadcast::broadcast_from_all_w_corruption,
         runtime::party::Role,
         runtime::session::LargeSessionHandles,
         sharing::{
@@ -160,7 +160,7 @@ async fn verify_sharing<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSess
 
         //Broadcast both my share of check values on all lsl as well as all the shares of check values for lsl where I am sender
         //All roles will be mapped to an output, but it may be Bot if they are malicious
-        let bcast_data = broadcast_with_corruption(
+        let bcast_data = broadcast_from_all_w_corruption(
             session,
             BroadcastValue::LocalSingleShare(MapsSharesChallenges {
                 checks_for_all: map_share_check_values,

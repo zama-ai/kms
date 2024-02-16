@@ -10,6 +10,9 @@ jobs:
     permissions:
       contents: 'read'
       id-token: 'write'
+    secrets:
+      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+
 
   docker-build:
     uses: ./.github/workflows/common-docker.yml
@@ -19,6 +22,8 @@ jobs:
       packages: 'write'
     with:
       push_image: false
+    secrets:
+      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
 
   done:
     runs-on: ubuntu-latest

@@ -9,6 +9,8 @@ on:
         required: true
       JOB_SECRET:
         required: true
+      CONCRETE_ACTIONS_TOKEN:
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -59,6 +61,9 @@ jobs:
         uses: KengoTODA/actions-setup-docker-compose@v1
         with:
           version: '2.23.3'
+
+      - name: Setup usage of private repo
+        run: git config --global url."https://${{ secrets.CONCRETE_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
 
       - name: Test Docker
         run: docker build -f operations/docker/local.dockerfile -t ddec .

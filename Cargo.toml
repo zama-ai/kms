@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 aes = "0.8.2"
-aes-prng = "~0.2"
+aes-prng = "0.2.1"
 aligned-vec = "~0.5"
 anyhow = "~1.0"
 async-channel = "~2.1"
@@ -60,6 +60,7 @@ tonic-health = "~0.10"
 typed-builder = "0.18.1"
 x509-parser = "~0.15"
 zeroize = { version = "~1.7", features = ["zeroize_derive"] }
+zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "169f1e28125e13ae481e7b1012f9afeff0c261b8" }
 
 [build-dependencies]
 tonic-build = "~0.10"
