@@ -147,20 +147,11 @@ impl Networking for GrpcNetworking {
 
             match client.send_value(request).await {
                 Ok(_) => Ok(()),
-                Err(e) => match e.code() {
-                    tonic::Code::Unavailable => {
-                        tracing::warn!(
-                            "Party get disconnected: {:?}. Not retrying anymore",
-                            receiver
-                        );
-                        Ok(())
-                    }
-                    _ => Err(anyhow_error_and_log(format!(
-                        "networking error: {:?}",
-                        e.to_string()
-                    )))
-                    .map_err(|e| e.into()),
-                },
+                Err(e) => Err(anyhow_error_and_log(format!(
+                    "networking error: {:?}",
+                    e.to_string()
+                )))
+                .map_err(|e| e.into()),
             }
         };
 
