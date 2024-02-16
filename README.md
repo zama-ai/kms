@@ -1,6 +1,6 @@
 # Key Management System
 
-[![CI](https://github.com/zama-ai/kms2/workflows/CI/badge.svg)](https://github.com/zama-ai/kms/actions)
+[![CI](https://github.com/zama-ai/kms/workflows/CI/badge.svg)](https://github.com/zama-ai/kms/actions)
 [![document-badge](https://github.com/zama-ai/kms/actions/workflows/doc.yml/badge.svg)](https://zama-ai.github.io/kms)
 [![license-badge](https://img.shields.io/badge/License-BSD-blue)](LICENSE)
 
