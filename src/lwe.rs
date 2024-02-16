@@ -17,7 +17,7 @@ use core::fmt::Debug;
 use ndarray::Array1;
 use num_integer::div_ceil;
 use num_traits::AsPrimitive;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use serde::Deserialize;
 use serde::Serialize;
 use std::num::Wrapping;
@@ -85,7 +85,7 @@ pub struct ThresholdLWEParameters {
     pub output_cipher_parameters: CiphertextParameters<u128>,
 }
 
-pub(crate) fn gen_single_party_share<R: CryptoRngCore, Z>(
+pub(crate) fn gen_single_party_share<R: Rng + CryptoRng, Z>(
     rng: &mut R,
     secret: Z,
     threshold: usize,
@@ -144,7 +144,7 @@ pub fn value_to_message(rec_value: Z128, message_mod_bits: usize) -> anyhow::Res
     Ok(from_expanded_msg(rec_value.0, message_mod_bits))
 }
 
-pub fn gen_key_set<R: CryptoRngCore>(
+pub fn gen_key_set<R: Rng + CryptoRng>(
     threshold_lwe_parameters: ThresholdLWEParameters,
     rng: &mut R,
 ) -> KeySet {
@@ -396,7 +396,7 @@ impl PublicKey {
     }
 
     /// Encrypts a [message], which is an unsigned integer using a explicit randomness generator [rng].
-    pub fn encrypt<T: DecomposableInto<u64> + UnsignedInteger, R: CryptoRngCore>(
+    pub fn encrypt<T: DecomposableInto<u64> + UnsignedInteger, R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
         message: T,
@@ -406,7 +406,7 @@ impl PublicKey {
 
     /// Encrypts a [message] into a cipher with [bits_to_encrypt] bits domain, using a explicit randomness generator [rng].
     /// That is, the argument [bits_to_encrypt] defines the amount of plaintext bit that should be in the resultant cipher regardless of the type T of [message].
-    pub fn encrypt_w_bitlimit<T: DecomposableInto<u64> + UnsignedInteger, R: CryptoRngCore>(
+    pub fn encrypt_w_bitlimit<T: DecomposableInto<u64> + UnsignedInteger, R: Rng + CryptoRng>(
         &self,
         rng: &mut R,
         message: T,
@@ -429,7 +429,11 @@ impl PublicKey {
     }
 
     /// encrypt message using pubkey.
-    pub fn encrypt_block<R: CryptoRngCore>(&self, rng: &mut R, message: u64) -> Ciphertext64Block {
+    pub fn encrypt_block<R: Rng + CryptoRng>(
+        &self,
+        rng: &mut R,
+        message: u64,
+    ) -> Ciphertext64Block {
         let plaintext = to_expanded_msg(
             message,
             self.threshold_lwe_parameters
@@ -525,7 +529,7 @@ pub type Ciphertext64Block = LweCiphertextOwned<u64>;
 pub type Ciphertext128 = Vec<Ciphertext128Block>;
 pub type Ciphertext128Block = LweCiphertextOwned<u128>;
 
-pub fn keygen_single_party_share<R: CryptoRngCore>(
+pub fn keygen_single_party_share<R: Rng + CryptoRng>(
     keyset: &KeySet,
     rng: &mut R,
     party_id: usize,
@@ -557,7 +561,7 @@ pub fn keygen_single_party_share<R: CryptoRngCore>(
     Ok(shared_sk)
 }
 /// keygen that generates secret key shares for many parties and a public key
-pub fn keygen_all_party_shares<R: CryptoRngCore>(
+pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
     keyset: &KeySet,
     rng: &mut R,
     num_parties: usize,
@@ -798,8 +802,7 @@ mod tests {
     };
     use aes_prng::AesRng;
     use num_traits::AsPrimitive;
-    use rand::RngCore;
-    use rand::SeedableRng;
+    use rand::{RngCore, SeedableRng};
     use std::num::Wrapping;
     use tfhe::{
         core_crypto::prelude::{LweSecretKey, LweSecretKeyOwned, Plaintext, UnsignedInteger},

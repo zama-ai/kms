@@ -9,17 +9,17 @@ use crate::{
 use async_trait::async_trait;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 
 #[async_trait]
 pub trait SingleSharing<Z: Ring>: Send + Default + Clone {
-    async fn init<R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()>;
-    async fn next<R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<Z>;
@@ -38,7 +38,7 @@ pub struct RealSingleSharing<Z, S: LocalSingleShare> {
 
 #[async_trait]
 impl<Z: ShamirRing + Derive, S: LocalSingleShare> SingleSharing<Z> for RealSingleSharing<Z, S> {
-    async fn init<R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
         l: usize,
@@ -69,7 +69,7 @@ impl<Z: ShamirRing + Derive, S: LocalSingleShare> SingleSharing<Z> for RealSingl
         }
         Ok(())
     }
-    async fn next<R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<Z> {

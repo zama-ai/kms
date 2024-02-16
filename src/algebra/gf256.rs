@@ -34,7 +34,7 @@ impl One for GF256 {
 }
 
 impl Sample for GF256 {
-    fn sample<R: rand::RngCore>(rng: &mut R) -> Self {
+    fn sample<R: rand::Rng>(rng: &mut R) -> Self {
         let mut candidate = [0_u8; 1];
         rng.fill_bytes(candidate.as_mut());
         GF256::from(candidate[0])

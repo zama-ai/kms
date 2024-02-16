@@ -1,5 +1,5 @@
 use itertools::{EitherOrBoth, Itertools};
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use tfhe::{
     core_crypto::{commons::traits::ByteRandomGenerator, entities::LweCompactPublicKeyOwned},
@@ -51,7 +51,7 @@ impl<Z: BaseRing> LweCompactPublicKeyShare<Z> {
         self.glwe_ciphertext_share.get_mut_mask_and_body()
     }
 
-    pub async fn open_to_tfhers_type<R: CryptoRngCore + Send + Sync, S: BaseSessionHandles<R>>(
+    pub async fn open_to_tfhers_type<R: Rng + CryptoRng + Send + Sync, S: BaseSessionHandles<R>>(
         self,
         session: &S,
     ) -> anyhow::Result<LweCompactPublicKeyOwned<u64>> {

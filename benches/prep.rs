@@ -20,7 +20,7 @@ use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_l
 use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_small;
 
 use pprof::criterion::{Output, PProfProfiler};
-use rand_core::SeedableRng;
+use rand::SeedableRng;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {

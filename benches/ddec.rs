@@ -15,8 +15,7 @@ use distributed_decryption::{
     lwe::{keygen_all_party_shares, KeySet},
 };
 use pprof::criterion::{Output, PProfProfiler};
-use rand::Rng;
-use rand_core::SeedableRng;
+use rand::{Rng, SeedableRng};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy)]

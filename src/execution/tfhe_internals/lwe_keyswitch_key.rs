@@ -1,5 +1,5 @@
 use itertools::{EitherOrBoth, Itertools};
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use tfhe::{
     core_crypto::{
         commons::{parameters::LweSize, traits::ContiguousEntityContainerMut},
@@ -64,7 +64,7 @@ impl<Z: BaseRing> LweKeySwitchKeyShare<Z> {
         self.decomp_level_count
     }
 
-    pub async fn open_to_tfhers_type<R: CryptoRngCore + Send + Sync, S: BaseSessionHandles<R>>(
+    pub async fn open_to_tfhers_type<R: Rng + CryptoRng + Send + Sync, S: BaseSessionHandles<R>>(
         self,
         session: &S,
     ) -> anyhow::Result<LweKeyswitchKeyOwned<u64>> {

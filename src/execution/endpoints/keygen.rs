@@ -5,7 +5,7 @@ use concrete_csprng::generators::SoftwareRandomGenerator;
 use itertools::Itertools;
 use ndarray::Array1;
 use num_integer::div_ceil;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use tfhe::core_crypto::prelude::Numeric;
 use tfhe::{
@@ -370,7 +370,7 @@ impl DKGParams {
 /// Note that there is some redundancy of information because we also explicitly ask the BaseRing as trait parameter
 pub async fn distributed_keygen<
     Z: BaseRing,
-    R: CryptoRngCore + Send + Sync,
+    R: Rng + CryptoRng + Send + Sync,
     S: BaseSessionHandles<R>,
     P: Preprocessing<ResiduePoly<Z>> + Send,
     BitGen: BitGenEven,

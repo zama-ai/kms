@@ -5,7 +5,7 @@ use crypto_box::{
 };
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use nom::AsBytes;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use serde::{de::Visitor, Deserialize, Deserializer, Serialize};
 use sha3::{Digest, Sha3_256};
 
@@ -221,7 +221,7 @@ impl ClientRequest {
     pub fn new<T: Serialize + AsRef<[u8]>>(
         fhe_cipher: &T,
         client_sig_sk: &PrivateSigKey,
-        rng: &mut impl CryptoRngCore,
+        rng: &mut (impl Rng + CryptoRng),
     ) -> anyhow::Result<(Self, SigncryptionPair)> {
         let keys = ClientRequest::ephemeral_key_generation(rng, client_sig_sk);
         let digest = hash_element(fhe_cipher);
@@ -273,7 +273,7 @@ impl ClientRequest {
 
     /// Helper method for what the client is supposed to do when generating ephemeral keys linked to the client's blockchain signing key
     fn ephemeral_key_generation(
-        rng: &mut impl CryptoRngCore,
+        rng: &mut (impl Rng + CryptoRng),
         sig_key: &PrivateSigKey,
     ) -> SigncryptionPair {
         let verification_key = PublicSigKey {
@@ -295,7 +295,9 @@ impl ClientRequest {
 
 /// Generate ephemeral keys used for encryption
 /// Concretely it involves generating ECDH keys for curve 25519 to be used in ECIES for hybrid encryption using Salsa
-pub fn encryption_key_generation(rng: &mut impl CryptoRngCore) -> (PublicEncKey, PrivateEncKey) {
+pub fn encryption_key_generation(
+    rng: &mut (impl Rng + CryptoRng),
+) -> (PublicEncKey, PrivateEncKey) {
     let sk = SecretKey::generate(rng);
     (PublicEncKey(sk.public_key()), sk)
 }
@@ -308,7 +310,7 @@ pub fn encryption_key_generation(rng: &mut impl CryptoRngCore) -> (PublicEncKey,
 /// validated to be consistent with the blockchain identity of the client BEFORE calling this method.
 /// IF THIS HAS NOT BEEN DONE THEN ANYONE CAN IMPERSONATE ANY CLIENT!!!
 pub fn signcrypt<T>(
-    rng: &mut impl CryptoRngCore,
+    rng: &mut (impl Rng + CryptoRng),
     msg: &T,
     client_pk: &SigncryptionPubKey,
     server_sig_key: &PrivateSigKey,
@@ -491,13 +493,15 @@ mod tests {
     use aes_prng::AesRng;
     use k256::ecdsa::SigningKey;
     use rand::SeedableRng;
-    use rand_core::CryptoRngCore;
+    use rand::{CryptoRng, Rng};
     use serde_asn1_der::{from_bytes, to_vec};
     use signature::Signer;
     use tracing_test::traced_test;
 
     /// Helper method for generating keys for digital signatures
-    pub fn signing_key_generation(rng: &mut impl CryptoRngCore) -> (PublicSigKey, PrivateSigKey) {
+    pub fn signing_key_generation(
+        rng: &mut (impl Rng + CryptoRng),
+    ) -> (PublicSigKey, PrivateSigKey) {
         let sk = SigningKey::random(rng);
         let pk = SigningKey::verifying_key(&sk);
         (PublicSigKey { pk: *pk }, PrivateSigKey { sk })

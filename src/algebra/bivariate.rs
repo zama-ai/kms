@@ -8,7 +8,7 @@ use anyhow::Result;
 use ndarray::Array;
 use ndarray::ArrayD;
 use ndarray::IxDyn;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use std::ops::Mul;
 
 /// Bivariate polynomial is a matrix of coefficients of ResiduePolynomials
@@ -22,7 +22,7 @@ pub struct BivariatePoly<Z> {
 
 impl<Z> BivariatePoly<Z> {
     /// method for sampling random bivariate polynomial where free term is the secret
-    pub fn from_secret<R: CryptoRngCore>(rng: &mut R, secret: Z, degree: usize) -> Result<Self>
+    pub fn from_secret<R: Rng + CryptoRng>(rng: &mut R, secret: Z, degree: usize) -> Result<Self>
     where
         Z: Sample + Zero + Copy,
     {

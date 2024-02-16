@@ -2,7 +2,7 @@ use aes_prng::AesRng;
 use async_trait::async_trait;
 use derive_more::Display;
 use rand::SeedableRng;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -157,13 +157,13 @@ impl ParameterHandles for SessionParameters {
 pub type BaseSession = BaseSessionStruct<AesRng, SessionParameters>;
 
 #[derive(Clone)]
-pub struct BaseSessionStruct<R: CryptoRngCore + Send + Sync, P: ParameterHandles> {
+pub struct BaseSessionStruct<R: Rng + CryptoRng + Send + Sync, P: ParameterHandles> {
     pub parameters: P,
     pub networking: NetworkingImpl,
     pub rng: R,
     pub corrupt_roles: HashSet<Role>,
 }
-pub trait BaseSessionHandles<R: CryptoRngCore>: ParameterHandles {
+pub trait BaseSessionHandles<R: Rng + CryptoRng>: ParameterHandles {
     fn corrupt_roles(&self) -> &HashSet<Role>;
     fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool>;
     fn rng(&mut self) -> &mut R;
@@ -185,7 +185,7 @@ impl BaseSession {
     }
 }
 
-impl<R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
+impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
     for BaseSessionStruct<R, P>
 {
     fn my_role(&self) -> anyhow::Result<Role> {
@@ -225,7 +225,7 @@ impl<R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> ParameterHandl
     }
 }
 
-impl<R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
+impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
     for BaseSessionStruct<R, P>
 {
     fn rng(&mut self) -> &mut R {
@@ -245,7 +245,7 @@ impl<R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHan
     }
 }
 
-pub trait ToBaseSession<R: CryptoRngCore + Send + Sync, B: BaseSessionHandles<R>> {
+pub trait ToBaseSession<R: Rng + CryptoRng + Send + Sync, B: BaseSessionHandles<R>> {
     fn to_base_session(&self) -> B;
 }
 
@@ -253,7 +253,7 @@ pub type SmallSession<Z> = SmallSessionStruct<Z, AesRng, SessionParameters>;
 pub type SmallSession64 = SmallSession<crate::algebra::residue_poly::ResiduePoly64>;
 pub type SmallSession128 = SmallSession<crate::algebra::residue_poly::ResiduePoly128>;
 
-pub trait SmallSessionHandles<Z: Ring, R: CryptoRngCore>: BaseSessionHandles<R> {
+pub trait SmallSessionHandles<Z: Ring, R: Rng + CryptoRng>: BaseSessionHandles<R> {
     /// Return the mutable prss state as an [Option]
     fn prss_as_mut(&mut self) -> anyhow::Result<&mut PRSSState<Z>>;
     /// Returns the non-mutable prss state if it exists or return an error
@@ -263,7 +263,7 @@ pub trait SmallSessionHandles<Z: Ring, R: CryptoRngCore>: BaseSessionHandles<R> 
 }
 
 #[derive(Clone)]
-pub struct SmallSessionStruct<Z: Ring, R: CryptoRngCore + Send + Sync, P: ParameterHandles> {
+pub struct SmallSessionStruct<Z: Ring, R: Rng + CryptoRng + Send + Sync, P: ParameterHandles> {
     pub parameters: P,
     pub network: NetworkingImpl,
     pub rng: R,
@@ -295,7 +295,7 @@ impl<Z: ShamirRing> SmallSession<Z> {
     }
 }
 
-impl<Z: Ring, R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
+impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
     for SmallSessionStruct<Z, R, P>
 {
     fn my_role(&self) -> anyhow::Result<Role> {
@@ -334,7 +334,7 @@ impl<Z: Ring, R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> Param
     }
 }
 
-impl<Z: Ring, R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
+impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
     for SmallSessionStruct<Z, R, P>
 {
     fn rng(&mut self) -> &mut R {
@@ -360,8 +360,8 @@ impl<Z: Ring, R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> BaseS
     }
 }
 
-impl<Z: Ring, R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> SmallSessionHandles<Z, R>
-    for SmallSessionStruct<Z, R, P>
+impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles>
+    SmallSessionHandles<Z, R> for SmallSessionStruct<Z, R, P>
 {
     fn prss_as_mut(&mut self) -> anyhow::Result<&mut PRSSState<Z>> {
         match self.prss_state {
@@ -385,7 +385,7 @@ impl<Z: Ring, R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> Small
     }
 }
 
-impl<Z: Ring, R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles>
+impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles>
     ToBaseSession<R, BaseSessionStruct<R, P>> for SmallSessionStruct<Z, R, P>
 {
     fn to_base_session(&self) -> BaseSessionStruct<R, P> {
@@ -412,7 +412,7 @@ pub struct DisputePayload {
 pub type LargeSession = LargeSessionStruct<AesRng, SessionParameters>;
 
 #[async_trait]
-pub trait LargeSessionHandles<R: CryptoRngCore>: BaseSessionHandles<R> {
+pub trait LargeSessionHandles<R: Rng + CryptoRng>: BaseSessionHandles<R> {
     fn disputed_roles(&self) -> &DisputeSet;
     fn my_disputes(&self) -> anyhow::Result<&BTreeSet<Role>>;
     fn add_dispute(&mut self, party_a: &Role, party_b: &Role) -> anyhow::Result<()>;
@@ -420,7 +420,7 @@ pub trait LargeSessionHandles<R: CryptoRngCore>: BaseSessionHandles<R> {
     //async fn add_dispute_and_bcast(&mut self, disputed_parties: &[Role]) -> anyhow::Result<()>;
 }
 #[derive(Clone)]
-pub struct LargeSessionStruct<R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> {
+pub struct LargeSessionStruct<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> {
     pub parameters: P,
     pub network: NetworkingImpl,
     pub rng: R,
@@ -440,7 +440,7 @@ impl LargeSession {
         })
     }
 }
-impl<R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
+impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
     for LargeSessionStruct<R, P>
 {
     fn my_role(&self) -> anyhow::Result<Role> {
@@ -479,7 +479,7 @@ impl<R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> ParameterHandl
         self.parameters.set_role_assignments(role_assignments);
     }
 }
-impl<R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
+impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
     for LargeSessionStruct<R, P>
 {
     fn rng(&mut self) -> &mut R {
@@ -504,7 +504,7 @@ impl<R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles> BaseSessionHan
     }
 }
 
-impl<R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles>
+impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles>
     ToBaseSession<R, BaseSessionStruct<R, P>> for LargeSessionStruct<R, P>
 {
     fn to_base_session(&self) -> BaseSessionStruct<R, P> {
@@ -518,7 +518,7 @@ impl<R: CryptoRngCore + Sync + Send + Clone, P: ParameterHandles>
 }
 
 #[async_trait]
-impl<R: CryptoRngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync>
+impl<R: Rng + CryptoRng + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync>
     LargeSessionHandles<R> for LargeSessionStruct<R, P>
 {
     fn disputed_roles(&self) -> &DisputeSet {
@@ -540,7 +540,7 @@ impl<R: CryptoRngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send 
     }
 }
 
-impl<R: CryptoRngCore + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync>
+impl<R: Rng + CryptoRng + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync>
     LargeSessionStruct<R, P>
 {
     pub fn sync_dispute_corrupt(&mut self, role: &Role) -> anyhow::Result<()> {

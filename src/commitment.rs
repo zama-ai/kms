@@ -1,4 +1,4 @@
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 
 /// Byte size of a typical key or opening value (currently 16 byte = 128 bit)
@@ -25,7 +25,7 @@ fn commitment_inner_hash(msg: &[u8], o: &Opening) -> Commitment {
 }
 
 /// commit to msg and return a 256-bit commitment and 128-bit opening value
-pub fn commit<R: CryptoRngCore>(msg: &[u8], rng: &mut R) -> (Commitment, Opening) {
+pub fn commit<R: Rng + CryptoRng>(msg: &[u8], rng: &mut R) -> (Commitment, Opening) {
     let mut opening = [0u8; KEY_BYTE_LEN];
     rng.fill_bytes(&mut opening);
 

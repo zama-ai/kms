@@ -12,8 +12,7 @@ use crate::{
 use aes_prng::AesRng;
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand::Rng;
-use rand_core::{CryptoRngCore, SeedableRng};
+use rand::{CryptoRng, Rng, SeedableRng};
 
 pub trait Solve: Sized + ZConsts {
     fn solve(v: &Self) -> anyhow::Result<Self>;
@@ -23,7 +22,7 @@ pub trait Solve: Sized + ZConsts {
 pub trait BitGenEven {
     async fn gen_bits_even<
         Z: ShamirRing + Solve,
-        Rnd: CryptoRngCore + Send + Sync,
+        Rnd: Rng + CryptoRng + Send + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
     >(
@@ -41,7 +40,7 @@ pub struct FakeBitGenEven {}
 impl BitGenEven for FakeBitGenEven {
     async fn gen_bits_even<
         Z: ShamirRing + Solve,
-        Rnd: CryptoRngCore + Send + Sync,
+        Rnd: Rng + CryptoRng + Send + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
     >(
@@ -80,7 +79,7 @@ impl BitGenEven for RealBitGenEven {
     /// The code only works when the modulo of the ring used is even.
     async fn gen_bits_even<
         Z: ShamirRing + Solve,
-        Rnd: CryptoRngCore + Send + Sync,
+        Rnd: Rng + CryptoRng + Send + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
     >(

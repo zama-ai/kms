@@ -1,7 +1,7 @@
 use std::ops::DerefMut;
 
 use itertools::{EitherOrBoth, Itertools};
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use tfhe::{
     core_crypto::{
         commons::{
@@ -83,7 +83,7 @@ impl<Z: BaseRing> LweBootstrapKeyShare<Z> {
 
     pub async fn open_to_tfhers_type<
         Scalar: UnsignedInteger,
-        R: CryptoRngCore + Send + Sync,
+        R: Rng + CryptoRng + Send + Sync,
         S: BaseSessionHandles<R>,
     >(
         self,

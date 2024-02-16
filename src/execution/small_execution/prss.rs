@@ -27,7 +27,7 @@ use crate::{
 use anyhow::Context;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -237,7 +237,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
 
     /// Compute the PRSS.check() method which returns the summed up psi value for each party based on the supplied counter `ctr`.
     /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
-    pub async fn prss_check<R: CryptoRngCore, S: SmallSessionHandles<Z, R>>(
+    pub async fn prss_check<R: Rng + CryptoRng, S: SmallSessionHandles<Z, R>>(
         &self,
         session: &mut S,
         ctr: u128,
@@ -270,7 +270,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
 
     /// Compute the PRZS.check() method which returns the summed up chi value for each party based on the supplied counter `ctr`.
     /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
-    pub async fn przs_check<R: CryptoRngCore, S: SmallSessionHandles<Z, R>>(
+    pub async fn przs_check<R: Rng + CryptoRng, S: SmallSessionHandles<Z, R>>(
         &self,
         session: &mut S,
         ctr: u128,
@@ -308,7 +308,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
     /// Helper method for counting the votes. Takes the `broadcast_result` and counts which parties has voted/replied each of the different [Value]s for each given [PrssSet].
     /// The result is a map from each unique received [PrssSet] to another map which maps from all possible received [Value]s associated
     /// with the [PrssSet] to the set of [Role]s which has voted/replied to the specific [Value] for the specific [PrssSet].
-    fn count_votes<R: CryptoRngCore, S: SmallSessionHandles<Z, R>>(
+    fn count_votes<R: Rng + CryptoRng, S: SmallSessionHandles<Z, R>>(
         broadcast_result: &HashMap<Role, BroadcastValue<Z>>,
         session: &mut S,
     ) -> anyhow::Result<HashMap<PartySet, ValueVotes<Z>>> {
@@ -346,7 +346,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
     /// That is, if it is not present in `value_votes` it gets added and in either case `cur_role` gets counted as having
     /// voted for `cur_prf_val`.
     /// In case `cur_role` has already voted for `cur_prf_val` they get added to the list of corrupt parties.
-    fn add_vote<R: CryptoRngCore, S: SmallSessionHandles<Z, R>>(
+    fn add_vote<R: Rng + CryptoRng, S: SmallSessionHandles<Z, R>>(
         value_votes: &mut ValueVotes<Z>,
         cur_prf_val: &Vec<Z>,
         cur_role: Role,
@@ -393,7 +393,7 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
     /// Helper method for finding the parties who did not vote for the results and add them to the corrupt set.
     /// Goes through `true_prf_vals` and find which parties did not vote for the psi values it contains.
     /// This is done by cross-referencing the votes in `count`
-    fn handle_non_voting_parties<R: CryptoRngCore, S: SmallSessionHandles<Z, R>>(
+    fn handle_non_voting_parties<R: Rng + CryptoRng, S: SmallSessionHandles<Z, R>>(
         true_prf_vals: &HashMap<&PartySet, &Vec<Z>>,
         count: &HashMap<PartySet, ValueVotes<Z>>,
         session: &mut S,
@@ -487,7 +487,7 @@ impl<Z: ShamirRing> PRSSSetup<Z> {
     /// initialize the PRSS setup for this epoch and a given party
     pub async fn init_with_abort<
         A: AgreeRandom + Send,
-        R: CryptoRngCore,
+        R: Rng + CryptoRng,
         S: SmallSessionHandles<Z, R>,
     >(
         session: &mut S,
@@ -561,7 +561,7 @@ impl<Z: ShamirRing> PRSSSetup<Z> {
         }
     }
 
-    pub async fn robust_init<V: Vss, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    pub async fn robust_init<V: Vss, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         session: &mut L,
         vss: &V,
     ) -> anyhow::Result<Self> {
@@ -615,7 +615,7 @@ fn inverse_vdm<Z: ShamirRing>(rows: usize, columns: usize) -> anyhow::Result<Arr
     Ok(init_vdm::<Z>(columns, rows)?.reversed_axes())
 }
 
-async fn agree_random_robust<Z: ShamirRing, Rnd: CryptoRngCore, L: LargeSessionHandles<Rnd>>(
+async fn agree_random_robust<Z: ShamirRing, Rnd: Rng + CryptoRng, L: LargeSessionHandles<Rnd>>(
     session: &mut L,
     shares: Vec<Z>,
 ) -> anyhow::Result<Vec<PrfKey>> {

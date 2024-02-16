@@ -132,7 +132,7 @@ mod tests {
     use aes_prng::AesRng;
     use concrete_csprng::generators::SoftwareRandomGenerator;
     use itertools::Itertools;
-    use rand_core::SeedableRng;
+    use rand::SeedableRng;
     use tfhe::{
         core_crypto::{
             algorithms::decrypt_lwe_ciphertext,

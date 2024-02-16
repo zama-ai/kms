@@ -1,5 +1,5 @@
 use itertools::Itertools;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use std::{collections::HashSet, sync::Arc};
 use tokio::{task::JoinSet, time::error::Elapsed};
 
@@ -167,7 +167,7 @@ pub fn reconstruct_w_errors_sync<Z: ShamirRing>(
     Ok(None)
 }
 
-pub async fn robust_open_to_all<Z: ShamirRing, R: CryptoRngCore, B: BaseSessionHandles<R>>(
+pub async fn robust_open_to_all<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     session: &B,
     share: Z,
     degree: usize,
@@ -187,7 +187,7 @@ pub async fn robust_open_to_all<Z: ShamirRing, R: CryptoRngCore, B: BaseSessionH
 ///
 /// Output:
 /// - The reconstructed secrets if reconstruction for all was possible
-pub async fn robust_opens_to_all<Z: ShamirRing, R: CryptoRngCore, B: BaseSessionHandles<R>>(
+pub async fn robust_opens_to_all<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     session: &B,
     shares: &[Z],
     degree: usize,
@@ -227,7 +227,7 @@ pub async fn robust_opens_to_all<Z: ShamirRing, R: CryptoRngCore, B: BaseSession
     try_reconstruct_from_shares(session, &mut sharings, degree, threshold, &mut jobs).await
 }
 
-pub async fn robust_open_to<Z: ShamirRing, R: CryptoRngCore + Send, B: BaseSessionHandles<R>>(
+pub async fn robust_open_to<Z: ShamirRing, R: Rng + CryptoRng + Send, B: BaseSessionHandles<R>>(
     session: &B,
     share: Z,
     degree: usize,
@@ -241,7 +241,7 @@ pub async fn robust_open_to<Z: ShamirRing, R: CryptoRngCore + Send, B: BaseSessi
     }
 }
 
-pub async fn robust_opens_to<Z: ShamirRing, R: CryptoRngCore + Send, B: BaseSessionHandles<R>>(
+pub async fn robust_opens_to<Z: ShamirRing, R: Rng + CryptoRng + Send, B: BaseSessionHandles<R>>(
     session: &B,
     shares: &[Z],
     degree: usize,

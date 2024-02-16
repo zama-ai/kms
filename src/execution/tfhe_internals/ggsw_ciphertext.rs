@@ -34,7 +34,7 @@ use super::{
     randomness::{EncryptionType, MPCEncryptionRandomGenerator},
 };
 use itertools::{EitherOrBoth, Itertools};
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use tfhe::{
     core_crypto::{
         commons::{
@@ -139,7 +139,7 @@ impl<Z: BaseRing> GgswCiphertextShare<Z> {
 }
 
 pub async fn ggsw_encode_messages<
-    Rnd: CryptoRngCore + Send + Sync,
+    Rnd: Rng + CryptoRng + Send + Sync,
     Z: BaseRing,
     S: BaseSessionHandles<Rnd>,
     P: Preprocessing<ResiduePoly<Z>>,
@@ -200,7 +200,7 @@ where
 ///This functions compute the necessary encoding required for GGSW
 ///In particular this does the MPC multiplication between the shared key bits and the secret message
 pub async fn ggsw_encode_message<
-    Rnd: CryptoRngCore + Send + Sync,
+    Rnd: Rng + CryptoRng + Send + Sync,
     Z: BaseRing,
     S: BaseSessionHandles<Rnd>,
     P: Preprocessing<ResiduePoly<Z>>,
@@ -354,7 +354,7 @@ mod tests {
     use aes_prng::AesRng;
     use concrete_csprng::generators::SoftwareRandomGenerator;
     use itertools::Itertools;
-    use rand_core::SeedableRng;
+    use rand::SeedableRng;
     use tfhe::{
         core_crypto::{
             algorithms::decrypt_constant_ggsw_ciphertext,

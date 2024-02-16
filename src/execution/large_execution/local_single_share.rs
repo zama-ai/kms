@@ -19,7 +19,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -48,7 +48,7 @@ pub trait LocalSingleShare: Send + Sync + Default + Clone {
     /// Output:
     /// - A HashMap that maps role to the vector of shares receive from that party (including my own shares).
     /// Corrupt parties are mapped to the default 0 sharing
-    async fn execute<Z: ShamirRing + Derive, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -72,7 +72,7 @@ pub struct RealLocalSingleShare<C: Coinflip, S: ShareDispute> {
 
 #[async_trait]
 impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, S> {
-    async fn execute<Z: ShamirRing + Derive, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -114,7 +114,7 @@ async fn send_receive_pads<Z, R, L, S>(
 ) -> anyhow::Result<ShareDisputeOutput<Z>>
 where
     Z: ShamirRing,
-    R: CryptoRngCore,
+    R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
     S: ShareDispute,
 {
@@ -123,7 +123,7 @@ where
     share_dispute.execute(session, &my_pads).await
 }
 
-async fn verify_sharing<Z: ShamirRing + Derive, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+async fn verify_sharing<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     session: &mut L,
     secrets: &mut ShareDisputeOutput<Z>,
     pads: &ShareDisputeOutput<Z>,
@@ -239,7 +239,7 @@ pub(crate) fn compute_check_values<Z: Ring>(
 //and that the overall sharing is a degree t polynomial
 pub(crate) fn verify_sender_challenge<
     Z: ShamirRing,
-    R: CryptoRngCore,
+    R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
 >(
     bcast_data: &HashMap<Role, MapsSharesChallenges<Z>>,
@@ -310,7 +310,7 @@ pub(crate) fn verify_sender_challenge<
     Ok(newly_corrupt)
 }
 
-pub(crate) fn look_for_disputes<Z: Ring, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+pub(crate) fn look_for_disputes<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     bcast_data: &HashMap<Role, MapsSharesChallenges<Z>>,
     session: &mut L,
 ) -> anyhow::Result<bool> {
@@ -397,7 +397,7 @@ pub(crate) mod tests {
     use async_trait::async_trait;
     use itertools::Itertools;
     use rand::SeedableRng;
-    use rand_core::CryptoRngCore;
+    use rand::{CryptoRng, Rng};
     use rstest::rstest;
     use std::collections::HashMap;
 
@@ -459,7 +459,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<C: Coinflip, S: ShareDispute> LocalSingleShare for MaliciousSenderLocalSingleShare<C, S> {
-        async fn execute<Z: ShamirRing + Derive, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
             &self,
             session: &mut L,
             secrets: &[Z],
@@ -501,7 +501,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<C: Coinflip, S: ShareDispute> LocalSingleShare for MaliciousReceiverLocalSingleShare<C, S> {
-        async fn execute<Z: ShamirRing + Derive, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
             &self,
             session: &mut L,
             secrets: &[Z],

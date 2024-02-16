@@ -1,5 +1,5 @@
 use super::poly::Poly;
-use rand::RngCore;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::{
     fmt::Display,
@@ -22,7 +22,7 @@ pub trait ZConsts {
 
 /// Sample random element(s)
 pub trait Sample {
-    fn sample<R: RngCore>(rng: &mut R) -> Self;
+    fn sample<R: Rng>(rng: &mut R) -> Self;
 }
 
 pub trait Ring: 'static

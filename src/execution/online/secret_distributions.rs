@@ -7,7 +7,7 @@ use crate::execution::{
     sharing::{shamir::ShamirRing, share::Share},
 };
 use async_trait::async_trait;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 
 #[async_trait]
 pub trait SecretDistributions {
@@ -19,7 +19,7 @@ pub trait SecretDistributions {
     ) -> anyhow::Result<Vec<Share<Z>>>
     where
         Z: ShamirRing + Solve,
-        Rnd: CryptoRngCore + Send + Sync,
+        Rnd: Rng + CryptoRng + Send + Sync,
         S: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
         BitGen: BitGenEven;
@@ -41,7 +41,7 @@ impl SecretDistributions for RealSecretDistributions {
     ) -> anyhow::Result<Vec<Share<Z>>>
     where
         Z: ShamirRing + Solve,
-        Rnd: CryptoRngCore + Send + Sync,
+        Rnd: Rng + CryptoRng + Send + Sync,
         S: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
         BitGen: BitGenEven,

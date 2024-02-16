@@ -1,6 +1,6 @@
 use itertools::EitherOrBoth;
 use itertools::Itertools;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use tfhe::{
     core_crypto::prelude::ByteRandomGenerator,
     shortint::parameters::{DecompositionBaseLog, DecompositionLevelCount},
@@ -31,7 +31,7 @@ pub async fn generate_lwe_bootstrap_key<Z, Gen, Rnd, S, P>(
 where
     Z: BaseRing,
     Gen: ByteRandomGenerator,
-    Rnd: CryptoRngCore + Send + Sync,
+    Rnd: Rng + CryptoRng + Send + Sync,
     S: BaseSessionHandles<Rnd>,
     P: Preprocessing<ResiduePoly<Z>>,
 {
@@ -88,7 +88,7 @@ pub async fn allocate_and_generate_lwe_bootstrap_key<Z, Gen, Rnd, S, P>(
 where
     Z: BaseRing,
     Gen: ByteRandomGenerator,
-    Rnd: CryptoRngCore + Send + Sync,
+    Rnd: Rng + CryptoRng + Send + Sync,
     S: BaseSessionHandles<Rnd>,
     P: Preprocessing<ResiduePoly<Z>>,
 {

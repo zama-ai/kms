@@ -1,6 +1,6 @@
 use super::structure_traits::{Field, One, Ring, Sample, Zero};
 use crate::{error::error_handler::anyhow_error_and_log, execution::sharing::shamir::ShamirRing};
-use rand::RngCore;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Div, Mul, Sub, SubAssign};
 
@@ -191,7 +191,7 @@ where
     F: Zero + One,
 {
     /// sample a random poly of given degree with `zero_coef` as fixed value for the constant term
-    pub fn sample_random_with_fixed_constant<U: RngCore>(
+    pub fn sample_random_with_fixed_constant<U: Rng>(
         rng: &mut U,
         zero_coef: F,
         degree: usize,

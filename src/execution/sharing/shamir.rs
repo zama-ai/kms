@@ -2,7 +2,7 @@ use super::share::Share;
 use crate::algebra::poly::Poly;
 use crate::execution::runtime::party::Role;
 use crate::{algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log};
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use std::ops::{Add, Mul, Sub};
 
 ///Trait required to be able to reconstruct a shamir sharing
@@ -138,7 +138,7 @@ impl<Z: ShamirRing> ShamirSharing<Z> {
     /// a share for party i is G(encode(i)) where
     /// G(X) = a_0 + a_1 * X + ... + a_{t-1} * X^{t-1}
     /// a_i \in Z_{2^K}/F(X) = G; deg(F) = 8
-    pub fn share<R: CryptoRngCore>(
+    pub fn share<R: Rng + CryptoRng>(
         rng: &mut R,
         secret: Z,
         num_parties: usize,

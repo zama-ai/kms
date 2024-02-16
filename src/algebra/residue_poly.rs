@@ -22,7 +22,7 @@ use crate::{
 };
 use crate::{error::error_handler::anyhow_error_and_log, execution::online::gen_bits::Solve};
 use itertools::Itertools;
-use rand::RngCore;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -157,7 +157,7 @@ impl<Z> ResiduePoly<Z> {
 }
 
 impl<Z: Zero + Sample + Copy> Sample for ResiduePoly<Z> {
-    fn sample<R: RngCore>(rng: &mut R) -> Self {
+    fn sample<R: Rng>(rng: &mut R) -> Self {
         let mut coefs = [Z::ZERO; F_DEG];
         for coef in coefs.iter_mut() {
             *coef = Z::sample(rng);

@@ -9,18 +9,18 @@ use crate::{
 };
 use anyhow::Context;
 use itertools::Itertools;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Triple<R>
 where
-    R: Ring + Send + Sync,
+    R: Ring + Sync,
 {
     pub a: Share<R>,
     pub b: Share<R>,
     pub c: Share<R>,
 }
-impl<R: Ring + Send + Sync> Triple<R> {
+impl<R: Ring + Sync> Triple<R> {
     pub fn new(a: Share<R>, b: Share<R>, c: Share<R>) -> Self {
         Self { a, b, c }
     }
@@ -36,7 +36,7 @@ impl<R: Ring + Send + Sync> Triple<R> {
 ///     [rho]       =[y]+[triple.b]
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
-pub async fn mult<Z: ShamirRing, Rnd: CryptoRngCore + Send + Sync, Ses: BaseSessionHandles<Rnd>>(
+pub async fn mult<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync, Ses: BaseSessionHandles<Rnd>>(
     x: Share<Z>,
     y: Share<Z>,
     triple: Triple<Z>,
@@ -57,11 +57,7 @@ pub async fn mult<Z: ShamirRing, Rnd: CryptoRngCore + Send + Sync, Ses: BaseSess
 ///     [rho]       =[y]+[triple.b]
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
-pub async fn mult_list<
-    Z: ShamirRing,
-    Rnd: CryptoRngCore + Send + Sync,
-    Ses: BaseSessionHandles<Rnd>,
->(
+pub async fn mult_list<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync, Ses: BaseSessionHandles<Rnd>>(
     x_vec: &[Share<Z>],
     y_vec: &[Share<Z>],
     triples: Vec<Triple<Z>>,
@@ -121,7 +117,7 @@ pub async fn mult_list<
 }
 
 // Open a single share
-pub async fn open<Z: ShamirRing, Rnd: CryptoRngCore + Send + Sync, Ses: BaseSessionHandles<Rnd>>(
+pub async fn open<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync, Ses: BaseSessionHandles<Rnd>>(
     to_open: Share<Z>,
     session: &Ses,
 ) -> anyhow::Result<Z> {
@@ -135,11 +131,7 @@ pub async fn open<Z: ShamirRing, Rnd: CryptoRngCore + Send + Sync, Ses: BaseSess
 }
 
 /// Opens a list of shares to all parties
-pub async fn open_list<
-    Z: ShamirRing,
-    Rnd: CryptoRngCore + Send + Sync,
-    Ses: BaseSessionHandles<Rnd>,
->(
+pub async fn open_list<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync, Ses: BaseSessionHandles<Rnd>>(
     to_open: &[Share<Z>],
     session: &Ses,
 ) -> anyhow::Result<Vec<Z>> {

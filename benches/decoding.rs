@@ -7,7 +7,7 @@ use distributed_decryption::{
     },
     execution::sharing::shamir::ShamirSharing,
 };
-use rand_core::SeedableRng;
+use rand::SeedableRng;
 use std::num::Wrapping;
 
 fn bench_decode_z2(c: &mut Criterion) {

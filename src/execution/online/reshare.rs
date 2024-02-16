@@ -1,6 +1,6 @@
 use itertools::{izip, Itertools};
 use ndarray::Array1;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use zeroize::Zeroize;
 
@@ -56,7 +56,7 @@ fn delta0i<Z: BaseRing>(
 }
 
 pub async fn reshare_sk_same_sets<
-    Rnd: CryptoRngCore + Send + Sync,
+    Rnd: Rng + CryptoRng + Send + Sync,
     Ses: BaseSessionHandles<Rnd>,
     P128: Preprocessing<ResiduePoly128> + Send,
     P64: Preprocessing<ResiduePoly64> + Send,
@@ -78,7 +78,7 @@ pub async fn reshare_sk_same_sets<
 }
 
 pub async fn reshare_same_sets<
-    Rnd: CryptoRngCore + Send + Sync,
+    Rnd: Rng + CryptoRng + Send + Sync,
     Ses: BaseSessionHandles<Rnd>,
     P: Preprocessing<ResiduePoly<Z>> + Send,
     Z: BaseRing + Zeroize,

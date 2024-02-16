@@ -13,7 +13,7 @@ use crate::{
 use async_trait::async_trait;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 
 type DoubleArrayShares<Z> = (ArrayD<Z>, ArrayD<Z>);
@@ -25,13 +25,13 @@ pub struct DoubleShare<Z> {
 
 #[async_trait]
 pub trait DoubleSharing<Z: Ring>: Send + Default + Clone {
-    async fn init<R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
         l: usize,
     ) -> anyhow::Result<()>;
 
-    async fn next<R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<DoubleShare<Z>>;
@@ -50,7 +50,7 @@ pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
 
 #[async_trait]
 impl<Z: ShamirRing + Derive, S: LocalDoubleShare> DoubleSharing<Z> for RealDoubleSharing<Z, S> {
-    async fn init<R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
         l: usize,
@@ -81,7 +81,7 @@ impl<Z: ShamirRing + Derive, S: LocalDoubleShare> DoubleSharing<Z> for RealDoubl
         }
         Ok(())
     }
-    async fn next<R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<DoubleShare<Z>> {

@@ -12,7 +12,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 
 #[derive(Clone, Default)]
@@ -35,7 +35,7 @@ pub trait ShareDispute: Send + Sync + Clone + Default {
     /// Returns:
     /// - a hashmap which maps roles to shares I received
     /// - another hashmap which maps roles to shares I sent
-    async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -44,7 +44,7 @@ pub trait ShareDispute: Send + Sync + Clone + Default {
     /// Executes the ShareDispute protocol on a vector of secrets,
     /// actually sharing the secret using a sharing of degree t and one of degree 2t
     /// Needed for doubleSharings
-    async fn execute_double<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn execute_double<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -55,7 +55,7 @@ pub trait ShareDispute: Send + Sync + Clone + Default {
 pub struct RealShareDispute {}
 
 //Want to puncture only at Dispute\Corrupt ids
-fn compute_puncture_idx<R: CryptoRngCore, L: LargeSessionHandles<R>>(
+fn compute_puncture_idx<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     session: &L,
 ) -> anyhow::Result<Vec<usize>> {
     Ok(session
@@ -72,7 +72,7 @@ fn compute_puncture_idx<R: CryptoRngCore, L: LargeSessionHandles<R>>(
         .collect())
 }
 
-fn share_secrets<Z: ShamirRing, R: CryptoRngCore>(
+fn share_secrets<Z: ShamirRing, R: Rng + CryptoRng>(
     rng: &mut R,
     secrets: &[Z],
     punctured_idx: &[usize],
@@ -88,7 +88,7 @@ fn share_secrets<Z: ShamirRing, R: CryptoRngCore>(
 }
 
 //Fill in missing values with 0s
-fn fill_incomplete_output<Z: Ring, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+fn fill_incomplete_output<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     session: &L,
     result: &mut HashMap<Role, Vec<Z>>,
     len: usize,
@@ -106,7 +106,7 @@ fn fill_incomplete_output<Z: Ring, R: CryptoRngCore, L: LargeSessionHandles<R>>(
 
 #[async_trait]
 impl ShareDispute for RealShareDispute {
-    async fn execute_double<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn execute_double<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -156,7 +156,7 @@ impl ShareDispute for RealShareDispute {
         send_and_receive_share_dispute_double(session, polypoints_map, secrets.len()).await
     }
 
-    async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -198,7 +198,7 @@ impl ShareDispute for RealShareDispute {
 
 async fn send_and_receive_share_dispute_double<
     Z: Ring,
-    R: CryptoRngCore,
+    R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
 >(
     session: &mut L,
@@ -282,7 +282,7 @@ async fn send_and_receive_share_dispute_double<
 
 async fn send_and_receive_share_dispute_single<
     Z: Ring,
-    R: CryptoRngCore,
+    R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
 >(
     session: &mut L,
@@ -345,7 +345,7 @@ async fn send_and_receive_share_dispute_single<
 
 /// Constructs a random polynomial given a set of `threshold` party IDs which should evaluate to 0 on the interpolated polynomial.
 /// Returns all the `num_parties` y-values interpolated from the `dispute_party_ids` point embedded onto the x-axis.
-pub fn interpolate_poly_w_punctures<Z: ShamirRing, R: CryptoRngCore>(
+pub fn interpolate_poly_w_punctures<Z: ShamirRing, R: Rng + CryptoRng>(
     rng: &mut R,
     num_parties: usize,
     threshold: usize,
@@ -433,7 +433,7 @@ pub(crate) mod tests {
     use async_trait::async_trait;
     use itertools::Itertools;
     use rand::SeedableRng;
-    use rand_core::CryptoRngCore;
+    use rand::{CryptoRng, Rng};
     use rstest::rstest;
     use std::{collections::HashMap, num::Wrapping};
     use tracing_test::traced_test;
@@ -466,7 +466,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl ShareDispute for DroppingShareDispute {
-        async fn execute<Z: Ring, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
             &self,
             _session: &mut L,
             _secrets: &[Z],
@@ -474,7 +474,7 @@ pub(crate) mod tests {
             Ok(ShareDisputeOutput::default())
         }
 
-        async fn execute_double<Z: Ring, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+        async fn execute_double<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
             &self,
             _session: &mut L,
             _secrets: &[Z],
@@ -485,7 +485,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl ShareDispute for WrongShareDisputeRecons {
-        async fn execute<Z: Ring, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
             &self,
             session: &mut L,
             secrets: &[Z],
@@ -526,7 +526,7 @@ pub(crate) mod tests {
             Ok(ShareDisputeOutput::default())
         }
 
-        async fn execute_double<Z: Ring, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+        async fn execute_double<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
             &self,
             session: &mut L,
             secrets: &[Z],
@@ -570,7 +570,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl ShareDispute for MaliciousShareDisputeRecons {
-        async fn execute_double<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+        async fn execute_double<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
             &self,
             session: &mut L,
             secrets: &[Z],
@@ -624,7 +624,7 @@ pub(crate) mod tests {
             send_and_receive_share_dispute_double(session, polypoints_map, secrets.len()).await
         }
 
-        async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
             &self,
             session: &mut L,
             secrets: &[Z],

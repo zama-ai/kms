@@ -1,7 +1,7 @@
 use anyhow::Context;
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use std::{cmp::min, collections::HashMap};
 
 use super::{agree_random::AgreeRandom, prf::PRSSConversions};
@@ -36,7 +36,7 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
 {
     /// Initializes the preprocessing for a new epoch, by preprocessing a batch
     /// NOTE: if None is passed for the option for `batch_sizes`, then the default values are used.
-    pub async fn init<Rnd: CryptoRngCore, Ses: SmallSessionHandles<Z, Rnd>>(
+    pub async fn init<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         batch_sizes: BatchParams,
     ) -> anyhow::Result<Self> {
@@ -66,7 +66,7 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
     /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
     /// If corruption occurs during the process then the corrupt parties are added to the corrupt set in `session` and the method
     /// automatically retries to construct any missing triples, to ensure a full batch has been constructed before returning.
-    async fn next_random_batch<Rnd: CryptoRngCore, Ses: SmallSessionHandles<Z, Rnd>>(
+    async fn next_random_batch<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         &mut self,
         session: &mut Ses,
     ) -> anyhow::Result<()> {
@@ -86,7 +86,7 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
     /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
     /// If corruption occurs during the process then the corrupt parties are added to the corrupt set in `session` and the method
     /// automatically retries to construct any missing triples, to ensure a full batch has been constructed before returning.
-    async fn next_triple_batch<Rnd: CryptoRngCore, Ses: SmallSessionHandles<Z, Rnd>>(
+    async fn next_triple_batch<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         &mut self,
         session: &mut Ses,
         amount: usize,
@@ -184,7 +184,7 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
     /// Helper method to parse the result of the broadcast by turning taking the i'th share from each party and combine them in a vector for which reconstruction is then computed.
     /// Hence the method returns a list of length `amount` which contain the reconstructed values.
     /// In case a wrong amount of elements or a wrong type is returned then the culpit is added to the list of corrupt parties.
-    fn compute_d_values<Rnd: CryptoRngCore, Ses: SmallSessionHandles<Z, Rnd>>(
+    fn compute_d_values<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         amount: usize,
         d_recons: HashMap<Role, BroadcastValue<Z>>,
@@ -245,7 +245,7 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
     /// Helper method which takes the list of d shares of each party (which is the result of the broadcast) and parses this into
     /// a vector of maps, where each map is from the sending [Role] to their i'th d share.
     /// Note: That in case the wrong type of share is sent, [None] is as share, and if the wrong type of broadcast message is sent, nothing is inserted.
-    fn parse_d_shares<Rnd: CryptoRngCore, Ses: SmallSessionHandles<Z, Rnd>>(
+    fn parse_d_shares<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         amount: usize,
         d_recons: HashMap<Role, BroadcastValue<Z>>,
@@ -280,7 +280,7 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
         Ok(res)
     }
 
-    fn prss_list<Rnd: CryptoRngCore, Ses: SmallSessionHandles<Z, Rnd>>(
+    fn prss_list<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         amount: usize,
     ) -> anyhow::Result<Vec<Z>> {
@@ -292,7 +292,7 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
         Ok(vec_prss)
     }
 
-    fn przs_list<Rnd: CryptoRngCore, Ses: SmallSessionHandles<Z, Rnd>>(
+    fn przs_list<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         amount: usize,
     ) -> anyhow::Result<Vec<Z>> {
@@ -307,7 +307,7 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
 
     /// Helper method for validating results when corruption has happened (by the reconstruction not being successful).
     /// The method finds the corrupt parties (based on what they broadcast) and adds them to the list of corrupt parties in the session.
-    async fn check_d<Rnd: CryptoRngCore, Ses: SmallSessionHandles<Z, Rnd>>(
+    async fn check_d<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         prss_ctr: u128,
         przs_ctr: u128,

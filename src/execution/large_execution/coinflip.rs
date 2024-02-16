@@ -1,7 +1,7 @@
 use aes_prng::AesRng;
 use async_trait::async_trait;
 use rand::SeedableRng;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 
 use crate::{
     error::error_handler::anyhow_error_and_log,
@@ -15,7 +15,7 @@ use super::vss::Vss;
 
 #[async_trait]
 pub trait Coinflip: Send + Sync + Clone + Default {
-    async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
     ) -> anyhow::Result<Z>;
@@ -26,7 +26,7 @@ pub struct DummyCoinflip {}
 
 #[async_trait]
 impl Coinflip for DummyCoinflip {
-    async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         _session: &mut L,
     ) -> anyhow::Result<Z> {
@@ -49,7 +49,7 @@ impl<V: Vss> RealCoinflip<V> {
 
 #[async_trait]
 impl<V: Vss> Coinflip for RealCoinflip<V> {
-    async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
     ) -> anyhow::Result<Z> {
@@ -102,7 +102,7 @@ pub(crate) mod tests {
     use anyhow::anyhow;
     use async_trait::async_trait;
     use rand::SeedableRng;
-    use rand_core::CryptoRngCore;
+    use rand::{CryptoRng, Rng};
     use rstest::rstest;
     use tokio::task::JoinSet;
 
@@ -181,7 +181,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<V: Vss> Coinflip for DroppingCoinflipAfterVss<V> {
-        async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
             &self,
             session: &mut L,
         ) -> anyhow::Result<Z> {
@@ -195,7 +195,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<V: Vss> Coinflip for MaliciousCoinflipRecons<V> {
-        async fn execute<Z: ShamirRing, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
             &self,
             session: &mut L,
         ) -> anyhow::Result<Z> {

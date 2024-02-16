@@ -12,7 +12,7 @@ use crate::{
 use anyhow::Context;
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 
 use super::prss::{create_sets, PrfKey};
@@ -20,7 +20,7 @@ use super::prss::{create_sets, PrfKey};
 #[async_trait]
 pub trait AgreeRandom {
     /// agree on a random value, as seen from a single party's view (determined by the session)
-    async fn agree_random<Z: Ring, R: CryptoRngCore, S: BaseSessionHandles<R>>(
+    async fn agree_random<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>>;
 }
@@ -221,7 +221,7 @@ fn verify_and_xor_keys(
 }
 
 /// does the communication for RealAgreeRandom and returns the unpacked commitments and keys/openings
-async fn agree_random_communication<Z: Ring, R: CryptoRngCore, S: BaseSessionHandles<R>>(
+async fn agree_random_communication<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &mut S,
     coms: &[Vec<Commitment>],
     keys_opens: &[Vec<(PrfKey, Opening)>],
@@ -272,7 +272,7 @@ async fn agree_random_communication<Z: Ring, R: CryptoRngCore, S: BaseSessionHan
 
 #[async_trait]
 impl AgreeRandom for RealAgreeRandom {
-    async fn agree_random<Z: Ring, R: CryptoRngCore, S: BaseSessionHandles<R>>(
+    async fn agree_random<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.amount_of_parties();
@@ -318,7 +318,7 @@ pub struct RealAgreeRandomWithAbort {}
 
 #[async_trait]
 impl AgreeRandom for RealAgreeRandomWithAbort {
-    async fn agree_random<Z: Ring, R: CryptoRngCore, S: BaseSessionHandles<R>>(
+    async fn agree_random<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
         let num_parties = session.amount_of_parties();
@@ -372,7 +372,7 @@ pub struct DummyAgreeRandom {}
 
 #[async_trait]
 impl AgreeRandom for DummyAgreeRandom {
-    async fn agree_random<Z, R: CryptoRngCore, S: BaseSessionHandles<R>>(
+    async fn agree_random<Z, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
         let party_sets = compute_party_sets(

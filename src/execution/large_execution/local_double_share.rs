@@ -17,7 +17,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub struct DoubleShares<Z> {
@@ -27,7 +27,7 @@ pub struct DoubleShares<Z> {
 
 #[async_trait]
 pub trait LocalDoubleShare: Send + Sync + Default + Clone {
-    async fn execute<Z: ShamirRing + Derive, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -49,7 +49,7 @@ pub struct RealLocalDoubleShare<C: Coinflip, S: ShareDispute> {
 
 #[async_trait]
 impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, S> {
-    async fn execute<Z: ShamirRing + Derive, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+    async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -121,7 +121,7 @@ async fn send_receive_pads_double<Z, R, L, S>(
 ) -> anyhow::Result<ShareDisputeOutputDouble<Z>>
 where
     Z: ShamirRing,
-    R: CryptoRngCore,
+    R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
     S: ShareDispute,
 {
@@ -130,7 +130,7 @@ where
     share_dispute.execute_double(session, &my_pads).await
 }
 
-async fn verify_sharing<Z: ShamirRing + Derive, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+async fn verify_sharing<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     session: &mut L,
     secrets_double: &mut ShareDisputeOutputDouble<Z>,
     pads_double: &ShareDisputeOutputDouble<Z>,
@@ -342,7 +342,7 @@ pub(crate) mod tests {
     use async_trait::async_trait;
     use itertools::Itertools;
     use rand::SeedableRng;
-    use rand_core::CryptoRngCore;
+    use rand::{CryptoRng, Rng};
     use rstest::rstest;
     use std::collections::HashMap;
 
@@ -402,7 +402,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for MaliciousSenderLocalDoubleShare<C, S> {
-        async fn execute<Z: ShamirRing + Derive, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
             &self,
             session: &mut L,
             secrets: &[Z],
@@ -458,7 +458,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for MaliciousReceiverLocalDoubleShare<C, S> {
-        async fn execute<Z: ShamirRing + Derive, R: CryptoRngCore, L: LargeSessionHandles<R>>(
+        async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
             &self,
             session: &mut L,
             secrets: &[Z],

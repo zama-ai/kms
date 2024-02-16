@@ -2,7 +2,7 @@ use std::{collections::HashMap, num::Wrapping, sync::Arc};
 
 use aes_prng::AesRng;
 use rand::SeedableRng;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 
 use crate::execution::large_execution::offline::LargePreprocessing;
 use crate::execution::online::bit_manipulation::{bit_dec_batch, BatchedBits};
@@ -274,7 +274,7 @@ pub fn threshold_decrypt64<Z: ShamirRing>(
     Ok(results)
 }
 
-async fn open_masked_ptxts<R: CryptoRngCore + Send, S: BaseSessionHandles<R>>(
+async fn open_masked_ptxts<R: Rng + CryptoRng + Send, S: BaseSessionHandles<R>>(
     session: &S,
     res: Vec<ResiduePoly128>,
     keyshares: &SecretKeyShare,
@@ -320,7 +320,7 @@ pub fn reconstruct_message(
     Ok(out)
 }
 
-async fn open_bit_composed_ptxts<R: CryptoRngCore + Send, S: BaseSessionHandles<R>>(
+async fn open_bit_composed_ptxts<R: Rng + CryptoRng + Send, S: BaseSessionHandles<R>>(
     session: &S,
     res: Vec<ResiduePoly64>,
 ) -> anyhow::Result<Vec<Z64>> {
@@ -446,8 +446,8 @@ pub fn batch_partial_decrypt(
 
 // run decryption with bit-decomposition
 pub async fn run_decryption_bitdec<
-    P: Preprocessing<ResiduePoly64> + std::marker::Send,
-    Rnd: CryptoRngCore + Send + Sync,
+    P: Preprocessing<ResiduePoly64> + Send,
+    Rnd: Rng + CryptoRng + Send + Sync,
     Ses: BaseSessionHandles<Rnd>,
 >(
     session: &mut Ses,

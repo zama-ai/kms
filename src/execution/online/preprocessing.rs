@@ -15,7 +15,7 @@ use crate::{
 use aes_prng::AesRng;
 use mockall::automock;
 use rand::SeedableRng;
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 
 /// The amount of triples required in a distributed decryption
 pub const TRIPLE_BATCH_SIZE: usize = 10_usize;
@@ -96,7 +96,7 @@ impl<Z: Ring> Preprocessing<Z> for BasePreprocessing<Z> {
 /// with `threshold` degree.
 /// Its implementation is deterministic but pseudorandomly and fully derived using the `seed`.
 #[derive(Clone)]
-pub struct DummyPreprocessing<Z, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>> {
+pub struct DummyPreprocessing<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> {
     seed: u64,
     session: Ses,
     pub rnd_ctr: u64,
@@ -105,7 +105,7 @@ pub struct DummyPreprocessing<Z, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd
     _phantom2: std::marker::PhantomData<Rnd>,
 }
 
-impl<Z: ShamirRing, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>>
+impl<Z: ShamirRing, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>
     DummyPreprocessing<Z, Rnd, Ses>
 {
     /// Dummy preprocessing which generates shares deterministically from `seed`
@@ -126,7 +126,7 @@ impl<Z: ShamirRing, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>>
         parties: usize,
         threshold: u8,
         secret: Z,
-        rng: &mut impl CryptoRngCore,
+        rng: &mut (impl Rng + CryptoRng),
     ) -> anyhow::Result<Vec<Share<Z>>> {
         let poly = Poly::sample_random_with_fixed_constant(rng, secret, threshold as usize);
         (1..=parties)
@@ -141,7 +141,7 @@ impl<Z: ShamirRing, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>>
     }
 }
 
-impl<Z: ShamirRing, Rnd: CryptoRngCore + Send + Sync + Clone, Ses: BaseSessionHandles<Rnd>>
+impl<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync + Clone, Ses: BaseSessionHandles<Rnd>>
     Preprocessing<Z> for DummyPreprocessing<Z, Rnd, Ses>
 {
     /// Computes a dummy triple deterministically constructed from the seed in [DummyPreprocessing].
@@ -229,7 +229,7 @@ impl<Z: ShamirRing, Rnd: CryptoRngCore + Send + Sync + Clone, Ses: BaseSessionHa
 /// Dummy preprocessing struct constructed primarely for use for debugging
 /// Concretely the struct can be used _non-interactively_ since shares will all be points,
 /// i.e. sharing of threshold=0
-pub struct DummyDebugPreprocessing<Z, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>> {
+pub struct DummyDebugPreprocessing<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> {
     seed: u64,
     session: Ses,
     rnd_ctr: u64,
@@ -237,7 +237,7 @@ pub struct DummyDebugPreprocessing<Z, Rnd: CryptoRngCore, Ses: BaseSessionHandle
     _phantom_rnd: std::marker::PhantomData<Rnd>,
     _phantom_z: std::marker::PhantomData<Z>,
 }
-impl<Z, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>> DummyDebugPreprocessing<Z, Rnd, Ses> {
+impl<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> DummyDebugPreprocessing<Z, Rnd, Ses> {
     // Dummy preprocessing which generates shares deterministically from `seed`
     pub fn new(seed: u64, session: Ses) -> Self {
         DummyDebugPreprocessing::<Z, Rnd, Ses> {
@@ -250,7 +250,7 @@ impl<Z, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>> DummyDebugPreprocessin
         }
     }
 }
-impl<Z: Ring, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>> Preprocessing<Z>
+impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> Preprocessing<Z>
     for DummyDebugPreprocessing<Z, Rnd, Ses>
 {
     /// Computes a dummy triple deterministically constructed from the seed in [DummyPreprocessing].
@@ -298,7 +298,7 @@ impl<Z: Ring, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>> Preprocessing<Z>
 
 /// Helper method to reconstructs a shared ring element based on a vector of shares.
 /// Returns an error if reconstruction fails, and otherwise the reconstructed ring value.
-pub fn reconstruct<Z: ShamirRing, Rnd: CryptoRngCore, Ses: BaseSessionHandles<Rnd>>(
+pub fn reconstruct<Z: ShamirRing, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
     session: &Ses,
     shares: Vec<Share<Z>>,
 ) -> anyhow::Result<Z> {

@@ -21,7 +21,7 @@ use distributed_decryption::tests::helper::tests_and_benches::{
     execute_protocol_large, execute_protocol_small,
 };
 use pprof::criterion::{Output, PProfProfiler};
-use rand_core::SeedableRng;
+use rand::SeedableRng;
 use std::num::Wrapping;
 
 #[derive(Debug, Clone, Copy)]

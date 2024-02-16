@@ -1,6 +1,5 @@
+use rand::Rng;
 use std::num::Wrapping;
-
-use rand::RngCore;
 
 use super::structure_traits::{BaseRing, BitExtract, FromU128, One, Ring, Sample, ZConsts, Zero};
 
@@ -21,8 +20,7 @@ macro_rules! ring_impl {
         }
 
         impl Sample for $z {
-            fn sample<R: RngCore>(rng: &mut R) -> Self {
-                use rand::Rng;
+            fn sample<R: Rng>(rng: &mut R) -> Self {
                 rng.gen::<$z>()
             }
         }

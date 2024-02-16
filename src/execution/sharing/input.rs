@@ -6,13 +6,13 @@ use crate::{
     },
     networking::value::NetworkValue,
 };
-use rand_core::CryptoRngCore;
+use rand::{CryptoRng, Rng};
 use std::sync::Arc;
 use tokio::{task::JoinSet, time::timeout_at};
 
 use super::shamir::{ShamirRing, ShamirSharing};
 
-pub async fn robust_input<Z: ShamirRing, R: CryptoRngCore>(
+pub async fn robust_input<Z: ShamirRing, R: Rng + CryptoRng>(
     session: &mut BaseSession,
     value: &Option<Z>,
     role: &Role,
