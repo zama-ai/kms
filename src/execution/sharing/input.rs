@@ -32,7 +32,7 @@ pub async fn robust_input<Z: ShamirRing, R: Rng + CryptoRng>(
                 }
             }
         };
-        let num_parties = session.amount_of_parties();
+        let num_parties = session.num_parties();
 
         let shamir_sharings =
             ShamirSharing::share(session.rng(), si, num_parties, threshold as usize)?;

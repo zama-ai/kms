@@ -61,7 +61,7 @@ impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, 
         }
         //Keeps executing til verification passes
         loop {
-            //ShareDispute will fill shares from corrupted players with 0s
+            //ShareDispute will fill shares from corrupted parties with 0s
             let mut shared_secrets_double =
                 self.share_dispute.execute_double(session, secrets).await?;
 
@@ -409,7 +409,7 @@ pub(crate) mod tests {
         ) -> anyhow::Result<HashMap<Role, DoubleShares<Z>>> {
             //Keeps executing til verification passes
             loop {
-                //ShareDispute will fill shares from corrupted players with 0s
+                //ShareDispute will fill shares from corrupted parties with 0s
                 let mut shared_secrets_double =
                     self.share_dispute.execute_double(session, secrets).await?;
 
@@ -465,7 +465,7 @@ pub(crate) mod tests {
         ) -> anyhow::Result<HashMap<Role, DoubleShares<Z>>> {
             //Keeps executing til verification passes
             loop {
-                //ShareDispute will fill shares from corrupted players with 0s
+                //ShareDispute will fill shares from corrupted parties with 0s
                 let mut shared_secrets_double =
                     self.share_dispute.execute_double(session, secrets).await?;
 

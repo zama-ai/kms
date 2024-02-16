@@ -84,7 +84,7 @@ impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, 
         }
         // Keeps executing til verification passes
         loop {
-            // ShareDispute will fill shares from corrupted players with 0s
+            // ShareDispute will fill shares from corrupted parties with 0s
             let mut shared_secrets = self.share_dispute.execute(session, secrets).await?;
 
             // note that we could merge the share_pads round into the first one.
@@ -466,7 +466,7 @@ pub(crate) mod tests {
         ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
             //Keeps executing til verification passes
             loop {
-                //ShareDispute will fill shares from corrupted players with 0s
+                //ShareDispute will fill shares from corrupted parties with 0s
                 let mut shared_secrets = self.share_dispute.execute(session, secrets).await?;
 
                 let shared_pads =
@@ -507,7 +507,7 @@ pub(crate) mod tests {
             secrets: &[Z],
         ) -> anyhow::Result<HashMap<Role, Vec<Z>>> {
             loop {
-                //ShareDispute will fill shares from corrupted players with 0s
+                //ShareDispute will fill shares from corrupted parties with 0s
                 let mut shared_secrets = self.share_dispute.execute(session, secrets).await?;
 
                 let shared_pads =

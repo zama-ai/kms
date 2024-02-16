@@ -111,7 +111,7 @@ impl ShareDispute for RealShareDispute {
         session: &mut L,
         secrets: &[Z],
     ) -> anyhow::Result<ShareDisputeOutputDouble<Z>> {
-        let num_parties = session.amount_of_parties();
+        let num_parties = session.num_parties();
         let degree_t = session.threshold() as usize;
         let degree_2t = 2 * degree_t;
 
@@ -161,7 +161,7 @@ impl ShareDispute for RealShareDispute {
         session: &mut L,
         secrets: &[Z],
     ) -> anyhow::Result<ShareDisputeOutput<Z>> {
-        let num_parties = session.amount_of_parties();
+        let num_parties = session.num_parties();
         let degree = session.threshold() as usize;
         //If some party is corrupt I shouldn't sample a specific point for it
         //Even if it is in dispute with me
@@ -446,7 +446,7 @@ pub(crate) mod tests {
     #[derive(Default, Clone)]
     pub(crate) struct WrongShareDisputeRecons {}
 
-    ///Strategy of a malicious player that just sends BS (but correct amount of correct type)
+    ///Strategy of a malicious party that just sends BS (but correct amount of correct type)
     /// Not really used to test ShareDispute itself, but rather higher level protocols
     #[derive(Default, Clone)]
     pub(crate) struct MaliciousShareDisputeRecons {
@@ -493,11 +493,8 @@ pub(crate) mod tests {
             //Sample random not enough shares
             let vec_polypoints: Vec<Vec<Z>> = (0..secrets.len() - 1)
                 .map(|_secret_idx| {
-                    (0_usize..session.amount_of_parties())
-                        .map(|_party_idx| {
-                            //Wrapping((secret_idx * session.amount_of_parties() + party_idx) as u128)
-                            Z::sample(session.rng())
-                        })
+                    (0_usize..session.num_parties())
+                        .map(|_party_idx| Z::sample(session.rng()))
                         .collect::<Vec<Z>>()
                 })
                 .collect_vec();
@@ -534,11 +531,8 @@ pub(crate) mod tests {
             //Sample random and not enough shares
             let vec_polypoints: Vec<Vec<Z>> = (0..secrets.len() - 1)
                 .map(|_secret_idx| {
-                    (0_usize..session.amount_of_parties())
-                        .map(|_party_idx| {
-                            //Wrapping((secret_idx * session.amount_of_parties() + party_idx) as u128)
-                            Z::sample(session.rng())
-                        })
+                    (0_usize..session.num_parties())
+                        .map(|_party_idx| Z::sample(session.rng()))
                         .collect::<Vec<Z>>()
                 })
                 .collect_vec();
@@ -575,7 +569,7 @@ pub(crate) mod tests {
             session: &mut L,
             secrets: &[Z],
         ) -> anyhow::Result<ShareDisputeOutputDouble<Z>> {
-            let num_parties = session.amount_of_parties();
+            let num_parties = session.num_parties();
             let degree_t = session.threshold() as usize;
             let degree_2t = 2 * degree_t;
 
@@ -629,7 +623,7 @@ pub(crate) mod tests {
             session: &mut L,
             secrets: &[Z],
         ) -> anyhow::Result<ShareDisputeOutput<Z>> {
-            let num_parties = session.amount_of_parties();
+            let num_parties = session.num_parties();
             let degree = session.threshold() as usize;
             //If some party is corrupt I shouldn't sample a specific point for it
             //Even if it is in dispute with me

@@ -35,11 +35,11 @@ impl<Z: ShamirRing, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing
     pub async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         session: &mut L,
         batch_sizes: BatchParams,
-        mut shh: S,
+        mut ssh: S,
         mut dsh: D,
     ) -> anyhow::Result<Self> {
         //Init single sharing
-        shh.init(session, 2 * batch_sizes.triples + batch_sizes.randoms)
+        ssh.init(session, 2 * batch_sizes.triples + batch_sizes.randoms)
             .await?;
 
         //Init double sharing
@@ -51,7 +51,7 @@ impl<Z: ShamirRing, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing
         let mut large_preproc = Self {
             triple_batch_size: batch_sizes.triples,
             random_batch_size: batch_sizes.randoms,
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             elements: base_preprocessing,
         };
@@ -674,19 +674,19 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let shh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
+        let ssh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
         test_offline_strategies(params.clone(), malicious_offline);
 
-        let shh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
+        let ssh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
@@ -735,19 +735,19 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let shh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
+        let ssh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
         test_offline_strategies(params.clone(), malicious_offline);
 
-        let shh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
+        let ssh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
@@ -803,19 +803,19 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let shh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
+        let ssh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = CheatingLargePreprocessing {
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             ..Default::default()
         };
         test_offline_strategies(params.clone(), malicious_offline);
 
-        let shh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
+        let ssh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = CheatingLargePreprocessing {
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             ..Default::default()
         };
@@ -922,19 +922,19 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let shh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
+        let ssh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
         test_offline_strategies(params.clone(), malicious_offline);
 
-        let shh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
+        let ssh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
@@ -984,19 +984,19 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let shh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
+        let ssh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
         test_offline_strategies(params.clone(), malicious_offline);
 
-        let shh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
+        let ssh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = HonestLargePreprocessing {
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             large_preproc: LargePreprocessing::default(),
         };
@@ -1053,19 +1053,19 @@ mod tests {
             )]
         ldl_strategy: LDL,
     ) {
-        let shh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
+        let ssh = create_real_single_sharing::<ResiduePoly64, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = CheatingLargePreprocessing {
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             ..Default::default()
         };
         test_offline_strategies(params.clone(), malicious_offline);
 
-        let shh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
+        let ssh = create_real_single_sharing::<ResiduePoly128, _>(lsl_strategy.clone());
         let dsh = create_real_double_sharing(ldl_strategy.clone());
         let malicious_offline = CheatingLargePreprocessing {
-            single_sharing_handle: shh,
+            single_sharing_handle: ssh,
             double_sharing_handle: dsh,
             ..Default::default()
         };

@@ -495,7 +495,7 @@ mod tests {
             _crs_size: usize,
         ) -> anyhow::Result<PublicParameter> {
             // do nothing
-            Ok(make_initial_pp(session.amount_of_parties()))
+            Ok(make_initial_pp(session.num_parties()))
         }
     }
 

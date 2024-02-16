@@ -90,7 +90,7 @@ fn bit_dec_online(c: &mut Criterion) {
 
                         let input_a = get_my_share(
                             2,
-                            session.amount_of_parties(),
+                            session.num_parties(),
                             session.threshold() as usize,
                             session.my_role().unwrap().zero_based(),
                         );
@@ -162,7 +162,7 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                             .map(|i| {
                                 get_my_share(
                                     i as u64,
-                                    session.amount_of_parties(),
+                                    session.num_parties(),
                                     session.threshold() as usize,
                                     session.my_role().unwrap().zero_based(),
                                 )
@@ -225,7 +225,7 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                             .map(|i| {
                                 get_my_share(
                                     i as u64,
-                                    session.amount_of_parties(),
+                                    session.num_parties(),
                                     session.threshold() as usize,
                                     session.my_role().unwrap().zero_based(),
                                 )

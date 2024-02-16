@@ -45,7 +45,7 @@ pub mod tests_and_benches {
         let mut tasks = JoinSet::new();
         for party_id in 0..parties {
             let session = test_runtime
-                .small_session_for_player(
+                .small_session_for_party(
                     session_id,
                     party_id,
                     Some(AesRng::seed_from_u64(party_id as u64)),
@@ -101,7 +101,7 @@ pub mod tests_and_benches {
         let mut tasks = JoinSet::new();
         for party_id in 0..parties {
             let session = test_runtime
-                .large_session_for_player(session_id, party_id)
+                .large_session_for_party(session_id, party_id)
                 .unwrap();
             // TODO why is the following cloned session needed?
             let session =
@@ -379,7 +379,7 @@ pub mod tests {
     pub fn get_large_session() -> LargeSession {
         let parameters = get_dummy_parameters();
         let id = parameters.own_identity.clone();
-        let parties = parameters.amount_of_parties();
+        let parties = parameters.num_parties();
         let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
         LargeSession {
             parameters,
@@ -449,7 +449,7 @@ pub mod tests {
         let mut malicious_tasks = JoinSet::new();
         for party_id in 0..parties {
             let session = test_runtime
-                .small_session_for_player(
+                .small_session_for_party(
                     session_id,
                     party_id,
                     Some(AesRng::seed_from_u64(party_id as u64)),

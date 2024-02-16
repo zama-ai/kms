@@ -83,7 +83,7 @@ impl<Z: BaseRing> LweBootstrapKeyShare<Z> {
 
     pub async fn open_to_tfhers_type<
         Scalar: UnsignedInteger,
-        R: Rng + CryptoRng + Send + Sync,
+        R: Rng + CryptoRng + Sync,
         S: BaseSessionHandles<R>,
     >(
         self,

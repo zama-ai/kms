@@ -1,14 +1,4 @@
-use aes_prng::AesRng;
-use async_trait::async_trait;
-use derive_more::Display;
-use rand::SeedableRng;
-use rand::{CryptoRng, Rng};
-use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeSet, HashMap, HashSet},
-    sync::Arc,
-};
-
+use super::party::{Identity, Role};
 use crate::{
     algebra::structure_traits::Ring,
     computation::SessionId,
@@ -19,8 +9,16 @@ use crate::{
     },
     networking::Networking,
 };
-
-use super::party::{Identity, Role};
+use aes_prng::AesRng;
+use async_trait::async_trait;
+use derive_more::Display;
+use rand::SeedableRng;
+use rand::{CryptoRng, Rng};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    sync::Arc,
+};
 
 pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
 
@@ -52,7 +50,7 @@ pub trait ParameterHandles: Sync + Send + Clone {
     fn own_identity(&self) -> Identity;
     fn my_role(&self) -> anyhow::Result<Role>;
     fn identity_from(&self, role: &Role) -> anyhow::Result<Identity>;
-    fn amount_of_parties(&self) -> usize;
+    fn num_parties(&self) -> usize;
     fn role_from(&self, identity: &Identity) -> anyhow::Result<Role>;
     fn role_assignments(&self) -> &HashMap<Role, Identity>;
     fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>);
@@ -102,7 +100,7 @@ impl ParameterHandles for SessionParameters {
         }
     }
 
-    fn amount_of_parties(&self) -> usize {
+    fn num_parties(&self) -> usize {
         self.role_assignments.len()
     }
 
@@ -159,7 +157,7 @@ pub type BaseSession = BaseSessionStruct<AesRng, SessionParameters>;
 #[derive(Clone)]
 pub struct BaseSessionStruct<R: Rng + CryptoRng + Send + Sync, P: ParameterHandles> {
     pub parameters: P,
-    pub networking: NetworkingImpl,
+    pub network: NetworkingImpl,
     pub rng: R,
     pub corrupt_roles: HashSet<Role>,
 }
@@ -178,7 +176,7 @@ impl BaseSession {
     ) -> anyhow::Result<Self> {
         Ok(BaseSessionStruct {
             parameters,
-            networking: network,
+            network,
             rng,
             corrupt_roles: HashSet::new(),
         })
@@ -196,8 +194,8 @@ impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHan
         self.parameters.identity_from(role)
     }
 
-    fn amount_of_parties(&self) -> usize {
-        self.parameters.amount_of_parties()
+    fn num_parties(&self) -> usize {
+        self.parameters.num_parties()
     }
 
     fn role_from(&self, identity: &Identity) -> anyhow::Result<Role> {
@@ -233,7 +231,7 @@ impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> BaseSessionH
     }
 
     fn network(&self) -> &NetworkingImpl {
-        &self.networking
+        &self.network
     }
 
     fn corrupt_roles(&self) -> &HashSet<Role> {
@@ -306,8 +304,8 @@ impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> Par
         self.parameters.identity_from(role)
     }
 
-    fn amount_of_parties(&self) -> usize {
-        self.parameters.amount_of_parties()
+    fn num_parties(&self) -> usize {
+        self.parameters.num_parties()
     }
 
     fn role_from(&self, identity: &Identity) -> anyhow::Result<Role> {
@@ -391,7 +389,7 @@ impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles>
     fn to_base_session(&self) -> BaseSessionStruct<R, P> {
         BaseSessionStruct {
             parameters: self.parameters.clone(),
-            networking: self.network.clone(),
+            network: self.network.clone(),
             rng: self.rng.clone(),
             corrupt_roles: self.corrupt_roles.clone(),
         }
@@ -425,7 +423,7 @@ pub struct LargeSessionStruct<R: Rng + CryptoRng + Sync + Send + Clone, P: Param
 impl LargeSession {
     /// Make a new [LargeSession] without any corruptions or disputes
     pub fn new(parameters: SessionParameters, network: NetworkingImpl) -> anyhow::Result<Self> {
-        let parties = parameters.amount_of_parties();
+        let parties = parameters.num_parties();
         Ok(LargeSession {
             parameters,
             network,
@@ -446,8 +444,8 @@ impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHan
         self.parameters.identity_from(role)
     }
 
-    fn amount_of_parties(&self) -> usize {
-        self.parameters.amount_of_parties()
+    fn num_parties(&self) -> usize {
+        self.parameters.num_parties()
     }
 
     /// Return Role for given Identity in this session
@@ -505,7 +503,7 @@ impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles>
     fn to_base_session(&self) -> BaseSessionStruct<R, P> {
         BaseSessionStruct {
             parameters: self.parameters.clone(),
-            networking: self.network.clone(),
+            network: self.network.clone(),
             rng: self.rng.clone(),
             corrupt_roles: self.corrupt_roles.clone(),
         }

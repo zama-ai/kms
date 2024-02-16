@@ -55,7 +55,7 @@ fn delta0i<Z: BaseRing>(
 }
 
 pub async fn reshare_sk_same_sets<
-    Rnd: Rng + CryptoRng + Send + Sync,
+    Rnd: Rng + CryptoRng + Sync,
     Ses: BaseSessionHandles<Rnd>,
     P128: Preprocessing<ResiduePoly128> + Send,
     P64: Preprocessing<ResiduePoly64> + Send,
@@ -77,7 +77,7 @@ pub async fn reshare_sk_same_sets<
 }
 
 pub async fn reshare_same_sets<
-    Rnd: Rng + CryptoRng + Send + Sync,
+    Rnd: Rng + CryptoRng + Sync,
     Ses: BaseSessionHandles<Rnd>,
     P: Preprocessing<ResiduePoly<Z>> + Send,
     Z: BaseRing + Zeroize,
@@ -87,7 +87,7 @@ pub async fn reshare_same_sets<
     input_share: &mut Array1<ResiduePoly<Z>>,
 ) -> anyhow::Result<Array1<ResiduePoly<Z>>> {
     // we need share_count shares for every party in the initial set of size n1
-    let n1 = session.amount_of_parties();
+    let n1 = session.num_parties();
     let share_count = input_share.len(); // this is the lwe dimension if input is sk
     let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
     all_roles_sorted.sort();

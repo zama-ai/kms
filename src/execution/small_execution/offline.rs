@@ -31,9 +31,7 @@ pub struct SmallPreprocessing<Z: Ring, A> {
     _marker: std::marker::PhantomData<A>,
 }
 
-impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
-    SmallPreprocessing<Z, A>
-{
+impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Sync> SmallPreprocessing<Z, A> {
     /// Initializes the preprocessing for a new epoch, by preprocessing a batch
     /// NOTE: if None is passed for the option for `batch_sizes`, then the default values are used.
     pub async fn init<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
@@ -190,7 +188,7 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
         amount: usize,
         d_recons: HashMap<Role, BroadcastValue<Z>>,
     ) -> anyhow::Result<Vec<Option<Z>>> {
-        let mut collected_shares = vec![Vec::with_capacity(session.amount_of_parties()); amount];
+        let mut collected_shares = vec![Vec::with_capacity(session.num_parties()); amount];
         // Go through the Role/value map of a broadcast of vectors of values and turn them into a vector of vectors of indexed values.
         // I.e. transpose the result and convert the role and value into indexed values
         for (cur_role, cur_values) in d_recons {
@@ -221,8 +219,8 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Send + Sync>
         }
 
         // Compute the max amount of corruptions that can be in the data. Since parties we already know are corrupted are excluded we subtract these
-        let mc_parties = session.amount_of_parties()
-            - min(session.amount_of_parties(), session.corrupt_roles().len());
+        let mc_parties =
+            session.num_parties() - min(session.num_parties(), session.corrupt_roles().len());
         let mc_threshold = (session.threshold() as usize)
             - min(session.threshold() as usize, session.corrupt_roles().len());
 

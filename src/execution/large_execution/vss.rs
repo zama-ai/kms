@@ -41,7 +41,7 @@ pub trait Vss: Send + Sync + Default + Clone {
         secret: &Z,
     ) -> anyhow::Result<Vec<Z>> {
         let out_vec = self.execute_many(session, &[*secret]).await?;
-        let n = session.amount_of_parties();
+        let n = session.num_parties();
         if out_vec.len() != n {
             return Err(anyhow_error_and_log(format!(
                 "incorrect output length, expect {n} but got {}",
@@ -146,7 +146,7 @@ impl Vss for DummyVss {
         secrets: &[Z],
     ) -> anyhow::Result<Vec<Vec<Z>>> {
         let own_role = session.my_role()?;
-        let num_parties = session.amount_of_parties();
+        let num_parties = session.num_parties();
 
         // send all secrets to all parties
         let values_to_send: HashMap<Role, NetworkValue<Z>> = session
@@ -246,7 +246,7 @@ async fn round_1<Z: Ring + 'static, R: Rng + CryptoRng, S: BaseSessionHandles<R>
     map_double_shares: MapRoleDoublePoly<Z>,
 ) -> anyhow::Result<Round1VSSOutput<Z>> {
     let my_role = session.my_role()?;
-    let num_parties = session.amount_of_parties();
+    let num_parties = session.num_parties();
 
     let mut received_data: Vec<ExchangedDataRound1<Z>> =
         vec![ExchangedDataRound1::default(num_parties, num_secrets); num_parties];
@@ -335,7 +335,7 @@ async fn round_2<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     vss: &Round1VSSOutput<Z>,
 ) -> anyhow::Result<HashMap<Role, Option<Vec<VerificationValues<Z>>>>> {
     let my_role = session.my_role()?;
-    let num_parties = session.amount_of_parties();
+    let num_parties = session.num_parties();
 
     //For every VSS, compute
     // aij = F_i(\alpha_j) + r_ij
@@ -378,7 +378,7 @@ async fn round_2<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         })
         .collect();
 
-    //Also make sure we don't bother with corrupted players
+    //Also make sure we don't bother with corrupted parties
     for corrupted_role in session.corrupt_roles().iter() {
         casted_bcast_data.insert(*corrupted_role, None);
     }
@@ -396,7 +396,7 @@ async fn round_3<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     vss: &Round1VSSOutput<Z>,
     verification_map: &HashMap<Role, Option<Vec<VerificationValues<Z>>>>,
 ) -> anyhow::Result<Vec<HashSet<Role>>> {
-    let num_parties = session.amount_of_parties();
+    let num_parties = session.num_parties();
     let own_role = session.my_role()?;
 
     //First create a HashSet<usize, role, role> that references all the conflicts
@@ -500,7 +500,7 @@ async fn round_4<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 
     //Remains to output trivial 0 for all senders in corrupt and correct share for all others
     //aux result variable to insert the result in order and not rely on the arbitrary order of keys()
-    let num_parties = session.amount_of_parties();
+    let num_parties = session.num_parties();
     let mut result: Vec<Vec<Z>> = vec![vec![Z::ZERO; num_secrets]; num_parties];
     session
         .role_assignments()
@@ -936,7 +936,7 @@ pub(crate) mod tests {
 
         for (party_nb, _) in runtime.identities.iter().enumerate() {
             let mut session = runtime
-                .large_session_for_player(session_id, party_nb)
+                .large_session_for_party(session_id, party_nb)
                 .unwrap();
             let s = secrets[party_nb].clone();
             set.spawn(async move {
@@ -1010,7 +1010,7 @@ pub(crate) mod tests {
 
         for (party_nb, _) in runtime.identities.iter().enumerate() {
             let mut session = runtime
-                .large_session_for_player(session_id, party_nb)
+                .large_session_for_party(session_id, party_nb)
                 .unwrap();
             let s = &secrets[party_nb];
             let (bivariate_poly, map_double_shares) = sample_secret_polys(&mut session, s).unwrap();

@@ -120,7 +120,7 @@ fn party_compute_f_a_points<Z: ShamirRing>(
     Ok(sets)
 }
 
-/// Precomputes powers of embedded player ids: alpha_i^j for all i in n and all j in t.
+/// Precomputes powers of embedded party ids: alpha_i^j for all i in n and all j in t.
 /// This is used in the chi prf in the PRZS
 fn embed_parties_and_compute_alpha_powers<Z: ShamirRing>(
     num_parties: usize,
@@ -428,18 +428,18 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
         param: &P,
         mode: ComputeShareMode,
     ) -> anyhow::Result<HashMap<Role, Z>> {
-        let sets = create_sets(param.amount_of_parties(), param.threshold() as usize);
-        let points = party_compute_f_a_points::<Z>(&sets, param.amount_of_parties())?;
+        let sets = create_sets(param.num_parties(), param.threshold() as usize);
+        let points = party_compute_f_a_points::<Z>(&sets, param.num_parties())?;
 
         let alphas = match mode {
             ComputeShareMode::Przs => Some(embed_parties_and_compute_alpha_powers(
-                param.amount_of_parties(),
+                param.num_parties(),
                 param.threshold() as usize,
             )?),
             _ => None,
         };
 
-        let mut s_values: HashMap<Role, Z> = HashMap::with_capacity(param.amount_of_parties());
+        let mut s_values: HashMap<Role, Z> = HashMap::with_capacity(param.num_parties());
         for cur_role in param.role_assignments().keys() {
             let mut cur_s = Z::ZERO;
             for (idx, set) in sets.iter().enumerate() {
@@ -490,13 +490,13 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
 impl<Z: ShamirRing> PRSSSetup<Z> {
     /// initialize the PRSS setup for this epoch and a given party
     pub async fn init_with_abort<
-        A: AgreeRandom + Send,
+        A: AgreeRandom,
         R: Rng + CryptoRng,
         S: SmallSessionHandles<Z, R>,
     >(
         session: &mut S,
     ) -> anyhow::Result<Self> {
-        let num_parties = session.amount_of_parties();
+        let num_parties = session.num_parties();
         let binom_nt = num_integer::binomial(num_parties, session.threshold() as usize);
         let party_id = session.my_role()?.one_based();
 
@@ -569,7 +569,7 @@ impl<Z: ShamirRing> PRSSSetup<Z> {
         session: &mut L,
         vss: &V,
     ) -> anyhow::Result<Self> {
-        let n = session.amount_of_parties();
+        let n = session.num_parties();
         let t = session.threshold() as usize;
         let c = num_integer::binomial(n, t).div_ceil(n - t);
         let party_id = session.my_role()?.one_based();
@@ -685,7 +685,7 @@ mod tests {
     use tracing_test::traced_test;
 
     // async helper function that creates the prss setups
-    async fn setup_prss_sess<Z: ShamirRing, A: AgreeRandom + Send>(
+    async fn setup_prss_sess<Z: ShamirRing, A: AgreeRandom>(
         sessions: Vec<SmallSession<Z>>,
     ) -> Option<HashMap<usize, PRSSSetup<Z>>> {
         let mut jobs = JoinSet::new();
@@ -863,11 +863,7 @@ mod tests {
             .map(|p| {
                 seed[0] = p as u8;
                 runtime
-                    .small_session_for_player(
-                        SessionId(u128::MAX),
-                        p,
-                        Some(AesRng::from_seed(seed)),
-                    )
+                    .small_session_for_party(SessionId(u128::MAX), p, Some(AesRng::from_seed(seed)))
                     .unwrap()
             })
             .collect();
@@ -1110,7 +1106,7 @@ mod tests {
         let threshold = 2;
         let identities = generate_fixed_identities(parties);
 
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold as u8);
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold);
         let session_id = SessionId(23);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1121,7 +1117,7 @@ mod tests {
         for party_id in 1..=parties {
             let rng = AesRng::seed_from_u64(party_id as u64);
             let mut session = runtime
-                .small_session_for_player(session_id, party_id - 1, Some(rng))
+                .small_session_for_party(session_id, party_id - 1, Some(rng))
                 .unwrap();
             DistributedTestRuntime::add_dummy_prss(&mut session);
             let state = session.prss().unwrap();
@@ -1177,7 +1173,7 @@ mod tests {
         let threshold = 2;
         let identities = generate_fixed_identities(parties);
 
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold as u8);
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold);
         let session_id = SessionId(17);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1188,7 +1184,7 @@ mod tests {
         for party_id in 1..=parties {
             let rng = AesRng::seed_from_u64(party_id as u64);
             let mut session = runtime
-                .small_session_for_player(session_id, party_id - 1, Some(rng))
+                .small_session_for_party(session_id, party_id - 1, Some(rng))
                 .unwrap();
             DistributedTestRuntime::add_dummy_prss(&mut session);
             let state = session.prss().unwrap();
@@ -1457,7 +1453,7 @@ mod tests {
             Share::new(role, state.prss_next(role.one_based()).unwrap())
         }
 
-        // init with Dummyt AR does not send anything = 0 expected rounds
+        // init with Dummy AR does not send anything = 0 expected rounds
         let result = execute_protocol_small(parties, threshold, Some(0), &mut task);
 
         validate_prss_init(ShamirSharing::create(result), parties, threshold as usize);

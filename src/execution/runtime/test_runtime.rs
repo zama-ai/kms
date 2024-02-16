@@ -17,7 +17,7 @@ use crate::{
 use aes_prng::AesRng;
 use std::{collections::HashMap, sync::Arc};
 
-// TODO The name and use of unwrap hints that this is a struct only to be used for testing, but it is laos used in production, e.g. in grpc.rs
+// TODO The name and use of unwrap hints that this is a struct only to be used for testing, but it is also used in production, e.g. in grpc.rs
 // Unsafe and test code should not be mixed with production code. See issue 173
 pub struct DistributedTestRuntime<Z: Ring> {
     pub identities: Vec<Identity>,
@@ -109,21 +109,21 @@ impl<Z: ShamirRing> DistributedTestRuntime<Z> {
         session.prss_state = Some(prss_setup.new_prss_session_state(session.session_id()));
     }
 
-    pub fn small_session_for_player(
+    pub fn small_session_for_party(
         &self,
         session_id: SessionId,
-        player_id: usize,
+        party_id: usize,
         rng: Option<AesRng>,
     ) -> anyhow::Result<SmallSession<Z>> {
         let role_assignments = self.role_assignments.clone();
-        let net = Arc::clone(&self.user_nets[player_id]);
+        let net = Arc::clone(&self.user_nets[party_id]);
 
         let prss_setup = self
             .prss_setups
             .as_ref()
-            .map(|per_party| per_party[&player_id].clone());
+            .map(|per_party| per_party[&party_id].clone());
 
-        let own_role = Role::indexed_by_zero(player_id);
+        let own_role = Role::indexed_by_zero(party_id);
         let identity = self.role_assignments[&own_role].clone();
 
         SmallSession::new(
@@ -137,14 +137,14 @@ impl<Z: ShamirRing> DistributedTestRuntime<Z> {
         )
     }
 
-    pub fn large_session_for_player(
+    pub fn large_session_for_party(
         &self,
         session_id: SessionId,
-        player_id: usize,
+        party_id: usize,
     ) -> anyhow::Result<LargeSession> {
         let role_assignments = self.role_assignments.clone();
-        let net = Arc::clone(&self.user_nets[player_id]);
-        let own_role = Role::indexed_by_zero(player_id);
+        let net = Arc::clone(&self.user_nets[party_id]);
+        let own_role = Role::indexed_by_zero(party_id);
         let identity = self.role_assignments[&own_role].clone();
         let parameters =
             SessionParameters::new(self.threshold, session_id, identity, role_assignments)?;

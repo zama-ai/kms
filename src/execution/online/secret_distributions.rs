@@ -19,13 +19,13 @@ pub trait SecretDistributions {
     ) -> anyhow::Result<Vec<Share<Z>>>
     where
         Z: ShamirRing + Solve,
-        Rnd: Rng + CryptoRng + Send + Sync,
+        Rnd: Rng + CryptoRng + Sync,
         S: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
         BitGen: BitGenEven;
 }
 
-/// Structures to execute the Secret Shared Distributions as described in Fig. 67 of NIST document.
+/// Structures to execute the Secret Shared Distributions as described in Fig. 70 of NIST document.
 pub struct RealSecretDistributions {}
 
 #[async_trait]
@@ -41,7 +41,7 @@ impl SecretDistributions for RealSecretDistributions {
     ) -> anyhow::Result<Vec<Share<Z>>>
     where
         Z: ShamirRing + Solve,
-        Rnd: Rng + CryptoRng + Send + Sync,
+        Rnd: Rng + CryptoRng + Sync,
         S: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
         BitGen: BitGenEven,

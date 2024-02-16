@@ -370,7 +370,7 @@ impl DKGParams {
 /// Note that there is some redundancy of information because we also explicitly ask the BaseRing as trait parameter
 pub async fn distributed_keygen<
     Z: BaseRing,
-    R: Rng + CryptoRng + Send + Sync,
+    R: Rng + CryptoRng + Sync,
     S: BaseSessionHandles<R>,
     P: Preprocessing<ResiduePoly<Z>> + Send,
     BitGen: BitGenEven,
@@ -607,7 +607,7 @@ pub async fn transfer_pk<Z: Ring>(
     if role.one_based() == input_party_id {
         let pubkey_raw = pubkey
             .ok_or_else(|| anyhow_error_and_log("I have no public key to send!".to_string()))?;
-        let num_parties = session.amount_of_parties();
+        let num_parties = session.num_parties();
         let pkval = NetworkValue::<Z>::PubKey(Box::new(pubkey_raw.clone()));
 
         let mut set = JoinSet::new();

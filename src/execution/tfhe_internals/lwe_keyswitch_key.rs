@@ -64,7 +64,7 @@ impl<Z: BaseRing> LweKeySwitchKeyShare<Z> {
         self.decomp_level_count
     }
 
-    pub async fn open_to_tfhers_type<R: Rng + CryptoRng + Send + Sync, S: BaseSessionHandles<R>>(
+    pub async fn open_to_tfhers_type<R: Rng + CryptoRng + Sync, S: BaseSessionHandles<R>>(
         self,
         session: &S,
     ) -> anyhow::Result<LweKeyswitchKeyOwned<u64>> {

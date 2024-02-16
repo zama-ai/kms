@@ -77,4 +77,7 @@ where
     Self: Ring + Div<Self, Output = Self> + DivAssign<Self>,
 {
     fn memoize_lagrange(points: &[Self]) -> anyhow::Result<Vec<Poly<Self>>>;
+
+    /// computes the multiplicative inverse of the field element
+    fn invert(&self) -> Self;
 }

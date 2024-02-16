@@ -129,6 +129,10 @@ impl Field for GF256 {
             ))
         }
     }
+
+    fn invert(&self) -> Self {
+        <GF256 as GaloisField>::ONE / *self
+    }
 }
 
 pub type ShamirZ2Poly = Poly<GF256>;

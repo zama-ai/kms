@@ -376,7 +376,8 @@ fn quo_rem<F: Field>(a: Poly<F>, b: &Poly<F>) -> (Poly<F>, Poly<F>) {
     let a_len = a.coefs.len();
     let b_len = b.coefs.len();
 
-    let t = F::ONE / b.highest_coefficient(); // TODO(Morten) replace with inv operation?
+    let t = b.highest_coefficient().invert();
+
     let mut q = Poly::zeros(a.coefs.len());
     let mut r = a;
 

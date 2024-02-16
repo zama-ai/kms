@@ -59,12 +59,12 @@ impl<Z: ShamirRing + Derive, S: LocalSingleShare> SingleSharing<Z> for RealSingl
 
         //Init vdm matrix only once or when dim changes
         let shape = self.vdm_matrix.shape();
-        let curr_height = session.amount_of_parties();
-        let curr_width = session.amount_of_parties() - session.threshold() as usize;
+        let curr_height = session.num_parties();
+        let curr_width = session.num_parties() - session.threshold() as usize;
         if self.vdm_matrix.is_empty() || curr_height != shape[0] || curr_width != shape[1] {
             self.vdm_matrix = init_vdm(
-                session.amount_of_parties(),
-                session.amount_of_parties() - session.threshold() as usize,
+                session.num_parties(),
+                session.num_parties() - session.threshold() as usize,
             )?;
         }
         Ok(())
@@ -183,7 +183,7 @@ pub(crate) mod tests {
     fn test_singlesharing<Z: ShamirRing + Derive>(parties: usize, threshold: usize) {
         let mut task = |mut session: LargeSession| async move {
             let lsl_batch_size = 10_usize;
-            let extracted_size = session.amount_of_parties() - session.threshold() as usize;
+            let extracted_size = session.num_parties() - session.threshold() as usize;
             let num_output = lsl_batch_size * extracted_size + 1;
             let mut res = Vec::<Z>::new();
             let mut single_sharing = RealSingleSharing::<Z, TrueLocalSingleShare>::default();
@@ -248,7 +248,7 @@ pub(crate) mod tests {
 
         async fn task(mut session: LargeSession) -> (Role, Vec<ResiduePoly128>) {
             let lsl_batch_size = 10_usize;
-            let extracted_size = session.amount_of_parties() - session.threshold() as usize;
+            let extracted_size = session.num_parties() - session.threshold() as usize;
             let num_output = lsl_batch_size * extracted_size + 1;
             let mut res = Vec::<ResiduePoly128>::new();
             if session.my_role().unwrap().one_based() != 2 {

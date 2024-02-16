@@ -139,7 +139,7 @@ impl<Z: BaseRing> GgswCiphertextShare<Z> {
 }
 
 pub async fn ggsw_encode_messages<
-    Rnd: Rng + CryptoRng + Send + Sync,
+    Rnd: Rng + CryptoRng + Sync,
     Z: BaseRing,
     S: BaseSessionHandles<Rnd>,
     P: Preprocessing<ResiduePoly<Z>>,
@@ -200,7 +200,7 @@ where
 ///This functions compute the necessary encoding required for GGSW
 ///In particular this does the MPC multiplication between the shared key bits and the secret message
 pub async fn ggsw_encode_message<
-    Rnd: Rng + CryptoRng + Send + Sync,
+    Rnd: Rng + CryptoRng + Sync,
     Z: BaseRing,
     S: BaseSessionHandles<Rnd>,
     P: Preprocessing<ResiduePoly<Z>>,
@@ -419,7 +419,7 @@ mod tests {
             let shared_message = ShamirSharing::share(
                 &mut AesRng::seed_from_u64(0),
                 ResiduePoly64::from_scalar(Wrapping(msg)),
-                session.amount_of_parties(),
+                session.num_parties(),
                 session.threshold() as usize,
             )
             .unwrap()

@@ -202,7 +202,7 @@ async fn receive_from_all_echo_batch<Z: Ring, R: Rng + CryptoRng, B: BaseSession
         receiver,
         &mut jobs,
         echoed_data,
-        session.amount_of_parties(),
+        session.num_parties(),
         session.threshold() as usize,
         non_answering_parties,
     )
@@ -225,7 +225,7 @@ fn receive_from_all_votes<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>
             NetworkValue::VoteBatch(v) => Ok(v),
             NetworkValue::Empty => Ok(RoleValueMap::new()),
             _ => Err(anyhow_error_and_log(format!(
-                "I have received sth different from an Vote Batch message on player: {:?}",
+                "I have received sth different from an Vote Batch message on party: {:?}",
                 id
             ))),
         },
@@ -275,7 +275,7 @@ async fn internal_process_echos_or_votes<Z: Ring>(
 }
 
 /// Process Echo messages one by one, starting with the own echoed_data
-/// If enough echoes >=(N-T) then player can cast a vote
+/// If enough echoes >=(N-T) then party can cast a vote
 async fn process_echos<Z: Ring>(
     receiver: &Role,
     echo_recv_tasks: &mut JoinSet<Result<JobType<Z>, Elapsed>>,
@@ -341,7 +341,7 @@ async fn gather_votes<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     casted: &mut HashMap<Role, bool>,
     non_answering_parties: &mut HashSet<Role>,
 ) -> anyhow::Result<()> {
-    let num_parties = session.amount_of_parties();
+    let num_parties = session.num_parties();
     let threshold = session.threshold() as usize;
 
     // wait for other parties' incoming vote
@@ -397,14 +397,14 @@ async fn gather_votes<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
 ///
 /// Here sender_list = \[Pi] and  vi = Vi
 /// Function returns a map bcast_data: Role => Value such that
-/// all players have the broadcasted values inside the map: bcast_data\[Pj] = Vj for all j in \[n].
+/// all parties have the broadcasted values inside the map: bcast_data\[Pj] = Vj for all j in \[n].
 /// This function does *not* handle corrupt parties.
 pub async fn reliable_broadcast<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     session: &B,
     sender_list: &[Role],
     vi: Option<BroadcastValue<Z>>,
 ) -> anyhow::Result<RoleValueMap<Z>> {
-    let num_parties = session.amount_of_parties();
+    let num_parties = session.num_parties();
     if sender_list.is_empty() {
         return Err(anyhow_error_and_log(
             "We expect at least one party as sender in reliable broadcast".to_string(),
@@ -642,7 +642,7 @@ mod tests {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
                 let num = party_no as u8;
                 let session = runtime
-                    .small_session_for_player(
+                    .small_session_for_party(
                         session_id,
                         party_no,
                         Some(AesRng::seed_from_u64(num.into())),
@@ -655,7 +655,7 @@ mod tests {
         } else {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
                 let session = runtime
-                    .small_session_for_player(session_id, party_no, Some(AesRng::seed_from_u64(0)))
+                    .small_session_for_party(session_id, party_no, Some(AesRng::seed_from_u64(0)))
                     .unwrap();
                 let sender_list = sender_parties.to_vec();
                 if sender_parties.contains(&Role::indexed_by_zero(party_no)) {
@@ -775,7 +775,7 @@ mod tests {
         let mut set = JoinSet::new();
         for (party_no, my_data) in input_values.iter().cloned().enumerate() {
             let session = runtime
-                .small_session_for_player(session_id, party_no, Some(AesRng::seed_from_u64(0)))
+                .small_session_for_party(session_id, party_no, Some(AesRng::seed_from_u64(0)))
                 .unwrap();
             if party_no != 0 {
                 set.spawn(
@@ -828,7 +828,7 @@ mod tests {
         for (party_id, _) in runtime.identities.iter().enumerate() {
             if corrupt_role != Role::indexed_by_zero(party_id) {
                 let mut session = runtime
-                    .large_session_for_player(session_id, party_id)
+                    .large_session_for_party(session_id, party_id)
                     .unwrap();
                 let cur_msg = msg.clone();
 
@@ -883,7 +883,7 @@ mod tests {
         sender_list: &[Role],
         vec_vi: Option<Vec<BroadcastValue<Z>>>,
     ) -> anyhow::Result<RoleValueMap<Z>> {
-        let num_parties = session.amount_of_parties();
+        let num_parties = session.num_parties();
         if sender_list.is_empty() {
             return Err(anyhow_error_and_log(
                 "We expect at least one party as sender in reliable broadcast".to_string(),
@@ -1024,7 +1024,7 @@ mod tests {
         let mut malicious_set = JoinSet::new();
         for party_id in 0..parties {
             let mut session = runtime
-                .small_session_for_player(session_id, party_id, None)
+                .small_session_for_party(session_id, party_id, None)
                 .unwrap();
             let cur_msg = msg.clone();
             if party_id == 0 {
@@ -1215,7 +1215,7 @@ mod tests {
         let mut malicious_set = JoinSet::new();
         for party_id in 0..parties {
             let mut session = runtime
-                .small_session_for_player(session_id, party_id, None)
+                .small_session_for_party(session_id, party_id, None)
                 .unwrap();
             let cur_msg = msg.clone();
             if party_id == 0 {

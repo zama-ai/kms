@@ -184,7 +184,7 @@ mod tests {
             let encoded_message = ShamirSharing::share(
                 &mut AesRng::seed_from_u64(0),
                 ResiduePoly64::from_scalar(Wrapping(msg << scaling)),
-                session.amount_of_parties(),
+                session.num_parties(),
                 session.threshold() as usize,
             )
             .unwrap()

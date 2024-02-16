@@ -226,7 +226,7 @@ async fn agree_random_communication<Z: Ring, R: Rng + CryptoRng, S: BaseSessionH
     coms: &[Vec<Commitment>],
     keys_opens: &[Vec<(PrfKey, Opening)>],
 ) -> anyhow::Result<(Vec<Vec<Commitment>>, Vec<Vec<(PrfKey, Opening)>>)> {
-    let num_parties = session.amount_of_parties();
+    let num_parties = session.num_parties();
     let party_id = session.my_role()?.one_based();
 
     // send commitments to all other parties. Each party gets the commitment for _all_ sets that they are member of at once to avoid multiple comm rounds
@@ -275,12 +275,12 @@ impl AgreeRandom for RealAgreeRandom {
     async fn agree_random<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
-        let num_parties = session.amount_of_parties();
+        let num_parties = session.num_parties();
         let party_id = session.my_role()?.one_based();
 
         let mut party_sets = compute_party_sets(
             session.my_role()?,
-            session.amount_of_parties(),
+            session.num_parties(),
             session.threshold() as usize,
         );
 
@@ -321,7 +321,7 @@ impl AgreeRandom for RealAgreeRandomWithAbort {
     async fn agree_random<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
-        let num_parties = session.amount_of_parties();
+        let num_parties = session.num_parties();
         let party_id = session.my_role()?.one_based();
 
         let mut party_sets = compute_party_sets(
@@ -377,7 +377,7 @@ impl AgreeRandom for DummyAgreeRandom {
     ) -> anyhow::Result<Vec<PrfKey>> {
         let party_sets = compute_party_sets(
             session.my_role()?,
-            session.amount_of_parties(),
+            session.num_parties(),
             session.threshold() as usize,
         );
 
@@ -600,7 +600,7 @@ mod tests {
             .map(|p| {
                 let num = p as u8;
                 runtime
-                    .small_session_for_player(
+                    .small_session_for_party(
                         SessionId(u128::MAX),
                         p,
                         Some(AesRng::seed_from_u64(num.into())),

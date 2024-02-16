@@ -59,7 +59,7 @@ async fn try_reconstruct_from_shares<Z: ShamirRing, P: ParameterHandles>(
     threshold: usize,
     jobs: &mut JoinSet<Result<JobResultType<Z>, Elapsed>>,
 ) -> anyhow::Result<Option<Vec<Z>>> {
-    let num_parties = session_parameters.amount_of_parties();
+    let num_parties = session_parameters.num_parties();
     let own_role = session_parameters.my_role()?;
     let num_secrets = sharings.len();
     let mut answering_parties = HashSet::<Role>::new();
@@ -227,7 +227,7 @@ pub async fn robust_opens_to_all<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessi
     try_reconstruct_from_shares(session, &mut sharings, degree, threshold, &mut jobs).await
 }
 
-pub async fn robust_open_to<Z: ShamirRing, R: Rng + CryptoRng + Send, B: BaseSessionHandles<R>>(
+pub async fn robust_open_to<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     session: &B,
     share: Z,
     degree: usize,
@@ -241,7 +241,7 @@ pub async fn robust_open_to<Z: ShamirRing, R: Rng + CryptoRng + Send, B: BaseSes
     }
 }
 
-pub async fn robust_opens_to<Z: ShamirRing, R: Rng + CryptoRng + Send, B: BaseSessionHandles<R>>(
+pub async fn robust_opens_to<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     session: &B,
     shares: &[Z],
     degree: usize,

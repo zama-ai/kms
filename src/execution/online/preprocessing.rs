@@ -153,7 +153,7 @@ impl<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync + Clone, Ses: BaseSessionHandles
         self.trip_ctr += 1;
         let a = Z::sample(&mut rng);
         let a_vec = DummyPreprocessing::<Z, Rnd, Ses>::share(
-            self.session.amount_of_parties(),
+            self.session.num_parties(),
             self.session.threshold(),
             a,
             &mut rng,
@@ -164,7 +164,7 @@ impl<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync + Clone, Ses: BaseSessionHandles
             .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
         let b = Z::sample(&mut rng);
         let b_vec = DummyPreprocessing::<Z, Rnd, Ses>::share(
-            self.session.amount_of_parties(),
+            self.session.num_parties(),
             self.session.threshold(),
             b,
             &mut rng,
@@ -175,7 +175,7 @@ impl<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync + Clone, Ses: BaseSessionHandles
             .ok_or_else(|| anyhow_error_and_log("My role index does not exist".to_string()))?;
         // Compute the c shares based on the true values of a and b
         let c_vec = DummyPreprocessing::<Z, Rnd, Ses>::share(
-            self.session.amount_of_parties(),
+            self.session.num_parties(),
             self.session.threshold(),
             a * b,
             &mut rng,
@@ -196,7 +196,7 @@ impl<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync + Clone, Ses: BaseSessionHandles
         self.rnd_ctr += 1;
         let secret = Z::sample(&mut rng);
         let all_parties_shares = DummyPreprocessing::<Z, Rnd, Ses>::share(
-            self.session.amount_of_parties(),
+            self.session.num_parties(),
             self.session.threshold(),
             secret,
             &mut rng,
@@ -431,7 +431,7 @@ mod tests {
                     let msg = ResiduePoly::<$z>::from_scalar(Wrapping(42));
                     let mut session = get_small_session_for_parties::<ResiduePoly<$z>>(10, 3, Role::indexed_by_one(1));
                     let shares = DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::share(
-                        session.amount_of_parties(),
+                        session.num_parties(),
                         session.threshold(),
                         msg,
                         session.rng(),

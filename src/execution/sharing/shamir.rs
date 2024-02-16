@@ -50,7 +50,7 @@ impl<Z: Ring> ShamirSharing<Z> {
             .binary_search_by_key(&share.owner(), |s| s.owner())
         {
             Ok(_pos) => Err(anyhow_error_and_log(
-                "Trying to insert two shares for the same player".to_string(),
+                "Trying to insert two shares for the same party".to_string(),
             )),
             Err(pos) => {
                 self.shares.insert(pos, share);

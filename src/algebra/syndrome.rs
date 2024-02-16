@@ -144,7 +144,7 @@ pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) ->
     // party indices (0-indexed) with errors
     let mut bs = Vec::new();
     for (idx, x) in x_alpha.iter().enumerate() {
-        if sigma.eval(&(F::ONE / *x)) == F::ZERO {
+        if sigma.eval(&x.invert()) == F::ZERO {
             bs.push(idx);
         }
     }
@@ -156,7 +156,7 @@ pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) ->
     // compute error magnitudes at indices b
     for b in bs.clone() {
         let alpha_b = x_alpha[b];
-        let alpha_b_inv = F::ONE / alpha_b;
+        let alpha_b_inv = alpha_b.invert();
 
         let numerator = -alpha_b * lagrange_polys[b].eval(&alpha_b) * omega.eval(&alpha_b_inv);
         let eb = numerator / sigma.formal_derivative().eval(&alpha_b_inv);

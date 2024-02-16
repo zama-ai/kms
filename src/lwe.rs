@@ -420,10 +420,10 @@ impl PublicKey {
             .0;
         let decomposer = BlockDecomposer::new(message, bits_in_block as u32);
         // T::BITS
-        let amount_of_blocks = div_ceil(bits_to_encrypt, bits_in_block);
+        let num_blocks = div_ceil(bits_to_encrypt, bits_in_block);
         decomposer
             .iter_as::<u64>()
-            .take(amount_of_blocks)
+            .take(num_blocks)
             .map(|clear_block| self.encrypt_block(rng, clear_block))
             .collect::<Vec<_>>()
     }

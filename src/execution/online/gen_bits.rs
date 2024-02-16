@@ -22,7 +22,7 @@ pub trait Solve: Sized + ZConsts {
 pub trait BitGenEven {
     async fn gen_bits_even<
         Z: ShamirRing + Solve,
-        Rnd: Rng + CryptoRng + Send + Sync,
+        Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
     >(
@@ -40,7 +40,7 @@ pub struct FakeBitGenEven {}
 impl BitGenEven for FakeBitGenEven {
     async fn gen_bits_even<
         Z: ShamirRing + Solve,
-        Rnd: Rng + CryptoRng + Send + Sync,
+        Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
     >(
@@ -55,7 +55,7 @@ impl BitGenEven for FakeBitGenEven {
             let bit = rng.gen_bool(1.0 / 2.0);
             let secret = if bit { Z::ONE } else { Z::ZERO };
             let shared_secret = DummyPreprocessing::<Z, Rnd, Ses>::share(
-                session.amount_of_parties(),
+                session.num_parties(),
                 session.threshold(),
                 secret,
                 &mut rng,
@@ -79,7 +79,7 @@ impl BitGenEven for RealBitGenEven {
     /// The code only works when the modulo of the ring used is even.
     async fn gen_bits_even<
         Z: ShamirRing + Solve,
-        Rnd: Rng + CryptoRng + Send + Sync,
+        Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
     >(

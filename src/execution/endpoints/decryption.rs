@@ -274,7 +274,7 @@ pub fn threshold_decrypt64<Z: ShamirRing>(
     Ok(results)
 }
 
-async fn open_masked_ptxts<R: Rng + CryptoRng + Send, S: BaseSessionHandles<R>>(
+async fn open_masked_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &S,
     res: Vec<ResiduePoly128>,
     keyshares: &SecretKeyShare,
@@ -320,7 +320,7 @@ pub fn reconstruct_message(
     Ok(out)
 }
 
-async fn open_bit_composed_ptxts<R: Rng + CryptoRng + Send, S: BaseSessionHandles<R>>(
+async fn open_bit_composed_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &S,
     res: Vec<ResiduePoly64>,
 ) -> anyhow::Result<Vec<Z64>> {
@@ -447,7 +447,7 @@ pub fn batch_partial_decrypt(
 // run decryption with bit-decomposition
 pub async fn run_decryption_bitdec<
     P: Preprocessing<ResiduePoly64> + Send,
-    Rnd: Rng + CryptoRng + Send + Sync,
+    Rnd: Rng + CryptoRng + Sync,
     Ses: BaseSessionHandles<Rnd>,
 >(
     session: &mut Ses,

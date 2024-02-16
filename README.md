@@ -98,12 +98,12 @@ The following networks are simulated using `tc`:
 Note that ping RTT will be 2x the latency from the table, when the network config is set on all nodes.
 
 ## Networking (gRPC) Benchmarks
-gRPC Benchmarking requires to setup a whole network inside a docker compose orchestator. This disable the possibility to integrate this kind of benchmarks with `Criterion` inside `cargo bench` running command.
+gRPC Benchmarking requires to setup a whole network inside a docker compose orchestrator. This disable the possibility to integrate this kind of benchmarks with `Criterion` inside `cargo bench` running command.
 
 In order to bypass this limitation we have automate this `gRPC` benchmarks using `cargo-make` utility. This implies the following new components to easily spawn different benchmarks configurations:
 
 - `src/bin/benches/gen-experiment.rs`: This new binary allows us to dynamically create a new experiment setup on the fly. A new experiment will contain `docker-compose.yml` file based on some command line parameters with the setup of the network topology (parties) plus the configuration file `conf.toml` for `mobygo` command in order to know how to execute that experiment. See `cargo run --bin gen-experiment --features="templating" -- --help`.
-- `cargo-make`: With cargo make we are orchestating all the command line chain in order to
+- `cargo-make`: With cargo make we are orchestrating all the command line chain in order to
   1. Run `cargo run --bin gen-experiment ...` to generate the desired experiment with the desired amount of parties
   2. Start docker compose generated in step 1.
   3. Run `cargo run --bin mobygo ... ` choreographer in order to **init, decrypt and gather results** based on the desired configuration.
@@ -133,7 +133,7 @@ Therefore if you want to create a new experiment just copy and paste this task, 
 ```
 
 ### New configuration
-If you want to write a new configuration to test specific parameter set, just do the following:
+If you want to write a new configuration to test a specific parameter set, just do the following:
 
 1. Create a new task inside `Makefile.toml`. You can be based on any of the existing experiment
 

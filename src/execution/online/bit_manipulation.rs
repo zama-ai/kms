@@ -63,7 +63,7 @@ fn shift_right_2d<Z: Ring + ZConsts>(
 
 impl<Z> BatchedBits<Z>
 where
-    Z: ShamirRing + ZConsts + Send + Sync,
+    Z: ShamirRing + ZConsts + Sync,
 {
     /// Takes a 1D array and arranges it into a 2D of size B (batch_size).
     /// Does this by taking consecutive CHAR_LOG2 (64/128) entries and puts them in a single batch
@@ -110,7 +110,7 @@ where
     }
 
     async fn xor_list_secret_secret<
-        Rnd: Rng + CryptoRng + Send + Sync,
+        Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -140,7 +140,7 @@ where
     }
 
     async fn and_list_secret_secret<
-        Rnd: Rng + CryptoRng + Send + Sync,
+        Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -190,7 +190,7 @@ where
     /// (and_left, and_right) = lhs AND rhs
     /// Then lhs1 XOR rhs1 is computed using and_left and other (local) linear operations.
     async fn compressed_xor_and<
-        Rnd: Rng + CryptoRng + Send + Sync,
+        Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -225,7 +225,7 @@ where
     }
 
     async fn binary_adder_secret_clear<
-        Rnd: Rng + CryptoRng + Send + Sync,
+        Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -246,7 +246,7 @@ where
                 rhs.len()
             ));
         }
-        let log_r = (Z::CHAR_LOG2 as f64).log2() as usize; // we know that Z::CHAR = 64/128
+        let log_r = Z::CHAR_LOG2.ilog2(); // we know that Z::CHAR = 64/128
 
         let p_store = BatchedBits::xor_list_secret_clear(lhs, rhs)?;
         let mut g = BatchedBits::and_list_secret_clear(lhs, rhs)?;
@@ -284,7 +284,7 @@ where
     /// o/w we return m
     /// Hence we do a final MUX, depending on the bit b.
     pub async fn extract_ptxts<
-        Rnd: Rng + CryptoRng + Send + Sync,
+        Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -330,7 +330,7 @@ where
 
 impl<Z> Bits<Z>
 where
-    Z: ShamirRing + ZConsts + Send + Sync,
+    Z: ShamirRing + ZConsts + Sync,
 {
     fn xor_with_prods(
         lhs: &SecretVec<Z>,
@@ -345,7 +345,7 @@ where
     }
 
     pub async fn xor_list_secret_secret<
-        Rnd: Rng + CryptoRng + Send + Sync,
+        Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -359,7 +359,7 @@ where
     }
 
     pub async fn and_list_secret_secret<
-        Rnd: Rng + CryptoRng + Send + Sync,
+        Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z>,
     >(
@@ -407,7 +407,7 @@ where
 pub async fn bit_dec_batch<
     Z,
     P: Preprocessing<ResiduePoly<Z>>,
-    Rnd: Rng + CryptoRng + Send + Sync,
+    Rnd: Rng + CryptoRng + Sync,
     Ses: BaseSessionHandles<Rnd>,
 >(
     session: &mut Ses,
@@ -504,7 +504,7 @@ mod tests {
         let shares = ShamirSharing::share(
             &mut rng,
             secret,
-            session.amount_of_parties(),
+            session.num_parties(),
             session.threshold() as usize,
         )
         .unwrap()
