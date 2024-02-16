@@ -1,8 +1,12 @@
 # Key Management System
 
 [![CI](https://github.com/zama-ai/kms/workflows/CI/badge.svg)](https://github.com/zama-ai/kms/actions)
-[![document-badge](https://github.com/zama-ai/kms/actions/workflows/doc.yml/badge.svg)](https://zama-ai.github.io/kms)
+[![image-badge](https://ghcr-badge.egpl.dev/zama-ai/kms/tags?trim=major)](https://github.com/zama-ai/kms/pkgs/container/kms)
+[![image-size-badge](https://ghcr-badge.egpl.dev/zama-ai/kms/size)](https://github.com/zama-ai/kms/pkgs/container/kms)
 [![license-badge](https://img.shields.io/badge/License-BSD-blue)](LICENSE)
+
+
+https://github.com/zama-ai/kms/actions/workflows/publish-docker-image.yml
 
 This repository hosts the code for the Zama Key Management System prototypes.
 
