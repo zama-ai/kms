@@ -17,7 +17,7 @@ RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 # Install the binary leaving it in the WORKDIR/bin folder
 RUN mkdir -p /app/ddec/bin
 RUN git config --global url."https://${CONCRETE_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-RUN --mount=type=cache,target=/usr/local/cargo/registry cargo install --path . --root . --bins
+RUN --mount=type=cache,target=/usr/local/cargo/registry cargo install --path . --root . --bins --features=choreographer
 
 # Second stage builds the runtime image.
 # This stage will be the final image

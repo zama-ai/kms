@@ -14,7 +14,7 @@ RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 
 # Install the binary leaving it in the WORKDIR/bin folder
 RUN mkdir -p /app/ddec/bin
-RUN --mount=type=ssh cargo install --path . --root . --bins
+RUN --mount=type=ssh cargo install --path . --root . --bins --features=choreographer
 
 # Second stage builds the runtime image.
 # This stage will be the final image
