@@ -1,4 +1,3 @@
-use crate::setup_rpc::{DEFAULT_CLIENT_KEY_PATH, DEFAULT_HL_CIPHER_PATH, DEFAULT_SERVER_KEYS_PATH};
 use aes_prng::AesRng;
 use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::residue_poly::ResiduePoly;
@@ -11,35 +10,38 @@ use distributed_decryption::execution::sharing::open::{
 use distributed_decryption::execution::sharing::shamir::ShamirSharing;
 use distributed_decryption::lwe::ThresholdLWEParameters;
 use itertools::Itertools;
-use kms::core::der_types::{
+use kms_lib::core::der_types::{
     PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
     SigncryptionPrivKey, SigncryptionPubKey,
 };
-use kms::core::kms_core::{decrypt_signcryption, BaseKmsStruct};
-use kms::core::signcryption::{encryption_key_generation, sign, verify_sig, RND_SIZE};
-use kms::file_handling::{read_as_json, read_element};
-use kms::kms::kms_endpoint_client::KmsEndpointClient;
-use kms::kms::{
+use kms_lib::kms::kms_endpoint_client::KmsEndpointClient;
+use kms_lib::kms::{
     AggregatedDecryptionResponse, AggregatedReencryptionResponse, DecryptionRequest,
     DecryptionResponsePayload, FheType, ReencryptionRequest, ReencryptionRequestPayload,
     ReencryptionResponse,
 };
-use kms::rpc::kms_rpc::some_or_err;
-use kms::rpc::rpc_types::{
+use kms_lib::rpc::kms_rpc::some_or_err;
+use kms_lib::rpc::rpc_types::{
     BaseKms, DecryptionRequestSigPayload, DecryptionResponseSigPayload, MetaResponse, Plaintext,
     ReencryptionRequestSigPayload,
 };
-use kms::threshold::threshold_kms::decrypted_blocks_to_raw_decryption;
+use kms_lib::threshold::threshold_kms::decrypted_blocks_to_raw_decryption;
+use kms_lib::{
+    core::kms_core::{decrypt_signcryption, BaseKmsStruct},
+    setup_rpc::DEFAULT_CENTRAL_CIPHER_PATH,
+};
+use kms_lib::{
+    core::signcryption::{encryption_key_generation, sign, verify_sig, RND_SIZE},
+    setup_rpc::CentralizedTestingKeys,
+};
+use kms_lib::{file_handling::read_element, setup_rpc::DEFAULT_CENTRAL_KEYS_PATH};
 use rand::{RngCore, SeedableRng};
 use serde_asn1_der::{from_bytes, to_vec};
-use setup_rpc::PARAM_PATH;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{filter, Layer};
-
-mod setup_rpc;
 
 /// Retries a function a given number of times with a given interval between retries.
 macro_rules! retry {
@@ -79,9 +81,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = &args[1];
 
     let mut kms_client = retry!(KmsEndpointClient::connect(url.to_owned()).await, 5, 100)?;
-
-    let (ct, fhe_type): (Vec<u8>, FheType) = read_element(DEFAULT_HL_CIPHER_PATH.to_string())?;
-    let mut internal_client = Client::default();
+    let (ct, fhe_type): (Vec<u8>, FheType) = read_element(DEFAULT_CENTRAL_CIPHER_PATH.to_string())?;
+    let central_keys: CentralizedTestingKeys =
+        read_element(DEFAULT_CENTRAL_KEYS_PATH.to_string()).unwrap();
+    let mut internal_client = Client::new(
+        HashSet::from_iter(central_keys.server_keys.iter().cloned()),
+        central_keys.client_pk,
+        central_keys.client_sk,
+        1,
+        central_keys.params,
+    );
 
     // DECRYPTION REQUEST
     let req = internal_client.decryption_request(ct.clone(), fhe_type)?;
@@ -135,22 +144,7 @@ pub struct Client {
     shares_needed: u32,
     params: ThresholdLWEParameters,
 }
-impl Default for Client {
-    /// Constructs a client for a centralized KMS based on default parameters and key paths.
-    fn default() -> Self {
-        let (client_pk, client_sk): (PublicSigKey, PrivateSigKey) =
-            read_element(DEFAULT_CLIENT_KEY_PATH.to_string()).unwrap();
-        let default_params: ThresholdLWEParameters = read_as_json(PARAM_PATH.to_owned()).unwrap();
-        Self {
-            rng: Box::new(AesRng::from_entropy()),
-            server_pks: read_element(DEFAULT_SERVER_KEYS_PATH.to_string()).unwrap(),
-            client_pk,
-            client_sk,
-            shares_needed: 1,
-            params: default_params,
-        }
-    }
-}
+
 impl Client {
     pub fn new(
         server_pks: HashSet<PublicSigKey>,
@@ -547,7 +541,6 @@ impl Client {
         let sharings =
             self.recover_sharings(validated_resps, req_payload.fhe_type(), client_keys)?;
         let amount_shares = sharings.len();
-        // TODO is this the optimal way of doing it?
         let mut decrypted_blocks = Vec::new();
         for cur_block_shares in sharings {
             if let Ok(Some(r)) = reconstruct_w_errors_sync(
@@ -703,32 +696,51 @@ pub fn num_blocks(fhe_type: FheType, params: ThresholdLWEParameters) -> usize {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::setup_rpc::tests::{AMOUNT_PARTIES, DEFAULT_FHE_TYPE, DEFAULT_MSG, THRESHOLD};
-    use crate::setup_rpc::{
-        BASE_PORT, DEFAULT_CLIENT_KEY_PATH, DEFAULT_HL_CIPHER_PATH, DEFAULT_KMS_KEY_PATH,
-        DEFAULT_LL_CIPHER_PATH, DEFAULT_PROT, DEFAULT_SERVER_KEYS_PATH, DEFAULT_URL, PARAM_PATH,
-        THRESHOLD_KMS_KEY_PATH,
-    };
     use crate::{num_blocks, Client};
     use distributed_decryption::lwe::ThresholdLWEParameters;
-    use kms::core::der_types::{PrivateSigKey, PublicSigKey};
-    use kms::file_handling::{read_as_json, read_element};
-    use kms::kms::kms_endpoint_client::KmsEndpointClient;
-    use kms::kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType};
-    use kms::rpc::kms_rpc::server_handle;
-    use kms::threshold::threshold_kms::threshold_server_handle;
+    use kms_lib::setup_rpc::{
+        ensure_central_key_cipher_exist, ensure_threshold_key_cipher_exist, BASE_PORT,
+        DEFAULT_PARAM_PATH, DEFAULT_PROT, DEFAULT_THRESHOLD_KEYS_PATH, DEFAULT_URL,
+        TEST_PARAM_PATH,
+    };
+    use kms_lib::{
+        core::kms_core::SoftwareKmsKeys,
+        setup_rpc::{
+            CentralizedTestingKeys, ThresholdTestingKeys, DEFAULT_CENTRAL_KEYS_PATH,
+            DEFAULT_THRESHOLD_CIPHER_PATH, TEST_THRESHOLD_KEYS_PATH,
+        },
+    };
+    use kms_lib::{
+        file_handling::{read_as_json, read_element},
+        setup_rpc::{TEST_FHE_TYPE, TEST_MSG},
+    };
+    use kms_lib::{
+        kms::kms_endpoint_client::KmsEndpointClient,
+        setup_rpc::{AMOUNT_PARTIES, THRESHOLD},
+    };
+    use kms_lib::{
+        kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType},
+        setup_rpc::TEST_THRESHOLD_CIPHER_PATH,
+    };
+    use kms_lib::{rpc::kms_rpc::server_handle, setup_rpc::TEST_CENTRAL_KEYS_PATH};
+    use kms_lib::{
+        setup_rpc::DEFAULT_CENTRAL_CIPHER_PATH, threshold::threshold_kms::threshold_server_start,
+    };
+    use kms_lib::{
+        setup_rpc::TEST_CENTRAL_CIPHER_PATH, threshold::threshold_kms::threshold_server_init,
+    };
     use serial_test::serial;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use std::str::FromStr;
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::{Channel, Uri};
 
-    async fn setup() -> (JoinHandle<()>, KmsEndpointClient<Channel>) {
-        let server_handle = tokio::spawn(async {
+    async fn setup(kms_keys: SoftwareKmsKeys) -> (JoinHandle<()>, KmsEndpointClient<Channel>) {
+        let server_handle = tokio::spawn(async move {
             let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
-            let _ = server_handle(url.as_str(), DEFAULT_KMS_KEY_PATH.to_string()).await;
+            let _ = server_handle(url.as_str(), kms_keys).await;
         });
-        // Wait for the server to start
+        // We have to wait for the server to start since it will keep running in the background
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
         let uri = Uri::from_str(&url).unwrap();
@@ -740,28 +752,52 @@ pub(crate) mod tests {
     async fn setup_threshold(
         amount: usize,
         threshold: u8,
+        threshold_key_path_prefix: &str,
     ) -> (
         HashMap<u32, JoinHandle<()>>,
         HashMap<u32, KmsEndpointClient<Channel>>,
     ) {
-        let mut server_handles = HashMap::new();
+        let mut handles = Vec::new();
+        tracing::info!("Spawning servers..");
         for i in 1..=amount {
-            let key_path = format!("{THRESHOLD_KMS_KEY_PATH}-{i}.bin");
-            let handle = tokio::spawn(async move {
-                let _ = threshold_server_handle(
+            let key_path = format!("{threshold_key_path_prefix}-{i}.bin");
+            handles.push(tokio::spawn(async move {
+                tracing::info!("Server {i} reading keys..");
+                let keys: ThresholdTestingKeys = read_element(key_path.to_string()).unwrap();
+                tracing::info!("Server {i} read keys..");
+                let server = threshold_server_init(
                     DEFAULT_URL.to_owned(),
                     BASE_PORT,
-                    key_path,
                     amount,
                     threshold,
                     i,
+                    keys.kms_keys,
                 )
                 .await;
+                (i, server)
+            }));
+        }
+        // Wait for the server to start
+        tracing::info!("Client waiting for server");
+        let mut servers = Vec::with_capacity(amount);
+        for cur_handle in handles {
+            let (i, kms_server_res) = cur_handle.await.unwrap();
+            match kms_server_res {
+                Ok(kms_server) => servers.push((i, kms_server)),
+                Err(e) => tracing::warn!("Failed to start server {i} with error {:?}", e),
+            }
+        }
+        tracing::info!("Servers initialized. Starting servers...");
+        let mut server_handles = HashMap::new();
+        for (i, cur_server) in servers {
+            let handle = tokio::spawn(async move {
+                let _ =
+                    threshold_server_start(DEFAULT_URL.to_owned(), BASE_PORT, i, cur_server).await;
             });
             server_handles.insert(i as u32, handle);
         }
-        // Wait for the server to start
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        // We need to sleep as the servers keep running in the background and hence do not return
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         let mut client_handles = HashMap::new();
         for i in 1..=amount {
             let port = BASE_PORT + i as u16;
@@ -770,16 +806,45 @@ pub(crate) mod tests {
             let channel = Channel::builder(uri).connect().await.unwrap();
             client_handles.insert(i as u32, KmsEndpointClient::new(channel));
         }
+        tracing::info!("Client connected to servers");
         (server_handles, client_handles)
     }
 
     #[tokio::test]
     #[serial]
-    async fn test_decryption() {
-        let (kms_server, mut kms_client) = setup().await;
-        let (ct, fhe_type): (Vec<u8>, FheType) =
-            read_element(DEFAULT_HL_CIPHER_PATH.to_string()).unwrap();
-        let mut internal_client = Client::default();
+    async fn test_decryption_central() {
+        ensure_central_key_cipher_exist(
+            TEST_PARAM_PATH,
+            TEST_CENTRAL_KEYS_PATH,
+            TEST_CENTRAL_CIPHER_PATH,
+        );
+        decryption_centralized(TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_CIPHER_PATH).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    #[ignore]
+    async fn default_decryption_centralized() {
+        ensure_central_key_cipher_exist(
+            DEFAULT_PARAM_PATH,
+            DEFAULT_CENTRAL_KEYS_PATH,
+            DEFAULT_CENTRAL_CIPHER_PATH,
+        );
+        decryption_centralized(DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_CIPHER_PATH).await;
+    }
+    // TODO speed up
+    async fn decryption_centralized(centralized_key_path: &str, cipher_path: &str) {
+        // TODO refactor with setup and teardown setting up servers that can be used to run tests in parapllel
+        let keys: CentralizedTestingKeys = read_element(centralized_key_path.to_string()).unwrap();
+        let (kms_server, mut kms_client) = setup(keys.software_kms_keys).await;
+        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path.to_string()).unwrap();
+        let mut internal_client = Client::new(
+            HashSet::from_iter(keys.server_keys.iter().cloned()),
+            keys.client_pk,
+            keys.client_sk,
+            1,
+            keys.params,
+        );
 
         let req = internal_client
             .decryption_request(ct.clone(), fhe_type)
@@ -796,19 +861,46 @@ pub(crate) mod tests {
             .process_decryption_resp(Some(req), responses)
             .unwrap()
             .unwrap();
-        assert_eq!(DEFAULT_FHE_TYPE, plaintext.fhe_type());
-        assert_eq!(DEFAULT_MSG, plaintext.as_u8());
+        assert_eq!(TEST_FHE_TYPE, plaintext.fhe_type());
+        assert_eq!(TEST_MSG, plaintext.as_u8());
 
         kms_server.abort();
     }
 
     #[tokio::test]
     #[serial]
-    async fn test_reencryption() {
-        let (kms_server, mut kms_client) = setup().await;
-        let (ct, fhe_type): (Vec<u8>, FheType) =
-            read_element(DEFAULT_HL_CIPHER_PATH.to_string()).unwrap();
-        let mut internal_client = Client::default();
+    async fn test_reencryption_centralized() {
+        ensure_central_key_cipher_exist(
+            TEST_PARAM_PATH,
+            TEST_CENTRAL_KEYS_PATH,
+            TEST_CENTRAL_CIPHER_PATH,
+        );
+        reencryption_centralized(TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_CIPHER_PATH).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    #[ignore]
+    async fn default_reencryption_centralized() {
+        ensure_central_key_cipher_exist(
+            DEFAULT_PARAM_PATH,
+            DEFAULT_CENTRAL_KEYS_PATH,
+            DEFAULT_CENTRAL_CIPHER_PATH,
+        );
+        reencryption_centralized(DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_CIPHER_PATH).await;
+    }
+
+    async fn reencryption_centralized(centralized_key_path: &str, cipher_path: &str) {
+        let keys: CentralizedTestingKeys = read_element(centralized_key_path.to_string()).unwrap();
+        let (kms_server, mut kms_client) = setup(keys.software_kms_keys).await;
+        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path.to_string()).unwrap();
+        let mut internal_client = Client::new(
+            HashSet::from_iter(keys.server_keys.iter().cloned()),
+            keys.client_pk,
+            keys.client_sk,
+            1,
+            keys.params,
+        );
 
         let (req, enc_pk, enc_sk) = internal_client.reencyption_request(ct, fhe_type).unwrap();
         let response = kms_client
@@ -823,8 +915,8 @@ pub(crate) mod tests {
             .process_reencryption_resp(Some(req), responses, &enc_pk, &enc_sk)
             .unwrap()
             .unwrap();
-        assert_eq!(DEFAULT_FHE_TYPE, plaintext.fhe_type());
-        assert_eq!(DEFAULT_MSG, plaintext.as_u8());
+        assert_eq!(TEST_FHE_TYPE, plaintext.fhe_type());
+        assert_eq!(TEST_MSG, plaintext.as_u8());
 
         kms_server.abort();
     }
@@ -832,19 +924,38 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_decryption_threshold() {
-        let (kms_servers, kms_clients) = setup_threshold(AMOUNT_PARTIES, THRESHOLD as u8).await;
-        let default_params: ThresholdLWEParameters = read_as_json(PARAM_PATH.to_owned()).unwrap();
-        let (ct, fhe_type): (Vec<u8>, FheType) =
-            read_element(DEFAULT_LL_CIPHER_PATH.to_string()).unwrap();
-        let (client_pk, client_sk): (PublicSigKey, PrivateSigKey) =
-            read_element(DEFAULT_CLIENT_KEY_PATH.to_string()).unwrap();
-        let server_pub_keys = read_element(DEFAULT_SERVER_KEYS_PATH.to_string()).unwrap();
+        ensure_threshold_key_cipher_exist(
+            TEST_PARAM_PATH,
+            TEST_THRESHOLD_KEYS_PATH,
+            TEST_THRESHOLD_CIPHER_PATH,
+        );
+        decryption_threshold(TEST_THRESHOLD_KEYS_PATH, TEST_THRESHOLD_CIPHER_PATH).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    #[ignore]
+    async fn default_decryption_threshold() {
+        ensure_threshold_key_cipher_exist(
+            DEFAULT_PARAM_PATH,
+            DEFAULT_THRESHOLD_KEYS_PATH,
+            DEFAULT_THRESHOLD_CIPHER_PATH,
+        );
+        decryption_threshold(DEFAULT_THRESHOLD_KEYS_PATH, DEFAULT_THRESHOLD_CIPHER_PATH).await;
+    }
+
+    async fn decryption_threshold(threshold_key_path: &str, cipher_path: &str) {
+        let (kms_servers, kms_clients) =
+            setup_threshold(AMOUNT_PARTIES, THRESHOLD as u8, threshold_key_path).await;
+        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path.to_string()).unwrap();
+        let keys: ThresholdTestingKeys =
+            read_element(format!("{threshold_key_path}-1.bin")).unwrap();
         let mut internal_client = Client::new(
-            server_pub_keys,
-            client_pk,
-            client_sk,
+            HashSet::from_iter(keys.server_keys.iter().cloned()),
+            keys.client_pk,
+            keys.client_sk,
             (THRESHOLD as u32) + 1,
-            default_params,
+            keys.params,
         );
 
         let req = internal_client.decryption_request(ct, fhe_type).unwrap();
@@ -865,8 +976,8 @@ pub(crate) mod tests {
             .process_decryption_resp(Some(req), agg)
             .unwrap()
             .unwrap();
-        assert_eq!(DEFAULT_FHE_TYPE, plaintext.fhe_type());
-        assert_eq!(DEFAULT_MSG, plaintext.as_u8());
+        assert_eq!(TEST_FHE_TYPE, plaintext.fhe_type());
+        assert_eq!(TEST_MSG, plaintext.as_u8());
         kms_servers
             .into_iter()
             .for_each(|(_id, handle)| handle.abort());
@@ -875,23 +986,43 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_reencryption_threshold() {
-        let (kms_servers, kms_clients) = setup_threshold(AMOUNT_PARTIES, THRESHOLD as u8).await;
-        let default_params: ThresholdLWEParameters = read_as_json(PARAM_PATH.to_owned()).unwrap();
-        let (ct, fhe_type): (Vec<u8>, FheType) =
-            read_element(DEFAULT_LL_CIPHER_PATH.to_string()).unwrap();
-        let (client_pk, client_sk): (PublicSigKey, PrivateSigKey) =
-            read_element(DEFAULT_CLIENT_KEY_PATH.to_string()).unwrap();
-        let server_pub_keys = read_element(DEFAULT_SERVER_KEYS_PATH.to_string()).unwrap();
+        ensure_threshold_key_cipher_exist(
+            TEST_PARAM_PATH,
+            TEST_THRESHOLD_KEYS_PATH,
+            TEST_THRESHOLD_CIPHER_PATH,
+        );
+        reencryption_threshold(TEST_THRESHOLD_KEYS_PATH, TEST_THRESHOLD_CIPHER_PATH).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    #[ignore]
+    async fn default_reencryption_threshold() {
+        ensure_threshold_key_cipher_exist(
+            DEFAULT_PARAM_PATH,
+            DEFAULT_THRESHOLD_KEYS_PATH,
+            DEFAULT_THRESHOLD_CIPHER_PATH,
+        );
+        reencryption_threshold(DEFAULT_THRESHOLD_KEYS_PATH, DEFAULT_THRESHOLD_CIPHER_PATH).await;
+    }
+
+    async fn reencryption_threshold(threshold_key_path: &str, cipher_path: &str) {
+        let (kms_servers, kms_clients) =
+            setup_threshold(AMOUNT_PARTIES, THRESHOLD as u8, threshold_key_path).await;
+        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path.to_string()).unwrap();
+        let keys: ThresholdTestingKeys =
+            read_element(format!("{threshold_key_path}-1.bin")).unwrap();
         let mut internal_client = Client::new(
-            server_pub_keys,
-            client_pk,
-            client_sk,
+            HashSet::from_iter(keys.server_keys.iter().cloned()),
+            keys.client_pk,
+            keys.client_sk,
             (THRESHOLD as u32) + 1,
-            default_params,
+            keys.params,
         );
 
         let (req, enc_pk, enc_sk) = internal_client.reencyption_request(ct, fhe_type).unwrap();
         let mut tasks = JoinSet::new();
+        tracing::info!("Client did reencryption request");
         for i in 1..=AMOUNT_PARTIES as u32 {
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             let req_clone = req.clone();
@@ -902,8 +1033,10 @@ pub(crate) mod tests {
                 )
             });
         }
+        tracing::info!("Client issued reencrypt queries");
         let mut response_map = HashMap::new();
         while let Some(Ok(res)) = tasks.join_next().await {
+            tracing::info!("Client got a response from {}", res.0);
             let (i, resp) = res;
             response_map.insert(i, resp.unwrap().into_inner());
         }
@@ -914,8 +1047,8 @@ pub(crate) mod tests {
             .process_reencryption_resp(Some(req), agg, &enc_pk, &enc_sk)
             .unwrap()
             .unwrap();
-        assert_eq!(DEFAULT_FHE_TYPE, plaintext.fhe_type());
-        assert_eq!(DEFAULT_MSG, plaintext.as_u8());
+        assert_eq!(TEST_FHE_TYPE, plaintext.fhe_type());
+        assert_eq!(TEST_MSG, plaintext.as_u8());
         kms_servers
             .into_iter()
             .for_each(|(_id, handle)| handle.abort());
@@ -924,11 +1057,20 @@ pub(crate) mod tests {
     // Validate bug-fix to ensure that the server fails gracefully when the ciphertext is too large
     #[tokio::test]
     #[serial]
+    #[ignore]
     async fn test_largecipher() {
-        let (kms_server, mut kms_client) = setup().await;
+        let keys: CentralizedTestingKeys =
+            read_element(DEFAULT_CENTRAL_KEYS_PATH.to_string()).unwrap();
+        let (kms_server, mut kms_client) = setup(keys.software_kms_keys).await;
         let ct = Vec::from([1_u8; 1000000]);
         let fhe_type = FheType::Euint32;
-        let mut internal_client = Client::default();
+        let mut internal_client = Client::new(
+            HashSet::from_iter(keys.server_keys.iter().cloned()),
+            keys.client_pk,
+            keys.client_sk,
+            1,
+            keys.params,
+        );
 
         let (req, _enc_pk, _enc_sk) = internal_client.reencyption_request(ct, fhe_type).unwrap();
         let response = kms_client.reencrypt(tonic::Request::new(req.clone())).await;
@@ -943,7 +1085,7 @@ pub(crate) mod tests {
 
     #[test]
     fn num_blocks_sunshine() {
-        let params: ThresholdLWEParameters = read_as_json(PARAM_PATH.to_owned()).unwrap();
+        let params: ThresholdLWEParameters = read_as_json(TEST_PARAM_PATH.to_owned()).unwrap();
         let cur_type = FheType::Bool;
         // 2 bits per block, using Euint8 as internal representation
         assert_eq!(num_blocks(cur_type, params), 4);

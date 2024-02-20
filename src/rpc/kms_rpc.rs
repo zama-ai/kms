@@ -1,7 +1,6 @@
 use super::rpc_types::{BaseKms, ReencryptionRequestSigPayload};
 use crate::core::der_types::{PublicEncKey, PublicSigKey, Signature};
 use crate::core::kms_core::{BaseKmsStruct, SoftwareKms, SoftwareKmsKeys};
-use crate::file_handling::read_element;
 use crate::kms::kms_endpoint_server::{KmsEndpoint, KmsEndpointServer};
 use crate::kms::{
     DecryptionRequest, DecryptionResponse, FheType, Proof, ReencryptionRequest,
@@ -19,7 +18,7 @@ use tonic::transport::Server;
 use tonic::{Code, Request, Response, Status};
 use url::Url;
 
-pub async fn server_handle(url_str: &str, key_path: String) -> anyhow::Result<()> {
+pub async fn server_handle(url_str: &str, kms_keys: SoftwareKmsKeys) -> anyhow::Result<()> {
     let url = Url::parse(url_str)?;
     if url.scheme() != "http" && url.scheme() != "https" {
         return Err(anyhow::anyhow!(
@@ -30,8 +29,7 @@ pub async fn server_handle(url_str: &str, key_path: String) -> anyhow::Result<()
     let port = url.port_or_known_default().ok_or("Invalid port in URL.");
     let socket: SocketAddr = format!("{}:{}", host_str.unwrap(), port.unwrap()).parse()?;
 
-    let keys: SoftwareKmsKeys = read_element(key_path)?;
-    let kms = SoftwareKms::new(keys.fhe_sk, keys.sig_sk);
+    let kms = SoftwareKms::new(kms_keys.fhe_sk, kms_keys.sig_sk);
     tracing::info!("Starting centralized KMS server ...");
     Server::builder()
         .add_service(KmsEndpointServer::new(kms))

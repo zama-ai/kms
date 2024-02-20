@@ -4,6 +4,7 @@ use std::panic::Location;
 pub mod kms {
     tonic::include_proto!("kms"); // The string specified here must match the proto package name
 }
+pub mod setup_rpc;
 pub mod core {
     pub mod der_types;
     pub mod kms_core;

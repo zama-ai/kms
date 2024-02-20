@@ -3,6 +3,10 @@ name = "kms"
 version = "0.1.0"
 edition = "2021"
 
+[lib] # Central KMS
+name = "kms_lib"
+path = "src/lib.rs"
+
 [[bin]] # Bin to run the gRPC server
 name = "kms-server"
 path = "src/server.rs"
@@ -24,6 +28,8 @@ k256 = "0.13.3"
 nom = "7.1.3"
 prost = "0.12.3"
 rand = { version = "~0.8", features = ["std", "std_rng"] }
+# TODO needed for now to avoid tests timing out
+rayon = "1.8.1"
 reqwest = { version = "0.11", features = ["json"] }
 serde = { version = "~1.0", features = ["derive", "rc"] }
 serde_json = "1.0"

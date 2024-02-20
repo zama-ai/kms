@@ -1,8 +1,6 @@
-use crate::anyhow_error_and_log;
 use crate::core::der_types::{self, PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::core::kms_core::BaseKmsStruct;
 use crate::core::signcryption::signcrypt;
-use crate::file_handling::read_element;
 use crate::kms::kms_endpoint_server::{KmsEndpoint, KmsEndpointServer};
 use crate::kms::{
     DecryptionRequest, DecryptionResponse, FheType, ReencryptionRequest, ReencryptionResponse,
@@ -13,6 +11,7 @@ use crate::rpc::kms_rpc::{
 use crate::rpc::rpc_types::{
     BaseKms, DecryptionResponseSigPayload, Plaintext, RawDecryption, SigncryptionPayload,
 };
+use crate::{anyhow_error_and_log, rpc::kms_rpc::some_or_err};
 use aes_prng::AesRng;
 use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::residue_poly::{ResiduePoly, ResiduePoly128};
@@ -29,49 +28,63 @@ use distributed_decryption::execution::sharing::open::robust_opens_to_all;
 use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandomWithAbort;
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::lwe::{
-    combine128, to_large_ciphertext_block, BootstrappingKey, Ciphertext64, SecretKeyShare,
-    ThresholdLWEParameters,
+    combine128, to_large_ciphertext_block, BootstrappingKey, SecretKeyShare, ThresholdLWEParameters,
 };
 use distributed_decryption::networking::grpc::GrpcNetworkingManager;
-use itertools::Itertools;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::to_vec;
 use std::fmt;
 use std::net::SocketAddr;
+use tfhe::{
+    core_crypto::entities::LweCiphertextOwned, integer::IntegerRadixCiphertext, FheUint16,
+    FheUint32, FheUint8,
+};
 use tokio::task::AbortHandle;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
-pub type FhePublicKey = distributed_decryption::lwe::PublicKey;
 // Jump between the webserver being externally visible and the webserver used to execute DDec
 // TODO this should eventually be specified a bit better
 pub const PORT_JUMP: u16 = 100;
 
-/// Construct and initialize a threshold KMS server. Its port will be `base_port`+`my_id``.
-pub async fn threshold_server_handle(
+/// Initialize a threshold KMS server using the DDec initialization protocol.
+/// This MUST be done before the server is started.
+pub async fn threshold_server_init(
     url: String,
     base_port: u16,
-    key_path: String,
     parties: usize,
     threshold: u8,
     my_id: usize,
+    keys: ThresholdKmsKeys,
+) -> anyhow::Result<ThresholdKms> {
+    let mut kms = ThresholdKms::new(keys, parties, threshold, &url, base_port, my_id)?;
+    tracing::info!("Initializing threshold KMS server for {my_id}...");
+    kms.init().await?;
+    tracing::info!("Initialization done! Starting threshold KMS server for {my_id} ...");
+    Ok(kms)
+}
+
+/// Starts threshold KMS server. Its port will be `base_port`+`my_id``.
+/// This MUST be done after the server has been initialized.
+pub async fn threshold_server_start(
+    url: String,
+    base_port: u16,
+    my_id: usize,
+    kms_server: ThresholdKms,
 ) -> anyhow::Result<()> {
     let port = base_port + (my_id as u16);
     let socket: std::net::SocketAddr = format!("{}:{}", url, port).parse()?;
-    let keys: ThresholdKmsKeys = read_element(key_path.to_string())?;
-    let mut kms = ThresholdKms::new(keys, parties, threshold, &url, base_port, my_id)?;
-    tracing::info!("Initializing threshold KMS server ...");
-    kms.init().await?;
-    tracing::info!("Initialization done! Starting threshold KMS server ...");
     Server::builder()
-        .add_service(KmsEndpointServer::new(kms))
+        .add_service(KmsEndpointServer::new(kms_server))
         .serve(socket)
         .await?;
+    tracing::info!("Started server {my_id}");
     Ok(())
 }
 
 /// Helper method for combining reconstructed messages after decryption.
-// TODO is this the right place for this function? Should probably be in ddec
+// TODO is this the right place for this function? Should probably be in ddec. Related to this issue https://github.com/zama-ai/distributed-decryption/issues/352
 pub fn decrypted_blocks_to_raw_decryption(
     params: &ThresholdLWEParameters,
     fhe_type: FheType,
@@ -89,11 +102,46 @@ pub fn decrypted_blocks_to_raw_decryption(
     };
     Ok(Plaintext::new(res, fhe_type))
 }
+
+impl FheType {
+    pub fn deserialize_to_low_level(
+        &self,
+        serialized_high_level: &[u8],
+    ) -> anyhow::Result<Vec<LweCiphertextOwned<u64>>> {
+        let radix_ct = match self {
+            FheType::Bool => {
+                let hl_ct: FheUint8 = bincode::deserialize(serialized_high_level)?;
+                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint8 => {
+                let hl_ct: FheUint8 = bincode::deserialize(serialized_high_level)?;
+                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint16 => {
+                let hl_ct: FheUint16 = bincode::deserialize(serialized_high_level)?;
+                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint32 => {
+                let hl_ct: FheUint32 = bincode::deserialize(serialized_high_level)?;
+                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+        };
+        Ok(radix_ct
+            .into_blocks()
+            .into_iter()
+            .map(|block| block.ct)
+            .collect::<Vec<_>>())
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct ThresholdKmsKeys {
     pub params: ThresholdLWEParameters,
     pub fhe_dec_key_share: SecretKeyShare,
-    pub fhe_pk: FhePublicKey,
     pub bsk: BootstrappingKey,
     pub sig_sk: PrivateSigKey,
     pub sig_pk: PublicSigKey,
@@ -227,14 +275,22 @@ impl BaseKms for ThresholdKms {
     }
 }
 impl ThresholdKms {
-    async fn inner_decrypt(&self, ct: &[u8]) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
-        // TODO handle that we use low level ciphertexts here
-        let ciphertext: Ciphertext64 = serde_asn1_der::from_bytes(ct)?;
-        let ct_large = ciphertext
-            .iter()
+    async fn inner_decrypt(
+        &self,
+        fhe_type: FheType,
+        high_level_ct: &[u8],
+    ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
+        // Deserialize the highlevel ciphertext into a low level ciphertext. Both the high level and low level are over u64
+        tracing::info!("Server {} starts serialize ciphertext", self.my_id);
+        let low_level_ct_small = fhe_type.deserialize_to_low_level(high_level_ct)?;
+        tracing::info!("Server {} starts to convert ciphertext", self.my_id);
+        // Convert the low level ciphertext over u64 into a low level ciphertext over u128
+        let ct_large = low_level_ct_small
+            .par_iter()
             .map(|ct_block| to_large_ciphertext_block(&self.bsk, ct_block))
-            .collect_vec();
-        let session_id = SessionId::new(&ciphertext)?;
+            .collect();
+        tracing::info!("Server {} converted ciphertext", self.my_id);
+        let session_id = SessionId::new(&low_level_ct_small)?;
         let networking = (self.networking_strategy)(session_id, self.role_assignments.clone());
         let own_identity = self
             .role_assignments
@@ -250,21 +306,26 @@ impl ThresholdKms {
             own_identity.clone(),
             Some(self.base_kms.new_rng()?),
         )?;
+        tracing::info!("Server {} doing batch decrypt", self.my_id);
         let partial_dec = batch_partial_decrypt(&mut session, &self.fhe_dec_key_share, ct_large)?;
-        let openeds =
-            robust_opens_to_all(&session, &partial_dec, (self.threshold + 1) as usize).await?;
-        Ok(openeds.unwrap())
+        tracing::info!("Server {} opening result", self.my_id);
+        let openeds = some_or_err(
+            robust_opens_to_all(&session, &partial_dec, self.threshold as usize).await?,
+            "Could not do reconstruction of opened values".to_string(),
+        )?;
+        tracing::info!("Server {} opened result", self.my_id);
+        Ok(openeds)
     }
 
     async fn inner_reencrypt(
         &self,
-        ct: &[u8],
+        high_level_ct: &[u8],
         ct_type: FheType,
         digest: Vec<u8>,
         client_enc_key: &PublicEncKey,
         client_verf_key: &PublicSigKey,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        let partial_dec = self.inner_decrypt(ct).await?;
+        let partial_dec = self.inner_decrypt(ct_type, high_level_ct).await?;
         let partial_dec_serialized = serde_asn1_der::to_vec(&partial_dec)?;
         let signcryption_msg = SigncryptionPayload {
             raw_decryption: RawDecryption::new(partial_dec_serialized, ct_type),
@@ -280,7 +341,7 @@ impl ThresholdKms {
         let res = to_vec(&enc_res)?;
         // TODO make logs everywhere. In particular make sure to log errors before throwing the
         // error back up
-        tracing::info!("Completed reencyption of ciphertext {:?} with type {:?} to client verification key {:?} under client encryption key {:?}", ct, ct_type, client_verf_key.pk, client_enc_key.0);
+        tracing::info!("Completed reencyption of ciphertext");
         Ok(Some(res))
     }
 }
@@ -297,6 +358,7 @@ impl KmsEndpoint for ThresholdKms {
                 validate_reencrypt_req(&inner).await,
                 format!("Invalid key in request {:?}", inner),
             )?;
+        tracing::info!("Server {} validated reencryption request", self.my_id);
         let return_cipher = process_response(
             self.inner_reencrypt(
                 &ciphertext,
@@ -307,6 +369,7 @@ impl KmsEndpoint for ThresholdKms {
             )
             .await,
         )?;
+        tracing::info!("Server {} did reencryption ", self.my_id);
         Ok(Response::new(ReencryptionResponse {
             shares_needed,
             signcrypted_ciphertext: return_cipher,
@@ -330,7 +393,7 @@ impl KmsEndpoint for ThresholdKms {
             format!("Invalid key in request {:?}", inner),
         )?;
         let raw_decryption = handle_potential_err(
-            self.inner_decrypt(&ciphertext).await,
+            self.inner_decrypt(fhe_type, &ciphertext).await,
             format!("Decryption failed for request {:?}", inner),
         )?;
         let recon_msg = reconstruct_message(Some(raw_decryption), &self.params).unwrap();

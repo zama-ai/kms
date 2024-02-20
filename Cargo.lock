@@ -1598,6 +1598,7 @@ dependencies = [
  "nom",
  "prost",
  "rand",
+ "rayon",
  "reqwest",
  "serde",
  "serde_asn1_der",

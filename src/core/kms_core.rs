@@ -2,13 +2,13 @@ use super::der_types::{Cipher, PrivateSigKey, PublicEncKey, PublicSigKey, Signcr
 use super::signcryption::{
     hash_element, sign, signcrypt, validate_and_decrypt, verify_sig, RND_SIZE,
 };
-use crate::anyhow_error_and_warn_log;
 use crate::kms::FheType;
 use crate::rpc::kms_rpc::handle_potential_err;
 use crate::rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, SigncryptionPayload};
+use crate::{anyhow_error_and_warn_log, setup_rpc::FhePrivateKey};
 use aes_prng::AesRng;
 use k256::ecdsa::SigningKey;
-use rand::{CryptoRng, RngCore, SeedableRng};
+use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::{from_bytes, to_vec};
 use std::fmt;
@@ -16,10 +16,7 @@ use std::sync::{Arc, Mutex};
 use tfhe::prelude::FheDecrypt;
 use tfhe::{generate_keys, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint8};
 
-pub type FhePublicKey = tfhe::PublicKey;
-pub type FhePrivateKey = tfhe::ClientKey;
-
-pub fn gen_sig_keys(rng: &mut (impl CryptoRng + RngCore)) -> (PublicSigKey, PrivateSigKey) {
+pub fn gen_sig_keys(rng: &mut (impl CryptoRng + Rng)) -> (PublicSigKey, PrivateSigKey) {
     let sk = SigningKey::random(rng);
     let pk = SigningKey::verifying_key(&sk);
     (PublicSigKey { pk: *pk }, PrivateSigKey { sk })
@@ -30,7 +27,6 @@ pub fn gen_kms_keys(config: Config, rng: &mut (impl CryptoRng + RngCore)) -> Sof
     let (sig_pk, sig_sk) = gen_sig_keys(rng);
     // TODO do we need this to be a mutex as well to allow for parallel queries
     SoftwareKmsKeys {
-        config,
         fhe_sk,
         sig_sk,
         sig_pk,
@@ -128,7 +124,6 @@ impl BaseKms for BaseKmsStruct {
 
 #[derive(Serialize, Deserialize)]
 pub struct SoftwareKmsKeys {
-    pub config: Config,
     pub fhe_sk: FhePrivateKey,
     pub sig_sk: PrivateSigKey,
     pub sig_pk: PublicSigKey,
@@ -174,25 +169,25 @@ impl BaseKms for SoftwareKms {
     }
 }
 impl Kms for SoftwareKms {
-    fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<Plaintext> {
+    fn decrypt(&self, high_level_ct: &[u8], fhe_type: FheType) -> anyhow::Result<Plaintext> {
         Ok(match fhe_type {
             FheType::Bool => {
-                let cipher: FheBool = bincode::deserialize(ct)?;
+                let cipher: FheBool = bincode::deserialize(high_level_ct)?;
                 let plaintext: bool = cipher.decrypt(&self.fhe_dec_key);
                 Plaintext::from_bool(plaintext)
             }
             FheType::Euint8 => {
-                let cipher: FheUint8 = bincode::deserialize(ct)?;
+                let cipher: FheUint8 = bincode::deserialize(high_level_ct)?;
                 let plaintext: u8 = cipher.decrypt(&self.fhe_dec_key);
                 Plaintext::from_u8(plaintext)
             }
             FheType::Euint16 => {
-                let cipher: FheUint16 = bincode::deserialize(ct)?;
+                let cipher: FheUint16 = bincode::deserialize(high_level_ct)?;
                 let plaintext: u16 = cipher.decrypt(&self.fhe_dec_key);
                 Plaintext::from_u16(plaintext)
             }
             FheType::Euint32 => {
-                let cipher: FheUint32 = bincode::deserialize(ct)?;
+                let cipher: FheUint32 = bincode::deserialize(high_level_ct)?;
                 let plaintext: u32 = cipher.decrypt(&self.fhe_dec_key);
                 Plaintext::from_u32(plaintext)
             }
@@ -223,7 +218,7 @@ impl Kms for SoftwareKms {
             &self.base_kms.sig_key,
         )?;
         let res = to_vec(&enc_res)?;
-        tracing::info!("Completed reencyption of ciphertext {:?} with type {:?} to client verification key {:?} under client encryption key {:?}", ct, fhe_type, client_verf_key.pk, client_enc_key.0);
+        tracing::info!("Completed reencyption of ciphertext");
         Ok(Some(res))
     }
 }
@@ -262,42 +257,55 @@ pub fn decrypt_signcryption(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
-    use super::{gen_kms_keys, SoftwareKmsKeys};
-    use crate::core::kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms};
-    use crate::core::request::ephemeral_key_generation;
-    use crate::file_handling::{read_element, write_element};
+    use crate::file_handling::read_element;
     use crate::kms::FheType;
     use crate::rpc::rpc_types::{Kms, Plaintext};
+    use crate::setup_rpc::CentralizedTestingKeys;
+    use crate::setup_rpc::{DEFAULT_CENTRAL_KEYS_PATH, TEST_CENTRAL_KEYS_PATH};
+    use crate::{
+        core::kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms},
+        setup_rpc::{
+            ensure_central_key_cipher_exist, DEFAULT_CENTRAL_CIPHER_PATH, DEFAULT_PARAM_PATH,
+        },
+    };
+    use crate::{
+        core::request::ephemeral_key_generation,
+        setup_rpc::{TEST_CENTRAL_CIPHER_PATH, TEST_PARAM_PATH},
+    };
     use aes_prng::AesRng;
-    use ctor::ctor;
     use rand::SeedableRng;
     use tfhe::prelude::FheEncrypt;
-    use tfhe::{ConfigBuilder, FheUint8};
+    use tfhe::FheUint8;
 
-    pub const TEST_KMS_KEY_PATH: &str = "temp/kms-keys.bin";
-
-    #[ctor]
     #[test]
-    fn ensure_keys_exist() {
-        if !Path::new(TEST_KMS_KEY_PATH).exists() {
-            let mut rng = AesRng::seed_from_u64(1);
-            let config = ConfigBuilder::default().build();
-            write_element(
-                TEST_KMS_KEY_PATH.to_string(),
-                &gen_kms_keys(config, &mut rng),
-            )
-            .unwrap();
-        }
+    fn sunshine_test_decrypt() {
+        ensure_central_key_cipher_exist(
+            TEST_PARAM_PATH,
+            TEST_CENTRAL_KEYS_PATH,
+            TEST_CENTRAL_CIPHER_PATH,
+        );
+        sunshine_decrypt(TEST_CENTRAL_KEYS_PATH)
     }
 
     #[test]
-    fn sunshine_decrypt() {
+    #[ignore]
+    fn sunshine_default_decrypt() {
+        ensure_central_key_cipher_exist(
+            DEFAULT_PARAM_PATH,
+            DEFAULT_CENTRAL_KEYS_PATH,
+            DEFAULT_CENTRAL_CIPHER_PATH,
+        );
+        sunshine_decrypt(DEFAULT_CENTRAL_KEYS_PATH)
+    }
+
+    fn sunshine_decrypt(kms_key_path: &str) {
         let msg = 42_u8;
-        let keys: SoftwareKmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();
-        let kms = SoftwareKms::new(keys.fhe_sk.clone(), keys.sig_sk);
-        let ct = FheUint8::encrypt(msg, &keys.fhe_sk);
+        let keys: CentralizedTestingKeys = read_element(kms_key_path.to_string()).unwrap();
+        let kms = SoftwareKms::new(
+            keys.software_kms_keys.fhe_sk.clone(),
+            keys.software_kms_keys.sig_sk,
+        );
+        let ct = FheUint8::encrypt(msg, &keys.software_kms_keys.fhe_sk);
         let mut serialized_ct = Vec::new();
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
         let plaintext: Plaintext = kms.decrypt(&serialized_ct, FheType::Euint8).unwrap();
@@ -305,12 +313,35 @@ mod tests {
     }
 
     #[test]
-    fn sunshine_reencrypt() {
+    fn sunshine_test_reencrypt() {
+        ensure_central_key_cipher_exist(
+            TEST_PARAM_PATH,
+            TEST_CENTRAL_KEYS_PATH,
+            TEST_CENTRAL_CIPHER_PATH,
+        );
+        sunshine_reencrypt(TEST_CENTRAL_KEYS_PATH);
+    }
+
+    #[test]
+    #[ignore]
+    fn sunshine_default_reencrypt() {
+        ensure_central_key_cipher_exist(
+            DEFAULT_PARAM_PATH,
+            DEFAULT_CENTRAL_KEYS_PATH,
+            DEFAULT_CENTRAL_CIPHER_PATH,
+        );
+        sunshine_reencrypt(DEFAULT_CENTRAL_KEYS_PATH);
+    }
+
+    fn sunshine_reencrypt(kms_key_path: &str) {
         let msg = 42_u8;
         let mut rng = AesRng::seed_from_u64(1);
-        let kms_keys: SoftwareKmsKeys = read_element(TEST_KMS_KEY_PATH.to_string()).unwrap();
-        let kms = SoftwareKms::new(kms_keys.fhe_sk.clone(), kms_keys.sig_sk);
-        let ct = FheUint8::encrypt(msg, &kms_keys.fhe_sk);
+        let keys: CentralizedTestingKeys = read_element(kms_key_path.to_string()).unwrap();
+        let kms = SoftwareKms::new(
+            keys.software_kms_keys.fhe_sk.clone(),
+            keys.software_kms_keys.sig_sk,
+        );
+        let ct = FheUint8::encrypt(msg, &keys.software_kms_keys.fhe_sk);
         let mut serialized_ct = Vec::new();
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
         let link = vec![42_u8, 42, 42];
@@ -326,10 +357,14 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        let decrypted_msg =
-            decrypt_signcryption(&raw_cipher, &link, &client_keys, &kms_keys.sig_pk)
-                .unwrap()
-                .unwrap();
+        let decrypted_msg = decrypt_signcryption(
+            &raw_cipher,
+            &link,
+            &client_keys,
+            &keys.software_kms_keys.sig_pk,
+        )
+        .unwrap()
+        .unwrap();
         let plaintext: Plaintext = decrypted_msg.try_into().unwrap();
         assert_eq!(plaintext.as_u8(), msg);
         assert_eq!(plaintext.fhe_type(), FheType::Euint8);
