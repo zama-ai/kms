@@ -1,22 +1,18 @@
-use super::rpc_types::{BaseKms, ReencryptionRequestSigPayload};
-use crate::core::der_types::{PublicEncKey, PublicSigKey, Signature};
+use super::rpc_types::{BaseKms, DecryptionRequestSerializable, ReencryptionRequestSigPayload};
+use crate::core::der_types::{PublicEncKey, PublicSigKey};
 use crate::core::kms_core::{BaseKmsStruct, SoftwareKms, SoftwareKmsKeys};
 use crate::kms::kms_endpoint_server::{KmsEndpoint, KmsEndpointServer};
-use crate::kms::{
-    DecryptionRequest, DecryptionResponse, FheType, Proof, ReencryptionRequest,
-    ReencryptionResponse,
-};
-use crate::rpc::rpc_types::{
-    DecryptionRequestSigPayload, DecryptionResponseSigPayload, Kms, LightClientCommitResponse,
-};
-use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
+use crate::kms::{DecryptionResponse, FheType, ReencryptionRequest, ReencryptionResponse};
+use crate::rpc::rpc_types::{DecryptionResponseSigPayload, Kms};
+use crate::{anyhow_error_and_warn_log, kms::DecryptionRequest};
 use serde_asn1_der::{from_bytes, to_vec};
 use std::fmt::{self};
 use std::net::SocketAddr;
-use tendermint::AppHash;
 use tonic::transport::Server;
-use tonic::{Code, Request, Response, Status};
+use tonic::{Request, Response, Status};
 use url::Url;
+
+pub static CURRENT_FORMAT_VERSION: u32 = 1;
 
 pub async fn server_handle(url_str: &str, kms_keys: SoftwareKmsKeys) -> anyhow::Result<()> {
     let url = Url::parse(url_str)?;
@@ -61,6 +57,7 @@ impl KmsEndpoint for SoftwareKms {
         // Observe that shares_needed should be part of the signcrypted response or request to
         // ensure a single server cannot default to a single share
         Ok(Response::new(ReencryptionResponse {
+            version: CURRENT_FORMAT_VERSION,
             shares_needed,
             signcrypted_ciphertext: return_cipher,
             fhe_type: fhe_type.into(),
@@ -98,6 +95,7 @@ impl KmsEndpoint for SoftwareKms {
             "Could not serialize server verification key".to_string(),
         )?;
         let sig_payload = DecryptionResponseSigPayload {
+            version: CURRENT_FORMAT_VERSION,
             shares_needed,
             plaintext: plaintext_bytes,
             verification_key: server_verf_key,
@@ -124,6 +122,12 @@ pub async fn validate_reencrypt_req(
         req.payload.clone(),
         format!("The request {:?} does not have a payload", req),
     )?;
+    if payload.version != CURRENT_FORMAT_VERSION {
+        return Err(anyhow_error_and_warn_log(format!(
+            "Version number was {:?}, whereas current is {:?}",
+            payload.version, CURRENT_FORMAT_VERSION
+        )));
+    }
     let sig_payload: ReencryptionRequestSigPayload = payload.clone().try_into()?;
     let sig_payload_serialized = to_vec(&sig_payload)?;
     let req_digest = handle_potential_err(
@@ -135,15 +139,7 @@ pub async fn validate_reencrypt_req(
         from_bytes(&payload.verification_key),
         format!("Invalid verification key in request {:?}", req),
     )?;
-    if !verify_client_key(&client_verf_key) {
-        return Err(anyhow_error_and_warn_log(format!("Request invalid since client is not permitted to decrypt specific ciphertext in request {:?}", req)));
-    }
     let client_enc_key: PublicEncKey = from_bytes(&sig_payload.enc_key)?;
-    let proof = match payload.proof {
-        Some(proof) => proof,
-        None => return Err(anyhow_error_and_log("Proof not present".to_owned())),
-    };
-    verify_proof(&proof).await?;
     if !BaseKmsStruct::verify_sig(&sig_payload, &from_bytes(&req.signature)?, &client_verf_key) {
         return Err(anyhow_error_and_warn_log(format!(
             "Could not validate signature in request {:?}",
@@ -165,60 +161,35 @@ pub async fn validate_decrypt_req(
     req: &DecryptionRequest,
 ) -> anyhow::Result<(Vec<u8>, FheType, Vec<u8>, Vec<u8>, u32)> {
     let req_clone = req.clone();
-    let payload = some_or_err(
-        req.payload.clone(),
-        format!("The request {:?} does not have a payload", req_clone),
-    )?;
-    let fhetype = payload.fhe_type();
-    let sig_payload: DecryptionRequestSigPayload = handle_potential_err(
-        payload.clone().try_into(),
+    if req_clone.version != CURRENT_FORMAT_VERSION {
+        return Err(anyhow_error_and_warn_log(format!(
+            "Version number was {:?}, whereas current is {:?}",
+            req_clone.version, CURRENT_FORMAT_VERSION
+        )));
+    }
+    let fhetype = req_clone.fhe_type();
+    let req_serialized: DecryptionRequestSerializable = handle_potential_err(
+        req_clone.clone().try_into(),
         format!(
             "Could not make signature payload from protobuf request {:?}",
             req_clone
         ),
     )?;
-    let client_verf_key: PublicSigKey = handle_potential_err(
-        from_bytes(&sig_payload.verification_key),
-        format!("Invalid client verification key in request {:?}", req_clone),
-    )?;
-    if !verify_client_key(&client_verf_key) {
-        return Err(anyhow_error_and_warn_log(format!("Request invalid since client is not permitted to decrypt specific ciphertext in request {:?}", req_clone)));
-    }
-    verify_proof(&some_or_err(
-        payload.proof,
-        format!("Proof not present in request {:?}", req_clone),
-    )?)
-    .await?;
-    let signature: Signature = handle_potential_err(
-        from_bytes(&req_clone.signature),
-        format!("Invalid signature in request {:?}", req_clone),
-    )?;
-    if !BaseKmsStruct::verify_sig(&sig_payload, &signature, &client_verf_key) {
-        return Err(anyhow_error_and_warn_log(format!(
-            "Could not validate signature in request {:?}",
-            req_clone
-        )));
-    }
-    let payload_serialized = handle_potential_err(
-        to_vec(&sig_payload),
+    let serialized_req = handle_potential_err(
+        to_vec(&req_serialized),
         format!("Could not serialize payload {:?}", req_clone),
     )?;
     let req_digest = handle_potential_err(
-        BaseKmsStruct::digest(&payload_serialized),
+        BaseKmsStruct::digest(&serialized_req),
         format!("Could not hash payload {:?}", req_clone),
     )?;
     Ok((
-        payload.ciphertext,
+        req_clone.ciphertext,
         fhetype,
         req_digest,
-        payload.randomness,
-        payload.shares_needed,
+        req_clone.randomness,
+        req_clone.shares_needed,
     ))
-}
-
-fn verify_client_key(_key: &PublicSigKey) -> bool {
-    // TODO
-    true
 }
 
 pub fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Result<T, Status> {
@@ -253,28 +224,4 @@ pub fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> Result<T
         tracing::warn!(error);
         tonic::Status::new(tonic::Code::Aborted, "Invalid request".to_string())
     })
-}
-
-async fn verify_proof(_proof: &Proof) -> Result<(), Status> {
-    // let _root: AppHash = get_state_root(proof.height).await?;
-    // TODO: verify `proof` against `root`
-    Ok(())
-}
-
-#[allow(dead_code)]
-async fn get_state_root(height: u32) -> Result<AppHash, Status> {
-    let response = reqwest::get(format!("http://127.0.0.1:8888/commit?height={}", height)) // assumes light client local service is up and running
-        .await
-        .or(Err(Status::new(
-            Code::Unavailable,
-            "unable to reach light client",
-        )))?
-        .json::<LightClientCommitResponse>()
-        .await
-        .or(Err(Status::new(
-            Code::Unavailable,
-            "unable to deserialize light client response",
-        )))?;
-
-    Ok(response.result.signed_header.header.app_hash)
 }

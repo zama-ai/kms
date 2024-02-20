@@ -21,8 +21,9 @@ use kms_lib::kms::{
     ReencryptionResponse,
 };
 use kms_lib::rpc::kms_rpc::some_or_err;
+use kms_lib::rpc::kms_rpc::CURRENT_FORMAT_VERSION;
 use kms_lib::rpc::rpc_types::{
-    BaseKms, DecryptionRequestSigPayload, DecryptionResponseSigPayload, MetaResponse, Plaintext,
+    BaseKms, DecryptionRequestSerializable, DecryptionResponseSigPayload, MetaResponse, Plaintext,
     ReencryptionRequestSigPayload,
 };
 use kms_lib::threshold::threshold_kms::decrypted_blocks_to_raw_decryption;
@@ -163,11 +164,7 @@ impl Client {
         }
     }
 
-    /// Creates a decryption request to send to the KMS servers. This generates
-    /// a signature payload containing the ciphertext, required number of shares,
-    /// and other metadata. It signs this payload with the client's private key.
-    /// Returns the full DecryptionRequest containing the signed payload to send
-    /// to the servers.
+    /// Creates a decryption request to send to the KMS servers.
     pub fn decryption_request(
         &mut self,
         ct: Vec<u8>,
@@ -179,26 +176,20 @@ impl Client {
         // security. TODO this argument should be validated
         let mut randomness: Vec<u8> = Vec::with_capacity(RND_SIZE);
         self.rng.fill_bytes(&mut randomness);
-        let sig_req = DecryptionRequestSigPayload {
+        let serialized_req = DecryptionRequestSerializable {
+            version: CURRENT_FORMAT_VERSION,
             shares_needed: self.shares_needed,
-            verification_key: to_vec(&self.client_pk)?,
             fhe_type,
             ciphertext: ct,
             randomness,
-            height: 0,
-            merkle_patricia_proof: vec![],
         };
-        let sig = sign(&to_vec(&sig_req)?, &self.client_sk)?;
-        Ok(DecryptionRequest {
-            signature: to_vec(&sig)?,
-            payload: Some(sig_req.into()),
-        })
+        Ok(serialized_req.into())
     }
 
     /// Creates a reencryption request to send to the KMS servers. This generates
     /// an ephemeral reencryption key pair, signature payload containing the ciphertext,
     /// required number of shares, and other metadata. It signs this payload with
-    /// the client's private key. Returns the full ReencryptionRequest containing
+    /// the users's wallet private key. Returns the full ReencryptionRequest containing
     /// the signed payload to send to the servers, along with the generated
     /// reencryption key pair.
     pub fn reencyption_request(
@@ -210,13 +201,12 @@ impl Client {
         let mut randomness = Vec::with_capacity(RND_SIZE);
         self.rng.fill_bytes(&mut randomness);
         let sig_payload = ReencryptionRequestSigPayload {
+            version: CURRENT_FORMAT_VERSION,
             shares_needed: self.shares_needed,
             enc_key: to_vec(&enc_pk)?,
             verification_key: to_vec(&self.client_pk)?,
             fhe_type,
             ciphertext: ct,
-            height: 0,
-            merkle_patricia_proof: vec![],
             randomness,
         };
         let sig = sign(&to_vec(&sig_payload)?, &self.client_sk)?;
@@ -259,6 +249,7 @@ impl Client {
             };
             // Observe that the values contained in the pivot has already been validated to be
             // correct
+            // TODO I think tthis is redundant
             if cur_payload.digest != pivot_payload.digest
                 || cur_payload.fhe_type()? != pivot_payload.fhe_type()?
                 || cur_payload.plaintext != pivot_payload.plaintext
@@ -331,33 +322,29 @@ impl Client {
         agg_resp: &AggregatedDecryptionResponse,
     ) -> anyhow::Result<bool> {
         match request {
-            Some(req) => match req.payload {
-                Some(req_payload) => {
-                    let resp_parsed_payloads = some_or_err(
-                        self.validate_individual_dec_resp(req_payload.shares_needed, agg_resp)?,
-                        "Could not validate the aggregated responses".to_string(),
-                    )?;
-                    let pivot_payload = resp_parsed_payloads[0].clone();
-                    if req_payload.fhe_type() != pivot_payload.fhe_type()? {
-                        tracing::warn!("Fhe type in the decryption response is incorrect");
-                        return Ok(false);
-                    }
-                    let sig_payload: DecryptionRequestSigPayload = req_payload.try_into()?;
-                    if BaseKmsStruct::digest(&to_vec(&sig_payload)?)? != pivot_payload.digest {
-                        tracing::warn!(
-                            "The decryption response is not linked to the correct request"
-                        );
-                        return Ok(false);
-                    }
-                    Ok(true)
+            Some(req) => {
+                let resp_parsed_payloads = some_or_err(
+                    self.validate_individual_dec_resp(req.shares_needed, agg_resp)?,
+                    "Could not validate the aggregated responses".to_string(),
+                )?;
+                let pivot_payload = resp_parsed_payloads[0].clone();
+                if req.version != pivot_payload.version() {
+                    tracing::warn!("Version in the decryption request is incorrect");
+                    return Ok(false);
                 }
-                None => {
-                    tracing::warn!("No payload in the decryption request!");
-                    Ok(false)
+                if req.fhe_type() != pivot_payload.fhe_type()? {
+                    tracing::warn!("Fhe type in the decryption response is incorrect");
+                    return Ok(false);
                 }
-            },
+                let sig_payload: DecryptionRequestSerializable = req.try_into()?;
+                if BaseKmsStruct::digest(&to_vec(&sig_payload)?)? != pivot_payload.digest {
+                    tracing::warn!("The decryption response is not linked to the correct request");
+                    return Ok(false);
+                }
+                Ok(true)
+            }
             None => {
-                tracing::warn!("No decryption request!");
+                tracing::warn!("No payload in the decryption request!");
                 Ok(false)
             }
         }
@@ -441,6 +428,10 @@ impl Client {
                         "Could not validate the aggregated responses".to_string(),
                     )?;
                     let pivot_resp = resp_parsed.values().collect_vec()[0];
+                    if req_payload.version != pivot_resp.version() {
+                        tracing::warn!("Version in the reencryption request is incorrect");
+                        return Ok(None);
+                    }
                     if req_payload.fhe_type() != pivot_resp.fhe_type() {
                         tracing::warn!("Fhe type in the reencryption response is incorrect");
                         return Ok(None);
@@ -620,6 +611,16 @@ impl Client {
         pivot_resp: &T,
         other_resp: &T,
     ) -> anyhow::Result<bool> {
+        if pivot_resp.version() != other_resp.version() {
+            tracing::warn!(
+                    "Response from server with verification key {:?} gave version {:?}, whereas the pivot server's version is {:?}, and its verification key is {:?}.",
+                    pivot_resp.verification_key(),
+                    pivot_resp.version(),
+                    other_resp.version(),
+                    other_resp.verification_key()
+                );
+            return Ok(false);
+        }
         if pivot_resp.fhe_type()? != other_resp.fhe_type()? {
             tracing::warn!(
                     "Response from server with verification key {:?} gave fhe type {:?}, whereas the pivot server's fhe type is {:?} and its verification key is {:?}",

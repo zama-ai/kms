@@ -1,16 +1,14 @@
+use crate::kms::{
+    DecryptionResponsePayload, FheType, ReencryptionRequestPayload, ReencryptionResponse,
+};
+use crate::{
+    core::der_types::{PublicEncKey, PublicSigKey, Signature},
+    kms::DecryptionRequest,
+};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_asn1_der::from_bytes;
 use std::fmt;
-use tendermint::block::signed_header::SignedHeader;
-
-use crate::core::der_types::{PublicEncKey, PublicSigKey, Signature};
-use crate::kms::{
-    DecryptionRequestPayload, DecryptionResponsePayload, FheType, Proof,
-    ReencryptionRequestPayload, ReencryptionResponse,
-};
-
-use super::kms_rpc::some_or_err;
 
 pub trait BaseKms {
     fn verify_sig<T: fmt::Debug + Serialize>(
@@ -41,18 +39,6 @@ pub trait Kms: BaseKms {
 pub struct SigncryptionPayload {
     pub raw_decryption: RawDecryption,
     pub req_digest: Vec<u8>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LightClientCommitResponse {
-    _jsonrpc: String,
-    _id: i32,
-    pub result: SignedHeaderWrapper,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SignedHeaderWrapper {
-    pub signed_header: SignedHeader,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,46 +165,37 @@ impl TryFrom<RawDecryption> for Plaintext {
 }
 
 /// Observe that this seemingly redundant types are required since the Protobuf compiled types do
-/// not implement the serializable and deserializable traits. Hence [DecryptionRequestSigPayload]
-/// implement data to be asn1 serialized which will be signed.
+/// not implement the serializable and deserializable traits. Hence [DecryptionRequestSerializable]
+/// implement data to be asn1 serialized and hashed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DecryptionRequestSigPayload {
+pub struct DecryptionRequestSerializable {
+    pub version: u32,
     pub shares_needed: u32,
-    pub verification_key: Vec<u8>,
     pub fhe_type: FheType,
     pub ciphertext: Vec<u8>,
     pub randomness: Vec<u8>,
-    pub height: u32,
-    pub merkle_patricia_proof: Vec<u8>,
 }
-impl From<DecryptionRequestSigPayload> for DecryptionRequestPayload {
-    fn from(val: DecryptionRequestSigPayload) -> DecryptionRequestPayload {
-        DecryptionRequestPayload {
+impl From<DecryptionRequestSerializable> for DecryptionRequest {
+    fn from(val: DecryptionRequestSerializable) -> DecryptionRequest {
+        DecryptionRequest {
+            version: val.version,
             shares_needed: val.shares_needed,
-            verification_key: val.verification_key,
             fhe_type: val.fhe_type.into(),
             ciphertext: val.ciphertext,
             randomness: val.randomness,
-            proof: Some(Proof {
-                height: val.height,
-                merkle_patricia_proof: val.merkle_patricia_proof,
-            }),
         }
     }
 }
-impl TryFrom<DecryptionRequestPayload> for DecryptionRequestSigPayload {
+impl TryFrom<DecryptionRequest> for DecryptionRequestSerializable {
     type Error = anyhow::Error;
 
-    fn try_from(val: DecryptionRequestPayload) -> Result<Self, Self::Error> {
-        let proof = some_or_err(val.proof, "Proof not present in value".to_string())?;
-        Ok(DecryptionRequestSigPayload {
+    fn try_from(val: DecryptionRequest) -> Result<Self, Self::Error> {
+        Ok(DecryptionRequestSerializable {
+            version: val.version,
             shares_needed: val.shares_needed,
-            verification_key: val.verification_key,
             fhe_type: val.fhe_type.try_into()?,
             ciphertext: val.ciphertext,
             randomness: val.randomness,
-            height: proof.height,
-            merkle_patricia_proof: proof.merkle_patricia_proof,
         })
     }
 }
@@ -228,6 +205,7 @@ impl TryFrom<DecryptionRequestPayload> for DecryptionRequestSigPayload {
 /// implement data to be asn1 serialized which will be signed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DecryptionResponseSigPayload {
+    pub version: u32,
     pub shares_needed: u32,
     pub verification_key: Vec<u8>,
     pub plaintext: Vec<u8>,
@@ -237,6 +215,7 @@ pub struct DecryptionResponseSigPayload {
 impl From<DecryptionResponseSigPayload> for DecryptionResponsePayload {
     fn from(val: DecryptionResponseSigPayload) -> DecryptionResponsePayload {
         DecryptionResponsePayload {
+            version: val.version,
             shares_needed: val.shares_needed,
             verification_key: val.verification_key,
             plaintext: val.plaintext,
@@ -248,6 +227,7 @@ impl From<DecryptionResponseSigPayload> for DecryptionResponsePayload {
 impl From<DecryptionResponsePayload> for DecryptionResponseSigPayload {
     fn from(val: DecryptionResponsePayload) -> Self {
         DecryptionResponseSigPayload {
+            version: val.version,
             shares_needed: val.shares_needed,
             verification_key: val.verification_key,
             plaintext: val.plaintext,
@@ -262,28 +242,24 @@ impl From<DecryptionResponsePayload> for DecryptionResponseSigPayload {
 /// implement data to be asn1 serialized which will be signed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReencryptionRequestSigPayload {
+    pub version: u32,
     pub shares_needed: u32,
     pub verification_key: Vec<u8>,
     pub enc_key: Vec<u8>,
     pub fhe_type: FheType,
     pub ciphertext: Vec<u8>,
     pub randomness: Vec<u8>,
-    pub height: u32,
-    pub merkle_patricia_proof: Vec<u8>,
 }
 impl From<ReencryptionRequestSigPayload> for ReencryptionRequestPayload {
     fn from(val: ReencryptionRequestSigPayload) -> ReencryptionRequestPayload {
         ReencryptionRequestPayload {
+            version: val.version,
             shares_needed: val.shares_needed,
             verification_key: val.verification_key,
             enc_key: val.enc_key,
             fhe_type: val.fhe_type.into(),
             ciphertext: val.ciphertext,
             randomness: val.randomness,
-            proof: Some(Proof {
-                height: val.height,
-                merkle_patricia_proof: val.merkle_patricia_proof,
-            }),
         }
     }
 }
@@ -291,16 +267,14 @@ impl TryFrom<ReencryptionRequestPayload> for ReencryptionRequestSigPayload {
     type Error = anyhow::Error;
 
     fn try_from(val: ReencryptionRequestPayload) -> Result<Self, Self::Error> {
-        let proof = some_or_err(val.proof, "Proof not present in value".to_string())?;
         Ok(ReencryptionRequestSigPayload {
+            version: val.version,
             shares_needed: val.shares_needed,
             verification_key: val.verification_key,
             enc_key: val.enc_key,
             fhe_type: val.fhe_type.try_into()?,
             ciphertext: val.ciphertext,
             randomness: val.randomness,
-            height: proof.height,
-            merkle_patricia_proof: proof.merkle_patricia_proof,
         })
     }
 }
@@ -340,6 +314,7 @@ impl<'de> Visitor<'de> for FheTypeVisitor {
     }
 }
 pub trait MetaResponse {
+    fn version(&self) -> u32;
     fn shares_needed(&self) -> u32;
     fn verification_key(&self) -> Vec<u8>;
     fn fhe_type(&self) -> anyhow::Result<FheType>;
@@ -367,6 +342,10 @@ impl MetaResponse for ReencryptionResponse {
     fn randomness(&self) -> Option<Vec<u8>> {
         None
     }
+
+    fn version(&self) -> u32 {
+        self.version
+    }
 }
 
 impl MetaResponse for DecryptionResponsePayload {
@@ -389,5 +368,9 @@ impl MetaResponse for DecryptionResponsePayload {
 
     fn randomness(&self) -> Option<Vec<u8>> {
         Some(self.randomness.to_owned())
+    }
+
+    fn version(&self) -> u32 {
+        self.version
     }
 }

@@ -5,6 +5,7 @@ use crate::kms::kms_endpoint_server::{KmsEndpoint, KmsEndpointServer};
 use crate::kms::{
     DecryptionRequest, DecryptionResponse, FheType, ReencryptionRequest, ReencryptionResponse,
 };
+use crate::rpc::kms_rpc::CURRENT_FORMAT_VERSION;
 use crate::rpc::kms_rpc::{
     handle_potential_err, process_response, validate_decrypt_req, validate_reencrypt_req,
 };
@@ -367,6 +368,7 @@ impl KmsEndpoint for ThresholdKms {
         )?;
         tracing::info!("Server {} did reencryption ", self.my_id);
         Ok(Response::new(ReencryptionResponse {
+            version: CURRENT_FORMAT_VERSION,
             shares_needed,
             signcrypted_ciphertext: return_cipher,
             fhe_type: fhe_type.into(),
@@ -409,6 +411,7 @@ impl KmsEndpoint for ThresholdKms {
             "Could not serialize server verification key".to_string(),
         )?;
         let sig_payload = DecryptionResponseSigPayload {
+            version: CURRENT_FORMAT_VERSION,
             shares_needed,
             plaintext: decrypted_bytes,
             verification_key: server_verf_key,

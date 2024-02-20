@@ -4,7 +4,7 @@ use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 
-// Alias wrapping the ephemeral public encryption key the client constructs and the server uses to
+// Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server uses to
 // encrypt its payload
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct PublicEncKey(pub(crate) crypto_box::PublicKey);
@@ -49,11 +49,11 @@ impl<'de> Visitor<'de> for PublicEncKeyVisitor {
     }
 }
 
-// Alias wrapping the ephemeral private decryption key the client constructs to receive the server's
+// Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the server's
 // encrypted payload
 pub type PrivateEncKey = crypto_box::SecretKey;
 
-// Struct wrapping signature verification key used by both the client and server
+// Struct wrapping signature verification key used by both the user's wallet and server
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PublicSigKey {
     pub(crate) pk: k256::ecdsa::VerifyingKey,
@@ -151,7 +151,6 @@ pub struct Cipher {
     pub(crate) server_enc_key: PublicEncKey,
 }
 
-#[allow(dead_code)]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SigncryptionPrivKey {
     pub signing_key: PrivateSigKey,
