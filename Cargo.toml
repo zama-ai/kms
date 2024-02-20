@@ -48,7 +48,6 @@ url = "2.5.0"
 
 [dev-dependencies]
 ctor = "~0.2"
-#distributed-decryption = {git = "ssh://git@github.com/zama-ai/distributed-decryption", features = ["test_utils"]}
 
 [build-dependencies]
 tonic-build = "0.10"

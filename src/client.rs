@@ -698,6 +698,7 @@ pub fn num_blocks(fhe_type: FheType, params: ThresholdLWEParameters) -> usize {
 pub(crate) mod tests {
     use crate::{num_blocks, Client};
     use distributed_decryption::lwe::ThresholdLWEParameters;
+    use kms_lib::file_handling::read_element_async;
     use kms_lib::setup_rpc::{
         ensure_central_key_cipher_exist, ensure_threshold_key_cipher_exist, BASE_PORT,
         DEFAULT_PARAM_PATH, DEFAULT_PROT, DEFAULT_THRESHOLD_KEYS_PATH, DEFAULT_URL,
@@ -763,7 +764,8 @@ pub(crate) mod tests {
             let key_path = format!("{threshold_key_path_prefix}-{i}.bin");
             handles.push(tokio::spawn(async move {
                 tracing::info!("Server {i} reading keys..");
-                let keys: ThresholdTestingKeys = read_element(key_path.to_string()).unwrap();
+                let keys: ThresholdTestingKeys =
+                    read_element_async(key_path.to_string()).await.unwrap();
                 tracing::info!("Server {i} read keys..");
                 let server = threshold_server_init(
                     DEFAULT_URL.to_owned(),
@@ -932,7 +934,7 @@ pub(crate) mod tests {
         decryption_threshold(TEST_THRESHOLD_KEYS_PATH, TEST_THRESHOLD_CIPHER_PATH).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     #[ignore]
     async fn default_decryption_threshold() {
@@ -947,9 +949,11 @@ pub(crate) mod tests {
     async fn decryption_threshold(threshold_key_path: &str, cipher_path: &str) {
         let (kms_servers, kms_clients) =
             setup_threshold(AMOUNT_PARTIES, THRESHOLD as u8, threshold_key_path).await;
-        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path.to_string()).unwrap();
-        let keys: ThresholdTestingKeys =
-            read_element(format!("{threshold_key_path}-1.bin")).unwrap();
+        let (ct, fhe_type): (Vec<u8>, FheType) =
+            read_element_async(cipher_path.to_string()).await.unwrap();
+        let keys: ThresholdTestingKeys = read_element_async(format!("{threshold_key_path}-1.bin"))
+            .await
+            .unwrap();
         let mut internal_client = Client::new(
             HashSet::from_iter(keys.server_keys.iter().cloned()),
             keys.client_pk,
@@ -994,7 +998,7 @@ pub(crate) mod tests {
         reencryption_threshold(TEST_THRESHOLD_KEYS_PATH, TEST_THRESHOLD_CIPHER_PATH).await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     #[ignore]
     async fn default_reencryption_threshold() {
@@ -1009,9 +1013,12 @@ pub(crate) mod tests {
     async fn reencryption_threshold(threshold_key_path: &str, cipher_path: &str) {
         let (kms_servers, kms_clients) =
             setup_threshold(AMOUNT_PARTIES, THRESHOLD as u8, threshold_key_path).await;
-        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path.to_string()).unwrap();
-        let keys: ThresholdTestingKeys =
-            read_element(format!("{threshold_key_path}-1.bin")).unwrap();
+        let (ct, fhe_type): (Vec<u8>, FheType) =
+            read_element_async(cipher_path.to_string()).await.unwrap();
+        // Use one set of server keys to get the necesary public keys
+        let keys: ThresholdTestingKeys = read_element_async(format!("{threshold_key_path}-1.bin"))
+            .await
+            .unwrap();
         let mut internal_client = Client::new(
             HashSet::from_iter(keys.server_keys.iter().cloned()),
             keys.client_pk,

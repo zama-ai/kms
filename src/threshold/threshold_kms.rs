@@ -281,15 +281,12 @@ impl ThresholdKms {
         high_level_ct: &[u8],
     ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
         // Deserialize the highlevel ciphertext into a low level ciphertext. Both the high level and low level are over u64
-        tracing::info!("Server {} starts serialize ciphertext", self.my_id);
         let low_level_ct_small = fhe_type.deserialize_to_low_level(high_level_ct)?;
-        tracing::info!("Server {} starts to convert ciphertext", self.my_id);
         // Convert the low level ciphertext over u64 into a low level ciphertext over u128
         let ct_large = low_level_ct_small
             .par_iter()
             .map(|ct_block| to_large_ciphertext_block(&self.bsk, ct_block))
             .collect();
-        tracing::info!("Server {} converted ciphertext", self.my_id);
         let session_id = SessionId::new(&low_level_ct_small)?;
         let networking = (self.networking_strategy)(session_id, self.role_assignments.clone());
         let own_identity = self
@@ -308,7 +305,6 @@ impl ThresholdKms {
         )?;
         tracing::info!("Server {} doing batch decrypt", self.my_id);
         let partial_dec = batch_partial_decrypt(&mut session, &self.fhe_dec_key_share, ct_large)?;
-        tracing::info!("Server {} opening result", self.my_id);
         let openeds = some_or_err(
             robust_opens_to_all(&session, &partial_dec, self.threshold as usize).await?,
             "Could not do reconstruction of opened values".to_string(),

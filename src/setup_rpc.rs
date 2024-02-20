@@ -184,7 +184,7 @@ pub fn ensure_central_key_cipher_exist(
 ) {
     ensure_dir_exist();
     if !Path::new(central_key_path).exists() {
-        ensure_central_keys_exist(param_path, central_key_path)
+        ensure_central_keys_exist(param_path, central_key_path);
     }
     if !Path::new(cipher_path).exists() {
         let central_keys: CentralizedTestingKeys =
@@ -204,7 +204,7 @@ pub fn ensure_threshold_key_cipher_exist(
     ensure_dir_exist();
     // Observe we just test for the first key for simplicity
     if !Path::new(&format!("{threshold_key_path}-1.bin")).exists() {
-        ensure_threshold_keys_exist(param_path, threshold_key_path)
+        ensure_threshold_keys_exist(param_path, threshold_key_path);
     }
     if !Path::new(cipher_path).exists() {
         let threshold_keys: ThresholdTestingKeys =
