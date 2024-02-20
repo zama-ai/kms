@@ -27,4 +27,6 @@ resource "aws_instance" "ddec-choreo-instance-test" {
   subnet_id = var.subnet_id
   associate_public_ip_address = true
   security_groups = [aws_security_group.ddec-choreo-instance-test-sg.id, var.security_group_default_id]
+  user_data = file("${path.module}/scripts/init.sh")
+  user_data_replace_on_change = true
 }

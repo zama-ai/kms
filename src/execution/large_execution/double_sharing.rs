@@ -160,14 +160,16 @@ pub(crate) mod tests {
         execution::{
             large_execution::{
                 coinflip::RealCoinflip,
-                double_sharing::{DoubleShare, DoubleSharing, RealDoubleSharing},
-                local_double_share::{LocalDoubleShare, RealLocalDoubleShare},
+                double_sharing::{DoubleShare, DoubleSharing, LocalDoubleShare, RealDoubleSharing},
+                local_double_share::RealLocalDoubleShare,
                 local_single_share::Derive,
                 share_dispute::RealShareDispute,
                 vss::RealVss,
             },
-            runtime::party::Role,
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::{
+                party::Role,
+                session::{LargeSession, ParameterHandles},
+            },
             sharing::{
                 shamir::{ShamirRing, ShamirSharing},
                 share::Share,

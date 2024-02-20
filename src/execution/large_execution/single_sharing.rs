@@ -153,8 +153,10 @@ pub(crate) mod tests {
                 single_sharing::SingleSharing,
                 vss::RealVss,
             },
-            runtime::party::Role,
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::{
+                party::Role,
+                session::{LargeSession, ParameterHandles},
+            },
             sharing::{
                 shamir::{ShamirRing, ShamirSharing},
                 share::Share,

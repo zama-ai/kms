@@ -1082,6 +1082,7 @@ mod tests {
     //In this strategy, the cheater sends m0 to P2 and m1 to P3 and P4,
     //it then echoes m to P3 an P4 but echoes m0 to P2 and does not vote for anything
     //we thus expect that P2,P3,P4 will end up agreeing on m1 at the end of round5
+    #[cfg(feature = "slow_tests")]
     async fn cheater_broadcast_strategy_2<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
         session: &B,
         sender_list: &[Role],
@@ -1195,6 +1196,7 @@ mod tests {
 
     //Test bcast with one actively malicious party
     #[test]
+    #[cfg(feature = "slow_tests")]
     fn broadcast_w_malicious_2() {
         let msg = BroadcastValue::from(ResiduePoly128::from_scalar(Wrapping(42)));
         let corrupt_msg = (0..5)

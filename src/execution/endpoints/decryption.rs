@@ -1,24 +1,14 @@
-use std::{collections::HashMap, num::Wrapping, sync::Arc};
-
-use aes_prng::AesRng;
-use rand::SeedableRng;
-use rand::{CryptoRng, Rng};
-
 use crate::execution::large_execution::offline::LargePreprocessing;
 use crate::execution::online::bit_manipulation::{bit_dec_batch, BatchedBits};
 use crate::execution::online::gen_bits::RealBitGenEven;
 use crate::execution::online::preprocessing::Preprocessing;
-use crate::execution::runtime::party::RoleAssignment;
-use crate::execution::runtime::session::NetworkingImpl;
 use crate::execution::runtime::session::SmallSession64;
-use crate::execution::runtime::session::SmallSessionHandles;
 use crate::execution::sharing::open::robust_opens_to;
-use crate::execution::sharing::shamir::ShamirRing;
 use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
-use crate::execution::small_execution::prss::PRSSSetup;
 use crate::lwe::combine128;
+#[cfg(any(test, feature = "testing"))]
 use crate::lwe::to_large_ciphertext;
 use crate::{
     algebra::residue_poly::ResiduePoly, execution::config::BatchParams, lwe::ThresholdLWEParameters,
@@ -30,19 +20,14 @@ use crate::{
         residue_poly::ResiduePoly64,
         structure_traits::Zero,
     },
-    computation::SessionId,
     error::error_handler::anyhow_error_and_log,
     execution::{
         constants::{BD1, INPUT_PARTY_ID, LOG_BD, STATSEC},
         large_execution::offline::{RealLargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
         online::secret_distributions::{RealSecretDistributions, SecretDistributions},
         runtime::{
-            party::{Identity, Role},
-            session::{
-                BaseSessionHandles, DecryptionMode, LargeSession, ParameterHandles,
-                SessionParameters, SmallSession,
-            },
-            test_runtime::DistributedTestRuntime,
+            party::Role,
+            session::{BaseSessionHandles, LargeSession, ParameterHandles, SmallSession},
         },
     },
     lwe::{
@@ -50,6 +35,28 @@ use crate::{
         SecretKeyShare,
     },
 };
+#[cfg(any(test, feature = "testing"))]
+use crate::{
+    computation::SessionId,
+    execution::{
+        runtime::{
+            party::{Identity, RoleAssignment},
+            session::{DecryptionMode, NetworkingImpl, SessionParameters, SmallSessionHandles},
+            test_runtime::DistributedTestRuntime,
+        },
+        sharing::shamir::ShamirRing,
+        small_execution::prss::PRSSSetup,
+    },
+};
+#[cfg(any(test, feature = "testing"))]
+use aes_prng::AesRng;
+#[cfg(any(test, feature = "testing"))]
+use rand::SeedableRng;
+use rand::{CryptoRng, Rng};
+use std::num::Wrapping;
+#[cfg(any(test, feature = "testing"))]
+use std::{collections::HashMap, sync::Arc};
+#[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
 
 /// Takes as input plaintexts blocks m1, ..., mN revealed to INPUT_PARTY_ID
@@ -76,6 +83,7 @@ fn combine_plaintext_blocks(
     Ok(outputs)
 }
 
+#[cfg(any(test, feature = "testing"))]
 async fn setup_small_session<Z: ShamirRing>(
     session_id: SessionId,
     role_assignments: RoleAssignment,
@@ -144,6 +152,7 @@ pub async fn init_prep_bitdec_large(
 }
 
 /// test the threshold decryption
+#[cfg(any(test, feature = "testing"))]
 pub fn threshold_decrypt64<Z: ShamirRing>(
     runtime: &DistributedTestRuntime<Z>,
     ct: Ciphertext64,

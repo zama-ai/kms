@@ -883,7 +883,7 @@ pub(crate) mod tests {
         runtime::party::Role,
         runtime::session::{BaseSessionHandles, LargeSession, ParameterHandles},
     };
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     use crate::tests::helper::tests::roles_from_idxs;
     use crate::tests::helper::tests::{
         execute_protocol_large_w_disputes_and_malicious, TestingParameters,
@@ -1479,7 +1479,7 @@ pub(crate) mod tests {
     //Test behaviour if a party doesn't participate in the protocol
     //Expected behaviour is that we end up with trivial 0 sharing for this party
     //and all other vss are fine
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 1)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 2)]
@@ -1506,7 +1506,7 @@ pub(crate) mod tests {
     ///Test for an adversary that sends malformed sharing in round 1 and does everything else honestly.
     ///If it lies to strictly more than t parties, we expect this party to get caught
     //Otherwise, we expect everything to happen normally - dispute will settle
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[3],&[],false,None), 1)]
     #[case(TestingParameters::init(4,1,&[0],&[3],&[],false,None), 2)]
@@ -1538,7 +1538,7 @@ pub(crate) mod tests {
 
     //Test for an adversary that drops out after Round1
     //We expect that adversarial parties will see their vss default to 0, all others VSS will recover
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 1)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],true,None), 2)]
@@ -1564,7 +1564,7 @@ pub(crate) mod tests {
 
     //Test for an adversary that drops out after Round2
     //We expect all goes fine as if honest round2, there's no further communication
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 1)]
     #[case(TestingParameters::init(4,1,&[0],&[],&[],false,None), 2)]

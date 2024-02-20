@@ -182,14 +182,15 @@ pub type RealLargePreprocessing<Z> =
 
 #[cfg(test)]
 mod tests {
+
     use super::{TrueDoubleSharing, TrueSingleSharing};
-    use crate::execution::config::BatchParams;
     use crate::{
         algebra::{
             residue_poly::{ResiduePoly128, ResiduePoly64},
             structure_traits::Ring,
         },
         execution::{
+            config::BatchParams,
             large_execution::{
                 coinflip::{
                     tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
@@ -200,9 +201,10 @@ mod tests {
                     tests::{MaliciousReceiverLocalDoubleShare, MaliciousSenderLocalDoubleShare},
                     LocalDoubleShare, RealLocalDoubleShare,
                 },
+                local_single_share::Derive,
                 local_single_share::{
                     tests::{MaliciousReceiverLocalSingleShare, MaliciousSenderLocalSingleShare},
-                    Derive, LocalSingleShare, RealLocalSingleShare,
+                    LocalSingleShare, RealLocalSingleShare,
                 },
                 offline::LargePreprocessing,
                 share_dispute::{
@@ -875,7 +877,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     fn test_large_offline_malicious_subprotocols_caught_9p<
         V: Vss,
@@ -941,7 +943,7 @@ mod tests {
         test_offline_strategies(params.clone(), malicious_offline);
     }
 
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     fn test_large_offline_malicious_subprotocols_caught_bis_9p<
         V: Vss,
@@ -1003,7 +1005,7 @@ mod tests {
         test_offline_strategies(params.clone(), malicious_offline);
     }
 
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     fn test_large_offline_malicious_subprotocols_not_caught_9p<
         V: Vss,

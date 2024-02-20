@@ -302,7 +302,7 @@ async fn verify_sharing<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSess
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{format_output, send_receive_pads_double, verify_sharing, DoubleShares};
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::{
         coinflip::tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
         share_dispute::tests::{
@@ -634,7 +634,7 @@ pub(crate) mod tests {
         test_ldl_strategies::<ResiduePoly128, _>(params.clone(), malicious_ldl.clone());
     }
 
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     fn test_ldl_malicious_subprotocols_caught<
         V: Vss,
@@ -673,7 +673,7 @@ pub(crate) mod tests {
         test_ldl_strategies::<ResiduePoly128, _>(params.clone(), malicious_ldl.clone());
     }
 
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     fn test_ldl_malicious_subprotocols_not_caught<
         V: Vss,
@@ -706,7 +706,7 @@ pub(crate) mod tests {
         test_ldl_strategies::<ResiduePoly128, _>(params.clone(), malicious_ldl.clone());
     }
 
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4,1,&[2],&[0],&[],true,None), TrueCoinFlip::default(), MaliciousShareDisputeRecons::init(&params.roles_to_lie_to))]
     #[case(TestingParameters::init(4,1,&[2],&[],&[(3,0)],false,None), MaliciousCoinflipRecons::<RealVss>::default(), RealShareDispute::default())]
@@ -729,7 +729,7 @@ pub(crate) mod tests {
     //Tests for when some parties lie about shares they received
     //Parties should finish after second iteration,
     //catching malicious users only if it lies about too many parties
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     fn test_malicious_receiver_ldl_malicious_subprotocols<
         V: Vss,
@@ -767,7 +767,7 @@ pub(crate) mod tests {
 
     //Tests for when some parties lie about shares they sent
     //Parties should finish after second iteration, catching malicious sender always because it keeps lying
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     fn test_malicious_sender_ldl_malicious_subprotocols<
         V: Vss,

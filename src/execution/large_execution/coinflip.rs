@@ -76,7 +76,7 @@ impl<V: Vss> Coinflip for RealCoinflip<V> {
 pub(crate) mod tests {
 
     use super::{Coinflip, DummyCoinflip, RealCoinflip};
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::vss::tests::{
         DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
     };
@@ -308,7 +308,7 @@ pub(crate) mod tests {
     //Test when coinflip aborts after the VSS for all kinds of VSS
     //No matter the strategy we expect all honest parties to output the same thing
     //We also specify whether we expect the cheating strategy to be detected, if so we check we do detect the cheaters
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), RealVss::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
@@ -331,7 +331,7 @@ pub(crate) mod tests {
     //Test honest coinflip with all kinds of malicious strategies for VSS
     //No matter the strategy, we expect all honest parties to end up with the same output
     //We also specify whether we expect the cheating strategy to be detected, if so we check we do detect the cheaters
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssFromStart::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]
@@ -360,7 +360,7 @@ pub(crate) mod tests {
 
     //Test malicious coinflip with all kinds of strategies for VSS (honest and malicious)
     //Again, we always expect the honest parties to agree on the output
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None), RealVss::default())]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], true, None), DroppingVssAfterR1::default())]

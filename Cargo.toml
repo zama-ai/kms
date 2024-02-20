@@ -102,6 +102,7 @@ required-features = ["templating"]
 [[bench]]
 name = "ddec"
 harness = false
+required-features = ["testing"]
 
 [[bench]]
 name = "decoding"
@@ -118,15 +119,18 @@ harness = false
 [[bench]]
 name = "prep"
 harness = false
+required-features = ["testing"]
 
 [[bench]]
 name = "bit_dec"
 harness = false
+required-features = ["testing"]
 
 [profile.bench]
 debug = true
 
 [features]
-extensive_testing = []
+testing = []
+slow_tests = []
 templating = ["minijinja"]
 choreographer = ["prettytable-rs"]

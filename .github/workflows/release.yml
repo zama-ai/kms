@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    uses: ./.github/workflows/common-build.yml
+    uses: ./.github/workflows/common-build-long-test.yml
     permissions:
       contents: 'read'
       id-token: 'write'

@@ -6,12 +6,15 @@ on:
 
 jobs:
   build:
-    uses: ./.github/workflows/common-build.yml
+    uses: ./.github/workflows/common-build-long-test.yml
     permissions:
       contents: 'read'
       id-token: 'write'
     secrets:
       CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
 
   integration-test:
     uses: ./.github/workflows/common-integration-test.yml

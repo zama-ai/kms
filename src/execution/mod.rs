@@ -6,6 +6,7 @@ pub mod constants;
 pub mod runtime {
     pub mod party;
     pub mod session;
+    #[cfg(any(test, feature = "testing"))]
     pub mod test_runtime;
 }
 pub mod small_execution {

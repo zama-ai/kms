@@ -401,12 +401,10 @@ pub(crate) mod tests {
         compute_puncture_idx, evaluate_w_zero_roots, send_and_receive_share_dispute_double,
         send_and_receive_share_dispute_single, share_secrets,
     };
-    use crate::algebra::residue_poly::ResiduePoly128;
-    use crate::algebra::residue_poly::ResiduePoly64;
     use crate::{
         algebra::{
             poly::Poly,
-            residue_poly::ResiduePoly,
+            residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
             structure_traits::{Ring, Zero},
         },
         execution::{
@@ -415,9 +413,11 @@ pub(crate) mod tests {
                 interpolate_poly_w_punctures, RealShareDispute, ShareDispute, ShareDisputeOutput,
                 ShareDisputeOutputDouble,
             },
-            runtime::party::Role,
-            runtime::session::{
-                BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
+            runtime::{
+                party::Role,
+                session::{
+                    BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
+                },
             },
             sharing::{
                 shamir::{ShamirRing, ShamirSharing},
@@ -848,7 +848,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[0], &[], &[], false, None))]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None))]
@@ -870,7 +870,7 @@ pub(crate) mod tests {
         );
     }
 
-    #[cfg(feature = "extensive_testing")]
+    #[cfg(feature = "slow_tests")]
     #[rstest]
     #[case(TestingParameters::init(4, 1, &[0], &[], &[], false, None))]
     #[case(TestingParameters::init(4, 1, &[1], &[], &[], false, None))]

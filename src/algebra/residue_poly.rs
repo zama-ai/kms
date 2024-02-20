@@ -1219,7 +1219,7 @@ mod tests {
                 assert_eq!(f_zero.to_scalar().unwrap(), secret);
             }
 
-            #[cfg(feature = "extensive_testing")]
+            #[cfg(feature = "slow_tests")]
             #[test]
             fn [<test_syndrome_decoding_large_ $z:lower>]() {
                 let n = 10;
