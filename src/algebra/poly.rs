@@ -50,11 +50,11 @@ impl BitwisePoly {
     ///
     /// eg:
     ///
-    ///     a_{i,0} = 1 => add [x^i_0, ..., x^i_7, 0, 0,...0] to res_coefs
+    /// a_{i,0} = 1 => add [x^i_0, ..., x^i_7, 0, 0,...0] to res_coefs
     ///
-    ///     a_{i,1} = 1 => add [0, x^i_0, ...x^i_6, x^i_7, 0, ...0] to res_coefs
+    /// a_{i,1} = 1 => add [0, x^i_0, ...x^i_6, x^i_7, 0, ...0] to res_coefs
     ///
-    ///     a_{i,2} = 1 => add [0, 0, x^i_0, ..., x^i_7, ... 0] to res_coefs
+    /// a_{i,2} = 1 => add [0, 0, x^i_0, ..., x^i_7, ... 0] to res_coefs
     ///
     /// and so on...
     pub fn lazy_eval<Z: Clone>(&self, powers: &Vec<ResiduePoly<Z>>) -> ResiduePoly<Z>
