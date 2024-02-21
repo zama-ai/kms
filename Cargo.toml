@@ -42,6 +42,7 @@ prettytable-rs = { version = "~0.10", optional = true }
 prost = "0.12"
 paste = "1.0.12"
 rand = { version = "~0.8" }
+rayon = "~1.8"
 regex = { version = "1", features = ["unicode-case"] }
 serde = { version = "~1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
@@ -123,6 +124,11 @@ required-features = ["testing"]
 
 [[bench]]
 name = "bit_dec"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
+name = "ceremony"
 harness = false
 required-features = ["testing"]
 

@@ -9,6 +9,7 @@ use crate::{
 use async_trait::async_trait;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg};
 use zk_poc::curve;
@@ -63,45 +64,48 @@ impl PublicParameter {
     }
 }
 
-fn make_proof<R: Rng + CryptoRng>(
+// note that `tau` and `r` (r_{pok, j}) must be generated freshly at random
+fn make_proof_deterministic(
     current_pp: &PublicParameter,
-    tau: &curve::Zp,
+    tau: curve::Zp,
     round: usize,
-    rng: &mut R,
+    r: curve::Zp,
 ) -> PartialProof {
     let b1 = current_pp.witness_dim();
     let tau_powers = (0..2 * b1)
         .scan(curve::Zp::ONE, |acc, _| {
-            *acc = acc.mul(*tau);
+            *acc = acc.mul(tau);
             Some(*acc)
         })
         .collect_vec();
 
-    // we need to set the round number instead of
+    // We need to set the round number instead of
     // using current_pp.round + 1 because
     // some rounds might be skipped when malicious parties
-    // do not send a valid proof
+    // do not send a valid proof.
+    //
+    // The scalar multiplication
+    // with powers of tau is the most expensive step.
     let new_pp = PublicParameter {
         round,
         inner: (
             current_pp
                 .inner
                 .0
-                .iter()
+                .par_iter()
                 .zip(&tau_powers)
                 .map(|(g, t)| g.mul_scalar(*t))
                 .collect(),
             current_pp
                 .inner
                 .1
-                .iter()
+                .par_iter()
                 .zip(&tau_powers)
                 .map(|(g, t)| g.mul_scalar(*t))
                 .collect(),
         ),
     };
 
-    let r = curve::Zp::rand(rng); // r_{pok, j}
     let g1_jm1 = current_pp.inner.0[0]; // g_{1,j-1}
     let r_pok = g1_jm1.mul_scalar(r); // R_{pok, j}
     let g1_j = new_pp.inner.0[0]; // g_{1, j}
@@ -111,7 +115,7 @@ fn make_proof<R: Rng + CryptoRng>(
         &[&g1_j.to_bytes(), &g1_jm1.to_bytes(), &r_pok.to_bytes()],
     );
     let h_pok = h_pok[0];
-    let s_pok = h_pok * (*tau) + r;
+    let s_pok = h_pok * (tau) + r;
 
     PartialProof {
         h_pok,
@@ -229,7 +233,7 @@ fn verify_wellformedness(new_pp: &PublicParameter) -> anyhow::Result<()> {
     let lhs0 = new_pp
         .inner
         .0
-        .iter()
+        .par_iter()
         .enumerate()
         .filter_map(|(i, g)| {
             if i == b1 || i == b1 + 1 {
@@ -243,7 +247,7 @@ fn verify_wellformedness(new_pp: &PublicParameter) -> anyhow::Result<()> {
     let lhs1 = new_pp
         .inner
         .1
-        .iter()
+        .par_iter()
         .take(b1 - 1)
         .enumerate()
         .map(|(l, g_hat)| g_hat.mul_scalar(rho1_powers[l + 1]))
@@ -254,7 +258,7 @@ fn verify_wellformedness(new_pp: &PublicParameter) -> anyhow::Result<()> {
     let rhs0 = new_pp
         .inner
         .0
-        .iter()
+        .par_iter()
         .take(b1 * 2 - 1)
         .enumerate()
         .filter_map(|(i, g)| {
@@ -270,7 +274,7 @@ fn verify_wellformedness(new_pp: &PublicParameter) -> anyhow::Result<()> {
     let rhs1 = new_pp
         .inner
         .1
-        .iter()
+        .par_iter()
         .enumerate()
         .map(|(l, g_hat)| g_hat.mul_scalar(rho1_powers[l]))
         .sum::<curve::G2>();
@@ -320,8 +324,18 @@ impl Ceremony for RealCeremony {
 
         for (round, role) in all_roles_sorted.iter().enumerate() {
             if role == &my_role {
+                // We use the rayon's threadpool for handling CPU-intensive tasks
+                // like creating the CRS. This is recommended over tokio::task::spawn_blocking
+                // since the tokio threadpool has a very high default upper limit.
+                // More info: https://ryhl.io/blog/async-what-is-blocking/
                 let tau = curve::Zp::rand(session.rng());
-                let proof: PartialProof = make_proof(&pp, &tau, round + 1, session.rng());
+                let r = curve::Zp::rand(session.rng());
+                let (send, recv) = tokio::sync::oneshot::channel();
+                rayon::spawn(move || {
+                    let partial_proof = make_proof_deterministic(&pp, tau, round + 1, r);
+                    let _ = send.send(partial_proof);
+                });
+                let proof = recv.await?;
                 let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
 
                 // nobody else should be broadcasting so we do not process results
@@ -340,7 +354,17 @@ impl Ceremony for RealCeremony {
                         for (sender, msg) in res {
                             if &sender == role {
                                 if let BroadcastValue::PartialProof(proof) = msg {
-                                    match verify_proof(&pp, &proof) {
+                                    // We move pp and then let the blocking thread return it to pp_tmp
+                                    // this will avoid cloning the whole pp which is just two vectors.
+                                    // The rayon threadpool is used again (see comment above).
+                                    let (send, recv) = tokio::sync::oneshot::channel();
+                                    rayon::spawn(move || {
+                                        let res = verify_proof(&pp, &proof);
+                                        let _ = send.send((res, pp));
+                                    });
+                                    let (ver, pp_tmp) = recv.await?;
+                                    pp = pp_tmp;
+                                    match ver {
                                         Ok(new_pp) => pp = new_pp,
                                         Err(e) => {
                                             tracing::warn!(
@@ -521,8 +545,9 @@ mod tests {
             for (round, role) in all_roles_sorted.iter().enumerate() {
                 if role == &my_role {
                     let tau = curve::Zp::rand(session.rng());
+                    let r = curve::Zp::rand(session.rng());
                     // make a bad proof
-                    let mut proof: PartialProof = make_proof(&pp, &tau, round + 1, session.rng());
+                    let mut proof: PartialProof = make_proof_deterministic(&pp, tau, round + 1, r);
                     proof.h_pok += curve::Zp::ONE;
                     let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
 
@@ -569,7 +594,8 @@ mod tests {
 
             for (round, role) in all_roles_sorted.iter().enumerate() {
                 let tau = curve::Zp::rand(session.rng());
-                let proof: PartialProof = make_proof(&pp, &tau, round + 1, session.rng());
+                let r = curve::Zp::rand(session.rng());
+                let proof: PartialProof = make_proof_deterministic(&pp, tau, round + 1, r);
                 let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
                 if role == &my_role {
                     let _ = broadcast_w_corruption(session, &[my_role], Some(vi)).await?;
@@ -664,10 +690,11 @@ mod tests {
     }
 
     #[test]
-    fn test_e() {
+    fn test_pairing() {
         // sanity check for the pairing operation
         let mut rng = AesRng::seed_from_u64(42);
         let tau = curve::Zp::rand(&mut rng);
+        let r = curve::Zp::rand(&mut rng);
         let tau_powers = (0..2 * 2)
             .scan(curve::Zp::ONE, |acc, _| {
                 *acc = acc.mul(tau);
@@ -687,9 +714,8 @@ mod tests {
             )
         );
 
-        let mut rng = AesRng::seed_from_u64(42);
         let pp = make_initial_pp(2);
-        let proof = make_proof(&pp, &tau, 0, &mut rng);
+        let proof = make_proof_deterministic(&pp, tau, 0, r);
         assert_eq!(
             proof.new_pp.inner.0[3],
             curve::G1::GENERATOR.mul_scalar(tau_powers[3])
@@ -710,30 +736,31 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(42);
         let pp1 = make_initial_pp(n);
         let tau1 = curve::Zp::rand(&mut rng);
+        let r = curve::Zp::rand(&mut rng);
 
         assert_eq!(pp1.inner.0.len(), n * 2);
         assert_eq!(pp1.inner.1.len(), n);
 
         {
             // first round
-            let proof1 = make_proof(&pp1, &tau1, 1, &mut rng);
+            let proof1 = make_proof_deterministic(&pp1, tau1, 1, r);
             assert!(verify_proof(&pp1, &proof1).is_ok());
 
             // second round
             let pp2 = proof1.new_pp;
             let tau2 = curve::Zp::rand(&mut rng);
-            let proof2 = make_proof(&pp2, &tau2, 2, &mut rng);
+            let proof2 = make_proof_deterministic(&pp2, tau2, 2, r);
             assert!(verify_proof(&pp2, &proof2).is_ok());
         }
         {
-            let proof = make_proof(&pp1, &tau1, 0, &mut rng);
+            let proof = make_proof_deterministic(&pp1, tau1, 0, r);
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
                 .contains("bad round number"));
         }
         {
-            let mut proof = make_proof(&pp1, &tau1, 1, &mut rng);
+            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
             proof.h_pok += curve::Zp::ONE;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -741,7 +768,7 @@ mod tests {
                 .contains("dlog check failed"));
         }
         {
-            let mut proof = make_proof(&pp1, &tau1, 1, &mut rng);
+            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
             proof.s_pok += curve::Zp::ONE;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -750,14 +777,14 @@ mod tests {
         }
         {
             let pp1 = make_degenerative_pp(n);
-            let proof = make_proof(&pp1, &tau1, 1, &mut rng);
+            let proof = make_proof_deterministic(&pp1, tau1, 1, r);
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
                 .contains("non-degenerative check failed"));
         }
         {
-            let mut proof = make_proof(&pp1, &tau1, 1, &mut rng);
+            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.0.push(curve::G1::GENERATOR);
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -765,7 +792,7 @@ mod tests {
                 .contains("crs length check failed (g)"));
         }
         {
-            let mut proof = make_proof(&pp1, &tau1, 1, &mut rng);
+            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.1.push(curve::G2::GENERATOR);
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -773,7 +800,7 @@ mod tests {
                 .contains("crs length check failed (g_hat)"));
         }
         {
-            let mut proof = make_proof(&pp1, &tau1, 1, &mut rng);
+            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.0[n + 1] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -781,7 +808,7 @@ mod tests {
                 .contains("well-formedness check failed (1)"));
         }
         {
-            let mut proof = make_proof(&pp1, &tau1, 1, &mut rng);
+            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.0[n - 1] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -789,7 +816,7 @@ mod tests {
                 .contains("well-formedness check failed (1)"));
         }
         {
-            let mut proof = make_proof(&pp1, &tau1, 1, &mut rng);
+            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.1[1] += curve::G2::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -797,7 +824,7 @@ mod tests {
                 .contains("well-formedness check failed (1)"));
         }
         {
-            let mut proof = make_proof(&pp1, &tau1, 1, &mut rng);
+            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.0[2] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -805,7 +832,7 @@ mod tests {
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_proof(&pp1, &tau1, 1, &mut rng);
+            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.0[2 * n - 1] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -813,7 +840,7 @@ mod tests {
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_proof(&pp1, &tau1, 1, &mut rng);
+            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.1[2] += curve::G2::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -821,7 +848,7 @@ mod tests {
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_proof(&pp1, &tau1, 1, &mut rng);
+            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.1[n - 1] += curve::G2::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
