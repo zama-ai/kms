@@ -380,12 +380,9 @@ mod tests {
     use crate::{
         algebra::residue_poly::ResiduePoly64,
         computation::SessionId,
-        execution::{
-            runtime::{
-                session::{LargeSession, ParameterHandles, SessionParameters},
-                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
-            },
-            sharing::shamir::ShamirRing,
+        execution::runtime::{
+            session::{LargeSession, ParameterHandles, SessionParameters},
+            test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         },
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, TestingParameters,
@@ -586,7 +583,7 @@ mod tests {
         }
     }
 
-    fn test_ceremony_strategies_large<Z: ShamirRing, C: Ceremony + 'static>(
+    fn test_ceremony_strategies_large<Z: Ring, C: Ceremony + 'static>(
         params: TestingParameters,
         witness_dim: usize,
         malicious_party: C,

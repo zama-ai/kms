@@ -4,6 +4,7 @@
 /// TODO(Dragos) Investigate this afterwards.
 pub mod tests_and_benches {
 
+    use crate::algebra::structure_traits::Ring;
     use aes_prng::AesRng;
     use futures::Future;
     use rand::SeedableRng;
@@ -12,9 +13,11 @@ pub mod tests_and_benches {
     use crate::{
         computation::SessionId,
         execution::{
-            runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
-            runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
-            sharing::shamir::ShamirRing,
+            runtime::{
+                session::{BaseSessionHandles, LargeSession, SmallSession},
+                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+            },
+            sharing::shamir::ErrorCorrect,
         },
         networking::Networking,
     };
@@ -24,7 +27,7 @@ pub mod tests_and_benches {
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
     /// `expected_rounds` can be used to test that the protocol needs the specified amount of comm rounds, or be set to None to allow any number of rounds
-    pub fn execute_protocol_small<Z: ShamirRing, TaskOutputT, OutputT>(
+    pub fn execute_protocol_small<Z: Ring + ErrorCorrect, TaskOutputT, OutputT>(
         parties: usize,
         threshold: u8,
         expected_rounds: Option<usize>,
@@ -80,7 +83,7 @@ pub mod tests_and_benches {
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
     /// `expected_rounds` can be used to test that the protocol needs the specified amount of comm rounds, or be set to None to allow any number of rounds
-    pub fn execute_protocol_large<Z: ShamirRing, TaskOutputT, OutputT>(
+    pub fn execute_protocol_large<Z: Ring, TaskOutputT, OutputT>(
         parties: usize,
         threshold: usize,
         expected_rounds: Option<usize>,
@@ -153,7 +156,6 @@ pub mod tests {
                 ParameterHandles, SessionParameters, SmallSession,
             },
             runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
-            sharing::shamir::ShamirRing,
         },
         file_handling::read_element,
         lwe::{gen_key_set, Ciphertext64, KeySet, ThresholdLWEParameters},
@@ -413,7 +415,7 @@ pub mod tests {
     ///
     ///**NOTE: FOR ALL TESTS THE RNG SEED OF A PARTY IS ITS PARTY_ID, THIS IS ACTUALLY USED IN SOME TESTS TO CHECK CORRECTNESS.**
     pub fn execute_protocol_large_w_disputes_and_malicious<
-        Z: ShamirRing,
+        Z: Ring,
         TaskOutputT,
         OutputT,
         TaskOutputM,

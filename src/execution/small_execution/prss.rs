@@ -15,11 +15,14 @@ use crate::{
         communication::broadcast::broadcast_from_all_w_corruption,
         constants::PRSS_SIZE_MAX,
         large_execution::{single_sharing::init_vdm, vss::Vss},
-        runtime::party::Role,
-        runtime::session::ParameterHandles,
-        runtime::session::{LargeSessionHandles, SmallSessionHandles},
-        sharing::open::robust_opens_to_all,
-        sharing::shamir::ShamirRing,
+        runtime::{
+            party::Role,
+            session::{LargeSessionHandles, ParameterHandles, SmallSessionHandles},
+        },
+        sharing::{
+            open::robust_opens_to_all,
+            shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed},
+        },
         small_execution::prf::{chi, phi, psi, PhiAes},
     },
     networking::value::BroadcastValue,
@@ -29,7 +32,9 @@ use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
+use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
+use std::default::Default;
 
 pub(crate) fn create_sets(n: usize, t: usize) -> Vec<Vec<usize>> {
     (1..=n).combinations(n - t).collect()
@@ -66,7 +71,7 @@ type ValueVotes<Z> = HashMap<Vec<Z>, HashSet<Role>>;
 
 /// PRSS object that holds info in a certain epoch for a single party Pi
 #[derive(Debug, Clone)]
-pub struct PRSSSetup<Z: Ring> {
+pub struct PRSSSetup<Z: Default + Clone> {
     /// all possible subsets of n-t parties (A) that contain Pi and their shared PRG
     sets: Vec<PrssSet<Z>>,
     alpha_powers: Vec<Vec<Z>>,
@@ -74,7 +79,7 @@ pub struct PRSSSetup<Z: Ring> {
 
 /// PRSS state for use within a given session.
 #[derive(Debug, Clone)]
-pub struct PRSSState<Z: Ring> {
+pub struct PRSSState<Z: Default + Clone> {
     /// counters that increases on every call to the respective .next()
     pub mask_ctr: u128,
     pub prss_ctr: u128,
@@ -89,7 +94,7 @@ pub struct PrfKey(pub [u8; 16]);
 
 /// computes the points on the polys f_A for all parties in the given sets A
 /// f_A is one at 0, and zero at the party indices not in set A
-fn party_compute_f_a_points<Z: ShamirRing>(
+fn party_compute_f_a_points<Z: Ring + RingEmbed + HenselLiftInverse>(
     partysets: &Vec<PartySet>,
     num_parties: usize,
 ) -> anyhow::Result<Vec<Vec<Z>>> {
@@ -122,17 +127,27 @@ fn party_compute_f_a_points<Z: ShamirRing>(
 
 /// Precomputes powers of embedded party ids: alpha_i^j for all i in n and all j in t.
 /// This is used in the chi prf in the PRZS
-fn embed_parties_and_compute_alpha_powers<Z: ShamirRing>(
+fn embed_parties_and_compute_alpha_powers<Z>(
     num_parties: usize,
     threshold: usize,
-) -> anyhow::Result<Vec<Vec<Z>>> {
+) -> anyhow::Result<Vec<Vec<Z>>>
+where
+    Z: Ring,
+    Z: RingEmbed,
+{
     let parties: Vec<_> = (1..=num_parties)
         .map(Z::embed_exceptional_set)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(compute_powers_list(&parties, threshold))
 }
 
-impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
+impl<Z> PRSSState<Z>
+where
+    Z: Ring,
+    Z: RingEmbed,
+    Z: HenselLiftInverse,
+    Z: PRSSConversions,
+{
     /// PRSS-Mask.Next() for a single party
     /// TODO: possibly change to Role as parameter instead of party_id
     pub fn mask_next(&mut self, party_id: usize, bd1: u128) -> anyhow::Result<Z> {
@@ -487,7 +502,12 @@ impl<Z: ShamirRing + PRSSConversions> PRSSState<Z> {
     }
 }
 
-impl<Z: ShamirRing> PRSSSetup<Z> {
+impl<Z> PRSSSetup<Z>
+where
+    Z: Ring,
+    Z: RingEmbed,
+    Z: HenselLiftInverse,
+{
     /// initialize the PRSS setup for this epoch and a given party
     pub async fn init_with_abort<
         A: AgreeRandom,
@@ -537,34 +557,15 @@ impl<Z: ShamirRing> PRSSSetup<Z> {
             alpha_powers,
         })
     }
+}
 
-    /// initializes a PRSS state for a new session
-    /// PRxS counters are set to zero
-    /// PRFs are initialized with agreed keys XORed with the session id
-    pub fn new_prss_session_state(&self, sid: SessionId) -> PRSSState<Z> {
-        let mut prss_setup = self.clone();
-
-        // initialize AES PRFs once with random agreed keys and sid
-        for set in prss_setup.sets.iter_mut() {
-            let chi_aes = ChiAes::new(&set.set_key, sid);
-            let psi_aes = PsiAes::new(&set.set_key, sid);
-            let phi_aes = PhiAes::new(&set.set_key, sid);
-
-            set.prfs = Some(PrfAes {
-                phi_aes,
-                psi_aes,
-                chi_aes,
-            });
-        }
-
-        PRSSState {
-            mask_ctr: 0,
-            prss_ctr: 0,
-            przs_ctr: 0,
-            prss_setup,
-        }
-    }
-
+impl<Z> PRSSSetup<Z>
+where
+    Z: Ring,
+    Z: ErrorCorrect,
+    Z: RingEmbed,
+    Z: HenselLiftInverse,
+{
     pub async fn robust_init<V: Vss, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         session: &mut L,
         vss: &V,
@@ -608,6 +609,39 @@ impl<Z: ShamirRing> PRSSSetup<Z> {
     }
 }
 
+impl<Z> PRSSSetup<Z>
+where
+    Z: Default,
+    Z: Clone,
+{
+    /// initializes a PRSS state for a new session
+    /// PRxS counters are set to zero
+    /// PRFs are initialized with agreed keys XORed with the session id
+    pub fn new_prss_session_state(&self, sid: SessionId) -> PRSSState<Z> {
+        let mut prss_setup = self.clone();
+
+        // initialize AES PRFs once with random agreed keys and sid
+        for set in prss_setup.sets.iter_mut() {
+            let chi_aes = ChiAes::new(&set.set_key, sid);
+            let psi_aes = PsiAes::new(&set.set_key, sid);
+            let phi_aes = PhiAes::new(&set.set_key, sid);
+
+            set.prfs = Some(PrfAes {
+                phi_aes,
+                psi_aes,
+                chi_aes,
+            });
+        }
+
+        PRSSState {
+            mask_ctr: 0,
+            prss_ctr: 0,
+            przs_ctr: 0,
+            prss_setup,
+        }
+    }
+}
+
 /// Compute the inverse Vandermonde matrix with a_i = embed(i).
 /// That is:
 /// 1               1               1           ...    1
@@ -615,11 +649,15 @@ impl<Z: ShamirRing> PRSSSetup<Z> {
 /// a_1^2           a_2^2           a_3^2       ...    a_columns^2
 /// ...
 /// a_1^{rows-1}    a_2^{rows-1}    a_3^{rows-1}...    a_columns^{rows-1}
-fn inverse_vdm<Z: ShamirRing>(rows: usize, columns: usize) -> anyhow::Result<ArrayD<Z>> {
+fn inverse_vdm<Z: Ring + RingEmbed>(rows: usize, columns: usize) -> anyhow::Result<ArrayD<Z>> {
     Ok(init_vdm::<Z>(columns, rows)?.reversed_axes())
 }
 
-async fn agree_random_robust<Z: ShamirRing, Rnd: Rng + CryptoRng, L: LargeSessionHandles<Rnd>>(
+async fn agree_random_robust<
+    Z: Ring + ErrorCorrect,
+    Rnd: Rng + CryptoRng,
+    L: LargeSessionHandles<Rnd>,
+>(
     session: &mut L,
     shares: Vec<Z>,
 ) -> anyhow::Result<Vec<PrfKey>> {
@@ -648,6 +686,7 @@ mod tests {
     use std::num::Wrapping;
 
     use super::*;
+    use crate::execution::sharing::shamir::RevealOp;
     use crate::{
         algebra::{
             residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
@@ -666,7 +705,7 @@ mod tests {
                 },
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
-            sharing::{shamir::ShamirSharing, share::Share},
+            sharing::{shamir::ShamirSharings, share::Share},
             small_execution::agree_random::{DummyAgreeRandom, RealAgreeRandomWithAbort},
         },
         file_handling::read_element,
@@ -685,7 +724,7 @@ mod tests {
     use tracing_test::traced_test;
 
     // async helper function that creates the prss setups
-    async fn setup_prss_sess<Z: ShamirRing, A: AgreeRandom>(
+    async fn setup_prss_sess<Z: Ring + RingEmbed + HenselLiftInverse, A: AgreeRandom + Send>(
         sessions: Vec<SmallSession<Z>>,
     ) -> Option<HashMap<usize, PRSSSetup<Z>>> {
         let mut jobs = JoinSet::new();
@@ -717,7 +756,7 @@ mod tests {
     }
 
     //NOTE: Need to generalize (some of) the tests to ResiduePoly64 ?
-    impl<Z: ShamirRing> PRSSSetup<Z> {
+    impl<Z: Ring + RingEmbed + HenselLiftInverse> PRSSSetup<Z> {
         // initializes the epoch for a single party (without actual networking)
         pub fn testing_party_epoch_init(
             num_parties: usize,
@@ -808,7 +847,7 @@ mod tests {
             })
             .collect();
 
-        let e_shares = ShamirSharing::create(shares);
+        let e_shares = ShamirSharings::create(shares);
 
         // reconstruct Mask E as signed integer
         let recon = e_shares
@@ -1023,7 +1062,7 @@ mod tests {
             })
             .collect();
 
-        let e_shares = ShamirSharing::create(shares);
+        let e_shares = ShamirSharings::create(shares);
         let recon = e_shares.reconstruct(2 * threshold).unwrap();
         tracing::debug!("reconstructed PRZS value (should be all-zero): {:?}", recon);
         assert!(recon.is_zero());
@@ -1058,7 +1097,7 @@ mod tests {
             .collect();
 
         // reconstruct the party shares
-        let e_shares = ShamirSharing::create(shares);
+        let e_shares = ShamirSharings::create(shares);
         let recon = e_shares.reconstruct(threshold).unwrap();
         tracing::info!("reconstructed PRSS value: {:?}", recon);
 
@@ -1092,7 +1131,7 @@ mod tests {
         let mut psi_sum = ResiduePoly128::ZERO;
         for (idx, _set) in all_sets.iter().enumerate() {
             let psi_aes = PsiAes::new(&keys[idx], sid);
-            let psi = psi(&psi_aes, 0).unwrap();
+            let psi: ResiduePoly128 = psi(&psi_aes, 0).unwrap();
             psi_sum += psi
         }
         tracing::info!("reconstructed psi sum: {:?}", psi_sum);
@@ -1456,10 +1495,14 @@ mod tests {
         // init with Dummy AR does not send anything = 0 expected rounds
         let result = execute_protocol_small(parties, threshold, Some(0), &mut task);
 
-        validate_prss_init(ShamirSharing::create(result), parties, threshold as usize);
+        validate_prss_init(ShamirSharings::create(result), parties, threshold as usize);
     }
 
-    fn validate_prss_init(result: ShamirSharing<ResiduePoly128>, parties: usize, threshold: usize) {
+    fn validate_prss_init(
+        result: ShamirSharings<ResiduePoly128>,
+        parties: usize,
+        threshold: usize,
+    ) {
         let base = result.err_reconstruct(threshold, threshold).unwrap();
         // Reconstruct the shared value
         // Check that we can still
@@ -1516,7 +1559,7 @@ mod tests {
             Some(rounds),
             &mut task,
         );
-        let sharing = ShamirSharing::create(result);
+        let sharing = ShamirSharings::create(result);
         validate_prss_init(sharing, parties, threshold);
     }
 
@@ -1542,7 +1585,7 @@ mod tests {
         let result =
             execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
 
-        let sharing = ShamirSharing::create(result);
+        let sharing = ShamirSharings::create(result);
         validate_prss_init(sharing, parties, threshold);
     }
 

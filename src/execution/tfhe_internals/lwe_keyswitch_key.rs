@@ -11,6 +11,7 @@ use tfhe::{
     },
 };
 
+use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::{
     algebra::structure_traits::BaseRing,
     error::error_handler::anyhow_error_and_log,
@@ -20,6 +21,7 @@ use crate::{
 };
 
 use super::lwe_ciphertext::LweCiphertextShare;
+use crate::algebra::residue_poly::ResiduePoly;
 
 #[derive(Clone)]
 pub struct LweKeySwitchKeyShare<Z: BaseRing> {
@@ -63,7 +65,11 @@ impl<Z: BaseRing> LweKeySwitchKeyShare<Z> {
     pub fn decomposition_level_count(&self) -> DecompositionLevelCount {
         self.decomp_level_count
     }
-
+}
+impl<Z: BaseRing> LweKeySwitchKeyShare<Z>
+where
+    ResiduePoly<Z>: ErrorCorrect,
+{
     pub async fn open_to_tfhers_type<R: Rng + CryptoRng + Sync, S: BaseSessionHandles<R>>(
         self,
         session: &S,

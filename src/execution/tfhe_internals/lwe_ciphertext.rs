@@ -145,6 +145,7 @@ mod tests {
         },
     };
 
+    use crate::execution::sharing::shamir::{InputOp, RevealOp};
     use crate::{
         algebra::residue_poly::ResiduePoly64,
         execution::{
@@ -154,7 +155,7 @@ mod tests {
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
             runtime::session::{LargeSession, ParameterHandles},
-            sharing::{shamir::ShamirSharing, share::Share},
+            sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{
                 randomness::{
                     MPCEncryptionRandomGenerator, MPCMaskRandomGenerator, MPCNoiseRandomGenerator,
@@ -181,7 +182,7 @@ mod tests {
 
         let mut task = |mut session: LargeSession| async move {
             let my_role = session.my_role().unwrap();
-            let encoded_message = ShamirSharing::share(
+            let encoded_message = ShamirSharings::share(
                 &mut AesRng::seed_from_u64(0),
                 ResiduePoly64::from_scalar(Wrapping(msg << scaling)),
                 session.num_parties(),
@@ -258,7 +259,7 @@ mod tests {
         //Try and reconstruct the body
         let body = {
             let vec_shares = lwe_ctxt_shares.into_values().collect_vec();
-            ShamirSharing::create(vec_shares)
+            ShamirSharings::create(vec_shares)
                 .reconstruct(threshold)
                 .unwrap()
                 .to_scalar()

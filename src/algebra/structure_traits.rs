@@ -68,6 +68,7 @@ pub trait BaseRing:
     + ZConsts
     + std::ops::BitAnd<Self, Output = Self>
     + std::ops::Shl<usize, Output = Self>
+    + for<'a> AddAssign<&'a Self>
     + Display
 {
 }

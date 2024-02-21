@@ -1,15 +1,90 @@
-use super::structure_traits::{Field, One, Ring, Sample, Zero};
-use crate::{error::error_handler::anyhow_error_and_log, execution::sharing::shamir::ShamirRing};
+use super::{
+    gf256::GF256,
+    residue_poly::F_DEG,
+    structure_traits::{Field, One, Ring, Sample, Zero},
+};
+use crate::algebra::residue_poly::ResiduePoly;
+use crate::error::error_handler::anyhow_error_and_log;
+use crate::{
+    algebra::residue_poly::LutMulReduction,
+    execution::sharing::shamir::{HenselLiftInverse, RingEmbed},
+};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::ops::{Add, Div, Mul, Sub, SubAssign};
+use std::ops::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 
+/// Generic polynomial struct
 #[derive(Serialize, Deserialize, Hash, Clone, Default, Debug)]
 pub struct Poly<F> {
     pub coefs: Vec<F>,
 }
 
-impl<Z: ShamirRing> Poly<Z> {
+/// Polynomial struct where all coefficients are bit-strings.
+/// We use this as a helper to optimize the reconstruction algorithms
+/// where we need to lift binary polynomials into the full ring domain.
+#[derive(Serialize, Deserialize, Hash, Clone, Default, Debug)]
+pub struct BitwisePoly {
+    pub coefs: Vec<u8>,
+}
+
+impl From<Poly<GF256>> for BitwisePoly {
+    fn from(poly: Poly<GF256>) -> BitwisePoly {
+        let coefs: Vec<u8> = poly.coefs.iter().map(|coef_2| coef_2.0).collect();
+        BitwisePoly { coefs }
+    }
+}
+
+impl BitwisePoly {
+    /// Lazy evaluation using precomputed powers.
+    ///
+    /// We compute F(x) = a_0+...+a_t*x^t where a_0,..,a_t \in {0, 1}^8
+    /// by taking auxiliary inputs x^0, ..., x^t
+    /// and do a dot product using just additions.
+    /// Note that a_0 = (a_{0,0}, ..., a_{0,7}) where each a_{0,i} is a bit
+    /// while x^i = (x^i_0, ..., x^i_7) has full Z128/Z64 entries.
+    /// The dot products <a=(a_0,..a_t),x=(1,.., x^t)>
+    /// are performed by looking at each bit of a_i = (a_{i,0}, ..., a_{i,7}), i \in [0,t]
+    /// where each bit in a_{i, j} dictates where each entry of x will land from the multiplication
+    /// in the final reduction: res_coefs = [Z; 16]
+    /// (a_{i,0}, ..., a_{i,7}) * (x^i_0,...,x^i_7),
+    ///
+    /// eg:
+    ///
+    ///     a_{i,0} = 1 => add [x^i_0, ..., x^i_7, 0, 0,...0] to res_coefs
+    ///
+    ///     a_{i,1} = 1 => add [0, x^i_0, ...x^i_6, x^i_7, 0, ...0] to res_coefs
+    ///
+    ///     a_{i,2} = 1 => add [0, 0, x^i_0, ..., x^i_7, ... 0] to res_coefs
+    ///
+    /// and so on...
+    pub fn lazy_eval<Z: Clone>(&self, powers: &Vec<ResiduePoly<Z>>) -> ResiduePoly<Z>
+    where
+        Z: Zero,
+        Z: for<'a> AddAssign<&'a Z>,
+        ResiduePoly<Z>: LutMulReduction<Z>,
+        Z: Copy,
+    {
+        let mut res_coefs = [Z::ZERO; 2 * (F_DEG - 1) + 1];
+        // now we go through each
+        for (coef_2, coef_r) in self.coefs.iter().zip(powers) {
+            for bit_idx in 0..F_DEG {
+                if ((coef_2 >> bit_idx) & 1) == 1 {
+                    for (j, cr) in coef_r.coefs.iter().enumerate() {
+                        res_coefs[j + bit_idx] += cr;
+                    }
+                }
+            }
+        }
+        ResiduePoly::reduce_mul(res_coefs)
+    }
+}
+
+impl<Z> Poly<Z>
+where
+    Z: Ring,
+    Z: RingEmbed,
+    Z: HenselLiftInverse,
+{
     ///Outputs a vector of the monomials (X - embed(party_id))/(party_id)
     /// for all party_id in \[num_parties\]
     /// as well as the vector of party's points
@@ -527,7 +602,9 @@ pub fn gao_decoding<F: Field>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::algebra::error_correction::MemoizedExceptionals;
     use crate::algebra::gf256::GF256;
+    use crate::algebra::residue_poly::ResiduePoly128;
     use proptest::prelude::*;
     use rstest::rstest;
 
@@ -683,5 +760,37 @@ mod tests {
         assert_eq!(f1, f.formal_derivative());
         assert_eq!(f2, f1.formal_derivative());
         assert_eq!(f2, f2.formal_derivative()); // derivative of zero is still zero
+    }
+
+    #[test]
+    fn test_bitwise_poly() {
+        let f = Poly {
+            coefs: vec![GF256::from(7), GF256::from(23), GF256::from(8)],
+        };
+        let degree = f.coefs.len();
+
+        let shifted_pos = 10;
+        let lifted_f = ResiduePoly128::shamir_bit_lift(&f, shifted_pos).unwrap();
+
+        let party_ids = [0, 1, 2, 3, 4, 5];
+        let ring_evals: Vec<ResiduePoly128> = party_ids
+            .iter()
+            .map(|id| {
+                let embedded_xi = ResiduePoly128::embed_exceptional_set(*id)?;
+                Ok(lifted_f.eval(&embedded_xi))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .unwrap();
+
+        let bitwise = BitwisePoly::from(f);
+
+        for party_id in party_ids {
+            assert_eq!(
+                ring_evals[party_id],
+                bitwise.lazy_eval(&ResiduePoly128::exceptional_set(party_id, degree).unwrap())
+                    << 10,
+                "party with index {party_id} failed with wrong evaluation"
+            );
+        }
     }
 }

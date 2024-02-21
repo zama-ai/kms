@@ -6,6 +6,7 @@ use tfhe::{
     shortint::parameters::{DecompositionBaseLog, DecompositionLevelCount},
 };
 
+use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::{
     algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
     error::error_handler::anyhow_error_and_log,
@@ -34,6 +35,7 @@ where
     Rnd: Rng + CryptoRng + Sync,
     S: BaseSessionHandles<Rnd>,
     P: Preprocessing<ResiduePoly<Z>>,
+    ResiduePoly<Z>: ErrorCorrect,
 {
     let encryption_type = output.encryption_type();
     let gen_iter = generator.fork_bsk_to_ggsw(
@@ -91,6 +93,7 @@ where
     Rnd: Rng + CryptoRng + Sync,
     S: BaseSessionHandles<Rnd>,
     P: Preprocessing<ResiduePoly<Z>>,
+    ResiduePoly<Z>: ErrorCorrect,
 {
     let mut bsk = LweBootstrapKeyShare::new(
         output_glwe_secret_key.glwe_dimension().to_glwe_size(),

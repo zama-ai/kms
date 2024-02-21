@@ -610,13 +610,12 @@ mod tests {
     use crate::execution::runtime::test_runtime::{
         generate_fixed_identities, DistributedTestRuntime,
     };
-    use crate::execution::sharing::shamir::ShamirRing;
     use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;
     use std::num::Wrapping;
 
-    fn legitimate_broadcast<Z: ShamirRing>(
+    fn legitimate_broadcast<Z: Ring>(
         sender_parties: &[Role],
     ) -> (Vec<Identity>, Vec<BroadcastValue<Z>>, Vec<RoleValueMap<Z>>) {
         let identities = generate_fixed_identities(4);

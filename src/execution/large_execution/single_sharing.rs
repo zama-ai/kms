@@ -1,10 +1,14 @@
 use super::local_single_share::{Derive, LocalSingleShare};
 use crate::{
-    algebra::bivariate::{compute_powers, MatrixMul},
-    algebra::structure_traits::Ring,
+    algebra::{
+        bivariate::{compute_powers, MatrixMul},
+        structure_traits::Ring,
+    },
     error::error_handler::anyhow_error_and_log,
-    execution::sharing::shamir::ShamirRing,
-    execution::{runtime::party::Role, runtime::session::LargeSessionHandles},
+    execution::{
+        runtime::{party::Role, session::LargeSessionHandles},
+        sharing::shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed},
+    },
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -37,7 +41,9 @@ pub struct RealSingleSharing<Z, S: LocalSingleShare> {
 }
 
 #[async_trait]
-impl<Z: ShamirRing + Derive, S: LocalSingleShare> SingleSharing<Z> for RealSingleSharing<Z, S> {
+impl<Z: Ring + RingEmbed + HenselLiftInverse + Derive + ErrorCorrect, S: LocalSingleShare>
+    SingleSharing<Z> for RealSingleSharing<Z, S>
+{
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -86,7 +92,7 @@ impl<Z: ShamirRing + Derive, S: LocalSingleShare> SingleSharing<Z> for RealSingl
     }
 }
 
-pub fn init_vdm<Z: ShamirRing>(height: usize, width: usize) -> anyhow::Result<ArrayD<Z>> {
+pub fn init_vdm<Z: Ring + RingEmbed>(height: usize, width: usize) -> anyhow::Result<ArrayD<Z>> {
     let invertible_points: Vec<Z> = (0..height)
         .map(|inv_idx| Z::embed_exceptional_set(inv_idx + 1))
         .try_collect()?;
@@ -140,6 +146,7 @@ fn compute_next_batch<Z: Ring>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{init_vdm, RealSingleSharing};
+    use crate::execution::sharing::shamir::{ErrorCorrect, HenselLiftInverse, RevealOp, RingEmbed};
     use crate::{
         algebra::{
             residue_poly::ResiduePoly,
@@ -153,14 +160,9 @@ pub(crate) mod tests {
                 single_sharing::SingleSharing,
                 vss::RealVss,
             },
-            runtime::{
-                party::Role,
-                session::{LargeSession, ParameterHandles},
-            },
-            sharing::{
-                shamir::{ShamirRing, ShamirSharing},
-                share::Share,
-            },
+            runtime::party::Role,
+            runtime::session::{LargeSession, ParameterHandles},
+            sharing::{shamir::ShamirSharings, share::Share},
         },
         tests::helper::tests_and_benches::execute_protocol_large,
     };
@@ -182,7 +184,10 @@ pub(crate) mod tests {
     }
 
     //#[test]
-    fn test_singlesharing<Z: ShamirRing + Derive>(parties: usize, threshold: usize) {
+    fn test_singlesharing<Z: Ring + RingEmbed + Derive + ErrorCorrect + HenselLiftInverse>(
+        parties: usize,
+        threshold: usize,
+    ) {
         let mut task = |mut session: LargeSession| async move {
             let lsl_batch_size = 10_usize;
             let extracted_size = session.num_parties() - session.threshold() as usize;
@@ -222,7 +227,7 @@ pub(crate) mod tests {
             for (role, res) in result.iter() {
                 res_vec.push(Share::new(*role, res[value_idx]));
             }
-            let shamir_sharing = ShamirSharing::create(res_vec);
+            let shamir_sharing = ShamirSharings::create(res_vec);
             let res = shamir_sharing.reconstruct(threshold);
             assert!(res.is_ok());
         }
@@ -285,7 +290,7 @@ pub(crate) mod tests {
             for (role, res) in result.iter() {
                 res_vec.push(Share::new(*role, res[value_idx]));
             }
-            let shamir_sharing = ShamirSharing::create(res_vec);
+            let shamir_sharing = ShamirSharings::create(res_vec);
             //Expect max 1 error coming from dropout
             let res = shamir_sharing.err_reconstruct(threshold, 1);
             assert!(res.is_ok());

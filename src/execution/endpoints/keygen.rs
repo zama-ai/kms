@@ -25,6 +25,7 @@ use tfhe::{
 };
 use tokio::{task::JoinSet, time::timeout_at};
 
+use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::{
     algebra::{
         residue_poly::ResiduePoly,
@@ -378,7 +379,10 @@ pub async fn distributed_keygen<
     session: &mut S,
     preprocessing: &mut P,
     params: DKGParams,
-) -> anyhow::Result<(PubKeySet, PrivateKeySet<Z>)> {
+) -> anyhow::Result<(PubKeySet, PrivateKeySet<Z>)>
+where
+    ResiduePoly<Z>: ErrorCorrect,
+{
     let my_role = session.my_role()?;
     //Sample the random but public seed and cast it into TFHE-rs seed type
     //NOTE: next_random_vec samples uniformly from Z[X]/F(X)

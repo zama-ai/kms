@@ -1,10 +1,11 @@
 use super::{
     bivariate::compute_powers_list,
-    gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing, GF256},
+    gf256::{ShamirZ2Poly, GF256},
     poly::Poly,
     structure_traits::{BaseRing, FromU128, One, Ring, Sample, ZConsts, Zero},
     syndrome::lagrange_numerators,
 };
+use crate::algebra::structure_traits::Field;
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
@@ -14,7 +15,7 @@ use crate::{
         large_execution::local_single_share::Derive,
         runtime::party::Role,
         sharing::{
-            shamir::{ShamirRing, ShamirSharing},
+            shamir::{HenselLiftInverse, RingEmbed, ShamirSharings, Syndrome},
             share::Share,
         },
         small_execution::prf::PRSSConversions,
@@ -232,6 +233,17 @@ where
     Z: AddAssign + Copy,
 {
     fn add_assign(&mut self, other: ResiduePoly<Z>) {
+        for i in 0..F_DEG {
+            self.coefs[i] += other.coefs[i];
+        }
+    }
+}
+
+impl<Z> AddAssign<&ResiduePoly<Z>> for ResiduePoly<Z>
+where
+    Z: AddAssign + Copy,
+{
+    fn add_assign(&mut self, other: &ResiduePoly<Z>) {
         for i in 0..F_DEG {
             self.coefs[i] += other.coefs[i];
         }
@@ -657,73 +669,7 @@ impl<Z: BaseRing> ReductionTable<Z> for ResiduePoly<Z> {
     const REDUCTION_TABLES: ReductionTablesGF256<Z> = ReductionTablesGF256::<Z>::new();
 }
 
-impl<Z: BaseRing> ShamirRing for ResiduePoly<Z> {
-    fn decode(
-        sharing: &ShamirSharing<ResiduePoly<Z>>,
-        threshold: usize,
-        max_correctable_errs: usize,
-    ) -> anyhow::Result<Poly<ResiduePoly<Z>>> {
-        // threshold is the degree of the shamir polynomial
-        let ring_size: usize = Z::BIT_LENGTH;
-
-        let mut y: Vec<_> = sharing.shares.iter().map(|x| x.value()).collect();
-        let parties: Vec<_> = sharing
-            .shares
-            .iter()
-            .map(|x| x.owner().one_based())
-            .collect();
-        let mut ring_polys = Vec::new();
-
-        for bit_idx in 0..ring_size {
-            let z: Vec<ShamirZ2Sharing> = parties
-                .iter()
-                .zip(y.iter())
-                .map(|(party_id, sh)| ShamirZ2Sharing {
-                    share: sh.bit_compose(bit_idx),
-                    party_id: *party_id as u8,
-                })
-                .collect();
-
-            // apply error correction on z
-            // fi(X) = a0 + ... a_t * X^t where a0 is the secret bit corresponding to position i
-            let fi_mod2 = error_correction(&z, threshold, max_correctable_errs)?;
-            let fi = ResiduePoly::<Z>::shamir_bit_lift(&fi_mod2, bit_idx)?;
-
-            // compute fi(\gamma_1) ..., fi(\gamma_n) \in GF(256)
-            let ring_eval: Vec<ResiduePoly<Z>> = parties
-                .iter()
-                .map(|party_id| {
-                    let embedded_xi = ResiduePoly::embed_exceptional_set(*party_id)?;
-                    Ok(fi.eval(&embedded_xi))
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?;
-
-            ring_polys.push(fi);
-
-            // remove LSBs computed from error correction in GF(256)
-            for (j, item) in y.iter_mut().enumerate() {
-                *item -= ring_eval[j];
-            }
-
-            // TODO This is never checked. Actually checking for error here makes the dropout tests fail (e.g. test_doublesharing_dropout)
-            // check that LSBs were removed correctly
-            let _errs: Vec<_> = y
-                .iter()
-                .map(|yj| {
-                    // see if yj is divisible by 2^{i+1}
-                    // different (and more expensive) check if we want to check divisibility by 2^{128} due to overflow
-                    // bitwise operation to check that 2^{i+1} | yj
-                    yj.multiple_pow2(bit_idx + 1)
-                })
-                .collect();
-        }
-
-        let result = ring_polys
-            .into_iter()
-            .fold(Poly::<ResiduePoly<Z>>::zero(), |acc, x| acc + x);
-        Ok(result)
-    }
-
+impl<Z: Ring> RingEmbed for ResiduePoly<Z> {
     fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self> {
         if idx >= (1 << F_DEG) {
             return Err(anyhow_error_and_log(format!(
@@ -742,27 +688,9 @@ impl<Z: BaseRing> ShamirRing for ResiduePoly<Z> {
 
         Ok(ResiduePoly { coefs })
     }
+}
 
-    /// invert and lift an Integer to the large Ring
-    fn invert(self) -> anyhow::Result<Self> {
-        if self == Self::ZERO {
-            return Err(anyhow_error_and_log("Cannot invert 0".to_string()));
-        }
-
-        let alpha_k = self.bit_compose(0);
-        let ainv = GF256::from(1) / alpha_k;
-        let mut x0 = Self::embed_exceptional_set(ainv.0 as usize)?;
-
-        // compute Newton-Raphson iterations
-        for _ in 0..Z::BIT_LENGTH.ilog2() {
-            x0 *= Self::TWO - self * x0;
-        }
-
-        debug_assert_eq!(x0 * self, ResiduePoly::ONE);
-
-        Ok(x0)
-    }
-
+impl<Z: BaseRing> Syndrome for ResiduePoly<Z> {
     // decode a ring syndrome into an error vector, containing the error magnitudes at the respective indices
     fn syndrome_decode(
         mut syndrome_poly: Poly<ResiduePoly<Z>>,
@@ -805,7 +733,7 @@ impl<Z: BaseRing> ShamirRing for ResiduePoly<Z> {
                 .enumerate()
                 .map(|(idx, val)| Share::new(Role::indexed_by_zero(idx), *val))
                 .collect_vec();
-            let corrected_shamir = ShamirSharing {
+            let corrected_shamir = ShamirSharings {
                 shares: correction_shares,
             };
             let syndrome_correction = Self::syndrome_compute(&corrected_shamir, threshold)?;
@@ -819,7 +747,7 @@ impl<Z: BaseRing> ShamirRing for ResiduePoly<Z> {
 
     // compute the syndrome in the GR from a given sharing and threshold
     fn syndrome_compute(
-        sharing: &ShamirSharing<ResiduePoly<Z>>,
+        sharing: &ShamirSharings<ResiduePoly<Z>>,
         threshold: usize,
     ) -> anyhow::Result<Poly<ResiduePoly<Z>>> {
         let n = sharing.shares.len();
@@ -831,7 +759,7 @@ impl<Z: BaseRing> ShamirRing for ResiduePoly<Z> {
         let parties: Vec<_> = sharing
             .shares
             .iter()
-            .map(|share| Self::embed_exceptional_set(share.owner().one_based()))
+            .map(|share| ResiduePoly::<Z>::embed_exceptional_set(share.owner().one_based()))
             .collect::<Result<Vec<_>, _>>()?;
 
         // lagrange numerators from Eq.15
@@ -847,15 +775,38 @@ impl<Z: BaseRing> ShamirRing for ResiduePoly<Z> {
             for i in 0..n {
                 let numerator = ys[i] * alpha_powers[i][j];
                 let denom = lagrange_polys[i].eval(&parties[i]);
-                let denom_invert = Self::invert(denom)?;
-
-                coef += numerator * denom_invert;
+                coef += numerator * denom.invert()?;
             }
 
             res.coefs[j] = coef;
         }
 
         Ok(res)
+    }
+}
+
+impl<Z> HenselLiftInverse for ResiduePoly<Z>
+where
+    Z: BaseRing,
+{
+    /// invert and lift an Integer to the large Ring
+    fn invert(self) -> anyhow::Result<Self> {
+        if self == Self::ZERO {
+            return Err(anyhow_error_and_log("Cannot invert 0".to_string()));
+        }
+
+        let alpha_k = self.bit_compose(0);
+        let ainv = alpha_k.invert();
+        let mut x0 = Self::embed_exceptional_set(ainv.0 as usize)?;
+
+        // compute Newton-Raphson iterations
+        for _ in 0..Z::BIT_LENGTH.ilog2() {
+            x0 *= Self::TWO - self * x0;
+        }
+
+        debug_assert_eq!(x0 * self, ResiduePoly::ONE);
+
+        Ok(x0)
     }
 }
 
@@ -1082,6 +1033,8 @@ impl PRSSConversions for ResiduePoly64 {
 mod tests {
     use super::*;
     use crate::algebra::base_ring::{Z128, Z64};
+    use crate::execution::sharing::shamir::ErrorCorrect;
+    use crate::execution::sharing::shamir::{InputOp, RevealOp};
     use aes_prng::AesRng;
     use itertools::Itertools;
     use paste::paste;
@@ -1139,13 +1092,13 @@ mod tests {
                 (Wrapping(1000));
                 let mut rng = AesRng::seed_from_u64(0);
 
-                let mut shares = ShamirSharing::share(&mut rng, secret, n, t).unwrap();
+                let mut shares = ShamirSharings::share(&mut rng, secret, n, t).unwrap();
                 // t+1 to reconstruct a degree t polynomial
                 // for each error we need to add in 2 honest shares to reconstruct
                 shares.shares[0] = Share::new(Role::indexed_by_zero(0),ResiduePoly::sample(&mut rng));
                 shares.shares[1] = Share::new(Role::indexed_by_zero(1),ResiduePoly::sample(&mut rng));
 
-                let recon = ResiduePoly::<$z>::decode(&shares,t, 1);
+                let recon = ResiduePoly::<$z>::error_correct(&shares,t, 1);
                 let _ =
                     recon.expect_err("Unable to correct. Too many errors given a smaller max_err_count");
             }
@@ -1166,7 +1119,7 @@ mod tests {
                 let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
 
                 let mut rng = AesRng::seed_from_u64(0);
-                let sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, residue_secret, num_parties, threshold).unwrap();
+                let sharings = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, residue_secret, num_parties, threshold).unwrap();
                 let recon = TryFromWrapper::<$z>::try_from(sharings.reconstruct(threshold).unwrap()).unwrap();
                 assert_eq!(recon.0, secret);
             }
@@ -1187,7 +1140,7 @@ mod tests {
                 let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
 
                 let mut rng = AesRng::from_entropy();
-                let sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, residue_secret, num_parties, threshold).unwrap();
+                let sharings = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, residue_secret, num_parties, threshold).unwrap();
                 let recon = TryFromWrapper::<$z>::try_from(sharings.reconstruct(threshold).unwrap()).unwrap();
                 assert_eq!(recon.0, secret);
             }
@@ -1204,7 +1157,7 @@ mod tests {
                 let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
 
                 let mut rng = AesRng::seed_from_u64(0);
-                let mut sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, residue_secret, n, t).unwrap();
+                let mut sharings = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, residue_secret, n, t).unwrap();
                 // t+1 to reconstruct a degree t polynomial
                 // for each error we need to add in 2 honest shares to reconstruct
 
@@ -1212,7 +1165,7 @@ mod tests {
                     *item = Share::new(item.owner(),ResiduePoly::sample(&mut rng));
                 }
 
-                let recon = ResiduePoly::<$z>::decode(&sharings,t, max_err);
+                let recon = ResiduePoly::<$z>::error_correct(&sharings,t, max_err);
                 let f_zero = recon
                     .expect("Unable to correct. Too many errors.")
                     .eval(&ResiduePoly::ZERO);
@@ -1230,11 +1183,11 @@ mod tests {
                 let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
 
                 let mut rng = AesRng::seed_from_u64(2342);
-                let sharings = ShamirSharing::share(&mut rng, residue_secret, n, t).unwrap();
+                let sharings = ShamirSharings::share(&mut rng, residue_secret, n, t).unwrap();
                 let party_ids = &sharings.shares.iter().map(|s| s.owner()).collect_vec();
 
                 // verify that decoding with Gao works as a sanity check
-                let decoded = ResiduePoly::<$z>::decode(&sharings, t, num_errs);
+                let decoded = ResiduePoly::<$z>::error_correct(&sharings, t, num_errs);
                 let f_zero = decoded
                     .expect("Unable to correct. Too many errors.")
                     .eval(&ResiduePoly::ZERO);
@@ -1291,10 +1244,10 @@ mod tests {
                 let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
 
                 let mut rng = AesRng::seed_from_u64(678);
-                let sharings = ShamirSharing::share(&mut rng, residue_secret, n, t).unwrap();
+                let sharings = ShamirSharings::share(&mut rng, residue_secret, n, t).unwrap();
 
                 // verify that decoding with Gao works as a sanity check
-                let decoded = ResiduePoly::<$z>::decode(&sharings, t, num_errs);
+                let decoded = ResiduePoly::<$z>::error_correct(&sharings, t, num_errs);
                 let f_zero = decoded
                     .expect("Unable to correct. Too many errors.")
                     .eval(&ResiduePoly::ZERO);
@@ -1351,7 +1304,7 @@ mod tests {
                 let residue_secret = ResiduePoly::<$z>::from_scalar(secret);
 
                 let mut rng = AesRng::seed_from_u64(0);
-                let mut sharings = ShamirSharing::share(&mut rng, residue_secret, n, t).unwrap();
+                let mut sharings = ShamirSharings::share(&mut rng, residue_secret, n, t).unwrap();
 
                 // syndrome computation without errors
                 let recon = ResiduePoly::<$z>::syndrome_compute(&sharings, t).unwrap();
@@ -1364,7 +1317,7 @@ mod tests {
                 }
 
                 // verify that decoding still works
-                let decoded = ResiduePoly::<$z>::decode(&sharings, t, 2);
+                let decoded = ResiduePoly::<$z>::error_correct(&sharings, t, 2);
                 let f_zero = decoded
                     .expect("Unable to correct. Too many errors.")
                     .eval(&ResiduePoly::ZERO);

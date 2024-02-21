@@ -1,13 +1,11 @@
 use super::triple::Triple;
 use crate::{
-    algebra::poly::Poly,
-    algebra::structure_traits::Ring,
+    algebra::{poly::Poly, structure_traits::Ring},
     error::error_handler::anyhow_error_and_log,
     execution::{
-        runtime::party::Role,
-        runtime::session::BaseSessionHandles,
+        runtime::{party::Role, session::BaseSessionHandles},
         sharing::{
-            shamir::{ShamirRing, ShamirSharing},
+            shamir::{ErrorCorrect, RevealOp, RingEmbed, ShamirSharings},
             share::Share,
         },
     },
@@ -105,9 +103,7 @@ pub struct DummyPreprocessing<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<R
     _phantom2: std::marker::PhantomData<Rnd>,
 }
 
-impl<Z: ShamirRing, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>
-    DummyPreprocessing<Z, Rnd, Ses>
-{
+impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> DummyPreprocessing<Z, Rnd, Ses> {
     /// Dummy preprocessing which generates shares deterministically from `seed`
     pub fn new(seed: u64, session: Ses) -> Self {
         DummyPreprocessing::<Z, Rnd, Ses> {
@@ -119,7 +115,12 @@ impl<Z: ShamirRing, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>
             _phantom2: Default::default(),
         }
     }
+}
 
+impl<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> DummyPreprocessing<Z, Rnd, Ses>
+where
+    Z: Ring + RingEmbed,
+{
     /// Helper method for computing the Shamir shares of a `secret`.
     /// Returns a vector of the shares 0-indexed based on [Role]
     pub fn share(
@@ -127,7 +128,8 @@ impl<Z: ShamirRing, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>
         threshold: u8,
         secret: Z,
         rng: &mut (impl Rng + CryptoRng),
-    ) -> anyhow::Result<Vec<Share<Z>>> {
+    ) -> anyhow::Result<Vec<Share<Z>>>
+where {
         let poly = Poly::sample_random_with_fixed_constant(rng, secret, threshold as usize);
         (1..=parties)
             .map(|xi| {
@@ -141,8 +143,11 @@ impl<Z: ShamirRing, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>
     }
 }
 
-impl<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync + Clone, Ses: BaseSessionHandles<Rnd>>
-    Preprocessing<Z> for DummyPreprocessing<Z, Rnd, Ses>
+impl<
+        Z: Ring + RingEmbed,
+        Rnd: Rng + CryptoRng + Send + Sync + Clone,
+        Ses: BaseSessionHandles<Rnd>,
+    > Preprocessing<Z> for DummyPreprocessing<Z, Rnd, Ses>
 {
     /// Computes a dummy triple deterministically constructed from the seed in [DummyPreprocessing].
     fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
@@ -298,11 +303,11 @@ impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> Preprocessing<
 
 /// Helper method to reconstructs a shared ring element based on a vector of shares.
 /// Returns an error if reconstruction fails, and otherwise the reconstructed ring value.
-pub fn reconstruct<Z: ShamirRing, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
+pub fn reconstruct<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
     session: &Ses,
     shares: Vec<Share<Z>>,
 ) -> anyhow::Result<Z> {
-    ShamirSharing::create(shares).reconstruct(session.threshold() as usize)
+    ShamirSharings::create(shares).reconstruct(session.threshold() as usize)
 }
 
 #[cfg(test)]

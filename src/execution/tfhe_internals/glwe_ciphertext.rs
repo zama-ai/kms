@@ -162,7 +162,7 @@ mod tests {
                 party::Role,
                 session::{LargeSession, ParameterHandles},
             },
-            sharing::{shamir::ShamirSharing, share::Share},
+            sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{
                 randomness::{EncryptionType, MPCMaskRandomGenerator, MPCNoiseRandomGenerator},
                 utils::tests::{reconstruct_bit_vec, reconstruct_glwe_body_vec},
@@ -175,6 +175,7 @@ mod tests {
         encrypt_glwe_ciphertext_assign, GlweCiphertextShare, GlweSecretKeyShare,
         MPCEncryptionRandomGenerator,
     };
+    use crate::execution::sharing::shamir::InputOp;
 
     //Test that we can encrypt with our code and decrypt with TFHE-rs
     #[test]
@@ -197,7 +198,7 @@ mod tests {
             let my_role = session.my_role().unwrap();
             let encoded_message = (0..polynomial_size.0)
                 .map(|idx| {
-                    ShamirSharing::share(
+                    ShamirSharings::share(
                         &mut AesRng::seed_from_u64(idx as u64),
                         ResiduePoly64::from_scalar(Wrapping(msg << scaling)),
                         session.num_parties(),

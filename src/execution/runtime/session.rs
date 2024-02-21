@@ -3,10 +3,7 @@ use crate::{
     algebra::structure_traits::Ring,
     computation::SessionId,
     error::error_handler::anyhow_error_and_log,
-    execution::{
-        sharing::shamir::ShamirRing,
-        small_execution::prss::{PRSSSetup, PRSSState},
-    },
+    execution::small_execution::prss::{PRSSSetup, PRSSState},
     networking::Networking,
 };
 use aes_prng::AesRng;
@@ -268,7 +265,10 @@ pub struct SmallSessionStruct<Z: Ring, R: Rng + CryptoRng + Send + Sync, P: Para
     pub corrupt_roles: HashSet<Role>,
     pub prss_state: Option<PRSSState<Z>>,
 }
-impl<Z: ShamirRing> SmallSession<Z> {
+impl<Z> SmallSession<Z>
+where
+    Z: Ring,
+{
     pub fn new(
         session_id: SessionId,
         role_assignments: HashMap<Role, Identity>,

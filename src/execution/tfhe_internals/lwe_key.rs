@@ -9,6 +9,7 @@ use tfhe::{
     },
 };
 
+use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::{
     algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
     error::error_handler::anyhow_error_and_log,
@@ -50,7 +51,12 @@ impl<Z: BaseRing> LweCompactPublicKeyShare<Z> {
     pub fn get_mut_mask_and_body(&mut self) -> (&mut Vec<Z>, &mut Vec<ResiduePoly<Z>>) {
         self.glwe_ciphertext_share.get_mut_mask_and_body()
     }
+}
 
+impl<Z: BaseRing> LweCompactPublicKeyShare<Z>
+where
+    ResiduePoly<Z>: ErrorCorrect,
+{
     pub async fn open_to_tfhers_type<R: Rng + CryptoRng + Sync, S: BaseSessionHandles<R>>(
         self,
         session: &S,

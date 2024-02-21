@@ -3,22 +3,27 @@ use async_trait::async_trait;
 use rand::SeedableRng;
 use rand::{CryptoRng, Rng};
 
+use super::vss::Vss;
+use crate::algebra::structure_traits::Ring;
+use crate::execution::sharing::shamir::RingEmbed;
 use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         runtime::session::LargeSessionHandles,
-        sharing::{open::robust_open_to_all, shamir::ShamirRing},
+        sharing::{open::robust_open_to_all, shamir::ErrorCorrect},
     },
 };
 
-use super::vss::Vss;
-
 #[async_trait]
 pub trait Coinflip: Send + Sync + Clone + Default {
-    async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<Z, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
-    ) -> anyhow::Result<Z>;
+    ) -> anyhow::Result<Z>
+    where
+        Z: ErrorCorrect,
+        Z: Ring,
+        Z: RingEmbed;
 }
 
 #[derive(Default, Clone)]
@@ -26,7 +31,7 @@ pub struct DummyCoinflip {}
 
 #[async_trait]
 impl Coinflip for DummyCoinflip {
-    async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         _session: &mut L,
     ) -> anyhow::Result<Z> {
@@ -49,10 +54,15 @@ impl<V: Vss> RealCoinflip<V> {
 
 #[async_trait]
 impl<V: Vss> Coinflip for RealCoinflip<V> {
-    async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<Z, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
-    ) -> anyhow::Result<Z> {
+    ) -> anyhow::Result<Z>
+    where
+        Z: ErrorCorrect,
+        Z: Ring,
+        Z: RingEmbed,
+    {
         //NOTE: I don't care if I am in Corrupt
         let my_secret = Z::sample(session.rng());
 
@@ -84,20 +94,21 @@ pub(crate) mod tests {
         algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
         execution::{
             large_execution::vss::{RealVss, Vss},
-            runtime::party::{Identity, Role},
             runtime::{
+                party::{Identity, Role},
                 session::{
                     BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
                 },
                 test_runtime::DistributedTestRuntime,
             },
-            sharing::{open::robust_open_to_all, shamir::ShamirRing},
+            sharing::{open::robust_open_to_all, shamir::ErrorCorrect},
         },
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, get_large_session_for_parties,
             TestingParameters,
         },
     };
+    use crate::{algebra::structure_traits::Ring, execution::sharing::shamir::RingEmbed};
     use aes_prng::AesRng;
     use anyhow::anyhow;
     use async_trait::async_trait;
@@ -181,7 +192,11 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<V: Vss> Coinflip for DroppingCoinflipAfterVss<V> {
-        async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+        async fn execute<
+            Z: Ring + RingEmbed + ErrorCorrect,
+            R: Rng + CryptoRng,
+            L: LargeSessionHandles<R>,
+        >(
             &self,
             session: &mut L,
         ) -> anyhow::Result<Z> {
@@ -195,7 +210,11 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<V: Vss> Coinflip for MaliciousCoinflipRecons<V> {
-        async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+        async fn execute<
+            Z: Ring + RingEmbed + ErrorCorrect,
+            R: Rng + CryptoRng,
+            L: LargeSessionHandles<R>,
+        >(
             &self,
             session: &mut L,
         ) -> anyhow::Result<Z> {
@@ -218,7 +237,7 @@ pub(crate) mod tests {
     }
 
     //Helper function to plug malicious coinflip strategies
-    fn test_coinflip_strategies<Z: ShamirRing, C: Coinflip + 'static>(
+    fn test_coinflip_strategies<Z: Ring + RingEmbed + ErrorCorrect, C: Coinflip + 'static>(
         params: TestingParameters,
         malicious_coinflip: C,
     ) {

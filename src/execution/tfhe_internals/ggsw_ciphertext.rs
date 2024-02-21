@@ -21,7 +21,7 @@ use crate::{
     execution::{
         online::{preprocessing::Preprocessing, triple::mult_list},
         runtime::session::BaseSessionHandles,
-        sharing::share::Share,
+        sharing::{shamir::ErrorCorrect, share::Share},
         tfhe_internals::utils::slice_wrapping_scalar_mul_assign,
     },
 };
@@ -148,7 +148,10 @@ pub async fn ggsw_encode_messages<
     key_bits: &GlweSecretKeyShare<Z>,
     session: &mut S,
     preproc: &mut P,
-) -> anyhow::Result<Vec<Vec<Vec<ResiduePoly<Z>>>>> {
+) -> anyhow::Result<Vec<Vec<Vec<ResiduePoly<Z>>>>>
+where
+    ResiduePoly<Z>: ErrorCorrect,
+{
     let num_messages = messages.len();
     let size_mult = num_messages * key_bits.data.len();
     let triples = preproc.next_triple_vec(size_mult)?;
@@ -209,7 +212,10 @@ pub async fn ggsw_encode_message<
     key_bits: &GlweSecretKeyShare<Z>,
     session: &mut S,
     preproc: &mut P,
-) -> anyhow::Result<Vec<Vec<ResiduePoly<Z>>>> {
+) -> anyhow::Result<Vec<Vec<ResiduePoly<Z>>>>
+where
+    ResiduePoly<Z>: ErrorCorrect,
+{
     Ok(
         ggsw_encode_messages(&[*message], key_bits, session, preproc)
             .await?
@@ -369,6 +375,7 @@ mod tests {
         },
     };
 
+    use crate::execution::sharing::shamir::InputOp;
     use crate::{
         algebra::residue_poly::ResiduePoly64,
         execution::{
@@ -381,7 +388,7 @@ mod tests {
                 party::Role,
                 session::{LargeSession, ParameterHandles},
             },
-            sharing::{shamir::ShamirSharing, share::Share},
+            sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
                 randomness::{
@@ -416,7 +423,7 @@ mod tests {
 
         let mut task = |mut session: LargeSession| async move {
             let my_role = session.my_role().unwrap();
-            let shared_message = ShamirSharing::share(
+            let shared_message = ShamirSharings::share(
                 &mut AesRng::seed_from_u64(0),
                 ResiduePoly64::from_scalar(Wrapping(msg)),
                 session.num_parties(),

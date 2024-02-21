@@ -1,4 +1,5 @@
 use super::share::Share;
+use crate::algebra::error_correction::MemoizedExceptionals;
 use crate::algebra::poly::Poly;
 use crate::execution::runtime::party::Role;
 use crate::{algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log};
@@ -6,41 +7,50 @@ use rand::{CryptoRng, Rng};
 use std::ops::{Add, Mul, Sub};
 
 ///Trait required to be able to reconstruct a shamir sharing
-pub trait ShamirRing: Ring {
-    fn decode(
-        sharing: &ShamirSharing<Self>,
-        threshold: usize,
-        max_correctable_errs: usize,
-    ) -> anyhow::Result<Poly<Self>>;
-    fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self>;
-    ///***Calling invert on a non-invertible element of the ring results in undefined behavior***
-    fn invert(self) -> anyhow::Result<Self>;
+pub trait Syndrome: Ring {
     fn syndrome_decode(
         syndrome_poly: Poly<Self>,
         parties: &[Role],
         threshold: usize,
     ) -> anyhow::Result<Vec<Self>>;
     fn syndrome_compute(
-        sharing: &ShamirSharing<Self>,
+        sharing: &ShamirSharings<Self>,
         threshold: usize,
     ) -> anyhow::Result<Poly<Self>>;
 }
+
+pub trait HenselLiftInverse: Sized {
+    fn invert(self) -> anyhow::Result<Self>;
+}
+
+pub trait RingEmbed: Sized {
+    fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self>;
+}
+
+pub trait ErrorCorrect: Ring + MemoizedExceptionals {
+    fn error_correct(
+        sharing: &ShamirSharings<Self>,
+        threshold: usize,
+        max_correctable_errs: usize,
+    ) -> anyhow::Result<Poly<Self>>;
+}
+
 /// This data structure holds a collection of party_ids and their corresponding Shamir shares (each a ResiduePoly<Z>)
 #[derive(Clone, Default, PartialEq, Debug)]
-pub struct ShamirSharing<Z: Ring> {
+pub struct ShamirSharings<Z: Ring> {
     pub shares: Vec<Share<Z>>,
 }
 
-impl<Z: Ring> ShamirSharing<Z> {
+impl<Z: Ring> ShamirSharings<Z> {
     pub fn new() -> Self {
-        ShamirSharing { shares: Vec::new() }
+        ShamirSharings { shares: Vec::new() }
     }
 
     //Create from shares
     pub fn create(mut shares: Vec<Share<Z>>) -> Self {
         //Sort to aid memoization of lagrange polynomials
         shares.sort_by_cached_key(|share| share.owner());
-        ShamirSharing { shares }
+        ShamirSharings { shares }
     }
 
     //Add a single share in the correct spot to keep ordering
@@ -60,10 +70,10 @@ impl<Z: Ring> ShamirSharing<Z> {
     }
 }
 
-impl<Z: Ring> Add<ShamirSharing<Z>> for ShamirSharing<Z> {
-    type Output = ShamirSharing<Z>;
-    fn add(self, rhs: ShamirSharing<Z>) -> Self::Output {
-        ShamirSharing {
+impl<Z: Ring> Add<ShamirSharings<Z>> for ShamirSharings<Z> {
+    type Output = ShamirSharings<Z>;
+    fn add(self, rhs: ShamirSharings<Z>) -> Self::Output {
+        ShamirSharings {
             shares: self
                 .shares
                 .into_iter()
@@ -74,10 +84,10 @@ impl<Z: Ring> Add<ShamirSharing<Z>> for ShamirSharing<Z> {
     }
 }
 
-impl<Z: Ring> Add<&ShamirSharing<Z>> for &ShamirSharing<Z> {
-    type Output = ShamirSharing<Z>;
-    fn add(self, rhs: &ShamirSharing<Z>) -> Self::Output {
-        ShamirSharing {
+impl<Z: Ring> Add<&ShamirSharings<Z>> for &ShamirSharings<Z> {
+    type Output = ShamirSharings<Z>;
+    fn add(self, rhs: &ShamirSharings<Z>) -> Self::Output {
+        ShamirSharings {
             shares: self
                 .shares
                 .iter()
@@ -91,10 +101,10 @@ impl<Z: Ring> Add<&ShamirSharing<Z>> for &ShamirSharing<Z> {
     }
 }
 
-impl<Z: Ring> Sub<&ShamirSharing<Z>> for &ShamirSharing<Z> {
-    type Output = ShamirSharing<Z>;
-    fn sub(self, rhs: &ShamirSharing<Z>) -> Self::Output {
-        ShamirSharing {
+impl<Z: Ring> Sub<&ShamirSharings<Z>> for &ShamirSharings<Z> {
+    type Output = ShamirSharings<Z>;
+    fn sub(self, rhs: &ShamirSharings<Z>) -> Self::Output {
+        ShamirSharings {
             shares: self
                 .shares
                 .iter()
@@ -108,10 +118,10 @@ impl<Z: Ring> Sub<&ShamirSharing<Z>> for &ShamirSharing<Z> {
     }
 }
 
-impl<Z: Ring> Add<Z> for &ShamirSharing<Z> {
-    type Output = ShamirSharing<Z>;
+impl<Z: Ring> Add<Z> for &ShamirSharings<Z> {
+    type Output = ShamirSharings<Z>;
     fn add(self, rhs: Z) -> Self::Output {
-        ShamirSharing {
+        ShamirSharings {
             shares: self
                 .shares
                 .iter()
@@ -121,10 +131,10 @@ impl<Z: Ring> Add<Z> for &ShamirSharing<Z> {
     }
 }
 
-impl<Z: Ring> Mul<Z> for &ShamirSharing<Z> {
-    type Output = ShamirSharing<Z>;
+impl<Z: Ring> Mul<Z> for &ShamirSharings<Z> {
+    type Output = ShamirSharings<Z>;
     fn mul(self, rhs: Z) -> Self::Output {
-        ShamirSharing {
+        ShamirSharings {
             shares: self
                 .shares
                 .iter()
@@ -134,20 +144,35 @@ impl<Z: Ring> Mul<Z> for &ShamirSharing<Z> {
     }
 }
 
-impl<Z: ShamirRing> ShamirSharing<Z> {
+pub trait InputOp<T> {
     /// a share for party i is G(encode(i)) where
     /// G(X) = a_0 + a_1 * X + ... + a_{t-1} * X^{t-1}
     /// a_i \in Z_{2^K}/F(X) = G; deg(F) = 8
-    pub fn share<R: Rng + CryptoRng>(
+    fn share<R: Rng + CryptoRng>(
+        rng: &mut R,
+        secret: T,
+        num_parties: usize,
+        threshold: usize,
+    ) -> anyhow::Result<Self>
+    where
+        Self: Sized;
+}
+
+impl<Z> InputOp<Z> for ShamirSharings<Z>
+where
+    Z: Ring,
+    Z: RingEmbed,
+{
+    fn share<R: Rng + CryptoRng>(
         rng: &mut R,
         secret: Z,
         num_parties: usize,
         threshold: usize,
-    ) -> anyhow::Result<ShamirSharing<Z>> {
+    ) -> anyhow::Result<Self> {
         let poly = Poly::sample_random_with_fixed_constant(rng, secret, threshold);
         let shares: Vec<_> = (1..=num_parties)
             .map(|xi| {
-                let embedded_xi = Z::embed_exceptional_set(xi)?;
+                let embedded_xi: Z = Z::embed_exceptional_set(xi)?;
                 Ok(Share::new(
                     Role::indexed_by_one(xi),
                     poly.eval(&embedded_xi),
@@ -155,18 +180,24 @@ impl<Z: ShamirRing> ShamirSharing<Z> {
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
 
-        Ok(ShamirSharing { shares })
+        Ok(ShamirSharings { shares })
     }
-    pub fn reconstruct(&self, threshold: usize) -> anyhow::Result<Z> {
+}
+
+pub trait RevealOp<Z> {
+    fn reconstruct(&self, threshold: usize) -> anyhow::Result<Z> {
         self.err_reconstruct(threshold, 0)
     }
 
-    pub fn err_reconstruct(
-        &self,
-        threshold: usize,
-        max_correctable_errs: usize,
-    ) -> anyhow::Result<Z> {
-        let recon = Z::decode(self, threshold, max_correctable_errs)?;
+    fn err_reconstruct(&self, threshold: usize, max_correctable_errs: usize) -> anyhow::Result<Z>;
+}
+
+impl<Z> RevealOp<Z> for ShamirSharings<Z>
+where
+    Z: ErrorCorrect,
+{
+    fn err_reconstruct(&self, threshold: usize, max_correctable_errs: usize) -> anyhow::Result<Z> {
+        let recon = <Z as ErrorCorrect>::error_correct(self, threshold, max_correctable_errs)?;
         Ok(recon.eval(&Z::ZERO))
     }
 }
@@ -187,7 +218,7 @@ mod tests {
             fn [<test_arith_const_add2_ $z:lower>]() {
                 let mut rng = AesRng::seed_from_u64(0);
                 let secret : ResiduePoly<$z> = ResiduePoly::<$z>::from_scalar(Wrapping(23));
-                let sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, secret, 9, 5).unwrap();
+                let sharings = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret, 9, 5).unwrap();
 
                 let sumsharing = &sharings + ResiduePoly::<$z>::from_scalar(Wrapping(2 as $u));
 
@@ -202,7 +233,7 @@ mod tests {
                 let mut rng = AesRng::seed_from_u64(0);
 
                 let secret : ResiduePoly<$z> = ResiduePoly::<$z>::from_scalar(Wrapping(23));
-                let sharings = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, secret, 9, 5).unwrap();
+                let sharings = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret, 9, 5).unwrap();
 
                 let sumsharing = &sharings * ResiduePoly::<$z>::from_scalar(Wrapping(2 as $u));
 
@@ -219,9 +250,9 @@ mod tests {
                 let secret_b = ResiduePoly::<$z>::from_scalar(Wrapping(42));
                 let secret_c = ResiduePoly::<$z>::from_scalar(Wrapping(29));
 
-                let mut sharings_a = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, secret_a, 9, 5).unwrap();
-                let mut sharings_b = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, secret_b, 9, 5).unwrap();
-                let sharings_c = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, secret_c, 9, 5).unwrap();
+                let mut sharings_a = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret_a, 9, 5).unwrap();
+                let mut sharings_b = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret_b, 9, 5).unwrap();
+                let sharings_c = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret_c, 9, 5).unwrap();
 
                 sharings_a = &sharings_a + ResiduePoly::<$z>::from_scalar(Wrapping(3 as $u));
                 sharings_b = &sharings_b * ResiduePoly::<$z>::from_scalar(Wrapping(3 as $u));
@@ -242,17 +273,16 @@ mod tests {
                 let secret_a = ResiduePoly::<$z>::from_scalar(Wrapping(23));
                 let secret_b = ResiduePoly::<$z>::from_scalar(Wrapping(42));
 
-                let sharings_a = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, secret_a, 9, 5).unwrap();
-                let sharings_b = ShamirSharing::<ResiduePoly<$z>>::share(&mut rng, secret_b, 9, 5).unwrap();
+                let sharings_a = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret_a, 9, 5).unwrap();
+                let sharings_b = ShamirSharings::<ResiduePoly<$z>>::share(&mut rng, secret_b, 9, 5).unwrap();
 
                 let sumsharing = &sharings_a + &sharings_b;
 
                 let recon = TryFromWrapper::<$z>::try_from(sumsharing.reconstruct(5).unwrap()).unwrap();
                 assert_eq!(recon.0, Wrapping(23 + 42));
             }
-        }
+        }}
     }
-}
 
     use crate::algebra::base_ring::{Z128, Z64};
     tests_poly_shamir!(Z64, u64);

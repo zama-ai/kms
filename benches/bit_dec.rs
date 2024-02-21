@@ -12,7 +12,8 @@ use distributed_decryption::execution::online::preprocessing::DummyPreprocessing
 use distributed_decryption::execution::runtime::session::ParameterHandles;
 use distributed_decryption::execution::runtime::session::SmallSessionHandles;
 use distributed_decryption::execution::runtime::session::{LargeSession, SmallSession};
-use distributed_decryption::execution::sharing::shamir::ShamirSharing;
+use distributed_decryption::execution::sharing::shamir::InputOp;
+use distributed_decryption::execution::sharing::shamir::ShamirSharings;
 use distributed_decryption::execution::sharing::share::Share;
 use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandom;
 use distributed_decryption::execution::small_execution::offline::SmallPreprocessing;
@@ -60,7 +61,7 @@ impl OneShotBitDec {
 fn get_my_share(val: u64, n: usize, threshold: usize, my_id: usize) -> Share<ResiduePoly64> {
     let mut rng = AesRng::seed_from_u64(val);
     let secret = ResiduePoly64::from_scalar(Wrapping(val));
-    let shares = ShamirSharing::share(&mut rng, secret, n, threshold)
+    let shares = ShamirSharings::share(&mut rng, secret, n, threshold)
         .unwrap()
         .shares;
     shares[my_id]

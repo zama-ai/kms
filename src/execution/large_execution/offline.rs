@@ -1,4 +1,5 @@
 use crate::execution::config::BatchParams;
+use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::{
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
@@ -8,7 +9,7 @@ use crate::{
             triple::Triple,
         },
         runtime::session::LargeSessionHandles,
-        sharing::{open::robust_opens_to_all, shamir::ShamirRing, share::Share},
+        sharing::{open::robust_opens_to_all, share::Share},
     },
 };
 use itertools::Itertools;
@@ -23,7 +24,7 @@ pub struct LargePreprocessing<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>>
     elements: BasePreprocessing<Z>,
 }
 
-impl<Z: ShamirRing, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing<Z, S, D> {
+impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing<Z, S, D> {
     /// Initializes the preprocessing for a new epoch, by preprocessing a batch
     /// NOTE: if None is passed for the option, we use the constants, which should at some point
     /// be set to give an optimized offline phase for ddec.
@@ -184,13 +185,17 @@ pub type RealLargePreprocessing<Z> =
 mod tests {
 
     use super::{TrueDoubleSharing, TrueSingleSharing};
+    use crate::execution::config::BatchParams;
+    use crate::execution::sharing::shamir::ErrorCorrect;
+    use crate::execution::sharing::shamir::HenselLiftInverse;
+    use crate::execution::sharing::shamir::RevealOp;
+    use crate::execution::sharing::shamir::RingEmbed;
     use crate::{
         algebra::{
             residue_poly::{ResiduePoly128, ResiduePoly64},
             structure_traits::Ring,
         },
         execution::{
-            config::BatchParams,
             large_execution::{
                 coinflip::{
                     tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
@@ -226,11 +231,7 @@ mod tests {
             runtime::session::{
                 BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
             },
-            sharing::{
-                open::robust_opens_to_all,
-                shamir::{ShamirRing, ShamirSharing},
-                share::Share,
-            },
+            sharing::{open::robust_opens_to_all, shamir::ShamirSharings, share::Share},
         },
         tests::helper::{
             tests::{execute_protocol_large_w_disputes_and_malicious, TestingParameters},
@@ -242,7 +243,7 @@ mod tests {
     use rstest::rstest;
 
     fn test_offline_strategies<
-        Z: Ring + Derive + ShamirRing,
+        Z: Ring + RingEmbed + Derive + HenselLiftInverse + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
         P: GenericMaliciousPreprocessing<Z, S, D> + 'static,
@@ -341,9 +342,9 @@ mod tests {
                 vec_z.push(z);
                 vec_r.push(r);
             }
-            let shamir_sharing_x = ShamirSharing::create(vec_x);
-            let shamir_sharing_y = ShamirSharing::create(vec_y);
-            let shamir_sharing_z = ShamirSharing::create(vec_z);
+            let shamir_sharing_x = ShamirSharings::create(vec_x);
+            let shamir_sharing_y = ShamirSharings::create(vec_y);
+            let shamir_sharing_z = ShamirSharings::create(vec_z);
             let x = shamir_sharing_x.reconstruct(params.threshold);
             let y = shamir_sharing_y.reconstruct(params.threshold);
             let z = shamir_sharing_z.reconstruct(params.threshold);
@@ -352,7 +353,7 @@ mod tests {
             assert!(z.is_ok());
             assert_eq!(x.unwrap() * y.unwrap(), z.unwrap());
 
-            let shamir_sharing_r = ShamirSharing::create(vec_r);
+            let shamir_sharing_r = ShamirSharings::create(vec_r);
             let r = shamir_sharing_r.reconstruct(params.threshold);
             assert!(r.is_ok());
         }
@@ -360,7 +361,7 @@ mod tests {
 
     #[async_trait]
     trait GenericMaliciousPreprocessing<
-        Z: ShamirRing + Derive,
+        Z: Ring + Derive + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
     >: Preprocessing<Z> + Clone + Send
@@ -380,7 +381,7 @@ mod tests {
     ///Malicious strategy that introduces an error in the reconstruction of beaver
     /// NOTE: Expect to fill single_sharing and double_sharing at creation
     pub(crate) struct CheatingLargePreprocessing<
-        Z: ShamirRing + Derive,
+        Z: Ring + Derive + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
     > {
@@ -395,7 +396,7 @@ mod tests {
     #[derive(Default, Clone)]
     ///Acts as a wrapper around the acutal protocol, needed because of the trait design around preprocessing
     pub(crate) struct HonestLargePreprocessing<
-        Z: ShamirRing + Derive,
+        Z: Ring + Derive + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
     > {
@@ -405,7 +406,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl<Z: ShamirRing + Derive, S: SingleSharing<Z>, D: DoubleSharing<Z>>
+    impl<Z: Ring + Derive + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>>
         GenericMaliciousPreprocessing<Z, S, D> for CheatingLargePreprocessing<Z, S, D>
     {
         async fn init(
@@ -504,7 +505,7 @@ mod tests {
 
     impl<Z, S, D> Preprocessing<Z> for CheatingLargePreprocessing<Z, S, D>
     where
-        Z: ShamirRing + Derive,
+        Z: Ring + Derive + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
     {
@@ -541,7 +542,7 @@ mod tests {
 
     //Needed because LargePreprocessing doesnt implement a specific trait
     #[async_trait]
-    impl<Z: ShamirRing + Derive, S: SingleSharing<Z>, D: DoubleSharing<Z>>
+    impl<Z: Ring + Derive + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>>
         GenericMaliciousPreprocessing<Z, S, D> for HonestLargePreprocessing<Z, S, D>
     {
         async fn init(
@@ -571,7 +572,7 @@ mod tests {
 
     impl<Z, S, D> Preprocessing<Z> for HonestLargePreprocessing<Z, S, D>
     where
-        Z: ShamirRing + Derive,
+        Z: Ring + Derive + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
     {

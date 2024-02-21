@@ -12,7 +12,7 @@ use crate::{
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::{
             open::{robust_opens_to, robust_opens_to_all},
-            shamir::{ShamirRing, ShamirSharing},
+            shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed, ShamirSharings, Syndrome},
             share::Share,
         },
     },
@@ -85,7 +85,10 @@ pub async fn reshare_same_sets<
     preproc: &mut P,
     session: &mut Ses,
     input_share: &mut Array1<ResiduePoly<Z>>,
-) -> anyhow::Result<Array1<ResiduePoly<Z>>> {
+) -> anyhow::Result<Array1<ResiduePoly<Z>>>
+where
+    ResiduePoly<Z>: ErrorCorrect,
+{
     // we need share_count shares for every party in the initial set of size n1
     let n1 = session.num_parties();
     let share_count = input_share.len(); // this is the lwe dimension if input is sk
@@ -184,7 +187,7 @@ pub async fn reshare_same_sets<
     let mut all_shamir_shares = Vec::with_capacity(share_count);
     let mut all_syndrome_poly_shares = Vec::with_capacity(share_count * n1);
     for shares in s_share_vec {
-        let shamir_sharing = ShamirSharing::create(shares);
+        let shamir_sharing = ShamirSharings::create(shares);
         let mut syndrome_share =
             ResiduePoly::<Z>::syndrome_compute(&shamir_sharing, session.threshold() as usize)?;
         all_shamir_shares.push(shamir_sharing);
@@ -218,7 +221,7 @@ pub async fn reshare_same_sets<
         )?;
 
         let res: ResiduePoly<Z> = izip!(shamir_sharing.shares, &deltas, opened_syndrome)
-            .map(|(s, d, e)| (s.value() - e) * d)
+            .map(|(s, d, e)| d * &(s.value() - e))
             .sum();
         new_sk_share.push(res);
     }
@@ -231,6 +234,7 @@ mod tests {
     use super::*;
     use std::{collections::HashMap, fmt::Display, sync::Arc};
 
+    use crate::execution::sharing::shamir::RevealOp;
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use tfhe::core_crypto::entities::LweSecretKey;
@@ -243,13 +247,14 @@ mod tests {
         },
         computation::SessionId,
         error::error_handler::anyhow_error_and_log,
-        execution::constants::SMALL_TEST_KEY_PATH,
         execution::{
+            constants::SMALL_TEST_KEY_PATH,
             online::preprocessing::DummyPreprocessing,
             runtime::{
                 session::{LargeSession, ParameterHandles, SessionParameters},
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
+            sharing::shamir::InputOp,
         },
         file_handling::read_element,
         lwe::{keygen_all_party_shares, KeySet, SecretKeyShare},
@@ -258,7 +263,11 @@ mod tests {
     fn reconstruct_shares_to_scalar<Z: BaseRing + Display>(
         shares: Vec<Array1<ResiduePoly<Z>>>,
         threshold: usize,
-    ) -> Vec<Z> {
+    ) -> Vec<Z>
+    where
+        ShamirSharings<ResiduePoly<Z>>: RevealOp<ResiduePoly<Z>>,
+        ShamirSharings<ResiduePoly<Z>>: InputOp<ResiduePoly<Z>>,
+    {
         let parties = shares.len();
         let mut out = Vec::with_capacity(shares[0].len());
         for j in 0..shares[0].len() {
@@ -269,7 +278,7 @@ mod tests {
                     *shares[i].get(j).unwrap(),
                 ));
             });
-            let first_bit_sharing = ShamirSharing::create(bit_shares);
+            let first_bit_sharing = ShamirSharings::create(bit_shares);
             let rec = first_bit_sharing
                 .err_reconstruct(threshold, threshold)
                 .unwrap();

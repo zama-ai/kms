@@ -3,6 +3,7 @@ use rand::{CryptoRng, Rng};
 use std::{collections::HashSet, sync::Arc};
 use tokio::{task::JoinSet, time::error::Elapsed};
 
+use crate::execution::sharing::shamir::RevealOp;
 use crate::{
     algebra::structure_traits::Ring,
     error::error_handler::{anyhow_error_and_log, anyhow_error_and_warn_log},
@@ -17,15 +18,15 @@ use crate::{
 };
 
 use super::{
-    shamir::{ShamirRing, ShamirSharing},
+    shamir::{ErrorCorrect, ShamirSharings},
     share::Share,
 };
 
-/// Maps `values` into [ShamirSharing]s by appending these to `sharings`.
+/// Maps `values` into [ShamirSharings]s by appending these to `sharings`.
 /// Furthermore, ensure that at least `num_values` shares are added to `sharings`.
 /// The function is useful to ensure that an indexiable vector of Shamir shares exist.
 pub fn fill_indexed_shares<Z: Ring>(
-    sharings: &mut [ShamirSharing<Z>],
+    sharings: &mut [ShamirSharings<Z>],
     values: Vec<Z>,
     num_values: usize,
     party_id: Role,
@@ -52,13 +53,16 @@ type JobResultType<Z> = (Role, anyhow::Result<Vec<Z>>);
 /// - degree as the degree of the secret sharing
 /// - t as the max. number of errors we allow (if no party has been flagged as corrupt, this is session.threshold)
 /// - a set of jobs to receive the shares from the other parties
-async fn try_reconstruct_from_shares<Z: ShamirRing, P: ParameterHandles>(
+async fn try_reconstruct_from_shares<Z: Ring, P: ParameterHandles>(
     session_parameters: &P,
-    sharings: &mut [ShamirSharing<Z>],
+    sharings: &mut [ShamirSharings<Z>],
     degree: usize,
     threshold: usize,
     jobs: &mut JoinSet<Result<JobResultType<Z>, Elapsed>>,
-) -> anyhow::Result<Option<Vec<Z>>> {
+) -> anyhow::Result<Option<Vec<Z>>>
+where
+    Z: ErrorCorrect,
+{
     let num_parties = session_parameters.num_parties();
     let own_role = session_parameters.my_role()?;
     let num_secrets = sharings.len();
@@ -151,12 +155,16 @@ async fn try_reconstruct_from_shares<Z: ShamirRing, P: ParameterHandles>(
 /// - threshold as the threshold of maximum corruptions
 /// - indexed_shares as the indexed shares of the parties
 /// NOTE: When needed, inplement the async version
-pub fn reconstruct_w_errors_sync<Z: ShamirRing>(
+pub fn reconstruct_w_errors_sync<Z>(
     num_parties: usize,
     degree: usize,
     threshold: usize,
-    sharing: &ShamirSharing<Z>,
-) -> anyhow::Result<Option<Z>> {
+    sharing: &ShamirSharings<Z>,
+) -> anyhow::Result<Option<Z>>
+where
+    Z: Ring + ErrorCorrect,
+    ShamirSharings<Z>: RevealOp<Z>,
+{
     if degree + 2 * threshold < num_parties && sharing.shares.len() > degree + 2 * threshold {
         let opened = sharing.err_reconstruct(degree, threshold)?;
         return Ok(Some(opened));
@@ -167,7 +175,11 @@ pub fn reconstruct_w_errors_sync<Z: ShamirRing>(
     Ok(None)
 }
 
-pub async fn robust_open_to_all<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub async fn robust_open_to_all<
+    Z: Ring + ErrorCorrect,
+    R: Rng + CryptoRng,
+    B: BaseSessionHandles<R>,
+>(
     session: &B,
     share: Z,
     degree: usize,
@@ -187,7 +199,11 @@ pub async fn robust_open_to_all<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessio
 ///
 /// Output:
 /// - The reconstructed secrets if reconstruction for all was possible
-pub async fn robust_opens_to_all<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub async fn robust_opens_to_all<
+    Z: Ring + ErrorCorrect,
+    R: Rng + CryptoRng,
+    B: BaseSessionHandles<R>,
+>(
     session: &B,
     shares: &[Z],
     degree: usize,
@@ -219,7 +235,7 @@ pub async fn robust_opens_to_all<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessi
 
     let mut sharings = shares
         .iter()
-        .map(|share| ShamirSharing::create(vec![Share::new(own_role, *share)]))
+        .map(|share| ShamirSharings::create(vec![Share::new(own_role, *share)]))
         .collect_vec();
     //Note: We are not even considering shares for the already known corrupt parties,
     //thus the effective threshold at this point is the "real" threshold - the number of known corrupt parties
@@ -227,7 +243,11 @@ pub async fn robust_opens_to_all<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessi
     try_reconstruct_from_shares(session, &mut sharings, degree, threshold, &mut jobs).await
 }
 
-pub async fn robust_open_to<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub async fn robust_open_to<
+    Z: Ring + ErrorCorrect,
+    R: Rng + CryptoRng + Send,
+    B: BaseSessionHandles<R>,
+>(
     session: &B,
     share: Z,
     degree: usize,
@@ -241,7 +261,11 @@ pub async fn robust_open_to<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessionHan
     }
 }
 
-pub async fn robust_opens_to<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+pub async fn robust_opens_to<
+    Z: Ring + ErrorCorrect,
+    R: Rng + CryptoRng,
+    B: BaseSessionHandles<R>,
+>(
     session: &B,
     shares: &[Z],
     degree: usize,
@@ -268,7 +292,7 @@ pub async fn robust_opens_to<Z: ShamirRing, R: Rng + CryptoRng, B: BaseSessionHa
         )?;
         let mut sharings = shares
             .iter()
-            .map(|share| ShamirSharing::create(vec![Share::new(*role, *share)]))
+            .map(|share| ShamirSharings::create(vec![Share::new(*role, *share)]))
             .collect_vec();
 
         //Note: We are not even considering shares for the already known corrupt parties,
@@ -304,11 +328,12 @@ mod test {
     use itertools::Itertools;
     use rand::SeedableRng;
 
+    use crate::execution::sharing::shamir::InputOp;
     use crate::{
         algebra::{residue_poly::ResiduePoly, residue_poly::ResiduePoly128},
         execution::{
             runtime::session::{LargeSession, ParameterHandles},
-            sharing::{open::robust_opens_to_all, shamir::ShamirSharing},
+            sharing::{open::robust_opens_to_all, shamir::ShamirSharings},
         },
         tests::helper::tests_and_benches::execute_protocol_large,
     };
@@ -325,7 +350,7 @@ mod test {
             let mut rng = AesRng::seed_from_u64(0);
             let shares = (0..num_secrets)
                 .map(|idx| {
-                    ShamirSharing::share(
+                    ShamirSharings::share(
                         &mut rng,
                         ResiduePoly::from_scalar(Wrapping(idx)),
                         parties,

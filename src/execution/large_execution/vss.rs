@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tokio::{task::JoinSet, time::error::Elapsed};
 
+use crate::execution::communication::broadcast::broadcast_from_all_w_corruption;
 use crate::{
     algebra::{
         bivariate::{BivariateEval, BivariatePoly},
@@ -13,11 +14,9 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::{broadcast_from_all_w_corruption, generic_receive_from_all},
-        communication::p2p::send_to_honest_parties,
-        runtime::party::Role,
-        runtime::session::BaseSessionHandles,
-        sharing::shamir::ShamirRing,
+        communication::{broadcast::generic_receive_from_all, p2p::send_to_honest_parties},
+        runtime::{party::Role, session::BaseSessionHandles},
+        sharing::shamir::RingEmbed,
     },
     networking::value::{BroadcastValue, NetworkValue},
 };
@@ -35,7 +34,7 @@ pub trait Vss: Send + Sync + Default + Clone {
     ///
     /// Returns
     /// - a vector of shares (share at index i is a sharing of the secret of party i)
-    async fn execute<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,
         secret: &Z,
@@ -66,7 +65,7 @@ pub trait Vss: Send + Sync + Default + Clone {
     /// - a vector of shares (shares at index i is a sharing of the secrets of party i)
     /// so in a successful execution shares.len() should be the number of parties
     /// and shares[0].len() should be the number of secrets
-    async fn execute_many<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -140,7 +139,7 @@ pub struct DummyVss {}
 
 #[async_trait]
 impl Vss for DummyVss {
-    async fn execute_many<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -194,7 +193,7 @@ pub struct RealVss {}
 
 #[async_trait]
 impl Vss for RealVss {
-    async fn execute_many<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,
         secrets: &[Z],
@@ -210,7 +209,7 @@ impl Vss for RealVss {
 
 type MapRoleDoublePoly<Z> = HashMap<Role, Vec<DoublePoly<Z>>>;
 
-fn sample_secret_polys<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+fn sample_secret_polys<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &mut S,
     secrets: &[Z],
 ) -> anyhow::Result<(Vec<BivariatePoly<Z>>, MapRoleDoublePoly<Z>)> {
@@ -239,7 +238,7 @@ fn sample_secret_polys<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<
     Ok((bivariate_poly, map_double_shares))
 }
 
-async fn round_1<Z: Ring + 'static, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+async fn round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &mut S,
     num_secrets: usize,
     bivariate_poly: Vec<BivariatePoly<Z>>,
@@ -329,7 +328,7 @@ async fn round_1<Z: Ring + 'static, R: Rng + CryptoRng, S: BaseSessionHandles<R>
     })
 }
 
-async fn round_2<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+async fn round_2<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
@@ -390,7 +389,7 @@ async fn round_2<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 // Role0 -> Some(v) with v = <VSS1:{<(a_00,b_00), (a_01,b_01), ...>}, VSS2:{}, ..., VSSn:{}>
 // Role1 -> None means somethings wrong happened, consider all values to be 0
 // Role2 -> Some(v) with v = <VSS1:{<(a_20,b_20), (a_21,b_21), ...>}, VSS2:{}, ..., VSSn:{}>
-async fn round_3<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+async fn round_3<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
@@ -437,7 +436,7 @@ async fn round_3<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     Ok(unhappy_vec)
 }
 
-async fn round_4<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+async fn round_4<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &mut S,
     num_secrets: usize,
     vss: &Round1VSSOutput<Z>,
@@ -557,13 +556,17 @@ fn vss_receive_round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     Ok(())
 }
 
-fn generate_verification_value<Z: ShamirRing>(
+fn generate_verification_value<Z>(
     num_secrets: usize,
     my_index: usize,
     party_idx: usize,
     vss_idx: usize,
     r1vss: &Round1VSSOutput<Z>,
-) -> anyhow::Result<Vec<(Z, Z)>> {
+) -> anyhow::Result<Vec<(Z, Z)>>
+where
+    Z: Ring,
+    Z: RingEmbed,
+{
     let dbl_poly_len = r1vss.received_vss[vss_idx].double_poly.len();
     let len_ok = dbl_poly_len == r1vss.received_vss[party_idx].challenge[vss_idx].len()
         && dbl_poly_len == num_secrets;
@@ -665,11 +668,15 @@ fn find_potential_conflicts_received_challenges<Z: Ring>(
         })
 }
 
-fn answer_to_potential_conflicts<Z: ShamirRing>(
+fn answer_to_potential_conflicts<Z>(
     potentially_unhappy: &HashSet<(usize, Role, Role)>,
     own_role: &Role,
     vss: &Round1VSSOutput<Z>,
-) -> anyhow::Result<BTreeMap<(usize, Role, Role), Vec<Z>>> {
+) -> anyhow::Result<BTreeMap<(usize, Role, Role), Vec<Z>>>
+where
+    Z: Ring,
+    Z: RingEmbed,
+{
     let mut msg = BTreeMap::<(usize, Role, Role), Vec<Z>>::new();
     let my_vss_idx = own_role.zero_based();
     //Can now match over the tuples of keys in potentially unhappy
@@ -768,7 +775,7 @@ fn find_real_conflicts<Z: Ring>(
     unhappy_vec
 }
 
-fn round_4_conflict_resolution<Z: ShamirRing>(
+fn round_4_conflict_resolution<Z: Ring + RingEmbed>(
     msg: &mut BTreeMap<(usize, Role), ValueOrPoly<Z>>,
     is_sender: bool,
     unhappy_tuple: (usize, &HashSet<Role>),
@@ -797,7 +804,7 @@ fn round_4_conflict_resolution<Z: ShamirRing>(
     Ok(())
 }
 
-fn round_4_fix_conflicts<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+fn round_4_fix_conflicts<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &mut S,
     num_secrets: usize,
     unhappy_tuple: (usize, &HashSet<Role>),
@@ -874,7 +881,8 @@ pub(crate) mod tests {
     use crate::algebra::residue_poly::{ResiduePoly128, ResiduePoly64};
     use crate::computation::SessionId;
     use crate::execution::runtime::session::SmallSession;
-    use crate::execution::sharing::shamir::{ShamirRing, ShamirSharing};
+    use crate::execution::sharing::shamir::ShamirSharings;
+    use crate::execution::sharing::shamir::{ErrorCorrect, RevealOp};
     use crate::execution::sharing::share::Share;
     use crate::execution::{
         runtime::party::Identity, runtime::test_runtime::DistributedTestRuntime,
@@ -980,10 +988,10 @@ pub(crate) mod tests {
                 }
             }
 
-            // we need to "transpose" vec_shares to create `ShamirSharing`
+            // we need to "transpose" vec_shares to create `ShamirSharings`
             let shamir_sharings = (0..num_secrets)
                 .map(|i| vec_shares.iter().map(|share| share[i]).collect_vec())
-                .map(ShamirSharing::create);
+                .map(ShamirSharings::create);
             for (secret_i, shamir_sharing) in shamir_sharings.enumerate() {
                 assert_eq!(
                     secrets[vss_idx][secret_i],
@@ -1118,8 +1126,8 @@ pub(crate) mod tests {
                 let expected = expected_secret[i];
                 let xs_shares = vec_x.iter().map(|xs| xs[i]).collect_vec();
                 let ys_shares = vec_y.iter().map(|xs| xs[i]).collect_vec();
-                let ss_x = ShamirSharing::create(xs_shares);
-                let ss_y = ShamirSharing::create(ys_shares);
+                let ss_x = ShamirSharings::create(xs_shares);
+                let ss_y = ShamirSharings::create(ys_shares);
                 assert_eq!(expected, ss_x.reconstruct(threshold.into()).unwrap());
                 assert_eq!(expected, ss_y.reconstruct(threshold.into()).unwrap());
             }
@@ -1147,7 +1155,7 @@ pub(crate) mod tests {
     #[async_trait]
     impl Vss for DroppingVssFromStart {
         //Do nothing, and output an empty Vec
-        async fn execute_many<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        async fn execute_many<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             &self,
             _session: &mut S,
             _secrets: &[Z],
@@ -1155,7 +1163,7 @@ pub(crate) mod tests {
             Ok(Vec::new())
         }
 
-        async fn execute<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             &self,
             _session: &mut S,
             _secret: &Z,
@@ -1167,7 +1175,7 @@ pub(crate) mod tests {
     #[async_trait]
     impl Vss for DroppingVssAfterR1 {
         //Do round1, and output an empty Vec
-        async fn execute_many<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             &self,
             session: &mut S,
             secrets: &[Z],
@@ -1177,7 +1185,7 @@ pub(crate) mod tests {
             Ok(Vec::new())
         }
 
-        async fn execute<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        async fn execute<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             &self,
             session: &mut S,
             secret: &Z,
@@ -1190,7 +1198,7 @@ pub(crate) mod tests {
     #[async_trait]
     impl Vss for DroppingVssAfterR2 {
         //Do round1 and round2, and output an empty Vec
-        async fn execute_many<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             &self,
             session: &mut S,
             secrets: &[Z],
@@ -1202,7 +1210,7 @@ pub(crate) mod tests {
             Ok(Vec::new())
         }
 
-        async fn execute<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        async fn execute<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             &self,
             session: &mut S,
             secret: &Z,
@@ -1225,7 +1233,7 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl Vss for MaliciousVssR1 {
-        async fn execute_many<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             &self,
             session: &mut S,
             secrets: &[Z],
@@ -1240,7 +1248,11 @@ pub(crate) mod tests {
     }
 
     //This code executes a round1 where the party sends malformed double shares for its VSS to parties in roles_to_lie_to
-    async fn malicious_round_1<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    async fn malicious_round_1<
+        Z: Ring + RingEmbed,
+        R: Rng + CryptoRng,
+        S: BaseSessionHandles<R>,
+    >(
         session: &mut S,
         secrets: &[Z],
         roles_to_lie_to: &[Role],
@@ -1292,7 +1304,10 @@ pub(crate) mod tests {
         round_1(session, num_secrets, bivariate_poly, map_double_shares).await
     }
 
-    fn test_vss_small<Z: ShamirRing>(params: TestingParameters, num_secrets: usize) {
+    fn test_vss_small<Z: Ring + RingEmbed + ErrorCorrect>(
+        params: TestingParameters,
+        num_secrets: usize,
+    ) {
         let mut task_honest = |mut session: SmallSession<Z>| async move {
             let real_vss = RealVss::default();
             let secrets = (0..num_secrets)
@@ -1325,7 +1340,7 @@ pub(crate) mod tests {
                         Share::new(Role::indexed_by_zero(*party_id), vec_shares[vss_idx][i])
                     })
                     .collect_vec();
-                let shamir_sharing = ShamirSharing::create(vec_shares);
+                let shamir_sharing = ShamirSharings::create(vec_shares);
                 let reconstructed_secret = shamir_sharing.reconstruct(params.threshold);
                 assert!(reconstructed_secret.is_ok());
                 assert_eq!(expected_secrets[vss_idx][i], reconstructed_secret.unwrap());
@@ -1336,7 +1351,7 @@ pub(crate) mod tests {
     #[async_trait]
     impl Vss for WrongSecretLenVss {
         // The adversary will halve the number of secrets
-        async fn execute_many<Z: ShamirRing, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
             &self,
             session: &mut S,
             secrets: &[Z],
@@ -1361,7 +1376,7 @@ pub(crate) mod tests {
         test_vss_small::<ResiduePoly128>(params, num_secrets)
     }
 
-    fn test_vss_strategies_large<Z: ShamirRing, V: Vss + 'static>(
+    fn test_vss_strategies_large<Z: Ring + RingEmbed + ErrorCorrect, V: Vss + 'static>(
         params: TestingParameters,
         num_secrets: usize,
         malicious_vss: V,
@@ -1429,7 +1444,7 @@ pub(crate) mod tests {
                         Share::new(Role::indexed_by_zero(*party_id), vec_shares[vss_idx][i])
                     })
                     .collect_vec();
-                let shamir_sharing = ShamirSharing::create(vec_shares);
+                let shamir_sharing = ShamirSharings::create(vec_shares);
                 let reconstructed_secret = shamir_sharing.reconstruct(params.threshold);
                 assert!(reconstructed_secret.is_ok());
                 assert_eq!(expected_secrets[vss_idx][i], reconstructed_secret.unwrap());

@@ -7,7 +7,8 @@ use crate::{
     algebra::{bivariate::MatrixMul, structure_traits::Ring},
     error::error_handler::anyhow_error_and_log,
     execution::{
-        runtime::party::Role, runtime::session::LargeSessionHandles, sharing::shamir::ShamirRing,
+        runtime::{party::Role, session::LargeSessionHandles},
+        sharing::shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed},
     },
 };
 use async_trait::async_trait;
@@ -49,7 +50,9 @@ pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
 }
 
 #[async_trait]
-impl<Z: ShamirRing + Derive, S: LocalDoubleShare> DoubleSharing<Z> for RealDoubleSharing<Z, S> {
+impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + HenselLiftInverse, S: LocalDoubleShare>
+    DoubleSharing<Z> for RealDoubleSharing<Z, S>
+{
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -155,6 +158,11 @@ pub(crate) mod tests {
 
     use crate::algebra::residue_poly::ResiduePoly128;
     use crate::algebra::residue_poly::ResiduePoly64;
+    use crate::execution::sharing::shamir::ErrorCorrect;
+
+    use crate::execution::sharing::shamir::HenselLiftInverse;
+    use crate::execution::sharing::shamir::RevealOp;
+    use crate::execution::sharing::shamir::RingEmbed;
     use crate::{
         algebra::structure_traits::{Ring, Sample},
         execution::{
@@ -170,10 +178,7 @@ pub(crate) mod tests {
                 party::Role,
                 session::{LargeSession, ParameterHandles},
             },
-            sharing::{
-                shamir::{ShamirRing, ShamirSharing},
-                share::Share,
-            },
+            sharing::{shamir::ShamirSharings, share::Share},
         },
         tests::helper::tests_and_benches::execute_protocol_large,
     };
@@ -189,7 +194,10 @@ pub(crate) mod tests {
         }
     }
     //#[test]
-    fn test_doublesharing<Z: ShamirRing + Derive>(parties: usize, threshold: usize) {
+    fn test_doublesharing<Z: Ring + RingEmbed + ErrorCorrect + Derive + HenselLiftInverse>(
+        parties: usize,
+        threshold: usize,
+    ) {
         let mut task = |mut session: LargeSession| async move {
             let ldl_batch_size = 10_usize;
             let extracted_size = session.num_parties() - session.threshold() as usize;
@@ -231,8 +239,8 @@ pub(crate) mod tests {
                 res_vec_t.push(Share::new(*role, res[value_idx].degree_t));
                 res_vec_2t.push(Share::new(*role, res[value_idx].degree_2t));
             }
-            let shamir_sharing_t = ShamirSharing::create(res_vec_t);
-            let shamir_sharing_2t = ShamirSharing::create(res_vec_2t);
+            let shamir_sharing_t = ShamirSharings::create(res_vec_t);
+            let shamir_sharing_2t = ShamirSharings::create(res_vec_2t);
             let res_t = shamir_sharing_t.reconstruct(threshold);
             let res_2t = shamir_sharing_2t.reconstruct(2 * threshold);
             assert!(res_t.is_ok());
@@ -305,8 +313,8 @@ pub(crate) mod tests {
                     res_vec_2t.push(Share::new(*role, res[value_idx].degree_2t));
                 }
             }
-            let shamir_sharing_t = ShamirSharing::create(res_vec_t);
-            let shamir_sharing_2t = ShamirSharing::create(res_vec_2t);
+            let shamir_sharing_t = ShamirSharings::create(res_vec_t);
+            let shamir_sharing_2t = ShamirSharings::create(res_vec_2t);
             //Expect at most 1 error from the dropout party
             let res_t = shamir_sharing_t.err_reconstruct(threshold, 1);
             //Here we needed to remove the corrupt party's share because of the pol. degree

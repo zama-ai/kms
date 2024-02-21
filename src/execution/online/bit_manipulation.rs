@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use crate::algebra::residue_poly::ResiduePoly;
 use crate::algebra::structure_traits::{BaseRing, BitExtract, ZConsts};
 use crate::execution::online::gen_bits::Solve;
-use crate::execution::sharing::shamir::ShamirRing;
+use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::{
     algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log,
     execution::runtime::session::BaseSessionHandles,
@@ -63,7 +63,7 @@ fn shift_right_2d<Z: Ring + ZConsts>(
 
 impl<Z> BatchedBits<Z>
 where
-    Z: ShamirRing + ZConsts + Sync,
+    Z: Ring + ZConsts + Send + Sync + ErrorCorrect,
 {
     /// Takes a 1D array and arranges it into a 2D of size B (batch_size).
     /// Does this by taking consecutive CHAR_LOG2 (64/128) entries and puts them in a single batch
@@ -330,7 +330,7 @@ where
 
 impl<Z> Bits<Z>
 where
-    Z: ShamirRing + ZConsts + Sync,
+    Z: Ring + ZConsts + Send + Sync + ErrorCorrect,
 {
     fn xor_with_prods(
         lhs: &SecretVec<Z>,
@@ -417,6 +417,7 @@ pub async fn bit_dec_batch<
 where
     Z: BaseRing + std::fmt::Display,
     ResiduePoly<Z>: Solve,
+    ResiduePoly<Z>: ErrorCorrect,
     Z: BitExtract,
     P: Send,
 {
@@ -478,7 +479,7 @@ mod tests {
     use std::num::Wrapping;
 
     use crate::algebra::structure_traits::Ring;
-    use crate::execution::sharing::shamir::ShamirSharing;
+    use crate::execution::sharing::shamir::ShamirSharings;
     use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;
@@ -494,6 +495,7 @@ mod tests {
     use crate::execution::online::triple::open_list;
     use crate::execution::runtime::session::ParameterHandles;
     use crate::execution::runtime::session::SmallSession;
+    use crate::execution::sharing::shamir::InputOp;
     use crate::execution::sharing::share::Share;
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
 
@@ -501,7 +503,7 @@ mod tests {
     fn get_my_share(val: u64, session: &SmallSession<ResiduePoly<Z64>>) -> Share<ResiduePoly<Z64>> {
         let mut rng = AesRng::seed_from_u64(val);
         let secret = ResiduePoly::<Z64>::from_scalar(Wrapping(val));
-        let shares = ShamirSharing::share(
+        let shares = ShamirSharings::share(
             &mut rng,
             secret,
             session.num_parties(),

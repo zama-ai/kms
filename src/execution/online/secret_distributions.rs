@@ -1,12 +1,17 @@
+use async_trait::async_trait;
+
 use super::{
     gen_bits::{BitGenEven, Solve},
     preprocessing::Preprocessing,
 };
 use crate::execution::{
     runtime::session::BaseSessionHandles,
-    sharing::{shamir::ShamirRing, share::Share},
+    sharing::{shamir::ErrorCorrect, share::Share},
 };
-use async_trait::async_trait;
+use crate::{
+    algebra::structure_traits::Ring,
+    execution::sharing::shamir::{HenselLiftInverse, RingEmbed},
+};
 use rand::{CryptoRng, Rng};
 
 #[async_trait]
@@ -18,7 +23,7 @@ pub trait SecretDistributions {
         session: &mut S,
     ) -> anyhow::Result<Vec<Share<Z>>>
     where
-        Z: ShamirRing + Solve,
+        Z: Ring + RingEmbed + Solve + ErrorCorrect + HenselLiftInverse,
         Rnd: Rng + CryptoRng + Sync,
         S: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
@@ -40,7 +45,7 @@ impl SecretDistributions for RealSecretDistributions {
         session: &mut S,
     ) -> anyhow::Result<Vec<Share<Z>>>
     where
-        Z: ShamirRing + Solve,
+        Z: Ring + RingEmbed + Solve + ErrorCorrect + HenselLiftInverse,
         Rnd: Rng + CryptoRng + Sync,
         S: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,

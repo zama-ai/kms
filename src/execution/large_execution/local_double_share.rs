@@ -7,11 +7,14 @@ use super::{
     },
     share_dispute::{ShareDispute, ShareDisputeOutputDouble},
 };
+use crate::execution::runtime::session::LargeSessionHandles;
 use crate::{
+    algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::broadcast::broadcast_from_all_w_corruption, runtime::party::Role,
-        runtime::session::LargeSessionHandles, sharing::shamir::ShamirRing,
+        communication::broadcast::broadcast_from_all_w_corruption,
+        runtime::party::Role,
+        sharing::shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed},
     },
     networking::value::BroadcastValue,
 };
@@ -27,7 +30,11 @@ pub struct DoubleShares<Z> {
 
 #[async_trait]
 pub trait LocalDoubleShare: Send + Sync + Default + Clone {
-    async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<
+        Z: Ring + RingEmbed + Derive + ErrorCorrect + HenselLiftInverse,
+        R: Rng + CryptoRng,
+        L: LargeSessionHandles<R>,
+    >(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -49,7 +56,11 @@ pub struct RealLocalDoubleShare<C: Coinflip, S: ShareDispute> {
 
 #[async_trait]
 impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, S> {
-    async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<
+        Z: Ring + RingEmbed + Derive + ErrorCorrect + HenselLiftInverse,
+        R: Rng + CryptoRng,
+        L: LargeSessionHandles<R>,
+    >(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -120,7 +131,7 @@ async fn send_receive_pads_double<Z, R, L, S>(
     share_dispute: &S,
 ) -> anyhow::Result<ShareDisputeOutputDouble<Z>>
 where
-    Z: ShamirRing,
+    Z: Ring + RingEmbed + HenselLiftInverse,
     R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
     S: ShareDispute,
@@ -130,7 +141,11 @@ where
     share_dispute.execute_double(session, &my_pads).await
 }
 
-async fn verify_sharing<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+async fn verify_sharing<
+    Z: Ring + Derive + ErrorCorrect,
+    R: Rng + CryptoRng,
+    L: LargeSessionHandles<R>,
+>(
     session: &mut L,
     secrets_double: &mut ShareDisputeOutputDouble<Z>,
     pads_double: &ShareDisputeOutputDouble<Z>,
@@ -314,8 +329,13 @@ pub(crate) mod tests {
         },
     };
 
-    use crate::algebra::residue_poly::ResiduePoly128;
-    use crate::algebra::residue_poly::ResiduePoly64;
+    use crate::algebra::structure_traits::Ring;
+    use crate::execution::sharing::shamir::ErrorCorrect;
+    use crate::execution::sharing::shamir::RevealOp;
+    use crate::{
+        algebra::residue_poly::ResiduePoly128, execution::sharing::shamir::HenselLiftInverse,
+    };
+    use crate::{algebra::residue_poly::ResiduePoly64, execution::sharing::shamir::RingEmbed};
     use crate::{
         execution::{
             large_execution::{
@@ -329,10 +349,7 @@ pub(crate) mod tests {
             runtime::session::{
                 BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
             },
-            sharing::{
-                shamir::{ShamirRing, ShamirSharing},
-                share::Share,
-            },
+            sharing::{shamir::ShamirSharings, share::Share},
         },
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, roles_from_idxs, TestingParameters,
@@ -402,7 +419,11 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for MaliciousSenderLocalDoubleShare<C, S> {
-        async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+        async fn execute<
+            Z: Ring + RingEmbed + Derive + ErrorCorrect + HenselLiftInverse,
+            R: Rng + CryptoRng,
+            L: LargeSessionHandles<R>,
+        >(
             &self,
             session: &mut L,
             secrets: &[Z],
@@ -458,7 +479,11 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for MaliciousReceiverLocalDoubleShare<C, S> {
-        async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+        async fn execute<
+            Z: Ring + RingEmbed + Derive + ErrorCorrect + HenselLiftInverse,
+            R: Rng + CryptoRng,
+            L: LargeSessionHandles<R>,
+        >(
             &self,
             session: &mut L,
             secrets: &[Z],
@@ -512,7 +537,10 @@ pub(crate) mod tests {
         }
     }
 
-    fn test_ldl_strategies<Z: ShamirRing + Derive, LD: LocalDoubleShare + 'static>(
+    fn test_ldl_strategies<
+        Z: Ring + RingEmbed + Derive + ErrorCorrect + HenselLiftInverse,
+        LD: LocalDoubleShare + 'static,
+    >(
         params: TestingParameters,
         malicious_ldl: LD,
     ) {
@@ -604,8 +632,8 @@ pub(crate) mod tests {
                         result_ldl.get(&sender_role).unwrap().share_2t[secret_id],
                     ));
                 }
-                let shamir_sharing_t = ShamirSharing::create(vec_shares_t);
-                let shamir_sharing_2t = ShamirSharing::create(vec_shares_2t);
+                let shamir_sharing_t = ShamirSharings::create(vec_shares_t);
+                let shamir_sharing_2t = ShamirSharings::create(vec_shares_2t);
                 let result_t = shamir_sharing_t.reconstruct(params.threshold);
                 let result_2t = shamir_sharing_2t.reconstruct(2 * params.threshold);
                 assert!(result_t.is_ok());

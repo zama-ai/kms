@@ -6,6 +6,7 @@ use std::{cmp::min, collections::HashMap};
 
 use super::{agree_random::AgreeRandom, prf::PRSSConversions};
 use crate::execution::config::BatchParams;
+use crate::execution::sharing::shamir::{ErrorCorrect, HenselLiftInverse, RevealOp, RingEmbed};
 use crate::{
     algebra::structure_traits::Ring,
     execution::{
@@ -16,10 +17,7 @@ use crate::{
         },
         runtime::party::Role,
         runtime::session::SmallSessionHandles,
-        sharing::{
-            shamir::{ShamirRing, ShamirSharing},
-            share::Share,
-        },
+        sharing::{shamir::ShamirSharings, share::Share},
     },
     networking::value::BroadcastValue,
 };
@@ -31,7 +29,13 @@ pub struct SmallPreprocessing<Z: Ring, A> {
     _marker: std::marker::PhantomData<A>,
 }
 
-impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Sync> SmallPreprocessing<Z, A> {
+impl<Z, A: AgreeRandom + Send + Sync> SmallPreprocessing<Z, A>
+where
+    Z: PRSSConversions,
+    Z: RingEmbed,
+    Z: ErrorCorrect,
+    Z: HenselLiftInverse,
+{
     /// Initializes the preprocessing for a new epoch, by preprocessing a batch
     /// NOTE: if None is passed for the option for `batch_sizes`, then the default values are used.
     pub async fn init<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
@@ -187,7 +191,10 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Sync> SmallPreproc
         session: &mut Ses,
         amount: usize,
         d_recons: HashMap<Role, BroadcastValue<Z>>,
-    ) -> anyhow::Result<Vec<Option<Z>>> {
+    ) -> anyhow::Result<Vec<Option<Z>>>
+    where
+        Z: ErrorCorrect,
+    {
         let mut collected_shares = vec![Vec::with_capacity(session.num_parties()); amount];
         // Go through the Role/value map of a broadcast of vectors of values and turn them into a vector of vectors of indexed values.
         // I.e. transpose the result and convert the role and value into indexed values
@@ -230,7 +237,7 @@ impl<Z: Ring + PRSSConversions + ShamirRing, A: AgreeRandom + Sync> SmallPreproc
         Ok(collected_shares
             .into_iter()
             .map(|cur_collection| {
-                let sharing = ShamirSharing::create(cur_collection);
+                let sharing = ShamirSharings::create(cur_collection);
                 if let Ok(r) = sharing.err_reconstruct(2 * session.threshold() as usize, max_errors)
                 {
                     Some(r)
@@ -378,6 +385,10 @@ impl<Z: Ring, A: AgreeRandom> Preprocessing<Z> for SmallPreprocessing<Z, A> {
 mod test {
     use std::{collections::HashMap, num::Wrapping};
 
+    use crate::algebra::structure_traits::Ring;
+    use crate::execution::sharing::shamir::ErrorCorrect;
+    use crate::execution::sharing::shamir::HenselLiftInverse;
+    use crate::execution::sharing::shamir::RingEmbed;
     use crate::{
         algebra::{
             residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
@@ -392,7 +403,7 @@ mod test {
             runtime::session::{
                 BaseSessionHandles, ParameterHandles, SmallSession, SmallSessionHandles,
             },
-            sharing::{shamir::ShamirRing, share::Share},
+            sharing::share::Share,
             small_execution::{
                 agree_random::DummyAgreeRandom,
                 offline::{BatchParams, SmallPreprocessing},
@@ -409,7 +420,7 @@ mod test {
     const RANDOM_BATCH_SIZE: usize = 10;
     const TRIPLE_BATCH_SIZE: usize = 10;
 
-    fn test_rand_generation<Z: ShamirRing + PRSSConversions>() {
+    fn test_rand_generation<Z: RingEmbed + PRSSConversions + ErrorCorrect + HenselLiftInverse>() {
         let parties = 4;
         let threshold = 1;
 
@@ -474,7 +485,9 @@ mod test {
         test_rand_generation::<ResiduePoly64>();
     }
 
-    fn test_triple_generation<Z: ShamirRing + PRSSConversions>() {
+    fn test_triple_generation<
+        Z: Ring + RingEmbed + PRSSConversions + ErrorCorrect + HenselLiftInverse,
+    >() {
         let parties = 4;
         let threshold = 1;
 

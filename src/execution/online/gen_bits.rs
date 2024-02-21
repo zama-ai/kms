@@ -2,11 +2,15 @@ use super::{
     preprocessing::{DummyPreprocessing, Preprocessing},
     triple::{mult_list, open_list},
 };
+use crate::{algebra::structure_traits::Ring, execution::sharing::shamir::RingEmbed};
 use crate::{
     algebra::structure_traits::ZConsts,
     execution::{
         runtime::session::BaseSessionHandles,
-        sharing::{shamir::ShamirRing, share::Share},
+        sharing::{
+            shamir::{ErrorCorrect, HenselLiftInverse},
+            share::Share,
+        },
     },
 };
 use aes_prng::AesRng;
@@ -21,7 +25,7 @@ pub trait Solve: Sized + ZConsts {
 #[async_trait]
 pub trait BitGenEven {
     async fn gen_bits_even<
-        Z: ShamirRing + Solve,
+        Z: Ring + RingEmbed + Solve + HenselLiftInverse + ErrorCorrect,
         Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
@@ -39,7 +43,7 @@ pub struct FakeBitGenEven {}
 #[async_trait]
 impl BitGenEven for FakeBitGenEven {
     async fn gen_bits_even<
-        Z: ShamirRing + Solve,
+        Z: Ring + RingEmbed,
         Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,
@@ -78,7 +82,7 @@ impl BitGenEven for RealBitGenEven {
     /// Generates a vector of secret shared random bits using a preprocessing functionality and a session.
     /// The code only works when the modulo of the ring used is even.
     async fn gen_bits_even<
-        Z: ShamirRing + Solve,
+        Z: Ring + RingEmbed + HenselLiftInverse + Solve + ErrorCorrect,
         Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
         P: Preprocessing<Z> + Send,

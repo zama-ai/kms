@@ -3,8 +3,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         runtime::session::BaseSessionHandles,
-        sharing::open::robust_opens_to_all,
-        sharing::{shamir::ShamirRing, share::Share},
+        sharing::{open::robust_opens_to_all, shamir::ErrorCorrect, share::Share},
     },
 };
 use anyhow::Context;
@@ -36,7 +35,11 @@ impl<R: Ring + Sync> Triple<R> {
 ///     [rho]       =[y]+[triple.b]
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
-pub async fn mult<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync, Ses: BaseSessionHandles<Rnd>>(
+pub async fn mult<
+    Z: Ring + ErrorCorrect,
+    Rnd: Rng + CryptoRng + Send + Sync,
+    Ses: BaseSessionHandles<Rnd>,
+>(
     x: Share<Z>,
     y: Share<Z>,
     triple: Triple<Z>,
@@ -57,7 +60,11 @@ pub async fn mult<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync, Ses: BaseSessionHa
 ///     [rho]       =[y]+[triple.b]
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
-pub async fn mult_list<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync, Ses: BaseSessionHandles<Rnd>>(
+pub async fn mult_list<
+    Z: Ring + ErrorCorrect,
+    Rnd: Rng + CryptoRng + Sync,
+    Ses: BaseSessionHandles<Rnd>,
+>(
     x_vec: &[Share<Z>],
     y_vec: &[Share<Z>],
     triples: Vec<Triple<Z>>,
@@ -117,7 +124,11 @@ pub async fn mult_list<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync, Ses: BaseSess
 }
 
 // Open a single share
-pub async fn open<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync, Ses: BaseSessionHandles<Rnd>>(
+pub async fn open<
+    Z: Ring + ErrorCorrect,
+    Rnd: Rng + CryptoRng + Send + Sync,
+    Ses: BaseSessionHandles<Rnd>,
+>(
     to_open: Share<Z>,
     session: &Ses,
 ) -> anyhow::Result<Z> {
@@ -131,7 +142,11 @@ pub async fn open<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync, Ses: BaseSessionHa
 }
 
 /// Opens a list of shares to all parties
-pub async fn open_list<Z: ShamirRing, Rnd: Rng + CryptoRng + Sync, Ses: BaseSessionHandles<Rnd>>(
+pub async fn open_list<
+    Z: Ring + ErrorCorrect,
+    Rnd: Rng + CryptoRng + Sync,
+    Ses: BaseSessionHandles<Rnd>,
+>(
     to_open: &[Share<Z>],
     session: &Ses,
 ) -> anyhow::Result<Vec<Z>> {

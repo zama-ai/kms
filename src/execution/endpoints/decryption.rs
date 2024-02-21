@@ -1,9 +1,13 @@
+#[cfg(any(test, feature = "testing"))]
+use crate::algebra::structure_traits::Ring;
 use crate::execution::large_execution::offline::LargePreprocessing;
 use crate::execution::online::bit_manipulation::{bit_dec_batch, BatchedBits};
 use crate::execution::online::gen_bits::RealBitGenEven;
 use crate::execution::online::preprocessing::Preprocessing;
 use crate::execution::runtime::session::SmallSession64;
 use crate::execution::sharing::open::robust_opens_to;
+#[cfg(any(test, feature = "testing"))]
+use crate::execution::sharing::shamir::{HenselLiftInverse, RingEmbed};
 use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
@@ -44,7 +48,6 @@ use crate::{
             session::{DecryptionMode, NetworkingImpl, SessionParameters, SmallSessionHandles},
             test_runtime::DistributedTestRuntime,
         },
-        sharing::shamir::ShamirRing,
         small_execution::prss::PRSSSetup,
     },
 };
@@ -84,13 +87,18 @@ fn combine_plaintext_blocks(
 }
 
 #[cfg(any(test, feature = "testing"))]
-async fn setup_small_session<Z: ShamirRing>(
+async fn setup_small_session<Z>(
     session_id: SessionId,
     role_assignments: RoleAssignment,
     threshold: u8,
     network: NetworkingImpl,
     identity: Identity,
-) -> SmallSession<Z> {
+) -> SmallSession<Z>
+where
+    Z: Ring,
+    Z: RingEmbed,
+    Z: HenselLiftInverse,
+{
     let mut session = SmallSession::<Z>::new(
         session_id,
         role_assignments,
@@ -153,7 +161,7 @@ pub async fn init_prep_bitdec_large(
 
 /// test the threshold decryption
 #[cfg(any(test, feature = "testing"))]
-pub fn threshold_decrypt64<Z: ShamirRing>(
+pub fn threshold_decrypt64<Z: Ring>(
     runtime: &DistributedTestRuntime<Z>,
     ct: Ciphertext64,
     mode: DecryptionMode,
@@ -547,9 +555,7 @@ pub fn partial_decrypt64(
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
-    use rand::SeedableRng;
-
+    use crate::execution::sharing::shamir::RevealOp;
     use crate::{
         algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
         execution::{
@@ -560,11 +566,13 @@ mod tests {
                 session::DecryptionMode,
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
-            sharing::{shamir::ShamirSharing, share::Share},
+            sharing::{shamir::ShamirSharings, share::Share},
         },
         file_handling::read_element,
         lwe::{keygen_all_party_shares, KeySet},
     };
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
     use std::sync::Arc;
 
     #[test]
@@ -580,7 +588,7 @@ mod tests {
                 *shares[i].input_key_share128.get(0).unwrap(),
             ));
         });
-        let first_bit_sharing = ShamirSharing::create(first_bit_shares);
+        let first_bit_sharing = ShamirSharings::create(first_bit_shares);
         let rec = first_bit_sharing.err_reconstruct(1, 0).unwrap();
         let inner_rec = rec.to_scalar().unwrap();
         assert_eq!(

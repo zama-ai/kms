@@ -11,7 +11,7 @@ use crate::{
         runtime::party::Role,
         runtime::session::LargeSessionHandles,
         sharing::{
-            shamir::{ShamirRing, ShamirSharing},
+            shamir::{ErrorCorrect, HenselLiftInverse, RevealOp, RingEmbed, ShamirSharings},
             share::Share,
         },
     },
@@ -48,7 +48,11 @@ pub trait LocalSingleShare: Send + Sync + Default + Clone {
     /// Output:
     /// - A HashMap that maps role to the vector of shares receive from that party (including my own shares).
     /// Corrupt parties are mapped to the default 0 sharing
-    async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<
+        Z: Ring + RingEmbed + HenselLiftInverse + Derive + ErrorCorrect,
+        R: Rng + CryptoRng,
+        L: LargeSessionHandles<R>,
+    >(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -72,7 +76,11 @@ pub struct RealLocalSingleShare<C: Coinflip, S: ShareDispute> {
 
 #[async_trait]
 impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, S> {
-    async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<
+        Z: Ring + RingEmbed + HenselLiftInverse + Derive + ErrorCorrect,
+        R: Rng + CryptoRng,
+        L: LargeSessionHandles<R>,
+    >(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -113,7 +121,7 @@ async fn send_receive_pads<Z, R, L, S>(
     share_dispute: &S,
 ) -> anyhow::Result<ShareDisputeOutput<Z>>
 where
-    Z: ShamirRing,
+    Z: Ring + RingEmbed + HenselLiftInverse,
     R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
     S: ShareDispute,
@@ -123,7 +131,11 @@ where
     share_dispute.execute(session, &my_pads).await
 }
 
-async fn verify_sharing<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+async fn verify_sharing<
+    Z: Ring + Derive + ErrorCorrect,
+    R: Rng + CryptoRng,
+    L: LargeSessionHandles<R>,
+>(
     session: &mut L,
     secrets: &mut ShareDisputeOutput<Z>,
     pads: &ShareDisputeOutput<Z>,
@@ -238,7 +250,7 @@ pub(crate) fn compute_check_values<Z: Ring>(
 //Verify that the sender for each lsl did give a 0 share to parties it is in dispute with
 //and that the overall sharing is a degree t polynomial
 pub(crate) fn verify_sender_challenge<
-    Z: ShamirRing,
+    Z: Ring + ErrorCorrect,
     R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
 >(
@@ -290,7 +302,7 @@ pub(crate) fn verify_sender_challenge<
                 .iter()
                 .map(|(role, share)| Share::new(*role, *share))
                 .collect_vec();
-            let sharing = ShamirSharing::create(sharing);
+            let sharing = ShamirSharings::create(sharing);
             let try_reconstruct = sharing.err_reconstruct(threshold, 0);
 
             if let Ok(value) = try_reconstruct {
@@ -372,6 +384,10 @@ pub(crate) mod tests {
             Vss,
         },
     };
+    use crate::execution::sharing::shamir::ErrorCorrect;
+    use crate::execution::sharing::shamir::HenselLiftInverse;
+    use crate::execution::sharing::shamir::RevealOp;
+    use crate::execution::sharing::shamir::RingEmbed;
     use crate::{
         execution::{
             large_execution::{
@@ -383,16 +399,14 @@ pub(crate) mod tests {
             runtime::session::{
                 BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
             },
-            sharing::{
-                shamir::{ShamirRing, ShamirSharing},
-                share::Share,
-            },
+            sharing::{shamir::ShamirSharings, share::Share},
         },
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, roles_from_idxs, TestingParameters,
         },
     };
 
+    use crate::algebra::structure_traits::Ring;
     use aes_prng::AesRng;
     use async_trait::async_trait;
     use itertools::Itertools;
@@ -459,7 +473,11 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<C: Coinflip, S: ShareDispute> LocalSingleShare for MaliciousSenderLocalSingleShare<C, S> {
-        async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+        async fn execute<
+            Z: Ring + RingEmbed + Derive + HenselLiftInverse + ErrorCorrect,
+            R: Rng + CryptoRng,
+            L: LargeSessionHandles<R>,
+        >(
             &self,
             session: &mut L,
             secrets: &[Z],
@@ -501,7 +519,11 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl<C: Coinflip, S: ShareDispute> LocalSingleShare for MaliciousReceiverLocalSingleShare<C, S> {
-        async fn execute<Z: ShamirRing + Derive, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+        async fn execute<
+            Z: Ring + RingEmbed + Derive + ErrorCorrect + HenselLiftInverse,
+            R: Rng + CryptoRng,
+            L: LargeSessionHandles<R>,
+        >(
             &self,
             session: &mut L,
             secrets: &[Z],
@@ -538,7 +560,10 @@ pub(crate) mod tests {
         }
     }
 
-    fn test_lsl_strategies<Z: ShamirRing + Derive, L: LocalSingleShare + 'static>(
+    fn test_lsl_strategies<
+        Z: Ring + RingEmbed + Derive + HenselLiftInverse + ErrorCorrect,
+        L: LocalSingleShare + 'static,
+    >(
         params: TestingParameters,
         malicious_lsl: L,
     ) {
@@ -625,7 +650,7 @@ pub(crate) mod tests {
                         result_lsl.get(&sender_role).unwrap()[secret_id],
                     ));
                 }
-                let shamir_sharing = ShamirSharing::create(vec_shares);
+                let shamir_sharing = ShamirSharings::create(vec_shares);
                 let result = shamir_sharing.reconstruct(params.threshold);
                 assert!(result.is_ok());
                 assert_eq!(result.unwrap(), expected_secret);

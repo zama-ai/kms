@@ -160,12 +160,16 @@ pub mod tests {
     use itertools::Itertools;
     use tfhe::core_crypto::entities::{GlweSecretKeyOwned, LweSecretKeyOwned};
 
+    use crate::execution::sharing::shamir::RevealOp;
     use crate::{
         algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
         execution::{
             endpoints::keygen::{DKGParams, PrivateKeySet},
             runtime::party::Role,
-            sharing::{shamir::ShamirSharing, share::Share},
+            sharing::{
+                shamir::{ErrorCorrect, ShamirSharings},
+                share::Share,
+            },
         },
     };
 
@@ -174,7 +178,10 @@ pub mod tests {
         expected_num_glwe_ctxt: usize,
         polynomial_size: usize,
         threshold: usize,
-    ) -> Vec<Vec<Z>> {
+    ) -> Vec<Vec<Z>>
+    where
+        ResiduePoly<Z>: ErrorCorrect,
+    {
         let mut output_body_vec = Vec::new();
         for glwe_ctxt_idx in 0..expected_num_glwe_ctxt {
             let mut body = Vec::new();
@@ -186,7 +193,7 @@ pub mod tests {
                     vec_body.push(values[curr_glwe_ctxt_index]);
                 }
                 body.push(
-                    ShamirSharing::create(vec_body)
+                    ShamirSharings::create(vec_body)
                         .reconstruct(threshold)
                         .unwrap()
                         .to_scalar()
@@ -203,7 +210,10 @@ pub mod tests {
         input: HashMap<Role, Vec<Share<ResiduePoly<Z>>>>,
         expected_num_bits: usize,
         threshold: usize,
-    ) -> Vec<u64> {
+    ) -> Vec<u64>
+    where
+        ResiduePoly<Z>: ErrorCorrect,
+    {
         let mut output_bit_vec = Vec::new();
         for idx in 0..expected_num_bits {
             let mut vec_bit = Vec::new();
@@ -211,7 +221,7 @@ pub mod tests {
                 vec_bit.push(values[idx]);
             }
 
-            let key_bit = ShamirSharing::create(vec_bit)
+            let key_bit = ShamirSharings::create(vec_bit)
                 .reconstruct(threshold)
                 .unwrap()
                 .to_scalar()
@@ -232,7 +242,10 @@ pub mod tests {
         parties: usize,
         threshold: usize,
         params: DKGParams,
-    ) -> LweSecretKeyOwned<u64> {
+    ) -> LweSecretKeyOwned<u64>
+    where
+        ResiduePoly<Z>: ErrorCorrect,
+    {
         let mut sk_shares = HashMap::new();
         for party in 0..parties {
             sk_shares.insert(
@@ -265,7 +278,10 @@ pub mod tests {
         parties: usize,
         threshold: usize,
         params: DKGParams,
-    ) -> (GlweSecretKeyOwned<u64>, Option<GlweSecretKeyOwned<u128>>) {
+    ) -> (GlweSecretKeyOwned<u64>, Option<GlweSecretKeyOwned<u128>>)
+    where
+        ResiduePoly<Z>: ErrorCorrect,
+    {
         let mut sk_shares = HashMap::new();
         for party in 0..parties {
             sk_shares.insert(

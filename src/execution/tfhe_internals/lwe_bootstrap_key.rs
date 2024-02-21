@@ -20,7 +20,9 @@ use crate::{
     algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
     error::error_handler::anyhow_error_and_log,
     execution::{
-        online::triple::open_list, runtime::session::BaseSessionHandles, sharing::share::Share,
+        online::triple::open_list,
+        runtime::session::BaseSessionHandles,
+        sharing::{shamir::ErrorCorrect, share::Share},
     },
 };
 
@@ -80,7 +82,12 @@ impl<Z: BaseRing> LweBootstrapKeyShare<Z> {
     pub fn encryption_type(&self) -> EncryptionType {
         self.ggsw_list[0].data[0].data[0].encryption_type
     }
+}
 
+impl<Z: BaseRing> LweBootstrapKeyShare<Z>
+where
+    ResiduePoly<Z>: ErrorCorrect,
+{
     pub async fn open_to_tfhers_type<
         Scalar: UnsignedInteger,
         R: Rng + CryptoRng + Sync,

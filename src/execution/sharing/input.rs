@@ -10,14 +10,20 @@ use rand::{CryptoRng, Rng};
 use std::sync::Arc;
 use tokio::{task::JoinSet, time::timeout_at};
 
-use super::shamir::{ShamirRing, ShamirSharing};
+use super::shamir::ShamirSharings;
+use crate::algebra::structure_traits::Ring;
+use crate::execution::sharing::shamir::InputOp;
 
-pub async fn robust_input<Z: ShamirRing, R: Rng + CryptoRng>(
+pub async fn robust_input<Z, R: Rng + CryptoRng>(
     session: &mut BaseSession,
     value: &Option<Z>,
     role: &Role,
     input_party_id: usize,
-) -> anyhow::Result<Z> {
+) -> anyhow::Result<Z>
+where
+    Z: Ring,
+    ShamirSharings<Z>: InputOp<Z>,
+{
     session.network().increase_round_counter().await?;
     if role.one_based() == input_party_id {
         let threshold = session.threshold();
@@ -35,7 +41,7 @@ pub async fn robust_input<Z: ShamirRing, R: Rng + CryptoRng>(
         let num_parties = session.num_parties();
 
         let shamir_sharings =
-            ShamirSharing::share(session.rng(), si, num_parties, threshold as usize)?;
+            ShamirSharings::share(session.rng(), si, num_parties, threshold as usize)?;
         let roles: Vec<_> = shamir_sharings
             .shares
             .iter()

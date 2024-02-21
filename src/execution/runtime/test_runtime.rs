@@ -8,7 +8,7 @@ use crate::{
     algebra::structure_traits::Ring,
     computation::SessionId,
     execution::{
-        sharing::shamir::ShamirRing,
+        sharing::shamir::{HenselLiftInverse, RingEmbed},
         small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
     },
     lwe::{BootstrappingKey, SecretKeyShare},
@@ -39,7 +39,7 @@ pub fn generate_fixed_identities(parties: usize) -> Vec<Identity> {
     res
 }
 
-impl<Z: ShamirRing> DistributedTestRuntime<Z> {
+impl<Z: Ring> DistributedTestRuntime<Z> {
     pub fn new(identities: Vec<Identity>, threshold: u8) -> Self {
         let role_assignments: RoleAssignment = identities
             .clone()
@@ -87,28 +87,22 @@ impl<Z: ShamirRing> DistributedTestRuntime<Z> {
     pub fn setup_prss(&mut self, setups: Option<HashMap<usize, PRSSSetup<Z>>>) {
         self.prss_setups = setups;
     }
-
-    // Setups and adds a PRSS state with DummyAgreeRandom to the current session
-    pub fn add_dummy_prss(session: &mut SmallSession<Z>) {
-        // this only works for DummyAgreeRandom
-        // for RealAgreeRandom this needs to happen async/in parallel, so the parties can actually talk to each other at the same time
-        // ==> use a JoinSet where this is called and collect the results later.
-        // see also setup_prss_sess() below
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let _guard = rt.enter();
-        let prss_setup = rt
-            .block_on(async {
-                PRSSSetup::init_with_abort::<
-                    DummyAgreeRandom,
-                    AesRng,
-                    SmallSessionStruct<Z, AesRng, SessionParameters>,
-                >(session)
-                .await
-            })
-            .unwrap();
-        session.prss_state = Some(prss_setup.new_prss_session_state(session.session_id()));
+    pub fn large_session_for_party(
+        &self,
+        session_id: SessionId,
+        player_id: usize,
+    ) -> anyhow::Result<LargeSession> {
+        let role_assignments = self.role_assignments.clone();
+        let net = Arc::clone(&self.user_nets[player_id]);
+        let own_role = Role::indexed_by_zero(player_id);
+        let identity = self.role_assignments[&own_role].clone();
+        let parameters =
+            SessionParameters::new(self.threshold, session_id, identity, role_assignments)?;
+        LargeSession::new(parameters, net)
     }
+}
 
+impl<Z: Ring> DistributedTestRuntime<Z> {
     pub fn small_session_for_party(
         &self,
         session_id: SessionId,
@@ -136,18 +130,32 @@ impl<Z: ShamirRing> DistributedTestRuntime<Z> {
             rng,
         )
     }
+}
 
-    pub fn large_session_for_party(
-        &self,
-        session_id: SessionId,
-        party_id: usize,
-    ) -> anyhow::Result<LargeSession> {
-        let role_assignments = self.role_assignments.clone();
-        let net = Arc::clone(&self.user_nets[party_id]);
-        let own_role = Role::indexed_by_zero(party_id);
-        let identity = self.role_assignments[&own_role].clone();
-        let parameters =
-            SessionParameters::new(self.threshold, session_id, identity, role_assignments)?;
-        LargeSession::new(parameters, net)
+impl<Z> DistributedTestRuntime<Z>
+where
+    Z: Ring,
+    Z: RingEmbed,
+    Z: HenselLiftInverse,
+{
+    // Setups and adds a PRSS state with DummyAgreeRandom to the current session
+    pub fn add_dummy_prss(session: &mut SmallSession<Z>) {
+        // this only works for DummyAgreeRandom
+        // for RealAgreeRandom this needs to happen async/in parallel, so the parties can actually talk to each other at the same time
+        // ==> use a JoinSet where this is called and collect the results later.
+        // see also setup_prss_sess() below
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+        let prss_setup = rt
+            .block_on(async {
+                PRSSSetup::init_with_abort::<
+                    DummyAgreeRandom,
+                    AesRng,
+                    SmallSessionStruct<Z, AesRng, SessionParameters>,
+                >(session)
+                .await
+            })
+            .unwrap();
+        session.prss_state = Some(prss_setup.new_prss_session_state(session.session_id()));
     }
 }

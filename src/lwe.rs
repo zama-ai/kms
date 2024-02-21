@@ -9,7 +9,7 @@ use crate::execution::constants::REAL_KEY_PATH;
 use crate::execution::random::get_rng;
 use crate::execution::random::secret_rng_from_seed;
 use crate::execution::random::seed_from_rng;
-use crate::execution::sharing::shamir::ShamirRing;
+use crate::execution::sharing::shamir::RingEmbed;
 use crate::file_handling::read_as_json;
 use aligned_vec::ABox;
 use core::fmt;
@@ -93,6 +93,7 @@ pub(crate) fn gen_single_party_share<R: Rng + CryptoRng, Z>(
 ) -> anyhow::Result<ResiduePoly<Z>>
 where
     Z: BaseRing,
+    ResiduePoly<Z>: RingEmbed,
 {
     let embedded_secret = ResiduePoly::from_scalar(secret);
     let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);

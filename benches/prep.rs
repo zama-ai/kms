@@ -13,6 +13,7 @@ use distributed_decryption::execution::online::gen_bits::{BitGenEven, RealBitGen
 use distributed_decryption::execution::runtime::session::ParameterHandles;
 use distributed_decryption::execution::runtime::session::SmallSessionHandles;
 use distributed_decryption::execution::runtime::session::{LargeSession, SmallSession128};
+use distributed_decryption::execution::sharing::shamir::{InputOp, RevealOp};
 use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandom;
 use distributed_decryption::execution::small_execution::offline::SmallPreprocessing;
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
@@ -373,7 +374,7 @@ fn bitgen_nlarge(c: &mut Criterion) {
 }
 
 fn batch_decode2t(c: &mut Criterion) {
-    use distributed_decryption::execution::sharing::shamir::ShamirSharing;
+    use distributed_decryption::execution::sharing::shamir::ShamirSharings;
     use std::num::Wrapping;
 
     let mut group = c.benchmark_group("batch_decode2t");
@@ -400,9 +401,9 @@ fn batch_decode2t(c: &mut Criterion) {
 
         let mut rng = AesRng::seed_from_u64(0);
 
-        let prep: Vec<ShamirSharing<_>> = (0..config.batch_size)
+        let prep: Vec<ShamirSharings<_>> = (0..config.batch_size)
             .map(|idx| {
-                ShamirSharing::share(
+                ShamirSharings::share(
                     &mut rng,
                     ResiduePoly128::from_scalar(Wrapping(idx as u128)),
                     config.n,

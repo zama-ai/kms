@@ -1,12 +1,15 @@
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use distributed_decryption::execution::sharing::shamir::{InputOp, RevealOp};
 use distributed_decryption::{
     algebra::{
         gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing, GF256},
         residue_poly::{ResiduePoly128, ResiduePoly64},
     },
-    execution::sharing::shamir::ShamirSharing,
+    execution::sharing::shamir::ShamirSharings,
 };
+use pprof::criterion::Output;
+use pprof::criterion::PProfProfiler;
 use rand::SeedableRng;
 use std::num::Wrapping;
 
@@ -52,16 +55,16 @@ fn bench_decode_z128(c: &mut Criterion) {
 
     for p in &params {
         let (num_parties, threshold, max_err) = *p;
-        let p_str = format!("n:{num_parties} t:{threshold} e:{max_err}");
+        let p_str = format!("n:{num_parties}/t:{threshold}/e:{max_err}");
         assert!(num_parties >= (threshold + 1) + 2 * max_err);
 
         group.bench_function(BenchmarkId::new("decode", p_str), |b| {
             let mut rng = AesRng::seed_from_u64(0);
             let secret = ResiduePoly128::from_scalar(Wrapping(23425));
-            let sharing = ShamirSharing::share(&mut rng, secret, num_parties, threshold).unwrap();
+            let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
 
             b.iter(|| {
-                //let recon = sharings.decode(threshold, max_err).unwrap();
+                //let recon = sharings.error_correct(threshold, max_err).unwrap();
                 //let f_zero = recon.eval(&ResiduePoly::ZERO);
                 let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
                 assert_eq!(f_zero.to_scalar().unwrap(), secret.to_scalar().unwrap());
@@ -83,7 +86,7 @@ fn bench_decode_z64(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("decode", p_str), |b| {
             let mut rng = AesRng::seed_from_u64(0);
             let secret = ResiduePoly64::from_scalar(Wrapping(23425));
-            let sharing = ShamirSharing::share(&mut rng, secret, num_parties, threshold).unwrap();
+            let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
 
             b.iter(|| {
                 let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
@@ -93,5 +96,9 @@ fn bench_decode_z64(c: &mut Criterion) {
     }
 }
 
-criterion_group!(decode, bench_decode_z2, bench_decode_z128, bench_decode_z64,);
+criterion_group! {
+    name = decode;
+    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    targets = bench_decode_z2, bench_decode_z128, bench_decode_z64,
+}
 criterion_main!(decode);

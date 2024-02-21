@@ -1,12 +1,10 @@
 use crate::{
-    algebra::poly::Poly,
-    algebra::structure_traits::Ring,
+    algebra::{poly::Poly, structure_traits::Ring},
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::p2p::{receive_from_parties_w_dispute, send_to_parties_w_dispute},
-        runtime::party::Role,
-        runtime::session::LargeSessionHandles,
-        sharing::shamir::ShamirRing,
+        runtime::{party::Role, session::LargeSessionHandles},
+        sharing::shamir::{HenselLiftInverse, RingEmbed},
     },
     networking::value::NetworkValue,
 };
@@ -35,7 +33,11 @@ pub trait ShareDispute: Send + Sync + Clone + Default {
     /// Returns:
     /// - a hashmap which maps roles to shares I received
     /// - another hashmap which maps roles to shares I sent
-    async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<
+        Z: Ring + RingEmbed + HenselLiftInverse,
+        R: Rng + CryptoRng,
+        L: LargeSessionHandles<R>,
+    >(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -44,7 +46,11 @@ pub trait ShareDispute: Send + Sync + Clone + Default {
     /// Executes the ShareDispute protocol on a vector of secrets,
     /// actually sharing the secret using a sharing of degree t and one of degree 2t
     /// Needed for doubleSharings
-    async fn execute_double<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute_double<
+        Z: Ring + RingEmbed + HenselLiftInverse,
+        R: Rng + CryptoRng,
+        L: LargeSessionHandles<R>,
+    >(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -72,13 +78,16 @@ fn compute_puncture_idx<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         .collect())
 }
 
-fn share_secrets<Z: ShamirRing, R: Rng + CryptoRng>(
+fn share_secrets<Z, R: Rng + CryptoRng>(
     rng: &mut R,
     secrets: &[Z],
     punctured_idx: &[usize],
     num_parties: usize,
     degree: usize,
-) -> anyhow::Result<Vec<Vec<Z>>> {
+) -> anyhow::Result<Vec<Vec<Z>>>
+where
+    Z: Ring + RingEmbed + HenselLiftInverse,
+{
     secrets
         .iter()
         .map(|secret| {
@@ -106,7 +115,11 @@ fn fill_incomplete_output<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>
 
 #[async_trait]
 impl ShareDispute for RealShareDispute {
-    async fn execute_double<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute_double<
+        Z: Ring + RingEmbed + HenselLiftInverse,
+        R: Rng + CryptoRng,
+        L: LargeSessionHandles<R>,
+    >(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -156,7 +169,11 @@ impl ShareDispute for RealShareDispute {
         send_and_receive_share_dispute_double(session, polypoints_map, secrets.len()).await
     }
 
-    async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    async fn execute<
+        Z: Ring + RingEmbed + HenselLiftInverse,
+        R: Rng + CryptoRng,
+        L: LargeSessionHandles<R>,
+    >(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -345,13 +362,18 @@ async fn send_and_receive_share_dispute_single<
 
 /// Constructs a random polynomial given a set of `threshold` party IDs which should evaluate to 0 on the interpolated polynomial.
 /// Returns all the `num_parties` y-values interpolated from the `dispute_party_ids` point embedded onto the x-axis.
-pub fn interpolate_poly_w_punctures<Z: ShamirRing, R: Rng + CryptoRng>(
+pub fn interpolate_poly_w_punctures<Z, R: Rng + CryptoRng>(
     rng: &mut R,
     num_parties: usize,
     threshold: usize,
     dispute_party_ids: Vec<usize>,
     secret: Z,
-) -> anyhow::Result<Vec<Z>> {
+) -> anyhow::Result<Vec<Z>>
+where
+    Z: Ring,
+    Z: RingEmbed,
+    Z: HenselLiftInverse,
+{
     if threshold < dispute_party_ids.len() {
         return Err(anyhow_error_and_log(format!(
             "Too many disputes, {:?}, for threshold {}",
@@ -378,11 +400,16 @@ pub fn interpolate_poly_w_punctures<Z: ShamirRing, R: Rng + CryptoRng>(
 /// More specifically the values in [points_of_zero_roots] gets embedded on the polynomial to ensure they are invertable, then
 /// the polynomial gets modified to ensure that each of the points in [points_of_zero_roots] will have y-value 0
 /// by increasing its degres with |points_of_zero_roots|. Then the polynomial is evaluated in embedded points 0..[num_partes] and this is returned.
-pub fn evaluate_w_zero_roots<Z: ShamirRing>(
+pub fn evaluate_w_zero_roots<Z>(
     num_parties: usize,
     points_of_zero_roots: Vec<usize>,
     base_poly: &Poly<Z>,
-) -> anyhow::Result<Vec<Z>> {
+) -> anyhow::Result<Vec<Z>>
+where
+    Z: Ring,
+    Z: RingEmbed,
+    Z: HenselLiftInverse,
+{
     let (normalized_parties_root, x_coords) = Poly::<Z>::normalized_parties_root(num_parties)?;
     let mut poly = base_poly.clone();
 
@@ -401,6 +428,10 @@ pub(crate) mod tests {
         compute_puncture_idx, evaluate_w_zero_roots, send_and_receive_share_dispute_double,
         send_and_receive_share_dispute_single, share_secrets,
     };
+    use crate::execution::sharing::shamir::ErrorCorrect;
+    use crate::execution::sharing::shamir::HenselLiftInverse;
+    use crate::execution::sharing::shamir::RevealOp;
+    use crate::execution::sharing::shamir::RingEmbed;
     use crate::{
         algebra::{
             poly::Poly,
@@ -419,10 +450,7 @@ pub(crate) mod tests {
                     BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
                 },
             },
-            sharing::{
-                shamir::{ShamirRing, ShamirSharing},
-                share::Share,
-            },
+            sharing::{shamir::ShamirSharings, share::Share},
         },
         networking::value::NetworkValue,
         tests::helper::tests::{
@@ -564,7 +592,11 @@ pub(crate) mod tests {
 
     #[async_trait]
     impl ShareDispute for MaliciousShareDisputeRecons {
-        async fn execute_double<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+        async fn execute_double<
+            Z: Ring + RingEmbed + HenselLiftInverse,
+            R: Rng + CryptoRng,
+            L: LargeSessionHandles<R>,
+        >(
             &self,
             session: &mut L,
             secrets: &[Z],
@@ -618,7 +650,11 @@ pub(crate) mod tests {
             send_and_receive_share_dispute_double(session, polypoints_map, secrets.len()).await
         }
 
-        async fn execute<Z: ShamirRing, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+        async fn execute<
+            Z: Ring + RingEmbed + HenselLiftInverse,
+            R: Rng + CryptoRng,
+            L: LargeSessionHandles<R>,
+        >(
             &self,
             session: &mut L,
             secrets: &[Z],
@@ -662,7 +698,10 @@ pub(crate) mod tests {
     /// Test share_dispute for different malicious strategies, doing both execute and execute_double
     /// Accepts a set of dispute pairs that will be inserted to the honest parties' sessions
     /// before executing the protocol
-    fn test_share_dispute_strategies<Z: ShamirRing, S: ShareDispute + 'static>(
+    fn test_share_dispute_strategies<
+        Z: Ring + RingEmbed + ErrorCorrect + HenselLiftInverse,
+        S: ShareDispute + 'static,
+    >(
         params: TestingParameters,
         malicious_share_dispute: S,
     ) {
@@ -801,19 +840,19 @@ pub(crate) mod tests {
             if !malicious_due_to_dispute.contains(&role_pi) {
                 for (idx_secret, expected_secret) in secrets_pi.iter().enumerate() {
                     //Reconstruct the secret shared by execute
-                    let reconst_single_t = ShamirSharing::create(
+                    let reconst_single_t = ShamirSharings::create(
                         reconstruction_vectors_single[role_pi.zero_based()][idx_secret].clone(),
                     )
                     .reconstruct(params.threshold);
 
                     //Reconstruct the secret of degree t shared by execute_double
-                    let reconst_double_t = ShamirSharing::create(
+                    let reconst_double_t = ShamirSharings::create(
                         reconstruction_vectors_double_t[role_pi.zero_based()][idx_secret].clone(),
                     )
                     .reconstruct(params.threshold);
 
                     //Reconstruct the secret of degree 2t shared by execute_double
-                    let reconst_double_2t = ShamirSharing::create(
+                    let reconst_double_2t = ShamirSharings::create(
                         reconstruction_vectors_double_2t[role_pi.zero_based()][idx_secret].clone(),
                     )
                     .reconstruct(2 * params.threshold);
@@ -967,7 +1006,7 @@ pub(crate) mod tests {
         let points = (1..parties)
             .map(|x| Share::new(Role::indexed_by_one(x), interpolation[x - 1]))
             .collect();
-        let sham = ShamirSharing::create(points);
+        let sham = ShamirSharings::create(points);
         // Reconstruct the message and check it is as expected
         let ref_msg = sham
             .err_reconstruct(threshold, dispute_ids.len())
