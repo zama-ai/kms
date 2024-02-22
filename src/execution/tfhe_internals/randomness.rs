@@ -29,6 +29,7 @@ pub struct MPCEncryptionRandomGenerator<Z: BaseRing, Gen: ByteRandomGenerator> {
     pub noise: MPCNoiseRandomGenerator<Z>,
 }
 
+#[derive(Default)]
 pub struct MPCNoiseRandomGenerator<Z: BaseRing> {
     pub vec: Vec<ResiduePoly<Z>>,
 }
@@ -182,6 +183,13 @@ impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
 }
 
 impl<Z: BaseRing, Gen: ByteRandomGenerator> MPCEncryptionRandomGenerator<Z, Gen> {
+    pub(crate) fn new_from_seed(seed: u128) -> Self {
+        Self {
+            mask: MPCMaskRandomGenerator::<Gen>::new_from_seed(seed),
+            noise: Default::default(),
+        }
+    }
+
     pub(crate) fn fill_noise(&mut self, fill_with: Vec<ResiduePoly<Z>>) {
         self.noise = MPCNoiseRandomGenerator { vec: fill_with };
     }

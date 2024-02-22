@@ -137,9 +137,11 @@ mod tests {
         algebra::{base_ring::Z64, residue_poly::ResiduePoly64},
         execution::{
             online::{
-                gen_bits::{BitGenEven, FakeBitGenEven, RealBitGenEven},
-                preprocessing::DummyPreprocessing,
-                secret_distributions::{RealSecretDistributions, SecretDistributions},
+                gen_bits::{BitGenEven, RealBitGenEven},
+                preprocessing::dummy::DummyPreprocessing,
+                secret_distributions::{
+                    RealSecretDistributions, SecretDistributions, TUniformBound,
+                },
             },
             runtime::session::{LargeSession, ParameterHandles},
             tfhe_internals::{
@@ -205,18 +207,15 @@ mod tests {
 
             //Prepare enough noise for the ksk
             let t_uniform_amount = glwe_dimension * polynomial_size * ksk_level_count;
-            let vec_tuniform_noise =
-                RealSecretDistributions::t_uniform::<_, _, _, _, FakeBitGenEven>(
-                    t_uniform_amount,
-                    t_uniform_bound_lwe,
-                    &mut large_preproc,
-                    &mut session,
-                )
-                .await
-                .unwrap()
-                .iter()
-                .map(|share| share.value())
-                .collect_vec();
+            let vec_tuniform_noise = RealSecretDistributions::t_uniform(
+                t_uniform_amount,
+                TUniformBound(t_uniform_bound_lwe),
+                &mut large_preproc,
+            )
+            .unwrap()
+            .iter()
+            .map(|share| share.value())
+            .collect_vec();
 
             let mut mpc_encryption_rng = MPCEncryptionRandomGenerator {
                 mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(seed),

@@ -1,20 +1,19 @@
 use anyhow::Context;
-use async_trait::async_trait;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use std::{cmp::min, collections::HashMap};
 
 use super::{agree_random::AgreeRandom, prf::PRSSConversions};
 use crate::execution::config::BatchParams;
+use crate::execution::online::preprocessing::{
+    default_factory, BasePreprocessing, RandomPreprocessing, TriplePreprocessing,
+};
 use crate::execution::sharing::shamir::{ErrorCorrect, HenselLiftInverse, RevealOp, RingEmbed};
 use crate::{
     algebra::structure_traits::Ring,
     execution::{
         communication::broadcast::broadcast_from_all_w_corruption,
-        online::{
-            preprocessing::{BasePreprocessing, Preprocessing},
-            triple::Triple,
-        },
+        online::triple::Triple,
         runtime::party::Role,
         runtime::session::SmallSessionHandles,
         sharing::{shamir::ShamirSharings, share::Share},
@@ -25,7 +24,7 @@ use crate::{
 /// Preprocessing for a single small session using a specific functionality for [A] for the [AgreeRandom] trait.
 pub struct SmallPreprocessing<Z: Ring, A> {
     batch_sizes: BatchParams,
-    elements: BasePreprocessing<Z>,
+    elements: Box<dyn BasePreprocessing<Z>>,
     _marker: std::marker::PhantomData<A>,
 }
 
@@ -43,20 +42,18 @@ where
         batch_sizes: BatchParams,
     ) -> anyhow::Result<Self> {
         let batch = batch_sizes;
-        let base_preprocessing = BasePreprocessing {
-            available_triples: Vec::new(),
-            available_randoms: Vec::new(),
-        };
+        let base_preprocessing = default_factory::<Z>().create_base_preprocessing();
+
         let mut res = SmallPreprocessing::<Z, A> {
             batch_sizes: batch,
             elements: base_preprocessing,
             _marker: std::marker::PhantomData,
         };
         // In case of malicious behavior not all triples might have been constructed, so we have to continue making triples until the batch is done
-        while res.elements.available_triples.len() < res.batch_sizes.triples {
+        while res.triples_len() < res.batch_sizes.triples {
             res.next_triple_batch(
                 session,
-                res.batch_sizes.triples - res.elements.available_triples.len(),
+                res.batch_sizes.triples - res.elements.triples_len(),
             )
             .await?;
         }
@@ -80,7 +77,7 @@ where
                 session.prss_as_mut()?.prss_next(my_role.one_based())?,
             ));
         }
-        self.elements.available_randoms.append(&mut res);
+        self.elements.append_randoms(res);
         Ok(())
     }
 
@@ -180,7 +177,7 @@ where
                 .await?;
             }
         }
-        self.elements.available_triples.append(&mut triples);
+        self.elements.append_triples(triples);
         Ok(())
     }
 
@@ -362,8 +359,7 @@ where
     }
 }
 
-#[async_trait]
-impl<Z: Ring, A: AgreeRandom> Preprocessing<Z> for SmallPreprocessing<Z, A> {
+impl<Z: Ring, A: AgreeRandom> TriplePreprocessing<Z> for SmallPreprocessing<Z, A> {
     fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
         self.elements.next_triple()
     }
@@ -372,23 +368,38 @@ impl<Z: Ring, A: AgreeRandom> Preprocessing<Z> for SmallPreprocessing<Z, A> {
         self.elements.next_triple_vec(amount)
     }
 
-    fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
-        self.elements.next_random()
+    fn append_triples(&mut self, triples: Vec<Triple<Z>>) {
+        self.elements.append_triples(triples);
     }
 
+    fn triples_len(&self) -> usize {
+        self.elements.triples_len()
+    }
+}
+
+impl<Z: Ring, A: AgreeRandom> RandomPreprocessing<Z> for SmallPreprocessing<Z, A> {
     fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
         self.elements.next_random_vec(amount)
     }
+
+    fn append_randoms(&mut self, randoms: Vec<Share<Z>>) {
+        self.elements.append_randoms(randoms);
+    }
+
+    fn randoms_len(&self) -> usize {
+        self.elements.randoms_len()
+    }
 }
+
+impl<Z: Ring, A: AgreeRandom + Send + Sync> BasePreprocessing<Z> for SmallPreprocessing<Z, A> {}
 
 #[cfg(test)]
 mod test {
     use std::{collections::HashMap, num::Wrapping};
 
     use crate::algebra::structure_traits::Ring;
-    use crate::execution::sharing::shamir::ErrorCorrect;
-    use crate::execution::sharing::shamir::HenselLiftInverse;
-    use crate::execution::sharing::shamir::RingEmbed;
+    use crate::execution::online::preprocessing::dummy::reconstruct;
+    use crate::execution::sharing::shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed};
     use crate::{
         algebra::{
             residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
@@ -396,12 +407,14 @@ mod test {
         },
         execution::{
             online::{
-                preprocessing::{reconstruct, BasePreprocessing, Preprocessing},
+                preprocessing::{default_factory, RandomPreprocessing, TriplePreprocessing},
                 triple::Triple,
             },
-            runtime::party::Role,
-            runtime::session::{
-                BaseSessionHandles, ParameterHandles, SmallSession, SmallSessionHandles,
+            runtime::{
+                party::Role,
+                session::{
+                    BaseSessionHandles, ParameterHandles, SmallSession, SmallSessionHandles,
+                },
             },
             sharing::share::Share,
             small_execution::{
@@ -417,6 +430,7 @@ mod test {
         },
     };
     use aes_prng::AesRng;
+
     const RANDOM_BATCH_SIZE: usize = 10;
     const TRIPLE_BATCH_SIZE: usize = 10;
 
@@ -436,7 +450,7 @@ mod test {
             ));
 
             let default_batch_size = BatchParams {
-                triples: TRIPLE_BATCH_SIZE,
+                triples: 0,
                 randoms: RANDOM_BATCH_SIZE,
             };
 
@@ -453,8 +467,8 @@ mod test {
 
         // Rounds:
         // PRSS-Setup with Dummy AR does not send anything = 0 rounds
-        // pre-processing without corruptions with Dummy AR does only do 1 reliable broadcast = 3 + t rounds
-        let rounds = 3 + threshold as usize;
+        // pre-processing randomness is communication free
+        let rounds = 0_usize;
 
         let result = execute_protocol_small(parties, threshold, Some(rounds), &mut task);
 
@@ -503,7 +517,7 @@ mod test {
             ));
             let default_batch_size = BatchParams {
                 triples: TRIPLE_BATCH_SIZE,
-                randoms: RANDOM_BATCH_SIZE,
+                randoms: 0,
             };
 
             let mut preproc =
@@ -571,11 +585,14 @@ mod test {
             session.set_prss(Some(
                 prss_setup.new_prss_session_state(session.session_id()),
             ));
-            let preproc = SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, batch_size)
-                .await
-                .unwrap();
-            assert_eq!(batch_size.triples, preproc.elements.available_triples.len());
-            assert_eq!(batch_size.randoms, preproc.elements.available_randoms.len());
+            let mut preproc =
+                SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, batch_size)
+                    .await
+                    .unwrap();
+            assert_eq!(batch_size.triples, preproc.elements.triples_len());
+            assert_eq!(batch_size.randoms, preproc.elements.randoms_len());
+            let _ = preproc.next_random_vec(batch_size.randoms);
+            let _ = preproc.next_triple_vec(batch_size.triples);
         }
 
         // Rounds:
@@ -821,10 +838,10 @@ mod test {
                 prss_state.przs_ctr = 234;
             };
             session.set_prss(Some(prss_state));
-            let base_preprocessing = BasePreprocessing::<ResiduePoly128> {
-                available_triples: Vec::new(),
-                available_randoms: Vec::new(),
-            };
+
+            let base_preprocessing =
+                default_factory::<ResiduePoly128>().create_base_preprocessing();
+
             let default_batch = BatchParams {
                 triples: 10,
                 randoms: 10,
@@ -836,7 +853,7 @@ mod test {
             };
             let _ = res.next_triple_batch(&mut session, 1).await;
             // Check that no triples get constructed due to the corrupt party
-            assert_eq!(res.elements.available_triples.len(), 0);
+            assert_eq!(res.elements.triples_len(), 0);
             session
         }
 

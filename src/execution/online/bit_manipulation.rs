@@ -10,9 +10,9 @@ use crate::{
     execution::runtime::session::BaseSessionHandles,
 };
 
-use super::gen_bits::RealBitGenEven;
-use super::{preprocessing::Preprocessing, triple::mult_list};
-use crate::execution::online::gen_bits::BitGenEven;
+use super::preprocessing::TriplePreprocessing;
+use super::triple::mult_list;
+use crate::execution::online::preprocessing::BitPreprocessing;
 use crate::execution::online::triple::open_list;
 use crate::execution::sharing::share::Share;
 
@@ -112,7 +112,7 @@ where
     async fn xor_list_secret_secret<
         Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
-        P: Preprocessing<Z>,
+        P: TriplePreprocessing<Z> + ?Sized,
     >(
         lhs: &[SecretBitArray<Z>],
         rhs: &[SecretBitArray<Z>],
@@ -142,7 +142,7 @@ where
     async fn and_list_secret_secret<
         Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
-        P: Preprocessing<Z>,
+        P: TriplePreprocessing<Z> + ?Sized,
     >(
         lhs: &[SecretBitArray<Z>],
         rhs: &[SecretBitArray<Z>],
@@ -192,7 +192,7 @@ where
     async fn compressed_xor_and<
         Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
-        P: Preprocessing<Z>,
+        P: TriplePreprocessing<Z> + ?Sized,
     >(
         lhs1: &[SecretBitArray<Z>],
         rhs1: &[SecretBitArray<Z>],
@@ -227,7 +227,7 @@ where
     async fn binary_adder_secret_clear<
         Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
-        P: Preprocessing<Z>,
+        P: TriplePreprocessing<Z> + ?Sized,
     >(
         session: &mut Ses,
         lhs: &[BitArray<Share<Z>>],
@@ -286,7 +286,7 @@ where
     pub async fn extract_ptxts<
         Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
-        P: Preprocessing<Z>,
+        P: TriplePreprocessing<Z> + ?Sized,
     >(
         partial_decs: Vec<SecretBitArray<Z>>,
         message_mod_bits: usize,
@@ -347,7 +347,7 @@ where
     pub async fn xor_list_secret_secret<
         Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
-        P: Preprocessing<Z>,
+        P: TriplePreprocessing<Z> + ?Sized,
     >(
         lhs: &SecretVec<Z>,
         rhs: &SecretVec<Z>,
@@ -361,7 +361,7 @@ where
     pub async fn and_list_secret_secret<
         Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
-        P: Preprocessing<Z>,
+        P: TriplePreprocessing<Z> + ?Sized,
     >(
         lhs: &SecretVec<Z>,
         rhs: &SecretVec<Z>,
@@ -406,7 +406,7 @@ where
 
 pub async fn bit_dec_batch<
     Z,
-    P: Preprocessing<ResiduePoly<Z>>,
+    P: TriplePreprocessing<ResiduePoly<Z>> + BitPreprocessing<ResiduePoly<Z>> + ?Sized,
     Rnd: Rng + CryptoRng + Sync,
     Ses: BaseSessionHandles<Rnd>,
 >(
@@ -422,12 +422,8 @@ where
     P: Send,
 {
     let batch_size = inputs.len();
-    let mut random_bits = RealBitGenEven::gen_bits_even::<ResiduePoly<Z>, Rnd, Ses, P>(
-        Z::CHAR_LOG2 * batch_size,
-        prep,
-        session,
-    )
-    .await?;
+
+    let mut random_bits = prep.next_bit_vec(Z::CHAR_LOG2 * batch_size)?;
     tracing::debug!("Finished generating the random bits...");
 
     let mut bitsums = Vec::with_capacity(batch_size);
@@ -491,7 +487,7 @@ mod tests {
     use crate::execution::online::bit_manipulation::bit_dec_batch;
     use crate::execution::online::bit_manipulation::BatchedBits;
     use crate::execution::online::bit_manipulation::Bits;
-    use crate::execution::online::preprocessing::DummyPreprocessing;
+    use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
     use crate::execution::online::triple::open_list;
     use crate::execution::runtime::session::ParameterHandles;
     use crate::execution::runtime::session::SmallSession;
@@ -788,7 +784,9 @@ mod tests {
             open_list(&bits[0], &session).await.unwrap()
         };
 
-        let rounds = 2_usize + 1 + 2_usize * Z64::CHAR_LOG2.ilog2() as usize + 1 + 1;
+        //Comment for reviewer, removing 2 rounds because
+        //generating bits from DummyPreprocessing is now communication-free
+        let rounds = 2_usize + 1 + 2_usize * Z64::CHAR_LOG2.ilog2() as usize;
         let results = &execute_protocol_small(parties, threshold as u8, Some(rounds), &mut task)[0];
         assert_eq!(results.len(), ref_val.len());
         for i in 0..results.len() {

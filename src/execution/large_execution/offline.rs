@@ -1,13 +1,13 @@
 use crate::execution::config::BatchParams;
+use crate::execution::online::preprocessing::{
+    default_factory, BasePreprocessing, RandomPreprocessing, TriplePreprocessing,
+};
 use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::{
     algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::{
-        online::{
-            preprocessing::{BasePreprocessing, Preprocessing},
-            triple::Triple,
-        },
+        online::triple::Triple,
         runtime::session::LargeSessionHandles,
         sharing::{open::robust_opens_to_all, share::Share},
     },
@@ -15,13 +15,37 @@ use crate::{
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 
-#[derive(Default, Clone)]
 pub struct LargePreprocessing<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> {
     triple_batch_size: usize,
     random_batch_size: usize,
     single_sharing_handle: S,
     double_sharing_handle: D,
-    elements: BasePreprocessing<Z>,
+    elements: Box<dyn BasePreprocessing<Z>>,
+}
+
+impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> Default for LargePreprocessing<Z, S, D> {
+    fn default() -> Self {
+        Self {
+            triple_batch_size: 0,
+            random_batch_size: 0,
+            single_sharing_handle: S::default(),
+            double_sharing_handle: D::default(),
+            elements: default_factory::<Z>().create_base_preprocessing(),
+        }
+    }
+}
+
+impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> Clone for LargePreprocessing<Z, S, D> {
+    fn clone(&self) -> Self {
+        Self {
+            triple_batch_size: self.triple_batch_size,
+            random_batch_size: self.random_batch_size,
+            single_sharing_handle: self.single_sharing_handle.clone(),
+            double_sharing_handle: self.double_sharing_handle.clone(),
+            // TODO: fixme this is a hack, we should not create a base preprocessor
+            elements: default_factory::<Z>().create_base_preprocessing(),
+        }
+    }
 }
 
 impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing<Z, S, D> {
@@ -45,10 +69,8 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
 
         //Init double sharing
         dsh.init(session, batch_sizes.triples).await?;
-        let base_preprocessing = BasePreprocessing {
-            available_triples: Vec::new(),
-            available_randoms: Vec::new(),
-        };
+
+        let base_preprocessing = default_factory::<Z>().create_base_preprocessing();
         let mut large_preproc = Self {
             triple_batch_size: batch_sizes.triples,
             random_batch_size: batch_sizes.randoms,
@@ -106,7 +128,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
             .collect_vec();
 
         let my_role = session.my_role()?;
-        let mut res = vec_share_x
+        let res = vec_share_x
             .into_iter()
             .zip(vec_share_y.into_iter())
             .zip(vec_shares_z.into_iter())
@@ -118,7 +140,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
                 )
             })
             .collect_vec();
-        self.elements.available_triples.append(&mut res);
+        self.elements.append_triples(res);
         Ok(())
     }
 
@@ -136,31 +158,52 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
                 self.single_sharing_handle.next(session).await?,
             ));
         }
-        self.elements.available_randoms.append(&mut res);
+        self.elements.append_randoms(res);
         Ok(())
     }
 }
 
-impl<Z: Ring, S, D> Preprocessing<Z> for LargePreprocessing<Z, S, D>
+impl<Z: Ring, S, D> TriplePreprocessing<Z> for LargePreprocessing<Z, S, D>
 where
     S: SingleSharing<Z>,
     D: DoubleSharing<Z>,
 {
-    fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
-        self.elements.next_triple()
-    }
-
     fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
         self.elements.next_triple_vec(amount)
     }
 
-    fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
-        self.elements.next_random()
+    fn append_triples(&mut self, triples: Vec<Triple<Z>>) {
+        self.elements.append_triples(triples);
     }
 
+    fn triples_len(&self) -> usize {
+        self.elements.triples_len()
+    }
+}
+
+impl<Z: Ring, S, D> RandomPreprocessing<Z> for LargePreprocessing<Z, S, D>
+where
+    S: SingleSharing<Z>,
+    D: DoubleSharing<Z>,
+{
     fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
         self.elements.next_random_vec(amount)
     }
+
+    fn append_randoms(&mut self, randoms: Vec<Share<Z>>) {
+        self.elements.append_randoms(randoms);
+    }
+
+    fn randoms_len(&self) -> usize {
+        self.elements.randoms_len()
+    }
+}
+
+impl<Z: Ring, S, D> BasePreprocessing<Z> for LargePreprocessing<Z, S, D>
+where
+    S: SingleSharing<Z> + Sync,
+    D: DoubleSharing<Z> + Sync,
+{
 }
 
 use crate::execution::large_execution::share_dispute::RealShareDispute;
@@ -186,6 +229,7 @@ mod tests {
 
     use super::{TrueDoubleSharing, TrueSingleSharing};
     use crate::execution::config::BatchParams;
+    use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
     use crate::execution::sharing::shamir::ErrorCorrect;
     use crate::execution::sharing::shamir::HenselLiftInverse;
     use crate::execution::sharing::shamir::RevealOp;
@@ -227,7 +271,7 @@ mod tests {
                     RealVss, Vss,
                 },
             },
-            online::{preprocessing::Preprocessing, triple::Triple},
+            online::{preprocessing::BasePreprocessing, triple::Triple},
             runtime::session::{
                 BaseSessionHandles, LargeSession, LargeSessionHandles, ParameterHandles,
             },
@@ -364,7 +408,7 @@ mod tests {
         Z: Ring + Derive + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
-    >: Preprocessing<Z> + Clone + Send
+    >: BasePreprocessing<Z> + Clone + Send
     {
         async fn init(
             &mut self,
@@ -406,8 +450,11 @@ mod tests {
     }
 
     #[async_trait]
-    impl<Z: Ring + Derive + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>>
-        GenericMaliciousPreprocessing<Z, S, D> for CheatingLargePreprocessing<Z, S, D>
+    impl<
+            Z: Ring + Derive + ErrorCorrect,
+            S: SingleSharing<Z> + Sync,
+            D: DoubleSharing<Z> + Sync,
+        > GenericMaliciousPreprocessing<Z, S, D> for CheatingLargePreprocessing<Z, S, D>
     {
         async fn init(
             &mut self,
@@ -503,47 +550,67 @@ mod tests {
         }
     }
 
-    impl<Z, S, D> Preprocessing<Z> for CheatingLargePreprocessing<Z, S, D>
+    impl<Z, S, D> TriplePreprocessing<Z> for CheatingLargePreprocessing<Z, S, D>
     where
         Z: Ring + Derive + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
     {
-        fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
-            Ok(self.available_triples.pop().unwrap())
-        }
         fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
             if self.available_triples.len() >= amount {
-                let mut res = Vec::with_capacity(amount);
-                for _ in 0..amount {
-                    res.push(self.available_triples.pop().unwrap());
-                }
-                Ok(res)
+                Ok(self.available_triples.drain(0..amount).collect())
             } else {
                 Ok(Vec::new())
             }
-        }
-        fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
-            Ok(self.available_randoms.pop().unwrap())
         }
 
+        fn append_triples(&mut self, triples: Vec<Triple<Z>>) {
+            self.available_triples.extend(triples);
+        }
+
+        fn triples_len(&self) -> usize {
+            self.available_triples.len()
+        }
+    }
+
+    impl<Z, S, D> RandomPreprocessing<Z> for CheatingLargePreprocessing<Z, S, D>
+    where
+        Z: Ring + ErrorCorrect + Derive,
+        S: SingleSharing<Z>,
+        D: DoubleSharing<Z>,
+    {
         fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
             if self.available_randoms.len() >= amount {
-                let mut res = Vec::with_capacity(amount);
-                for _ in 0..amount {
-                    res.push(self.available_randoms.pop().unwrap());
-                }
-                Ok(res)
+                Ok(self.available_randoms.drain(0..amount).collect())
             } else {
                 Ok(Vec::new())
             }
         }
+
+        fn append_randoms(&mut self, randoms: Vec<Share<Z>>) {
+            self.available_randoms.extend(randoms);
+        }
+
+        fn randoms_len(&self) -> usize {
+            self.available_randoms.len()
+        }
+    }
+
+    impl<Z, S, D> BasePreprocessing<Z> for CheatingLargePreprocessing<Z, S, D>
+    where
+        Z: Ring + ErrorCorrect + Derive,
+        S: SingleSharing<Z> + Sync,
+        D: DoubleSharing<Z> + Sync,
+    {
     }
 
     //Needed because LargePreprocessing doesnt implement a specific trait
     #[async_trait]
-    impl<Z: Ring + Derive + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>>
-        GenericMaliciousPreprocessing<Z, S, D> for HonestLargePreprocessing<Z, S, D>
+    impl<
+            Z: Ring + Derive + ErrorCorrect,
+            S: SingleSharing<Z> + Sync,
+            D: DoubleSharing<Z> + Sync,
+        > GenericMaliciousPreprocessing<Z, S, D> for HonestLargePreprocessing<Z, S, D>
     {
         async fn init(
             &mut self,
@@ -570,7 +637,7 @@ mod tests {
         }
     }
 
-    impl<Z, S, D> Preprocessing<Z> for HonestLargePreprocessing<Z, S, D>
+    impl<Z, S, D> TriplePreprocessing<Z> for HonestLargePreprocessing<Z, S, D>
     where
         Z: Ring + Derive + ErrorCorrect,
         S: SingleSharing<Z>,
@@ -582,13 +649,41 @@ mod tests {
         fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
             self.large_preproc.next_triple_vec(amount)
         }
-        fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
-            self.large_preproc.next_random()
+
+        fn append_triples(&mut self, triples: Vec<Triple<Z>>) {
+            self.large_preproc.append_triples(triples);
         }
 
+        fn triples_len(&self) -> usize {
+            self.large_preproc.triples_len()
+        }
+    }
+
+    impl<Z, S, D> RandomPreprocessing<Z> for HonestLargePreprocessing<Z, S, D>
+    where
+        Z: Ring + ErrorCorrect + Derive,
+        S: SingleSharing<Z>,
+        D: DoubleSharing<Z>,
+    {
         fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
             self.large_preproc.next_random_vec(amount)
         }
+
+        fn append_randoms(&mut self, randoms: Vec<Share<Z>>) {
+            self.large_preproc.append_randoms(randoms);
+        }
+
+        fn randoms_len(&self) -> usize {
+            self.large_preproc.randoms_len()
+        }
+    }
+
+    impl<Z, S, D> BasePreprocessing<Z> for HonestLargePreprocessing<Z, S, D>
+    where
+        Z: Ring + ErrorCorrect + Derive,
+        S: SingleSharing<Z> + Sync,
+        D: DoubleSharing<Z> + Sync,
+    {
     }
 
     // Rounds (happy path)
@@ -863,9 +958,9 @@ mod tests {
             // We have now used the entire batch of values and should thus fail
             assert!(preproc.next_triple().is_err());
             let err = preproc.next_triple().unwrap_err().to_string();
-            assert!(err.contains("available_triple is empty"));
+            assert!(err.contains("Not enough triples to pop 1"));
             let err = preproc.next_random().unwrap_err().to_string();
-            assert!(err.contains("available_random is empty"));
+            assert!(err.contains("Not enough randomness to pop 1"));
             (session, triple_res, rand_res)
         }
 

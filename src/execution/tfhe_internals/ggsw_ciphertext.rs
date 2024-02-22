@@ -19,7 +19,7 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        online::{preprocessing::Preprocessing, triple::mult_list},
+        online::{preprocessing::TriplePreprocessing, triple::mult_list},
         runtime::session::BaseSessionHandles,
         sharing::{shamir::ErrorCorrect, share::Share},
         tfhe_internals::utils::slice_wrapping_scalar_mul_assign,
@@ -142,7 +142,7 @@ pub async fn ggsw_encode_messages<
     Rnd: Rng + CryptoRng + Sync,
     Z: BaseRing,
     S: BaseSessionHandles<Rnd>,
-    P: Preprocessing<ResiduePoly<Z>>,
+    P: TriplePreprocessing<ResiduePoly<Z>> + ?Sized,
 >(
     messages: &[Share<ResiduePoly<Z>>],
     key_bits: &GlweSecretKeyShare<Z>,
@@ -206,7 +206,7 @@ pub async fn ggsw_encode_message<
     Rnd: Rng + CryptoRng + Sync,
     Z: BaseRing,
     S: BaseSessionHandles<Rnd>,
-    P: Preprocessing<ResiduePoly<Z>>,
+    P: TriplePreprocessing<ResiduePoly<Z>>,
 >(
     message: &Share<ResiduePoly<Z>>,
     key_bits: &GlweSecretKeyShare<Z>,
@@ -375,13 +375,13 @@ mod tests {
         },
     };
 
-    use crate::execution::sharing::shamir::InputOp;
+    use crate::execution::{online::secret_distributions::TUniformBound, sharing::shamir::InputOp};
     use crate::{
         algebra::residue_poly::ResiduePoly64,
         execution::{
             online::{
-                gen_bits::{BitGenEven, FakeBitGenEven, RealBitGenEven},
-                preprocessing::DummyPreprocessing,
+                gen_bits::{BitGenEven, RealBitGenEven},
+                preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
             runtime::{
@@ -453,18 +453,15 @@ mod tests {
             .await
             .unwrap();
 
-            let vec_tuniform_noise =
-                RealSecretDistributions::t_uniform::<_, _, _, _, FakeBitGenEven>(
-                    t_uniform_amount,
-                    t_uniform_bound,
-                    &mut large_preproc,
-                    &mut session,
-                )
-                .await
-                .unwrap()
-                .iter()
-                .map(|share| share.value())
-                .collect_vec();
+            let vec_tuniform_noise = RealSecretDistributions::t_uniform(
+                t_uniform_amount,
+                TUniformBound(t_uniform_bound),
+                &mut large_preproc,
+            )
+            .unwrap()
+            .iter()
+            .map(|share| share.value())
+            .collect_vec();
 
             let mut mpc_encryption_rng = MPCEncryptionRandomGenerator {
                 mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(seed),

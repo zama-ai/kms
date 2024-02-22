@@ -173,7 +173,9 @@ mod tests {
         },
         execution::{
             online::{
-                preprocessing::{DummyPreprocessing, Preprocessing},
+                preprocessing::{
+                    dummy::DummyPreprocessing, RandomPreprocessing, TriplePreprocessing,
+                },
                 triple::{mult, mult_list, open_list},
             },
             runtime::party::Role,

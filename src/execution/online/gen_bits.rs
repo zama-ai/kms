@@ -1,5 +1,5 @@
 use super::{
-    preprocessing::{DummyPreprocessing, Preprocessing},
+    preprocessing::BasePreprocessing,
     triple::{mult_list, open_list},
 };
 use crate::{algebra::structure_traits::Ring, execution::sharing::shamir::RingEmbed};
@@ -13,10 +13,9 @@ use crate::{
         },
     },
 };
-use aes_prng::AesRng;
 use async_trait::async_trait;
 use itertools::Itertools;
-use rand::{CryptoRng, Rng, SeedableRng};
+use rand::{CryptoRng, Rng};
 
 pub trait Solve: Sized + ZConsts {
     fn solve(v: &Self) -> anyhow::Result<Self>;
@@ -28,46 +27,12 @@ pub trait BitGenEven {
         Z: Ring + RingEmbed + Solve + HenselLiftInverse + ErrorCorrect,
         Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
-        P: Preprocessing<Z> + Send,
+        P: BasePreprocessing<Z> + Send + ?Sized,
     >(
         amount: usize,
         preproc: &mut P,
         session: &mut Ses,
     ) -> anyhow::Result<Vec<Share<Z>>>;
-}
-
-/// This is fake whatever Preprocessing we pass to it
-/// (preprocessing isn't used)
-pub struct FakeBitGenEven {}
-
-#[async_trait]
-impl BitGenEven for FakeBitGenEven {
-    async fn gen_bits_even<
-        Z: Ring + RingEmbed,
-        Rnd: Rng + CryptoRng + Sync,
-        Ses: BaseSessionHandles<Rnd>,
-        P: Preprocessing<Z> + Send,
-    >(
-        amount: usize,
-        _preproc: &mut P,
-        session: &mut Ses,
-    ) -> anyhow::Result<Vec<Share<Z>>> {
-        //Use the amount requested as a seed (so it's common accross all parties)
-        let mut rng = AesRng::seed_from_u64(amount as u64);
-        let mut res = Vec::with_capacity(amount);
-        for _ in 0..amount {
-            let bit = rng.gen_bool(1.0 / 2.0);
-            let secret = if bit { Z::ONE } else { Z::ZERO };
-            let shared_secret = DummyPreprocessing::<Z, Rnd, Ses>::share(
-                session.num_parties(),
-                session.threshold(),
-                secret,
-                &mut rng,
-            )?[session.my_role()?.zero_based()];
-            res.push(shared_secret);
-        }
-        Ok(res)
-    }
 }
 
 pub struct RealBitGenEven {}
@@ -85,7 +50,7 @@ impl BitGenEven for RealBitGenEven {
         Z: Ring + RingEmbed + HenselLiftInverse + Solve + ErrorCorrect,
         Rnd: Rng + CryptoRng + Sync,
         Ses: BaseSessionHandles<Rnd>,
-        P: Preprocessing<Z> + Send,
+        P: BasePreprocessing<Z> + Send + ?Sized,
     >(
         amount: usize,
         preproc: &mut P,
@@ -124,7 +89,9 @@ mod tests {
         execution::{
             online::{
                 gen_bits::Solve,
-                preprocessing::{DummyPreprocessing, MockPreprocessing, Preprocessing},
+                preprocessing::{
+                    dummy::DummyPreprocessing, MockBasePreprocessing, TriplePreprocessing,
+                },
                 triple::open_list,
             },
             runtime::party::Role,
@@ -171,7 +138,7 @@ mod tests {
                         // Execute with dummy prepreocessing for honest parties and a mock for the bad one
                         let bits = if session.my_role().unwrap() == bad_party {
                             let mut mock =
-                                MockPreprocessing::<ResiduePoly<$z>>::new();
+                                MockBasePreprocessing::<ResiduePoly<$z>>::new();
                             // Mock the bad party's preprocessing by returning incorrect shares on calls to next_random_vec
                             mock.expect_next_random_vec()
                                 .returning(move |amount| {

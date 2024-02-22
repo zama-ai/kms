@@ -4,7 +4,7 @@ use tfhe::shortint::parameters::{GlweDimension, PolynomialSize};
 
 use crate::{
     algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
-    execution::sharing::share::Share,
+    execution::{online::preprocessing::BitPreprocessing, sharing::share::Share},
 };
 
 use super::lwe_key::LweSecretKeyShare;
@@ -20,6 +20,17 @@ pub struct GlweSecretKeyShare<Z> {
 }
 
 impl<Z: BaseRing> GlweSecretKeyShare<Z> {
+    pub fn new_from_preprocessing<P: BitPreprocessing<ResiduePoly<Z>> + ?Sized>(
+        total_size: usize,
+        polynomial_size: PolynomialSize,
+        preprocessing: &mut P,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            data: preprocessing.next_bit_vec(total_size)?,
+            polynomial_size,
+        })
+    }
+
     pub fn data_as_raw_vec(&self) -> Vec<ResiduePoly<Z>> {
         self.data.iter().map(|share| share.value()).collect_vec()
     }

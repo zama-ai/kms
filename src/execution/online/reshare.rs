@@ -8,7 +8,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::broadcast_from_all,
-        online::preprocessing::Preprocessing,
+        online::preprocessing::BasePreprocessing,
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::{
             open::{robust_opens_to, robust_opens_to_all},
@@ -57,8 +57,8 @@ fn delta0i<Z: BaseRing>(
 pub async fn reshare_sk_same_sets<
     Rnd: Rng + CryptoRng + Sync,
     Ses: BaseSessionHandles<Rnd>,
-    P128: Preprocessing<ResiduePoly128> + Send,
-    P64: Preprocessing<ResiduePoly64> + Send,
+    P128: BasePreprocessing<ResiduePoly128> + Send,
+    P64: BasePreprocessing<ResiduePoly64> + Send,
 >(
     preproc128: &mut P128,
     preproc64: &mut P64,
@@ -79,7 +79,7 @@ pub async fn reshare_sk_same_sets<
 pub async fn reshare_same_sets<
     Rnd: Rng + CryptoRng + Sync,
     Ses: BaseSessionHandles<Rnd>,
-    P: Preprocessing<ResiduePoly<Z>> + Send,
+    P: BasePreprocessing<ResiduePoly<Z>> + Send,
     Z: BaseRing + Zeroize,
 >(
     preproc: &mut P,
@@ -249,7 +249,7 @@ mod tests {
         error::error_handler::anyhow_error_and_log,
         execution::{
             constants::SMALL_TEST_KEY_PATH,
-            online::preprocessing::DummyPreprocessing,
+            online::preprocessing::dummy::DummyPreprocessing,
             runtime::{
                 session::{LargeSession, ParameterHandles, SessionParameters},
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},

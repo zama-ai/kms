@@ -145,13 +145,16 @@ mod tests {
         },
     };
 
-    use crate::execution::sharing::shamir::{InputOp, RevealOp};
+    use crate::execution::{
+        online::secret_distributions::TUniformBound,
+        sharing::shamir::{InputOp, RevealOp},
+    };
     use crate::{
         algebra::residue_poly::ResiduePoly64,
         execution::{
             online::{
-                gen_bits::{BitGenEven, FakeBitGenEven, RealBitGenEven},
-                preprocessing::DummyPreprocessing,
+                gen_bits::{BitGenEven, RealBitGenEven},
+                preprocessing::dummy::DummyPreprocessing,
                 secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
             runtime::session::{LargeSession, ParameterHandles},
@@ -200,18 +203,15 @@ mod tests {
                     .unwrap(),
             };
 
-            let vec_tuniform_noise =
-                RealSecretDistributions::t_uniform::<_, _, _, _, FakeBitGenEven>(
-                    1,
-                    t_uniform_bound,
-                    &mut large_preproc,
-                    &mut session,
-                )
-                .await
-                .unwrap()
-                .iter()
-                .map(|share| share.value())
-                .collect_vec();
+            let vec_tuniform_noise = RealSecretDistributions::t_uniform(
+                1,
+                TUniformBound(t_uniform_bound),
+                &mut large_preproc,
+            )
+            .unwrap()
+            .iter()
+            .map(|share| share.value())
+            .collect_vec();
 
             let mut mpc_encryption_rng = MPCEncryptionRandomGenerator {
                 mask: MPCMaskRandomGenerator::<SoftwareRandomGenerator>::new_from_seed(seed),

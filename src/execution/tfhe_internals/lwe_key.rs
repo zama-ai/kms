@@ -14,7 +14,9 @@ use crate::{
     algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
     error::error_handler::anyhow_error_and_log,
     execution::{
-        online::triple::open_list, runtime::session::BaseSessionHandles, sharing::share::Share,
+        online::{preprocessing::BitPreprocessing, triple::open_list},
+        runtime::session::BaseSessionHandles,
+        sharing::share::Share,
     },
 };
 
@@ -112,6 +114,15 @@ where
 }
 
 impl<Z: BaseRing> LweSecretKeyShare<Z> {
+    pub fn new_from_preprocessing<P: BitPreprocessing<ResiduePoly<Z>> + ?Sized>(
+        dimension: LweDimension,
+        preprocessing: &mut P,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            data: preprocessing.next_bit_vec(dimension.0)?,
+        })
+    }
+
     pub fn lwe_dimension(&self) -> LweDimension {
         LweDimension(self.data.len())
     }
@@ -188,9 +199,11 @@ mod tests {
         algebra::{base_ring::Z64, residue_poly::ResiduePoly64},
         execution::{
             online::{
-                gen_bits::{BitGenEven, FakeBitGenEven, RealBitGenEven},
-                preprocessing::DummyPreprocessing,
-                secret_distributions::{RealSecretDistributions, SecretDistributions},
+                gen_bits::{BitGenEven, RealBitGenEven},
+                preprocessing::dummy::DummyPreprocessing,
+                secret_distributions::{
+                    RealSecretDistributions, SecretDistributions, TUniformBound,
+                },
             },
             runtime::session::{LargeSession, ParameterHandles},
             tfhe_internals::{
@@ -236,18 +249,15 @@ mod tests {
                 gen: RandomGenerator::<SoftwareRandomGenerator>::new(Seed(seed)),
             };
 
-            let vec_tuniform_noise =
-                RealSecretDistributions::t_uniform::<_, _, _, _, FakeBitGenEven>(
-                    lwe_dimension,
-                    t_uniform_bound,
-                    &mut large_preproc,
-                    &mut session,
-                )
-                .await
-                .unwrap()
-                .iter()
-                .map(|share| share.value())
-                .collect_vec();
+            let vec_tuniform_noise = RealSecretDistributions::t_uniform(
+                lwe_dimension,
+                TUniformBound(t_uniform_bound),
+                &mut large_preproc,
+            )
+            .unwrap()
+            .iter()
+            .map(|share| share.value())
+            .collect_vec();
 
             let mut mpc_encryption_rng = MPCEncryptionRandomGenerator {
                 mask: mpc_mask_generator,

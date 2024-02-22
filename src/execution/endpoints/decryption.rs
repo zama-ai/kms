@@ -2,9 +2,11 @@
 use crate::algebra::structure_traits::Ring;
 use crate::execution::large_execution::offline::LargePreprocessing;
 use crate::execution::online::bit_manipulation::{bit_dec_batch, BatchedBits};
-use crate::execution::online::gen_bits::RealBitGenEven;
-use crate::execution::online::preprocessing::Preprocessing;
+use crate::execution::online::preprocessing::default_factory;
+use crate::execution::online::preprocessing::BitDecPreprocessing;
+use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use crate::execution::runtime::session::SmallSession64;
+use crate::execution::runtime::session::ToBaseSession;
 use crate::execution::sharing::open::robust_opens_to;
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::sharing::shamir::{HenselLiftInverse, RingEmbed};
@@ -26,12 +28,11 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        constants::{BD1, INPUT_PARTY_ID, LOG_BD, STATSEC},
+        constants::{INPUT_PARTY_ID, LOG_BD, STATSEC},
         large_execution::offline::{RealLargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
-        online::secret_distributions::{RealSecretDistributions, SecretDistributions},
         runtime::{
             party::Role,
-            session::{BaseSessionHandles, LargeSession, ParameterHandles, SmallSession},
+            session::{BaseSessionHandles, LargeSession, SmallSession},
         },
     },
     lwe::{
@@ -45,7 +46,7 @@ use crate::{
     execution::{
         runtime::{
             party::{Identity, RoleAssignment},
-            session::{DecryptionMode, NetworkingImpl, SessionParameters, SmallSessionHandles},
+            session::{DecryptionMode, NetworkingImpl, SessionParameters},
             test_runtime::DistributedTestRuntime,
         },
         small_execution::prss::PRSSSetup,
@@ -99,6 +100,8 @@ where
     Z: RingEmbed,
     Z: HenselLiftInverse,
 {
+    use crate::execution::runtime::session::{ParameterHandles, SmallSessionHandles};
+
     let mut session = SmallSession::<Z>::new(
         session_id,
         role_assignments,
@@ -125,27 +128,39 @@ where
 pub async fn init_prep_bitdec_small(
     session: &mut SmallSession64,
     num_ctxts: usize,
-) -> SmallPreprocessing<ResiduePoly64, RealAgreeRandom> {
+) -> Box<dyn BitDecPreprocessing> {
     let bitdec_batch = BatchParams {
         triples: 1280 * num_ctxts + num_ctxts,
         randoms: 64 * num_ctxts,
     };
 
-    SmallPreprocessing::<ResiduePoly64, RealAgreeRandom>::init(session, bitdec_batch)
+    let mut small_preprocessing =
+        SmallPreprocessing::<ResiduePoly64, RealAgreeRandom>::init(session, bitdec_batch)
+            .await
+            .unwrap();
+    let mut bitdec_preprocessing = default_factory::<Z64>().create_bit_decryption_preprocessing();
+    bitdec_preprocessing
+        .fill_from_base_preproc(
+            &mut small_preprocessing,
+            &mut session.to_base_session(),
+            num_ctxts,
+        )
         .await
-        .unwrap()
+        .unwrap();
+
+    bitdec_preprocessing
 }
 
 pub async fn init_prep_bitdec_large(
     session: &mut LargeSession,
     num_ctxts: usize,
-) -> RealLargePreprocessing<ResiduePoly64> {
+) -> Box<dyn BitDecPreprocessing> {
     let bitdec_batch = BatchParams {
         triples: 1280 * num_ctxts + num_ctxts,
         randoms: 64 * num_ctxts,
     };
 
-    LargePreprocessing::<
+    let mut large_preprocessing = LargePreprocessing::<
         ResiduePoly64,
         TrueSingleSharing<ResiduePoly64>,
         TrueDoubleSharing<ResiduePoly64>,
@@ -156,7 +171,58 @@ pub async fn init_prep_bitdec_large(
         TrueDoubleSharing::default(),
     )
     .await
-    .unwrap()
+    .unwrap();
+
+    let mut bitdec_preprocessing = default_factory::<Z64>().create_bit_decryption_preprocessing();
+    bitdec_preprocessing
+        .fill_from_base_preproc(
+            &mut large_preprocessing,
+            &mut session.to_base_session(),
+            num_ctxts,
+        )
+        .await
+        .unwrap();
+
+    bitdec_preprocessing
+}
+
+///Assumes [`SmallSession`] has **initalized** [`crate::execution::small_execution::prss::PRSSSetup`]
+pub fn init_prep_noiseflood_small(
+    session: &mut SmallSession<ResiduePoly128>,
+    num_ctxt: usize,
+) -> Box<dyn NoiseFloodPreprocessing> {
+    let mut sns_preprocessing = default_factory::<Z128>().create_noise_flood_preprocessing();
+    sns_preprocessing
+        .fill_from_small_session(session, num_ctxt)
+        .unwrap();
+    sns_preprocessing
+}
+
+pub async fn init_prep_noiseflood_large(
+    session: &mut LargeSession,
+    num_ctxt: usize,
+) -> Box<dyn NoiseFloodPreprocessing> {
+    let nb_preproc = 2 * num_ctxt * ((STATSEC + LOG_BD) as usize + 2);
+    let batch_size = BatchParams {
+        triples: nb_preproc,
+        randoms: nb_preproc,
+    };
+
+    let mut large_preproc = RealLargePreprocessing::init(
+        session,
+        batch_size,
+        TrueSingleSharing::default(),
+        TrueDoubleSharing::default(),
+    )
+    .await
+    .unwrap();
+
+    let mut sns_preprocessing = default_factory::<Z128>().create_noise_flood_preprocessing();
+    sns_preprocessing
+        .fill_from_base_preproc(&mut large_preproc, &mut session.to_base_session(), num_ctxt)
+        .await
+        .unwrap();
+    sns_preprocessing
 }
 
 /// test the threshold decryption
@@ -209,6 +275,7 @@ pub fn threshold_decrypt64<Z: Ring>(
 
         match mode {
             DecryptionMode::PRSSDecrypt => {
+                let large_ct = large_ct.unwrap();
                 set.spawn(async move {
                     let mut session = setup_small_session::<ResiduePoly128>(
                         session_id,
@@ -218,14 +285,23 @@ pub fn threshold_decrypt64<Z: Ring>(
                         identity.clone(),
                     )
                     .await;
-                    let out =
-                        run_decryption_small(&mut session, &party_keyshare, large_ct.unwrap())
-                            .await
-                            .unwrap();
+
+                    let mut noiseflood_preprocessing =
+                        init_prep_noiseflood_small(&mut session, large_ct.len());
+                    let out = run_decryption_noiseflood(
+                        &mut session,
+                        noiseflood_preprocessing.as_mut(),
+                        &party_keyshare,
+                        large_ct,
+                    )
+                    .await
+                    .unwrap();
+
                     (identity, out)
                 });
             }
             DecryptionMode::LargeDecrypt => {
+                let large_ct = large_ct.unwrap();
                 set.spawn(async move {
                     let session_params = SessionParameters::new(
                         threshold,
@@ -235,10 +311,17 @@ pub fn threshold_decrypt64<Z: Ring>(
                     )
                     .unwrap();
                     let mut session = LargeSession::new(session_params, net).unwrap();
-                    let out =
-                        run_decryption_large(&mut session, &party_keyshare, large_ct.unwrap())
-                            .await
-                            .unwrap();
+                    let mut noiseflood_preprocessing =
+                        init_prep_noiseflood_large(&mut session, large_ct.len()).await;
+                    let out = run_decryption_noiseflood(
+                        &mut session,
+                        noiseflood_preprocessing.as_mut(),
+                        &party_keyshare,
+                        large_ct,
+                    )
+                    .await
+                    .unwrap();
+
                     (identity, out)
                 });
             }
@@ -253,9 +336,10 @@ pub fn threshold_decrypt64<Z: Ring>(
                     .unwrap();
                     let mut session = LargeSession::new(session_params, net).unwrap();
                     let mut prep = init_prep_bitdec_large(&mut session, ct.len()).await;
-                    let out = run_decryption_bitdec(&mut session, &mut prep, &party_keyshare, ct)
-                        .await
-                        .unwrap();
+                    let out =
+                        run_decryption_bitdec(&mut session, prep.as_mut(), &party_keyshare, ct)
+                            .await
+                            .unwrap();
 
                     (identity, out)
                 });
@@ -271,9 +355,10 @@ pub fn threshold_decrypt64<Z: Ring>(
                     )
                     .await;
                     let mut prep = init_prep_bitdec_small(&mut session, ct.len()).await;
-                    let out = run_decryption_bitdec(&mut session, &mut prep, &party_keyshare, ct)
-                        .await
-                        .unwrap();
+                    let out =
+                        run_decryption_bitdec(&mut session, prep.as_mut(), &party_keyshare, ct)
+                            .await
+                            .unwrap();
                     (identity, out)
                 });
             }
@@ -371,100 +456,37 @@ async fn open_bit_composed_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     Ok(vec![Wrapping(0)])
 }
 
-pub async fn run_decryption_large(
-    session: &mut LargeSession,
+pub async fn run_decryption_noiseflood<
+    R: Rng + CryptoRng + Send,
+    S: BaseSessionHandles<R>,
+    P: NoiseFloodPreprocessing + ?Sized,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
     keyshares: &SecretKeyShare,
     ciphertext: Ciphertext128,
 ) -> anyhow::Result<Vec<Z64>> {
-    let own_role = session.my_role()?;
-
-    //Compute what we need from offline
-    let bound = (STATSEC + LOG_BD) as usize;
-    let num_ctxt = ciphertext.len();
-    //Need 2 uniform per ctxt, each uniform requires bound+2 bits
-    //each bit requires 1 triple and 1 random
-    let num_preproc = 2 * num_ctxt * (bound + 2);
-    let batch_size = BatchParams {
-        triples: num_preproc,
-        randoms: num_preproc,
-    };
-    //Init nlarge offline once for all
-    let mut large_preproc = RealLargePreprocessing::<ResiduePoly128>::init(
-        session,
-        batch_size,
-        TrueSingleSharing::default(),
-        TrueDoubleSharing::default(),
-    )
-    .await?;
-    //Get all the necessary uniform random
-    let u_randoms = RealSecretDistributions::t_uniform::<_, _, _, _, RealBitGenEven>(
-        2 * num_ctxt,
-        bound,
-        &mut large_preproc,
-        session,
-    )
-    .await?;
-
-    let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
-    for (idx, current_ct_block) in ciphertext.iter().enumerate() {
-        let partial_decrypt = partial_decrypt128(keyshares, current_ct_block)?;
-        let t = u_randoms[2 * idx] + u_randoms[2 * idx + 1];
-        let res = partial_decrypt + t.value();
-
-        shared_masked_ptxts.push(res);
-    }
-    let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
-    let bits_in_block = keyshares
-        .threshold_lwe_parameters
-        .output_cipher_parameters
-        .usable_message_modulus_log
-        .0;
-    combine_plaintext_blocks(&own_role, bits_in_block, partial_decrypted)
-}
-
-/// run decryption
-pub async fn run_decryption_small(
-    session: &mut SmallSession<ResiduePoly128>,
-    keyshares: &SecretKeyShare,
-    ciphertext: Ciphertext128,
-) -> anyhow::Result<Vec<Z64>> {
-    let own_role = session.my_role()?;
-    let shared_masked_ptxts = batch_partial_decrypt(session, keyshares, ciphertext)?;
-    let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
-    // TODO there seems to be a bug somewhere since this should actuall be `usable_message_modulus_log` as bits_in_block
-    let bits_in_block = keyshares
-        .threshold_lwe_parameters
-        .output_cipher_parameters
-        .usable_message_modulus_log
-        .0;
-    combine_plaintext_blocks(&own_role, bits_in_block, partial_decrypted)
-}
-
-pub fn batch_partial_decrypt(
-    session: &mut SmallSession<ResiduePoly128>,
-    keyshares: &SecretKeyShare,
-    ciphertext: Ciphertext128,
-) -> anyhow::Result<Vec<ResiduePoly128>> {
     let own_role = session.my_role()?;
     let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
     for current_ct_block in ciphertext {
-        let prss_state = session
-            .prss_state
-            .as_mut()
-            .ok_or_else(|| anyhow_error_and_log("PRSS_State not initialized".to_string()))?;
-        let partial_dec = partial_decrypt128(keyshares, &current_ct_block)?;
-        let composed_bits = prss_state.mask_next(own_role.one_based(), BD1)?;
-        let res = partial_dec + composed_bits;
+        let partial_decrypt = partial_decrypt128(keyshares, &current_ct_block)?;
+        let res = partial_decrypt + preprocessing.next_mask()?;
 
         shared_masked_ptxts.push(res);
     }
-    Ok(shared_masked_ptxts)
+    let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
+    let bits_in_block = keyshares
+        .threshold_lwe_parameters
+        .output_cipher_parameters
+        .usable_message_modulus_log
+        .0;
+    combine_plaintext_blocks(&own_role, bits_in_block, partial_decrypted)
 }
 
 // run decryption with bit-decomposition
 pub async fn run_decryption_bitdec<
-    P: Preprocessing<ResiduePoly64> + Send,
-    Rnd: Rng + CryptoRng + Sync,
+    P: BitDecPreprocessing + Send + ?Sized,
+    Rnd: Rng + CryptoRng + Send + Sync,
     Ses: BaseSessionHandles<Rnd>,
 >(
     session: &mut Ses,

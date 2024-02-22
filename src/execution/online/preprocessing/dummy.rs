@@ -1,93 +1,29 @@
-use super::triple::Triple;
+use super::BitPreprocessing;
+use super::DKGPreprocessing;
+use super::NoiseBounds;
+use crate::execution::online::preprocessing::BasePreprocessing;
+use crate::execution::online::preprocessing::RandomPreprocessing;
+use crate::execution::online::preprocessing::TriplePreprocessing;
+use crate::execution::online::secret_distributions::RealSecretDistributions;
+use crate::execution::online::secret_distributions::SecretDistributions;
+use crate::execution::online::triple::Triple;
+use crate::execution::runtime::session::BaseSession;
+use crate::execution::runtime::session::SmallSession;
+use crate::execution::sharing::shamir::ErrorCorrect;
+use crate::execution::sharing::shamir::RevealOp;
+use crate::execution::sharing::shamir::RingEmbed;
+use crate::execution::sharing::shamir::ShamirSharings;
 use crate::{
-    algebra::{poly::Poly, structure_traits::Ring},
+    algebra::poly::Poly,
+    algebra::structure_traits::Ring,
     error::error_handler::anyhow_error_and_log,
     execution::{
-        runtime::{party::Role, session::BaseSessionHandles},
-        sharing::{
-            shamir::{ErrorCorrect, RevealOp, RingEmbed, ShamirSharings},
-            share::Share,
-        },
+        runtime::party::Role, runtime::session::BaseSessionHandles, sharing::share::Share,
     },
 };
 use aes_prng::AesRng;
-use mockall::automock;
-use rand::SeedableRng;
-use rand::{CryptoRng, Rng};
-
-/// The amount of triples required in a distributed decryption
-pub const TRIPLE_BATCH_SIZE: usize = 10_usize;
-/// The amount of randoms required in a distributed decryption
-pub const RANDOM_BATCH_SIZE: usize = 10_usize;
-
-//NOTE: It's actually cumbersome to have the trait bounds define in the trait definition and not in the methods.
-//It forces to define a Rnd sperately from LargeSession
-/// Trait for implementing preprocessing values
-#[automock]
-pub trait Preprocessing<R: Ring> {
-    /// Outputs share of a random triple
-    fn next_triple(&mut self) -> anyhow::Result<Triple<R>>;
-
-    /// Outputs a vector of shares of random triples
-    fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<R>>>;
-
-    /// Outputs share of a uniformly random element of the [`Ring`]
-    fn next_random(&mut self) -> anyhow::Result<Share<R>>;
-
-    /// Constructs a vector of shares of uniformly random elements of the [`Ring`]
-    fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<R>>>;
-}
-
-#[derive(Default, Clone)]
-pub struct BasePreprocessing<R>
-where
-    R: Ring,
-{
-    pub available_triples: Vec<Triple<R>>,
-    pub available_randoms: Vec<Share<R>>,
-}
-
-impl<Z: Ring> Preprocessing<Z> for BasePreprocessing<Z> {
-    fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
-        self.available_triples
-            .pop()
-            .ok_or_else(|| anyhow_error_and_log("available_triple is empty".to_string()))
-    }
-
-    fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
-        if self.available_triples.len() >= amount {
-            let mut res = Vec::with_capacity(amount);
-            for _ in 0..amount {
-                res.push(self.next_triple()?);
-            }
-            Ok(res)
-        } else {
-            Err(anyhow_error_and_log(format!(
-                "Not enough triples to pop {amount}"
-            )))
-        }
-    }
-
-    fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
-        self.available_randoms
-            .pop()
-            .ok_or_else(|| anyhow_error_and_log("available_random is empty".to_string()))
-    }
-
-    fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
-        if self.available_randoms.len() >= amount {
-            let mut res = Vec::with_capacity(amount);
-            for _ in 0..amount {
-                res.push(self.next_random()?);
-            }
-            Ok(res)
-        } else {
-            Err(anyhow_error_and_log(format!(
-                "Not enough randomness to pop {amount}"
-            )))
-        }
-    }
-}
+use rand::{CryptoRng, Rng, SeedableRng};
+use tonic::async_trait;
 
 /// Struct for dummy preprocessing for use in interactive tests although it is constructed non-interactively.
 /// The struct reflects dummy shares that are technically correct Shamir shares of a polynomial
@@ -103,7 +39,10 @@ pub struct DummyPreprocessing<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<R
     _phantom2: std::marker::PhantomData<Rnd>,
 }
 
-impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> DummyPreprocessing<Z, Rnd, Ses> {
+impl<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> DummyPreprocessing<Z, Rnd, Ses>
+where
+    Z: Ring + RingEmbed,
+{
     /// Dummy preprocessing which generates shares deterministically from `seed`
     pub fn new(seed: u64, session: Ses) -> Self {
         DummyPreprocessing::<Z, Rnd, Ses> {
@@ -115,12 +54,7 @@ impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> DummyPreproces
             _phantom2: Default::default(),
         }
     }
-}
 
-impl<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> DummyPreprocessing<Z, Rnd, Ses>
-where
-    Z: Ring + RingEmbed,
-{
     /// Helper method for computing the Shamir shares of a `secret`.
     /// Returns a vector of the shares 0-indexed based on [Role]
     pub fn share(
@@ -128,8 +62,7 @@ where
         threshold: u8,
         secret: Z,
         rng: &mut (impl Rng + CryptoRng),
-    ) -> anyhow::Result<Vec<Share<Z>>>
-where {
+    ) -> anyhow::Result<Vec<Share<Z>>> {
         let poly = Poly::sample_random_with_fixed_constant(rng, secret, threshold as usize);
         (1..=parties)
             .map(|xi| {
@@ -143,11 +76,10 @@ where {
     }
 }
 
-impl<
-        Z: Ring + RingEmbed,
-        Rnd: Rng + CryptoRng + Send + Sync + Clone,
-        Ses: BaseSessionHandles<Rnd>,
-    > Preprocessing<Z> for DummyPreprocessing<Z, Rnd, Ses>
+impl<Z, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> TriplePreprocessing<Z>
+    for DummyPreprocessing<Z, Rnd, Ses>
+where
+    Z: Ring + RingEmbed,
 {
     /// Computes a dummy triple deterministically constructed from the seed in [DummyPreprocessing].
     fn next_triple(&mut self) -> anyhow::Result<Triple<Z>> {
@@ -192,6 +124,29 @@ impl<
         Ok(Triple::new(*a_share, *b_share, *c_share))
     }
 
+    fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
+        let mut res = Vec::with_capacity(amount);
+        // Since there is no communication in the dummy implementation there is no need for optimizating the list call
+        for _i in 0..amount {
+            res.push(self.next_triple()?);
+        }
+        Ok(res)
+    }
+
+    fn append_triples(&mut self, _triples: Vec<Triple<Z>>) {
+        unimplemented!()
+    }
+
+    fn triples_len(&self) -> usize {
+        self.trip_ctr as usize
+    }
+}
+
+impl<Z, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> RandomPreprocessing<Z>
+    for DummyPreprocessing<Z, Rnd, Ses>
+where
+    Z: Ring + RingEmbed,
+{
     /// Computes a random element deterministically but pseudorandomly constructed from the seed in [DummyPreprocessing].
     fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
         // Used to distinguish calls to next random and next triple
@@ -200,7 +155,7 @@ impl<
         let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.rnd_ctr ^ RAND_FLAG);
         self.rnd_ctr += 1;
         let secret = Z::sample(&mut rng);
-        let all_parties_shares = DummyPreprocessing::<Z, Rnd, Ses>::share(
+        let all_parties_shares = Self::share(
             self.session.num_parties(),
             self.session.threshold(),
             secret,
@@ -212,15 +167,6 @@ impl<
         Ok(*my_share)
     }
 
-    fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
-        let mut res = Vec::with_capacity(amount);
-        // Since there is no communication in the dummy implementation there is no need for optimizating the list call
-        for _i in 0..amount {
-            res.push(self.next_triple()?);
-        }
-        Ok(res)
-    }
-
     fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
         let mut res = Vec::with_capacity(amount);
         // Since there is no communication in the dummy implementation there is no need for optimizating the list call
@@ -228,6 +174,105 @@ impl<
             res.push(self.next_random()?);
         }
         Ok(res)
+    }
+
+    fn append_randoms(&mut self, _randoms: Vec<Share<Z>>) {
+        unimplemented!()
+    }
+
+    fn randoms_len(&self) -> usize {
+        self.rnd_ctr as usize
+    }
+}
+
+impl<Z, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> BasePreprocessing<Z>
+    for DummyPreprocessing<Z, Rnd, Ses>
+where
+    Z: Ring + RingEmbed,
+{
+}
+
+impl<Z, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> BitPreprocessing<Z>
+    for DummyPreprocessing<Z, Rnd, Ses>
+where
+    Z: Ring + RingEmbed,
+{
+    ///__NOTE__ : It is useless to append bits to a [`DummyPreprocessing`]
+    /// we generate them on the fly with no interaction
+    fn append_bits(&mut self, _bits: Vec<Share<Z>>) {}
+
+    fn next_bit(&mut self) -> anyhow::Result<Share<Z>> {
+        Ok(self.next_bit_vec(1)?[0])
+    }
+
+    fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
+        const BIT_FLAG: u64 = 0xB542074E84A9D88E;
+        let mut rng = AesRng::seed_from_u64(BIT_FLAG ^ self.seed);
+        let mut res = Vec::with_capacity(amount);
+        for _ in 0..amount {
+            let bit = rng.gen_bool(1.0 / 2.0);
+            let secret = if bit { Z::ONE } else { Z::ZERO };
+            let shared_secret = DummyPreprocessing::<Z, Rnd, Ses>::share(
+                self.session.num_parties(),
+                self.session.threshold(),
+                secret,
+                &mut rng,
+            )?[self.session.my_role()?.zero_based()];
+            res.push(shared_secret);
+        }
+        Ok(res)
+    }
+}
+
+#[async_trait]
+impl<Z, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> DKGPreprocessing<Z>
+    for DummyPreprocessing<Z, Rnd, Ses>
+where
+    Z: Ring + RingEmbed,
+{
+    fn next_noise_vec(
+        &mut self,
+        amount: usize,
+        bound: NoiseBounds,
+    ) -> anyhow::Result<Vec<Share<Z>>> {
+        RealSecretDistributions::t_uniform(amount, bound.get_bound(), self)
+    }
+
+    ///__NOTE__ : It is useless to append noises to a [`DummyPreprocessing`]
+    /// we generate them on the fly with no interaction
+    fn append_noises(&mut self, _noises: Vec<Share<Z>>, _bound: NoiseBounds) {}
+
+    async fn fill_from_base_preproc_small_session_appendix_version(
+        &mut self,
+        _session: &mut SmallSession<Z>,
+        _preprocessing: &mut dyn BasePreprocessing<Z>,
+    ) -> anyhow::Result<()> {
+        unimplemented!("We do not implement filling for DummyPreprocessing")
+    }
+
+    fn fill_from_triples_and_bit_preproc_small_session_appendix_version(
+        &mut self,
+        _session: &mut SmallSession<Z>,
+        _preprocessing_triples: &mut dyn BasePreprocessing<Z>,
+        _preprocessing_bits: &mut dyn BitPreprocessing<Z>,
+    ) -> anyhow::Result<()> {
+        unimplemented!("We do not implement filling for DummyPreprocessing")
+    }
+    async fn fill_from_base_preproc(
+        &mut self,
+        _session: &mut BaseSession,
+        _preprocessing: &mut dyn BasePreprocessing<Z>,
+    ) -> anyhow::Result<()> {
+        unimplemented!("We do not implement filling for DummyPreprocessing")
+    }
+
+    fn fill_from_triples_and_bit_preproc(
+        &mut self,
+        _session: &mut BaseSession,
+        _preprocessing_triples: &mut dyn BasePreprocessing<Z>,
+        _preprocessing_bits: &mut dyn BitPreprocessing<Z>,
+    ) -> anyhow::Result<()> {
+        unimplemented!("We do not implement filling for DummyPreprocessing")
     }
 }
 
@@ -255,7 +300,7 @@ impl<Z, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> DummyDebugPreprocess
         }
     }
 }
-impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> Preprocessing<Z>
+impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> TriplePreprocessing<Z>
     for DummyDebugPreprocessing<Z, Rnd, Ses>
 {
     /// Computes a dummy triple deterministically constructed from the seed in [DummyPreprocessing].
@@ -270,16 +315,6 @@ impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> Preprocessing<
         Ok(Triple::new(a, b, c))
     }
 
-    /// Computes a random element deterministically but pseudorandomly constructed from the seed in [DummyPreprocessing].
-    fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
-        // Used to distinguish calls to next random and next triple
-        const RAND_FLAG: u64 = 0x818DECF7255EBCE6;
-        // Construct a rng uniquely defined from the dummy seed and the ctr
-        let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.rnd_ctr ^ RAND_FLAG);
-        self.rnd_ctr += 1;
-        Ok(Share::new(self.session.my_role()?, Z::sample(&mut rng)))
-    }
-
     fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
         let mut res = Vec::with_capacity(amount);
         // Since there is no communication in the dummy implementation there is no need for optimizating
@@ -288,6 +323,28 @@ impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> Preprocessing<
             res.push(self.next_triple()?);
         }
         Ok(res)
+    }
+
+    fn append_triples(&mut self, _triples: Vec<Triple<Z>>) {
+        unimplemented!()
+    }
+
+    fn triples_len(&self) -> usize {
+        self.trip_ctr as usize
+    }
+}
+
+impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> RandomPreprocessing<Z>
+    for DummyDebugPreprocessing<Z, Rnd, Ses>
+{
+    /// Computes a random element deterministically but pseudorandomly constructed from the seed in [DummyPreprocessing].
+    fn next_random(&mut self) -> anyhow::Result<Share<Z>> {
+        // Used to distinguish calls to next random and next triple
+        const RAND_FLAG: u64 = 0x818DECF7255EBCE6;
+        // Construct a rng uniquely defined from the dummy seed and the ctr
+        let mut rng: AesRng = AesRng::seed_from_u64(self.seed ^ self.rnd_ctr ^ RAND_FLAG);
+        self.rnd_ctr += 1;
+        Ok(Share::new(self.session.my_role()?, Z::sample(&mut rng)))
     }
 
     fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
@@ -299,6 +356,19 @@ impl<Z: Ring, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>> Preprocessing<
         }
         Ok(res)
     }
+
+    fn append_randoms(&mut self, _randoms: Vec<Share<Z>>) {
+        unimplemented!()
+    }
+
+    fn randoms_len(&self) -> usize {
+        self.rnd_ctr as usize
+    }
+}
+
+impl<Z: Ring, Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> BasePreprocessing<Z>
+    for DummyDebugPreprocessing<Z, Rnd, Ses>
+{
 }
 
 /// Helper method to reconstructs a shared ring element based on a vector of shares.
@@ -315,29 +385,27 @@ mod tests {
     use crate::{
         algebra::{
             base_ring::{Z128, Z64},
-            residue_poly::ResiduePoly,
-            residue_poly::ResiduePoly128,
+            residue_poly::{ResiduePoly, ResiduePoly128},
             structure_traits::Zero,
-        },
-        execution::{
-            online::{
-                preprocessing::{
-                    reconstruct, BasePreprocessing, DummyDebugPreprocessing, DummyPreprocessing,
-                    Preprocessing, RANDOM_BATCH_SIZE, TRIPLE_BATCH_SIZE,
-                },
-                triple::Triple,
-            },
-            runtime::party::Role,
-            runtime::session::{BaseSessionHandles, ParameterHandles, SmallSession},
         },
         tests::helper::tests::{get_small_session, get_small_session_for_parties},
     };
     use aes_prng::AesRng;
-    use itertools::Itertools;
     use paste::paste;
     use std::num::Wrapping;
 
     use super::Share;
+    use crate::execution::online::preprocessing::dummy::reconstruct;
+    use crate::execution::online::preprocessing::dummy::DummyDebugPreprocessing;
+    use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
+    use crate::execution::online::preprocessing::dummy::Role;
+    use crate::execution::online::preprocessing::RandomPreprocessing;
+    use crate::execution::online::preprocessing::TriplePreprocessing;
+    use crate::execution::online::triple::Triple;
+    use crate::execution::runtime::session::BaseSessionHandles;
+    use crate::execution::runtime::session::ParameterHandles;
+    use crate::execution::runtime::session::SmallSession;
+    use itertools::Itertools;
 
     #[test]
     fn test_debug_dummy_rand() {
@@ -399,37 +467,6 @@ mod tests {
     macro_rules! test_preprocessing {
         ($z:ty, $u:ty) => {
             paste! {
-                // Test what happens when no more triples are preset
-                #[test]
-                fn [<test_no_more_elements_ $z:lower>]() {
-                    let share = Share::new(Role::indexed_by_one(1), ResiduePoly::<$z>::from_scalar(Wrapping(1)));
-                    let triple = Triple::new(share.clone(), share.clone(), share.clone());
-                    let mut preproc = BasePreprocessing::<ResiduePoly<$z>> {
-                        available_triples: (0..TRIPLE_BATCH_SIZE).map(|_i| triple.clone()).collect_vec(),
-                        available_randoms: (0..TRIPLE_BATCH_SIZE).map(|_i| share.clone()).collect_vec(),
-                    };
-                    // Try to use both the method for getting a single triple and a vector
-                    let mut triple_res = preproc
-                        .next_triple_vec(TRIPLE_BATCH_SIZE - 1)
-                        .unwrap();
-                    triple_res.push(preproc.next_triple().unwrap());
-                    // Similarely for random elements
-                    let mut rand_res = preproc
-                        .next_random_vec(RANDOM_BATCH_SIZE - 1)
-                        .unwrap();
-                    rand_res.push(preproc.next_random().unwrap());
-                    // We have now used the entire batch of values and should thus fail
-                    assert!(preproc
-                        .next_triple()
-                        .unwrap_err()
-                        .to_string()
-                        .contains("available_triple is empty"));
-                    assert!(preproc
-                        .next_random()
-                        .unwrap_err()
-                        .to_string()
-                        .contains("available_random is empty"));
-                }
 
                 #[test]
                 fn [<test_threshold_dummy_share $z:lower>]() {

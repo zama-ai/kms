@@ -2,13 +2,12 @@ use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::algebra::base_ring::Z64;
 use distributed_decryption::algebra::residue_poly::ResiduePoly64;
-use distributed_decryption::execution::config::BatchParams;
-use distributed_decryption::execution::large_execution::offline::LargePreprocessing;
-use distributed_decryption::execution::large_execution::offline::{
-    TrueDoubleSharing, TrueSingleSharing,
+use distributed_decryption::execution::endpoints::decryption::{
+    init_prep_bitdec_large, init_prep_bitdec_small,
 };
 use distributed_decryption::execution::online::bit_manipulation::bit_dec_batch;
-use distributed_decryption::execution::online::preprocessing::DummyPreprocessing;
+use distributed_decryption::execution::online::preprocessing::dummy::DummyPreprocessing;
+use distributed_decryption::execution::online::preprocessing::BitDecPreprocessing;
 use distributed_decryption::execution::runtime::session::ParameterHandles;
 use distributed_decryption::execution::runtime::session::SmallSessionHandles;
 use distributed_decryption::execution::runtime::session::{LargeSession, SmallSession};
@@ -16,7 +15,6 @@ use distributed_decryption::execution::sharing::shamir::InputOp;
 use distributed_decryption::execution::sharing::shamir::ShamirSharings;
 use distributed_decryption::execution::sharing::share::Share;
 use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandom;
-use distributed_decryption::execution::small_execution::offline::SmallPreprocessing;
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::tests::helper::tests_and_benches::{
     execute_protocol_large, execute_protocol_small,
@@ -41,17 +39,6 @@ impl std::fmt::Display for OneShotConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "n={}_t={}_batch={}", self.n, self.t, self.batch_size)?;
         Ok(())
-    }
-}
-
-/// Preprocessing amount for doing a single (full) 64-bit bit-decomposition
-struct OneShotBitDec;
-impl OneShotBitDec {
-    fn triples() -> usize {
-        1280
-    }
-    fn randoms() -> usize {
-        64
     }
 }
 
@@ -147,17 +134,8 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                             prss_setup.new_prss_session_state(session.session_id()),
                         ));
 
-                        let bitdec_batch = BatchParams {
-                            triples: OneShotBitDec::triples() * config.batch_size,
-                            randoms: OneShotBitDec::randoms() * config.batch_size,
-                        };
-
-                        let mut prep = SmallPreprocessing::<ResiduePoly64, RealAgreeRandom>::init(
-                            &mut session,
-                            bitdec_batch,
-                        )
-                        .await
-                        .unwrap();
+                        let mut bitdec_prep =
+                            init_prep_bitdec_small(&mut session, config.batch_size).await;
 
                         let inputs: Vec<_> = (0..config.batch_size)
                             .map(|i| {
@@ -170,9 +148,13 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                             })
                             .collect();
 
-                        let _bits = bit_dec_batch::<Z64, _, _, _>(&mut session, &mut prep, inputs)
-                            .await
-                            .unwrap();
+                        let _bits = bit_dec_batch::<Z64, dyn BitDecPreprocessing, _, _>(
+                            &mut session,
+                            bitdec_prep.as_mut(),
+                            inputs,
+                        )
+                        .await
+                        .unwrap();
                     };
 
                     let _result = execute_protocol_small::<ResiduePoly64, _, _>(
@@ -206,22 +188,8 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
             |b, &config| {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
-                        let mut large_preprocessing = LargePreprocessing::<
-                            ResiduePoly64,
-                            TrueSingleSharing<ResiduePoly64>,
-                            TrueDoubleSharing<ResiduePoly64>,
-                        >::init(
-                            &mut session,
-                            BatchParams {
-                                triples: OneShotBitDec::triples() * config.batch_size,
-                                randoms: OneShotBitDec::randoms() * config.batch_size,
-                            },
-                            TrueSingleSharing::default(),
-                            TrueDoubleSharing::default(),
-                        )
-                        .await
-                        .unwrap();
-
+                        let mut bitdec_prep =
+                            init_prep_bitdec_large(&mut session, config.batch_size).await;
                         let inputs: Vec<_> = (0..config.batch_size)
                             .map(|i| {
                                 get_my_share(
@@ -233,9 +201,9 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                             })
                             .collect();
 
-                        let _bits = bit_dec_batch::<Z64, _, _, _>(
+                        let _bits = bit_dec_batch::<Z64, dyn BitDecPreprocessing, _, _>(
                             &mut session,
-                            &mut large_preprocessing,
+                            bitdec_prep.as_mut(),
                             inputs,
                         )
                         .await

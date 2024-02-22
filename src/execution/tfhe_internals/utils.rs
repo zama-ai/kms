@@ -161,10 +161,11 @@ pub mod tests {
     use tfhe::core_crypto::entities::{GlweSecretKeyOwned, LweSecretKeyOwned};
 
     use crate::execution::sharing::shamir::RevealOp;
+    use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
     use crate::{
         algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
         execution::{
-            endpoints::keygen::{DKGParams, PrivateKeySet},
+            endpoints::keygen::PrivateKeySet,
             runtime::party::Role,
             sharing::{
                 shamir::{ErrorCorrect, ShamirSharings},
@@ -238,10 +239,10 @@ pub mod tests {
         output_bit_vec
     }
 
-    pub fn reconstruct_lwe_secret_key_from_file<Z: BaseRing>(
+    pub fn reconstruct_lwe_secret_key_from_file<Z: BaseRing, Params: DKGParamsBasics + ?Sized>(
         parties: usize,
         threshold: usize,
-        params: DKGParams,
+        params: &Params,
     ) -> LweSecretKeyOwned<u64>
     where
         ResiduePoly<Z>: ErrorCorrect,
@@ -288,7 +289,7 @@ pub mod tests {
                 Role::indexed_by_zero(party),
                 PrivateKeySet::<Z>::read_from_file(format!(
                     "{}/sk_p{}.der",
-                    params.get_prefix_path(),
+                    params.get_params_basics_handle().get_prefix_path(),
                     party
                 ))
                 .unwrap(),
@@ -300,30 +301,41 @@ pub mod tests {
         for (role, sk) in sk_shares {
             glwe_key_shares.insert(role, sk.glwe_secret_key_share.data);
 
-            if params.o_flag {
-                big_glwe_key_shares.insert(role, sk.glwe_secret_key_share_sns.unwrap().data);
+            match params {
+                DKGParams::WithoutSnS(_) => (),
+                DKGParams::WithSnS(_) => {
+                    let _ = big_glwe_key_shares
+                        .insert(role, sk.glwe_secret_key_share_sns.unwrap().data);
+                }
             }
         }
 
-        let glwe_key = reconstruct_bit_vec(glwe_key_shares, params.glwe_sk_num_bits(), threshold);
-        let glwe_secret_key =
-            GlweSecretKeyOwned::from_container(glwe_key, params.polynomial_size());
+        let glwe_key = reconstruct_bit_vec(
+            glwe_key_shares,
+            params.get_params_basics_handle().glwe_sk_num_bits(),
+            threshold,
+        );
+        let glwe_secret_key = GlweSecretKeyOwned::from_container(
+            glwe_key,
+            params.get_params_basics_handle().polynomial_size(),
+        );
 
-        let big_glwe_secret_key = if params.o_flag {
-            let big_glwe_key = reconstruct_bit_vec(
-                big_glwe_key_shares,
-                params.glwe_sk_num_bits_sns().unwrap(),
-                threshold,
-            )
-            .into_iter()
-            .map(|bit| bit as u128)
-            .collect_vec();
-            Some(GlweSecretKeyOwned::from_container(
-                big_glwe_key,
-                params.o_N.unwrap(),
-            ))
-        } else {
-            None
+        let big_glwe_secret_key = match params {
+            DKGParams::WithSnS(sns_params) => {
+                let big_glwe_key = reconstruct_bit_vec(
+                    big_glwe_key_shares,
+                    sns_params.glwe_sk_num_bits_sns(),
+                    threshold,
+                )
+                .into_iter()
+                .map(|bit| bit as u128)
+                .collect_vec();
+                Some(GlweSecretKeyOwned::from_container(
+                    big_glwe_key,
+                    sns_params.polynomial_size_sns(),
+                ))
+            }
+            DKGParams::WithoutSnS(_) => None,
         };
 
         (glwe_secret_key, big_glwe_secret_key)

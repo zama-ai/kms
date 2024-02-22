@@ -13,7 +13,9 @@ use self::gen::{
 use crate::algebra::base_ring::Z64;
 use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
-use crate::execution::endpoints::decryption::{run_decryption_large, run_decryption_small};
+use crate::execution::endpoints::decryption::{
+    init_prep_noiseflood_large, init_prep_noiseflood_small, run_decryption_noiseflood,
+};
 use crate::execution::endpoints::keygen::initialize_key_material;
 use crate::execution::runtime::party::{Identity, Role};
 use crate::execution::runtime::session::{
@@ -223,9 +225,15 @@ impl Choreography for GrpcChoreography {
                                 .iter()
                                 .map(|ct_block| to_large_ciphertext_block(ck, ct_block))
                                 .collect_vec();
+
+                            //Set up the preprocessing
+                            let mut noiseflood_preprocessing =
+                                init_prep_noiseflood_small(&mut session, ct_large.len());
+
                             let mut results = HashMap::with_capacity(1);
-                            let outputs = run_decryption_small(
+                            let outputs = run_decryption_noiseflood(
                                 &mut session,
+                                noiseflood_preprocessing.as_mut(),
                                 &setup_info.secret_key_share,
                                 ct_large,
                             )
@@ -283,9 +291,15 @@ impl Choreography for GrpcChoreography {
                                 .iter()
                                 .map(|ct_block| to_large_ciphertext_block(ck, ct_block))
                                 .collect_vec();
+
+                            //Set up the preprocessing
+                            let mut noiseflood_preprocessing =
+                                init_prep_noiseflood_large(&mut session, ct_large.len()).await;
+
                             let mut results = HashMap::with_capacity(1);
-                            let outputs = run_decryption_large(
+                            let outputs = run_decryption_noiseflood(
                                 &mut session,
+                                noiseflood_preprocessing.as_mut(),
                                 &setup_info.secret_key_share,
                                 ct_large,
                             )
