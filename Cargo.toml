@@ -21,7 +21,7 @@ anyhow = "~1.0"
 bincode = "~1.3"
 crypto_box = {version = "~0.9.1", features = ["salsa20"]}
 # Run ssh-add to authenticate your SSH keys to access the private github repo below
-distributed-decryption = {git = "ssh://git@github.com/zama-ai/distributed-decryption"}
+distributed-decryption = {git = "ssh://git@github.com/zama-ai/distributed-decryption", rev = "f9e5f8e"}
 ctor = "~0.2"
 itertools = "0.12"
 k256 = "0.13.3"

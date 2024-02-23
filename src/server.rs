@@ -23,8 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let url = &args[1];
-    let keys: SoftwareKmsKeys =
-        read_element(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH.to_string()).unwrap();
+    let keys: SoftwareKmsKeys = read_element(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH)?;
     server_handle(url, keys).await?;
     Ok(())
 }

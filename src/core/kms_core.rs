@@ -16,13 +16,13 @@ use std::sync::{Arc, Mutex};
 use tfhe::prelude::FheDecrypt;
 use tfhe::{generate_keys, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint8};
 
-pub fn gen_sig_keys(rng: &mut (impl CryptoRng + Rng)) -> (PublicSigKey, PrivateSigKey) {
+pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
     let sk = SigningKey::random(rng);
     let pk = SigningKey::verifying_key(&sk);
     (PublicSigKey { pk: *pk }, PrivateSigKey { sk })
 }
 
-pub fn gen_kms_keys(config: Config, rng: &mut (impl CryptoRng + RngCore)) -> SoftwareKmsKeys {
+pub fn gen_kms_keys<R: CryptoRng + RngCore>(config: Config, rng: &mut R) -> SoftwareKmsKeys {
     let (fhe_sk, _fhe_server_key) = generate_keys(config.clone());
     let (sig_pk, sig_sk) = gen_sig_keys(rng);
     // TODO do we need this to be a mutex as well to allow for parallel queries
@@ -38,6 +38,7 @@ pub struct BaseKmsStruct {
     pub(crate) sig_key: PrivateSigKey,
     pub(crate) rng: Arc<Mutex<AesRng>>,
 }
+
 impl BaseKmsStruct {
     pub fn new(sig_sk: PrivateSigKey) -> Self {
         BaseKmsStruct {
@@ -168,6 +169,7 @@ impl BaseKms for SoftwareKms {
         BaseKmsStruct::digest(&msg)
     }
 }
+
 impl Kms for SoftwareKms {
     fn decrypt(&self, high_level_ct: &[u8], fhe_type: FheType) -> anyhow::Result<Plaintext> {
         Ok(match fhe_type {
@@ -300,7 +302,7 @@ mod tests {
 
     fn sunshine_decrypt(kms_key_path: &str) {
         let msg = 42_u8;
-        let keys: CentralizedTestingKeys = read_element(kms_key_path.to_string()).unwrap();
+        let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
         let kms = SoftwareKms::new(
             keys.software_kms_keys.fhe_sk.clone(),
             keys.software_kms_keys.sig_sk,
@@ -336,7 +338,7 @@ mod tests {
     fn sunshine_reencrypt(kms_key_path: &str) {
         let msg = 42_u8;
         let mut rng = AesRng::seed_from_u64(1);
-        let keys: CentralizedTestingKeys = read_element(kms_key_path.to_string()).unwrap();
+        let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
         let kms = SoftwareKms::new(
             keys.software_kms_keys.fhe_sk.clone(),
             keys.software_kms_keys.sig_sk,

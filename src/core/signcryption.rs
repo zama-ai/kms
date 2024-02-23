@@ -1,3 +1,14 @@
+//! Necessary methods for secure client communication in relation to decryption requests.
+//!
+//! Client requests to the server should be validated against the client's ECDSA secp256k1 key.
+//! Based on the request the server does sign-then-encrypt to securely encrypt a payload for the
+//! client. Signing for the server is also carried out using ECDSA with secp256k1 and the client
+//! can validate this against the server's public key.
+//!
+//! For encryption a hybrid encryption is used based on ECIES using Libsodium. More specifically
+//! using ECDH with curve 25519 and Salsa. NOTE This may change in the future to be more compatible
+//! with NIST standardized schemes.
+
 use super::der_types::{
     Cipher, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
     SigncryptionPubKey,
@@ -13,24 +24,14 @@ use serde::Serialize;
 use serde_asn1_der::to_vec;
 use sha3::{Digest, Sha3_256};
 
-///
-/// This file is supposed to implemente the necesary methods required for secure client
-/// communication in relation to decryption requests. This means that the client sends a request to
-/// the server which it validates against the client's ECDSA secp256k1 key. Based on the request the
-/// server does sign-then-encrypt to securely encrypt a payload for the client. Signing for the
-/// server is also carried out using ECDSA with secp256k1 and the client can validate this against
-/// the server's public key.
-///
-/// For encryption a hybrid encryption is used based on ECIES using Libsodium. More specifically
-/// using ECDH with curve 25519 and Salsa. NOTE This may change in the future to be more compatible
-/// with NIST standardized schemes.
 const DIGEST_BYTES: usize = 256 / 8; // SHA3-256 digest
 pub(crate) const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 pub const RND_SIZE: usize = 128 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
 
-/// Generate ephemeral keys used for encryption
+/// Generate ephemeral keys used for encryption.
+///
 /// Concretely it involves generating ECDH keys for curve 25519 to be used in ECIES for hybrid
-/// encryption using Salsa
+/// encryption using Salsa.
 pub fn encryption_key_generation(
     rng: &mut (impl CryptoRng + RngCore),
 ) -> (PublicEncKey, PrivateEncKey) {
@@ -38,9 +39,9 @@ pub fn encryption_key_generation(
     (PublicEncKey(sk.public_key()), sk)
 }
 
-/// Method for computing the signature on a payload, `msg`, based on the server's signing key
-/// `server_sig_key`. Returns the signed message as a vector of bytes/
-/// Concretely r || s
+/// Computing the signature on message based on the server's signing key.
+///
+/// Returns the signed message as a vector of bytes. Concretely r || s.
 pub fn sign<T>(msg: &T, server_sig_key: &PrivateSigKey) -> anyhow::Result<Signature>
 where
     T: Serialize + AsRef<[u8]>,
@@ -51,8 +52,9 @@ where
     Ok(Signature { sig })
 }
 
-/// Method method for performing the necesary checks on a plain signature.
-/// Returns true if the signature is ok and false otherwise
+/// Verify a plain signature.
+///
+/// Returns true if the signature is ok and false otherwise.
 pub fn verify_sig<T>(msg: &T, sig: &Signature, server_verf_key: &PublicSigKey) -> bool
 where
     T: Serialize + AsRef<[u8]>,
@@ -71,8 +73,8 @@ where
     true
 }
 
-/// Method for computing the signcryption of a payload, `msg`, based on the necessary public keys
-/// `client_pk` received from a client, and the server's signing key `server_sig_key`.
+/// Compute the signcryption of a message based on the public keys received from a client and the server's signing key.
+///
 /// Returns the signcrypted message.
 ///
 /// WARNING: It is assumed that the client's public key HAS been validated to come from a valid
@@ -136,7 +138,8 @@ where
     })
 }
 
-/// Validates a signcryption and decrypts the payload if everything validates correctly.
+/// Validate a signcryption and decrypt the payload if everything validates correctly.
+///
 /// Returns None if validation fails.
 pub fn validate_and_decrypt(
     cipher: &Cipher,

@@ -85,6 +85,7 @@ impl ClientRequest {
         Ok(check_normalized(&self.signature))
     }
 }
+
 /// Helper method for what the client is supposed to do when generating ephemeral keys linked to the
 /// client's blockchain signing key
 pub(crate) fn ephemeral_key_generation(

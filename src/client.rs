@@ -82,9 +82,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = &args[1];
 
     let mut kms_client = retry!(KmsEndpointClient::connect(url.to_owned()).await, 5, 100)?;
-    let (ct, fhe_type): (Vec<u8>, FheType) = read_element(DEFAULT_CENTRAL_CIPHER_PATH.to_string())?;
-    let central_keys: CentralizedTestingKeys =
-        read_element(DEFAULT_CENTRAL_KEYS_PATH.to_string()).unwrap();
+    let (ct, fhe_type): (Vec<u8>, FheType) = read_element(DEFAULT_CENTRAL_CIPHER_PATH)?;
+    let central_keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH)?;
     let mut internal_client = Client::new(
         HashSet::from_iter(central_keys.server_keys.iter().cloned()),
         central_keys.client_pk,
@@ -838,9 +837,9 @@ pub(crate) mod tests {
     // TODO speed up
     async fn decryption_centralized(centralized_key_path: &str, cipher_path: &str) {
         // TODO refactor with setup and teardown setting up servers that can be used to run tests in parapllel
-        let keys: CentralizedTestingKeys = read_element(centralized_key_path.to_string()).unwrap();
+        let keys: CentralizedTestingKeys = read_element(centralized_key_path).unwrap();
         let (kms_server, mut kms_client) = setup(keys.software_kms_keys).await;
-        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path.to_string()).unwrap();
+        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
         let mut internal_client = Client::new(
             HashSet::from_iter(keys.server_keys.iter().cloned()),
             keys.client_pk,
@@ -894,9 +893,9 @@ pub(crate) mod tests {
     }
 
     async fn reencryption_centralized(centralized_key_path: &str, cipher_path: &str) {
-        let keys: CentralizedTestingKeys = read_element(centralized_key_path.to_string()).unwrap();
+        let keys: CentralizedTestingKeys = read_element(centralized_key_path).unwrap();
         let (kms_server, mut kms_client) = setup(keys.software_kms_keys).await;
-        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path.to_string()).unwrap();
+        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
         let mut internal_client = Client::new(
             HashSet::from_iter(keys.server_keys.iter().cloned()),
             keys.client_pk,
@@ -1067,8 +1066,7 @@ pub(crate) mod tests {
     #[serial]
     #[ignore]
     async fn test_largecipher() {
-        let keys: CentralizedTestingKeys =
-            read_element(DEFAULT_CENTRAL_KEYS_PATH.to_string()).unwrap();
+        let keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH).unwrap();
         let (kms_server, mut kms_client) = setup(keys.software_kms_keys).await;
         let ct = Vec::from([1_u8; 1000000]);
         let fhe_type = FheType::Euint32;

@@ -32,8 +32,8 @@ pub fn write_element<T: serde::Serialize>(file_path: String, element: &T) -> any
     Ok(())
 }
 
-pub fn read_element<T: DeserializeOwned + Serialize>(file_path: String) -> anyhow::Result<T> {
-    let read_element = std::fs::read(file_path.clone())?;
+pub fn read_element<T: DeserializeOwned + Serialize>(file_path: &str) -> anyhow::Result<T> {
+    let read_element = std::fs::read(file_path)?;
     Ok(bincode::deserialize_from(read_element.as_slice())?)
 }
 
@@ -99,7 +99,7 @@ mod tests {
         let msg = "I am a teacup!".to_owned();
         let file_name = "temp/test_element.bin".to_string();
         write_element(file_name.clone(), &msg.clone()).unwrap();
-        let read_element: String = read_element(file_name.clone()).unwrap();
+        let read_element: String = read_element(&file_name).unwrap();
         assert_eq!(read_element, msg);
         remove_file(file_name).unwrap();
     }
