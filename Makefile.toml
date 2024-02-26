@@ -4,7 +4,7 @@ args = ["build", "-f", "operations/docker/local.dockerfile", "--ssh", "default",
 
 [tasks.generate-experiment]
 command = "cargo"
-args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-m", "${PROTOCOL}", "-o", "${EXPERIMENT_NAME}", "-e", "${NUM_MESSAGES}"]
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-s", "${PROTOCOL}", "-o", "${EXPERIMENT_NAME}", "-m", "${NUM_MESSAGES}", "-e", "${EPOCH_ID}"]
 
 [tasks.start-parties]
 command = "docker"
@@ -28,6 +28,7 @@ echo "= Parties: ${NUM_PARTIES}                               "
 echo "= Threshold: ${THRESHOLD}                               "
 echo "= Messages: ${NUM_MESSAGES}                             "
 echo "= Protocol: ${PROTOCOL}                                 "
+echo "= Epoch: ${EPOCH_ID}                                 "
 echo "=                                                       ="
 echo "========================================================="
 echo ""
@@ -37,11 +38,15 @@ echo ""
 [tasks.choreo]
 env = { "RUST_LOG" = "info", "RUST_BACKTRACE" = "1"}
 command = "cargo"
-args = ["run", "--bin", "mobygo", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "${CHOREO_COMMAND}"]
+args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "${CHOREO_COMMAND}"]
 
 
 [tasks.choreo-init]
 env = { "CHOREO_COMMAND" = "init"}
+run_task = { name = ["choreo"] }
+
+[tasks.choreo-crs]
+env = { "CHOREO_COMMAND" = "crs-ceremony"}
 run_task = { name = ["choreo"] }
 
 [tasks.choreo-decrypt]
@@ -58,7 +63,7 @@ command = "sleep"
 args = ["2"]
 
 [tasks.grpc-bench]
-run_task = { name = ["generate-experiment", "experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "sleep", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
+run_task = { name = ["generate-experiment", "experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "choreo-crs", "sleep", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
 
 
 [tasks.docker-image-ci]
@@ -69,42 +74,42 @@ args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}",
 run_task = { name = ["docker-image-ci", "grpc-bench-4-1-1-prss"] }
 
 [tasks.grpc-bench-4-1-1-prss]
-env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg1_prss" }
+env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "1", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg1_prss" }
 run_task = { name = ["grpc-bench"] }
 description = "4 parties, 1 threshold, 1 messages, PRSS"
 
 [tasks.grpc-bench-4-1-10-prss]
-env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg10_prss" }
+env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg10_prss" }
 run_task = { name = ["grpc-bench"] }
 description = "4 parties, 1 threshold, 10 messages, PRSS"
 
 [tasks.grpc-bench-4-1-30-prss]
-env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "30", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg30_prss" }
+env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "30", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg30_prss" }
 run_task = { name = ["grpc-bench"] }
 description = "4 parties, 1 threshold, 30 messages, PRSS"
 
 [tasks.grpc-bench-10-2-20-prss]
-env = { "NUM_PARTIES" = "10", "THRESHOLD" = "2", "NUM_MESSAGES" = "20", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p10_t2_msg20_prss" }
+env = { "NUM_PARTIES" = "10", "THRESHOLD" = "2", "NUM_MESSAGES" = "20", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p10_t2_msg20_prss" }
 run_task = { name = ["grpc-bench"] }
 description = "10 parties, 2 threshold, 20 messages, PRSS"
 
 [tasks.grpc-bench-16-5-40-prss]
-env = { "NUM_PARTIES" = "16", "THRESHOLD" = "5", "NUM_MESSAGES" = "40", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p16_t5_msg40_prss" }
+env = { "NUM_PARTIES" = "16", "THRESHOLD" = "5", "NUM_MESSAGES" = "40", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p16_t5_msg40_prss" }
 run_task = { name = ["grpc-bench"] }
 description = "16 parties, 5 threshold, 40 messages, PRSS"
 
 [tasks.grpc-bench-5-1-10-large]
-env = { "NUM_PARTIES" = "5", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p5_t1_msg10_large" }
+env = { "NUM_PARTIES" = "5", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "EPOCH_ID" = "1", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p5_t1_msg10_large" }
 run_task = { name = ["grpc-bench"] }
 description = "5 parties, 1 threshold, 10 messages, LargeDecryption"
 
 [tasks.grpc-bench-10-2-20-large]
-env = { "NUM_PARTIES" = "10", "THRESHOLD" = "2", "NUM_MESSAGES" = "20", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p10_t2_msg20_large" }
+env = { "NUM_PARTIES" = "10", "THRESHOLD" = "2", "NUM_MESSAGES" = "20", "EPOCH_ID" = "1", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p10_t2_msg20_large" }
 run_task = { name = ["grpc-bench"] }
 description = "10 parties, 2 threshold, 20 messages, LargeDecryption"
 
 [tasks.grpc-bench-100-10-40-large]
-env = { "NUM_PARTIES" = "100", "THRESHOLD" = "10", "NUM_MESSAGES" = "40", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p100_t10_msg40_large" }
+env = { "NUM_PARTIES" = "100", "THRESHOLD" = "10", "NUM_MESSAGES" = "40", "EPOCH_ID" = "1", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p100_t10_msg40_large" }
 run_task = { name = ["grpc-bench"] }
 description = "100 parties, 10 threshold, 40 messages, LargeDecryption"
 

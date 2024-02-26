@@ -7,8 +7,9 @@ pub mod gen {
 
 use self::gen::choreography_server::{Choreography, ChoreographyServer};
 use self::gen::{
-    DecryptionResponse, KeygenRequest, KeygenResponse, PubkeyRequest, PubkeyResponse,
-    RetrieveResultsRequest, RetrieveResultsResponse,
+    CrsCeremonyRequest, CrsCeremonyResponse, CrsRequest, CrsResponse, DecryptionResponse,
+    KeygenRequest, KeygenResponse, PubkeyRequest, PubkeyResponse, RetrieveResultsRequest,
+    RetrieveResultsResponse,
 };
 use crate::algebra::base_ring::Z64;
 use crate::algebra::residue_poly::ResiduePoly128;
@@ -21,6 +22,7 @@ use crate::execution::runtime::party::{Identity, Role};
 use crate::execution::runtime::session::{
     DecryptionMode, LargeSession, SessionParameters, SmallSessionStruct,
 };
+use crate::execution::zk::ceremony::{Ceremony, PublicParameter, RealCeremony};
 use crate::lwe::to_large_ciphertext_block;
 use crate::lwe::{Ciphertext64, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
@@ -62,34 +64,39 @@ enum SupportedPRSSSetup {
     ResiduePoly128(Option<PRSSSetup<ResiduePoly128>>),
 }
 
+/// Structure that holds data from the one-time (per-epoch) init phase
 #[derive(Clone)]
-struct SetupInfo {
+struct InitInfo {
     pub secret_key_share: SecretKeyShare,
     pub prss_setup: HashMap<SupportedRing, SupportedPRSSSetup>,
 }
-
 type ResultStores = DashMap<SessionId, Arc<AsyncCell<ComputationOutputs>>>;
-type SetupStore = DashMap<SessionId, Arc<AsyncCell<SetupInfo>>>;
+type InitStore = DashMap<SessionId, Arc<AsyncCell<InitInfo>>>;
+type CrsStore = DashMap<SessionId, Arc<AsyncCell<PublicParameter>>>;
 
-///Store results of decryptions (Z64) and setups for PRSS128 and PRSS64
+#[derive(Default)]
+
+struct GrpcDataStores {
+    init_store: Arc<InitStore>,
+    pubkey_store: Arc<Mutex<Option<PubConKeyPair>>>,
+    crs_store: Arc<CrsStore>,
+    init_epoch_id: AsyncCell<SessionId>,
+    crs_epoch_id: AsyncCell<SessionId>,
+    result_stores: Arc<ResultStores>,
+}
+
 pub struct GrpcChoreography {
     own_identity: Identity,
-    result_stores: Arc<ResultStores>,
     networking_strategy: NetworkingStrategy,
-    setup_store: Arc<SetupStore>,
-    pubkey_store: Arc<Mutex<Option<PubConKeyPair>>>,
-    setup_epoch_id: AsyncCell<SessionId>,
+    data: GrpcDataStores,
 }
 
 impl GrpcChoreography {
     pub fn new(own_identity: Identity, networking_strategy: NetworkingStrategy) -> Self {
         GrpcChoreography {
             own_identity,
-            result_stores: Arc::new(ResultStores::default()),
             networking_strategy,
-            setup_store: Arc::new(SetupStore::default()),
-            setup_epoch_id: AsyncCell::default(),
-            pubkey_store: Arc::new(Mutex::new(None)),
+            data: GrpcDataStores::default(),
         }
     }
 
@@ -125,10 +132,10 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
-        let threshold: u8 = bincode::deserialize(&request.threshold).map_err(|_e| {
+        let threshold: u8 = request.threshold.try_into().map_err(|_e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                "failed to parse threshold".to_string(),
+                "threshold must be at most 255".to_string(),
             )
         })?;
 
@@ -146,9 +153,9 @@ impl Choreography for GrpcChoreography {
                 "failed to construct session ID".to_string(),
             )
         })?;
-        let setup_epoch_id = &self.setup_epoch_id.try_get();
+        let init_epoch_id = &self.data.init_epoch_id.try_get();
 
-        match (self.result_stores.entry(session_id), setup_epoch_id) {
+        match (self.data.result_stores.entry(session_id), init_epoch_id) {
             (Entry::Occupied(_), _) => Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "session id exists already or inconsistent metric and result map".to_string(),
@@ -161,7 +168,8 @@ impl Choreography for GrpcChoreography {
                 tracing::debug!("I've launched a new decryption");
 
                 let setup_info = self
-                    .setup_store
+                    .data
+                    .init_store
                     .get(se_id)
                     .map(|ksarc| ksarc.value().clone())
                     .ok_or_else(|| {
@@ -183,8 +191,8 @@ impl Choreography for GrpcChoreography {
                     own_identity
                 );
 
-                let result_stores = Arc::clone(&self.result_stores);
-                let pks = Arc::clone(&self.pubkey_store);
+                let result_stores = Arc::clone(&self.data.result_stores);
+                let pks = Arc::clone(&self.data.pubkey_store);
                 let pkl = pks.lock().unwrap().clone();
                 match mode {
                     DecryptionMode::PRSSDecrypt => {
@@ -370,6 +378,7 @@ impl Choreography for GrpcChoreography {
 
         for i in 0..session_range {
             match self
+                .data
                 .result_stores
                 .get(&SessionId::from(session_id.0 + i as u128))
             {
@@ -402,10 +411,10 @@ impl Choreography for GrpcChoreography {
             tonic::Status::new(tonic::Code::Aborted, "failed to parse epoch id".to_string())
         })?;
 
-        let threshold: u8 = bincode::deserialize(&request.threshold).map_err(|_e| {
+        let threshold: u8 = request.threshold.try_into().map_err(|_e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                "failed to parse threshold".to_string(),
+                "threshold must be at most 255".to_string(),
             )
         })?;
 
@@ -432,7 +441,7 @@ impl Choreography for GrpcChoreography {
                 )
             })?;
 
-        match self.setup_store.entry(epoch_id) {
+        match self.data.init_store.entry(epoch_id) {
             Entry::Occupied(_) => Err(tonic::Status::new(
                 tonic::Code::Aborted,
                 "key epoch exists already or inconsistent metric and result map".to_string(),
@@ -441,7 +450,7 @@ impl Choreography for GrpcChoreography {
                 tracing::debug!("I've launched a new keygen");
 
                 // we have a new public key - store the current epoch ID
-                self.setup_epoch_id.set(epoch_id);
+                self.data.init_epoch_id.set(epoch_id);
 
                 let result_cell = AsyncCell::shared();
                 keyshare_store_entry.insert(result_cell);
@@ -460,8 +469,8 @@ impl Choreography for GrpcChoreography {
                     )
                 })?;
 
-                let setup_store = Arc::clone(&self.setup_store);
-                let pks = Arc::clone(&self.pubkey_store);
+                let init_store = Arc::clone(&self.data.init_store);
+                let pks = Arc::clone(&self.data.pubkey_store);
 
                 tokio::spawn(async move {
                     let (sk, pk, prss_setup) =
@@ -475,16 +484,17 @@ impl Choreography for GrpcChoreography {
                         SupportedPRSSSetup::ResiduePoly128(prss_setup),
                     );
 
-                    setup_store
+                    init_store
                         .get(&epoch_id)
                         .map(|setup_result_cell| {
-                            setup_result_cell.set(SetupInfo {
+                            setup_result_cell.set(InitInfo {
                                 secret_key_share: sk,
                                 prss_setup: map_setup,
                             });
                         })
                         .expect("Epoch key store disappeared unexpectedly");
 
+                    // store the public key
                     *pks.lock().unwrap() = Some(pk);
                     tracing::debug!("Key material stored.");
                 });
@@ -506,7 +516,8 @@ impl Choreography for GrpcChoreography {
         })?;
 
         let comp = self
-            .setup_store
+            .data
+            .init_store
             .get(&epoch_id)
             .map(|res| res.value().clone())
             .ok_or_else(|| {
@@ -518,7 +529,7 @@ impl Choreography for GrpcChoreography {
         // make sure that key was generated completely
         comp.get().await;
 
-        let pks = Arc::clone(&self.pubkey_store);
+        let pks = Arc::clone(&self.data.pubkey_store);
         let pkl = pks.lock().unwrap().clone().ok_or_else(|| {
             tonic::Status::new(
                 tonic::Code::Aborted,
@@ -526,11 +537,127 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
-        let pk_serialized = bincode::serialize(&pkl).expect("failed to serialize results");
+        let pk_serialized = bincode::serialize(&pkl).expect("failed to serialize pubkey");
         tracing::debug!("Pubkey successfully retrieved.");
 
         Ok(tonic::Response::new(PubkeyResponse {
             pubkey: pk_serialized,
         }))
+    }
+
+    async fn crs_ceremony(
+        &self,
+        request: tonic::Request<CrsCeremonyRequest>,
+    ) -> Result<tonic::Response<CrsCeremonyResponse>, tonic::Status> {
+        let request = request.into_inner();
+
+        let epoch_id = bincode::deserialize::<SessionId>(&request.epoch_id).map_err(|_e| {
+            tonic::Status::new(tonic::Code::Aborted, "failed to parse epoch id".to_string())
+        })?;
+
+        let threshold: u8 = request.threshold.try_into().map_err(|_e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                "threshold must be at most 255".to_string(),
+            )
+        })?;
+
+        let role_assignments: HashMap<Role, Identity> =
+            bincode::deserialize(&request.role_assignment).map_err(|_e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    "failed to parse role assignment".to_string(),
+                )
+            })?;
+
+        match self.data.crs_store.entry(epoch_id) {
+            Entry::Occupied(_) => Err(tonic::Status::new(
+                tonic::Code::Aborted,
+                "crs epoch exists already or inconsistent metric and result map".to_string(),
+            )),
+            Entry::Vacant(keyshare_store_entry) => {
+                tracing::debug!("I've launched a new CRS ceremony");
+
+                // we have a new epoch - store the current epoch ID
+                self.data.crs_epoch_id.set(epoch_id);
+
+                let result_cell = AsyncCell::shared();
+                keyshare_store_entry.insert(result_cell);
+
+                let own_identity = self.own_identity.clone();
+                let networking = (self.networking_strategy)(epoch_id, role_assignments.clone());
+
+                let mut session: SmallSessionStruct<ResiduePoly128,aes_prng::AesRng, SessionParameters> = SmallSession::new(
+                        epoch_id, role_assignments, Arc::clone(&networking), threshold, None, own_identity, None,)
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("could not make a valid session with current parameters. Failed with error \"{:?}\"", e).to_string(),
+                        )
+                    })?;
+
+                let crs_store = Arc::clone(&self.data.crs_store);
+
+                tokio::spawn(async move {
+                    let crs_start_timer = Instant::now();
+
+                    let real_ceremony = RealCeremony::default();
+                    let pp = real_ceremony
+                        .execute::<Z64, _, _>(&mut session, request.witness_dim as usize)
+                        .await
+                        .unwrap();
+
+                    let crs_stop_timer = Instant::now();
+
+                    // store the CRS
+                    crs_store
+                        .get(&epoch_id)
+                        .map(|result_cell| {
+                            result_cell.set(pp);
+                        })
+                        .expect("session disappeared unexpectedly");
+
+                    let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
+                    tracing::info!(
+                        "CRS stored. CRS ceremony time was {:?} ms",
+                        (elapsed_time).as_millis()
+                    );
+                });
+
+                Ok(tonic::Response::new(CrsCeremonyResponse {}))
+            }
+        }
+    }
+
+    async fn retrieve_crs(
+        &self,
+        request: tonic::Request<CrsRequest>,
+    ) -> Result<tonic::Response<CrsResponse>, tonic::Status> {
+        tracing::debug!("Retrieving CRS...");
+        let request = request.into_inner();
+
+        let epoch_id = bincode::deserialize::<SessionId>(&request.epoch_id).map_err(|_e| {
+            tonic::Status::new(tonic::Code::Aborted, "Failed to parse epoch id".to_string())
+        })?;
+
+        let crs = self
+            .data
+            .crs_store
+            .get(&epoch_id)
+            .map(|res| res.value().clone())
+            .ok_or_else(|| {
+                tonic::Status::new(
+                    tonic::Code::NotFound,
+                    format!("CRS not found for epoch id {}.", epoch_id),
+                )
+            })?;
+
+        // make sure that CRS was generated completely
+        let pp = crs.get().await;
+
+        let crs_ser = bincode::serialize(&pp).expect("failed to serialize CRS");
+        tracing::debug!("CRS successfully retrieved.");
+
+        Ok(tonic::Response::new(CrsResponse { crs: crs_ser }))
     }
 }

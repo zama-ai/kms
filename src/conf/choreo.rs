@@ -79,16 +79,21 @@ pub struct ChoreoConf {
     pub params_file: String,
     pub setup_mode: SetupMode,
     pub decrypt_mode: DecryptionMode,
-    epoch: Option<u128>,
+    epoch_id: Option<usize>,
+    pub witness_dim: Option<u32>,
 }
 
 impl ChoreoConf {
     pub fn epoch(&self) -> u128 {
-        self.epoch.unwrap_or(1)
+        self.epoch_id.unwrap_or(1) as u128
     }
 
     pub fn pub_key_file(&self) -> String {
         format!("{}/pk.bin", self.storage_folder)
+    }
+
+    pub fn crs_file(&self) -> String {
+        format!("{}/crs_{}.bin", self.storage_folder, self.epoch())
     }
 
     pub fn session_file_path(&self) -> String {

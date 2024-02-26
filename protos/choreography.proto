@@ -7,12 +7,14 @@ service Choreography {
     rpc Keygen(KeygenRequest) returns(KeygenResponse);
     rpc RetrievePubkey(PubkeyRequest) returns(PubkeyResponse);
     rpc ThresholdDecrypt(DecryptionRequest) returns(DecryptionResponse);
+    rpc CrsCeremony(CrsCeremonyRequest) returns(CrsCeremonyResponse);
+    rpc RetrieveCrs(CrsRequest) returns(CrsResponse);
 }
 
 message DecryptionRequest {
     bytes role_assignment = 1;
     bytes mode = 2;
-    bytes threshold = 3;
+    uint32 threshold = 3;
     bytes ciphertext = 4;
 }
 
@@ -32,7 +34,7 @@ message RetrieveResultsResponse {
 message KeygenRequest {
     bytes epoch_id = 1;
     bytes role_assignment = 2;
-    bytes threshold = 3;
+    uint32 threshold = 3;
     bytes params = 4;
     bytes setup_mode = 5;
 }
@@ -45,4 +47,21 @@ message PubkeyRequest {
 
 message PubkeyResponse {
     bytes pubkey = 1;
+}
+
+message CrsCeremonyRequest {
+    bytes epoch_id = 1;
+    bytes role_assignment = 2;
+    uint32 threshold = 3;
+    uint32 witness_dim = 4;
+}
+
+message CrsCeremonyResponse {}
+
+message CrsRequest {
+    bytes epoch_id = 1;
+}
+
+message CrsResponse {
+    bytes crs = 1;
 }

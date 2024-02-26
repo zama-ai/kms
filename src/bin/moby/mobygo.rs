@@ -31,11 +31,43 @@ pub struct Cli {
 pub enum Commands {
     /// Decrypt on cluster of mobys (non-blocking)
     Decrypt,
-
     /// Initialize the moby workers with a key share and a PRSS setup
     Init,
     /// Retrieve one or many results of computation from cluster of mobys
     Results,
+    /// Run the CRS ceremony between the workers and store/return the CRS
+    CrsCeremony,
+}
+
+async fn crs_ceremony_command(
+    runtime: &ChoreoRuntime,
+    init_opts: &ChoreoConf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let wd = match init_opts.witness_dim {
+        Some(wd) => wd,
+        None => {
+            return Err(anyhow_error_and_log(
+                "Witness Dimension required in CRS ceremony, but not set.".to_string(),
+            )
+            .into());
+        }
+    };
+
+    // the CRS can be set once per epoch (currently stored in a SessionID)
+    let crs = runtime
+        .initiate_crs_ceremony(
+            &SessionId::from(init_opts.epoch()),
+            init_opts.threshold_topology.threshold,
+            wd,
+        )
+        .await?;
+
+    tracing::info!("CRS received.");
+
+    // write received CRS to file
+    let serialized_crs = bincode::serialize(&crs)?;
+    std::fs::write(init_opts.crs_file(), serialized_crs)?;
+    Ok(())
 }
 
 async fn init_command(
@@ -45,7 +77,6 @@ async fn init_command(
     let default_params: ThresholdLWEParameters = read_as_json(init_opts.params_file.to_owned())?;
 
     // keys can be set once per epoch (currently stored in a SessionID)
-    // TODO so far we only use the default parameters
     let pk = runtime
         .initiate_keygen(
             &SessionId::from(init_opts.epoch()),
@@ -85,11 +116,11 @@ async fn decrypt_command(
         number_messages
     );
 
-    // read pk from file (Init must have been called before)
+    // read pk from file (Init must have been called before!)
     let pk_serialized = std::fs::read(decrypt_opts.pub_key_file())?;
     let pk: PublicKey = bincode::deserialize(&pk_serialized)?;
 
-    let cyphers = messages
+    let ciphers = messages
         .iter()
         .map(|m| pk.encrypt(rng, *m as u64))
         .collect::<Vec<_>>();
@@ -98,7 +129,7 @@ async fn decrypt_command(
 
     let rt = Arc::new(runtime);
     let mode = Arc::new(decrypt_opts.decrypt_mode.clone());
-    cyphers.into_iter().for_each(|ct| {
+    ciphers.into_iter().for_each(|ct| {
         let rt = rt.clone();
         let mode = mode.clone();
         let threshold = decrypt_opts.threshold_topology.threshold;
@@ -241,6 +272,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args.command {
         Commands::Init => {
             init_command(&runtime, &conf).await?;
+        }
+        Commands::CrsCeremony => {
+            crs_ceremony_command(&runtime, &conf).await?;
         }
         Commands::Decrypt => {
             let session_ids = decrypt_command(runtime, &conf, &mut rng).await?;

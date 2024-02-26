@@ -1,20 +1,25 @@
+use super::grpc::gen::CrsRequest;
 use crate::{
     algebra::base_ring::Z64,
     choreography::grpc::gen::{
-        choreography_client::ChoreographyClient, DecryptionRequest, KeygenRequest, PubkeyRequest,
-        RetrieveResultsRequest,
+        choreography_client::ChoreographyClient, CrsCeremonyRequest, DecryptionRequest,
+        KeygenRequest, PubkeyRequest, RetrieveResultsRequest,
     },
     computation::SessionId,
     execution::{
         constants::INPUT_PARTY_ID,
         runtime::party::{Identity, Role},
+        zk::ceremony::PublicParameter,
     },
     lwe::{Ciphertext64, PublicKey},
     networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG},
 };
 use crate::{choreography::grpc::ComputationOutputs, execution::runtime::session::DecryptionMode};
 use crate::{execution::runtime::session::SetupMode, lwe::ThresholdLWEParameters};
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 use tokio::task::JoinSet;
 use tonic::transport::{Channel, ClientTlsConfig, Uri};
 
@@ -85,18 +90,17 @@ impl ChoreoRuntime {
     ) -> anyhow::Result<SessionId> {
         let mode_s = bincode::serialize(mode)?;
         let role_assignment = bincode::serialize(&self.role_assignments)?;
-        let threshold = bincode::serialize(&threshold)?;
         let ciphertext = bincode::serialize(ct)?;
-        self.threshold_decrypt(&mode_s, &role_assignment, &threshold, &ciphertext)
+        self.spawn_threshold_decrypt(&mode_s, &role_assignment, threshold, &ciphertext)
             .await?;
         SessionId::new(ct)
     }
 
-    async fn threshold_decrypt(
+    async fn spawn_threshold_decrypt(
         &self,
         mode: &[u8],
         role_assignment: &[u8],
-        threshold: &[u8],
+        threshold: u32,
         ciphertext: &[u8],
     ) -> anyhow::Result<()> {
         let mut join_set = JoinSet::new();
@@ -106,7 +110,7 @@ impl ChoreoRuntime {
             let request = DecryptionRequest {
                 mode: mode.to_vec(),
                 role_assignment: role_assignment.to_vec(),
-                threshold: threshold.to_vec(),
+                threshold,
                 ciphertext: ciphertext.to_vec(),
             };
 
@@ -177,7 +181,6 @@ impl ChoreoRuntime {
     ) -> Result<PublicKey, Box<dyn std::error::Error>> {
         let epoch_id = bincode::serialize(epoch_id)?;
         let role_assignment = bincode::serialize(&self.role_assignments)?;
-        let threshold = bincode::serialize(&threshold)?;
         let params = bincode::serialize(&params)?;
         let setup_mode = bincode::serialize(&setup_mode)?;
 
@@ -187,7 +190,7 @@ impl ChoreoRuntime {
             let request = KeygenRequest {
                 epoch_id: epoch_id.clone(),
                 role_assignment: role_assignment.clone(),
-                threshold: threshold.clone(),
+                threshold,
                 params: params.clone(),
                 setup_mode: setup_mode.clone(),
             };
@@ -226,5 +229,82 @@ impl ChoreoRuntime {
         }
 
         Err("No Public Key received!".into())
+    }
+
+    pub async fn initiate_crs_ceremony(
+        &self,
+        epoch_id: &SessionId,
+        threshold: u32,
+        witness_dim: u32,
+    ) -> Result<PublicParameter, Box<dyn std::error::Error>> {
+        let epoch_id = bincode::serialize(epoch_id)?;
+        let role_assignment = bincode::serialize(&self.role_assignments)?;
+
+        let crs_choreo_start_timer = Instant::now();
+
+        for channel in self.channels.values() {
+            let mut client = self.new_client(channel.clone());
+
+            let request = CrsCeremonyRequest {
+                epoch_id: epoch_id.clone(),
+                role_assignment: role_assignment.clone(),
+                threshold,
+                witness_dim,
+            };
+
+            tracing::debug!("Launching CRS ceremony to {:?}", channel);
+            let _ = client.crs_ceremony(request).await?;
+        }
+
+        for (role, channel) in self.channels.iter() {
+            if role.one_based() == INPUT_PARTY_ID {
+                let mut client = self.new_client(channel.clone());
+                let request = CrsRequest { epoch_id };
+                let response = client.retrieve_crs(request).await?;
+                let crs_choreo_rcv_timer = Instant::now();
+
+                let elapsed_time = crs_choreo_rcv_timer.duration_since(crs_choreo_start_timer);
+                tracing::info!(
+                    "CRS ceremony and retrieval on choreographer took {:?} ms.",
+                    elapsed_time.as_millis(),
+                );
+
+                let crs_serialized = &response.get_ref().crs;
+                let crs = bincode::deserialize::<PublicParameter>(crs_serialized)?;
+
+                let crs_choreo_stop_timer = Instant::now();
+                let full_time = crs_choreo_stop_timer.duration_since(crs_choreo_start_timer);
+                let deserialize_time = crs_choreo_stop_timer.duration_since(crs_choreo_rcv_timer);
+                tracing::info!(
+                    "Total CRS ceremony, retrieval and deserializtion on choreographer took {:?} ms. Deserialization took {:?} ms. CRS size: {} KiB",
+                    full_time.as_millis(),
+                    deserialize_time.as_millis(),
+                    crs_serialized.len().div_ceil(1024)
+                );
+
+                return Ok(crs);
+            }
+        }
+
+        Err("No CRS generated!".into())
+    }
+
+    pub async fn initiate_retrieve_crs(
+        &self,
+        epoch_id: &SessionId,
+    ) -> Result<PublicParameter, Box<dyn std::error::Error>> {
+        let epoch_id = bincode::serialize(epoch_id)?;
+
+        for (role, channel) in self.channels.iter() {
+            if role.one_based() == INPUT_PARTY_ID {
+                let mut client = self.new_client(channel.clone());
+                let request = CrsRequest { epoch_id };
+                let response = client.retrieve_crs(request).await?;
+                let crs = bincode::deserialize::<PublicParameter>(&response.get_ref().crs)?;
+                return Ok(crs);
+            }
+        }
+
+        Err("No CRS received!".into())
     }
 }

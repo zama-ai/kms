@@ -4,6 +4,8 @@ params_file = "parameters/small_test_params.json"
 setup_mode = "{{ setup_mode }}"
 decrypt_mode = "{{ decrypt_mode }}"
 number_messages = {{ number_messages }}
+witness_dim = {{ witness_dim }}
+epoch_id = {{ epoch_id }}
 
 [threshold_topology]
 threshold = {{ threshold }}
@@ -12,4 +14,3 @@ peers = [
     { physical_address = "localhost", physical_port = {{ 50000 + i + 1 }}, logical_address = "p{{ i+1 }}", logical_port = 50000 , id = {{ i+1 }} },
     {% endfor %}
 ]
-

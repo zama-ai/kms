@@ -4,6 +4,7 @@ params_file = "parameters/small_test_params.json"
 setup_mode = "AllProtos"
 decrypt_mode = "PRSSDecrypt"
 number_messages = 10
+witness_dim = 100
 
 [threshold_topology]
 threshold = 1

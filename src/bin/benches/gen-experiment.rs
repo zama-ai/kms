@@ -12,10 +12,16 @@ pub struct Cli {
     #[clap(short, default_value = "1")]
     threshold: u8,
 
-    #[clap(short = 'e', long, default_value = "5")]
+    #[clap(short = 'm', long, default_value = "5")]
     number_messages: usize,
 
-    #[clap(short = 'm', long, default_value = "1")]
+    #[clap(short = 'w', long, default_value = "10")]
+    witness_dim: u32,
+
+    #[clap(short = 'e', long, default_value = "1")]
+    epoch_id: u32,
+
+    #[clap(short = 's', long, default_value = "1")]
     decrypt_setup_mode: u8,
 
     #[clap(short = 'o', long, default_value = "experiment")]
@@ -52,7 +58,8 @@ fn main() {
         threshold => args.threshold,
         number_messages => args.number_messages,
         experiment_name => args.experiment_name,
-        number_messages => args.number_messages,
+        witness_dim => args.witness_dim,
+        epoch_id => args.epoch_id,
         decrypt_mode => decrypt_mode,
         setup_mode => setup_mode
     );
