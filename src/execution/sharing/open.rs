@@ -245,7 +245,7 @@ pub async fn robust_opens_to_all<
 
 pub async fn robust_open_to<
     Z: Ring + ErrorCorrect,
-    R: Rng + CryptoRng + Send,
+    R: Rng + CryptoRng,
     B: BaseSessionHandles<R>,
 >(
     session: &B,

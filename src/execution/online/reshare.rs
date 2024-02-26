@@ -55,7 +55,7 @@ fn delta0i<Z: BaseRing>(
 }
 
 pub async fn reshare_sk_same_sets<
-    Rnd: Rng + CryptoRng + Sync,
+    Rnd: Rng + CryptoRng,
     Ses: BaseSessionHandles<Rnd>,
     P128: BasePreprocessing<ResiduePoly128> + Send,
     P64: BasePreprocessing<ResiduePoly64> + Send,
@@ -77,7 +77,7 @@ pub async fn reshare_sk_same_sets<
 }
 
 pub async fn reshare_same_sets<
-    Rnd: Rng + CryptoRng + Sync,
+    Rnd: Rng + CryptoRng,
     Ses: BaseSessionHandles<Rnd>,
     P: BasePreprocessing<ResiduePoly<Z>> + Send,
     Z: BaseRing + Zeroize,

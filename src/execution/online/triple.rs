@@ -35,11 +35,7 @@ impl<R: Ring + Sync> Triple<R> {
 ///     [rho]       =[y]+[triple.b]
 ///     Open        [epsilon], [rho]
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
-pub async fn mult<
-    Z: Ring + ErrorCorrect,
-    Rnd: Rng + CryptoRng + Send + Sync,
-    Ses: BaseSessionHandles<Rnd>,
->(
+pub async fn mult<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
     x: Share<Z>,
     y: Share<Z>,
     triple: Triple<Z>,
@@ -62,7 +58,7 @@ pub async fn mult<
 ///     Output [z]  =[y]*epsilon-[triple.a]*rho+[triple.c]
 pub async fn mult_list<
     Z: Ring + ErrorCorrect,
-    Rnd: Rng + CryptoRng + Sync,
+    Rnd: Rng + CryptoRng,
     Ses: BaseSessionHandles<Rnd>,
 >(
     x_vec: &[Share<Z>],
@@ -124,11 +120,7 @@ pub async fn mult_list<
 }
 
 // Open a single share
-pub async fn open<
-    Z: Ring + ErrorCorrect,
-    Rnd: Rng + CryptoRng + Send + Sync,
-    Ses: BaseSessionHandles<Rnd>,
->(
+pub async fn open<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
     to_open: Share<Z>,
     session: &Ses,
 ) -> anyhow::Result<Z> {
@@ -144,7 +136,7 @@ pub async fn open<
 /// Opens a list of shares to all parties
 pub async fn open_list<
     Z: Ring + ErrorCorrect,
-    Rnd: Rng + CryptoRng + Sync,
+    Rnd: Rng + CryptoRng,
     Ses: BaseSessionHandles<Rnd>,
 >(
     to_open: &[Share<Z>],

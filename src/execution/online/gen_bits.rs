@@ -25,7 +25,7 @@ pub trait Solve: Sized + ZConsts {
 pub trait BitGenEven {
     async fn gen_bits_even<
         Z: Ring + RingEmbed + Solve + HenselLiftInverse + ErrorCorrect,
-        Rnd: Rng + CryptoRng + Sync,
+        Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
         P: BasePreprocessing<Z> + Send + ?Sized,
     >(
@@ -48,7 +48,7 @@ impl BitGenEven for RealBitGenEven {
     /// The code only works when the modulo of the ring used is even.
     async fn gen_bits_even<
         Z: Ring + RingEmbed + HenselLiftInverse + Solve + ErrorCorrect,
-        Rnd: Rng + CryptoRng + Sync,
+        Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
         P: BasePreprocessing<Z> + Send + ?Sized,
     >(

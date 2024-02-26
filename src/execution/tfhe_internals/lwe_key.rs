@@ -59,7 +59,7 @@ impl<Z: BaseRing> LweCompactPublicKeyShare<Z>
 where
     ResiduePoly<Z>: ErrorCorrect,
 {
-    pub async fn open_to_tfhers_type<R: Rng + CryptoRng + Sync, S: BaseSessionHandles<R>>(
+    pub async fn open_to_tfhers_type<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         self,
         session: &S,
     ) -> anyhow::Result<LweCompactPublicKeyOwned<u64>> {

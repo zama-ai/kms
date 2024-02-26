@@ -90,7 +90,7 @@ where
 {
     pub async fn open_to_tfhers_type<
         Scalar: UnsignedInteger,
-        R: Rng + CryptoRng + Sync,
+        R: Rng + CryptoRng,
         S: BaseSessionHandles<R>,
     >(
         self,

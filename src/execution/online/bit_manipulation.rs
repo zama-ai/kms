@@ -110,7 +110,7 @@ where
     }
 
     async fn xor_list_secret_secret<
-        Rnd: Rng + CryptoRng + Sync,
+        Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
@@ -140,7 +140,7 @@ where
     }
 
     async fn and_list_secret_secret<
-        Rnd: Rng + CryptoRng + Sync,
+        Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
@@ -190,7 +190,7 @@ where
     /// (and_left, and_right) = lhs AND rhs
     /// Then lhs1 XOR rhs1 is computed using and_left and other (local) linear operations.
     async fn compressed_xor_and<
-        Rnd: Rng + CryptoRng + Sync,
+        Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
@@ -225,7 +225,7 @@ where
     }
 
     async fn binary_adder_secret_clear<
-        Rnd: Rng + CryptoRng + Sync,
+        Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
@@ -284,7 +284,7 @@ where
     /// o/w we return m
     /// Hence we do a final MUX, depending on the bit b.
     pub async fn extract_ptxts<
-        Rnd: Rng + CryptoRng + Sync,
+        Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
@@ -345,7 +345,7 @@ where
     }
 
     pub async fn xor_list_secret_secret<
-        Rnd: Rng + CryptoRng + Sync,
+        Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
@@ -359,7 +359,7 @@ where
     }
 
     pub async fn and_list_secret_secret<
-        Rnd: Rng + CryptoRng + Sync,
+        Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
         P: TriplePreprocessing<Z> + ?Sized,
     >(
@@ -407,7 +407,7 @@ where
 pub async fn bit_dec_batch<
     Z,
     P: TriplePreprocessing<ResiduePoly<Z>> + BitPreprocessing<ResiduePoly<Z>> + ?Sized,
-    Rnd: Rng + CryptoRng + Sync,
+    Rnd: Rng + CryptoRng,
     Ses: BaseSessionHandles<Rnd>,
 >(
     session: &mut Ses,

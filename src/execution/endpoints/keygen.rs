@@ -138,7 +138,7 @@ impl<Z: BaseRing> PrivateKeySet<Z> {
 async fn sample_seed<
     Z: Ring + ErrorCorrect,
     P: RandomPreprocessing<Z> + ?Sized,
-    R: Rng + CryptoRng + Send + Sync,
+    R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
 >(
     sec: u64,
@@ -162,7 +162,7 @@ async fn sample_seed<
 async fn generate_lwe_private_public_key_pair<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
-    R: Rng + CryptoRng + Send + Sync,
+    R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
 >(
@@ -211,7 +211,7 @@ where
 async fn generate_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
-    R: Rng + CryptoRng + Send + Sync,
+    R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
 >(
@@ -259,7 +259,7 @@ where
 async fn generate_bootstrap_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
-    R: Rng + CryptoRng + Send + Sync,
+    R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
     Scalar: UnsignedInteger,
@@ -362,7 +362,7 @@ where
 /// Note that there is some redundancy of information because we also explicitly ask the [`BaseRing`] as trait parameter
 pub async fn distributed_keygen<
     Z: BaseRing,
-    R: Rng + CryptoRng + Send + Sync,
+    R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     P: DKGPreprocessing<ResiduePoly<Z>> + Send + ?Sized,
 >(

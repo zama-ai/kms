@@ -32,7 +32,7 @@ pub async fn generate_lwe_bootstrap_key<Z, Gen, Rnd, S, P>(
 where
     Z: BaseRing,
     Gen: ByteRandomGenerator,
-    Rnd: Rng + CryptoRng + Sync,
+    Rnd: Rng + CryptoRng,
     S: BaseSessionHandles<Rnd>,
     P: TriplePreprocessing<ResiduePoly<Z>> + ?Sized,
     ResiduePoly<Z>: ErrorCorrect,
@@ -90,7 +90,7 @@ pub async fn allocate_and_generate_lwe_bootstrap_key<Z, Gen, Rnd, S, P>(
 where
     Z: BaseRing,
     Gen: ByteRandomGenerator,
-    Rnd: Rng + CryptoRng + Sync,
+    Rnd: Rng + CryptoRng,
     S: BaseSessionHandles<Rnd>,
     P: TriplePreprocessing<ResiduePoly<Z>> + ?Sized,
     ResiduePoly<Z>: ErrorCorrect,

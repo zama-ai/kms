@@ -139,7 +139,7 @@ impl<Z: BaseRing> GgswCiphertextShare<Z> {
 }
 
 pub async fn ggsw_encode_messages<
-    Rnd: Rng + CryptoRng + Sync,
+    Rnd: Rng + CryptoRng,
     Z: BaseRing,
     S: BaseSessionHandles<Rnd>,
     P: TriplePreprocessing<ResiduePoly<Z>> + ?Sized,
@@ -203,7 +203,7 @@ where
 ///This functions compute the necessary encoding required for GGSW
 ///In particular this does the MPC multiplication between the shared key bits and the secret message
 pub async fn ggsw_encode_message<
-    Rnd: Rng + CryptoRng + Sync,
+    Rnd: Rng + CryptoRng,
     Z: BaseRing,
     S: BaseSessionHandles<Rnd>,
     P: TriplePreprocessing<ResiduePoly<Z>>,

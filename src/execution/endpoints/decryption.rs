@@ -584,7 +584,7 @@ async fn open_bit_composed_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 }
 
 pub async fn run_decryption_noiseflood<
-    R: Rng + CryptoRng + Send,
+    R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     P: NoiseFloodPreprocessing + ?Sized,
 >(
@@ -613,7 +613,7 @@ pub async fn run_decryption_noiseflood<
 // run decryption with bit-decomposition
 pub async fn run_decryption_bitdec<
     P: BitDecPreprocessing + Send + ?Sized,
-    Rnd: Rng + CryptoRng + Send + Sync,
+    Rnd: Rng + CryptoRng,
     Ses: BaseSessionHandles<Rnd>,
 >(
     session: &mut Ses,
