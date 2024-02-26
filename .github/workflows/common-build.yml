@@ -48,9 +48,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Linting.
-        run: cargo clippy --all-targets -- -D warnings --no-deps
+        run: cargo clippy --all-targets --all-features -- -D warnings --no-deps
 
       - name: Run Tests
         run: cargo test ${{ inputs.args_build }} --features tfhe/x86_64 --release
-
-
