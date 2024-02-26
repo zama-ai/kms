@@ -10,6 +10,7 @@ use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
 use super::constants::{MESSAGE_LIMIT, NETWORK_TIMEOUT_LONG};
 use crate::computation::SessionId;
+use crate::conf::telemetry::ContextPropagator;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::networking::constants::{self, MAX_EN_DECODE_MESSAGE_SIZE};
@@ -24,7 +25,9 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::time::Instant;
 use tonic::codegen::http::Uri;
+use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
+use tracing::instrument;
 
 #[derive(Debug, Clone)]
 pub struct GrpcNetworkingManager {
@@ -104,16 +107,21 @@ impl GrpcNetworking {
         Ok(channel)
     }
 
-    fn new_client(&self, identity: &Identity) -> anyhow::Result<GnetworkingClient<Channel>> {
+    fn new_client(
+        &self,
+        identity: &Identity,
+    ) -> anyhow::Result<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>> {
         let channel = self.channel(identity)?;
-        Ok(GnetworkingClient::new(channel)
+        let client = GnetworkingClient::with_interceptor(channel, ContextPropagator)
             .max_decoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
-            .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE))
+            .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE);
+        Ok(client)
     }
 }
 
 #[async_trait]
 impl Networking for GrpcNetworking {
+    #[instrument(skip(self, value), fields(session_id = %_session_id, owner = %self.owner, receiver = %receiver))]
     async fn send(
         &self,
         value: Vec<u8>,
@@ -176,6 +184,7 @@ impl Networking for GrpcNetworking {
         retry_notify(exponential_backoff, send_fn, notify).await
     }
 
+    #[instrument(skip(self), fields(session_id = %_session_id, sender = %sender, owner = %self.owner))]
     async fn receive(&self, sender: &Identity, _session_id: &SessionId) -> anyhow::Result<Vec<u8>> {
         if !self.message_queues.contains_key(&self.session_id) {
             return Err(anyhow_error_and_log(

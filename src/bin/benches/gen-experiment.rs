@@ -1,7 +1,17 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use minijinja::{context, path_loader, Environment};
 use std::fs::File;
 use std::io::Write;
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    #[clap(name = "cluster")]
+    Cluster,
+    #[clap(name = "experiment")]
+    Experiment,
+    #[clap(name = "all")]
+    All,
+}
 
 #[derive(Parser, Debug)]
 #[clap(name = "exp-conf")]
@@ -32,6 +42,9 @@ pub struct Cli {
 
     #[clap(short = 'd', long, default_value = "experiments/templates")]
     template_dir: String,
+
+    #[clap(subcommand)]
+    command: Option<Command>,
 }
 
 fn create_env(template_dir: &str) -> Environment<'static> {
@@ -46,7 +59,20 @@ fn main() {
     let env = create_env(&args.template_dir);
     let conf_template = env.get_template("conf.toml.j2").unwrap();
     let docker_template = env.get_template("docker-compose.yml.j2").unwrap();
-    let templates = [("toml", conf_template), ("yml", docker_template)];
+    let mut templates = vec![];
+    let command = args.command.unwrap_or(Command::All);
+    match command {
+        Command::Cluster => {
+            templates.push(("yml", docker_template));
+        }
+        Command::Experiment => {
+            templates.push(("toml", conf_template));
+        }
+        Command::All => {
+            templates.push(("toml", conf_template));
+            templates.push(("yml", docker_template));
+        }
+    }
     let (setup_mode, decrypt_mode) = match args.decrypt_setup_mode {
         1 => ("AllProtos", "PRSSDecrypt"),
         2 => ("NoPrss", "LargeDecrypt"),

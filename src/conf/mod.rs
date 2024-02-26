@@ -8,6 +8,10 @@ use typed_builder::TypedBuilder;
 
 use crate::execution::runtime::party::{Identity, Role};
 
+lazy_static::lazy_static! {
+    pub static ref ENVIRONMENT: Mode = mode();
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct Party {
     address: String,
@@ -44,6 +48,24 @@ impl From<&Party> for Identity {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct Tracing {
+    service_name: String,
+    endpoint: String,
+}
+
+impl Tracing {
+    /// Returns the service name.
+    pub fn service_name(&self) -> &str {
+        &self.service_name
+    }
+
+    /// Returns the endpoint.
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+}
+
 #[derive(Default, Display, Deserialize, Serialize, Clone, EnumString, AsRefStr, Eq, PartialEq)]
 #[strum(serialize_all = "snake_case")]
 pub enum Mode {
@@ -64,7 +86,7 @@ pub struct Settings<'a> {
     path: Option<&'a str>,
 }
 
-pub fn mode() -> Mode {
+fn mode() -> Mode {
     env::var("RUN_MODE")
         .map(|enum_str| Mode::from_str(enum_str.as_str()).unwrap_or_default())
         .unwrap_or_else(|_| Mode::Local)
@@ -77,12 +99,10 @@ impl<'a> Settings<'a> {
     ///
     /// Returns an error if the configuration cannot be created or deserialized.
     pub fn init_conf<'de, T: Deserialize<'de>>(&self) -> Result<T, ConfigError> {
-        let run_mode = mode();
-
         let mut s = Config::builder()
             .add_source(File::with_name("config/default").required(cfg!(not(test))))
             .add_source(File::with_name("config/ddec").required(false))
-            .add_source(File::with_name(&format!("config/ddec_{}", run_mode)).required(false))
+            .add_source(File::with_name(&format!("config/ddec_{}", *ENVIRONMENT)).required(false))
             .add_source(File::with_name("/etc/config/ddec.toml").required(false));
 
         if let Some(path) = self.path {
@@ -103,3 +123,4 @@ impl<'a> Settings<'a> {
 pub mod choreo;
 
 pub mod party;
+pub mod telemetry;

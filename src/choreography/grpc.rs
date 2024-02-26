@@ -14,16 +14,14 @@ use self::gen::{
 use crate::algebra::base_ring::Z64;
 use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
-use crate::execution::endpoints::decryption::{
-    init_prep_noiseflood_large, init_prep_noiseflood_small, run_decryption_noiseflood,
-};
+use crate::execution::endpoints::decryption::decrypt;
+use crate::execution::endpoints::decryption::{Large, Small};
 use crate::execution::endpoints::keygen::initialize_key_material;
 use crate::execution::runtime::party::{Identity, Role};
 use crate::execution::runtime::session::{
     DecryptionMode, LargeSession, SessionParameters, SmallSessionStruct,
 };
 use crate::execution::zk::ceremony::{Ceremony, PublicParameter, RealCeremony};
-use crate::lwe::to_large_ciphertext_block;
 use crate::lwe::{Ciphertext64, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::{
@@ -35,11 +33,11 @@ use async_cell::sync::AsyncCell;
 use async_trait::async_trait;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
-use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tracing::instrument;
 
 ///Used to store results of decryption
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
@@ -111,6 +109,7 @@ impl GrpcChoreography {
 impl Choreography for GrpcChoreography {
     ///NOTE: For now we only do threshold decrypt with Ctxt lifting, but we may want to propose both options
     /// (that's why we have setup_store contain a map for both options)
+    #[instrument(skip(self, request))]
     async fn threshold_decrypt(
         &self,
         request: tonic::Request<DecryptionRequest>,
@@ -218,46 +217,19 @@ impl Choreography for GrpcChoreography {
                         })?;
 
                         tokio::spawn(async move {
-                            let execution_start_timer = Instant::now();
-                            let ck = &pkl
-                                .as_ref()
-                                .ok_or_else(|| {
-                                    tonic::Status::new(
-                                        tonic::Code::Aborted,
-                                        "No public key available for decryption".to_string(),
-                                    )
-                                })
-                                .unwrap()
-                                .ck;
-                            let ct_large = ct
-                                .iter()
-                                .map(|ct_block| to_large_ciphertext_block(ck, ct_block))
-                                .collect_vec();
-
-                            //Set up the preprocessing
-                            let mut noiseflood_preprocessing =
-                                init_prep_noiseflood_small(&mut session, ct_large.len());
-
-                            let mut results = HashMap::with_capacity(1);
-                            let outputs = run_decryption_noiseflood(
+                            let mut protocol = Small::new(session.clone());
+                            let (results, elapsed_time) = decrypt(
                                 &mut session,
-                                noiseflood_preprocessing.as_mut(),
+                                &mut protocol,
+                                pkl,
+                                ct,
                                 &setup_info.secret_key_share,
-                                ct_large,
+                                session_id,
+                                mode,
+                                own_identity,
                             )
                             .await
                             .unwrap();
-
-                            tracing::info!(
-                                "Results in session {:?} ready: {:?}",
-                                session_id,
-                                outputs
-                            );
-                            results.insert(format!("{session_id}"), outputs);
-
-                            let execution_stop_timer = Instant::now();
-                            let elapsed_time =
-                                execution_stop_timer.duration_since(execution_start_timer);
                             result_stores
                                 .get(&session_id)
                                 .map(|res| {
@@ -267,77 +239,41 @@ impl Choreography for GrpcChoreography {
                                     });
                                 })
                                 .expect("session disappeared unexpectedly");
-                            tracing::info!(
-                                "Online time was {:?} microseconds",
-                                (elapsed_time).as_micros()
-                            );
                         });
                     }
                     DecryptionMode::LargeDecrypt => {
                         let session_params = SessionParameters::new(
                             threshold,
                             session_id,
-                            own_identity,
+                            own_identity.clone(),
                             role_assignments,
                         )
                         .unwrap();
                         let mut session =
                             LargeSession::new(session_params, Arc::clone(&networking)).unwrap();
                         tokio::spawn(async move {
-                            let execution_start_timer = Instant::now();
-                            let ck = &pkl
-                                .as_ref()
-                                .ok_or_else(|| {
-                                    tonic::Status::new(
-                                        tonic::Code::Aborted,
-                                        "No public key available for decryption".to_string(),
-                                    )
-                                })
-                                .unwrap()
-                                .ck;
-                            let ct_large = ct
-                                .iter()
-                                .map(|ct_block| to_large_ciphertext_block(ck, ct_block))
-                                .collect_vec();
-
-                            //Set up the preprocessing
-                            let mut noiseflood_preprocessing =
-                                init_prep_noiseflood_large(&mut session, ct_large.len()).await;
-
-                            let mut results = HashMap::with_capacity(1);
-                            let outputs = run_decryption_noiseflood(
+                            let mut protocol = Large::new(session.clone());
+                            let (results, elapsed_time) = decrypt(
                                 &mut session,
-                                noiseflood_preprocessing.as_mut(),
+                                &mut protocol,
+                                pkl,
+                                ct,
                                 &setup_info.secret_key_share,
-                                ct_large,
+                                session_id,
+                                mode,
+                                own_identity,
                             )
                             .await
                             .unwrap();
-
-                            tracing::info!(
-                                "Results in session {:?} ready: {:?}",
-                                session_id,
-                                outputs
-                            );
-                            results.insert(format!("{session_id}"), outputs);
-
-                            let execution_stop_timer = Instant::now();
-                            let elapsed_time =
-                                execution_stop_timer.duration_since(execution_start_timer);
-
                             result_stores
                                 .get(&session_id)
-                                .map(|result_cell| {
-                                    result_cell.set(ComputationOutputs {
+                                .map(|res| {
+                                    res.set(ComputationOutputs {
                                         outputs: results,
                                         elapsed_time: Some(elapsed_time),
                                     });
                                 })
                                 .expect("session disappeared unexpectedly");
-                            tracing::info!(
-                                "Online time was {:?} microseconds",
-                                (elapsed_time).as_micros()
-                            );
                         });
                     }
                     DecryptionMode::BitDecSmallDecrypt => todo!(),
@@ -357,6 +293,7 @@ impl Choreography for GrpcChoreography {
         }
     }
 
+    #[instrument(skip(self, request))]
     async fn retrieve_results(
         &self,
         request: tonic::Request<RetrieveResultsRequest>,
@@ -401,6 +338,7 @@ impl Choreography for GrpcChoreography {
     }
 
     ///Note: For now assumes keygen works with PRSS128, but we don't really have a protocol yet so...
+    #[instrument(skip(self, request))]
     async fn keygen(
         &self,
         request: tonic::Request<KeygenRequest>,
@@ -504,6 +442,7 @@ impl Choreography for GrpcChoreography {
         }
     }
 
+    #[instrument(skip(self, request))]
     async fn retrieve_pubkey(
         &self,
         request: tonic::Request<PubkeyRequest>,

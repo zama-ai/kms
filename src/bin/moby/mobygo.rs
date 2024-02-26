@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use distributed_decryption::{
     choreography::choreographer::ChoreoRuntime,
     computation::SessionId,
-    conf::{choreo::ChoreoConf, Settings},
+    conf::{choreo::ChoreoConf, telemetry::init_tracing, Settings},
     error::error_handler::anyhow_error_and_log,
     execution::runtime::party::RoleAssignment,
     file_handling::{self, read_as_json},
@@ -252,7 +252,6 @@ async fn collect_results(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
-    tracing_subscriber::fmt::init();
 
     let mut rng = rand::thread_rng();
     let tls_config = None;
@@ -260,6 +259,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .path(&args.conf_file)
         .build()
         .init_conf()?;
+
+    init_tracing(conf.tracing.clone())?;
 
     let topology = &conf.threshold_topology;
 

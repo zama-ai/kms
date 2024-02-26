@@ -1,3 +1,6 @@
+[config]
+unstable_features = ["CTRL_C_HANDLING"]
+
 [tasks.docker-image]
 command = "docker"
 args = ["build", "-f", "operations/docker/local.dockerfile", "--ssh", "default", "-t", "ddec", "."]
@@ -57,6 +60,24 @@ run_task = { name = ["choreo"] }
 env = { "CHOREO_COMMAND" = "results"}
 run_task = { name = ["choreo"] }
 
+[tasks.gen-local-choreo]
+command = "cargo"
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-m", "${PROTOCOL}", "-o", "local-cluster", "-e", "${NUM_MESSAGES}", "experiment"]
+
+[tasks.local-choreo-init]
+env = { "CHOREO_COMMAND" = "init", EXPERIMENT_NAME = "local-cluster" }
+run_task = { name = ["choreo"] }
+dependencies = ["gen-local-choreo"]
+
+[tasks.local-choreo-decrypt]
+env = { "CHOREO_COMMAND" = "decrypt", EXPERIMENT_NAME = "local-cluster" }
+run_task = { name = ["choreo"] }
+dependencies = ["gen-local-choreo"]
+
+[tasks.local-choreo-results]
+env = { "CHOREO_COMMAND" = "results", EXPERIMENT_NAME = "local-cluster" }
+run_task = { name = ["choreo"] }
+dependencies = ["gen-local-choreo"]
 
 [tasks.sleep]
 command = "sleep"
@@ -65,10 +86,18 @@ args = ["2"]
 [tasks.grpc-bench]
 run_task = { name = ["generate-experiment", "experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "choreo-crs", "sleep", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
 
-
 [tasks.docker-image-ci]
 command = "docker"
 args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "operations/docker/ci.dockerfile", "-t", "ddec", "."]
+
+[tasks.gen-local-cluster]
+command = "cargo"
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-o", "local-cluster", "-f", "temp", "cluster"]
+
+[tasks.run-local-cluster]
+command = "docker"
+args = ["compose", "-f", "temp/local-cluster.yml", "up", "--quiet-pull"]
+dependencies = ["gen-local-cluster"]
 
 [tasks.ci-test]
 run_task = { name = ["docker-image-ci", "grpc-bench-4-1-1-prss"] }

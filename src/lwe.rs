@@ -57,6 +57,7 @@ use tfhe::shortint::prelude::LweDimension;
 use tfhe::shortint::prelude::PolynomialSize;
 use tfhe::shortint::prelude::StandardDev;
 use tfhe::shortint::MessageModulus;
+use tracing::instrument;
 use zeroize::Zeroize;
 
 // Copied from tfhe-rs lwe_noise_gap_programmable_bootstrapping since it is only specified in their test code
@@ -639,6 +640,7 @@ pub fn to_large_ciphertext(ck: &BootstrappingKey, small_ct: &Ciphertext64) -> Ci
 /// Converts a single ciphertext block over a 64 bit domain to a ciphertext block over a 128 bit domain (which is needed for secure threshold decryption).
 /// Conversion is done using a precreated conversion key, [ck].
 /// Observe that the decryption key will be different after conversion, since [ck] is actually a key-switching key.
+#[instrument(skip(ck, small_ct))]
 pub fn to_large_ciphertext_block(
     ck: &BootstrappingKey,
     small_ct: &Ciphertext64Block,

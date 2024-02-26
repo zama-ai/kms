@@ -19,7 +19,7 @@ use std::{
 
 pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
 
-#[derive(Clone, Serialize, Deserialize, Display)]
+#[derive(Clone, Serialize, Deserialize, Display, Debug)]
 pub enum DecryptionMode {
     PRSSDecrypt,
     LargeDecrypt,

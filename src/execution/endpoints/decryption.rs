@@ -1,21 +1,32 @@
 #[cfg(any(test, feature = "testing"))]
 use crate::algebra::structure_traits::Ring;
+use crate::computation::SessionId;
 use crate::execution::large_execution::offline::LargePreprocessing;
 use crate::execution::online::bit_manipulation::{bit_dec_batch, BatchedBits};
 use crate::execution::online::preprocessing::default_factory;
 use crate::execution::online::preprocessing::BitDecPreprocessing;
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
-use crate::execution::runtime::session::SmallSession64;
+use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::session::ToBaseSession;
+use crate::execution::runtime::session::{DecryptionMode, SmallSession64};
 use crate::execution::sharing::open::robust_opens_to;
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::sharing::shamir::{HenselLiftInverse, RingEmbed};
 use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
-use crate::lwe::combine128;
+#[cfg(any(test, feature = "testing"))]
+use crate::execution::{
+    runtime::{
+        party::RoleAssignment,
+        session::{NetworkingImpl, SessionParameters},
+        test_runtime::DistributedTestRuntime,
+    },
+    small_execution::prss::PRSSSetup,
+};
 #[cfg(any(test, feature = "testing"))]
 use crate::lwe::to_large_ciphertext;
+use crate::lwe::{combine128, to_large_ciphertext_block, PubConKeyPair};
 use crate::{
     algebra::residue_poly::ResiduePoly, execution::config::BatchParams, lwe::ThresholdLWEParameters,
 };
@@ -41,27 +52,180 @@ use crate::{
     },
 };
 #[cfg(any(test, feature = "testing"))]
-use crate::{
-    computation::SessionId,
-    execution::{
-        runtime::{
-            party::{Identity, RoleAssignment},
-            session::{DecryptionMode, NetworkingImpl, SessionParameters},
-            test_runtime::DistributedTestRuntime,
-        },
-        small_execution::prss::PRSSSetup,
-    },
-};
-#[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
+use async_trait::async_trait;
+use enum_dispatch::enum_dispatch;
+use itertools::Itertools;
 #[cfg(any(test, feature = "testing"))]
 use rand::SeedableRng;
 use rand::{CryptoRng, Rng};
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::num::Wrapping;
 #[cfg(any(test, feature = "testing"))]
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
+use tracing::instrument;
+
+#[enum_dispatch]
+#[allow(clippy::large_enum_variant)]
+enum ProtocolType {
+    Small(Small),
+    Large(Large),
+}
+
+pub struct Small {
+    session: RefCell<SmallSession<ResiduePoly128>>,
+}
+
+impl Small {
+    pub fn new(session: SmallSession<ResiduePoly128>) -> Self {
+        Small {
+            session: RefCell::new(session),
+        }
+    }
+}
+
+pub struct Large {
+    session: RefCell<LargeSession>,
+}
+
+impl Large {
+    pub fn new(session: LargeSession) -> Self {
+        Large {
+            session: RefCell::new(session),
+        }
+    }
+}
+
+#[async_trait]
+#[enum_dispatch(ProtocolType)]
+pub trait ProtocolDecryption {
+    async fn init_prep_noiseflooding(
+        &mut self,
+        num_ctxt: usize,
+    ) -> Box<dyn NoiseFloodPreprocessing>;
+}
+
+#[async_trait]
+impl ProtocolDecryption for Small {
+    async fn init_prep_noiseflooding(
+        &mut self,
+        num_ctxt: usize,
+    ) -> Box<dyn NoiseFloodPreprocessing> {
+        let session = self.session.get_mut();
+        let mut sns_preprocessing = default_factory::<Z128>().create_noise_flood_preprocessing();
+        sns_preprocessing
+            .fill_from_small_session(session, num_ctxt)
+            .unwrap();
+        sns_preprocessing
+    }
+}
+
+#[async_trait]
+impl ProtocolDecryption for Large {
+    async fn init_prep_noiseflooding(
+        &mut self,
+        num_ctxt: usize,
+    ) -> Box<dyn NoiseFloodPreprocessing> {
+        let session = self.session.get_mut();
+        let nb_preproc = 2 * num_ctxt * ((STATSEC + LOG_BD) as usize + 2);
+        let batch_size = BatchParams {
+            triples: nb_preproc,
+            randoms: nb_preproc,
+        };
+
+        let mut large_preproc = RealLargePreprocessing::init(
+            session,
+            batch_size,
+            TrueSingleSharing::default(),
+            TrueDoubleSharing::default(),
+        )
+        .await
+        .unwrap();
+
+        let mut sns_preprocessing = default_factory::<Z128>().create_noise_flood_preprocessing();
+        sns_preprocessing
+            .fill_from_base_preproc(&mut large_preproc, &mut session.to_base_session(), num_ctxt)
+            .await
+            .unwrap();
+        sns_preprocessing
+    }
+}
+
+/// Decrypts a ciphertext using the noise flooding `ProtocolType`
+///
+/// This is the entry point of the decryption protocol.
+///
+/// # Arguments
+/// * `session` - The session object that contains the networking and the role of the party_keyshare
+/// * `protocol` - The protocol object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
+/// * `pkl` - The public key pair
+/// * `ct` - The ciphertext to be decrypted
+/// * `secret_key_share` - The secret key share of the party_keyshare
+/// * `session_id` - The session id
+/// * `_mode` - The decryption mode. This is used only for tracing purposes
+/// * `_own_identity` - The identity of the party_keyshare. This is used only for tracing purposes
+///
+/// # Returns
+/// * A tuple containing the results of the decryption and the time it took to execute the decryption
+/// * The results of the decryption are a hashmap containing the session id and the decrypted plaintexts
+/// * The time it took to execute the decryption
+///
+/// # Remarks
+/// The decryption protocol is executed in the following steps:
+/// 1. The ciphertext is converted to a large ciphertext block
+/// 2. The protocol is initialized with the noise flooding
+/// 3. The decryption is executed
+/// 4. The results are returned
+///
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(session, protocol, pkl, ct, secret_key_share), fields(session_id = ?session_id, own_identity = %_own_identity, mode = %_mode))]
+pub async fn decrypt<S, P, R>(
+    session: &mut S,
+    protocol: &mut P,
+    pkl: Option<PubConKeyPair>,
+    ct: Ciphertext64,
+    secret_key_share: &SecretKeyShare,
+    session_id: SessionId,
+    _mode: DecryptionMode,
+    _own_identity: Identity,
+) -> anyhow::Result<(HashMap<String, Vec<Z64>>, Duration)>
+where
+    R: Rng + CryptoRng + Send,
+    S: BaseSessionHandles<R>,
+    P: ProtocolDecryption,
+{
+    let execution_start_timer = Instant::now();
+    let ck = &pkl
+        .as_ref()
+        .ok_or_else(|| anyhow_error_and_log("No public key available for decryption".to_string()))?
+        .ck;
+    let ct_large = ct
+        .iter()
+        .map(|ct_block| to_large_ciphertext_block(ck, ct_block))
+        .collect_vec();
+    let mut results = HashMap::with_capacity(1);
+    let len = ct_large.len();
+    let mut preparation = protocol.init_prep_noiseflooding(len).await;
+    let preparation = preparation.as_mut();
+    let outputs = run_decryption_noiseflood(session, preparation, secret_key_share, ct_large)
+        .await
+        .unwrap();
+
+    tracing::info!(
+        "Results in session {:?} ready: {:?}",
+        session_id,
+        outputs.len()
+    );
+    results.insert(format!("{session_id}"), outputs);
+
+    let execution_stop_timer = Instant::now();
+    let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
+    Ok((results, elapsed_time))
+}
 
 /// Takes as input plaintexts blocks m1, ..., mN revealed to INPUT_PARTY_ID
 /// which we call partial decryptions each of B bits
@@ -186,45 +350,6 @@ pub async fn init_prep_bitdec_large(
     bitdec_preprocessing
 }
 
-///Assumes [`SmallSession`] has **initalized** [`crate::execution::small_execution::prss::PRSSSetup`]
-pub fn init_prep_noiseflood_small(
-    session: &mut SmallSession<ResiduePoly128>,
-    num_ctxt: usize,
-) -> Box<dyn NoiseFloodPreprocessing> {
-    let mut sns_preprocessing = default_factory::<Z128>().create_noise_flood_preprocessing();
-    sns_preprocessing
-        .fill_from_small_session(session, num_ctxt)
-        .unwrap();
-    sns_preprocessing
-}
-
-pub async fn init_prep_noiseflood_large(
-    session: &mut LargeSession,
-    num_ctxt: usize,
-) -> Box<dyn NoiseFloodPreprocessing> {
-    let nb_preproc = 2 * num_ctxt * ((STATSEC + LOG_BD) as usize + 2);
-    let batch_size = BatchParams {
-        triples: nb_preproc,
-        randoms: nb_preproc,
-    };
-
-    let mut large_preproc = RealLargePreprocessing::init(
-        session,
-        batch_size,
-        TrueSingleSharing::default(),
-        TrueDoubleSharing::default(),
-    )
-    .await
-    .unwrap();
-
-    let mut sns_preprocessing = default_factory::<Z128>().create_noise_flood_preprocessing();
-    sns_preprocessing
-        .fill_from_base_preproc(&mut large_preproc, &mut session.to_base_session(), num_ctxt)
-        .await
-        .unwrap();
-    sns_preprocessing
-}
-
 /// test the threshold decryption
 #[cfg(any(test, feature = "testing"))]
 pub fn threshold_decrypt64<Z: Ring>(
@@ -286,8 +411,9 @@ pub fn threshold_decrypt64<Z: Ring>(
                     )
                     .await;
 
-                    let mut noiseflood_preprocessing =
-                        init_prep_noiseflood_small(&mut session, large_ct.len());
+                    let mut noiseflood_preprocessing = Small::new(session.clone())
+                        .init_prep_noiseflooding(ct.len())
+                        .await;
                     let out = run_decryption_noiseflood(
                         &mut session,
                         noiseflood_preprocessing.as_mut(),
@@ -311,8 +437,9 @@ pub fn threshold_decrypt64<Z: Ring>(
                     )
                     .unwrap();
                     let mut session = LargeSession::new(session_params, net).unwrap();
-                    let mut noiseflood_preprocessing =
-                        init_prep_noiseflood_large(&mut session, large_ct.len()).await;
+                    let mut noiseflood_preprocessing = Large::new(session.clone())
+                        .init_prep_noiseflooding(ct.len())
+                        .await;
                     let out = run_decryption_noiseflood(
                         &mut session,
                         noiseflood_preprocessing.as_mut(),

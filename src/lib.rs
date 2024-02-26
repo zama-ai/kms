@@ -11,3 +11,4 @@ pub use tokio;
 pub mod algebra;
 pub mod conf;
 pub mod error;
+pub mod grpc;

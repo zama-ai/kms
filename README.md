@@ -57,25 +57,6 @@ In order to build docker image locally you should have `ssh-agent` running and w
 
 Check documentation [here](./doc/ci.md)
 
-## Text below is outdated...
-
-To run a 10 party benchmark for distributed decryption on a local network run the following:
-
-```sh
-docker build -t ddec .
-cd experiments/10
-docker compose up
-```
-
-By default the docker images run a distributed decryption with session id equal
-to 1. To collect statistics about timings on different parties run the
-following:
-
-```sh
-docker exec -it 10-choreo-1 bash
-RUST_LOG=info mobygo -n 4 results --session-id 1
-```
-
 ## Simulating Docker Network Setting
 
 To simulate a certain network connection on all containers run the following (replace `wan.sh` with the desired network below):
@@ -151,6 +132,49 @@ description = "my experiment description"
 ```
 
 > NOTE: Perhaps you need to rebuild the docker image used by the experiment. You can do it just running `cargo make docker-image`
+
+
+## Running Locally on Cluster Mode (Cargo Make)
+
+There are two possible scenarios in which we want to run a cluster in local mode:
+
+1. Run a Cluster in local mode just to be accessible from `curl` commands or other programs
+2. Run a Cluster in local mode and after that execute a test using `mobygo` as a client.
+
+Lets analyze how to run using utilities on `Makefile.toml` file in both scenarios.
+
+### Run Local Cluster only
+
+1. First you need to build the docker image with the current version of the code. If you have done that already, you can skip this step.
+
+```bash
+> cargo make docker-image
+```
+
+2. Run a Local Cluster in foreground mode. You can kill this with `Ctrl-C`
+
+```bash
+> cargo make --env NUM_PARTIES=5 run-local-cluster
+```
+
+You can change the `NUM_PARTIES` variables to run more or less parties.
+
+
+### Run Local Cluster and Test with `mobygo`
+
+This is the same as before in step 1 and 2 but afterwards you should run the following in another terminal.
+
+```bash
+> cargo make --env NUM_PARTIES=4 --env THRESHOLD=1 --env PROTOCOL=1 --env NUM_MESSAGES=10 local-choreo-XXXX
+```
+
+where **XXX** could be `init | decrypt | results` depending on the command you want. [See here](./Makefile.toml?plain=1#L46)
+
+**Considerations**
+
+$$\texttt{local-choreo-XXXX(NUM\\_PARTIES)} >= \texttt{run-local-cluster(NUM\\_PARTIES)}$$
+
+$$\texttt{NUM\\_PARTIES} >> \texttt{THRESHOLD}$$
 
 ## AWS Benchmarks
 

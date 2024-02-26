@@ -3,7 +3,7 @@
 //!
 use serde::{Deserialize, Serialize};
 
-use super::Party;
+use super::{Party, Tracing};
 
 /// Struct for storing protocol settings
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -28,6 +28,7 @@ impl Protocol {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PartyConf {
     protocol: Protocol,
+    pub tracing: Option<Tracing>,
 }
 
 /// This is an example of the configuration file using `PartyConf` struct.

@@ -8,6 +8,8 @@ use crate::choreography::choreographer::NetworkTopology;
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
 use crate::execution::runtime::session::{DecryptionMode, SetupMode};
 
+use super::Tracing;
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct ChoreoParty {
     pub logical_address: String,
@@ -81,6 +83,7 @@ pub struct ChoreoConf {
     pub decrypt_mode: DecryptionMode,
     epoch_id: Option<usize>,
     pub witness_dim: Option<u32>,
+    pub tracing: Option<Tracing>,
 }
 
 impl ChoreoConf {
