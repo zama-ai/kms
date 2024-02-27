@@ -17,7 +17,7 @@ use crate::{
         large_execution::{single_sharing::init_vdm, vss::Vss},
         runtime::{
             party::Role,
-            session::{LargeSessionHandles, ParameterHandles, SmallSessionHandles},
+            session::{BaseSessionHandles, ParameterHandles, SmallSessionHandles},
         },
         sharing::{
             open::robust_opens_to_all,
@@ -566,7 +566,7 @@ where
     Z: RingEmbed,
     Z: HenselLiftInverse,
 {
-    pub async fn robust_init<V: Vss, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+    pub async fn robust_init<V: Vss, R: Rng + CryptoRng, L: BaseSessionHandles<R>>(
         session: &mut L,
         vss: &V,
     ) -> anyhow::Result<Self> {
@@ -656,7 +656,7 @@ fn inverse_vdm<Z: Ring + RingEmbed>(rows: usize, columns: usize) -> anyhow::Resu
 async fn agree_random_robust<
     Z: Ring + ErrorCorrect,
     Rnd: Rng + CryptoRng,
-    L: LargeSessionHandles<Rnd>,
+    L: BaseSessionHandles<Rnd>,
 >(
     session: &mut L,
     shares: Vec<Z>,
@@ -700,8 +700,8 @@ mod tests {
             runtime::party::{Identity, Role},
             runtime::{
                 session::{
-                    BaseSessionHandles, DecryptionMode, LargeSession, ParameterHandles,
-                    SessionParameters, SmallSession, SmallSessionStruct,
+                    BaseSessionHandles, DecryptionMode, ParameterHandles, SessionParameters,
+                    SmallSession, SmallSessionStruct,
                 },
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
@@ -712,7 +712,6 @@ mod tests {
         lwe::{keygen_all_party_shares, KeySet},
         tests::{
             helper::tests::get_small_session_for_parties,
-            helper::tests_and_benches::execute_protocol_large,
             helper::tests_and_benches::execute_protocol_small,
         },
     };
@@ -1527,7 +1526,7 @@ mod tests {
         let parties: usize = 5;
         let threshold = 1;
 
-        async fn task(mut session: LargeSession) -> Share<ResiduePoly128> {
+        async fn task(mut session: SmallSession<ResiduePoly128>) -> Share<ResiduePoly128> {
             let prss_setup = PRSSSetup::robust_init(&mut session, &RealVss::default())
                 .await
                 .unwrap();
@@ -1553,14 +1552,14 @@ mod tests {
         let c = 1;
         let rounds = c * (1 + 3 + threshold) + 1;
 
-        let result = execute_protocol_large::<ResiduePoly128, _, _>(
+        let result = execute_protocol_small::<ResiduePoly128, _, _>(
             parties,
             threshold,
-            Some(rounds),
+            Some(rounds.into()),
             &mut task,
         );
         let sharing = ShamirSharings::create(result);
-        validate_prss_init(sharing, parties, threshold);
+        validate_prss_init(sharing, parties, threshold.into());
     }
 
     #[test]
@@ -1569,7 +1568,7 @@ mod tests {
         let threshold = 1;
         let bad_party = 3;
 
-        let mut task = |mut session: LargeSession| async move {
+        let mut task = |mut session: SmallSession<ResiduePoly128>| async move {
             if session.my_role().unwrap().one_based() != bad_party {
                 let prss_setup = PRSSSetup::robust_init(&mut session, &RealVss::default())
                     .await
@@ -1583,10 +1582,10 @@ mod tests {
         };
 
         let result =
-            execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
+            execute_protocol_small::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
 
         let sharing = ShamirSharings::create(result);
-        validate_prss_init(sharing, parties, threshold);
+        validate_prss_init(sharing, parties, threshold.into());
     }
 
     #[test]
