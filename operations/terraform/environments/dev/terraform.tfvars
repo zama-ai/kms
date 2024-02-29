@@ -6,5 +6,6 @@ subnet_id_private = "subnet-a886b4c1"
 repository_arn_aws_creds = "arn:aws:secretsmanager:eu-west-3:324777464715:secret:deploy/ddec-tXKTIn"
 subnet_ids = ["subnet-00992e35840964944", "subnet-01274aa0313771247", "subnet-0954651460a6b4c09"]
 security_group_default_id = "sg-1469e77b"
-instance_type = "m6i.32xlarge"
+# instance_type = "m6i.32xlarge"
+instance_type = "t2.small"
 ami_ecs_optimized = "ami-0bb0fae8e10da83d4"
