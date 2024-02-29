@@ -199,7 +199,7 @@ resource "aws_ecs_task_definition" "ddec_node_task" {
   count = var.desired_count
   family = "ddec-node-${count.index + 1}" # append a suffix to the name
   network_mode = "awsvpc"
-  memory = "262144"
+  memory = "1024"
   runtime_platform {
     operating_system_family = "LINUX"
     cpu_architecture        = "X86_64"
