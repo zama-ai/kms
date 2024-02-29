@@ -1,7 +1,7 @@
 terraform {
   backend "s3" {
     bucket = "kms-terraform-state"
-    key    = "ddec/terraform.tfstate"
+    key    = "ddec/dev/terraform.tfstate"
     region = "eu-west-3"
     workspace_key_prefix = "ddec"
   }
@@ -26,7 +26,9 @@ module "ecs" {
   cloudwatch_log_group_name = module.cloudwatch.log_group_name
   subnet_ids = var.subnet_ids
   repository_arn_aws_creds = var.repository_arn_aws_creds
-  ubuntu_ami_id = var.ubuntu_ami_id
+  instance_type = var.instance_type
+  ami_ecs_optimized = var.ami_ecs_optimized
+  subnet_id_private = var.subnet_id_private
 }
 
 module "ec2" {
@@ -35,7 +37,8 @@ module "ec2" {
   subnet_id = var.subnet_id_private
   security_group_default_id = var.security_group_default_id
   vpc_id = var.vpc_id_private
-  ubuntu_ami_id = var.ubuntu_ami_id
+  image = var.image
+  repository_arn_aws_creds = var.repository_arn_aws_creds
 }
 
 

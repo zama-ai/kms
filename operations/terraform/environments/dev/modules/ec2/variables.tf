@@ -18,7 +18,12 @@ variable "vpc_id" {
   description = "The VPC ID to deploy the app service to"
 }
 
-variable "ubuntu_ami_id" {
+variable "image" {
   type = string
-  description = "The AMI ID to use for the EC2 instances"
+  description = "The Docker image to use for the ECS task"
+}
+
+variable "repository_arn_aws_creds" {
+  type = string
+  description = "The ARN of the AWS Secrets Manager secret containing the Docker repository credentials"
 }

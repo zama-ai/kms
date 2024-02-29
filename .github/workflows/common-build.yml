@@ -27,6 +27,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Home
+        if: ${{ inputs.runs-on != 'ubuntu-latest' }}
         run: echo "HOME=/home/ubuntu" >> ${GITHUB_ENV}
 
       - name: Set up Rust.

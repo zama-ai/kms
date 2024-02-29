@@ -38,7 +38,4 @@ variable "security_group_default_id" {
   description = "The security group ID to deploy the app service to"
 }
 
-variable "ubuntu_ami_id" {
-  type = string
-  description = "The AMI ID to use for the EC2 instances"
-}
+

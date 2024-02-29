@@ -17,15 +17,15 @@ jobs:
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
 
   docker-build:
-    uses: ./.github/workflows/common-docker.yml
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
-    with:
-      push_image: false
-    secrets:
-      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+     uses: ./.github/workflows/common-docker.yml
+     permissions:
+       contents: 'read'
+       id-token: 'write'
+       packages: 'write'
+     with:
+       push_image: true
+     secrets:
+       CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
 
   done:
     runs-on: ubuntu-latest

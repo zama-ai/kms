@@ -33,7 +33,19 @@ variable "repository_arn_aws_creds" {
   description = "The ARN of the AWS credentials to use for the ECR repository"
 }
 
-variable "ubuntu_ami_id" {
+variable "instance_type" {
   type = string
-  description = "The AMI ID to use for the EC2 instances"
+  description = "The instance type to use for the EC2 instance"
 }
+
+variable "ami_ecs_optimized" {
+  type = string
+  description = "The AMI ID to use for the ECS-optimized EC2 instance"
+}
+
+variable "subnet_id_private" {
+  type = string
+  description = "The subnet ID to deploy the app service to"
+}
+
+

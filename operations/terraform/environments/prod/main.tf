@@ -1,7 +1,7 @@
 terraform {
   backend "s3" {
     bucket = "kms-terraform-state"
-    key    = "ddec/terraform.tfstate"
+    key    = "ddec/prod/terraform.tfstate"
     region = "eu-west-3"
     workspace_key_prefix = "ddec"
   }
