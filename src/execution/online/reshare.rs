@@ -232,14 +232,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::HashMap, fmt::Display, sync::Arc};
-
     use crate::execution::sharing::shamir::RevealOp;
-    use aes_prng::AesRng;
-    use rand::SeedableRng;
-    use tfhe::core_crypto::entities::LweSecretKey;
-    use tokio::task::JoinSet;
-
     use crate::{
         algebra::{
             residue_poly::ResiduePoly128,
@@ -259,6 +252,14 @@ mod tests {
         file_handling::read_element,
         lwe::{keygen_all_party_shares, KeySet, SecretKeyShare},
     };
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
+    use std::{collections::HashMap, fmt::Display, sync::Arc};
+    use tfhe::{
+        core_crypto::entities::LweSecretKey,
+        shortint::{ClassicPBSParameters, ShortintParameterSet},
+    };
+    use tokio::task::JoinSet;
 
     fn reconstruct_shares_to_scalar<Z: BaseRing + Display>(
         shares: Vec<Array1<ResiduePoly<Z>>>,
@@ -329,10 +330,7 @@ mod tests {
         let mut keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
 
         // we make the shares shorter to make sure the test doesn't take too long
-        keyset.sk.lwe_secret_key_128 =
-            LweSecretKey::from_container(keyset.sk.lwe_secret_key_128.as_ref()[..8].to_vec());
-        keyset.sk.lwe_secret_key_64 =
-            LweSecretKey::from_container(keyset.sk.lwe_secret_key_64.as_ref()[..8].to_vec());
+        truncate_client_keys(&mut keyset);
 
         // generate the key shares
         let mut rng = AesRng::from_entropy();
@@ -357,8 +355,8 @@ mod tests {
         }
         // sanity check that we can still reconstruct
         let expected_sk = (
-            keyset.sk.lwe_secret_key_128.into_container(),
-            keyset.sk.lwe_secret_key_64.into_container(),
+            keyset.client_output_key.large_key.clone().into_container(),
+            keyset.get_raw_client_key().to_owned().into_container(),
         );
         let rec_sk = reconstruct_sk(key_shares.clone(), threshold);
         assert_eq!(rec_sk, expected_sk);
@@ -442,5 +440,45 @@ mod tests {
             assert_eq!(old_share, zero_share);
         }
         Ok(())
+    }
+
+    fn truncate_client_keys(keyset: &mut KeySet) {
+        keyset.client_output_key.large_key =
+            LweSecretKey::from_container(keyset.client_output_key.large_key.as_ref()[..8].to_vec());
+        let (glwe_raw, lwe_raw, params) = keyset
+            .client_key
+            .to_owned()
+            .into_raw_parts()
+            .0
+            .into_raw_parts()
+            .into_raw_parts();
+        let new_params = ShortintParameterSet::new_pbs_param_set(
+            tfhe::shortint::PBSParameters::PBS(ClassicPBSParameters {
+                lwe_dimension: tfhe::integer::parameters::LweDimension(8),
+                glwe_dimension: params.glwe_dimension(),
+                polynomial_size: params.polynomial_size(),
+                lwe_modular_std_dev: params.lwe_modular_std_dev(),
+                glwe_modular_std_dev: params.glwe_modular_std_dev(),
+                pbs_base_log: params.pbs_base_log(),
+                pbs_level: params.pbs_level(),
+                ks_base_log: params.ks_base_log(),
+                ks_level: params.ks_level(),
+                message_modulus: params.message_modulus(),
+                carry_modulus: params.carry_modulus(),
+                ciphertext_modulus: params.ciphertext_modulus(),
+                encryption_key_choice: params.encryption_key_choice(),
+            }),
+        );
+        let con: Vec<u64> = lwe_raw.into_container();
+        let con = con[..8].to_vec();
+        let new_lwe_raw = LweSecretKey::from_container(con);
+        let ck =
+            tfhe::ClientKey::from_raw_parts(
+                tfhe::integer::ClientKey::from_raw_parts(
+                    tfhe::shortint::ClientKey::from_raw_parts(glwe_raw, new_lwe_raw, new_params),
+                ),
+                None,
+            );
+        keyset.client_key = ck;
     }
 }

@@ -5,6 +5,7 @@ use tfhe::shortint::{
         StandardDev,
     },
     CarryModulus, CiphertextModulus, ClassicPBSParameters, EncryptionKeyChoice, MessageModulus,
+    PBSOrder,
 };
 
 use crate::{
@@ -71,6 +72,9 @@ pub struct DKGParamsRegular {
     carry_modulus: CarryModulus,
     ///States whether we want compressed ciphertexts
     flag: bool,
+    ///States whether to use the big or small key for encryption. I.e. if the big key is used it implies
+    ///that the key switch key is generated *before* the bootstrapping key.
+    encryption_key_choice: EncryptionKeyChoice,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -124,7 +128,10 @@ pub trait DKGParamsBasics: Sync {
     fn num_needed_noise_pk(&self) -> usize;
     fn num_needed_noise_ksk(&self) -> usize;
     fn num_needed_noise_bk(&self) -> usize;
+    fn encryption_key_choice(&self) -> EncryptionKeyChoice;
+    fn pbs_order(&self) -> PBSOrder;
     fn to_dkg_params(&self) -> DKGParams;
+    fn to_threshold_parameters(&self) -> ThresholdLWEParameters;
 }
 
 impl DKGParamsBasics for DKGParamsRegular {
@@ -268,6 +275,58 @@ impl DKGParamsBasics for DKGParamsRegular {
     fn to_dkg_params(&self) -> DKGParams {
         DKGParams::WithoutSnS(*self)
     }
+
+    fn encryption_key_choice(&self) -> EncryptionKeyChoice {
+        self.encryption_key_choice
+    }
+
+    fn pbs_order(&self) -> PBSOrder {
+        PBSOrder::from(self.encryption_key_choice())
+    }
+
+    fn to_threshold_parameters(&self) -> ThresholdLWEParameters {
+        let input_ciphertext_parameters = CiphertextParameters {
+            lwe_dimension: self.lwe_dimension(),
+            glwe_dimension: self.glwe_dimension(),
+            polynomial_size: self.polynomial_size(),
+            //TODO(issue#350): Once TFHE-RS supports TUNIFORM noise modif this!
+            lwe_modular_std_dev: StandardDev(1e-37),
+            //TODO(issue#350): Once TFHE-RS supports TUNIFORM noise modif this!
+            glwe_modular_std_dev: StandardDev(1e-37),
+            pbs_base_log: self.decomposition_base_log_bk(),
+            pbs_level: self.decomposition_level_count_bk(),
+            ks_base_log: self.decomposition_base_log_ksk(),
+            ks_level: self.decomposition_level_count_ksk(),
+            message_modulus: self.message_modulus,
+            carry_modulus: self.carry_modulus,
+            ciphertext_modulus: CiphertextModulus::new_native(),
+            encryption_key_choice: self.encryption_key_choice,
+        };
+        let output_ciphertext_parameters = CiphertextParameters {
+            lwe_dimension: self.lwe_dimension(),
+            glwe_dimension: self.glwe_dimension(),
+            polynomial_size: self.polynomial_size(),
+            //TODO(issue#350): Once TFHE-RS supports TUNIFORM noise modif this!
+            lwe_modular_std_dev: StandardDev(1e-37),
+            //TODO(issue#350): Once TFHE-RS supports TUNIFORM noise modif this!
+            glwe_modular_std_dev: StandardDev(1e-37),
+            pbs_base_log: self.decomposition_base_log_bk(),
+            pbs_level: self.decomposition_level_count_bk(),
+            ks_base_log: self.decomposition_base_log_ksk(),
+            ks_level: self.decomposition_level_count_ksk(),
+            message_modulus: self.message_modulus,
+            carry_modulus: self.carry_modulus,
+            ciphertext_modulus: tfhe::core_crypto::commons::ciphertext_modulus::CiphertextModulus::<
+                u128,
+            >::new_native(),
+            encryption_key_choice: self.encryption_key_choice,
+        };
+
+        ThresholdLWEParameters {
+            input_cipher_parameters: input_ciphertext_parameters,
+            output_cipher_parameters: output_ciphertext_parameters,
+        }
+    }
 }
 
 impl DKGParamsBasics for DKGParamsSnS {
@@ -383,6 +442,18 @@ impl DKGParamsBasics for DKGParamsSnS {
     fn to_dkg_params(&self) -> DKGParams {
         DKGParams::WithSnS(*self)
     }
+
+    fn encryption_key_choice(&self) -> EncryptionKeyChoice {
+        self.regular_params.encryption_key_choice()
+    }
+
+    fn pbs_order(&self) -> PBSOrder {
+        self.regular_params.pbs_order()
+    }
+
+    fn to_threshold_parameters(&self) -> ThresholdLWEParameters {
+        self.regular_params.to_threshold_parameters()
+    }
 }
 
 impl DKGParamsSnS {
@@ -413,47 +484,6 @@ impl DKGParamsSnS {
     pub fn num_needed_noise_bk_sns(&self) -> usize {
         self.regular_params.l.0 * (self.o_w.0 + 1) * self.o_nu_bk.0 * self.o_N.0
     }
-    pub fn to_threshold_parameters(&self) -> ThresholdLWEParameters {
-        let input_ciphertext_parameters = CiphertextParameters {
-            lwe_dimension: self.lwe_dimension(),
-            glwe_dimension: self.glwe_dimension(),
-            polynomial_size: self.polynomial_size(),
-            //TODO(issue#350): Once TFHE-RS supports TUNIFORM noise modif this!
-            lwe_modular_std_dev: StandardDev(1e-37),
-            //TODO(issue#350): Once TFHE-RS supports TUNIFORM noise modif this!
-            glwe_modular_std_dev: StandardDev(1e-37),
-            pbs_base_log: self.decomposition_base_log_bk(),
-            pbs_level: self.decomposition_level_count_bk(),
-            ks_base_log: self.decomposition_base_log_ksk(),
-            ks_level: self.decomposition_level_count_ksk(),
-            message_modulus_log: self.regular_params.message_modulus,
-            usable_message_modulus_log: self.regular_params.message_modulus, //TODO: NEED TO MAP THESE PARAM STRUCTURE CORRECTLY WITH TFHERS
-            ciphertext_modulus: CiphertextModulus::new_native(),
-        };
-        let output_ciphertext_parameters = CiphertextParameters {
-            lwe_dimension: self.lwe_dimension(),
-            glwe_dimension: self.o_w,
-            polynomial_size: self.polynomial_size_sns(),
-            //TODO(issue#350): Once TFHE-RS supports TUNIFORM noise modif this!
-            lwe_modular_std_dev: StandardDev(1e-37),
-            //TODO(issue#350): Once TFHE-RS supports TUNIFORM noise modif this!
-            glwe_modular_std_dev: StandardDev(1e-37),
-            pbs_base_log: self.decomposition_base_log_bk_sns(),
-            pbs_level: self.decomposition_level_count_bk_sns(),
-            ks_base_log: self.decomposition_base_log_ksk(),
-            ks_level: self.decomposition_level_count_ksk(),
-            message_modulus_log: self.regular_params.message_modulus,
-            usable_message_modulus_log: self.regular_params.message_modulus, //TODO: NEED TO MAP THESE PARAM STRUCTURE CORRECTLY WITH TFHERS
-            ciphertext_modulus: tfhe::core_crypto::commons::ciphertext_modulus::CiphertextModulus::<
-                u128,
-            >::new_native(),
-        };
-
-        ThresholdLWEParameters {
-            input_cipher_parameters: input_ciphertext_parameters,
-            output_cipher_parameters: output_ciphertext_parameters,
-        }
-    }
 }
 
 ///Small-ish parameter set with 2 bit plaintext modulus
@@ -472,6 +502,7 @@ pub const PARAMS_P32_SMALL_NO_SNS: DKGParams = DKGParams::WithoutSnS(DKGParamsRe
     message_modulus: MessageModulus(4),
     carry_modulus: CarryModulus(4),
     flag: true,
+    encryption_key_choice: EncryptionKeyChoice::Small,
 });
 
 //Small-ish parameter set with 1 bit plaintext modulus
@@ -490,6 +521,7 @@ pub const PARAMS_P8_SMALL_NO_SNS: DKGParams = DKGParams::WithoutSnS(DKGParamsReg
     message_modulus: MessageModulus(2),
     carry_modulus: CarryModulus(2),
     flag: true,
+    encryption_key_choice: EncryptionKeyChoice::Small,
 });
 
 ///This parameter set somewhat match the ones in [`distributed_decryption::tests::test_data_setup::TEST_PARAMETERS`]
@@ -509,6 +541,7 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(2),
         flag: true,
+        encryption_key_choice: EncryptionKeyChoice::Small,
     },
     o_N: PolynomialSize(256),
     o_w: GlweDimension(2),
@@ -534,6 +567,7 @@ pub const PARAMS_P8_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
         message_modulus: MessageModulus(2),
         carry_modulus: CarryModulus(2),
         flag: true,
+        encryption_key_choice: EncryptionKeyChoice::Small,
     },
     o_N: PolynomialSize(1024),
     o_w: GlweDimension(4),
@@ -559,6 +593,7 @@ pub const PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS 
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
         flag: true,
+        encryption_key_choice: EncryptionKeyChoice::Small,
     },
     o_N: PolynomialSize(2048),
     o_w: GlweDimension(2),

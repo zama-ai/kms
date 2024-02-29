@@ -17,6 +17,7 @@ use distributed_decryption::{
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
+use tfhe::{prelude::FheEncrypt, FheUint8};
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {
@@ -58,15 +59,14 @@ fn ddec_nsmall(c: &mut Criterion) {
     for config in params {
         let message = rng.gen::<u64>();
         let key_shares = keygen_all_party_shares(&keyset, &mut rng, config.n, config.t).unwrap();
-        let ct = keyset
-            .pk
-            .encrypt_w_bitlimit(&mut rng, message, config.ctxt_size);
+        let ct = FheUint8::encrypt(message, &keyset.public_key);
+        let (raw_ct, _id) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
         let mut runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities, config.t as u8);
-        let ctc = Arc::new(ct);
+        let ctc = Arc::new(raw_ct);
 
-        let keyset_ck = Arc::new(keyset.ck.clone());
+        let keyset_ck = Arc::new(keyset.conversion_key.clone());
         let key_shares = Arc::new(key_shares);
         runtime.conversion_keys = Some(keyset_ck.clone());
         runtime.setup_sks(key_shares.clone().to_vec());
@@ -76,7 +76,7 @@ fn ddec_nsmall(c: &mut Criterion) {
             &(config, ctc, runtime),
             |b, (_config, cti, runtime)| {
                 b.iter(|| {
-                    let _ = threshold_decrypt64(runtime, cti.to_vec(), DecryptionMode::PRSSDecrypt);
+                    let _ = threshold_decrypt64(runtime, cti.as_ref(), DecryptionMode::PRSSDecrypt);
                 });
             },
         );
@@ -105,12 +105,11 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
     for config in params {
         let message = rng.gen::<u64>();
         let key_shares = keygen_all_party_shares(&keyset, &mut rng, config.n, config.t).unwrap();
-        let ct = keyset
-            .pk
-            .encrypt_w_bitlimit(&mut rng, message, config.ctxt_size);
+        let ct = FheUint8::encrypt(message, &keyset.public_key);
+        let (raw_ct, _id) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
-        let ctc = Arc::new(ct);
+        let ctc = Arc::new(raw_ct);
         let key_shares = Arc::new(key_shares);
         let mut runtime =
             DistributedTestRuntime::<ResiduePoly64>::new(identities.clone(), config.t as u8);
@@ -122,7 +121,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
                 b.iter(|| {
                     let _ = threshold_decrypt64(
                         runtime,
-                        ct.to_vec(),
+                        ct.as_ref(),
                         DecryptionMode::BitDecSmallDecrypt,
                     );
                 })
@@ -152,17 +151,16 @@ fn ddec_nlarge(c: &mut Criterion) {
     for config in params {
         let message = rng.gen::<u64>();
         let key_shares = keygen_all_party_shares(&keyset, &mut rng, config.n, config.t).unwrap();
-        let ct = keyset
-            .pk
-            .encrypt_w_bitlimit(&mut rng, message, config.ctxt_size);
+        let ct = FheUint8::encrypt(message, &keyset.public_key);
+        let (raw_ct, _id) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
         let mut runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities, config.t as u8);
 
-        let ctc = Arc::new(ct);
-        let keyset_ck = Arc::new(keyset.ck.clone());
+        let ctc = Arc::new(raw_ct);
+        let conversion_key = Arc::new(keyset.conversion_key.clone());
         let key_shares = Arc::new(key_shares);
-        runtime.setup_cks(keyset_ck.clone());
+        runtime.setup_conversion_key(conversion_key.clone());
         runtime.setup_sks(key_shares.clone().to_vec());
 
         group.bench_with_input(
@@ -170,7 +168,7 @@ fn ddec_nlarge(c: &mut Criterion) {
             &(config, ctc, runtime),
             |b, (_config, ct, runtime)| {
                 b.iter(|| {
-                    let _ = threshold_decrypt64(runtime, ct.to_vec(), DecryptionMode::LargeDecrypt);
+                    let _ = threshold_decrypt64(runtime, ct.as_ref(), DecryptionMode::LargeDecrypt);
                 });
             },
         );
@@ -199,12 +197,11 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
     for config in params {
         let message = rng.gen::<u64>();
         let key_shares = keygen_all_party_shares(&keyset, &mut rng, config.n, config.t).unwrap();
-        let ct = keyset
-            .pk
-            .encrypt_w_bitlimit(&mut rng, message, config.ctxt_size);
+        let ct = FheUint8::encrypt(message, &keyset.public_key);
+        let (raw_ct, _id) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
-        let ctc = Arc::new(ct);
+        let ctc = Arc::new(raw_ct);
         let key_shares = Arc::new(key_shares);
         let mut runtime =
             DistributedTestRuntime::<ResiduePoly64>::new(identities.clone(), config.t as u8);
@@ -216,7 +213,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
                 b.iter(|| {
                     let _ = threshold_decrypt64(
                         runtime,
-                        ct.to_vec(),
+                        ct.as_ref(),
                         DecryptionMode::BitDecLargeDecrypt,
                     );
                 })

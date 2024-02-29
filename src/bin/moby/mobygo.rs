@@ -7,13 +7,14 @@ use distributed_decryption::{
     error::error_handler::anyhow_error_and_log,
     execution::runtime::party::RoleAssignment,
     file_handling::{self, read_as_json},
-    lwe::{PublicKey, ThresholdLWEParameters},
+    lwe::ThresholdLWEParameters,
 };
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
 use prettytable::{Attr, Cell, Row, Table};
-use rand::{distributions::Uniform, rngs::ThreadRng, Rng};
+use rand::{distributions::Uniform, Rng};
 use std::sync::Arc;
+use tfhe::{prelude::FheEncrypt, FheUint8};
 use tokio::task::JoinSet;
 
 #[derive(Parser, Debug)]
@@ -97,7 +98,6 @@ async fn init_command(
 async fn decrypt_command(
     runtime: ChoreoRuntime,
     decrypt_opts: &ChoreoConf,
-    rng: &mut ThreadRng,
 ) -> Result<Vec<SessionId>, Box<dyn std::error::Error>> {
     let possible_messages = Uniform::from(0..=255);
     let number_messages = decrypt_opts.number_messages.unwrap_or_else(|| {
@@ -118,11 +118,14 @@ async fn decrypt_command(
 
     // read pk from file (Init must have been called before!)
     let pk_serialized = std::fs::read(decrypt_opts.pub_key_file())?;
-    let pk: PublicKey = bincode::deserialize(&pk_serialized)?;
+    let pk: tfhe::CompactPublicKey = bincode::deserialize(&pk_serialized)?;
 
     let ciphers = messages
         .iter()
-        .map(|m| pk.encrypt(rng, *m as u64))
+        .map(|m| {
+            let (ct, _id) = FheUint8::encrypt(*m, &pk).into_raw_parts();
+            ct
+        })
         .collect::<Vec<_>>();
 
     let mut join_set = JoinSet::new();
@@ -134,7 +137,7 @@ async fn decrypt_command(
         let mode = mode.clone();
         let threshold = decrypt_opts.threshold_topology.threshold;
         join_set.spawn(async move {
-            rt.initiate_threshold_decryption(&mode, threshold, ct.as_ref())
+            rt.initiate_threshold_decryption(&mode, threshold, &ct)
                 .await
         });
     });
@@ -253,7 +256,6 @@ async fn collect_results(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
 
-    let mut rng = rand::thread_rng();
     let tls_config = None;
     let conf: ChoreoConf = Settings::builder()
         .path(&args.conf_file)
@@ -278,7 +280,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             crs_ceremony_command(&runtime, &conf).await?;
         }
         Commands::Decrypt => {
-            let session_ids = decrypt_command(runtime, &conf, &mut rng).await?;
+            let session_ids = decrypt_command(runtime, &conf).await?;
             tracing::info!(
                 "Storing session ids: {:?} - into {:?}",
                 session_ids,

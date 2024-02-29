@@ -106,8 +106,7 @@ mod tests {
                 Ok(NetworkValue::PubKey(key)) => key,
                 _ => panic!(),
             };
-            assert_eq!(received_key.pk, pck.pk);
-            assert_eq!(received_key.ck, pck.ck);
+            assert_eq!(*received_key, pck);
         });
 
         let task2 = tokio::spawn(async move {

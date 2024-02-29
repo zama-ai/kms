@@ -12,13 +12,15 @@ pub mod tests {
     };
     use ctor::ctor;
     use std::fs;
-    use tfhe::core_crypto::commons::ciphertext_modulus::CiphertextModulus;
     use tfhe::shortint::{
         prelude::{
             DecompositionBaseLog, DecompositionLevelCount, GlweDimension, LweDimension,
             PolynomialSize, StandardDev,
         },
-        MessageModulus,
+        CarryModulus, MessageModulus,
+    };
+    use tfhe::{
+        core_crypto::commons::ciphertext_modulus::CiphertextModulus, shortint::EncryptionKeyChoice,
     };
 
     pub const DEFAULT_SEED: u64 = 1;
@@ -41,8 +43,9 @@ pub mod tests {
         ks_base_log: DecompositionBaseLog(8),
         ks_level: DecompositionLevelCount(4),
         ciphertext_modulus: CiphertextModulus::<u64>::new_native(),
-        message_modulus_log: MessageModulus(4),
-        usable_message_modulus_log: MessageModulus(2),
+        message_modulus: MessageModulus(4),
+        carry_modulus: CarryModulus(4),
+        encryption_key_choice: EncryptionKeyChoice::Small,
     };
 
     // TEST OUTPUT decryption
@@ -57,8 +60,9 @@ pub mod tests {
         ks_base_log: DecompositionBaseLog(30),
         ks_level: DecompositionLevelCount(2),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        message_modulus_log: MessageModulus(4),
-        usable_message_modulus_log: MessageModulus(2),
+        message_modulus: MessageModulus(4),
+        carry_modulus: CarryModulus(4),
+        encryption_key_choice: EncryptionKeyChoice::Small,
     };
 
     // DEFAULT INPUT parameters
@@ -74,8 +78,9 @@ pub mod tests {
             ks_base_log: DecompositionBaseLog(8),
             ks_level: DecompositionLevelCount(4),
             ciphertext_modulus: CiphertextModulus::new_native(),
-            message_modulus_log: MessageModulus(4),
-            usable_message_modulus_log: MessageModulus(2),
+            message_modulus: MessageModulus(4),
+            carry_modulus: CarryModulus(4),
+            encryption_key_choice: EncryptionKeyChoice::Small,
         };
 
     // DEFAULT OUTPUT decryption
@@ -90,8 +95,9 @@ pub mod tests {
         ks_base_log: DecompositionBaseLog(30),
         ks_level: DecompositionLevelCount(2),
         ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
-        message_modulus_log: MessageModulus(4),
-        usable_message_modulus_log: MessageModulus(2),
+        message_modulus: MessageModulus(4),
+        carry_modulus: CarryModulus(4),
+        encryption_key_choice: EncryptionKeyChoice::Small,
     };
 
     // TODO based on https://github.com/zama-ai/tfhe-rs-internal/blob/noise_gap_exp/tfhe/benches/core_crypto/noise_gap_pbs-ks.rs PARAM_CGGI_BOOLEAN_COMPACT_PKE_PBS_KS_INPUT found in noise_gap.rs in noise_gap_exp

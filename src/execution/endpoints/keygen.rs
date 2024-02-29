@@ -1,33 +1,9 @@
 use std::{num::Wrapping, sync::Arc};
 
-use aes_prng::AesRng;
-use concrete_csprng::generators::SoftwareRandomGenerator;
-use itertools::Itertools;
-use ndarray::Array1;
-use num_integer::div_ceil;
-use rand::{CryptoRng, Rng};
-use serde::{Deserialize, Serialize};
-use tfhe::core_crypto::commons::traits::UnsignedInteger;
-use tfhe::core_crypto::prelude::Numeric;
-use tfhe::{
-    core_crypto::{
-        algorithms::par_convert_standard_lwe_bootstrap_key_to_fourier,
-        entities::{FourierLweBootstrapKey, LweBootstrapKey, LweCompactPublicKey, LweKeyswitchKey},
-        prelude::ByteRandomGenerator,
-    },
-    shortint::{
-        ciphertext::{MaxDegree, MaxNoiseLevel},
-        server_key::ShortintBootstrappingKey,
-    },
-};
-use tokio::{task::JoinSet, time::timeout_at};
-
-use crate::execution::online::preprocessing::{DKGPreprocessing, NoiseBounds, RandomPreprocessing};
 use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
 use crate::{
     algebra::{
-        residue_poly::ResiduePoly,
-        residue_poly::ResiduePoly128,
+        residue_poly::{ResiduePoly, ResiduePoly128},
         structure_traits::{BaseRing, Ring},
     },
     error::error_handler::anyhow_error_and_log,
@@ -52,9 +28,34 @@ use crate::{
         },
     },
     file_handling::{read_element, write_element},
-    lwe::{gen_key_set, KeySet, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters},
+    lwe::{gen_key_set, KeySet, PubConKeyPair, SecretKeyShare},
     networking::value::NetworkValue,
 };
+use crate::{
+    execution::online::preprocessing::{DKGPreprocessing, NoiseBounds, RandomPreprocessing},
+    lwe::ThresholdLWEParameters,
+};
+use aes_prng::AesRng;
+use concrete_csprng::generators::SoftwareRandomGenerator;
+use itertools::Itertools;
+use ndarray::Array1;
+use num_integer::div_ceil;
+use rand::{CryptoRng, Rng};
+use serde::{Deserialize, Serialize};
+use tfhe::core_crypto::commons::traits::UnsignedInteger;
+use tfhe::core_crypto::prelude::Numeric;
+use tfhe::{
+    core_crypto::{
+        algorithms::par_convert_standard_lwe_bootstrap_key_to_fourier,
+        entities::{FourierLweBootstrapKey, LweBootstrapKey, LweCompactPublicKey, LweKeyswitchKey},
+        prelude::ByteRandomGenerator,
+    },
+    shortint::{
+        ciphertext::{MaxDegree, MaxNoiseLevel},
+        server_key::ShortintBootstrappingKey,
+    },
+};
+use tokio::{task::JoinSet, time::timeout_at};
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct PubKeySet {
@@ -558,7 +559,7 @@ pub async fn initialize_key_material(
 
     let sk_container64: Vec<u64> = keyset
         .as_ref()
-        .map(|s| s.clone().sk.lwe_secret_key_64.into_container())
+        .map(|s| s.clone().get_raw_client_key().into_container())
         .unwrap_or_else(|| {
             // TODO: This needs to be refactor, since we have done this hack in order all the
             // parties that are not INPUT_PARTY_ID wait for INPUT_PARTY_ID to generate the keyset
@@ -570,7 +571,7 @@ pub async fn initialize_key_material(
 
     let sk_container128: Vec<u128> = keyset
         .as_ref()
-        .map(|s| s.clone().sk.lwe_secret_key_128.into_container())
+        .map(|s| s.clone().client_output_key.large_key.into_container())
         .unwrap_or_else(|| {
             // TODO: This needs to be refactor, since we have done this hack in order all the
             // parties that are not INPUT_PARTY_ID wait for INPUT_PARTY_ID to generate the keyset
@@ -625,7 +626,10 @@ pub async fn initialize_key_material(
         key_shares128.push(share);
     }
 
-    let pubcon = keyset.map(|s| PubConKeyPair { pk: s.pk, ck: s.ck });
+    let pubcon = keyset.map(|s| PubConKeyPair {
+        public_key: s.public_key,
+        conversion_key: s.conversion_key,
+    });
     let transferred_pk = transfer_pk::<ResiduePoly128>(
         &session.to_base_session(),
         pubcon,
@@ -661,10 +665,10 @@ mod tests {
             },
             entities::{Fourier128LweBootstrapKey, LweBootstrapKey, LweSecretKey},
         },
-        prelude::{FheDecrypt, FheMin, FheTryEncrypt},
+        prelude::{FheDecrypt, FheEncrypt, FheMin, FheTryEncrypt},
         set_server_key,
         shortint::parameters::{CoreCiphertextModulus, StandardDev},
-        FheUint32, FheUint8,
+        FheUint32, FheUint64, FheUint8,
     };
 
     use crate::{
@@ -683,6 +687,7 @@ mod tests {
                 PARAMS_P8_SMALL_NO_SNS,
             },
         },
+        lwe::{to_hl_client_key, to_hl_public_key},
         tests::helper::tests_and_benches::{execute_protocol_large, execute_protocol_small},
     };
     use crate::{
@@ -690,7 +695,7 @@ mod tests {
             parameters::{PARAMS_P32_REAL_WITH_SNS, PARAMS_P8_REAL_WITH_SNS},
             utils::tests::reconstruct_lwe_secret_key_from_file,
         },
-        lwe::to_large_ciphertext_block,
+        lwe::LargeClientKey,
     };
     use crate::{
         execution::{
@@ -699,7 +704,7 @@ mod tests {
                 parameters::PARAMS_TEST_BK_SNS, utils::tests::reconstruct_glwe_secret_key_from_file,
             },
         },
-        lwe::BootstrappingKey,
+        lwe::ConversionKey,
     };
 
     use super::{distributed_keygen, DKGParams, PubKeySet};
@@ -1049,10 +1054,9 @@ mod tests {
             .unwrap();
     }
 
-    ///Tests switch and squash decryption
     fn run_switch_and_squash(prefix_path: String, num_parties: usize, threshold: usize) {
         let params = DKGParamsSnS::read_from_file(prefix_path + "/params.json").unwrap();
-        let message = (params.get_message_modulus().0 - 1) as u64;
+        let message = (params.get_message_modulus().0 - 1) as u8;
         let threshold_lwe_parameters = params.to_threshold_parameters();
 
         let sk_lwe =
@@ -1062,12 +1066,14 @@ mod tests {
             threshold,
             DKGParams::WithSnS(params),
         );
+        let sk_large = LargeClientKey::new(
+            threshold_lwe_parameters.output_cipher_parameters,
+            big_sk_glwe.clone().unwrap().into_lwe_secret_key(),
+        );
         let pk = PubKeySet::read_from_file(format!("{}/pk.der", params.get_prefix_path())).unwrap();
 
-        let ddec_pk = crate::lwe::PublicKey {
-            public_key: pk.lwe_public_key,
-            threshold_lwe_parameters,
-        };
+        let ddec_pk = to_hl_public_key(&threshold_lwe_parameters, pk.lwe_public_key);
+        let ddec_sk = to_hl_client_key(&threshold_lwe_parameters, sk_lwe.clone(), sk_glwe);
 
         let bk_sns = pk.bk_sns.unwrap();
         let mut fourier_bsk = Fourier128LweBootstrapKey::new(
@@ -1080,7 +1086,7 @@ mod tests {
 
         convert_standard_lwe_bootstrap_key_to_fourier_128(&bk_sns, &mut fourier_bsk);
 
-        let ck = crate::lwe::BootstrappingKey {
+        let ck = crate::lwe::ConversionKey {
             fbsk_out: fourier_bsk,
             threshold_lwe_parameters,
         };
@@ -1088,7 +1094,6 @@ mod tests {
         //Try and generate the bk_sns directly from the private keys
         let sk_lwe_lifted_128 = LweSecretKey::from_container(
             sk_lwe
-                .clone()
                 .into_container()
                 .iter()
                 .map(|bit| *bit as u128)
@@ -1114,7 +1119,7 @@ mod tests {
 
         par_generate_lwe_bootstrap_key(
             &sk_lwe_lifted_128,
-            &big_sk_glwe.clone().unwrap(),
+            &big_sk_glwe.unwrap(),
             &mut bsk_out,
             StandardDev(3.15283466779972e-16),
             &mut enc_rng,
@@ -1130,25 +1135,19 @@ mod tests {
         convert_standard_lwe_bootstrap_key_to_fourier_128(&bsk_out, &mut fbsk_out);
         drop(bsk_out);
 
-        let ck_bis = BootstrappingKey::new(threshold_lwe_parameters, fbsk_out);
+        let ck_bis = ConversionKey::new(threshold_lwe_parameters, fbsk_out);
+        let small_ct = FheUint64::encrypt(message, &ddec_pk);
+        let (raw_ct, _id) = small_ct.clone().into_raw_parts();
+        let large_ct = ck.to_large_ciphertext(&raw_ct).unwrap();
+        let large_ct_bis = ck_bis.to_large_ciphertext(&raw_ct).unwrap();
 
-        let small_ct = ddec_pk.encrypt_block(&mut get_rng(), message);
-        let large_ct = to_large_ciphertext_block(&ck, &small_ct);
-        let large_ct_bis = to_large_ciphertext_block(&ck_bis, &small_ct);
+        let res_small: u8 = small_ct.decrypt(&ddec_sk);
+        let res_large = sk_large.decrypt_128(&large_ct);
+        let res_large_bis = sk_large.decrypt_128(&large_ct_bis);
 
-        let sk = crate::lwe::SecretKey {
-            lwe_secret_key_64: sk_lwe,
-            glwe_secret_key_64: sk_glwe,
-            lwe_secret_key_128: big_sk_glwe.unwrap().into_lwe_secret_key(),
-            threshold_lwe_parameters,
-        };
-        let res_small = sk.decrypt_block_64(&small_ct);
-        let res_large = sk.decrypt_block_128(&large_ct);
-        let res_large_bis = sk.decrypt_block_128(&large_ct_bis);
-
-        assert_eq!(message as u128, res_small.0);
-        assert_eq!(message as u128, res_large_bis.0);
-        assert_eq!(message as u128, res_large.0);
+        assert_eq!(message, res_small);
+        assert_eq!(message as u128, res_large_bis);
+        assert_eq!(message as u128, res_large);
     }
 
     ///Runs only the shortint computation

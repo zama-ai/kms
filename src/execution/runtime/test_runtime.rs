@@ -11,7 +11,7 @@ use crate::{
         sharing::shamir::{HenselLiftInverse, RingEmbed},
         small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
     },
-    lwe::{BootstrappingKey, SecretKeyShare},
+    lwe::{ConversionKey, SecretKeyShare},
     networking::local::{LocalNetworking, LocalNetworkingProducer},
 };
 use aes_prng::AesRng;
@@ -26,7 +26,7 @@ pub struct DistributedTestRuntime<Z: Ring> {
     pub keyshares: Option<Vec<SecretKeyShare>>,
     pub user_nets: Vec<Arc<LocalNetworking>>,
     pub role_assignments: RoleAssignment,
-    pub conversion_keys: Option<Arc<BootstrappingKey>>,
+    pub conversion_keys: Option<Arc<ConversionKey>>,
 }
 
 /// Generates a list of list identities, setting their addresses as localhost:5000, localhost:5001, ...
@@ -70,11 +70,11 @@ impl<Z: Ring> DistributedTestRuntime<Z> {
         }
     }
 
-    pub fn get_ck(&self) -> Arc<BootstrappingKey> {
+    pub fn get_conversion_key(&self) -> Arc<ConversionKey> {
         Arc::clone(&self.conversion_keys.clone().unwrap())
     }
 
-    pub fn setup_cks(&mut self, cks: Arc<BootstrappingKey>) {
+    pub fn setup_conversion_key(&mut self, cks: Arc<ConversionKey>) {
         self.conversion_keys = Some(cks);
     }
 

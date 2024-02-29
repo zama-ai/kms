@@ -57,12 +57,12 @@ mod tests {
     }
 
     #[test]
-    fn determinism() {
+    fn indeterminism() {
         let ct_base = generate_cipher(SMALL_TEST_KEY_PATH, 0);
         let base = SessionId::new(&ct_base);
         let ct_other: Ciphertext64 = generate_cipher(SMALL_TEST_KEY_PATH, 0);
-        // validate that the same input gives the same result
-        assert_eq!(base.unwrap(), SessionId::new(&ct_other).unwrap());
+        // validate that the same input gives a different result
+        assert_ne!(base.unwrap(), SessionId::new(&ct_other).unwrap());
     }
 
     #[test]

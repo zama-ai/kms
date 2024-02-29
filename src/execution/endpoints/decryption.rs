@@ -1,20 +1,23 @@
 #[cfg(any(test, feature = "testing"))]
 use crate::algebra::structure_traits::Ring;
+#[cfg(any(test, feature = "testing"))]
 use crate::computation::SessionId;
 use crate::execution::large_execution::offline::LargePreprocessing;
-use crate::execution::online::bit_manipulation::{bit_dec_batch, BatchedBits};
 use crate::execution::online::preprocessing::default_factory;
 use crate::execution::online::preprocessing::BitDecPreprocessing;
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::session::ToBaseSession;
 use crate::execution::runtime::session::{DecryptionMode, SmallSession64};
-use crate::execution::sharing::open::robust_opens_to;
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::sharing::shamir::{HenselLiftInverse, RingEmbed};
 use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
+use crate::execution::{
+    online::bit_manipulation::{bit_dec_batch, BatchedBits},
+    sharing::open::robust_opens_to_all,
+};
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::{
     runtime::{
@@ -24,9 +27,8 @@ use crate::execution::{
     },
     small_execution::prss::PRSSSetup,
 };
-#[cfg(any(test, feature = "testing"))]
-use crate::lwe::to_large_ciphertext;
-use crate::lwe::{combine128, to_large_ciphertext_block, PubConKeyPair};
+use crate::lwe::combine128;
+use crate::lwe::ConversionKey;
 use crate::{
     algebra::residue_poly::ResiduePoly, execution::config::BatchParams, lwe::ThresholdLWEParameters,
 };
@@ -39,12 +41,9 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        constants::{INPUT_PARTY_ID, LOG_BD, STATSEC},
+        constants::{LOG_BD, STATSEC},
         large_execution::offline::{RealLargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
-        runtime::{
-            party::Role,
-            session::{BaseSessionHandles, LargeSession, SmallSession},
-        },
+        runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
     },
     lwe::{
         from_expanded_msg, Ciphertext128, Ciphertext128Block, Ciphertext64, Ciphertext64Block,
@@ -55,7 +54,6 @@ use crate::{
 use aes_prng::AesRng;
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
-use itertools::Itertools;
 #[cfg(any(test, feature = "testing"))]
 use rand::SeedableRng;
 use rand::{CryptoRng, Rng};
@@ -65,6 +63,7 @@ use std::num::Wrapping;
 #[cfg(any(test, feature = "testing"))]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tfhe::integer::IntegerCiphertext;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
 use tracing::instrument;
@@ -162,10 +161,9 @@ impl ProtocolDecryption for Large {
 /// # Arguments
 /// * `session` - The session object that contains the networking and the role of the party_keyshare
 /// * `protocol` - The protocol object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
-/// * `pkl` - The public key pair
+/// * `ck` - The conversion key
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
-/// * `session_id` - The session id
 /// * `_mode` - The decryption mode. This is used only for tracing purposes
 /// * `_own_identity` - The identity of the party_keyshare. This is used only for tracing purposes
 ///
@@ -182,31 +180,23 @@ impl ProtocolDecryption for Large {
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(session, protocol, pkl, ct, secret_key_share), fields(session_id = ?session_id, own_identity = %_own_identity, mode = %_mode))]
-pub async fn decrypt<S, P, R>(
+#[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(session_id = ?session.session_id(), own_identity = %_own_identity, mode = %_mode))]
+pub async fn decrypt_using_noiseflooding<S, P, R>(
     session: &mut S,
     protocol: &mut P,
-    pkl: Option<PubConKeyPair>,
+    ck: &ConversionKey,
     ct: Ciphertext64,
     secret_key_share: &SecretKeyShare,
-    session_id: SessionId,
     _mode: DecryptionMode,
     _own_identity: Identity,
-) -> anyhow::Result<(HashMap<String, Vec<Z64>>, Duration)>
+) -> anyhow::Result<(HashMap<String, Z64>, Duration)>
 where
     R: Rng + CryptoRng + Send,
     S: BaseSessionHandles<R>,
     P: ProtocolDecryption,
 {
     let execution_start_timer = Instant::now();
-    let ck = &pkl
-        .as_ref()
-        .ok_or_else(|| anyhow_error_and_log("No public key available for decryption".to_string()))?
-        .ck;
-    let ct_large = ct
-        .iter()
-        .map(|ct_block| to_large_ciphertext_block(ck, ct_block))
-        .collect_vec();
+    let ct_large = ck.to_large_ciphertext(&ct)?;
     let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
     let mut preparation = protocol.init_prep_noiseflooding(len).await;
@@ -215,40 +205,94 @@ where
         .await
         .unwrap();
 
-    tracing::info!(
-        "Results in session {:?} ready: {:?}",
-        session_id,
-        outputs.len()
-    );
-    results.insert(format!("{session_id}"), outputs);
+    tracing::info!("Result in session {:?} is ready", session.session_id());
+    results.insert(format!("{}", session.session_id()), outputs);
 
     let execution_stop_timer = Instant::now();
     let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
     Ok((results, elapsed_time))
 }
 
-/// Takes as input plaintexts blocks m1, ..., mN revealed to INPUT_PARTY_ID
+/// Partially decrypt a ciphertext using the noise flooding `ProtocolType`.
+/// Partially here means that each party outputs a share of the decrypted result.
+///
+/// This is the entry point of the reencryption protocol.
+///
+/// # Arguments
+/// * `session` - The session object that contains the networking and the role of the party_keyshare
+/// * `protocol` - The protocol object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
+/// * `ck` - The conversion key
+/// * `ct` - The ciphertext to be decrypted
+/// * `secret_key_share` - The secret key share of the party_keyshare
+/// * `_mode` - The decryption mode. This is used only for tracing purposes
+/// * `_own_identity` - The identity of the party_keyshare. This is used only for tracing purposes
+///
+/// # Returns
+/// * A tuple containing the results of the partial decryption and the time it took to execute
+/// * The results of the partial decryption are a hashmap containing the session id and the partially decrypted ciphertexts
+/// * The time it took to execute the partial decryption
+///
+/// # Remarks
+/// The partial decryption protocol is executed in the following steps:
+/// 1. The ciphertext is converted to a large ciphertext block
+/// 2. The protocol is initialized with the noise flooding
+/// 3. The local decryption is executed
+/// 4. The results are returned
+///
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(session_id = ?session.session_id(), own_identity = %session.my_identity()?, mode = %_mode))]
+pub async fn partial_decrypt_using_noiseflooding<S, P, R>(
+    session: &mut S,
+    protocol: &mut P,
+    ck: &ConversionKey,
+    ct: Ciphertext64,
+    secret_key_share: &SecretKeyShare,
+    _mode: DecryptionMode,
+) -> anyhow::Result<(HashMap<String, Vec<ResiduePoly128>>, Duration)>
+where
+    R: Rng + CryptoRng + Send,
+    S: BaseSessionHandles<R>,
+    P: ProtocolDecryption,
+{
+    let execution_start_timer = Instant::now();
+    let ct_large = ck.to_large_ciphertext(&ct)?;
+    let mut results = HashMap::with_capacity(1);
+    let len = ct_large.len();
+    let mut preparation = protocol.init_prep_noiseflooding(len).await;
+    let preparation = preparation.as_mut();
+    let mut shared_masked_ptxts = Vec::with_capacity(ct_large.len());
+    for current_ct_block in ct_large {
+        let partial_decrypt = partial_decrypt128(secret_key_share, &current_ct_block)?;
+        let res = partial_decrypt + preparation.next_mask()?;
+
+        shared_masked_ptxts.push(res);
+    }
+
+    tracing::info!("Result in session {:?} is ready", session.session_id());
+    results.insert(format!("{}", session.session_id()), shared_masked_ptxts);
+
+    let execution_stop_timer = Instant::now();
+    let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
+    Ok((results, elapsed_time))
+}
+
+/// Takes as input plaintexts blocks m1, ..., mN revealed to all parties
 /// which we call partial decryptions each of B bits
 /// and uses tfhe block recomposer to get back the u64 plaintext.
 fn combine_plaintext_blocks(
-    own_role: &Role,
     bits_in_block: usize,
     partial_decrypted: Vec<Z128>,
-) -> anyhow::Result<Vec<Z64>> {
-    let mut outputs = Vec::new();
-    if own_role.one_based() == INPUT_PARTY_ID {
-        let res = match combine128(bits_in_block as u32, partial_decrypted) {
-            Ok(res) => res,
-            Err(error) => {
-                eprint!("Panicked in combining {error}");
-                return Err(anyhow_error_and_log(format!(
-                    "Panicked in combining {error}"
-                )));
-            }
-        };
-        outputs.push(Wrapping(res as u64));
-    }
-    Ok(outputs)
+) -> anyhow::Result<Z64> {
+    let res = match combine128(bits_in_block as u32, partial_decrypted) {
+        Ok(res) => res,
+        Err(error) => {
+            eprint!("Panicked in combining {error}");
+            return Err(anyhow_error_and_log(format!(
+                "Panicked in combining {error}"
+            )));
+        }
+    };
+    Ok(Wrapping(res as u64))
 }
 
 #[cfg(any(test, feature = "testing"))]
@@ -354,9 +398,9 @@ pub async fn init_prep_bitdec_large(
 #[cfg(any(test, feature = "testing"))]
 pub fn threshold_decrypt64<Z: Ring>(
     runtime: &DistributedTestRuntime<Z>,
-    ct: Ciphertext64,
+    ct: &Ciphertext64,
     mode: DecryptionMode,
-) -> anyhow::Result<HashMap<Identity, Vec<Z64>>> {
+) -> anyhow::Result<HashMap<Identity, Z64>> {
     let session_id = SessionId(1);
 
     let rt = tokio::runtime::Runtime::new()?;
@@ -368,8 +412,8 @@ pub fn threshold_decrypt64<Z: Ring>(
     let large_ct = match mode {
         DecryptionMode::PRSSDecrypt | DecryptionMode::LargeDecrypt => {
             tracing::info!("Switch&Squash started...");
-            let keyset_ck = runtime.get_ck();
-            let large_ct = to_large_ciphertext(&keyset_ck, &ct);
+            let keyset_ck = runtime.get_conversion_key();
+            let large_ct = keyset_ck.to_large_ciphertext(ct)?;
             tracing::info!("Switch&Squash done.");
             Some(large_ct)
         }
@@ -412,7 +456,7 @@ pub fn threshold_decrypt64<Z: Ring>(
                     .await;
 
                     let mut noiseflood_preprocessing = Small::new(session.clone())
-                        .init_prep_noiseflooding(ct.len())
+                        .init_prep_noiseflooding(ct.blocks().len())
                         .await;
                     let out = run_decryption_noiseflood(
                         &mut session,
@@ -438,7 +482,7 @@ pub fn threshold_decrypt64<Z: Ring>(
                     .unwrap();
                     let mut session = LargeSession::new(session_params, net).unwrap();
                     let mut noiseflood_preprocessing = Large::new(session.clone())
-                        .init_prep_noiseflooding(ct.len())
+                        .init_prep_noiseflooding(ct.blocks().len())
                         .await;
                     let out = run_decryption_noiseflood(
                         &mut session,
@@ -462,7 +506,7 @@ pub fn threshold_decrypt64<Z: Ring>(
                     )
                     .unwrap();
                     let mut session = LargeSession::new(session_params, net).unwrap();
-                    let mut prep = init_prep_bitdec_large(&mut session, ct.len()).await;
+                    let mut prep = init_prep_bitdec_large(&mut session, ct.blocks().len()).await;
                     let out =
                         run_decryption_bitdec(&mut session, prep.as_mut(), &party_keyshare, ct)
                             .await
@@ -481,7 +525,7 @@ pub fn threshold_decrypt64<Z: Ring>(
                         identity.clone(),
                     )
                     .await;
-                    let mut prep = init_prep_bitdec_small(&mut session, ct.len()).await;
+                    let mut prep = init_prep_bitdec_small(&mut session, ct.blocks().len()).await;
                     let out =
                         run_decryption_bitdec(&mut session, prep.as_mut(), &party_keyshare, ct)
                             .await
@@ -508,20 +552,8 @@ async fn open_masked_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     res: Vec<ResiduePoly128>,
     keyshares: &SecretKeyShare,
 ) -> anyhow::Result<Vec<Z128>> {
-    let own_role = session.my_role()?;
-    let openeds = robust_opens_to(
-        session,
-        &res,
-        session.threshold() as usize,
-        &own_role,
-        INPUT_PARTY_ID,
-    )
-    .await?;
-
-    if own_role.one_based() == INPUT_PARTY_ID {
-        return reconstruct_message(openeds, &keyshares.threshold_lwe_parameters);
-    }
-    Ok(vec![Wrapping(0)])
+    let openeds = robust_opens_to_all(session, &res, session.threshold() as usize).await?;
+    reconstruct_message(openeds, &keyshares.threshold_lwe_parameters)
 }
 
 /// Reconstructs a vector of plaintexts from raw, opened ciphertexts, by using the contant term of the `openeds`
@@ -530,14 +562,14 @@ pub fn reconstruct_message(
     openeds: Option<Vec<ResiduePoly<Z128>>>,
     params: &ThresholdLWEParameters,
 ) -> anyhow::Result<Vec<Z128>> {
-    let message_mod_bits = params.output_cipher_parameters.message_modulus_log.0;
+    let total_mod_bits = params.output_cipher_parameters.total_block_bits() as usize;
     // shift
     let mut out = Vec::new();
     match openeds {
         Some(openeds) => {
             for opened in openeds {
                 let v_scalar = opened.to_scalar()?;
-                out.push(from_expanded_msg(v_scalar.0, message_mod_bits));
+                out.push(from_expanded_msg(v_scalar.0, total_mod_bits));
             }
         }
         _ => {
@@ -553,34 +585,23 @@ async fn open_bit_composed_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &S,
     res: Vec<ResiduePoly64>,
 ) -> anyhow::Result<Vec<Z64>> {
-    let own_role = session.my_role()?;
-    let openeds = robust_opens_to(
-        session,
-        &res,
-        session.threshold() as usize,
-        &own_role,
-        INPUT_PARTY_ID,
-    )
-    .await?;
+    let openeds = robust_opens_to_all(session, &res, session.threshold() as usize).await?;
 
-    if own_role.one_based() == INPUT_PARTY_ID {
-        let mut out = Vec::with_capacity(res.len());
-        match openeds {
-            Some(openeds) => {
-                for opened in openeds {
-                    let v_scalar = opened.to_scalar()?;
-                    out.push(v_scalar);
-                }
+    let mut out = Vec::with_capacity(res.len());
+    match openeds {
+        Some(openeds) => {
+            for opened in openeds {
+                let v_scalar = opened.to_scalar()?;
+                out.push(v_scalar);
             }
-            _ => {
-                return Err(anyhow_error_and_log(
-                    "Error receiving shares for reconstructing bit-composed message".to_string(),
-                ))
-            }
-        };
-        return Ok(out);
-    }
-    Ok(vec![Wrapping(0)])
+        }
+        _ => {
+            return Err(anyhow_error_and_log(
+                "Error receiving shares for reconstructing bit-composed message".to_string(),
+            ))
+        }
+    };
+    Ok(out)
 }
 
 pub async fn run_decryption_noiseflood<
@@ -592,8 +613,7 @@ pub async fn run_decryption_noiseflood<
     preprocessing: &mut P,
     keyshares: &SecretKeyShare,
     ciphertext: Ciphertext128,
-) -> anyhow::Result<Vec<Z64>> {
-    let own_role = session.my_role()?;
+) -> anyhow::Result<Z64> {
     let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
     for current_ct_block in ciphertext {
         let partial_decrypt = partial_decrypt128(keyshares, &current_ct_block)?;
@@ -602,12 +622,11 @@ pub async fn run_decryption_noiseflood<
         shared_masked_ptxts.push(res);
     }
     let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
-    let bits_in_block = keyshares
+    let usable_message_bits = keyshares
         .threshold_lwe_parameters
         .output_cipher_parameters
-        .usable_message_modulus_log
-        .0;
-    combine_plaintext_blocks(&own_role, bits_in_block, partial_decrypted)
+        .message_modulus_log() as usize;
+    combine_plaintext_blocks(usable_message_bits, partial_decrypted)
 }
 
 // run decryption with bit-decomposition
@@ -620,12 +639,12 @@ pub async fn run_decryption_bitdec<
     prep: &mut P,
     keyshares: &SecretKeyShare,
     ciphertext: Ciphertext64,
-) -> anyhow::Result<Vec<Z64>> {
+) -> anyhow::Result<Z64> {
     let own_role = session.my_role()?;
 
-    let mut shared_ptxts = Vec::with_capacity(ciphertext.len());
-    for current_ct_block in ciphertext {
-        let partial_dec = partial_decrypt64(keyshares, &current_ct_block)?;
+    let mut shared_ptxts = Vec::with_capacity(ciphertext.blocks().len());
+    for current_ct_block in ciphertext.blocks() {
+        let partial_dec = partial_decrypt64(keyshares, current_ct_block)?;
         shared_ptxts.push(Share::new(own_role, partial_dec));
     }
 
@@ -633,14 +652,13 @@ pub async fn run_decryption_bitdec<
         .await
         .unwrap();
 
-    let message_mod_bits = keyshares
+    let total_bits = keyshares
         .threshold_lwe_parameters
         .input_cipher_parameters
-        .message_modulus_log
-        .0;
+        .total_block_bits() as usize;
 
     // bit-compose the plaintexts
-    let ptxt_sums = BatchedBits::extract_ptxts(bits, message_mod_bits, prep, session).await?;
+    let ptxt_sums = BatchedBits::extract_ptxts(bits, total_bits, prep, session).await?;
     let ptxt_sums: Vec<_> = ptxt_sums.iter().map(|ptxt_sum| ptxt_sum.value()).collect();
 
     // output results to party 0
@@ -650,14 +668,13 @@ pub async fn run_decryption_bitdec<
         .map(|ptxt| Wrapping(ptxt.0 as u128))
         .collect();
 
-    let usable_message_mod_bits = keyshares
+    let usable_message_bits = keyshares
         .threshold_lwe_parameters
         .input_cipher_parameters
-        .usable_message_modulus_log
-        .0;
+        .message_modulus_log() as usize;
 
     // combine outputs to form the decrypted integer on party 0
-    combine_plaintext_blocks(&own_role, usable_message_mod_bits, ptxts128)
+    combine_plaintext_blocks(usable_message_bits, ptxts128)
 }
 
 /// computes b - <a, s> with no rounding of the noise. This is used for noise flooding decryption
@@ -680,10 +697,10 @@ pub fn partial_decrypt128(
 // computes b - <a, s> + \Delta/2 for the bitwise decryption method
 pub fn partial_decrypt64(
     sk_share: &SecretKeyShare,
-    ct: &Ciphertext64Block,
+    ct_block: &Ciphertext64Block,
 ) -> anyhow::Result<ResiduePoly64> {
     let ciphertext_modulus = 64;
-    let (mask, body) = ct.get_mask_and_body();
+    let (mask, body) = ct_block.ct.get_mask_and_body();
     let key_share64 = sk_share.input_key_share64.clone();
     let a_time_s = (0..key_share64.len()).fold(ResiduePoly64::ZERO, |acc, column| {
         acc + key_share64[column] * ResiduePoly64::from_scalar(Wrapping(mask.as_ref()[column]))
@@ -693,8 +710,7 @@ pub fn partial_decrypt64(
         - (sk_share
             .threshold_lwe_parameters
             .input_cipher_parameters
-            .message_modulus_log
-            .0
+            .total_block_bits()
             + 1);
     let delta_pad_half = (1_u64 << delta_pad_bits) >> 1;
     let scalar_delta_half = ResiduePoly64::from_scalar(Wrapping(delta_pad_half));
@@ -723,6 +739,7 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use std::sync::Arc;
+    use tfhe::{prelude::FheEncrypt, FheUint8};
 
     #[test]
     fn reconstruct_key() {
@@ -741,7 +758,7 @@ mod tests {
         let rec = first_bit_sharing.err_reconstruct(1, 0).unwrap();
         let inner_rec = rec.to_scalar().unwrap();
         assert_eq!(
-            keyset.sk.lwe_secret_key_128.into_container()[0],
+            keyset.client_output_key.large_key.into_container()[0],
             inner_rec.0
         );
     }
@@ -757,21 +774,21 @@ mod tests {
         // generate keys
         let key_shares =
             keygen_all_party_shares(&keyset, &mut rng, num_parties, threshold).unwrap();
-        let ct = keyset.pk.encrypt_w_bitlimit(&mut rng, msg, 4);
+        let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
         let mut runtime = DistributedTestRuntime::new(identities, threshold as u8);
 
-        runtime.setup_cks(Arc::new(keyset.ck.clone()));
+        runtime.setup_conversion_key(Arc::new(keyset.conversion_key.clone()));
         runtime.setup_sks(key_shares);
 
         let results_dec =
-            threshold_decrypt64::<ResiduePoly128>(&runtime, ct, DecryptionMode::LargeDecrypt)
+            threshold_decrypt64::<ResiduePoly128>(&runtime, &ct, DecryptionMode::LargeDecrypt)
                 .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         let ref_res = std::num::Wrapping(msg as u64);
-        assert_eq!(out_dec[0], ref_res);
+        assert_eq!(*out_dec, ref_res);
     }
 
     #[test]
@@ -785,21 +802,21 @@ mod tests {
         // generate keys
         let key_shares =
             keygen_all_party_shares(&keyset, &mut rng, num_parties, threshold).unwrap();
-        let ct = keyset.pk.encrypt_w_bitlimit(&mut rng, msg, 2);
+        let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
         let mut runtime = DistributedTestRuntime::new(identities, threshold as u8);
 
-        runtime.setup_cks(Arc::new(keyset.ck.clone()));
+        runtime.setup_conversion_key(Arc::new(keyset.conversion_key.clone()));
         runtime.setup_sks(key_shares);
 
         let results_dec =
-            threshold_decrypt64::<ResiduePoly128>(&runtime, ct, DecryptionMode::PRSSDecrypt)
+            threshold_decrypt64::<ResiduePoly128>(&runtime, &ct, DecryptionMode::PRSSDecrypt)
                 .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         let ref_res = std::num::Wrapping(msg as u64);
-        assert_eq!(out_dec[0], ref_res);
+        assert_eq!(*out_dec, ref_res);
     }
 
     #[test]
@@ -813,7 +830,7 @@ mod tests {
         // generate keys
         let key_shares =
             keygen_all_party_shares(&keyset, &mut rng, num_parties, threshold).unwrap();
-        let ct = keyset.pk.encrypt_w_bitlimit(&mut rng, msg, 2);
+        let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
         let mut runtime = DistributedTestRuntime::<ResiduePoly64>::new(identities, threshold as u8);
@@ -821,11 +838,11 @@ mod tests {
         runtime.setup_sks(key_shares);
 
         let results_dec =
-            threshold_decrypt64(&runtime, ct, DecryptionMode::BitDecSmallDecrypt).unwrap();
+            threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmallDecrypt).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         let ref_res = std::num::Wrapping(msg as u64);
-        assert_eq!(out_dec[0], ref_res);
+        assert_eq!(*out_dec, ref_res);
     }
 
     #[test]
@@ -839,7 +856,7 @@ mod tests {
         // generate keys
         let key_shares =
             keygen_all_party_shares(&keyset, &mut rng, num_parties, threshold).unwrap();
-        let ct = keyset.pk.encrypt_w_bitlimit(&mut rng, msg, 4);
+        let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
         let mut runtime = DistributedTestRuntime::<ResiduePoly64>::new(identities, threshold as u8);
@@ -847,10 +864,10 @@ mod tests {
         runtime.setup_sks(key_shares);
 
         let results_dec =
-            threshold_decrypt64(&runtime, ct, DecryptionMode::BitDecSmallDecrypt).unwrap();
+            threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmallDecrypt).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         let ref_res = std::num::Wrapping(msg as u64);
-        assert_eq!(out_dec[0], ref_res);
+        assert_eq!(*out_dec, ref_res);
     }
 }

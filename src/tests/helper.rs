@@ -143,6 +143,7 @@ pub mod tests {
     use futures::Future;
     use itertools::Itertools;
     use rand::SeedableRng;
+    use tfhe::{prelude::FheEncrypt, FheUint8};
     use tokio::task::{JoinError, JoinSet};
 
     use crate::{
@@ -292,22 +293,12 @@ pub mod tests {
         gen_key_set(params, &mut seeded_rng)
     }
 
-    /// Deterministic cipher generation.
+    /// Indeterministic cipher generation.
     /// Encrypts a small message with deterministic randomness
     pub fn generate_cipher(_key_name: &str, message: u8) -> Ciphertext64 {
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
-        let mod_log = keys
-            .pk
-            .threshold_lwe_parameters
-            .input_cipher_parameters
-            .usable_message_modulus_log
-            .0;
-        if message >= 1 << mod_log {
-            panic!("Message cannot be handled in a single block with current parameters!");
-        }
-        let mut seeded_rng = AesRng::seed_from_u64(444);
-        keys.pk
-            .encrypt_w_bitlimit(&mut seeded_rng, message, mod_log)
+        let (ct, _id) = FheUint8::encrypt(message, &keys.client_key).into_raw_parts();
+        ct
     }
 
     /// Generates dummy parameters for unit tests with role 1. Parameters contain a single party, session ID = 1 and threshold = 0

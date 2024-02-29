@@ -395,7 +395,7 @@ where
 
 //TODO: This function should be optimized with memoized calls to normalized_parties_root
 /// Helper method for punctured polynomial interpolation.
-/// Takes a base polynomial and increases its degree by |points_of_zero_roots] by ensuring that each of the [points_of_zero_roots] gets embedded to x-points whose y-value is 0.
+/// Takes a base polynomial and increases its degree by [points_of_zero_roots] by ensuring that each of the [points_of_zero_roots] gets embedded to x-points whose y-value is 0.
 /// And then returns all the 0..[num_parties] points on the polynomial.
 /// More specifically the values in [points_of_zero_roots] gets embedded on the polynomial to ensure they are invertable, then
 /// the polynomial gets modified to ensure that each of the points in [points_of_zero_roots] will have y-value 0

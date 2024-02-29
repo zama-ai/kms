@@ -14,7 +14,7 @@ use self::gen::{
 use crate::algebra::base_ring::Z64;
 use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
-use crate::execution::endpoints::decryption::decrypt;
+use crate::execution::endpoints::decryption::decrypt_using_noiseflooding;
 use crate::execution::endpoints::decryption::{Large, Small};
 use crate::execution::endpoints::keygen::initialize_key_material;
 use crate::execution::runtime::party::{Identity, Role};
@@ -42,7 +42,7 @@ use tracing::instrument;
 ///Used to store results of decryption
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 pub struct ComputationOutputs {
-    pub outputs: HashMap<String, Vec<Z64>>,
+    pub outputs: HashMap<String, Z64>,
     pub elapsed_time: Option<Duration>,
 }
 
@@ -192,7 +192,15 @@ impl Choreography for GrpcChoreography {
 
                 let result_stores = Arc::clone(&self.data.result_stores);
                 let pks = Arc::clone(&self.data.pubkey_store);
-                let pkl = pks.lock().unwrap().clone();
+                let ck = match pks.lock().unwrap().clone() {
+                    Some(pks) => pks.conversion_key,
+                    None => {
+                        return Err(tonic::Status::new(
+                            tonic::Code::Aborted,
+                            "No public key available for decryption".to_string(),
+                        ))
+                    }
+                };
                 match mode {
                     DecryptionMode::PRSSDecrypt => {
                         let prss_setup =
@@ -218,13 +226,12 @@ impl Choreography for GrpcChoreography {
 
                         tokio::spawn(async move {
                             let mut protocol = Small::new(session.clone());
-                            let (results, elapsed_time) = decrypt(
+                            let (results, elapsed_time) = decrypt_using_noiseflooding(
                                 &mut session,
                                 &mut protocol,
-                                pkl,
+                                &ck,
                                 ct,
                                 &setup_info.secret_key_share,
-                                session_id,
                                 mode,
                                 own_identity,
                             )
@@ -253,13 +260,12 @@ impl Choreography for GrpcChoreography {
                             LargeSession::new(session_params, Arc::clone(&networking)).unwrap();
                         tokio::spawn(async move {
                             let mut protocol = Large::new(session.clone());
-                            let (results, elapsed_time) = decrypt(
+                            let (results, elapsed_time) = decrypt_using_noiseflooding(
                                 &mut session,
                                 &mut protocol,
-                                pkl,
+                                &ck,
                                 ct,
                                 &setup_info.secret_key_share,
-                                session_id,
                                 mode,
                                 own_identity,
                             )

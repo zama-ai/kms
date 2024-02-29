@@ -719,6 +719,7 @@ mod tests {
     use rand::SeedableRng;
     use rstest::rstest;
     use std::sync::Arc;
+    use tfhe::{prelude::FheEncrypt, FheUint8};
     use tokio::task::JoinSet;
     use tracing_test::traced_test;
 
@@ -888,12 +889,13 @@ mod tests {
 
         // generate keys
         let key_shares = keygen_all_party_shares(&keys, &mut rng, num_parties, threshold).unwrap();
-        let ct = keys.pk.encrypt(&mut rng, msg);
+        let ct = FheUint8::encrypt(msg, &keys.public_key);
+        let (raw_ct, _id) = ct.into_raw_parts();
 
         let mut runtime = DistributedTestRuntime::new(identities, threshold as u8);
 
         runtime.setup_sks(key_shares);
-        runtime.setup_cks(Arc::new(keys.ck.clone()));
+        runtime.setup_conversion_key(Arc::new(keys.conversion_key.clone()));
 
         let mut seed = [0_u8; aes_prng::SEED_SIZE];
         // create sessions for each prss party
@@ -916,15 +918,12 @@ mod tests {
         runtime.setup_prss(prss_setups);
 
         // test PRSS with decryption endpoint
-        let results_dec = threshold_decrypt64::<ResiduePoly128>(
-            &runtime,
-            ct.clone(),
-            DecryptionMode::PRSSDecrypt,
-        )
-        .unwrap();
+        let results_dec =
+            threshold_decrypt64::<ResiduePoly128>(&runtime, &raw_ct, DecryptionMode::PRSSDecrypt)
+                .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
-
-        assert_eq!(out_dec[0], std::num::Wrapping(msg as u64));
+        let ref_res = std::num::Wrapping(msg as u64);
+        assert_eq!(*out_dec, ref_res);
 
         // Test with Dummy AgreeRandom
         let _guard = rt.enter();
@@ -936,11 +935,11 @@ mod tests {
 
         // test PRSS with decryption endpoint
         let results_dec =
-            threshold_decrypt64::<ResiduePoly128>(&runtime, ct, DecryptionMode::PRSSDecrypt)
+            threshold_decrypt64::<ResiduePoly128>(&runtime, &raw_ct, DecryptionMode::PRSSDecrypt)
                 .unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
-
-        assert_eq!(out_dec[0], std::num::Wrapping(msg as u64));
+        let ref_res = std::num::Wrapping(msg as u64);
+        assert_eq!(*out_dec, ref_res);
     }
 
     #[rstest]

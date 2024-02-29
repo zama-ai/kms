@@ -1,7 +1,6 @@
 //! CLI tool for interacting with a group of flamins
 use clap::Parser;
 use distributed_decryption::execution::constants::REAL_PARAM_PATH;
-use distributed_decryption::execution::random::get_rng;
 use distributed_decryption::file_handling::read_as_json;
 use distributed_decryption::lwe::ThresholdLWEParameters;
 use distributed_decryption::{
@@ -12,6 +11,7 @@ use distributed_decryption::{computation::SessionId, execution::runtime::session
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
 use std::path::PathBuf;
+use tfhe::{prelude::FheEncrypt, FheUint64};
 
 #[derive(Parser, Debug)]
 #[clap(name = "flamingo")]
@@ -83,7 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await?
     };
-    let ct = pk.encrypt::<u64, _>(&mut get_rng(), args.msg);
+    let (ct, _id) = FheUint64::encrypt(args.msg, &pk).into_raw_parts();
     let session_id = SessionId::new(&ct)?;
     for _i in 0..args.session_range {
         runtime

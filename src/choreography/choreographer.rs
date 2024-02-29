@@ -11,7 +11,7 @@ use crate::{
         runtime::party::{Identity, Role},
         zk::ceremony::PublicParameter,
     },
-    lwe::{Ciphertext64, PublicKey},
+    lwe::Ciphertext64,
     networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG},
 };
 use crate::{choreography::grpc::ComputationOutputs, execution::runtime::session::DecryptionMode};
@@ -30,7 +30,7 @@ pub struct ChoreoRuntime {
 
 #[derive(Debug)]
 pub struct GrpcOutputs {
-    pub outputs: HashMap<String, Vec<Z64>>,
+    pub outputs: HashMap<String, Z64>,
     pub elapsed_times: Option<HashMap<Role, Vec<Duration>>>,
 }
 
@@ -178,7 +178,7 @@ impl ChoreoRuntime {
         threshold: u32,
         params: ThresholdLWEParameters,
         setup_mode: SetupMode,
-    ) -> Result<PublicKey, Box<dyn std::error::Error>> {
+    ) -> Result<tfhe::CompactPublicKey, Box<dyn std::error::Error>> {
         let epoch_id = bincode::serialize(epoch_id)?;
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let params = bincode::serialize(&params)?;
@@ -204,7 +204,8 @@ impl ChoreoRuntime {
                 let mut client = self.new_client(channel.clone());
                 let request = PubkeyRequest { epoch_id };
                 let response = client.retrieve_pubkey(request).await?;
-                let pk = bincode::deserialize::<PublicKey>(&response.get_ref().pubkey)?;
+                let pk =
+                    bincode::deserialize::<tfhe::CompactPublicKey>(&response.get_ref().pubkey)?;
                 return Ok(pk);
             }
         }
@@ -215,7 +216,7 @@ impl ChoreoRuntime {
     pub async fn initiate_retrieve_pubkey(
         &self,
         epoch_id: &SessionId,
-    ) -> Result<PublicKey, Box<dyn std::error::Error>> {
+    ) -> Result<tfhe::CompactPublicKey, Box<dyn std::error::Error>> {
         let epoch_id = bincode::serialize(epoch_id)?;
 
         for (role, channel) in self.channels.iter() {
@@ -223,7 +224,8 @@ impl ChoreoRuntime {
                 let mut client = self.new_client(channel.clone());
                 let request = PubkeyRequest { epoch_id };
                 let response = client.retrieve_pubkey(request).await?;
-                let pk = bincode::deserialize::<PublicKey>(&response.get_ref().pubkey)?;
+                let pk =
+                    bincode::deserialize::<tfhe::CompactPublicKey>(&response.get_ref().pubkey)?;
                 return Ok(pk);
             }
         }
