@@ -70,7 +70,7 @@ struct InitInfo {
 }
 type ResultStores = DashMap<SessionId, Arc<AsyncCell<ComputationOutputs>>>;
 type InitStore = DashMap<SessionId, Arc<AsyncCell<InitInfo>>>;
-type CrsStore = DashMap<SessionId, Arc<AsyncCell<PublicParameter>>>;
+type CrsStore = DashMap<SessionId, Arc<AsyncCell<(PublicParameter, Duration)>>>;
 
 #[derive(Default)]
 
@@ -553,20 +553,19 @@ impl Choreography for GrpcChoreography {
                         .unwrap();
 
                     let crs_stop_timer = Instant::now();
-
-                    // store the CRS
-                    crs_store
-                        .get(&epoch_id)
-                        .map(|result_cell| {
-                            result_cell.set(pp);
-                        })
-                        .expect("session disappeared unexpectedly");
-
                     let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
                     tracing::info!(
                         "CRS stored. CRS ceremony time was {:?} ms",
                         (elapsed_time).as_millis()
                     );
+
+                    // store the CRS
+                    crs_store
+                        .get(&epoch_id)
+                        .map(|result_cell| {
+                            result_cell.set((pp, elapsed_time));
+                        })
+                        .expect("session disappeared unexpectedly");
                 });
 
                 Ok(tonic::Response::new(CrsCeremonyResponse {}))
@@ -593,16 +592,27 @@ impl Choreography for GrpcChoreography {
             .ok_or_else(|| {
                 tonic::Status::new(
                     tonic::Code::NotFound,
-                    format!("CRS not found for epoch id {}.", epoch_id),
+                    format!("CRS not found for epoch id {epoch_id}."),
                 )
             })?;
 
-        // make sure that CRS was generated completely
-        let pp = crs.get().await;
+        // wait a bit for the crs to be generated
+        // but timeout after a second since this process may take a long time
+        let (pp, dur) = tokio::time::timeout(Duration::from_secs(1), crs.get())
+            .await
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::NotFound,
+                    format!("CRS not ready yet for epoch id {epoch_id} ({e})"),
+                )
+            })?;
 
         let crs_ser = bincode::serialize(&pp).expect("failed to serialize CRS");
         tracing::debug!("CRS successfully retrieved.");
 
-        Ok(tonic::Response::new(CrsResponse { crs: crs_ser }))
+        Ok(tonic::Response::new(CrsResponse {
+            crs: crs_ser,
+            duration_secs: dur.as_secs_f32(),
+        }))
     }
 }

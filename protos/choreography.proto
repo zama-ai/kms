@@ -64,4 +64,5 @@ message CrsRequest {
 
 message CrsResponse {
     bytes crs = 1;
+    float duration_secs = 2;
 }

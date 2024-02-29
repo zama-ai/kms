@@ -16,10 +16,7 @@ use crate::{
 };
 use crate::{choreography::grpc::ComputationOutputs, execution::runtime::session::DecryptionMode};
 use crate::{execution::runtime::session::SetupMode, lwe::ThresholdLWEParameters};
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+use std::{collections::HashMap, time::Duration};
 use tokio::task::JoinSet;
 use tonic::transport::{Channel, ClientTlsConfig, Uri};
 
@@ -238,11 +235,9 @@ impl ChoreoRuntime {
         epoch_id: &SessionId,
         threshold: u32,
         witness_dim: u32,
-    ) -> Result<PublicParameter, Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let epoch_id = bincode::serialize(epoch_id)?;
         let role_assignment = bincode::serialize(&self.role_assignments)?;
-
-        let crs_choreo_start_timer = Instant::now();
 
         for channel in self.channels.values() {
             let mut client = self.new_client(channel.clone());
@@ -257,44 +252,13 @@ impl ChoreoRuntime {
             tracing::debug!("Launching CRS ceremony to {:?}", channel);
             let _ = client.crs_ceremony(request).await?;
         }
-
-        for (role, channel) in self.channels.iter() {
-            if role.one_based() == INPUT_PARTY_ID {
-                let mut client = self.new_client(channel.clone());
-                let request = CrsRequest { epoch_id };
-                let response = client.retrieve_crs(request).await?;
-                let crs_choreo_rcv_timer = Instant::now();
-
-                let elapsed_time = crs_choreo_rcv_timer.duration_since(crs_choreo_start_timer);
-                tracing::info!(
-                    "CRS ceremony and retrieval on choreographer took {:?} ms.",
-                    elapsed_time.as_millis(),
-                );
-
-                let crs_serialized = &response.get_ref().crs;
-                let crs = bincode::deserialize::<PublicParameter>(crs_serialized)?;
-
-                let crs_choreo_stop_timer = Instant::now();
-                let full_time = crs_choreo_stop_timer.duration_since(crs_choreo_start_timer);
-                let deserialize_time = crs_choreo_stop_timer.duration_since(crs_choreo_rcv_timer);
-                tracing::info!(
-                    "Total CRS ceremony, retrieval and deserializtion on choreographer took {:?} ms. Deserialization took {:?} ms. CRS size: {} KiB",
-                    full_time.as_millis(),
-                    deserialize_time.as_millis(),
-                    crs_serialized.len().div_ceil(1024)
-                );
-
-                return Ok(crs);
-            }
-        }
-
-        Err("No CRS generated!".into())
+        Ok(())
     }
 
     pub async fn initiate_retrieve_crs(
         &self,
         epoch_id: &SessionId,
-    ) -> Result<PublicParameter, Box<dyn std::error::Error>> {
+    ) -> Result<(PublicParameter, f32), Box<dyn std::error::Error>> {
         let epoch_id = bincode::serialize(epoch_id)?;
 
         for (role, channel) in self.channels.iter() {
@@ -303,7 +267,8 @@ impl ChoreoRuntime {
                 let request = CrsRequest { epoch_id };
                 let response = client.retrieve_crs(request).await?;
                 let crs = bincode::deserialize::<PublicParameter>(&response.get_ref().crs)?;
-                return Ok(crs);
+                let dur = response.get_ref().duration_secs;
+                return Ok((crs, dur));
             }
         }
 

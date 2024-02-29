@@ -37,10 +37,12 @@ pub enum Commands {
     /// Retrieve one or many results of computation from cluster of mobys
     Results,
     /// Run the CRS ceremony between the workers and store/return the CRS
-    CrsCeremony,
+    StartCrsCeremony,
+    /// Retrieve the CRS, might be empty if the ceremony is not finished
+    RetrieveCrs,
 }
 
-async fn crs_ceremony_command(
+async fn start_crs_ceremony_command(
     runtime: &ChoreoRuntime,
     init_opts: &ChoreoConf,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -55,15 +57,27 @@ async fn crs_ceremony_command(
     };
 
     // the CRS can be set once per epoch (currently stored in a SessionID)
-    let crs = runtime
+    runtime
         .initiate_crs_ceremony(
             &SessionId::from(init_opts.epoch()),
             init_opts.threshold_topology.threshold,
             wd,
         )
         .await?;
+    Ok(())
+}
 
-    tracing::info!("CRS received.");
+async fn retrieve_crs_command(
+    runtime: &ChoreoRuntime,
+    init_opts: &ChoreoConf,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (crs, dur) = runtime
+        .initiate_retrieve_crs(&SessionId::from(init_opts.epoch()))
+        .await?;
+    tracing::info!(
+        "CRS received at epoch {}, generation took {dur} seconds.",
+        init_opts.epoch()
+    );
 
     // write received CRS to file
     let serialized_crs = bincode::serialize(&crs)?;
@@ -276,9 +290,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Init => {
             init_command(&runtime, &conf).await?;
         }
-        Commands::CrsCeremony => {
-            crs_ceremony_command(&runtime, &conf).await?;
-        }
         Commands::Decrypt => {
             let session_ids = decrypt_command(runtime, &conf).await?;
             tracing::info!(
@@ -291,6 +302,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::Results => {
             results_command(&runtime, conf.session_file_path()).await?;
+        }
+        Commands::StartCrsCeremony => {
+            start_crs_ceremony_command(&runtime, &conf).await?;
+        }
+        Commands::RetrieveCrs => {
+            retrieve_crs_command(&runtime, &conf).await?;
         }
     };
 

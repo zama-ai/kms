@@ -48,8 +48,12 @@ args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "-
 env = { "CHOREO_COMMAND" = "init"}
 run_task = { name = ["choreo"] }
 
-[tasks.choreo-crs]
-env = { "CHOREO_COMMAND" = "crs-ceremony"}
+[tasks.choreo-start-crs]
+env = { "CHOREO_COMMAND" = "start-crs-ceremony"}
+run_task = { name = ["choreo"] }
+
+[tasks.choreo-retrieve-crs]
+env = { "CHOREO_COMMAND" = "retrieve-crs"}
 run_task = { name = ["choreo"] }
 
 [tasks.choreo-decrypt]
@@ -84,7 +88,7 @@ command = "sleep"
 args = ["2"]
 
 [tasks.grpc-bench]
-run_task = { name = ["generate-experiment", "experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "choreo-crs", "sleep", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
+run_task = { name = ["generate-experiment", "experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "sleep", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
 
 [tasks.docker-image-ci]
 command = "docker"
