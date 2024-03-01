@@ -17,3 +17,4 @@ RUN apt-get update \
 RUN --mount=type=ssh cargo install --path . --bin kms-server
 
 CMD ["kms-server"]
+

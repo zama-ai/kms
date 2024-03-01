@@ -1,0 +1,57 @@
+name: Compile Rust Project and Run Tests
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        type: string
+        required: false
+        default: 'ubuntu-latest'
+      args_build:
+        type: string
+        required: false
+        default: ''
+    secrets:
+      CONCRETE_ACTIONS_TOKEN:
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compile-rust-unit-tests:
+    runs-on: ${{ inputs.runs-on }}
+
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@v4
+
+      - name: Setup Home
+        if: ${{ inputs.runs-on != 'ubuntu-latest' }}
+        run: echo "HOME=/home/ubuntu" >> ${GITHUB_ENV}
+
+      - name: Set up Rust.
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+
+      - name: Setup usage of private repo
+        run: git config --global url."https://${{ secrets.CONCRETE_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
+
+      - name: Formatting.
+        run: cargo fmt --all -- --check
+
+      - name: Linting.
+        run: cargo clippy --all-targets --workspace -- -D warnings
+
+      - name: Run Tests
+        run: cargo test ${{ inputs.args_build }} --features tfhe/seeder_unix tfhe/x86_64 --release -- --ignored
+
+
