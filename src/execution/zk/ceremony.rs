@@ -18,7 +18,7 @@ use zk_poc::curve;
 pub struct PartialProof {
     h_pok: curve::Zp,
     s_pok: curve::Zp,
-    new_pp: PublicParameter,
+    pub new_pp: PublicParameter,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
@@ -28,7 +28,18 @@ pub struct PublicParameter {
 }
 
 impl PublicParameter {
-    fn witness_dim(&self) -> usize {
+    /// create new PublicParamter for given witness dimension containing the generators
+    pub fn new(witness_dim: usize) -> Self {
+        PublicParameter {
+            round: 0,
+            inner: (
+                vec![curve::G1::GENERATOR; witness_dim * 2],
+                vec![curve::G2::GENERATOR; witness_dim],
+            ),
+        }
+    }
+
+    pub fn witness_dim(&self) -> usize {
         self.inner.1.len()
     }
 
@@ -64,8 +75,10 @@ impl PublicParameter {
     }
 }
 
-// note that `tau` and `r` (r_{pok, j}) must be generated freshly at random
-fn make_proof_deterministic(
+/// Compute a new proof round.
+///
+/// Note that this function is deterministic, i.e. the parameters `tau` and `r` (r_{pok, j}) must be generated freshly at random outside this function.
+pub fn make_proof_deterministic(
     current_pp: &PublicParameter,
     tau: curve::Zp,
     round: usize,
@@ -314,13 +327,7 @@ impl Ceremony for RealCeremony {
         all_roles_sorted.sort();
         let my_role = session.my_role()?;
 
-        let mut pp = PublicParameter {
-            round: 0,
-            inner: (
-                vec![curve::G1::GENERATOR; witness_dim * 2],
-                vec![curve::G2::GENERATOR; witness_dim],
-            ),
-        };
+        let mut pp = PublicParameter::new(witness_dim);
 
         for (round, role) in all_roles_sorted.iter().enumerate() {
             if role == &my_role {
@@ -365,6 +372,7 @@ impl Ceremony for RealCeremony {
                                     let (ver, pp_tmp) = recv.await?;
                                     pp = pp_tmp;
                                     match ver {
+                                        // verification succeeded, we can update pp with the new value
                                         Ok(new_pp) => pp = new_pp,
                                         Err(e) => {
                                             tracing::warn!(
@@ -488,16 +496,7 @@ mod tests {
         assert!(verify.is_ok());
     }
 
-    fn make_initial_pp(n: usize) -> PublicParameter {
-        PublicParameter {
-            round: 0,
-            inner: (
-                vec![curve::G1::GENERATOR; 2 * n],
-                vec![curve::G2::GENERATOR; n],
-            ),
-        }
-    }
-
+    /// create all-zero public parameters
     fn make_degenerative_pp(n: usize) -> PublicParameter {
         PublicParameter {
             round: 0,
@@ -516,7 +515,7 @@ mod tests {
             _crs_size: usize,
         ) -> anyhow::Result<PublicParameter> {
             // do nothing
-            Ok(make_initial_pp(session.num_parties()))
+            Ok(PublicParameter::new(session.num_parties()))
         }
     }
 
@@ -534,13 +533,7 @@ mod tests {
             all_roles_sorted.sort();
             let my_role = session.my_role()?;
 
-            let mut pp = PublicParameter {
-                round: 0,
-                inner: (
-                    vec![curve::G1::GENERATOR; witness_dim * 2],
-                    vec![curve::G2::GENERATOR; witness_dim],
-                ),
-            };
+            let mut pp = PublicParameter::new(witness_dim);
 
             for (round, role) in all_roles_sorted.iter().enumerate() {
                 if role == &my_role {
@@ -714,7 +707,7 @@ mod tests {
             )
         );
 
-        let pp = make_initial_pp(2);
+        let pp = PublicParameter::new(2);
         let proof = make_proof_deterministic(&pp, tau, 0, r);
         assert_eq!(
             proof.new_pp.inner.0[3],
@@ -734,7 +727,7 @@ mod tests {
     fn test_intermediate_proof() {
         let n = 4usize;
         let mut rng = AesRng::seed_from_u64(42);
-        let pp1 = make_initial_pp(n);
+        let pp1 = PublicParameter::new(n);
         let tau1 = curve::Zp::rand(&mut rng);
         let r = curve::Zp::rand(&mut rng);
 
