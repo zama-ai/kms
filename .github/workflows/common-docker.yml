@@ -6,6 +6,10 @@ on:
       CONCRETE_ACTIONS_TOKEN:
         required: true
     inputs:
+      runs-on:
+        type: string
+        default: 'ubuntu-latest'
+        required: false
       push_image:
         type: boolean
         default: true
@@ -20,13 +24,18 @@ on:
 
 jobs:
   build-and-push-docker:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs-on }}
     outputs:
       image_name: ${{ steps.final_image.outputs.image }}
       image_tag: ${{ steps.final_version.outputs.tag }}
     steps:
       - name: Checkout Project
         uses: actions/checkout@v4
+
+      - name: Setup Home
+        if: ${{ inputs.runs-on != 'ubuntu-latest' }}
+        run: echo "HOME=/home/ubuntu" >> ${GITHUB_ENV}
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -56,6 +65,9 @@ jobs:
           file: operations/docker/ci.dockerfile
           push: ${{ inputs.push_image }}
           tags: ghcr.io/zama-ai/ddec:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/ddec:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Write Image to outputs
         id: final_image
         run: echo "image=ghcr.io/zama-ai/ddec:${{env.DOCKER_TAG_IMAGE}}" >> "$GITHUB_OUTPUT"

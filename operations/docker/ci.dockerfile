@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry cargo install --path . -
 
 # Second stage builds the runtime image.
 # This stage will be the final image
-FROM debian:stable-slim as runtime
+FROM debian:stable-slim as go-runtime
 
 RUN apt update && \
     apt install -y iproute2 iputils-ping iperf net-tools dnsutils libssl-dev libprotobuf-dev curl netcat-openbsd
@@ -40,8 +40,16 @@ ENV PATH="$PATH:/usr/local/go/bin:/root/go/bin"
 # Install grpc-health-probe
 RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
+# Third stage: Copy the binaries from the base stage and the go-runtime stage
+FROM debian:stable-slim as runtime
+WORKDIR /app/ddec
+# Set the path to include the binaries and not just the default /usr/local/bin
+ENV PATH="$PATH:/app/ddec/bin"
+
+
 # Copy the binaries from the base stage
 COPY --from=base /app/ddec/bin/ /app/ddec/bin/
+COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/ddec/bin/grpc-health-probe
 COPY ./config/default.toml /app/ddec/config/default.toml
 
 EXPOSE 50000

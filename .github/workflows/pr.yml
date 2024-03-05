@@ -23,7 +23,7 @@ jobs:
        id-token: 'write'
        packages: 'write'
      with:
-       push_image: true
+       push_image: false
      secrets:
        CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
 

@@ -30,8 +30,7 @@ sudo docker tag ${image} ghcr.io/zama-ai/ddec:latest
 EOF
 
   chmod +x pull_docker_image.sh
-  cd ../..
-  chown -R ec2-user:ec2-user ./utils
+  chown -R ec2-user:ec2-user /home/ec2-user/utils
 
   sudo -H -u ec2-user bash -c "cd /home/ec2-user/utils && ./pull_docker_image.sh"
 

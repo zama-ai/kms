@@ -12,6 +12,36 @@ There are 3 automated pipelines which are executed automatically on different ev
 
 On the other hand there is only 1 manual pipeline for running long tests and benchmarks which might take more than 1 hour, called **Heavy Processing**.
 
+```mermaid
+graph
+    subgraph P[Pull Request]
+        BD[Build] --> D[Done]
+        DC[Docker] --> D[Done]
+    end
+    subgraph M[Merge Main]
+        BD1[Build] --> DC1[Docker]
+        IN1[Int-Tests] --> DP1[Deploy]
+        DC1[Docker] --> DP1[Deploy]
+        DP1[Deploy] --> D1((Done))
+    end
+    subgraph R[Release Tag]
+        BD2[Build] --> DC2[Docker]
+        IN2[Int-Tests] --> DP2[Deploy]
+        DC2[Docker] --> DP2[Deploy]
+        DP2[Deploy] --> D2((Done))
+    end
+    subgraph Heavy Processing Manual
+        BD3[Build] --> D3((Done))
+        IN3[Int-Tests] --> D3((Done))
+        BM3[Benchmarks] --> D3((Done))
+    end
+    subgraph Docker Image Tag
+        P --> |short_commit_hash| B((ghcr.io))
+        M --> |short_commit_hash| B
+        R --> |Git Tag| B
+    end
+```
+
 ## Pipelines Details
 
 When an automated pipeline occurs, in general there are mandatory steps that needs to be done. The most fundamental one is `common-build.yml`, which includes the basics steps of checking out the project, compiling and running unit testing. After build also `common-docker.yml` is executed for every pipeline in order to be sure Docker image can be built and push into the registry. In this case to `ghcr.io/zama-ai` registry.
