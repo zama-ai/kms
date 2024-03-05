@@ -14,28 +14,24 @@ use kms_lib::core::der_types::{
     PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
     SigncryptionPrivKey, SigncryptionPubKey,
 };
+use kms_lib::core::kms_core::{decrypt_signcryption, BaseKmsStruct};
+use kms_lib::core::signcryption::{encryption_key_generation, sign, verify_sig, RND_SIZE};
+use kms_lib::file_handling::read_element;
 use kms_lib::kms::kms_endpoint_client::KmsEndpointClient;
 use kms_lib::kms::{
     AggregatedDecryptionResponse, AggregatedReencryptionResponse, DecryptionRequest,
     DecryptionResponsePayload, FheType, ReencryptionRequest, ReencryptionRequestPayload,
     ReencryptionResponse,
 };
-use kms_lib::rpc::kms_rpc::some_or_err;
-use kms_lib::rpc::kms_rpc::CURRENT_FORMAT_VERSION;
+use kms_lib::rpc::kms_rpc::{some_or_err, CURRENT_FORMAT_VERSION};
 use kms_lib::rpc::rpc_types::{
     BaseKms, DecryptionRequestSerializable, DecryptionResponseSigPayload, MetaResponse, Plaintext,
     ReencryptionRequestSigPayload,
 };
+use kms_lib::setup_rpc::{
+    CentralizedTestingKeys, DEFAULT_CENTRAL_CIPHER_PATH, DEFAULT_CENTRAL_KEYS_PATH,
+};
 use kms_lib::threshold::threshold_kms::decrypted_blocks_to_raw_decryption;
-use kms_lib::{
-    core::kms_core::{decrypt_signcryption, BaseKmsStruct},
-    setup_rpc::DEFAULT_CENTRAL_CIPHER_PATH,
-};
-use kms_lib::{
-    core::signcryption::{encryption_key_generation, sign, verify_sig, RND_SIZE},
-    setup_rpc::CentralizedTestingKeys,
-};
-use kms_lib::{file_handling::read_element, setup_rpc::DEFAULT_CENTRAL_KEYS_PATH};
 use rand::{RngCore, SeedableRng};
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::{HashMap, HashSet};
@@ -682,6 +678,9 @@ pub fn num_blocks(fhe_type: FheType, params: ThresholdLWEParameters) -> usize {
         FheType::Bool => {
             8_usize.div_ceil(params.output_cipher_parameters.usable_message_modulus_log.0)
         }
+        FheType::Euint4 => {
+            8_usize.div_ceil(params.output_cipher_parameters.usable_message_modulus_log.0)
+        }
         FheType::Euint8 => {
             8_usize.div_ceil(params.output_cipher_parameters.usable_message_modulus_log.0)
         }
@@ -691,6 +690,9 @@ pub fn num_blocks(fhe_type: FheType, params: ThresholdLWEParameters) -> usize {
         FheType::Euint32 => {
             32_usize.div_ceil(params.output_cipher_parameters.usable_message_modulus_log.0)
         }
+        FheType::Euint64 => {
+            64_usize.div_ceil(params.output_cipher_parameters.usable_message_modulus_log.0)
+        }
     }
 }
 
@@ -698,38 +700,20 @@ pub fn num_blocks(fhe_type: FheType, params: ThresholdLWEParameters) -> usize {
 pub(crate) mod tests {
     use crate::{num_blocks, Client};
     use distributed_decryption::lwe::ThresholdLWEParameters;
-    use kms_lib::file_handling::read_element_async;
+    use kms_lib::core::kms_core::SoftwareKmsKeys;
+    use kms_lib::file_handling::{read_as_json, read_element, read_element_async};
+    use kms_lib::kms::kms_endpoint_client::KmsEndpointClient;
+    use kms_lib::kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType};
+    use kms_lib::rpc::kms_rpc::server_handle;
     use kms_lib::setup_rpc::{
-        ensure_central_key_cipher_exist, ensure_threshold_key_cipher_exist, BASE_PORT,
-        DEFAULT_PARAM_PATH, DEFAULT_PROT, DEFAULT_THRESHOLD_KEYS_PATH, DEFAULT_URL,
-        TEST_PARAM_PATH,
+        ensure_central_key_cipher_exist, ensure_threshold_key_cipher_exist, CentralizedTestingKeys,
+        ThresholdTestingKeys, AMOUNT_PARTIES, BASE_PORT, DEFAULT_CENTRAL_CIPHER_PATH,
+        DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_PARAM_PATH, DEFAULT_PROT, DEFAULT_THRESHOLD_CIPHER_PATH,
+        DEFAULT_THRESHOLD_KEYS_PATH, DEFAULT_URL, TEST_CENTRAL_CIPHER_PATH, TEST_CENTRAL_KEYS_PATH,
+        TEST_FHE_TYPE, TEST_MSG, TEST_PARAM_PATH, TEST_THRESHOLD_CIPHER_PATH,
+        TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
     };
-    use kms_lib::{
-        core::kms_core::SoftwareKmsKeys,
-        setup_rpc::{
-            CentralizedTestingKeys, ThresholdTestingKeys, DEFAULT_CENTRAL_KEYS_PATH,
-            DEFAULT_THRESHOLD_CIPHER_PATH, TEST_THRESHOLD_KEYS_PATH,
-        },
-    };
-    use kms_lib::{
-        file_handling::{read_as_json, read_element},
-        setup_rpc::{TEST_FHE_TYPE, TEST_MSG},
-    };
-    use kms_lib::{
-        kms::kms_endpoint_client::KmsEndpointClient,
-        setup_rpc::{AMOUNT_PARTIES, THRESHOLD},
-    };
-    use kms_lib::{
-        kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType},
-        setup_rpc::TEST_THRESHOLD_CIPHER_PATH,
-    };
-    use kms_lib::{rpc::kms_rpc::server_handle, setup_rpc::TEST_CENTRAL_KEYS_PATH};
-    use kms_lib::{
-        setup_rpc::DEFAULT_CENTRAL_CIPHER_PATH, threshold::threshold_kms::threshold_server_start,
-    };
-    use kms_lib::{
-        setup_rpc::TEST_CENTRAL_CIPHER_PATH, threshold::threshold_kms::threshold_server_init,
-    };
+    use kms_lib::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
     use serial_test::serial;
     use std::collections::{HashMap, HashSet};
     use std::str::FromStr;
@@ -836,7 +820,8 @@ pub(crate) mod tests {
     }
     // TODO speed up
     async fn decryption_centralized(centralized_key_path: &str, cipher_path: &str) {
-        // TODO refactor with setup and teardown setting up servers that can be used to run tests in parapllel
+        // TODO refactor with setup and teardown setting up servers that can be used to run tests in
+        // parapllel
         let keys: CentralizedTestingKeys = read_element(centralized_key_path).unwrap();
         let (kms_server, mut kms_client) = setup(keys.software_kms_keys).await;
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();

@@ -1,3 +1,4 @@
+use crate::anyhow_error_and_log;
 use crate::core::der_types::{self, PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::core::kms_core::BaseKmsStruct;
 use crate::core::signcryption::signcrypt;
@@ -5,14 +6,13 @@ use crate::kms::kms_endpoint_server::{KmsEndpoint, KmsEndpointServer};
 use crate::kms::{
     DecryptionRequest, DecryptionResponse, FheType, ReencryptionRequest, ReencryptionResponse,
 };
-use crate::rpc::kms_rpc::CURRENT_FORMAT_VERSION;
 use crate::rpc::kms_rpc::{
-    handle_potential_err, process_response, validate_decrypt_req, validate_reencrypt_req,
+    handle_potential_err, process_response, some_or_err, validate_decrypt_req,
+    validate_reencrypt_req, CURRENT_FORMAT_VERSION,
 };
 use crate::rpc::rpc_types::{
     BaseKms, DecryptionResponseSigPayload, Plaintext, RawDecryption, SigncryptionPayload,
 };
-use crate::{anyhow_error_and_log, rpc::kms_rpc::some_or_err};
 use aes_prng::AesRng;
 use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::residue_poly::{ResiduePoly, ResiduePoly128};
@@ -37,10 +37,9 @@ use serde::{Deserialize, Serialize};
 use serde_asn1_der::to_vec;
 use std::fmt;
 use std::net::SocketAddr;
-use tfhe::{
-    core_crypto::entities::LweCiphertextOwned, integer::IntegerRadixCiphertext, FheUint16,
-    FheUint32, FheUint8,
-};
+use tfhe::core_crypto::entities::LweCiphertextOwned;
+use tfhe::integer::IntegerRadixCiphertext;
+use tfhe::{FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
 use tokio::task::AbortHandle;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
@@ -115,6 +114,11 @@ impl FheType {
                 let (radix_ct, _id) = hl_ct.into_raw_parts();
                 radix_ct
             }
+            FheType::Euint4 => {
+                let hl_ct: FheUint4 = bincode::deserialize(serialized_high_level)?;
+                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                radix_ct
+            }
             FheType::Euint8 => {
                 let hl_ct: FheUint8 = bincode::deserialize(serialized_high_level)?;
                 let (radix_ct, _id) = hl_ct.into_raw_parts();
@@ -127,6 +131,11 @@ impl FheType {
             }
             FheType::Euint32 => {
                 let hl_ct: FheUint32 = bincode::deserialize(serialized_high_level)?;
+                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint64 => {
+                let hl_ct: FheUint64 = bincode::deserialize(serialized_high_level)?;
                 let (radix_ct, _id) = hl_ct.into_raw_parts();
                 radix_ct
             }
@@ -281,7 +290,8 @@ impl ThresholdKms {
         fhe_type: FheType,
         high_level_ct: &[u8],
     ) -> anyhow::Result<Vec<ResiduePoly<Z128>>> {
-        // Deserialize the highlevel ciphertext into a low level ciphertext. Both the high level and low level are over u64
+        // Deserialize the highlevel ciphertext into a low level ciphertext. Both the high level and
+        // low level are over u64
         let low_level_ct_small = fhe_type.deserialize_to_low_level(high_level_ct)?;
         // Convert the low level ciphertext over u64 into a low level ciphertext over u128
         let ct_large = low_level_ct_small

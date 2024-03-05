@@ -1,9 +1,7 @@
+use crate::core::der_types::{PublicEncKey, PublicSigKey, Signature};
 use crate::kms::{
-    DecryptionResponsePayload, FheType, ReencryptionRequestPayload, ReencryptionResponse,
-};
-use crate::{
-    core::der_types::{PublicEncKey, PublicSigKey, Signature},
-    kms::DecryptionRequest,
+    DecryptionRequest, DecryptionResponsePayload, FheType, ReencryptionRequestPayload,
+    ReencryptionResponse,
 };
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -77,6 +75,13 @@ impl Plaintext {
         }
     }
 
+    pub fn from_u4(value: u8) -> Self {
+        Self {
+            value: value as u128,
+            fhe_type: FheType::Euint4,
+        }
+    }
+
     pub fn from_u8(value: u8) -> Self {
         Self {
             value: value as u128,
@@ -98,6 +103,13 @@ impl Plaintext {
         }
     }
 
+    pub fn from_u64(value: u64) -> Self {
+        Self {
+            value: value as u128,
+            fhe_type: FheType::Euint64,
+        }
+    }
+
     pub fn as_bool(&self) -> bool {
         if self.fhe_type != FheType::Bool {
             tracing::warn!(
@@ -105,6 +117,13 @@ impl Plaintext {
             );
         }
         self.value % 2 == 1
+    }
+
+    pub fn as_u4(&self) -> u8 {
+        if self.fhe_type != FheType::Euint4 {
+            tracing::warn!("Plaintext is not of type u4. Returning the value modulo 16");
+        }
+        (self.value % 16) as u8
     }
 
     pub fn as_u8(&self) -> u8 {
@@ -128,6 +147,13 @@ impl Plaintext {
         self.value as u32
     }
 
+    pub fn as_u64(&self) -> u64 {
+        if self.fhe_type != FheType::Euint64 {
+            tracing::warn!("Plaintext is not of type u32. Returning the value modulo 2^64");
+        }
+        self.value as u64
+    }
+
     pub fn fhe_type(&self) -> FheType {
         self.fhe_type
     }
@@ -145,6 +171,7 @@ impl TryFrom<RawDecryption> for Plaintext {
                     Ok(Plaintext::from_bool(false))
                 }
             }
+            FheType::Euint4 => Ok(Plaintext::from_u4(value.bytes[0])),
             FheType::Euint8 => Ok(Plaintext::from_u8(value.bytes[0])),
             FheType::Euint16 => {
                 let value_arr: [u8; 2] = value
@@ -159,6 +186,13 @@ impl TryFrom<RawDecryption> for Plaintext {
                     .try_into()
                     .map_err(|_| anyhow::anyhow!("Failed to convert bytes to u32"))?;
                 Ok(Plaintext::from_u32(u32::from_le_bytes(value_arr)))
+            }
+            FheType::Euint64 => {
+                let value_arr: [u8; 8] = value
+                    .bytes
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("Failed to convert bytes to u64"))?;
+                Ok(Plaintext::from_u64(u64::from_le_bytes(value_arr)))
             }
         }
     }

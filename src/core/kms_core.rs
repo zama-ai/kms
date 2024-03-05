@@ -2,10 +2,11 @@ use super::der_types::{Cipher, PrivateSigKey, PublicEncKey, PublicSigKey, Signcr
 use super::signcryption::{
     hash_element, sign, signcrypt, validate_and_decrypt, verify_sig, RND_SIZE,
 };
+use crate::anyhow_error_and_warn_log;
 use crate::kms::FheType;
 use crate::rpc::kms_rpc::handle_potential_err;
 use crate::rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, SigncryptionPayload};
-use crate::{anyhow_error_and_warn_log, setup_rpc::FhePrivateKey};
+use crate::setup_rpc::FhePrivateKey;
 use aes_prng::AesRng;
 use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
@@ -14,7 +15,9 @@ use serde_asn1_der::{from_bytes, to_vec};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use tfhe::prelude::FheDecrypt;
-use tfhe::{generate_keys, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint8};
+use tfhe::{
+    generate_keys, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8,
+};
 
 pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
     let sk = SigningKey::random(rng);
@@ -178,6 +181,11 @@ impl Kms for SoftwareKms {
                 let plaintext: bool = cipher.decrypt(&self.fhe_dec_key);
                 Plaintext::from_bool(plaintext)
             }
+            FheType::Euint4 => {
+                let cipher: FheUint4 = bincode::deserialize(high_level_ct)?;
+                let plaintext: u8 = cipher.decrypt(&self.fhe_dec_key);
+                Plaintext::from_u4(plaintext)
+            }
             FheType::Euint8 => {
                 let cipher: FheUint8 = bincode::deserialize(high_level_ct)?;
                 let plaintext: u8 = cipher.decrypt(&self.fhe_dec_key);
@@ -192,6 +200,11 @@ impl Kms for SoftwareKms {
                 let cipher: FheUint32 = bincode::deserialize(high_level_ct)?;
                 let plaintext: u32 = cipher.decrypt(&self.fhe_dec_key);
                 Plaintext::from_u32(plaintext)
+            }
+            FheType::Euint64 => {
+                let cipher: FheUint64 = bincode::deserialize(high_level_ct)?;
+                let plaintext: u64 = cipher.decrypt(&self.fhe_dec_key);
+                Plaintext::from_u64(plaintext)
             }
         })
     }
@@ -259,20 +272,15 @@ pub fn decrypt_signcryption(
 
 #[cfg(test)]
 mod tests {
+    use crate::core::kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms};
+    use crate::core::request::ephemeral_key_generation;
     use crate::file_handling::read_element;
     use crate::kms::FheType;
     use crate::rpc::rpc_types::{Kms, Plaintext};
-    use crate::setup_rpc::CentralizedTestingKeys;
-    use crate::setup_rpc::{DEFAULT_CENTRAL_KEYS_PATH, TEST_CENTRAL_KEYS_PATH};
-    use crate::{
-        core::kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms},
-        setup_rpc::{
-            ensure_central_key_cipher_exist, DEFAULT_CENTRAL_CIPHER_PATH, DEFAULT_PARAM_PATH,
-        },
-    };
-    use crate::{
-        core::request::ephemeral_key_generation,
-        setup_rpc::{TEST_CENTRAL_CIPHER_PATH, TEST_PARAM_PATH},
+    use crate::setup_rpc::{
+        ensure_central_key_cipher_exist, CentralizedTestingKeys, DEFAULT_CENTRAL_CIPHER_PATH,
+        DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_PARAM_PATH, TEST_CENTRAL_CIPHER_PATH,
+        TEST_CENTRAL_KEYS_PATH, TEST_PARAM_PATH,
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;

@@ -9,9 +9,11 @@ service KmsEndpoint {
 // The plaintext types that can be encrypted in a fhevm ciphertext.
 enum FheType {
   Bool = 0;
-  Euint8 = 1;
-  Euint16 = 2;
-  Euint32 = 3;
+  Euint4 = 1;
+  Euint8 = 2;
+  Euint16 = 3;
+  Euint32 = 4;
+  Euint64 = 5;
 }
 
 message DecryptionRequest {
@@ -19,7 +21,8 @@ message DecryptionRequest {
   uint32 version = 1;
   // The amount of shares needed to recombine the result.
   // This implies the threshold used.
-  // Needed to avoid a single malicious server taking over a request that should have been distributed.
+  // Needed to avoid a single malicious server taking over a request that should
+  // have been distributed.
   uint32 shares_needed = 2;
   // The type of plaintext encrypted.
   FheType fhe_type = 3;
@@ -33,23 +36,29 @@ message DecryptionRequest {
 message DecryptionResponsePayload {
   // Version of the response format.
   uint32 version = 1;
-  // TODO shares_needed are not really needed since there is a link to the digest, however, it seems better to be able to handle a response without getting data from the request as well.
-  // but this is also a security issue since it is possible to get meaning from the response without directly linking it to a request
+  // TODO shares_needed are not really needed since there is a link to the
+  // digest, however, it seems better to be able to handle a response without
+  // getting data from the request as well. but this is also a security issue
+  // since it is possible to get meaning from the response without directly
+  // linking it to a request
   //
   // The amount of shares needed to recombine the result.
   // This implies the threshold used.
   uint32 shares_needed = 2;
   // The server's signature verification key.
   // Encoded using SEC1.
-  // Needed to validate the response, but MUST also be linked to a list of trusted keys.
+  // Needed to validate the response, but MUST also be linked to a list of
+  // trusted keys.
   bytes verification_key = 3;
   // Little endian encoding of the plaintext.
   bytes plaintext = 4;
   // Digest of the request validated.
   // Needed to ensure that the response is for the expected request.
   bytes digest = 5;
-  // Randomness specified in the request to ensure EU-CMA of the signed response.
-  // TODO check that we don't need two types of randomness. One for the reuqest and one for the response
+  // Randomness specified in the request to ensure EU-CMA of the signed
+  // response.
+  // TODO check that we don't need two types of randomness. One for the reuqest
+  // and one for the response
   bytes randomness = 6;
 }
 
@@ -68,22 +77,26 @@ message ReencryptionRequestPayload {
   uint32 version = 1;
   // The amount of shares needed to recombine the result.
   // This implies the threshold used.
-  // Needed to avoid a single malicious server taking over a request that should have been distributed.
+  // Needed to avoid a single malicious server taking over a request that should
+  // have been distributed.
   uint32 shares_needed = 2;
   // The server's signature verification key.
   // Encoded using SEC1.
   bytes verification_key = 3;
   // Encoding of the user's public encryption key for this request.
-  // Encoding using the default encoding of libsodium, i.e. the 32 bytes of a Montgomery point.
+  // Encoding using the default encoding of libsodium, i.e. the 32 bytes of a
+  // Montgomery point.
   bytes enc_key = 4;
   // The type of plaintext encrypted.
   FheType fhe_type = 5;
   // The actual ciphertext to decrypt, taken directly from the fhevm.
   bytes ciphertext = 6;
-  // Randomness specified in the request to ensure EU-CMA of the signed response.
-  // TODO check that we don't need two types of randomness. One for the reuqest and one for the response
+  // Randomness specified in the request to ensure EU-CMA of the signed
+  // response.
+  // TODO check that we don't need two types of randomness. One for the reuqest
+  // and one for the response
   bytes randomness = 7;
-  }
+}
 
 message ReencryptionRequest {
   bytes signature = 1;
@@ -94,19 +107,24 @@ message ReencryptionRequest {
 message ReencryptionResponse {
   // Version of the response format.
   uint32 version = 1;
-  // TODO shares_needed are not really needed since there is a link to the digest, however, it seems better to be able to handle a response without getting data from the request as well.
-  // but this is also a security issue since it is possible to get meaning from the response without directly linking it to a request
+  // TODO shares_needed are not really needed since there is a link to the
+  // digest, however, it seems better to be able to handle a response without
+  // getting data from the request as well. but this is also a security issue
+  // since it is possible to get meaning from the response without directly
+  // linking it to a request
   //
   // The amount of shares needed to recombine the result.
   // This implies the threshold used.
   uint32 shares_needed = 2;
   // The server's signature verification key.
   // Encoded using SEC1.
-  // Needed to validate the response, but MUST also be linked to a list of trusted keys.
+  // Needed to validate the response, but MUST also be linked to a list of
+  // trusted keys.
   bytes verification_key = 3;
   // The type of plaintext encrypted.
   FheType fhe_type = 4;
-  // The signcrypted payload, using a hybrid encryption approach in sign-then-encrypt.
+  // The signcrypted payload, using a hybrid encryption approach in
+  // sign-then-encrypt.
   bytes signcrypted_ciphertext = 5;
   // Digest of the request validated.
   // Needed to ensure that the response is for the expected request.
