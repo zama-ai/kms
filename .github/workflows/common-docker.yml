@@ -52,6 +52,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           build-args: |
             CONCRETE_ACTIONS_TOKEN=${{ secrets.CONCRETE_ACTIONS_TOKEN }}
           file: operations/docker/ci.dockerfile
