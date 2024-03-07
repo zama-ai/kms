@@ -1,8 +1,8 @@
 name: "[Release Tag] Pipeline Run"
 
 on:
-  push:
-    tags: ['v*']
+  release:
+    types: [published]
 
 jobs:
   build:
