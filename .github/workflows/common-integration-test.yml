@@ -35,6 +35,11 @@ jobs:
           job-secret: ${{ secrets.JOB_SECRET }}
 
   run-integration-tests:
+    services:
+      redis:
+        image: redis/redis-stack:latest
+        ports:
+          - 6379:6379
     needs: start-runner
     uses: ./.github/workflows/common-build.yml
     secrets:
