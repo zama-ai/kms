@@ -27,3 +27,8 @@ variable "instance_type" {
   type = string
   description = "The instance type to use for the app service"
 }
+
+variable "ssh_key_name" {
+  type = string
+  description = "The name of the SSH key to use for the app service"
+}

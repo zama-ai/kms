@@ -20,6 +20,7 @@ module "ec2" {
   subnet_id = var.subnet_id
   repository_arn_aws_creds = var.repository_arn_aws_creds
   instance_type = var.instance_type
+  ssh_key_name = var.ssh_key_name
 }
 
 

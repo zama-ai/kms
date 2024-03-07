@@ -51,11 +51,14 @@ resource "aws_security_group" "kms_cent_sg" {
   name = "kms-cent-instance-sg"
   vpc_id = var.vpc_id
 
-  ingress {
-    from_port = 22
-    to_port = 22
-    protocol = "TCP"
-    cidr_blocks = ["0.0.0.0/0"]
+  dynamic "ingress" {
+    for_each = var.environment == "dev" ? [1] : []
+    content {
+      from_port = 22
+      to_port = 22
+      protocol = "tcp"
+      cidr_blocks = ["0.0.0.0/0"]
+    }
   }
 
   ingress {
@@ -113,7 +116,7 @@ resource "aws_instance" "kms_cent_instance" {
   }
   ami = data.aws_ami.amazon-linux-2.id
   instance_type = var.instance_type
-  key_name = "kms_team_ddec_choreo_test"
+  key_name = var.ssh_key_name
   iam_instance_profile = aws_iam_instance_profile.kms_cent_ec2_profile.name
   subnet_id = var.subnet_id
   associate_public_ip_address = true

@@ -16,10 +16,11 @@ module "ec2" {
   source = "../../modules/ec2"
   environment = var.environment
   image = var.image
-  vpc_id = var.vpc_id_private
+  vpc_id = var.vpc_id
   subnet_id = var.subnet_id
   repository_arn_aws_creds = var.repository_arn_aws_creds
   instance_type = var.instance_type
+  ssh_key_name = var.ssh_key_name
 }
 
 
