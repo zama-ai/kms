@@ -1,3 +1,4 @@
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use tfhe::shortint::{
     parameters::{
@@ -14,7 +15,7 @@ use crate::{
     lwe::{CiphertextParameters, ThresholdLWEParameters},
 };
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 pub enum DKGParams {
     WithoutSnS(DKGParamsRegular),
     WithSnS(DKGParamsSnS),
@@ -43,7 +44,7 @@ impl DKGParams {
     }
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
 pub struct DKGParamsRegular {
     ///Security parameter (related to the size of the XOF seed)
@@ -77,7 +78,7 @@ pub struct DKGParamsRegular {
     encryption_key_choice: EncryptionKeyChoice,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
 pub struct DKGParamsSnS {
     regular_params: DKGParamsRegular,
@@ -483,6 +484,28 @@ impl DKGParamsSnS {
 
     pub fn num_needed_noise_bk_sns(&self) -> usize {
         self.regular_params.l.0 * (self.o_w.0 + 1) * self.o_nu_bk.0 * self.o_N.0
+    }
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+#[allow(non_camel_case_types)]
+pub enum DkgParamsAvailable {
+    PARAMS_P32_SMALL_NO_SNS,
+    PARAMS_P8_SMALL_NO_SNS,
+    PARAMS_TEST_BK_SNS,
+    PARAMS_P8_REAL_WITH_SNS,
+    PARAMS_P32_REAL_WITH_SNS,
+}
+
+impl DkgParamsAvailable {
+    pub fn to_param(&self) -> DKGParams {
+        match self {
+            DkgParamsAvailable::PARAMS_P32_SMALL_NO_SNS => PARAMS_P32_SMALL_NO_SNS,
+            DkgParamsAvailable::PARAMS_P8_SMALL_NO_SNS => PARAMS_P8_SMALL_NO_SNS,
+            DkgParamsAvailable::PARAMS_TEST_BK_SNS => PARAMS_TEST_BK_SNS,
+            DkgParamsAvailable::PARAMS_P8_REAL_WITH_SNS => PARAMS_P8_REAL_WITH_SNS,
+            DkgParamsAvailable::PARAMS_P32_REAL_WITH_SNS => PARAMS_P32_REAL_WITH_SNS,
+        }
     }
 }
 

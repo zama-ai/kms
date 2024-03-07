@@ -5,7 +5,7 @@ use distributed_decryption::{
     computation::SessionId,
     conf::{choreo::ChoreoConf, telemetry::init_tracing, Settings},
     error::error_handler::anyhow_error_and_log,
-    execution::runtime::party::RoleAssignment,
+    execution::{runtime::party::RoleAssignment, tfhe_internals::parameters::DkgParamsAvailable},
     file_handling::{self, read_as_json},
     lwe::ThresholdLWEParameters,
 };
@@ -26,6 +26,12 @@ pub struct Cli {
 
     #[clap(short, long, default_value = "config/mobygo.toml")]
     conf_file: String,
+
+    #[clap(short, long, value_enum)]
+    dkg_params: Option<DkgParamsAvailable>,
+
+    #[clap(short, long)]
+    num_sessions_preproc: Option<u32>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -34,6 +40,8 @@ pub enum Commands {
     Decrypt,
     /// Initialize the moby workers with a key share and a PRSS setup
     Init,
+    //Start DKG preprocessing
+    Preprocessing,
     /// Retrieve one or many results of computation from cluster of mobys
     Results,
     /// Run the CRS ceremony between the workers and store/return the CRS
@@ -85,6 +93,28 @@ async fn retrieve_crs_command(
     Ok(())
 }
 
+async fn preproc_command(
+    runtime: ChoreoRuntime,
+    init_opts: &ChoreoConf,
+    dkg_params: Option<DkgParamsAvailable>,
+    num_sessions: Option<u32>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let params = match dkg_params {
+        Some(params) => params.to_param(),
+        None => panic!("Need to specify some Dkg params"),
+    };
+
+    let num_sessions = match num_sessions {
+        Some(value) => value,
+        None => panic!("Need to specify number of sessions to use in dkg preproc"),
+    };
+
+    runtime
+        .initate_preproc(params, init_opts.threshold_topology.threshold, num_sessions)
+        .await?;
+
+    Ok(())
+}
 async fn init_command(
     runtime: &ChoreoRuntime,
     init_opts: &ChoreoConf,
@@ -299,6 +329,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             file_handling::write_element(conf.session_file_path(), &session_ids)?;
             tracing::info!("Session ids stored in {:?}.", conf.session_file_path());
+        }
+        Commands::Preprocessing => {
+            preproc_command(runtime, &conf, args.dkg_params, args.num_sessions_preproc).await?;
         }
         Commands::Results => {
             results_command(&runtime, conf.session_file_path()).await?;

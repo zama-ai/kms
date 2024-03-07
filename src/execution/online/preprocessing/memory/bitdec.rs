@@ -71,6 +71,10 @@ impl BitPreprocessing<ResiduePoly64> for InMemoryBitDecPreprocessing {
             )))
         }
     }
+
+    fn bits_len(&self) -> usize {
+        self.available_bits.len()
+    }
 }
 
 #[async_trait]
@@ -84,11 +88,15 @@ impl BitDecPreprocessing for InMemoryBitDecPreprocessing {
         num_ctxts: usize,
     ) -> anyhow::Result<()> {
         //Need 64 bits per ctxt
-        let bit_vec = RealBitGenEven::gen_bits_even(num_ctxts * 64, preprocessing, session).await?;
+        let bit_vec = RealBitGenEven::gen_bits_even(
+            self.num_required_bits(num_ctxts),
+            preprocessing,
+            session,
+        )
+        .await?;
         self.append_bits(bit_vec);
 
-        //Need 1217 triples per ctxt
-        let triple_vec = preprocessing.next_triple_vec(num_ctxts * 1217)?;
+        let triple_vec = preprocessing.next_triple_vec(self.num_required_triples(num_ctxts))?;
         self.append_triples(triple_vec);
 
         Ok(())

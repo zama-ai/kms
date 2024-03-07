@@ -1,6 +1,7 @@
 use crate::execution::config::BatchParams;
+use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{
-    default_factory, BasePreprocessing, RandomPreprocessing, TriplePreprocessing,
+    BasePreprocessing, RandomPreprocessing, TriplePreprocessing,
 };
 use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::{
@@ -14,6 +15,7 @@ use crate::{
 };
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
+use tracing::instrument;
 
 pub struct LargePreprocessing<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> {
     triple_batch_size: usize,
@@ -21,31 +23,6 @@ pub struct LargePreprocessing<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>>
     single_sharing_handle: S,
     double_sharing_handle: D,
     elements: Box<dyn BasePreprocessing<Z>>,
-}
-
-impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> Default for LargePreprocessing<Z, S, D> {
-    fn default() -> Self {
-        Self {
-            triple_batch_size: 0,
-            random_batch_size: 0,
-            single_sharing_handle: S::default(),
-            double_sharing_handle: D::default(),
-            elements: default_factory::<Z>().create_base_preprocessing(),
-        }
-    }
-}
-
-impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> Clone for LargePreprocessing<Z, S, D> {
-    fn clone(&self) -> Self {
-        Self {
-            triple_batch_size: self.triple_batch_size,
-            random_batch_size: self.random_batch_size,
-            single_sharing_handle: self.single_sharing_handle.clone(),
-            double_sharing_handle: self.double_sharing_handle.clone(),
-            // TODO: fixme this is a hack, we should not create a base preprocessor
-            elements: default_factory::<Z>().create_base_preprocessing(),
-        }
-    }
 }
 
 impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing<Z, S, D> {
@@ -57,6 +34,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
     /// - batch size for single and double sharing
     /// - batch size for triple generation
     /// - batch size for random generation
+    #[instrument(skip(session, ssh, dsh), fields(session_id= ?session.session_id(), own_identity = ?session.own_identity()))]
     pub async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         session: &mut L,
         batch_sizes: BatchParams,
@@ -70,7 +48,9 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
         //Init double sharing
         dsh.init(session, batch_sizes.triples).await?;
 
-        let base_preprocessing = default_factory::<Z>().create_base_preprocessing();
+        //We always want the session to use in-memory storage, it's up to higher level process (e.g. orchestrator)
+        //to maybe decide to store data somewhere else
+        let base_preprocessing = Box::<InMemoryBasePreprocessing<Z>>::default();
         let mut large_preproc = Self {
             triple_batch_size: batch_sizes.triples,
             random_batch_size: batch_sizes.randoms,
@@ -229,6 +209,7 @@ mod tests {
 
     use super::{TrueDoubleSharing, TrueSingleSharing};
     use crate::execution::config::BatchParams;
+    use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
     use crate::execution::sharing::shamir::ErrorCorrect;
     use crate::execution::sharing::shamir::HenselLiftInverse;
@@ -285,6 +266,30 @@ mod tests {
     use async_trait::async_trait;
     use itertools::Itertools;
     use rstest::rstest;
+
+    impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> Default for LargePreprocessing<Z, S, D> {
+        fn default() -> Self {
+            Self {
+                triple_batch_size: 0,
+                random_batch_size: 0,
+                single_sharing_handle: S::default(),
+                double_sharing_handle: D::default(),
+                elements: Box::<InMemoryBasePreprocessing<Z>>::default(),
+            }
+        }
+    }
+
+    impl<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> Clone for LargePreprocessing<Z, S, D> {
+        fn clone(&self) -> Self {
+            Self {
+                triple_batch_size: self.triple_batch_size,
+                random_batch_size: self.random_batch_size,
+                single_sharing_handle: self.single_sharing_handle.clone(),
+                double_sharing_handle: self.double_sharing_handle.clone(),
+                elements: Box::<InMemoryBasePreprocessing<Z>>::default(),
+            }
+        }
+    }
 
     fn test_offline_strategies<
         Z: Ring + RingEmbed + Derive + HenselLiftInverse + ErrorCorrect,

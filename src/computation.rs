@@ -5,7 +5,7 @@ use crate::lwe::Ciphertext64;
 
 pub const TAG_BYTES: usize = 128 / 8;
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SessionId(pub u128);
 
 impl SessionId {

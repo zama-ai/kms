@@ -16,6 +16,7 @@ use crate::{
 use async_trait::async_trait;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
+use tracing::instrument;
 
 pub trait Solve: Sized + ZConsts {
     fn solve(v: &Self) -> anyhow::Result<Self>;
@@ -46,6 +47,7 @@ pub struct RealBitGenEven {}
 impl BitGenEven for RealBitGenEven {
     /// Generates a vector of secret shared random bits using a preprocessing functionality and a session.
     /// The code only works when the modulo of the ring used is even.
+    #[instrument(skip(preproc, session), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
     async fn gen_bits_even<
         Z: Ring + RingEmbed + HenselLiftInverse + Solve + ErrorCorrect,
         Rnd: Rng + CryptoRng,

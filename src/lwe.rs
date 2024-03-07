@@ -254,6 +254,7 @@ impl ConversionKey {
     /// Converts a ciphertext over a 64 bit domain to a ciphertext over a 128 bit domain (which is needed for secure threshold decryption).
     /// Conversion is done using a precreated conversion key [conversion_key].
     /// Observe that the decryption key will be different after conversion, since [conversion_key] is actually a key-switching key.
+    #[instrument(skip(self, raw_small_ct))]
     pub fn to_large_ciphertext(
         &self,
         raw_small_ct: &Ciphertext64,
@@ -269,7 +270,6 @@ impl ConversionKey {
     /// Converts a single ciphertext block over a 64 bit domain to a ciphertext block over a 128 bit domain (which is needed for secure threshold decryption).
     /// Conversion is done using a precreated conversion key, [conversion_key].
     /// Observe that the decryption key will be different after conversion, since [conversion_key] is actually a key-switching key.
-    #[instrument(skip(small_ct_block))]
     pub fn to_large_ciphertext_block(
         &self,
         small_ct_block: &Ciphertext64Block,

@@ -27,7 +27,6 @@ use tokio::time::Instant;
 use tonic::codegen::http::Uri;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
-use tracing::instrument;
 
 #[derive(Debug, Clone)]
 pub struct GrpcNetworkingManager {
@@ -121,7 +120,6 @@ impl GrpcNetworking {
 
 #[async_trait]
 impl Networking for GrpcNetworking {
-    #[instrument(skip(self, value), fields(session_id = %_session_id, owner = %self.owner, receiver = %receiver))]
     async fn send(
         &self,
         value: Vec<u8>,
@@ -184,7 +182,6 @@ impl Networking for GrpcNetworking {
         retry_notify(exponential_backoff, send_fn, notify).await
     }
 
-    #[instrument(skip(self), fields(session_id = %_session_id, sender = %sender, owner = %self.owner))]
     async fn receive(&self, sender: &Identity, _session_id: &SessionId) -> anyhow::Result<Vec<u8>> {
         if !self.message_queues.contains_key(&self.session_id) {
             return Err(anyhow_error_and_log(

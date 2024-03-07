@@ -1,5 +1,6 @@
 use clap::Parser;
 use distributed_decryption::choreography::grpc::GrpcChoreography;
+use distributed_decryption::execution::online::preprocessing::create_memory_factory;
 use distributed_decryption::execution::runtime::party::Identity;
 use distributed_decryption::networking::grpc::GrpcNetworkingManager;
 use tonic::transport::Server;
@@ -39,6 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let choreography = GrpcChoreography::new(
         own_identity,
         Box::new(move |session_id, roles| networking.new_session(session_id, roles)),
+        create_memory_factory(),
     );
 
     let mut server = Server::builder();

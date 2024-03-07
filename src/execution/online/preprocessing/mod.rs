@@ -1,7 +1,10 @@
-use super::secret_distributions::TUniformBound;
+use self::redis::{redis_factory, CorrelatedRandomnessType, RedisConf};
+
 use super::triple::Triple;
 use crate::algebra::residue_poly::{ResiduePoly128, ResiduePoly64};
-use crate::execution::online::preprocessing::memory::memory_factory;
+use crate::execution::online::{
+    preprocessing::memory::memory_factory, secret_distributions::TUniformBound,
+};
 use crate::execution::runtime::session::{BaseSession, SmallSession};
 use crate::execution::tfhe_internals::parameters::DKGParams;
 use crate::{
@@ -83,6 +86,7 @@ pub trait BitPreprocessing<Z: Ring>: Send + Sync {
     fn append_bits(&mut self, bits: Vec<Share<Z>>);
     fn next_bit(&mut self) -> anyhow::Result<Share<Z>>;
     fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>>;
+    fn bits_len(&self) -> usize;
 }
 
 #[async_trait]
@@ -93,6 +97,16 @@ pub trait BitPreprocessing<Z: Ring>: Send + Sync {
 pub trait BitDecPreprocessing:
     BitPreprocessing<ResiduePoly64> + TriplePreprocessing<ResiduePoly64>
 {
+    //For ctxt space Z_2^k need k + 3k log2(k) + 1 (raw) triples
+    fn num_required_triples(&self, num_ctxts: usize) -> usize {
+        1217 * num_ctxts
+    }
+
+    //For ctxt space Z_2^k need k bits
+    fn num_required_bits(&self, num_ctxts: usize) -> usize {
+        64 * num_ctxts
+    }
+
     async fn fill_from_base_preproc(
         &mut self,
         preprocessing: &mut dyn BasePreprocessing<ResiduePoly64>,
@@ -150,6 +164,14 @@ impl NoiseBounds {
             NoiseBounds::GlweNoiseSnS(bound) => *bound,
         }
     }
+
+    pub(crate) fn get_type(&self) -> CorrelatedRandomnessType {
+        match self {
+            NoiseBounds::LweNoise(_) => CorrelatedRandomnessType::NoiseLwe,
+            NoiseBounds::GlweNoise(_) => CorrelatedRandomnessType::NoiseGlwe,
+            NoiseBounds::GlweNoiseSnS(_) => CorrelatedRandomnessType::NoiseGlweSnS,
+        }
+    }
 }
 
 /// Trait that a __store__ for correlated randomness related to
@@ -176,6 +198,7 @@ pub trait DKGPreprocessing<Z: Ring>: BasePreprocessing<Z> + BitPreprocessing<Z> 
     /// we thus need interaction to generate the bits.
     async fn fill_from_base_preproc_small_session_appendix_version(
         &mut self,
+        params: DKGParams,
         session: &mut SmallSession<Z>,
         preprocessing: &mut dyn BasePreprocessing<Z>,
     ) -> anyhow::Result<()>;
@@ -185,6 +208,7 @@ pub trait DKGPreprocessing<Z: Ring>: BasePreprocessing<Z> + BitPreprocessing<Z> 
     /// Pull the triples from [`TriplePreprocessing`] and the bits from [`BitPreprocessing`]
     fn fill_from_triples_and_bit_preproc_small_session_appendix_version(
         &mut self,
+        params: DKGParams,
         session: &mut SmallSession<Z>,
         preprocessing_triples: &mut dyn BasePreprocessing<Z>,
         preprocessing_bits: &mut dyn BitPreprocessing<Z>,
@@ -196,6 +220,7 @@ pub trait DKGPreprocessing<Z: Ring>: BasePreprocessing<Z> + BitPreprocessing<Z> 
     /// we thus need interation to generate the bits.
     async fn fill_from_base_preproc(
         &mut self,
+        params: DKGParams,
         session: &mut BaseSession,
         preprocessing: &mut dyn BasePreprocessing<Z>,
     ) -> anyhow::Result<()>;
@@ -206,36 +231,41 @@ pub trait DKGPreprocessing<Z: Ring>: BasePreprocessing<Z> + BitPreprocessing<Z> 
     /// and triples from [`TriplePreprocessing`].
     fn fill_from_triples_and_bit_preproc(
         &mut self,
+        params: DKGParams,
         session: &mut BaseSession,
         preprocessing_triples: &mut dyn BasePreprocessing<Z>,
         preprocessing_bits: &mut dyn BitPreprocessing<Z>,
     ) -> anyhow::Result<()>;
 }
 
-pub trait PreprocessorFactory<R> {
-    //COMMENT FOR REVIEWER
-    //Qu: Do we prefer removing the generic R here and have instead explicitly 2 methods
-    // create_bit/base_preprocessing_Z64
-    // create_bit/base_preprocessing_Z128
-    //Or do we even want those 2, as higher level protocols will only use the more specialized ones anyway
-    fn create_bit_preprocessing(&self) -> Box<dyn BitPreprocessing<R>>;
-    fn create_base_preprocessing(&self) -> Box<dyn BasePreprocessing<R>>;
-    fn create_bit_decryption_preprocessing(&self) -> Box<dyn BitDecPreprocessing>;
-    fn create_noise_flood_preprocessing(&self) -> Box<dyn NoiseFloodPreprocessing>;
-    fn create_dkg_preprocessing_no_sns(
-        &self,
-        params: DKGParams,
-    ) -> Box<dyn DKGPreprocessing<ResiduePoly64>>;
-    fn create_dkg_preprocessing_with_sns(
-        &self,
-        params: DKGParams,
-    ) -> Box<dyn DKGPreprocessing<ResiduePoly128>>;
+pub trait PreprocessorFactory: Sync + Send {
+    fn create_bit_preprocessing_residue_64(&mut self) -> Box<dyn BitPreprocessing<ResiduePoly64>>;
+    fn create_bit_preprocessing_residue_128(&mut self)
+        -> Box<dyn BitPreprocessing<ResiduePoly128>>;
+    fn create_base_preprocessing_residue_64(&mut self)
+        -> Box<dyn BasePreprocessing<ResiduePoly64>>;
+    fn create_base_preprocessing_residue_128(
+        &mut self,
+    ) -> Box<dyn BasePreprocessing<ResiduePoly128>>;
+    fn create_bit_decryption_preprocessing(&mut self) -> Box<dyn BitDecPreprocessing>;
+    fn create_noise_flood_preprocessing(&mut self) -> Box<dyn NoiseFloodPreprocessing>;
+    fn create_dkg_preprocessing_no_sns(&mut self) -> Box<dyn DKGPreprocessing<ResiduePoly64>>;
+    fn create_dkg_preprocessing_with_sns(&mut self) -> Box<dyn DKGPreprocessing<ResiduePoly128>>;
 }
 
 /// Returns a default factory for the global preprocessor
-pub fn default_factory<R: Ring>() -> Box<dyn PreprocessorFactory<R>> {
-    memory_factory::<R>()
+pub fn create_memory_factory() -> Box<dyn PreprocessorFactory> {
+    memory_factory()
+}
+
+pub fn create_redis_factory(
+    key_prefix: String,
+    redis_conf: &RedisConf,
+) -> Box<dyn PreprocessorFactory> {
+    redis_factory(key_prefix, redis_conf)
 }
 
 pub mod dummy;
-mod memory;
+pub(crate) mod memory;
+pub mod orchestrator;
+pub mod redis;

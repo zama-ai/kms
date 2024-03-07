@@ -9,16 +9,15 @@ use crate::{
 use anyhow::Context;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct Triple<R>
-where
-    R: Ring + Sync,
-{
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Triple<R> {
     pub a: Share<R>,
     pub b: Share<R>,
     pub c: Share<R>,
 }
+
 impl<R: Ring + Sync> Triple<R> {
     pub fn new(a: Share<R>, b: Share<R>, c: Share<R>) -> Self {
         Self { a, b, c }

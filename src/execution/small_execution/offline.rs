@@ -2,11 +2,13 @@ use anyhow::Context;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use std::{cmp::min, collections::HashMap};
+use tracing::instrument;
 
 use super::{agree_random::AgreeRandom, prf::PRSSConversions};
 use crate::execution::config::BatchParams;
+use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{
-    default_factory, BasePreprocessing, RandomPreprocessing, TriplePreprocessing,
+    BasePreprocessing, RandomPreprocessing, TriplePreprocessing,
 };
 use crate::execution::sharing::shamir::{ErrorCorrect, HenselLiftInverse, RevealOp, RingEmbed};
 use crate::{
@@ -37,12 +39,15 @@ where
 {
     /// Initializes the preprocessing for a new epoch, by preprocessing a batch
     /// NOTE: if None is passed for the option for `batch_sizes`, then the default values are used.
+    #[instrument(skip(session), fields(session_id= ?session.session_id(), own_identity = ?session.own_identity()))]
     pub async fn init<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         batch_sizes: BatchParams,
     ) -> anyhow::Result<Self> {
         let batch = batch_sizes;
-        let base_preprocessing = default_factory::<Z>().create_base_preprocessing();
+        //We always want the session to use in-memory storage, it's up to higher level process (e.g. orchestrator)
+        //to maybe decide to store data somewhere else
+        let base_preprocessing = Box::<InMemoryBasePreprocessing<Z>>::default();
 
         let mut res = SmallPreprocessing::<Z, A> {
             batch_sizes: batch,
@@ -407,7 +412,7 @@ mod test {
         },
         execution::{
             online::{
-                preprocessing::{default_factory, RandomPreprocessing, TriplePreprocessing},
+                preprocessing::{create_memory_factory, RandomPreprocessing, TriplePreprocessing},
                 triple::Triple,
             },
             runtime::{
@@ -840,7 +845,7 @@ mod test {
             session.set_prss(Some(prss_state));
 
             let base_preprocessing =
-                default_factory::<ResiduePoly128>().create_base_preprocessing();
+                create_memory_factory().create_base_preprocessing_residue_128();
 
             let default_batch = BatchParams {
                 triples: 10,

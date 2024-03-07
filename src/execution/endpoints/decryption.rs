@@ -3,7 +3,7 @@ use crate::algebra::structure_traits::Ring;
 #[cfg(any(test, feature = "testing"))]
 use crate::computation::SessionId;
 use crate::execution::large_execution::offline::LargePreprocessing;
-use crate::execution::online::preprocessing::default_factory;
+use crate::execution::online::preprocessing::create_memory_factory;
 use crate::execution::online::preprocessing::BitDecPreprocessing;
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use crate::execution::runtime::party::Identity;
@@ -115,7 +115,7 @@ impl ProtocolDecryption for Small {
         num_ctxt: usize,
     ) -> Box<dyn NoiseFloodPreprocessing> {
         let session = self.session.get_mut();
-        let mut sns_preprocessing = default_factory::<Z128>().create_noise_flood_preprocessing();
+        let mut sns_preprocessing = create_memory_factory().create_noise_flood_preprocessing();
         sns_preprocessing
             .fill_from_small_session(session, num_ctxt)
             .unwrap();
@@ -145,7 +145,7 @@ impl ProtocolDecryption for Large {
         .await
         .unwrap();
 
-        let mut sns_preprocessing = default_factory::<Z128>().create_noise_flood_preprocessing();
+        let mut sns_preprocessing = create_memory_factory().create_noise_flood_preprocessing();
         sns_preprocessing
             .fill_from_base_preproc(&mut large_preproc, &mut session.to_base_session(), num_ctxt)
             .await
@@ -337,16 +337,18 @@ pub async fn init_prep_bitdec_small(
     session: &mut SmallSession64,
     num_ctxts: usize,
 ) -> Box<dyn BitDecPreprocessing> {
+    let mut bitdec_preprocessing = create_memory_factory().create_bit_decryption_preprocessing();
     let bitdec_batch = BatchParams {
-        triples: 1280 * num_ctxts + num_ctxts,
-        randoms: 64 * num_ctxts,
+        triples: bitdec_preprocessing.num_required_triples(num_ctxts)
+            + bitdec_preprocessing.num_required_bits(num_ctxts),
+        randoms: bitdec_preprocessing.num_required_bits(num_ctxts),
     };
 
     let mut small_preprocessing =
         SmallPreprocessing::<ResiduePoly64, RealAgreeRandom>::init(session, bitdec_batch)
             .await
             .unwrap();
-    let mut bitdec_preprocessing = default_factory::<Z64>().create_bit_decryption_preprocessing();
+
     bitdec_preprocessing
         .fill_from_base_preproc(
             &mut small_preprocessing,
@@ -363,9 +365,11 @@ pub async fn init_prep_bitdec_large(
     session: &mut LargeSession,
     num_ctxts: usize,
 ) -> Box<dyn BitDecPreprocessing> {
+    let mut bitdec_preprocessing = create_memory_factory().create_bit_decryption_preprocessing();
     let bitdec_batch = BatchParams {
-        triples: 1280 * num_ctxts + num_ctxts,
-        randoms: 64 * num_ctxts,
+        triples: bitdec_preprocessing.num_required_triples(num_ctxts)
+            + bitdec_preprocessing.num_required_bits(num_ctxts),
+        randoms: bitdec_preprocessing.num_required_bits(num_ctxts),
     };
 
     let mut large_preprocessing = LargePreprocessing::<
@@ -381,7 +385,6 @@ pub async fn init_prep_bitdec_large(
     .await
     .unwrap();
 
-    let mut bitdec_preprocessing = default_factory::<Z64>().create_bit_decryption_preprocessing();
     bitdec_preprocessing
         .fill_from_base_preproc(
             &mut large_preprocessing,
@@ -864,7 +867,7 @@ mod tests {
         runtime.setup_sks(key_shares);
 
         let results_dec =
-            threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmallDecrypt).unwrap();
+            threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLargeDecrypt).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         let ref_res = std::num::Wrapping(msg as u64);

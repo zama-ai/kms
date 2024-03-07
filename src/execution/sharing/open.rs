@@ -2,6 +2,7 @@ use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use std::{collections::HashSet, sync::Arc};
 use tokio::{task::JoinSet, time::error::Elapsed};
+use tracing::instrument;
 
 use crate::execution::sharing::shamir::RevealOp;
 use crate::{
@@ -199,6 +200,7 @@ pub async fn robust_open_to_all<
 ///
 /// Output:
 /// - The reconstructed secrets if reconstruction for all was possible
+#[instrument(skip(session,shares),fields(session_id= ?session.session_id(), own_identity = ?session.own_identity()))]
 pub async fn robust_opens_to_all<
     Z: Ring + ErrorCorrect,
     R: Rng + CryptoRng,

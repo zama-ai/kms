@@ -3,6 +3,8 @@
 //!
 use serde::{Deserialize, Serialize};
 
+use crate::execution::online::preprocessing::redis::RedisConf;
+
 use super::{Party, Tracing};
 
 /// Struct for storing protocol settings
@@ -29,6 +31,7 @@ impl Protocol {
 pub struct PartyConf {
     protocol: Protocol,
     pub tracing: Option<Tracing>,
+    pub redis: Option<RedisConf>,
 }
 
 /// This is an example of the configuration file using `PartyConf` struct.

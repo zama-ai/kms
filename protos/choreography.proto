@@ -9,7 +9,17 @@ service Choreography {
     rpc ThresholdDecrypt(DecryptionRequest) returns(DecryptionResponse);
     rpc CrsCeremony(CrsCeremonyRequest) returns(CrsCeremonyResponse);
     rpc RetrieveCrs(CrsRequest) returns(CrsResponse);
+    rpc Preproc(PreprocRequest) returns (PreprocResponse);
 }
+
+message PreprocRequest {
+    bytes role_assignment = 1;
+    bytes params = 2;
+    uint32 threshold = 3;
+    uint32 num_sessions = 4;
+}
+
+message PreprocResponse {}
 
 message DecryptionRequest {
     bytes role_assignment = 1;

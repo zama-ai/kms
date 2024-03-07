@@ -48,6 +48,7 @@ paste = "1.0.12"
 prost = "0.12"
 rand = { version = "~0.8" }
 rayon = "~1.8"
+redis = "0.24.0"
 serde = { version = "~1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 serde_asn1_der = "0.8.0"

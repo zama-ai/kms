@@ -1,6 +1,7 @@
 use crate::choreography::grpc::GrpcChoreography;
 use crate::conf::party::PartyConf;
 use crate::conf::telemetry::{accept_trace, make_span};
+use crate::execution::online::preprocessing::{create_memory_factory, create_redis_factory};
 use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::networking::constants::NETWORK_TIMEOUT_LONG;
 use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer};
@@ -25,9 +26,15 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
     let networking = GrpcNetworkingManager::without_tls(own_identity.clone());
     let networking_server = networking.new_server();
 
+    let factory = match &settings.redis {
+        None => create_memory_factory(),
+        Some(conf) => create_redis_factory(format!("{own_identity}"), conf),
+    };
+
     let choreography = GrpcChoreography::new(
         own_identity,
         Box::new(move |session_id, roles| networking.new_session(session_id, roles)),
+        factory,
     )
     .into_server();
 

@@ -11,7 +11,6 @@ use crate::{
                 RandomPreprocessing, TriplePreprocessing,
             },
             secret_distributions::{RealSecretDistributions, SecretDistributions},
-            triple::Triple,
         },
         runtime::session::{BaseSession, ParameterHandles, SmallSession},
         sharing::{
@@ -23,124 +22,43 @@ use crate::{
     },
 };
 
-use super::{InMemoryBasePreprocessing, InMemoryBitPreprocessing};
-
-#[derive(Default)]
-pub struct InMemoryDKGPreprocessing<Z: Ring> {
-    in_memory_bits: InMemoryBitPreprocessing<Z>,
-    in_memory_base: InMemoryBasePreprocessing<Z>,
-    available_noise_lwe: Vec<Share<Z>>,
-    available_noise_glwe: Vec<Share<Z>>,
-    available_noise_oglwe: Vec<Share<Z>>,
-}
-
-impl<Z: Ring> Drop for InMemoryDKGPreprocessing<Z> {
-    fn drop(&mut self) {
-        debug_assert_eq!(self.available_noise_lwe.len(), 0);
-        debug_assert_eq!(self.available_noise_glwe.len(), 0);
-        debug_assert_eq!(self.available_noise_oglwe.len(), 0);
-    }
-}
-
-impl<Z: Ring> TriplePreprocessing<Z> for InMemoryDKGPreprocessing<Z> {
-    fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
-        self.in_memory_base.next_triple_vec(amount)
-    }
-
-    fn append_triples(&mut self, triples: Vec<Triple<Z>>) {
-        self.in_memory_base.append_triples(triples)
-    }
-
-    fn triples_len(&self) -> usize {
-        self.in_memory_base.triples_len()
-    }
-}
-
-impl<Z: Ring> RandomPreprocessing<Z> for InMemoryDKGPreprocessing<Z> {
-    fn next_random_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
-        self.in_memory_base.next_random_vec(amount)
-    }
-
-    fn append_randoms(&mut self, randoms: Vec<Share<Z>>) {
-        self.in_memory_base.append_randoms(randoms)
-    }
-
-    fn randoms_len(&self) -> usize {
-        self.in_memory_base.randoms_len()
-    }
-}
-
-impl<Z: Ring> BasePreprocessing<Z> for InMemoryDKGPreprocessing<Z> {}
-
-impl<Z: Ring> BitPreprocessing<Z> for InMemoryDKGPreprocessing<Z> {
-    fn append_bits(&mut self, bits: Vec<Share<Z>>) {
-        self.in_memory_bits.append_bits(bits);
-    }
-
-    fn next_bit(&mut self) -> anyhow::Result<Share<Z>> {
-        self.in_memory_bits.next_bit()
-    }
-
-    fn next_bit_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<Z>>> {
-        self.in_memory_bits.next_bit_vec(amount)
-    }
-
-    fn bits_len(&self) -> usize {
-        self.in_memory_bits.bits_len()
-    }
-}
+use super::{fetch_correlated_randomness, store_correlated_randomness, RedisPreprocessing};
 
 #[async_trait]
-impl<Z> DKGPreprocessing<Z> for InMemoryDKGPreprocessing<Z>
+impl<Z> DKGPreprocessing<Z> for RedisPreprocessing<Z>
 where
-    Z: Ring + RingEmbed + HenselLiftInverse + PRSSConversions + ErrorCorrect + Solve,
+    Z: Ring + RingEmbed + Solve + HenselLiftInverse + ErrorCorrect + PRSSConversions,
 {
-    ///Store a vec of noise, each following the same TUniform distribution specified by bound.
     fn append_noises(&mut self, noises: Vec<Share<Z>>, bound: NoiseBounds) {
-        //Note: do we want to assert that the distribution is the epxect one from self.parameters ?
-        match bound {
-            NoiseBounds::LweNoise(_) => self.available_noise_lwe.extend(noises),
-            NoiseBounds::GlweNoise(_) => self.available_noise_glwe.extend(noises),
-            NoiseBounds::GlweNoiseSnS(_) => self.available_noise_oglwe.extend(noises),
-        }
+        store_correlated_randomness(
+            self.get_client(),
+            &noises,
+            bound.get_type(),
+            self.key_prefix(),
+        )
+        .unwrap();
     }
 
-    //Note that storing in noise format rather than raw bits saves space (and bandwidth for read/write)
-    //We may want to store the noise depending on their distribution
-    //(2 or 3 diff distribution required for DKG depending on whether we need Switch and Squash keys)
     fn next_noise_vec(
         &mut self,
         amount: usize,
         bound: NoiseBounds,
     ) -> anyhow::Result<Vec<Share<Z>>> {
-        let noise_distrib = match bound {
-            NoiseBounds::LweNoise(_) => &mut self.available_noise_lwe,
-            NoiseBounds::GlweNoise(_) => &mut self.available_noise_glwe,
-            NoiseBounds::GlweNoiseSnS(_) => &mut self.available_noise_oglwe,
-        };
-
-        if noise_distrib.len() >= amount {
-            Ok(noise_distrib.drain(0..amount).collect())
-        } else {
-            Err(anyhow_error_and_log(format!(
-                "Not enough noise of distribution {:?} to pop {amount}, only have {}",
-                bound,
-                noise_distrib.len()
-            )))
-        }
+        fetch_correlated_randomness(
+            self.get_client(),
+            amount,
+            bound.get_type(),
+            self.key_prefix(),
+        )
+        .map_err(|e| anyhow_error_and_log(e.to_string()))
     }
 
-    /// __Fill the noise directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
-    /// as described in the appendix of the NIST document.__
-    /// The bits and triples are generated/pulled from the [`BasePreprocessing`],
-    /// we thus need interaction to generate the bits.
     async fn fill_from_base_preproc_small_session_appendix_version(
         &mut self,
         params: DKGParams,
         session: &mut SmallSession<Z>,
         preprocessing: &mut dyn BasePreprocessing<Z>,
     ) -> anyhow::Result<()> {
-        //Need bits for lwe sk, glwe sk and maybe glwe sk sns
         let num_bits_needed = params.get_params_basics_handle().lwe_dimension().0
             + params.get_params_basics_handle().glwe_sk_num_bits()
             + match params {
@@ -148,12 +66,11 @@ where
                 DKGParams::WithSnS(sns_params) => sns_params.glwe_sk_num_bits_sns(),
             };
 
-        let mut bit_preproc = InMemoryBitPreprocessing::default();
-
-        bit_preproc.append_bits(
+        self.append_bits(
             RealBitGenEven::gen_bits_even(num_bits_needed, preprocessing, session).await?,
         );
 
+        let mut bit_preproc = self.clone();
         self.fill_from_triples_and_bit_preproc_small_session_appendix_version(
             params,
             session,
@@ -162,9 +79,8 @@ where
         )
     }
 
-    /// __Fill the noise directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
-    /// as described in the appendix of the NIST document.__
-    /// Pull the triples from [`TriplePreprocessing`] and the bits from [`BitPreprocessing`]
+    //Code is completely generic for now,
+    //but that may be where we want to address sync issues if we have multiple producers, etc... ?
     fn fill_from_triples_and_bit_preproc_small_session_appendix_version(
         &mut self,
         params: DKGParams,
@@ -195,19 +111,11 @@ where
         };
 
         let params_basics_handles = params.get_params_basics_handle();
-
         //Generate noise needed for the pk and the key switch key
         fill_noise(
             prss_state,
             params_basics_handles.num_needed_noise_pk()
                 + params_basics_handles.num_needed_noise_ksk(),
-            NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
-        )?;
-
-        //Generate noise needed for the key switch key
-        fill_noise(
-            prss_state,
-            params_basics_handles.num_needed_noise_ksk(),
             NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
         )?;
 
@@ -229,6 +137,9 @@ where
             }
             DKGParams::WithoutSnS(_) => (),
         }
+
+        //NOTE: BELOW WE MAY JUST BE POPING AND PUSHING THE SAME DATA
+        //IF THE PREPROCESSING WE DEPEND ON IS THE SAME REDIS INSTANCE
 
         //Fill in the required number of _raw_ bits
         let num_bits_needed = params_basics_handles.lwe_dimension().0
@@ -253,10 +164,6 @@ where
         Ok(())
     }
 
-    /// Fill the noise from [`crate::execution::online::secret_distributions::SecretDistributions`]
-    /// where the bits required to do so are generated through the [`BasePreprocessing`]
-    /// Also generate the additional bits (and triples) needed from [`BasePreprocessing`]
-    /// we thus need interation to generate the bits.
     async fn fill_from_base_preproc(
         &mut self,
         params: DKGParams,
@@ -265,19 +172,19 @@ where
     ) -> anyhow::Result<()> {
         let num_bits_required = params.get_params_basics_handle().total_bits_required();
 
-        let mut bit_preproc = InMemoryBitPreprocessing::default();
-
-        bit_preproc.append_bits(
+        self.append_bits(
             RealBitGenEven::gen_bits_even(num_bits_required, preprocessing, session).await?,
         );
+
+        let mut bit_preproc = self.clone();
 
         self.fill_from_triples_and_bit_preproc(params, session, preprocessing, &mut bit_preproc)
     }
 
-    /// Fill the noise from [`crate::execution::online::secret_distributions::SecretDistributions`]
-    /// where the bits required to do so are pulled from the [`BitPreprocessing`].
-    /// The additional bits required are also pulled from [`BitPreprocessing`]
-    /// and triples from [`TriplePreprocessing`].
+    //Code is completely generic for now,
+    //but that may be where we want to allow for a more streaming process ?
+    //
+    //More streaming oriented process would require dealing with empty/incomplete answers to the next() requests.
     fn fill_from_triples_and_bit_preproc(
         &mut self,
         params: DKGParams,

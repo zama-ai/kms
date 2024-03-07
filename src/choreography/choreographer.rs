@@ -3,12 +3,13 @@ use crate::{
     algebra::base_ring::Z64,
     choreography::grpc::gen::{
         choreography_client::ChoreographyClient, CrsCeremonyRequest, DecryptionRequest,
-        KeygenRequest, PubkeyRequest, RetrieveResultsRequest,
+        KeygenRequest, PreprocRequest, PubkeyRequest, RetrieveResultsRequest,
     },
     computation::SessionId,
     execution::{
         constants::INPUT_PARTY_ID,
         runtime::party::{Identity, Role},
+        tfhe_internals::parameters::DKGParams,
         zk::ceremony::PublicParameter,
     },
     lwe::Ciphertext64,
@@ -77,6 +78,34 @@ impl ChoreoRuntime {
         ChoreographyClient::new(channel)
             .max_decoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
             .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
+    }
+
+    pub async fn initate_preproc(
+        &self,
+        params: DKGParams,
+        threshold: u32,
+        num_sessions: u32,
+    ) -> anyhow::Result<()> {
+        let role_assignment = bincode::serialize(&self.role_assignments)?;
+        let params = bincode::serialize(&params)?;
+
+        let mut join_set = JoinSet::new();
+        self.channels.values().for_each(|channel| {
+            let mut client = self.new_client(channel.clone());
+
+            let request = PreprocRequest {
+                role_assignment: role_assignment.to_vec(),
+                params: params.to_vec(),
+                threshold,
+                num_sessions,
+            };
+            tracing::debug!("launching the dkg preproc with proto to {:?}", channel);
+            join_set.spawn(async move { client.preproc(request).await });
+        });
+        while let Some(response) = join_set.join_next().await {
+            response??;
+        }
+        Ok(())
     }
 
     pub async fn initiate_threshold_decryption(

@@ -13,6 +13,7 @@ use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::execution::sharing::shamir::RevealOp;
 use crate::execution::sharing::shamir::RingEmbed;
 use crate::execution::sharing::shamir::ShamirSharings;
+use crate::execution::tfhe_internals::parameters::DKGParams;
 use crate::{
     algebra::poly::Poly,
     algebra::structure_traits::Ring,
@@ -222,6 +223,10 @@ where
         }
         Ok(res)
     }
+
+    fn bits_len(&self) -> usize {
+        unimplemented!("We do not store anything in dummy preprocessing");
+    }
 }
 
 #[async_trait]
@@ -244,6 +249,7 @@ where
 
     async fn fill_from_base_preproc_small_session_appendix_version(
         &mut self,
+        _params: DKGParams,
         _session: &mut SmallSession<Z>,
         _preprocessing: &mut dyn BasePreprocessing<Z>,
     ) -> anyhow::Result<()> {
@@ -252,6 +258,7 @@ where
 
     fn fill_from_triples_and_bit_preproc_small_session_appendix_version(
         &mut self,
+        _params: DKGParams,
         _session: &mut SmallSession<Z>,
         _preprocessing_triples: &mut dyn BasePreprocessing<Z>,
         _preprocessing_bits: &mut dyn BitPreprocessing<Z>,
@@ -260,6 +267,7 @@ where
     }
     async fn fill_from_base_preproc(
         &mut self,
+        _params: DKGParams,
         _session: &mut BaseSession,
         _preprocessing: &mut dyn BasePreprocessing<Z>,
     ) -> anyhow::Result<()> {
@@ -268,6 +276,7 @@ where
 
     fn fill_from_triples_and_bit_preproc(
         &mut self,
+        _params: DKGParams,
         _session: &mut BaseSession,
         _preprocessing_triples: &mut dyn BasePreprocessing<Z>,
         _preprocessing_bits: &mut dyn BitPreprocessing<Z>,

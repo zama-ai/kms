@@ -41,7 +41,7 @@ echo ""
 [tasks.choreo]
 env = { "RUST_LOG" = "info", "RUST_BACKTRACE" = "1"}
 command = "cargo"
-args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "${CHOREO_COMMAND}"]
+args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "--dkg-params", "${DKG_PARAMS}", "--num-sessions-preproc", "${NUM_SESSIONS_PREPROC}", "${CHOREO_COMMAND}" ]
 
 
 [tasks.choreo-init]
@@ -82,6 +82,15 @@ dependencies = ["gen-local-choreo"]
 env = { "CHOREO_COMMAND" = "results", EXPERIMENT_NAME = "local-cluster" }
 run_task = { name = ["choreo"] }
 dependencies = ["gen-local-choreo"]
+
+[tasks.gen-local-choreo-dkg]
+command = "cargo"
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-m", "0", "-o", "local-cluster", "-e", "0", "experiment"]
+
+[tasks.local-choreo-preprocessing]
+env = { "CHOREO_COMMAND" = "preprocessing", "DKG_PARAMS" = "${DKG_PARAMS}", "NUM_SESSIONS_PREPROC" = "${NUM_SESSIONS_PREPROC}", EXPERIMENT_NAME = "local-cluster" }
+run_task = { name = ["choreo"] }
+dependencies = ["gen-local-choreo-dkg"]
 
 [tasks.sleep]
 command = "sleep"

@@ -12,7 +12,6 @@ use crate::execution::online::preprocessing::RandomPreprocessing;
 use crate::execution::online::preprocessing::TriplePreprocessing;
 use crate::execution::online::triple::Triple;
 use crate::execution::sharing::share::Share;
-use crate::execution::tfhe_internals::parameters::DKGParams;
 
 use self::dkg::InMemoryDKGPreprocessing;
 
@@ -21,39 +20,51 @@ use super::BitDecPreprocessing;
 #[derive(Default)]
 struct InMemoryPreprocessorFactory;
 
-impl<R: Ring> PreprocessorFactory<R> for InMemoryPreprocessorFactory {
-    fn create_bit_preprocessing(&self) -> Box<dyn BitPreprocessing<R>> {
-        Box::<InMemoryBitPreprocessing<R>>::default()
+impl PreprocessorFactory for InMemoryPreprocessorFactory {
+    fn create_bit_preprocessing_residue_64(&mut self) -> Box<dyn BitPreprocessing<ResiduePoly64>> {
+        Box::<InMemoryBitPreprocessing<ResiduePoly64>>::default()
     }
 
-    fn create_base_preprocessing(&self) -> Box<dyn BasePreprocessing<R>> {
-        Box::<InMemoryBasePreprocessing<R>>::default()
+    fn create_bit_preprocessing_residue_128(
+        &mut self,
+    ) -> Box<dyn BitPreprocessing<ResiduePoly128>> {
+        Box::<InMemoryBitPreprocessing<ResiduePoly128>>::default()
     }
 
-    fn create_bit_decryption_preprocessing(&self) -> Box<dyn BitDecPreprocessing> {
+    fn create_base_preprocessing_residue_64(
+        &mut self,
+    ) -> Box<dyn BasePreprocessing<ResiduePoly64>> {
+        Box::<InMemoryBasePreprocessing<ResiduePoly64>>::default()
+    }
+
+    fn create_base_preprocessing_residue_128(
+        &mut self,
+    ) -> Box<dyn BasePreprocessing<ResiduePoly128>> {
+        Box::<InMemoryBasePreprocessing<ResiduePoly128>>::default()
+    }
+
+    fn create_bit_decryption_preprocessing(&mut self) -> Box<dyn BitDecPreprocessing> {
         Box::<InMemoryBitDecPreprocessing>::default()
     }
 
-    fn create_noise_flood_preprocessing(&self) -> Box<dyn NoiseFloodPreprocessing> {
+    fn create_noise_flood_preprocessing(&mut self) -> Box<dyn NoiseFloodPreprocessing> {
         Box::<InMemoryNoiseFloodPreprocessing>::default()
     }
 
     fn create_dkg_preprocessing_no_sns(
-        &self,
-        params: DKGParams,
+        &mut self,
     ) -> Box<dyn super::DKGPreprocessing<ResiduePoly64>> {
-        Box::new(InMemoryDKGPreprocessing::<ResiduePoly64>::new(params))
+        Box::<InMemoryDKGPreprocessing<ResiduePoly64>>::default()
     }
 
     fn create_dkg_preprocessing_with_sns(
-        &self,
-        params: DKGParams,
+        &mut self,
     ) -> Box<dyn super::DKGPreprocessing<ResiduePoly128>> {
-        Box::new(InMemoryDKGPreprocessing::<ResiduePoly128>::new(params))
+        Box::<InMemoryDKGPreprocessing<ResiduePoly128>>::default()
     }
 }
 
-pub fn memory_factory<R: Ring>() -> Box<dyn PreprocessorFactory<R>> {
+pub fn memory_factory() -> Box<dyn PreprocessorFactory> {
     Box::<InMemoryPreprocessorFactory>::default()
 }
 
@@ -84,6 +95,10 @@ impl<Z: Ring> BitPreprocessing<Z> for InMemoryBitPreprocessing<Z> {
                 "Not enough bits to drain {amount}"
             )))
         }
+    }
+
+    fn bits_len(&self) -> usize {
+        self.available_bits.len()
     }
 }
 

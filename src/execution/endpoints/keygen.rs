@@ -56,6 +56,7 @@ use tfhe::{
     },
 };
 use tokio::{task::JoinSet, time::timeout_at};
+use tracing::instrument;
 
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct PubKeySet {
@@ -159,7 +160,8 @@ async fn sample_seed<
         .fold(0_u128, |acc, x| (acc << 8) + (x as u128)))
 }
 
-///Generates the lwe private key share and associated public key
+///Generates the lwe private key share and associated public keyglwe_secret_key_share
+#[instrument(skip( mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_lwe_private_public_key_pair<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
@@ -209,6 +211,7 @@ where
 
 ///Generate the Key Switch Key from a Glwe key given in Lwe format,
 ///and an actual Lwe key
+#[instrument(skip(glwe_sk_share_as_lwe, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
@@ -257,6 +260,7 @@ where
 ///, a Lwe key and the params enum variant:
 /// - [`DKGParams::WithoutSnS`] for __regular__ BK
 /// - [`DKGParams::WithSnS`] for __Switch and Squash__ BK
+#[instrument(skip(glwe_secret_key_share, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_bootstrap_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
@@ -361,6 +365,7 @@ where
 ///If the [`DKGParams::o_flag`] is set in the params, then the sharing domain must be [`ResiduePoly128`] but the domain of
 ///all non-overlined key material is still [`u64`].
 /// Note that there is some redundancy of information because we also explicitly ask the [`BaseRing`] as trait parameter
+#[instrument(skip(session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub async fn distributed_keygen<
     Z: BaseRing,
     R: Rng + CryptoRng,
@@ -648,7 +653,7 @@ pub async fn initialize_key_material(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use std::fs;
 
     use concrete_csprng::seeders::Seeder;
@@ -672,13 +677,18 @@ mod tests {
     };
 
     use crate::{
-        algebra::{base_ring::Z128, residue_poly::ResiduePoly128},
+        algebra::{
+            base_ring::Z128,
+            residue_poly::{ResiduePoly, ResiduePoly128},
+            structure_traits::BaseRing,
+        },
         execution::{
             config::BatchParams,
-            online::preprocessing::{default_factory, dummy::DummyPreprocessing},
+            online::preprocessing::{create_memory_factory, dummy::DummyPreprocessing},
             runtime::session::{
                 LargeSession, ParameterHandles, SmallSession, SmallSessionHandles, ToBaseSession,
             },
+            sharing::shamir::ErrorCorrect,
             small_execution::{
                 agree_random::DummyAgreeRandom, offline::SmallPreprocessing, prss::PRSSSetup,
             },
@@ -737,12 +747,12 @@ mod tests {
             expected_size,
             num_parties,
         );
-        run_tfhe_computation_shortint::<DKGParamsRegular>(
+        run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
             params_basics_handles.get_prefix_path(),
             num_parties,
             threshold,
         );
-        run_tfhe_computation_fheuint::<DKGParamsRegular>(
+        run_tfhe_computation_fheuint::<Z128, DKGParamsRegular>(
             params_basics_handles.get_prefix_path(),
             num_parties,
             threshold,
@@ -774,7 +784,7 @@ mod tests {
             num_parties,
         );
         //This parameter set isnt big enough to run the fheuint tests
-        run_tfhe_computation_shortint::<DKGParamsRegular>(
+        run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
             params_basics_handles.get_prefix_path(),
             num_parties,
             threshold,
@@ -875,12 +885,12 @@ mod tests {
             threshold,
         );
 
-        run_tfhe_computation_shortint::<DKGParamsSnS>(
+        run_tfhe_computation_shortint::<Z128, DKGParamsSnS>(
             params_basics_handles.get_prefix_path(),
             num_parties,
             threshold,
         );
-        run_tfhe_computation_fheuint::<DKGParamsSnS>(
+        run_tfhe_computation_fheuint::<Z128, DKGParamsSnS>(
             params_basics_handles.get_prefix_path(),
             num_parties,
             threshold,
@@ -919,7 +929,7 @@ mod tests {
         );
 
         //This parameter set isnt big enough to run the fheuint tests
-        run_tfhe_computation_shortint::<DKGParamsSnS>(
+        run_tfhe_computation_shortint::<Z128, DKGParamsSnS>(
             params_basics_handles.get_prefix_path(),
             num_parties,
             threshold,
@@ -968,11 +978,10 @@ mod tests {
                     .await
                     .unwrap();
 
-            let mut dkg_preproc =
-                default_factory::<Z128>().create_dkg_preprocessing_with_sns(params);
+            let mut dkg_preproc = create_memory_factory().create_dkg_preprocessing_with_sns();
 
             dkg_preproc
-                .fill_from_base_preproc(&mut session.to_base_session(), &mut small_preproc)
+                .fill_from_base_preproc(params, &mut session.to_base_session(), &mut small_preproc)
                 .await
                 .unwrap();
 
@@ -1151,15 +1160,17 @@ mod tests {
     }
 
     ///Runs only the shortint computation
-    fn run_tfhe_computation_shortint<Params: DKGParamsBasics>(
+    pub fn run_tfhe_computation_shortint<Z: BaseRing, Params: DKGParamsBasics>(
         prefix_path: String,
         num_parties: usize,
         threshold: usize,
-    ) {
+    ) where
+        ResiduePoly<Z>: ErrorCorrect,
+    {
         let params = Params::read_from_file(prefix_path + "/params.json")
             .unwrap()
             .to_dkg_params();
-        let (shortint_sk, pk) = retrieve_keys_from_files(params, num_parties, threshold);
+        let (shortint_sk, pk) = retrieve_keys_from_files::<Z>(params, num_parties, threshold);
         let shortint_pk = pk.into_tfhe_shortint_keys(params);
         for _ in 0..100 {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
@@ -1167,15 +1178,17 @@ mod tests {
     }
 
     ///Runs both shortint and fheuint computation
-    fn run_tfhe_computation_fheuint<Params: DKGParamsBasics>(
+    fn run_tfhe_computation_fheuint<Z: BaseRing, Params: DKGParamsBasics>(
         prefix_path: String,
         num_parties: usize,
         threshold: usize,
-    ) {
+    ) where
+        ResiduePoly<Z>: ErrorCorrect,
+    {
         let params = Params::read_from_file(prefix_path + "/params.json")
             .unwrap()
             .to_dkg_params();
-        let (shortint_sk, pk) = retrieve_keys_from_files(params, num_parties, threshold);
+        let (shortint_sk, pk) = retrieve_keys_from_files::<Z>(params, num_parties, threshold);
         let shortint_pk = pk.clone().into_tfhe_shortint_keys(params);
         for _ in 0..100 {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
@@ -1189,22 +1202,25 @@ mod tests {
 
     ///Read files created by [`run_dkg_and_save`] and reconstruct the secret keys
     ///from the parties' shares
-    fn retrieve_keys_from_files(
+    fn retrieve_keys_from_files<Z: BaseRing>(
         params: DKGParams,
         num_parties: usize,
         threshold: usize,
-    ) -> (tfhe::shortint::ClientKey, PubKeySet) {
+    ) -> (tfhe::shortint::ClientKey, PubKeySet)
+    where
+        ResiduePoly<Z>: ErrorCorrect,
+    {
         let params_tfhe_rs = params
             .get_params_basics_handle()
             .to_classic_pbs_parameters();
 
-        let lwe_secret_key = reconstruct_lwe_secret_key_from_file::<Z128, _>(
+        let lwe_secret_key = reconstruct_lwe_secret_key_from_file::<Z, _>(
             num_parties,
             threshold,
             params.get_params_basics_handle(),
         );
         let (glwe_secret_key, _) =
-            reconstruct_glwe_secret_key_from_file::<Z128>(num_parties, threshold, params);
+            reconstruct_glwe_secret_key_from_file::<Z>(num_parties, threshold, params);
         let pk = PubKeySet::read_from_file(format!(
             "{}/pk.der",
             params.get_params_basics_handle().get_prefix_path()

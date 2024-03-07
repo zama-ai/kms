@@ -8,19 +8,23 @@ pub mod gen {
 use self::gen::choreography_server::{Choreography, ChoreographyServer};
 use self::gen::{
     CrsCeremonyRequest, CrsCeremonyResponse, CrsRequest, CrsResponse, DecryptionResponse,
-    KeygenRequest, KeygenResponse, PubkeyRequest, PubkeyResponse, RetrieveResultsRequest,
-    RetrieveResultsResponse,
+    KeygenRequest, KeygenResponse, PreprocRequest, PreprocResponse, PubkeyRequest, PubkeyResponse,
+    RetrieveResultsRequest, RetrieveResultsResponse,
 };
 use crate::algebra::base_ring::Z64;
 use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
+use crate::algebra::structure_traits::Ring;
 use crate::execution::endpoints::decryption::decrypt_using_noiseflooding;
 use crate::execution::endpoints::decryption::{Large, Small};
-use crate::execution::endpoints::keygen::initialize_key_material;
+use crate::execution::endpoints::keygen::{distributed_keygen, initialize_key_material};
+use crate::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
+use crate::execution::online::preprocessing::PreprocessorFactory;
 use crate::execution::runtime::party::{Identity, Role};
 use crate::execution::runtime::session::{
     DecryptionMode, LargeSession, SessionParameters, SmallSessionStruct,
 };
+use crate::execution::tfhe_internals::parameters::DKGParams;
 use crate::execution::zk::ceremony::{Ceremony, PublicParameter, RealCeremony};
 use crate::lwe::{Ciphertext64, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
@@ -33,6 +37,7 @@ use async_cell::sync::AsyncCell;
 use async_trait::async_trait;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -86,14 +91,22 @@ struct GrpcDataStores {
 pub struct GrpcChoreography {
     own_identity: Identity,
     networking_strategy: NetworkingStrategy,
+    factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
+    num_sessions_created: Mutex<usize>,
     data: GrpcDataStores,
 }
 
 impl GrpcChoreography {
-    pub fn new(own_identity: Identity, networking_strategy: NetworkingStrategy) -> Self {
+    pub fn new(
+        own_identity: Identity,
+        networking_strategy: NetworkingStrategy,
+        factory: Box<dyn PreprocessorFactory>,
+    ) -> Self {
         GrpcChoreography {
             own_identity,
             networking_strategy,
+            factory: Arc::new(Mutex::new(factory)),
+            num_sessions_created: Mutex::new(0),
             data: GrpcDataStores::default(),
         }
     }
@@ -107,6 +120,142 @@ impl GrpcChoreography {
 
 #[async_trait]
 impl Choreography for GrpcChoreography {
+    #[instrument(skip(self, request))]
+    async fn preproc(
+        &self,
+        request: tonic::Request<PreprocRequest>,
+    ) -> Result<tonic::Response<PreprocResponse>, tonic::Status> {
+        let request = request.into_inner();
+
+        let threshold: u8 = request.threshold.try_into().map_err(|_e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                "threshold must be at most 255".to_string(),
+            )
+        })?;
+
+        let role_assignments: HashMap<Role, Identity> =
+            bincode::deserialize(&request.role_assignment).map_err(|_e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    "failed to parse role assignment".to_string(),
+                )
+            })?;
+
+        let params: DKGParams = bincode::deserialize(&request.params).map_err(|_e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                "failed to parse dkg params".to_string(),
+            )
+        })?;
+
+        let num_sessions: u8 = request.num_sessions.try_into().map_err(|_e| {
+            tonic::Status::new(tonic::Code::Aborted, "nb_sessions must be at most 255")
+        })?;
+
+        fn create_sessions<Z: Ring>(
+            num_sessions: usize,
+            start_session: usize,
+            networking_strategy: &NetworkingStrategy,
+            own_identity: Identity,
+            threshold: u8,
+            role_assignments: HashMap<Role, Identity>,
+        ) -> Vec<SmallSession<Z>> {
+            (start_session..start_session + num_sessions)
+                .map(|session_id| {
+                    let session_id = SessionId(session_id as u128);
+                    let networking = (networking_strategy)(session_id, role_assignments.clone());
+                    SmallSession::new(
+                        session_id,
+                        role_assignments.clone(),
+                        Arc::clone(&networking),
+                        threshold,
+                        None,
+                        own_identity.clone(),
+                        None,
+                    )
+                    .unwrap()
+                })
+                .collect_vec()
+        }
+
+        let own_identity = self.own_identity.clone();
+        let factory = self.factory.clone();
+        match params {
+            DKGParams::WithoutSnS(_) => {
+                let sessions = {
+                    let start_session = self.num_sessions_created.try_lock().unwrap();
+                    create_sessions(
+                        num_sessions as usize,
+                        *start_session,
+                        &self.networking_strategy,
+                        own_identity.clone(),
+                        threshold,
+                        role_assignments,
+                    )
+                };
+
+                tokio::spawn(async move {
+                    let orchestrator = {
+                        let mut factory_guard = factory.try_lock().unwrap();
+                        let factory = factory_guard.as_mut();
+                        PreprocessingOrchestrator::<ResiduePoly64>::new(factory, params).unwrap()
+                    };
+
+                    let (mut sessions, mut preproc) = orchestrator
+                        .orchestrate_small_session_dkg_processing(sessions)
+                        .unwrap();
+
+                    //TODO: We dont do anything with the keys,
+                    //At some point this should replace the keygen endpoint,
+                    //but probably best to sync with kms ppl
+
+                    distributed_keygen(&mut sessions[0], preproc.as_mut(), params)
+                        .await
+                        .unwrap()
+                });
+            }
+            DKGParams::WithSnS(_) => {
+                let sessions = {
+                    let start_session = self.num_sessions_created.try_lock().unwrap();
+                    create_sessions(
+                        num_sessions as usize,
+                        *start_session,
+                        &self.networking_strategy,
+                        own_identity.clone(),
+                        threshold,
+                        role_assignments,
+                    )
+                };
+
+                tokio::spawn(async move {
+                    let orchestrator = {
+                        let mut factory_guard = factory.try_lock().unwrap();
+                        let factory = factory_guard.as_mut();
+                        PreprocessingOrchestrator::<ResiduePoly128>::new(factory, params).unwrap()
+                    };
+
+                    let (mut sessions, mut preproc) = orchestrator
+                        .orchestrate_small_session_dkg_processing(sessions)
+                        .unwrap();
+
+                    //TODO: We dont do anything with the keys,
+                    //At some point this should replace the keygen endpoint,
+                    //but probably best to sync with kms ppl
+                    distributed_keygen(&mut sessions[0], preproc.as_mut(), params)
+                        .await
+                        .unwrap()
+                });
+            }
+        }
+
+        {
+            let mut num_sessions_created_guard = self.num_sessions_created.try_lock().unwrap();
+            *num_sessions_created_guard += num_sessions as usize;
+        }
+        Ok(tonic::Response::new(PreprocResponse {}))
+    }
+
     ///NOTE: For now we only do threshold decrypt with Ctxt lifting, but we may want to propose both options
     /// (that's why we have setup_store contain a map for both options)
     #[instrument(skip(self, request))]
