@@ -31,6 +31,8 @@ jobs:
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
@@ -52,7 +54,6 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
           build-args: |
             CONCRETE_ACTIONS_TOKEN=${{ secrets.CONCRETE_ACTIONS_TOKEN }}
           file: operations/docker/ci.dockerfile
@@ -68,6 +69,35 @@ jobs:
         id: final_version
         run: echo "tag=${{env.DOCKER_TAG_IMAGE}}" >> "$GITHUB_OUTPUT"
 
+      - name: Extract Docker metadata
+        if: github.event_name == 'release'
+        id: meta
+        uses: docker/metadata-action@v5.5.1
+        with:
+          annotations: |
+            org.opencontainers.image.description="KMS Centralized Dev Docker Image ${{ env.DOCKER_TAG_IMAGE }}"
+          labels: |
+            zama.kms.version=${{ env.DOCKER_TAG_IMAGE }}
+            zama.kms.description="KMS Image"
+          images: ghcr.io/kms-dev:${{ env.DOCKER_TAG_IMAGE }}
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index
 
+      - name: Docker Build and Push Dev Image
+        if: github.event_name == 'release'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            CONCRETE_ACTIONS_TOKEN=${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+          file: operations/docker/dev.dockerfile
+          push: ${{ inputs.push_image }}
+          pull: false
+          tags: ghcr.io/zama-ai/kms-dev:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/kms-dev:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
 
 

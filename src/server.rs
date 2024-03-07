@@ -1,12 +1,7 @@
-use aes_prng::AesRng;
-use distributed_decryption::lwe::{gen_key_set, ThresholdLWEParameters};
 use kms_lib::{
-    core::kms_core::{gen_sig_keys, SoftwareKmsKeys},
-    file_handling::{read_as_json, read_element, write_element},
-    rpc::kms_rpc::server_handle,
-    setup_rpc::{recover_sk, DEFAULT_PARAM_PATH},
+    core::kms_core::SoftwareKmsKeys, file_handling::read_element, rpc::kms_rpc::server_handle,
+    write_default_keys,
 };
-use rand::SeedableRng;
 use std::{env, path::Path};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -38,43 +33,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::info!(
             "Could not find default keys. Generating new keys with default parameters..."
         );
-        write_default_keys()
+        write_default_keys(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH)
     };
     server_handle(&url, keys).await?;
     Ok(())
-}
-
-fn write_default_keys() -> SoftwareKmsKeys {
-    let mut rng = AesRng::from_entropy();
-    let params: ThresholdLWEParameters = read_as_json(DEFAULT_PARAM_PATH.to_owned()).unwrap();
-    let key_set = gen_key_set(params, &mut rng);
-    let fhe_sk = recover_sk(key_set.sk);
-    let (server_pk, server_sk) = gen_sig_keys(&mut rng);
-    let software_kms_keys = SoftwareKmsKeys {
-        fhe_sk,
-        sig_sk: server_sk,
-        sig_pk: server_pk.clone(),
-    };
-    write_element(
-        DEFAULT_SOFTWARE_CENTRAL_KEY_PATH.to_string(),
-        &software_kms_keys,
-    )
-    .unwrap();
-    software_kms_keys
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{write_default_keys, DEFAULT_SOFTWARE_CENTRAL_KEY_PATH};
-    use ctor::ctor;
-    use std::path::Path;
-
-    #[ctor]
-    #[test]
-    #[ignore]
-    fn ensure_server_keys_exist() {
-        if !Path::new(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH).exists() {
-            let _ = write_default_keys();
-        }
-    }
 }

@@ -7,6 +7,10 @@ edition = "2021"
 name = "kms_lib"
 path = "src/lib.rs"
 
+[[bin]]
+name = "kms-gen"
+path = "src/gen.rs"
+
 [[bin]] # Bin to run the gRPC server
 name = "kms-server"
 path = "src/server.rs"

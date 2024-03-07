@@ -21,6 +21,12 @@ RUN --mount=type=ssh --mount=type=cache,target=/var/cache/buildkit \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
     cargo install --path . --root . --bin kms-server
 
+# Generate the default software keys
+RUN --mount=type=ssh --mount=type=cache,target=/var/cache/buildkit \
+    CARGO_HOME=/var/cache/buildkit/cargo \
+    CARGO_TARGET_DIR=/var/cache/buildkit/target \
+    cargo run --bin kms-gen /app/kms/temp/default-software-keys.bin
+
 # Second stage builds the runtime image.
 # This stage will be the final image
 FROM debian:stable-slim as go-runtime
@@ -46,6 +52,7 @@ WORKDIR /app/kms
 ENV PATH="$PATH:/app/kms/bin"
 # Copy the binaries from the base stage
 COPY --from=base /app/kms/bin/ /app/kms/bin/
+COPY --from=base /app/kms/temp/default-software-keys.bin /app/kms/temp/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
 
 CMD ["kms-server"]
