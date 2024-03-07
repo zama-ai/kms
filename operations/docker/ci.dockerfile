@@ -16,7 +16,7 @@ RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 # Install the binary leaving it in the WORKDIR/bin folder
 RUN mkdir -p /app/kms/bin
 RUN git config --global url."https://${CONCRETE_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-RUN --mount=type=ssh --mount=type=cache,target=/var/cache/buildkit \
+RUN --mount=type=cache,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
     cargo install --path . --root . --bin kms-server
