@@ -11,6 +11,10 @@ on:
         type: string
         required: false
         default: ''
+      run-redis:
+        type: boolean
+        required: false
+        default: false
     secrets:
       CONCRETE_ACTIONS_TOKEN:
         required: true
@@ -21,7 +25,11 @@ env:
 jobs:
   compile-rust-unit-tests:
     runs-on: ${{ inputs.runs-on }}
-
+    services:
+      redis:
+        image: ${{ inputs.run-redis && 'redis/redis-stack:latest' || '' }}
+        ports:
+          - 6379:6379
     steps:
       - name: Checkout Project
         uses: actions/checkout@v4

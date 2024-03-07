@@ -18,11 +18,6 @@ jobs:
   start-runner:
     name: Start self-hosted EC2 runner
     runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis/redis-stack:latest
-        ports:
-          - 6379:6379
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
       ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
@@ -47,6 +42,7 @@ jobs:
     with:
       args_build: "--features slow_tests"
       runs-on: ${{ needs.start-runner.outputs.label }}
+      run-redis: true
 
   stop-runner:
     name: Stops self-hosted EC2 runner
