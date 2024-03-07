@@ -18,6 +18,11 @@ jobs:
   start-runner:
     name: Start self-hosted EC2 runner
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis/redis-stack:latest
+        ports:
+          - 6379:6379
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
       ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
@@ -35,11 +40,6 @@ jobs:
           job-secret: ${{ secrets.JOB_SECRET }}
 
   run-integration-tests:
-    services:
-      redis:
-        image: redis/redis-stack:latest
-        ports:
-          - 6379:6379
     needs: start-runner
     uses: ./.github/workflows/common-build.yml
     secrets:
