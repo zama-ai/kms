@@ -41,6 +41,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Echo github event
+        run: echo "Github event ==> ${{ github.event_name }}"
+
       - name: Current branch sha
         if: github.event_name != 'release'
         run: |
