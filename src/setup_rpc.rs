@@ -18,6 +18,7 @@ use tfhe::prelude::FheEncrypt;
 use tfhe::shortint::{CarryModulus, ClassicPBSParameters, EncryptionKeyChoice, MessageModulus};
 use tfhe::FheUint8;
 use tfhe::PublicKey;
+use tfhe::CompactPublicKey;
 
 pub type FhePublicKey = tfhe::PublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
@@ -65,6 +66,11 @@ pub struct CentralizedTestingKeys {
 
 pub fn recover_bsk(sk: &tfhe::ClientKey) -> tfhe::ServerKey {
     sk.generate_server_key()
+}
+
+pub fn recover_compact_pk(ddec_sk: SecretKey) -> tfhe::CompactPublicKey {
+    let hl_sk = recover_sk(ddec_sk);
+    CompactPublicKey::new(&hl_sk)
 }
 
 pub fn recover_pk(ddec_sk: SecretKey) -> FhePublicKey {

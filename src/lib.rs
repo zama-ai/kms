@@ -6,7 +6,7 @@ use file_handling::read_as_json;
 use file_handling::write_element;
 use rand::SeedableRng;
 use setup_rpc::recover_bsk;
-use setup_rpc::recover_pk;
+use setup_rpc::recover_compact_pk;
 use setup_rpc::recover_sk;
 use std::panic::Location;
 
@@ -47,7 +47,7 @@ pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
     let mut rng = AesRng::from_entropy();
     let params: ThresholdLWEParameters = read_as_json(DEFAULT_PARAM_PATH.to_owned()).unwrap();
     let key_set = gen_key_set(params, &mut rng);
-    let fhe_pk = recover_pk(key_set.sk.clone());
+    let fhe_pk = recover_compact_pk(key_set.sk.clone());
     let fhe_sk = recover_sk(key_set.sk);
     let fhe_bsk = recover_bsk(&fhe_sk);
     let (server_pk, server_sk) = gen_sig_keys(&mut rng);
