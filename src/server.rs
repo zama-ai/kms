@@ -28,7 +28,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args[1].to_owned()
     };
     let keys: SoftwareKmsKeys = if Path::new(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH).exists() {
-        read_element(&format!("{DEFAULT_SOFTWARE_CENTRAL_KEY_PATH}/default-software-keys.bin"))?
+        read_element(&format!(
+            "{DEFAULT_SOFTWARE_CENTRAL_KEY_PATH}/default-software-keys.bin"
+        ))?
     } else {
         tracing::info!(
             "Could not find default keys. Generating new keys with default parameters..."

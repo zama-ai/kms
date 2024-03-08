@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 use tfhe::prelude::FheEncrypt;
 use tfhe::shortint::{CarryModulus, ClassicPBSParameters, EncryptionKeyChoice, MessageModulus};
+use tfhe::CompactPublicKey;
 use tfhe::FheUint8;
 use tfhe::PublicKey;
-use tfhe::CompactPublicKey;
 
 pub type FhePublicKey = tfhe::PublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
