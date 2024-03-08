@@ -49,6 +49,9 @@ tracing-test = "0.2.4"
 tracing-subscriber = "0.3.18"
 url = "2.5.0"
 
+[target.'cfg(unix)'.dependencies]
+tfhe = { version = "0.5.1", features = ["seeder_unix"] }
+
 [dev-dependencies]
 ctor = "~0.2"
 
