@@ -2,7 +2,7 @@
 # First stage builds the binary
 FROM rust:1.76-slim-buster as base
 
-RUN --mount=type=cache,target=/var/cache/apt apt update && \
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
     apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config libssl-dev
 
 WORKDIR /app/kms
@@ -14,7 +14,7 @@ RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 
 # Install the binary leaving it in the WORKDIR/bin folder
 RUN mkdir -p /app/kms/bin
-RUN --mount=type=ssh --mount=type=cache,target=/var/cache/buildkit \
+RUN --mount=type=ssh --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
     cargo install --path . --root . --bin kms-server
@@ -24,7 +24,7 @@ RUN --mount=type=ssh --mount=type=cache,target=/var/cache/buildkit \
 FROM debian:stable-slim as go-runtime
 WORKDIR /app/kms
 
-RUN --mount=type=cache,target=/var/cache/apt apt update && \
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
     apt install -y curl netcat-openbsd
 
 # We are going to need grpc-health-probe to check the health of the grpc server for docker-compose or future deployments
