@@ -7,7 +7,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{filter, Layer};
 
-pub const DEFAULT_SOFTWARE_CENTRAL_KEY_PATH: &str = "temp/default-software-keys.bin";
+pub const DEFAULT_SOFTWARE_CENTRAL_KEY_PATH: &str = "temp/";
 
 // URL format is without protocol e.g.: 0.0.0.0:50051
 #[tokio::main]

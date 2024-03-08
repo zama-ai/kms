@@ -63,6 +63,10 @@ pub struct CentralizedTestingKeys {
     pub server_keys: Vec<PublicSigKey>,
 }
 
+pub fn recover_bsk(sk: &tfhe::ClientKey) -> tfhe::ServerKey {
+    sk.generate_server_key()
+}
+
 pub fn recover_pk(ddec_sk: SecretKey) -> FhePublicKey {
     let hl_sk = recover_sk(ddec_sk);
     FhePublicKey::new(&hl_sk)

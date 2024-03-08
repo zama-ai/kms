@@ -25,7 +25,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo run --bin kms-gen /app/kms/temp/default-software-keys.bin
+    cargo run --bin kms-gen /app/kms/temp/
 
 # Second stage builds the runtime image.
 # This stage will be the final image
@@ -53,6 +53,8 @@ ENV PATH="$PATH:/app/kms/bin"
 # Copy the binaries from the base stage
 COPY --from=base /app/kms/bin/ /app/kms/bin/
 COPY --from=base /app/kms/temp/default-software-keys.bin /app/kms/temp/
+COPY --from=base /app/kms/temp/pks.bin /app/kms/temp/
+COPY --from=base /app/kms/temp/sks.bin /app/kms/temp/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
 
 CMD ["kms-server"]
