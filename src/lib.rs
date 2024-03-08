@@ -51,6 +51,11 @@ pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
     let fhe_sk = recover_sk(key_set.sk);
     let fhe_bsk = recover_bsk(&fhe_sk);
     let (server_pk, server_sk) = gen_sig_keys(&mut rng);
+
+    write_element(format!("{path}pks.bin"), &fhe_pk).unwrap();
+    write_element(format!("{path}sks.bin"), &fhe_bsk).unwrap();
+    write_element(format!("{path}cks.bin"), &fhe_sk).unwrap();
+
     let software_kms_keys = SoftwareKmsKeys {
         fhe_sk,
         sig_sk: server_sk,
@@ -61,8 +66,6 @@ pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
         &software_kms_keys,
     )
     .unwrap();
-    write_element(format!("{path}pks.bin"), &fhe_pk).unwrap();
-    write_element(format!("{path}sks.bin"), &fhe_bsk).unwrap();
 
     software_kms_keys
 }
