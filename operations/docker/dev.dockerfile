@@ -19,13 +19,10 @@ RUN git config --global url."https://${CONCRETE_ACTIONS_TOKEN}@github.com".inste
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path . --root . --bin kms-server
+    cargo install --path . --root . --bin kms-server --bin kms-gen
 
 # Generate the default software keys
-RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
-    CARGO_HOME=/var/cache/buildkit/cargo \
-    CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo run --bin kms-gen /app/kms/temp/
+RUN /app/kms/bin/kms-gen /app/kms/temp/
 
 # Second stage builds the runtime image.
 # This stage will be the final image

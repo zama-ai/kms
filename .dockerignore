@@ -32,3 +32,5 @@
 **/values.dev.yaml
 LICENSE
 README.md
+target/**
+temp/**

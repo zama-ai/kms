@@ -24,7 +24,6 @@ jobs:
     secrets:
       CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
 
-
   done:
     runs-on: ubuntu-latest
     name: Pipeline Done
