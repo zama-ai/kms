@@ -45,6 +45,8 @@ RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 FROM debian:stable-slim as runtime
 WORKDIR /app/kms
 
+RUN mkdir -p /app/kms/parameters
+
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="$PATH:/app/kms/bin"
 # Copy the binaries from the base stage
@@ -53,6 +55,7 @@ COPY --from=base /app/kms/temp/default-software-keys.bin /app/kms/temp/
 COPY --from=base /app/kms/temp/pks.bin /app/kms/temp/
 COPY --from=base /app/kms/temp/sks.bin /app/kms/temp/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
+COPY ./parameters/default_params.json /app/kms/parameters/
 
 CMD ["kms-server"]
 
