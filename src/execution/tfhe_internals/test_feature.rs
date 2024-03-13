@@ -139,6 +139,7 @@ pub async fn initialize_key_material(
 ) -> anyhow::Result<(
     PrivateKeySet,
     SwitchAndSquashKey,
+    Option<tfhe::CompactPublicKey>,
     Option<PRSSSetup<ResiduePoly128>>,
 )> {
     let prss_setup = Some(
@@ -226,8 +227,9 @@ pub async fn initialize_key_material(
 
         key_shares128.push(Share::new(own_role, share));
     }
+    let compact_pubkey = keyset.as_ref().map(|set| set.public_key.clone());
 
-    let transferred_pk = transfer_sns_key::<ResiduePoly128>(
+    let transferred_sns_key = transfer_sns_key::<ResiduePoly128>(
         &session.to_base_session(),
         keyset.map(|set| set.conversion_key),
         &own_role,
@@ -248,7 +250,7 @@ pub async fn initialize_key_material(
         parameters: params.ciphertext_parameters,
     };
 
-    Ok((shared_sk, transferred_pk, prss_setup))
+    Ok((shared_sk, transferred_sns_key, compact_pubkey, prss_setup))
 }
 
 pub async fn transfer_sns_key<Z: Ring>(

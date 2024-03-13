@@ -47,6 +47,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tfhe::CompactPublicKey;
 use tracing::instrument;
 
 ///Used to store results of decryption
@@ -87,6 +88,7 @@ type CrsStore = DashMap<SessionId, Arc<AsyncCell<(PublicParameter, Duration)>>>;
 struct GrpcDataStores {
     init_store: Arc<InitStore>,
     sns_key_store: Arc<Mutex<Option<SwitchAndSquashKey>>>,
+    pubkey_store: Arc<Mutex<Option<CompactPublicKey>>>,
     crs_store: Arc<CrsStore>,
     init_epoch_id: AsyncCell<SessionId>,
     crs_epoch_id: AsyncCell<SessionId>,
@@ -549,13 +551,14 @@ impl Choreography for GrpcChoreography {
                 })?;
 
                 let init_store = Arc::clone(&self.data.init_store);
-                let pks = Arc::clone(&self.data.sns_key_store);
+                let sns_keys = Arc::clone(&self.data.sns_key_store);
+                let pks = Arc::clone(&self.data.pubkey_store);
 
                 tokio::spawn(async move {
                     let mut session = SmallSession::new_and_init_prss_state(base_session)
                         .await
                         .unwrap();
-                    let (sk, pk, prss_setup) =
+                    let (sk, sns_key, compact_pk, prss_setup) =
                         local_initialize_key_material(&mut session, dkg_params)
                             .await
                             .unwrap();
@@ -577,7 +580,8 @@ impl Choreography for GrpcChoreography {
                         .expect("Epoch key store disappeared unexpectedly");
 
                     // store the public key
-                    *pks.lock().unwrap() = Some(pk);
+                    *pks.lock().unwrap() = compact_pk;
+                    *sns_keys.lock().unwrap() = Some(sns_key);
                     tracing::debug!("Key material stored.");
                 });
 
@@ -612,7 +616,7 @@ impl Choreography for GrpcChoreography {
         // make sure that key was generated completely
         comp.get().await;
 
-        let pks = Arc::clone(&self.data.sns_key_store);
+        let pks = Arc::clone(&self.data.pubkey_store);
         let pkl = pks.lock().unwrap().clone().ok_or_else(|| {
             tonic::Status::new(
                 tonic::Code::Aborted,
@@ -770,6 +774,7 @@ async fn local_initialize_key_material(
 ) -> anyhow::Result<(
     PrivateKeySet,
     SwitchAndSquashKey,
+    Option<tfhe::CompactPublicKey>,
     Option<PRSSSetup<ResiduePoly128>>,
 )> {
     crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params).await
@@ -782,6 +787,7 @@ async fn local_initialize_key_material(
 ) -> anyhow::Result<(
     PrivateKeySet,
     SwitchAndSquashKey,
+    Option<tfhe::CompactPublicKey>,
     Option<PRSSSetup<ResiduePoly128>>,
 )> {
     todo!()
