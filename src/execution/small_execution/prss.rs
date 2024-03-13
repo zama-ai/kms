@@ -1,12 +1,12 @@
 use super::{
     agree_random::AgreeRandom,
-    prf::{ChiAes, PRSSConversions, PsiAes},
+    prf::{ChiAes, PRSSConversions, PrfKey, PsiAes},
 };
 use crate::{
     algebra::{
         bivariate::{compute_powers_list, MatrixMul},
         poly::Poly,
-        structure_traits::Ring,
+        structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
     },
     commitment::KEY_BYTE_LEN,
     computation::SessionId,
@@ -19,10 +19,7 @@ use crate::{
             party::Role,
             session::{BaseSessionHandles, ParameterHandles, SmallSessionHandles},
         },
-        sharing::{
-            open::robust_opens_to_all,
-            shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed},
-        },
+        sharing::open::robust_opens_to_all,
         small_execution::prf::{chi, phi, psi, PhiAes},
     },
     networking::value::BroadcastValue,
@@ -31,7 +28,6 @@ use anyhow::Context;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
-use serde::{Deserialize, Serialize};
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
 use std::default::Default;
@@ -87,10 +83,6 @@ pub struct PRSSState<Z: Default + Clone> {
     /// PRSSSetup
     prss_setup: PRSSSetup<Z>,
 }
-
-/// key for blake3
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
-pub struct PrfKey(pub [u8; 16]);
 
 /// computes the points on the polys f_A for all parties in the given sets A
 /// f_A is one at 0, and zero at the party indices not in set A

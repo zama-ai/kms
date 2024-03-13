@@ -1,7 +1,10 @@
 #[cfg(any(test, feature = "testing"))]
 use crate::algebra::structure_traits::Ring;
 #[cfg(any(test, feature = "testing"))]
+use crate::algebra::structure_traits::{HenselLiftInverse, RingEmbed};
+#[cfg(any(test, feature = "testing"))]
 use crate::computation::SessionId;
+use crate::execution::config::BatchParams;
 use crate::execution::large_execution::offline::LargePreprocessing;
 use crate::execution::online::preprocessing::create_memory_factory;
 use crate::execution::online::preprocessing::BitDecPreprocessing;
@@ -9,8 +12,6 @@ use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::session::ToBaseSession;
 use crate::execution::runtime::session::{DecryptionMode, SmallSession64};
-#[cfg(any(test, feature = "testing"))]
-use crate::execution::sharing::shamir::{HenselLiftInverse, RingEmbed};
 use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
@@ -30,9 +31,6 @@ use crate::execution::{
 use crate::lwe::combine128;
 use crate::lwe::ConversionKey;
 use crate::{
-    algebra::residue_poly::ResiduePoly, execution::config::BatchParams, lwe::ThresholdLWEParameters,
-};
-use crate::{
     algebra::{
         base_ring::{Z128, Z64},
         residue_poly::ResiduePoly128,
@@ -45,10 +43,7 @@ use crate::{
         large_execution::offline::{RealLargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
         runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
     },
-    lwe::{
-        from_expanded_msg, Ciphertext128, Ciphertext128Block, Ciphertext64, Ciphertext64Block,
-        SecretKeyShare,
-    },
+    lwe::{Ciphertext128, Ciphertext128Block, Ciphertext64, Ciphertext64Block, SecretKeyShare},
 };
 #[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
@@ -67,6 +62,8 @@ use tfhe::integer::IntegerCiphertext;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
 use tracing::instrument;
+
+use super::reconstruct::reconstruct_message;
 
 #[enum_dispatch]
 #[allow(clippy::large_enum_variant)]
@@ -557,31 +554,6 @@ async fn open_masked_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 ) -> anyhow::Result<Vec<Z128>> {
     let openeds = robust_opens_to_all(session, &res, session.threshold() as usize).await?;
     reconstruct_message(openeds, &keyshares.threshold_lwe_parameters)
-}
-
-/// Reconstructs a vector of plaintexts from raw, opened ciphertexts, by using the contant term of the `openeds`
-/// and mapping it down to the message space of a ciphertext block.
-pub fn reconstruct_message(
-    openeds: Option<Vec<ResiduePoly<Z128>>>,
-    params: &ThresholdLWEParameters,
-) -> anyhow::Result<Vec<Z128>> {
-    let total_mod_bits = params.output_cipher_parameters.total_block_bits() as usize;
-    // shift
-    let mut out = Vec::new();
-    match openeds {
-        Some(openeds) => {
-            for opened in openeds {
-                let v_scalar = opened.to_scalar()?;
-                out.push(from_expanded_msg(v_scalar.0, total_mod_bits));
-            }
-        }
-        _ => {
-            return Err(anyhow_error_and_log(
-                "Right shift not possible - no opened value".to_string(),
-            ))
-        }
-    };
-    Ok(out)
 }
 
 async fn open_bit_composed_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(

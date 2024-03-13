@@ -2,20 +2,15 @@ use super::{
     coinflip::Coinflip,
     constants::DISPUTE_STAT_SEC,
     local_single_share::{
-        compute_check_values, look_for_disputes, verify_sender_challenge, Derive,
-        MapsSharesChallenges,
+        compute_check_values, look_for_disputes, verify_sender_challenge, MapsSharesChallenges,
     },
     share_dispute::{ShareDispute, ShareDisputeOutputDouble},
 };
 use crate::execution::runtime::session::LargeSessionHandles;
 use crate::{
-    algebra::structure_traits::Ring,
+    algebra::structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
     error::error_handler::anyhow_error_and_log,
-    execution::{
-        communication::broadcast::broadcast_from_all_w_corruption,
-        runtime::party::Role,
-        sharing::shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed},
-    },
+    execution::{communication::broadcast::broadcast_from_all_w_corruption, runtime::party::Role},
     networking::value::BroadcastValue,
 };
 use async_trait::async_trait;
@@ -329,19 +324,16 @@ pub(crate) mod tests {
         },
     };
 
-    use crate::algebra::structure_traits::Ring;
-    use crate::execution::sharing::shamir::ErrorCorrect;
-    use crate::execution::sharing::shamir::RevealOp;
-    use crate::{
-        algebra::residue_poly::ResiduePoly128, execution::sharing::shamir::HenselLiftInverse,
+    use crate::algebra::residue_poly::{ResiduePoly128, ResiduePoly64};
+    use crate::algebra::structure_traits::{
+        Derive, ErrorCorrect, HenselLiftInverse, Ring, RingEmbed,
     };
-    use crate::{algebra::residue_poly::ResiduePoly64, execution::sharing::shamir::RingEmbed};
+    use crate::execution::sharing::shamir::RevealOp;
     use crate::{
         execution::{
             large_execution::{
                 coinflip::{Coinflip, RealCoinflip},
                 local_double_share::{LocalDoubleShare, RealLocalDoubleShare},
-                local_single_share::Derive,
                 share_dispute::{RealShareDispute, ShareDispute},
                 vss::RealVss,
             },

@@ -2,25 +2,14 @@ use super::{
     preprocessing::BasePreprocessing,
     triple::{mult_list, open_list},
 };
-use crate::{algebra::structure_traits::Ring, execution::sharing::shamir::RingEmbed};
 use crate::{
-    algebra::structure_traits::ZConsts,
-    execution::{
-        runtime::session::BaseSessionHandles,
-        sharing::{
-            shamir::{ErrorCorrect, HenselLiftInverse},
-            share::Share,
-        },
-    },
+    algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed, Solve},
+    execution::{runtime::session::BaseSessionHandles, sharing::share::Share},
 };
 use async_trait::async_trait;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use tracing::instrument;
-
-pub trait Solve: Sized + ZConsts {
-    fn solve(v: &Self) -> anyhow::Result<Self>;
-}
 
 #[async_trait]
 pub trait BitGenEven {

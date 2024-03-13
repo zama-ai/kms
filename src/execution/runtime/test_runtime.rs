@@ -5,12 +5,9 @@ use super::{
     },
 };
 use crate::{
-    algebra::structure_traits::Ring,
+    algebra::structure_traits::{HenselLiftInverse, Ring, RingEmbed},
     computation::SessionId,
-    execution::{
-        sharing::shamir::{HenselLiftInverse, RingEmbed},
-        small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
-    },
+    execution::small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
     lwe::{ConversionKey, SecretKeyShare},
     networking::local::{LocalNetworking, LocalNetworkingProducer},
 };

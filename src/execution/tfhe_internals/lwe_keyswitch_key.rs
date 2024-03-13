@@ -11,9 +11,8 @@ use tfhe::{
     },
 };
 
-use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::{
-    algebra::structure_traits::BaseRing,
+    algebra::structure_traits::{BaseRing, ErrorCorrect},
     error::error_handler::anyhow_error_and_log,
     execution::{
         online::triple::open_list, runtime::session::BaseSessionHandles, sharing::share::Share,

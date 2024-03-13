@@ -163,14 +163,14 @@ pub mod tests {
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
     use crate::{
-        algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
+        algebra::{
+            residue_poly::ResiduePoly,
+            structure_traits::{BaseRing, ErrorCorrect},
+        },
         execution::{
             endpoints::keygen::PrivateKeySet,
             runtime::party::Role,
-            sharing::{
-                shamir::{ErrorCorrect, ShamirSharings},
-                share::Share,
-            },
+            sharing::{shamir::ShamirSharings, share::Share},
         },
     };
 

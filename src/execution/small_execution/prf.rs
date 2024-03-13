@@ -1,18 +1,29 @@
 use crate::algebra::structure_traits::Ring;
+use crate::commitment::KEY_BYTE_LEN;
 use crate::computation::SessionId;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
-use crate::execution::small_execution::prss::PrfKey;
 use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
-
-use super::agree_random::xor_u8_arr_in_place;
+use serde::{Deserialize, Serialize};
 
 ///Trait required for PRSS executions
 pub trait PRSSConversions {
     fn from_u128_chunks(coefs: Vec<u128>) -> Self;
     fn from_i128(value: i128) -> Self;
+}
+
+/// key for blake3
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
+pub struct PrfKey(pub [u8; 16]);
+
+/// helper function that compute bit-wise xor of two byte arrays in place (overwriting the first argument `arr1`)
+/// TODO maybe not the best place for this function
+pub(crate) fn xor_u8_arr_in_place(arr1: &mut [u8; KEY_BYTE_LEN], arr2: &[u8; KEY_BYTE_LEN]) {
+    for i in 0..KEY_BYTE_LEN {
+        arr1[i] ^= arr2[i];
+    }
 }
 
 #[derive(Debug, Clone)]

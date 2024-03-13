@@ -10,7 +10,7 @@ use crate::execution::{runtime::party::Role, small_execution::prss::PartySet};
 use crate::lwe::PubConKeyPair;
 use crate::{
     commitment::{Commitment, Opening},
-    execution::small_execution::prss::PrfKey,
+    execution::small_execution::prf::PrfKey,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};

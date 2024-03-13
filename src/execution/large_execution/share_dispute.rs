@@ -1,10 +1,12 @@
 use crate::{
-    algebra::{poly::Poly, structure_traits::Ring},
+    algebra::{
+        poly::Poly,
+        structure_traits::{HenselLiftInverse, Ring, RingEmbed},
+    },
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::p2p::{receive_from_parties_w_dispute, send_to_parties_w_dispute},
         runtime::{party::Role, session::LargeSessionHandles},
-        sharing::shamir::{HenselLiftInverse, RingEmbed},
     },
     networking::value::NetworkValue,
 };
@@ -428,15 +430,12 @@ pub(crate) mod tests {
         compute_puncture_idx, evaluate_w_zero_roots, send_and_receive_share_dispute_double,
         send_and_receive_share_dispute_single, share_secrets,
     };
-    use crate::execution::sharing::shamir::ErrorCorrect;
-    use crate::execution::sharing::shamir::HenselLiftInverse;
     use crate::execution::sharing::shamir::RevealOp;
-    use crate::execution::sharing::shamir::RingEmbed;
     use crate::{
         algebra::{
             poly::Poly,
             residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
-            structure_traits::{Ring, Zero},
+            structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed, Zero},
         },
         execution::{
             communication::p2p::send_to_parties_w_dispute,

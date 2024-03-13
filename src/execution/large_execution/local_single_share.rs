@@ -4,14 +4,13 @@ use super::{
     share_dispute::{ShareDispute, ShareDisputeOutput},
 };
 use crate::{
-    algebra::structure_traits::Ring,
+    algebra::structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::broadcast_from_all_w_corruption,
-        runtime::party::Role,
-        runtime::session::LargeSessionHandles,
+        runtime::{party::Role, session::LargeSessionHandles},
         sharing::{
-            shamir::{ErrorCorrect, HenselLiftInverse, RevealOp, RingEmbed, ShamirSharings},
+            shamir::{RevealOp, ShamirSharings},
             share::Share,
         },
     },
@@ -22,16 +21,6 @@ use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
-
-///Trait required to execute local and double single share, need to be able to derive many values from ones (by hashing)
-pub trait Derive: Sized {
-    fn derive_challenges_from_coinflip(
-        x: &Self,
-        g: usize,
-        l: usize,
-        roles: &[Role],
-    ) -> HashMap<Role, Vec<Self>>;
-}
 
 #[async_trait]
 pub trait LocalSingleShare: Send + Sync + Default + Clone {
@@ -373,6 +362,7 @@ pub(crate) mod tests {
     };
     use crate::algebra::residue_poly::ResiduePoly128;
     use crate::algebra::residue_poly::ResiduePoly64;
+    use crate::algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, RingEmbed};
     #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::{
         coinflip::tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
@@ -384,10 +374,7 @@ pub(crate) mod tests {
             Vss,
         },
     };
-    use crate::execution::sharing::shamir::ErrorCorrect;
-    use crate::execution::sharing::shamir::HenselLiftInverse;
     use crate::execution::sharing::shamir::RevealOp;
-    use crate::execution::sharing::shamir::RingEmbed;
     use crate::{
         execution::{
             large_execution::{

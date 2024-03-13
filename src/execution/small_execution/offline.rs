@@ -10,9 +10,9 @@ use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{
     BasePreprocessing, RandomPreprocessing, TriplePreprocessing,
 };
-use crate::execution::sharing::shamir::{ErrorCorrect, HenselLiftInverse, RevealOp, RingEmbed};
+use crate::execution::sharing::shamir::RevealOp;
 use crate::{
-    algebra::structure_traits::Ring,
+    algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
     execution::{
         communication::broadcast::broadcast_from_all_w_corruption,
         online::triple::Triple,
@@ -402,9 +402,8 @@ impl<Z: Ring, A: AgreeRandom + Send + Sync> BasePreprocessing<Z> for SmallPrepro
 mod test {
     use std::{collections::HashMap, num::Wrapping};
 
-    use crate::algebra::structure_traits::Ring;
+    use crate::algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed};
     use crate::execution::online::preprocessing::dummy::reconstruct;
-    use crate::execution::sharing::shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed};
     use crate::{
         algebra::{
             residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},

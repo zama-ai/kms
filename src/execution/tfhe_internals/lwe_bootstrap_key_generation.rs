@@ -6,9 +6,11 @@ use tfhe::{
     shortint::parameters::{DecompositionBaseLog, DecompositionLevelCount},
 };
 
-use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::{
-    algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
+    algebra::{
+        residue_poly::ResiduePoly,
+        structure_traits::{BaseRing, ErrorCorrect},
+    },
     error::error_handler::anyhow_error_and_log,
     execution::{online::preprocessing::TriplePreprocessing, runtime::session::BaseSessionHandles},
 };

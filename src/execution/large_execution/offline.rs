@@ -3,9 +3,8 @@ use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{
     BasePreprocessing, RandomPreprocessing, TriplePreprocessing,
 };
-use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::{
-    algebra::structure_traits::Ring,
+    algebra::structure_traits::{ErrorCorrect, Ring},
     error::error_handler::anyhow_error_and_log,
     execution::{
         online::triple::Triple,
@@ -208,13 +207,11 @@ pub type RealLargePreprocessing<Z> =
 mod tests {
 
     use super::{TrueDoubleSharing, TrueSingleSharing};
+    use crate::algebra::structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, RingEmbed};
     use crate::execution::config::BatchParams;
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
-    use crate::execution::sharing::shamir::ErrorCorrect;
-    use crate::execution::sharing::shamir::HenselLiftInverse;
     use crate::execution::sharing::shamir::RevealOp;
-    use crate::execution::sharing::shamir::RingEmbed;
     use crate::{
         algebra::{
             residue_poly::{ResiduePoly128, ResiduePoly64},
@@ -231,7 +228,6 @@ mod tests {
                     tests::{MaliciousReceiverLocalDoubleShare, MaliciousSenderLocalDoubleShare},
                     LocalDoubleShare, RealLocalDoubleShare,
                 },
-                local_single_share::Derive,
                 local_single_share::{
                     tests::{MaliciousReceiverLocalSingleShare, MaliciousSenderLocalSingleShare},
                     LocalSingleShare, RealLocalSingleShare,

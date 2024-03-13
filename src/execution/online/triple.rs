@@ -1,9 +1,9 @@
 use crate::{
-    algebra::structure_traits::Ring,
+    algebra::structure_traits::{ErrorCorrect, Ring},
     error::error_handler::anyhow_error_and_log,
     execution::{
         runtime::session::BaseSessionHandles,
-        sharing::{open::robust_opens_to_all, shamir::ErrorCorrect, share::Share},
+        sharing::{open::robust_opens_to_all, share::Share},
     },
 };
 use anyhow::Context;

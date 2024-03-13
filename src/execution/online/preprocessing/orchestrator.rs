@@ -13,18 +13,20 @@ use tokio::{runtime::Handle, task::JoinSet};
 use tracing::{instrument, Instrument};
 
 use crate::{
-    algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
+    algebra::{
+        residue_poly::{ResiduePoly128, ResiduePoly64},
+        structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, RingEmbed, Solve},
+    },
     computation::SessionId,
     error::error_handler::anyhow_error_and_log,
     execution::{
         config::BatchParams,
         large_execution::{
-            local_single_share::Derive,
             offline::{LargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
             vss::RealVss,
         },
         online::{
-            gen_bits::{BitGenEven, RealBitGenEven, Solve},
+            gen_bits::{BitGenEven, RealBitGenEven},
             preprocessing::{
                 BasePreprocessing, BitPreprocessing, DKGPreprocessing, PreprocessorFactory,
             },
@@ -34,10 +36,7 @@ use crate::{
             BaseSessionHandles, LargeSession, ParameterHandles, SmallSession, SmallSessionHandles,
             ToBaseSession,
         },
-        sharing::{
-            shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed},
-            share::Share,
-        },
+        sharing::share::Share,
         small_execution::{
             agree_random::RealAgreeRandom, offline::SmallPreprocessing, prf::PRSSConversions,
             prss::PRSSSetup,

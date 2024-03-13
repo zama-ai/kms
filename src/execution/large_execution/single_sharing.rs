@@ -1,14 +1,11 @@
-use super::local_single_share::{Derive, LocalSingleShare};
+use super::local_single_share::LocalSingleShare;
 use crate::{
     algebra::{
         bivariate::{compute_powers, MatrixMul},
-        structure_traits::Ring,
+        structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
     },
     error::error_handler::anyhow_error_and_log,
-    execution::{
-        runtime::{party::Role, session::LargeSessionHandles},
-        sharing::shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed},
-    },
+    execution::runtime::{party::Role, session::LargeSessionHandles},
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -146,16 +143,16 @@ fn compute_next_batch<Z: Ring>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{init_vdm, RealSingleSharing};
-    use crate::execution::sharing::shamir::{ErrorCorrect, HenselLiftInverse, RevealOp, RingEmbed};
+    use crate::execution::sharing::shamir::RevealOp;
     use crate::{
         algebra::{
             residue_poly::ResiduePoly,
-            structure_traits::{Ring, Sample},
+            structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, Ring, RingEmbed, Sample},
         },
         execution::{
             large_execution::{
                 coinflip::RealCoinflip,
-                local_single_share::{Derive, LocalSingleShare, RealLocalSingleShare},
+                local_single_share::{LocalSingleShare, RealLocalSingleShare},
                 share_dispute::RealShareDispute,
                 single_sharing::SingleSharing,
                 vss::RealVss,

@@ -1,7 +1,12 @@
 use super::poly::Poly;
+use crate::{
+    algebra::error_correction::MemoizedExceptionals,
+    execution::{runtime::party::Role, sharing::shamir::ShamirSharings},
+};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fmt::Display,
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
@@ -81,4 +86,46 @@ where
 
     /// computes the multiplicative inverse of the field element
     fn invert(&self) -> Self;
+}
+
+///Trait required to be able to reconstruct a shamir sharing
+pub trait Syndrome: Ring {
+    fn syndrome_decode(
+        syndrome_poly: Poly<Self>,
+        parties: &[Role],
+        threshold: usize,
+    ) -> anyhow::Result<Vec<Self>>;
+    fn syndrome_compute(
+        sharing: &ShamirSharings<Self>,
+        threshold: usize,
+    ) -> anyhow::Result<Poly<Self>>;
+}
+
+pub trait HenselLiftInverse: Sized {
+    fn invert(self) -> anyhow::Result<Self>;
+}
+
+pub trait RingEmbed: Sized {
+    fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self>;
+}
+
+pub trait ErrorCorrect: Ring + MemoizedExceptionals {
+    fn error_correct(
+        sharing: &ShamirSharings<Self>,
+        threshold: usize,
+        max_correctable_errs: usize,
+    ) -> anyhow::Result<Poly<Self>>;
+}
+
+pub trait Derive: Sized {
+    fn derive_challenges_from_coinflip(
+        x: &Self,
+        g: usize,
+        l: usize,
+        roles: &[Role],
+    ) -> HashMap<Role, Vec<Self>>;
+}
+
+pub trait Solve: Sized + ZConsts {
+    fn solve(v: &Self) -> anyhow::Result<Self>;
 }

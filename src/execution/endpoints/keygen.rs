@@ -1,5 +1,6 @@
 use std::{num::Wrapping, sync::Arc};
 
+use crate::algebra::structure_traits::ErrorCorrect;
 use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
 use crate::{
     algebra::{
@@ -17,7 +18,7 @@ use crate::{
                 SmallSession, SmallSessionStruct, ToBaseSession,
             },
         },
-        sharing::{input::robust_input, shamir::ErrorCorrect},
+        sharing::input::robust_input,
         small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
         tfhe_internals::{
             glwe_key::GlweSecretKeyShare,
@@ -680,7 +681,7 @@ pub mod tests {
         algebra::{
             base_ring::Z128,
             residue_poly::{ResiduePoly, ResiduePoly128},
-            structure_traits::BaseRing,
+            structure_traits::{BaseRing, ErrorCorrect},
         },
         execution::{
             config::BatchParams,
@@ -688,7 +689,6 @@ pub mod tests {
             runtime::session::{
                 LargeSession, ParameterHandles, SmallSession, SmallSessionHandles, ToBaseSession,
             },
-            sharing::shamir::ErrorCorrect,
             small_execution::{
                 agree_random::DummyAgreeRandom, offline::SmallPreprocessing, prss::PRSSSetup,
             },

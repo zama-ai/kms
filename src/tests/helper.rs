@@ -4,7 +4,7 @@
 /// TODO(Dragos) Investigate this afterwards.
 pub mod tests_and_benches {
 
-    use crate::algebra::structure_traits::Ring;
+    use crate::algebra::structure_traits::{ErrorCorrect, Ring};
     use aes_prng::AesRng;
     use futures::Future;
     use rand::SeedableRng;
@@ -12,12 +12,9 @@ pub mod tests_and_benches {
 
     use crate::{
         computation::SessionId,
-        execution::{
-            runtime::{
-                session::{BaseSessionHandles, LargeSession, SmallSession},
-                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
-            },
-            sharing::shamir::ErrorCorrect,
+        execution::runtime::{
+            session::{BaseSessionHandles, LargeSession, SmallSession},
+            test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         },
         networking::Networking,
     };

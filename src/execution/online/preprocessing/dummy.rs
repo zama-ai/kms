@@ -1,6 +1,8 @@
 use super::BitPreprocessing;
 use super::DKGPreprocessing;
 use super::NoiseBounds;
+use crate::algebra::structure_traits::ErrorCorrect;
+use crate::algebra::structure_traits::RingEmbed;
 use crate::execution::online::preprocessing::BasePreprocessing;
 use crate::execution::online::preprocessing::RandomPreprocessing;
 use crate::execution::online::preprocessing::TriplePreprocessing;
@@ -9,9 +11,7 @@ use crate::execution::online::secret_distributions::SecretDistributions;
 use crate::execution::online::triple::Triple;
 use crate::execution::runtime::session::BaseSession;
 use crate::execution::runtime::session::SmallSession;
-use crate::execution::sharing::shamir::ErrorCorrect;
 use crate::execution::sharing::shamir::RevealOp;
-use crate::execution::sharing::shamir::RingEmbed;
 use crate::execution::sharing::shamir::ShamirSharings;
 use crate::execution::tfhe_internals::parameters::DKGParams;
 use crate::{

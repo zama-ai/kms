@@ -1,14 +1,11 @@
 use super::{
     gf256::GF256,
     residue_poly::F_DEG,
-    structure_traits::{Field, One, Ring, Sample, Zero},
+    structure_traits::{Field, HenselLiftInverse, One, Ring, RingEmbed, Sample, Zero},
 };
+use crate::algebra::residue_poly::LutMulReduction;
 use crate::algebra::residue_poly::ResiduePoly;
 use crate::error::error_handler::anyhow_error_and_log;
-use crate::{
-    algebra::residue_poly::LutMulReduction,
-    execution::sharing::shamir::{HenselLiftInverse, RingEmbed},
-};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Div, Mul, Sub, SubAssign};

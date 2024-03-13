@@ -2,17 +2,14 @@ use super::{
     bivariate::compute_powers,
     gf256::{error_correction, ShamirZ2Sharing, GF256},
     poly::Poly,
-    structure_traits::{BaseRing, Zero},
+    residue_poly::ResiduePoly,
+    structure_traits::{BaseRing, ErrorCorrect, RingEmbed, Zero},
 };
 use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
+use crate::algebra::{poly::BitwisePoly, residue_poly::F_DEG};
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::sharing::shamir::ShamirSharings;
-use crate::{algebra::residue_poly::ResiduePoly, execution::sharing::shamir::RingEmbed};
-use crate::{
-    algebra::{poly::BitwisePoly, residue_poly::F_DEG},
-    execution::sharing::shamir::ErrorCorrect,
-};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::RwLock;

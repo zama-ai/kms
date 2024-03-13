@@ -1,11 +1,10 @@
+use crate::algebra::base_ring::Z128;
 use crate::algebra::residue_poly::ResiduePoly;
 use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
-use crate::algebra::structure_traits::BaseRing;
-use crate::algebra::structure_traits::Zero;
+use crate::algebra::structure_traits::{BaseRing, RingEmbed, Zero};
 use crate::execution::random::secret_rng_from_seed;
 use crate::execution::random::seed_from_rng;
-use crate::{algebra::base_ring::Z128, execution::sharing::shamir::RingEmbed};
 use crate::{algebra::poly::Poly, error::error_handler::anyhow_error_and_log};
 use aligned_vec::ABox;
 use core::fmt;

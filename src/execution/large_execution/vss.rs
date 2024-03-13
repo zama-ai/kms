@@ -10,13 +10,12 @@ use crate::{
     algebra::{
         bivariate::{BivariateEval, BivariatePoly},
         poly::Poly,
-        structure_traits::Ring,
+        structure_traits::{Ring, RingEmbed},
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::{broadcast::generic_receive_from_all, p2p::send_to_honest_parties},
         runtime::{party::Role, session::BaseSessionHandles},
-        sharing::shamir::RingEmbed,
     },
     networking::value::{BroadcastValue, NetworkValue},
 };
@@ -879,10 +878,11 @@ pub(crate) mod tests {
     use crate::algebra::bivariate::{BivariateEval, BivariatePoly};
     use crate::algebra::residue_poly::ResiduePoly;
     use crate::algebra::residue_poly::{ResiduePoly128, ResiduePoly64};
+    use crate::algebra::structure_traits::ErrorCorrect;
     use crate::computation::SessionId;
     use crate::execution::runtime::session::SmallSession;
+    use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::sharing::shamir::ShamirSharings;
-    use crate::execution::sharing::shamir::{ErrorCorrect, RevealOp};
     use crate::execution::sharing::share::Share;
     use crate::execution::{
         runtime::party::Identity, runtime::test_runtime::DistributedTestRuntime,

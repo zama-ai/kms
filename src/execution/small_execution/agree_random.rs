@@ -15,7 +15,10 @@ use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 
-use super::prss::{create_sets, PrfKey};
+use super::{
+    prf::{xor_u8_arr_in_place, PrfKey},
+    prss::create_sets,
+};
 
 #[async_trait]
 pub trait AgreeRandom {
@@ -405,13 +408,6 @@ impl AgreeRandom for DummyAgreeRandom {
     }
 }
 
-/// helper function that compute bit-wise xor of two byte arrays in place (overwriting the first argument `arr1`)
-pub(crate) fn xor_u8_arr_in_place(arr1: &mut [u8; KEY_BYTE_LEN], arr2: &[u8; KEY_BYTE_LEN]) {
-    for i in 0..KEY_BYTE_LEN {
-        arr1[i] ^= arr2[i];
-    }
-}
-
 /// helper function returns the all the subsets of party IDs of size n-t of which the given party is a member
 fn compute_party_sets(my_role: Role, parties: usize, threshold: usize) -> Vec<Vec<usize>> {
     let party_id = my_role.one_based();
@@ -424,28 +420,32 @@ fn compute_party_sets(my_role: Role, parties: usize, threshold: usize) -> Vec<Ve
 #[cfg(test)]
 mod tests {
     use super::{
-        check_and_unpack_coms, check_rcv_len, verify_and_xor_keys, xor_u8_arr_in_place,
-        AgreeRandom, DummyAgreeRandom, RealAgreeRandom, RealAgreeRandomWithAbort,
+        check_and_unpack_coms, check_rcv_len, verify_and_xor_keys, AgreeRandom, DummyAgreeRandom,
+        RealAgreeRandom, RealAgreeRandomWithAbort,
     };
     use crate::{
         algebra::residue_poly::ResiduePoly128,
         commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN},
         computation::SessionId,
         execution::{
-            runtime::party::Role,
-            runtime::session::{ParameterHandles, SmallSession},
-            runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+            runtime::{
+                party::Role,
+                session::{ParameterHandles, SmallSession},
+                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+            },
             small_execution::{
                 agree_random::{
                     check_and_unpack_keys, check_and_unpack_keys_openings, compute_party_sets,
                     verify_keys_equal,
                 },
-                prss::{create_sets, PrfKey},
+                prf::{xor_u8_arr_in_place, PrfKey},
+                prss::create_sets,
             },
         },
         networking::value::{AgreeRandomValue, NetworkValue},
-        tests::helper::tests::get_small_session_for_parties,
-        tests::helper::tests_and_benches::execute_protocol_small,
+        tests::helper::{
+            tests::get_small_session_for_parties, tests_and_benches::execute_protocol_small,
+        },
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;

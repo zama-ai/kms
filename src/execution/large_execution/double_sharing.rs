@@ -1,15 +1,14 @@
 use super::{
     local_double_share::{DoubleShares, LocalDoubleShare},
-    local_single_share::Derive,
     single_sharing::init_vdm,
 };
 use crate::{
-    algebra::{bivariate::MatrixMul, structure_traits::Ring},
-    error::error_handler::anyhow_error_and_log,
-    execution::{
-        runtime::{party::Role, session::LargeSessionHandles},
-        sharing::shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed},
+    algebra::{
+        bivariate::MatrixMul,
+        structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
     },
+    error::error_handler::anyhow_error_and_log,
+    execution::runtime::{party::Role, session::LargeSessionHandles},
 };
 use async_trait::async_trait;
 use itertools::Itertools;
@@ -158,11 +157,11 @@ pub(crate) mod tests {
 
     use crate::algebra::residue_poly::ResiduePoly128;
     use crate::algebra::residue_poly::ResiduePoly64;
-    use crate::execution::sharing::shamir::ErrorCorrect;
-
-    use crate::execution::sharing::shamir::HenselLiftInverse;
+    use crate::algebra::structure_traits::Derive;
+    use crate::algebra::structure_traits::ErrorCorrect;
+    use crate::algebra::structure_traits::HenselLiftInverse;
+    use crate::algebra::structure_traits::RingEmbed;
     use crate::execution::sharing::shamir::RevealOp;
-    use crate::execution::sharing::shamir::RingEmbed;
     use crate::{
         algebra::structure_traits::{Ring, Sample},
         execution::{
@@ -170,7 +169,6 @@ pub(crate) mod tests {
                 coinflip::RealCoinflip,
                 double_sharing::{DoubleShare, DoubleSharing, LocalDoubleShare, RealDoubleSharing},
                 local_double_share::RealLocalDoubleShare,
-                local_single_share::Derive,
                 share_dispute::RealShareDispute,
                 vss::RealVss,
             },

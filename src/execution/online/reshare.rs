@@ -2,7 +2,7 @@ use crate::{
     algebra::{
         poly::Poly,
         residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
-        structure_traits::BaseRing,
+        structure_traits::{BaseRing, ErrorCorrect, HenselLiftInverse, RingEmbed, Syndrome},
         syndrome::lagrange_numerators,
     },
     error::error_handler::anyhow_error_and_log,
@@ -12,7 +12,7 @@ use crate::{
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::{
             open::{robust_opens_to, robust_opens_to_all},
-            shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed, ShamirSharings, Syndrome},
+            shamir::ShamirSharings,
             share::Share,
         },
     },

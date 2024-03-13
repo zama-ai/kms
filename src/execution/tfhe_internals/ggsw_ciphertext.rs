@@ -15,13 +15,13 @@ use std::ops::Neg;
 use crate::{
     algebra::{
         residue_poly::ResiduePoly,
-        structure_traits::{BaseRing, Zero},
+        structure_traits::{BaseRing, ErrorCorrect, Zero},
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
         online::{preprocessing::TriplePreprocessing, triple::mult_list},
         runtime::session::BaseSessionHandles,
-        sharing::{shamir::ErrorCorrect, share::Share},
+        sharing::share::Share,
         tfhe_internals::utils::slice_wrapping_scalar_mul_assign,
     },
 };

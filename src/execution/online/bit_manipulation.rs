@@ -2,9 +2,7 @@ use rand::{CryptoRng, Rng};
 use std::marker::PhantomData;
 
 use crate::algebra::residue_poly::ResiduePoly;
-use crate::algebra::structure_traits::{BaseRing, BitExtract, ZConsts};
-use crate::execution::online::gen_bits::Solve;
-use crate::execution::sharing::shamir::ErrorCorrect;
+use crate::algebra::structure_traits::{BaseRing, BitExtract, ErrorCorrect, Solve, ZConsts};
 use crate::{
     algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log,
     execution::runtime::session::BaseSessionHandles,

@@ -4,14 +4,10 @@ use rand::SeedableRng;
 use rand::{CryptoRng, Rng};
 
 use super::vss::Vss;
-use crate::algebra::structure_traits::Ring;
-use crate::execution::sharing::shamir::RingEmbed;
+use crate::algebra::structure_traits::{ErrorCorrect, Ring, RingEmbed};
 use crate::{
     error::error_handler::anyhow_error_and_log,
-    execution::{
-        runtime::session::LargeSessionHandles,
-        sharing::{open::robust_open_to_all, shamir::ErrorCorrect},
-    },
+    execution::{runtime::session::LargeSessionHandles, sharing::open::robust_open_to_all},
 };
 
 #[async_trait]
@@ -86,6 +82,7 @@ impl<V: Vss> Coinflip for RealCoinflip<V> {
 pub(crate) mod tests {
 
     use super::{Coinflip, DummyCoinflip, RealCoinflip};
+    use crate::algebra::structure_traits::{ErrorCorrect, Ring, RingEmbed};
     #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::vss::tests::{
         DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
@@ -101,14 +98,13 @@ pub(crate) mod tests {
                 },
                 test_runtime::DistributedTestRuntime,
             },
-            sharing::{open::robust_open_to_all, shamir::ErrorCorrect},
+            sharing::open::robust_open_to_all,
         },
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, get_large_session_for_parties,
             TestingParameters,
         },
     };
-    use crate::{algebra::structure_traits::Ring, execution::sharing::shamir::RingEmbed};
     use aes_prng::AesRng;
     use anyhow::anyhow;
     use async_trait::async_trait;

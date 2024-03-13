@@ -2,26 +2,25 @@ use super::{
     bivariate::compute_powers_list,
     gf256::{ShamirZ2Poly, GF256},
     poly::Poly,
-    structure_traits::{BaseRing, FromU128, One, Ring, Sample, ZConsts, Zero},
+    structure_traits::{
+        BaseRing, Derive, FromU128, HenselLiftInverse, One, Ring, RingEmbed, Sample, Solve,
+        Syndrome, ZConsts, Zero,
+    },
     syndrome::lagrange_numerators,
 };
 use crate::algebra::structure_traits::Field;
+use crate::error::error_handler::anyhow_error_and_log;
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
         gf256::syndrome_decoding_z2,
     },
     execution::{
-        large_execution::local_single_share::Derive,
         runtime::party::Role,
-        sharing::{
-            shamir::{HenselLiftInverse, RingEmbed, ShamirSharings, Syndrome},
-            share::Share,
-        },
+        sharing::{shamir::ShamirSharings, share::Share},
         small_execution::prf::PRSSConversions,
     },
 };
-use crate::{error::error_handler::anyhow_error_and_log, execution::online::gen_bits::Solve};
 use itertools::Itertools;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -1033,7 +1032,7 @@ impl PRSSConversions for ResiduePoly64 {
 mod tests {
     use super::*;
     use crate::algebra::base_ring::{Z128, Z64};
-    use crate::execution::sharing::shamir::ErrorCorrect;
+    use crate::algebra::structure_traits::ErrorCorrect;
     use crate::execution::sharing::shamir::{InputOp, RevealOp};
     use aes_prng::AesRng;
     use itertools::Itertools;

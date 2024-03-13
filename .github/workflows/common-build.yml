@@ -38,7 +38,7 @@ jobs:
         if: ${{ inputs.runs-on != 'ubuntu-latest' }}
         run: echo "HOME=/home/ubuntu" >> ${GITHUB_ENV}
 
-      - name: Set up Rust.
+      - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
@@ -53,11 +53,17 @@ jobs:
       - name: Setup usage of private repo
         run: git config --global url."https://${{ secrets.CONCRETE_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
 
-      - name: Formatting.
+      - name: Formatting
         run: cargo fmt --all -- --check
 
-      - name: Linting.
+      - name: Linting
         run: cargo clippy --all-targets --all-features -- -D warnings --no-deps
 
       - name: Run Tests
         run: cargo test ${{ inputs.args_build }} --features tfhe/x86_64 --release
+      
+      - name: Install wasm-pack
+        run: wasm-pack --version > /dev/null 2>&1 || cargo install wasm-pack
+
+      - name: Build wasm
+        run: RUSTFLAGS="$RUSTFLAGS -A dead_code" wasm-pack build --target web . --no-default-features

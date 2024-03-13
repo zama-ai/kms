@@ -17,12 +17,13 @@ use tfhe::{
 };
 
 use crate::{
-    algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
+    algebra::{
+        residue_poly::ResiduePoly,
+        structure_traits::{BaseRing, ErrorCorrect},
+    },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        online::triple::open_list,
-        runtime::session::BaseSessionHandles,
-        sharing::{shamir::ErrorCorrect, share::Share},
+        online::triple::open_list, runtime::session::BaseSessionHandles, sharing::share::Share,
     },
 };
 

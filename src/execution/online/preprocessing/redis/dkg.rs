@@ -1,11 +1,11 @@
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::Ring,
+    algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed, Solve},
     error::error_handler::anyhow_error_and_log,
     execution::{
         online::{
-            gen_bits::{BitGenEven, RealBitGenEven, Solve},
+            gen_bits::{BitGenEven, RealBitGenEven},
             preprocessing::{
                 BasePreprocessing, BitPreprocessing, DKGPreprocessing, NoiseBounds,
                 RandomPreprocessing, TriplePreprocessing,
@@ -13,10 +13,7 @@ use crate::{
             secret_distributions::{RealSecretDistributions, SecretDistributions},
         },
         runtime::session::{BaseSession, ParameterHandles, SmallSession},
-        sharing::{
-            shamir::{ErrorCorrect, HenselLiftInverse, RingEmbed},
-            share::Share,
-        },
+        sharing::share::Share,
         small_execution::{prf::PRSSConversions, prss::PRSSState},
         tfhe_internals::parameters::DKGParams,
     },

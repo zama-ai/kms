@@ -4,10 +4,9 @@ use std::{collections::HashSet, sync::Arc};
 use tokio::{task::JoinSet, time::error::Elapsed};
 use tracing::instrument;
 
-use crate::execution::sharing::shamir::RevealOp;
 use crate::{
-    algebra::structure_traits::Ring,
-    error::error_handler::{anyhow_error_and_log, anyhow_error_and_warn_log},
+    algebra::structure_traits::{ErrorCorrect, Ring},
+    error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::{generic_receive_from_all, send_to_all},
         runtime::{
@@ -19,32 +18,9 @@ use crate::{
 };
 
 use super::{
-    shamir::{ErrorCorrect, ShamirSharings},
+    shamir::{fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings},
     share::Share,
 };
-
-/// Maps `values` into [ShamirSharings]s by appending these to `sharings`.
-/// Furthermore, ensure that at least `num_values` shares are added to `sharings`.
-/// The function is useful to ensure that an indexiable vector of Shamir shares exist.
-pub fn fill_indexed_shares<Z: Ring>(
-    sharings: &mut [ShamirSharings<Z>],
-    values: Vec<Z>,
-    num_values: usize,
-    party_id: Role,
-) -> anyhow::Result<()> {
-    let values_len = values.len();
-    values
-        .into_iter()
-        .zip(sharings.iter_mut())
-        .try_for_each(|(v, sharing)| sharing.add_share(Share::new(party_id, v)))?;
-
-    if values_len < num_values {
-        for sharing in sharings.iter_mut().skip(values_len) {
-            sharing.add_share(Share::new(party_id, Z::ZERO))?;
-        }
-    }
-    Ok(())
-}
 
 type JobResultType<Z> = (Role, anyhow::Result<Vec<Z>>);
 /// Helper function of robust reconstructions which collect the shares and tries to reconstruct
@@ -147,33 +123,6 @@ where
     Err(anyhow_error_and_log(
         "Could not reconstruct the sharing".to_string(),
     ))
-}
-
-/// Core algorithm for robust reconstructions which tries to reconstruct from a collection of shares
-/// Takes as input:
-/// - num_parties as number of parties
-/// - degree as the degree of the sharing (usually either t or 2t)
-/// - threshold as the threshold of maximum corruptions
-/// - indexed_shares as the indexed shares of the parties
-/// NOTE: When needed, inplement the async version
-pub fn reconstruct_w_errors_sync<Z>(
-    num_parties: usize,
-    degree: usize,
-    threshold: usize,
-    sharing: &ShamirSharings<Z>,
-) -> anyhow::Result<Option<Z>>
-where
-    Z: Ring + ErrorCorrect,
-    ShamirSharings<Z>: RevealOp<Z>,
-{
-    if degree + 2 * threshold < num_parties && sharing.shares.len() > degree + 2 * threshold {
-        let opened = sharing.err_reconstruct(degree, threshold)?;
-        return Ok(Some(opened));
-    } else if degree + 2 * threshold >= num_parties {
-        return Err(anyhow_error_and_warn_log(format!("Can NOT reconstruct with {} shares, degree {degree}, threshold {threshold} and num_parties {num_parties}", sharing.shares.len())));
-    }
-
-    Ok(None)
 }
 
 pub async fn robust_open_to_all<
