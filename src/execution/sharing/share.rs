@@ -1,15 +1,17 @@
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 use crate::{algebra::structure_traits::Ring, execution::runtime::party::Role};
 
 /// Generic structure for shares with non-interactive methods possible to carry out on shares.
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, Serialize, Deserialize, Zeroize)]
 pub struct Share<Z> {
     value: Z,
     owner: Role,
 }
+
 impl<Z: Ring> Share<Z> {
     /// Construct a new share based on the actual share and the owner.
     /// I.e. this is a non-interactive and should not be mistaken for an input phase in MPC.

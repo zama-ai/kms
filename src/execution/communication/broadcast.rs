@@ -618,7 +618,9 @@ mod tests {
     fn legitimate_broadcast<Z: Ring>(
         sender_parties: &[Role],
     ) -> (Vec<Identity>, Vec<BroadcastValue<Z>>, Vec<RoleValueMap<Z>>) {
-        let identities = generate_fixed_identities(4);
+        let num_parties = 4;
+        let identities = generate_fixed_identities(num_parties);
+        let session_id = SessionId(1);
 
         let input_values = vec![
             BroadcastValue::from(Z::ONE),
@@ -629,33 +631,22 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::<Z>::new(identities.clone(), threshold);
-        let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
 
         let mut set = JoinSet::new();
-
+        let test_runtime = DistributedTestRuntime::<Z>::new(identities.clone(), threshold);
         if identities.len() == sender_parties.len() {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
-                let num = party_no as u8;
-                let session = runtime
-                    .small_session_for_party(
-                        session_id,
-                        party_no,
-                        Some(AesRng::seed_from_u64(num.into())),
-                    )
-                    .unwrap();
+                let session = test_runtime.base_session_for_party(session_id, party_no, None);
                 set.spawn(
                     async move { broadcast_from_all(&session, Some(my_data)).await.unwrap() },
                 );
             }
         } else {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
-                let session = runtime
-                    .small_session_for_party(session_id, party_no, Some(AesRng::seed_from_u64(0)))
-                    .unwrap();
+                let session = test_runtime.base_session_for_party(session_id, party_no, None);
                 let sender_list = sender_parties.to_vec();
                 if sender_parties.contains(&Role::indexed_by_zero(party_no)) {
                     set.spawn(async move {
@@ -773,9 +764,11 @@ mod tests {
 
         let mut set = JoinSet::new();
         for (party_no, my_data) in input_values.iter().cloned().enumerate() {
-            let session = runtime
-                .small_session_for_party(session_id, party_no, Some(AesRng::seed_from_u64(0)))
-                .unwrap();
+            let session = runtime.small_session_for_party(
+                session_id,
+                party_no,
+                Some(AesRng::seed_from_u64(0)),
+            );
             if party_no != 0 {
                 set.spawn(
                     async move { broadcast_from_all(&session, Some(my_data)).await.unwrap() },
@@ -826,9 +819,7 @@ mod tests {
         let mut set = JoinSet::new();
         for (party_id, _) in runtime.identities.iter().enumerate() {
             if corrupt_role != Role::indexed_by_zero(party_id) {
-                let mut session = runtime
-                    .large_session_for_party(session_id, party_id)
-                    .unwrap();
+                let mut session = runtime.large_session_for_party(session_id, party_id);
                 let cur_msg = msg.clone();
 
                 set.spawn(async move {
@@ -1022,9 +1013,7 @@ mod tests {
         let mut set = JoinSet::new();
         let mut malicious_set = JoinSet::new();
         for party_id in 0..parties {
-            let mut session = runtime
-                .small_session_for_party(session_id, party_id, None)
-                .unwrap();
+            let mut session = runtime.small_session_for_party(session_id, party_id, None);
             let cur_msg = msg.clone();
             if party_id == 0 {
                 let cms = corrupt_msg.clone();
@@ -1215,9 +1204,7 @@ mod tests {
         let mut set = JoinSet::new();
         let mut malicious_set = JoinSet::new();
         for party_id in 0..parties {
-            let mut session = runtime
-                .small_session_for_party(session_id, party_id, None)
-                .unwrap();
+            let mut session = runtime.small_session_for_party(session_id, party_id, None);
             let cur_msg = msg.clone();
             if party_id == 0 {
                 let cms = corrupt_msg.clone();

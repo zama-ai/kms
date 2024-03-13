@@ -5,9 +5,10 @@ use crate::execution::large_execution::local_single_share::MapsSharesChallenges;
 use crate::execution::large_execution::vss::{
     ExchangedDataRound1, ValueOrPoly, VerificationValues,
 };
+#[cfg(any(test, feature = "testing"))]
+use crate::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use crate::execution::zk::ceremony;
 use crate::execution::{runtime::party::Role, small_execution::prss::PartySet};
-use crate::lwe::PubConKeyPair;
 use crate::{
     commitment::{Commitment, Opening},
     execution::small_execution::prf::PrfKey,
@@ -52,7 +53,8 @@ pub enum AgreeRandomValue {
 /// a value that is sent via network
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 pub enum NetworkValue<Z: Eq + Zero> {
-    PubKey(Box<PubConKeyPair>),
+    #[cfg(any(test, feature = "testing"))]
+    SwitchAndSquashKey(Box<SwitchAndSquashKey>),
     RingValue(Z),
     VecRingValue(Vec<Z>),
     VecPairRingValue(Vec<(Z, Z)>),
@@ -80,9 +82,11 @@ impl<Z: Ring> NetworkValue<Z> {
 mod tests {
     use crate::{
         algebra::base_ring::Z128,
-        execution::{constants::SMALL_TEST_KEY_PATH, runtime::party::Identity},
+        execution::{
+            constants::SMALL_TEST_KEY_PATH, runtime::party::Identity,
+            tfhe_internals::test_feature::KeySet,
+        },
         file_handling::read_element,
-        lwe::{KeySet, PubConKeyPair},
         networking::{local::LocalNetworkingProducer, Networking},
     };
 
@@ -91,8 +95,8 @@ mod tests {
     #[tokio::test]
     async fn test_box_sending() {
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
-        let pck = PubConKeyPair::new(keys);
-        let value = NetworkValue::<Z128>::PubKey(Box::new(pck.clone()));
+        let conversion_key = keys.conversion_key;
+        let value = NetworkValue::<Z128>::SwitchAndSquashKey(Box::new(conversion_key.clone()));
 
         let identities: Vec<Identity> = vec!["alice".into(), "bob".into()];
         let net_producer = LocalNetworkingProducer::from_ids(&identities);
@@ -103,10 +107,10 @@ mod tests {
         let task1 = tokio::spawn(async move {
             let recv = net_bob.receive(&"alice".into(), &123_u128.into()).await;
             let received_key = match NetworkValue::<Z128>::from_network(recv) {
-                Ok(NetworkValue::PubKey(key)) => key,
+                Ok(NetworkValue::SwitchAndSquashKey(key)) => key,
                 _ => panic!(),
             };
-            assert_eq!(*received_key, pck);
+            assert_eq!(*received_key, conversion_key);
         });
 
         let task2 = tokio::spawn(async move {

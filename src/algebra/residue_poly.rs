@@ -1,4 +1,5 @@
 use super::{
+    base_ring::ToZ64,
     bivariate::compute_powers_list,
     gf256::{ShamirZ2Poly, GF256},
     poly::Poly,
@@ -977,6 +978,16 @@ impl ResiduePoly64 {
             *coef = Wrapping(u64::from_le_bytes(coef_byte));
         }
         ResiduePoly { coefs }
+    }
+}
+
+impl ResiduePoly<Z128> {
+    pub fn to_residuepoly64(self) -> ResiduePoly64 {
+        let coefs = self.coefs;
+        let output_coefs = coefs.map(|coef| coef.to_z64());
+        ResiduePoly64 {
+            coefs: output_coefs,
+        }
     }
 }
 

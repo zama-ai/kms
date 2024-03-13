@@ -4,7 +4,6 @@ pub mod commitment;
 pub mod computation;
 pub mod execution;
 pub mod file_handling;
-pub mod lwe;
 #[cfg(feature = "non-wasm")]
 pub mod networking;
 #[cfg(any(test, feature = "testing"))]

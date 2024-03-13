@@ -21,10 +21,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         config::BatchParams,
-        large_execution::{
-            offline::{LargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
-            vss::RealVss,
-        },
+        large_execution::offline::{LargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
         online::{
             gen_bits::{BitGenEven, RealBitGenEven},
             preprocessing::{
@@ -33,13 +30,11 @@ use crate::{
             triple::Triple,
         },
         runtime::session::{
-            BaseSessionHandles, LargeSession, ParameterHandles, SmallSession, SmallSessionHandles,
-            ToBaseSession,
+            BaseSessionHandles, LargeSession, ParameterHandles, SmallSession, ToBaseSession,
         },
         sharing::share::Share,
         small_execution::{
             agree_random::RealAgreeRandom, offline::SmallPreprocessing, prf::PRSSConversions,
-            prss::PRSSSetup,
         },
         tfhe_internals::parameters::DKGParams,
     },
@@ -399,8 +394,6 @@ where
     ///- the type of preprocessing as a [`TypeOrchestration`]
     ///- the set of [`SmallSession`] dedicated to this preprocessing
     ///- a [`Handle`] to the tokio runtime
-    ///
-    ///This is where the [`PRSSSetup`] is performed (maybe not the best place thouhg)
     pub fn orchestrate_small_session_processing(
         &self,
         batch_size: usize,
@@ -414,28 +407,6 @@ where
             assert_eq!(party_id, session.own_identity());
         }
         println!("Entering orchestrator for  {}", party_id);
-
-        //let runtime_handle = tokio::runtime::Handle::current();
-
-        //May be easier to assume the session are PRSS Ready
-        let task_setup = |mut session: SmallSession<R>| async move {
-            let prss_setup = PRSSSetup::<R>::robust_init(&mut session, &RealVss::default()).await;
-            (session, prss_setup)
-        };
-        //First need to init the PRSS on all sessions
-        let session = sessions.pop().ok_or_else(|| {
-            anyhow_error_and_log("Error retrieving a session to initialize PRSS".to_string())
-        })?;
-        let prss_setup = runtime_handle.spawn(task_setup(session));
-
-        let (new_session, prss_setup) = runtime_handle.block_on(prss_setup)?;
-        let prss_setup = prss_setup?;
-        sessions.push(new_session);
-        for session in sessions.iter_mut() {
-            session.set_prss(Some(
-                prss_setup.new_prss_session_state(session.session_id()),
-            ));
-        }
 
         let task_basic_gen = |mut session: SmallSession<R>, span: tracing::Span| async move {
             let batch_size = match type_orchestration {
@@ -966,9 +937,7 @@ mod tests {
                     .iter()
                     .zip(0..num_sessions)
                     .map(|(runtime, session_id)| {
-                        runtime
-                            .large_session_for_party(SessionId(session_id), party_id)
-                            .unwrap()
+                        runtime.large_session_for_party(SessionId(session_id), party_id)
                     })
                     .collect_vec();
 
@@ -1147,9 +1116,7 @@ mod tests {
                     .iter()
                     .zip(0..num_sessions)
                     .map(|(runtime, session_id)| {
-                        runtime
-                            .small_session_for_party(SessionId(session_id), party_id, None)
-                            .unwrap()
+                        runtime.small_session_for_party(SessionId(session_id), party_id, None)
                     })
                     .collect_vec();
 

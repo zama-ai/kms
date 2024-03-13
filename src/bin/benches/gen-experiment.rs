@@ -73,9 +73,9 @@ fn main() {
             templates.push(("yml", docker_template));
         }
     }
-    let (setup_mode, decrypt_mode) = match args.decrypt_setup_mode {
-        1 => ("AllProtos", "PRSSDecrypt"),
-        2 => ("NoPrss", "LargeDecrypt"),
+    let decrypt_mode = match args.decrypt_setup_mode {
+        1 => "PRSSDecrypt",
+        2 => "LargeDecrypt",
         _ => panic!("Invalid decrypt setup mode"),
     };
 
@@ -87,7 +87,6 @@ fn main() {
         witness_dim => args.witness_dim,
         epoch_id => args.epoch_id,
         decrypt_mode => decrypt_mode,
-        setup_mode => setup_mode
     );
     templates.iter().for_each(|(ty, template)| {
         let output = template.render(context.clone()).unwrap();

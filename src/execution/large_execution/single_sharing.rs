@@ -143,6 +143,7 @@ fn compute_next_batch<Z: Ring>(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{init_vdm, RealSingleSharing};
+    use crate::execution::runtime::session::BaseSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::{
         algebra::{
@@ -265,10 +266,10 @@ pub(crate) mod tests {
                 for _ in 0..num_output {
                     res.push(single_sharing.next(&mut session).await.unwrap());
                 }
-                assert!(session.corrupt_roles.contains(&Role::indexed_by_one(2)));
+                assert!(session.corrupt_roles().contains(&Role::indexed_by_one(2)));
             } else {
                 for _ in 0..num_output {
-                    res.push(ResiduePoly128::sample(&mut session.rng));
+                    res.push(ResiduePoly128::sample(session.rng()));
                 }
             }
             (session.my_role().unwrap(), res)

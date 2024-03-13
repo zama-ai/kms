@@ -878,11 +878,10 @@ pub(crate) mod tests {
     use crate::algebra::bivariate::{BivariateEval, BivariatePoly};
     use crate::algebra::residue_poly::ResiduePoly;
     use crate::algebra::residue_poly::{ResiduePoly128, ResiduePoly64};
-    use crate::algebra::structure_traits::ErrorCorrect;
+    use crate::algebra::structure_traits::{ErrorCorrect, HenselLiftInverse};
     use crate::computation::SessionId;
     use crate::execution::runtime::session::SmallSession;
-    use crate::execution::sharing::shamir::RevealOp;
-    use crate::execution::sharing::shamir::ShamirSharings;
+    use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
     use crate::execution::sharing::share::Share;
     use crate::execution::{
         runtime::party::Identity, runtime::test_runtime::DistributedTestRuntime,
@@ -943,9 +942,7 @@ pub(crate) mod tests {
         let mut set = JoinSet::new();
 
         for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = runtime
-                .large_session_for_party(session_id, party_nb)
-                .unwrap();
+            let mut session = runtime.large_session_for_party(session_id, party_nb);
             let s = secrets[party_nb].clone();
             set.spawn(async move {
                 let dummy_vss = DummyVss::default();
@@ -1017,9 +1014,7 @@ pub(crate) mod tests {
         let mut set = JoinSet::new();
 
         for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = runtime
-                .large_session_for_party(session_id, party_nb)
-                .unwrap();
+            let mut session = runtime.large_session_for_party(session_id, party_nb);
             let s = &secrets[party_nb];
             let (bivariate_poly, map_double_shares) = sample_secret_polys(&mut session, s).unwrap();
             set.spawn(async move {
@@ -1304,7 +1299,7 @@ pub(crate) mod tests {
         round_1(session, num_secrets, bivariate_poly, map_double_shares).await
     }
 
-    fn test_vss_small<Z: Ring + RingEmbed + ErrorCorrect>(
+    fn test_vss_small<Z: Ring + RingEmbed + ErrorCorrect + HenselLiftInverse>(
         params: TestingParameters,
         num_secrets: usize,
     ) {

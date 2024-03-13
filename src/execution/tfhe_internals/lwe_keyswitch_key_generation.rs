@@ -120,15 +120,17 @@ mod tests {
             },
             commons::{
                 generators::EncryptionRandomGenerator,
-                math::{decomposition::SignedDecomposer, random::ActivatedRandomGenerator},
+                math::{
+                    decomposition::SignedDecomposer,
+                    random::{ActivatedRandomGenerator, TUniform},
+                },
             },
             entities::{GlweSecretKeyOwned, LweCiphertext, LweSecretKeyOwned, Plaintext},
             seeders::new_seeder,
         },
+        integer::parameters::DynamicDistribution,
         shortint::{
-            parameters::{
-                DecompositionBaseLog, DecompositionLevelCount, PolynomialSize, StandardDev,
-            },
+            parameters::{DecompositionBaseLog, DecompositionLevelCount, PolynomialSize},
             CiphertextModulus,
         },
     };
@@ -139,14 +141,13 @@ mod tests {
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
                 preprocessing::dummy::DummyPreprocessing,
-                secret_distributions::{
-                    RealSecretDistributions, SecretDistributions, TUniformBound,
-                },
+                secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
             runtime::session::{LargeSession, ParameterHandles},
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
                 lwe_key::LweSecretKeyShare,
+                parameters::TUniformBound,
                 randomness::{
                     MPCEncryptionRandomGenerator, MPCMaskRandomGenerator, MPCNoiseRandomGenerator,
                 },
@@ -290,7 +291,6 @@ mod tests {
         let ciphertext_modulus = CiphertextModulus::new_native();
         let plaintext = Plaintext(msg << scaling);
         //Does this std dev work?
-        let lwe_modular_std_dev = StandardDev(0.000007069849454709433);
         let mut seeder = new_seeder();
         let seeder = seeder.as_mut();
         let mut encryption_generator =
@@ -299,7 +299,7 @@ mod tests {
         let ct = allocate_and_encrypt_new_lwe_ciphertext(
             &big_lwe_sk,
             plaintext,
-            lwe_modular_std_dev,
+            DynamicDistribution::TUniform(TUniform::new(t_uniform_bound_lwe.try_into().unwrap())),
             ciphertext_modulus,
             &mut encryption_generator,
         );

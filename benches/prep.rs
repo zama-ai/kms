@@ -10,13 +10,10 @@ use distributed_decryption::execution::large_execution::offline::{
     TrueDoubleSharing, TrueSingleSharing,
 };
 use distributed_decryption::execution::online::gen_bits::{BitGenEven, RealBitGenEven};
-use distributed_decryption::execution::runtime::session::ParameterHandles;
-use distributed_decryption::execution::runtime::session::SmallSessionHandles;
 use distributed_decryption::execution::runtime::session::{LargeSession, SmallSession128};
 use distributed_decryption::execution::sharing::shamir::{InputOp, RevealOp};
 use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandom;
 use distributed_decryption::execution::small_execution::offline::SmallPreprocessing;
-use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_large;
 use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_small;
 
@@ -66,16 +63,6 @@ fn triple_nsmall128(c: &mut Criterion) {
                             triples: config.batch_size,
                             randoms: 0,
                         };
-
-                        let prss_setup =
-                            PRSSSetup::init_with_abort::<RealAgreeRandom, AesRng, SmallSession128>(
-                                &mut session,
-                            )
-                            .await
-                            .unwrap();
-                        session.set_prss(Some(
-                            prss_setup.new_prss_session_state(session.session_id()),
-                        ));
 
                         let _prep = SmallPreprocessing::<_, RealAgreeRandom>::init(
                             &mut session,

@@ -1,4 +1,5 @@
 use super::grpc::gen::CrsRequest;
+use crate::execution::tfhe_internals::parameters::{Ciphertext64, NoiseFloodParameters};
 use crate::{
     algebra::base_ring::Z64,
     choreography::grpc::gen::{
@@ -12,11 +13,9 @@ use crate::{
         tfhe_internals::parameters::DKGParams,
         zk::ceremony::PublicParameter,
     },
-    lwe::Ciphertext64,
     networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG},
 };
 use crate::{choreography::grpc::ComputationOutputs, execution::runtime::session::DecryptionMode};
-use crate::{execution::runtime::session::SetupMode, lwe::ThresholdLWEParameters};
 use std::{collections::HashMap, time::Duration};
 use tokio::task::JoinSet;
 use tonic::transport::{Channel, ClientTlsConfig, Uri};
@@ -202,13 +201,11 @@ impl ChoreoRuntime {
         &self,
         epoch_id: &SessionId,
         threshold: u32,
-        params: ThresholdLWEParameters,
-        setup_mode: SetupMode,
+        params: NoiseFloodParameters,
     ) -> Result<tfhe::CompactPublicKey, Box<dyn std::error::Error>> {
         let epoch_id = bincode::serialize(epoch_id)?;
         let role_assignment = bincode::serialize(&self.role_assignments)?;
         let params = bincode::serialize(&params)?;
-        let setup_mode = bincode::serialize(&setup_mode)?;
 
         for channel in self.channels.values() {
             let mut client = self.new_client(channel.clone());
@@ -218,7 +215,6 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.clone(),
                 threshold,
                 params: params.clone(),
-                setup_mode: setup_mode.clone(),
             };
 
             tracing::debug!("launching keygen to {:?}", channel);

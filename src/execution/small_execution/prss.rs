@@ -319,7 +319,7 @@ where
     /// Helper method for counting the votes. Takes the `broadcast_result` and counts which parties has voted/replied each of the different [Value]s for each given [PrssSet].
     /// The result is a map from each unique received [PrssSet] to another map which maps from all possible received [Value]s associated
     /// with the [PrssSet] to the set of [Role]s which has voted/replied to the specific [Value] for the specific [PrssSet].
-    fn count_votes<R: Rng + CryptoRng, S: SmallSessionHandles<Z, R>>(
+    fn count_votes<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         broadcast_result: &HashMap<Role, BroadcastValue<Z>>,
         session: &mut S,
     ) -> anyhow::Result<HashMap<PartySet, ValueVotes<Z>>> {
@@ -357,7 +357,7 @@ where
     /// That is, if it is not present in `value_votes` it gets added and in either case `cur_role` gets counted as having
     /// voted for `cur_prf_val`.
     /// In case `cur_role` has already voted for `cur_prf_val` they get added to the list of corrupt parties.
-    fn add_vote<R: Rng + CryptoRng, S: SmallSessionHandles<Z, R>>(
+    fn add_vote<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         value_votes: &mut ValueVotes<Z>,
         cur_prf_val: &Vec<Z>,
         cur_role: Role,
@@ -404,7 +404,7 @@ where
     /// Helper method for finding the parties who did not vote for the results and add them to the corrupt set.
     /// Goes through `true_prf_vals` and find which parties did not vote for the psi values it contains.
     /// This is done by cross-referencing the votes in `count`
-    fn handle_non_voting_parties<R: Rng + CryptoRng, S: SmallSessionHandles<Z, R>>(
+    fn handle_non_voting_parties<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         true_prf_vals: &HashMap<&PartySet, &Vec<Z>>,
         count: &HashMap<PartySet, ValueVotes<Z>>,
         session: &mut S,
@@ -501,11 +501,7 @@ where
     Z: HenselLiftInverse,
 {
     /// initialize the PRSS setup for this epoch and a given party
-    pub async fn init_with_abort<
-        A: AgreeRandom,
-        R: Rng + CryptoRng,
-        S: SmallSessionHandles<Z, R>,
-    >(
+    pub async fn init_with_abort<A: AgreeRandom, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Self> {
         let num_parties = session.num_parties();
@@ -679,12 +675,14 @@ mod tests {
 
     use super::*;
     use crate::execution::sharing::shamir::RevealOp;
+    use crate::execution::tfhe_internals::test_feature::KeySet;
     use crate::{
         algebra::{
             residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
             structure_traits::{One, Zero},
         },
         commitment::KEY_BYTE_LEN,
+        execution::tfhe_internals::test_feature::keygen_all_party_shares,
         execution::{
             constants::{BD1, LOG_BD, SMALL_TEST_KEY_PATH, STATSEC},
             endpoints::decryption::threshold_decrypt64,
@@ -701,9 +699,8 @@ mod tests {
             small_execution::agree_random::{DummyAgreeRandom, RealAgreeRandomWithAbort},
         },
         file_handling::read_element,
-        lwe::{keygen_all_party_shares, KeySet},
         tests::{
-            helper::tests::get_small_session_for_parties,
+            helper::tests::get_networkless_base_session_for_parties,
             helper::tests_and_benches::execute_protocol_small,
         },
     };
@@ -768,7 +765,7 @@ mod tests {
                 .filter(|aset| aset.contains(&party_id))
                 .collect::<Vec<_>>();
 
-            let mut sess = get_small_session_for_parties::<Z>(
+            let mut sess = get_networkless_base_session_for_parties(
                 num_parties,
                 threshold as u8,
                 Role::indexed_by_one(party_id),
@@ -880,7 +877,20 @@ mod tests {
         let identities = generate_fixed_identities(num_parties);
 
         // generate keys
-        let key_shares = keygen_all_party_shares(&keys, &mut rng, num_parties, threshold).unwrap();
+        let lwe_secret_key = keys.get_raw_lwe_client_key();
+        let glwe_secret_key = keys.get_raw_glwe_client_key();
+        let glwe_secret_key_sns_as_lwe = keys.client_output_key.large_key;
+        let params = keys.client_output_key.params;
+        let key_shares = keygen_all_party_shares(
+            lwe_secret_key,
+            glwe_secret_key,
+            glwe_secret_key_sns_as_lwe,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let ct = FheUint8::encrypt(msg, &keys.public_key);
         let (raw_ct, _id) = ct.into_raw_parts();
 
@@ -894,9 +904,11 @@ mod tests {
         let sessions: Vec<SmallSession<ResiduePoly128>> = (0..num_parties)
             .map(|p| {
                 seed[0] = p as u8;
-                runtime
-                    .small_session_for_party(SessionId(u128::MAX), p, Some(AesRng::from_seed(seed)))
-                    .unwrap()
+                runtime.small_session_for_party(
+                    SessionId(u128::MAX),
+                    p,
+                    Some(AesRng::from_seed(seed)),
+                )
             })
             .collect();
 
@@ -1145,11 +1157,8 @@ mod tests {
         let mut reference_values = Vec::with_capacity(parties);
         for party_id in 1..=parties {
             let rng = AesRng::seed_from_u64(party_id as u64);
-            let mut session = runtime
-                .small_session_for_party(session_id, party_id - 1, Some(rng))
-                .unwrap();
-            DistributedTestRuntime::add_dummy_prss(&mut session);
-            let state = session.prss().unwrap();
+            let mut session = runtime.small_session_for_party(session_id, party_id - 1, Some(rng));
+            let state = session.prss();
             // Compute reference value based on check (we clone to ensure that they are evaluated for the same counter)
             reference_values.push(state.clone().prss_next(party_id).unwrap());
             // Do the actual computation
@@ -1212,11 +1221,8 @@ mod tests {
         let mut reference_values = Vec::with_capacity(parties);
         for party_id in 1..=parties {
             let rng = AesRng::seed_from_u64(party_id as u64);
-            let mut session = runtime
-                .small_session_for_party(session_id, party_id - 1, Some(rng))
-                .unwrap();
-            DistributedTestRuntime::add_dummy_prss(&mut session);
-            let state = session.prss().unwrap();
+            let mut session = runtime.small_session_for_party(session_id, party_id - 1, Some(rng));
+            let state = session.prss();
             // Compute reference value based on check (we clone to ensure that they are evaluated for the same counter)
             reference_values.push(
                 state
@@ -1272,7 +1278,7 @@ mod tests {
     fn test_count_votes() {
         let parties = 3;
         let my_role = Role::indexed_by_one(3);
-        let mut session = get_small_session_for_parties(parties, 0, my_role);
+        let mut session = get_networkless_base_session_for_parties(parties, 0, my_role);
         let set = Vec::from([1, 2, 3]);
         let value = vec![ResiduePoly128::from_scalar(Wrapping(87654))];
         let values = Vec::from([(set.clone(), value.clone())]);
@@ -1311,7 +1317,7 @@ mod tests {
     fn test_count_votes_bad_type() {
         let parties = 3;
         let my_role = Role::indexed_by_one(1);
-        let mut session = get_small_session_for_parties(parties, 0, my_role);
+        let mut session = get_networkless_base_session_for_parties(parties, 0, my_role);
         let set = Vec::from([1, 2, 3]);
         let value = ResiduePoly64::from_scalar(Wrapping(42));
         let values = Vec::from([(set.clone(), vec![value])]);
@@ -1347,7 +1353,7 @@ mod tests {
     fn test_add_votes() {
         let parties = 3;
         let my_role = Role::indexed_by_one(1);
-        let mut session = get_small_session_for_parties(parties, 0, my_role);
+        let mut session = get_networkless_base_session_for_parties(parties, 0, my_role);
         let value = vec![ResiduePoly128::from_scalar(Wrapping(42))];
         let mut votes = HashMap::new();
 
@@ -1411,7 +1417,8 @@ mod tests {
     fn identify_non_voting_party() {
         let parties = 4;
         let set = Vec::from([1, 3, 2]);
-        let mut session = get_small_session_for_parties(parties, 0, Role::indexed_by_one(1));
+        let mut session =
+            get_networkless_base_session_for_parties(parties, 0, Role::indexed_by_one(1));
         let value = vec![ResiduePoly128::from_scalar(Wrapping(42))];
         let ref_value = value.clone();
         let true_psi_vals = HashMap::from([(&set, &ref_value)]);
@@ -1435,13 +1442,14 @@ mod tests {
         let parties = 1;
         let role = Role::indexed_by_one(1);
         let mut session =
-            get_small_session_for_parties::<ResiduePoly128>(parties, 0, Role::indexed_by_one(1));
+            get_networkless_base_session_for_parties(parties, 0, Role::indexed_by_one(1));
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         let prss_setup = rt
             .block_on(async {
-                PRSSSetup::init_with_abort::<DummyAgreeRandom, _, _>(&mut session).await
+                PRSSSetup::<ResiduePoly128>::init_with_abort::<DummyAgreeRandom, _, _>(&mut session)
+                    .await
             })
             .unwrap();
         let state = prss_setup.new_prss_session_state(session.session_id());
@@ -1618,9 +1626,7 @@ mod tests {
     #[test]
     fn expected_set_not_present() {
         let parties = 10;
-        let mut session =
-            get_small_session_for_parties::<ResiduePoly128>(parties, 0, Role::indexed_by_one(1));
-        DistributedTestRuntime::add_dummy_prss(&mut session);
+        let session = get_networkless_base_session_for_parties(parties, 0, Role::indexed_by_one(1));
         // Use an empty hash map to ensure that
         let psi_values = HashMap::new();
         assert!(PRSSState::<ResiduePoly128>::compute_party_shares(

@@ -1,16 +1,15 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
-    algebra::{residue_poly::ResiduePoly128, structure_traits::Ring},
+    algebra::residue_poly::ResiduePoly128,
     computation::SessionId,
     execution::{
-        runtime::party::{Identity, Role},
-        runtime::session::{SessionParameters, SmallSession, SmallSessionStruct},
+        runtime::{
+            party::{Identity, Role},
+            session::{BaseSessionStruct, SessionParameters},
+        },
         small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
     },
     networking::local::LocalNetworkingProducer,
@@ -26,18 +25,14 @@ fn bench_prss(c: &mut Criterion) {
 
     let sid = SessionId::from(42);
 
-    let mut sess = get_small_session_for_parties(num_parties, threshold, Role::indexed_by_one(1));
+    let mut sess = get_base_session_for_parties(num_parties, threshold, Role::indexed_by_one(1));
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
     let prss = rt
         .block_on(async {
-            PRSSSetup::init_with_abort::<
-                DummyAgreeRandom,
-                AesRng,
-                SmallSessionStruct<ResiduePoly128, AesRng, SessionParameters>,
-            >(&mut sess)
-            .await
+            PRSSSetup::<ResiduePoly128>::init_with_abort::<DummyAgreeRandom, AesRng, _>(&mut sess)
+                .await
         })
         .unwrap();
 
@@ -54,21 +49,20 @@ fn bench_prss(c: &mut Criterion) {
     }
 }
 
-pub fn get_small_session_for_parties<Z: Ring>(
+pub fn get_base_session_for_parties(
     amount: usize,
     threshold: u8,
     role: Role,
-) -> SmallSession<Z> {
+) -> BaseSessionStruct<AesRng, SessionParameters> {
     let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
     let id = parameters.own_identity.clone();
     let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-    SmallSession {
+    BaseSessionStruct::new(
         parameters,
-        network: Arc::new(net_producer.user_net(id)),
-        rng: AesRng::seed_from_u64(42),
-        corrupt_roles: HashSet::new(),
-        prss_state: None,
-    }
+        Arc::new(net_producer.user_net(id)),
+        AesRng::seed_from_u64(42),
+    )
+    .unwrap()
 }
 
 pub fn get_dummy_parameters_for_parties(

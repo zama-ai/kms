@@ -1,8 +1,11 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
-    execution::{constants::REAL_PARAM_PATH, random::get_rng},
+    execution::{
+        constants::REAL_PARAM_PATH,
+        random::get_rng,
+        tfhe_internals::{parameters::NoiseFloodParameters, test_feature::gen_key_set},
+    },
     file_handling::read_as_json,
-    lwe::{gen_key_set, ThresholdLWEParameters},
 };
 use tfhe::{integer::IntegerCiphertext, prelude::FheEncrypt, FheUint16, FheUint8};
 
@@ -13,7 +16,7 @@ fn bench_switch_and_squash(c: &mut Criterion) {
 
     println!("using key parameters: {key_params}");
 
-    let params: ThresholdLWEParameters = read_as_json(key_params).unwrap();
+    let params: NoiseFloodParameters = read_as_json(key_params).unwrap();
     let keyset = gen_key_set(params, &mut get_rng());
 
     let msg8 = 5_u8;

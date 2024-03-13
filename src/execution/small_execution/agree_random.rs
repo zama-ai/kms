@@ -443,9 +443,8 @@ mod tests {
             },
         },
         networking::value::{AgreeRandomValue, NetworkValue},
-        tests::helper::{
-            tests::get_small_session_for_parties, tests_and_benches::execute_protocol_small,
-        },
+        tests::helper::tests::get_networkless_base_session_for_parties,
+        tests::helper::tests_and_benches::execute_protocol_small,
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;
@@ -495,7 +494,7 @@ mod tests {
         let mut allkeys: Vec<VecDeque<PrfKey>> = Vec::new();
 
         for p in 1..=num_parties {
-            let mut sess = get_small_session_for_parties::<ResiduePoly128>(
+            let mut sess = get_networkless_base_session_for_parties(
                 num_parties,
                 threshold,
                 Role::indexed_by_one(p),
@@ -599,13 +598,11 @@ mod tests {
         let sessions: Vec<SmallSession<ResiduePoly128>> = (1..num_parties)
             .map(|p| {
                 let num = p as u8;
-                runtime
-                    .small_session_for_party(
-                        SessionId(u128::MAX),
-                        p,
-                        Some(AesRng::seed_from_u64(num.into())),
-                    )
-                    .unwrap()
+                runtime.small_session_for_party(
+                    SessionId(u128::MAX),
+                    p,
+                    Some(AesRng::seed_from_u64(num.into())),
+                )
             })
             .collect();
 

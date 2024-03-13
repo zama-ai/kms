@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 
-use crate::lwe::Ciphertext64;
+use crate::execution::tfhe_internals::parameters::Ciphertext64;
 
 pub const TAG_BYTES: usize = 128 / 8;
 
@@ -45,8 +45,8 @@ impl From<u128> for SessionId {
 #[cfg(test)]
 mod tests {
     use crate::{
-        computation::SessionId, execution::constants::SMALL_TEST_KEY_PATH, lwe::Ciphertext64,
-        tests::helper::tests::generate_cipher,
+        computation::SessionId, execution::constants::SMALL_TEST_KEY_PATH,
+        execution::tfhe_internals::parameters::Ciphertext64, tests::helper::tests::generate_cipher,
     };
 
     #[test]

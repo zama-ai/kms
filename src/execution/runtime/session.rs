@@ -1,15 +1,17 @@
 use super::party::{Identity, Role};
 use crate::{
-    algebra::structure_traits::Ring,
+    algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
     computation::SessionId,
     error::error_handler::anyhow_error_and_log,
-    execution::small_execution::prss::{PRSSSetup, PRSSState},
+    execution::{
+        large_execution::vss::RealVss,
+        small_execution::prss::{PRSSSetup, PRSSState},
+    },
     networking::Networking,
 };
 use aes_prng::AesRng;
 use async_trait::async_trait;
 use derive_more::Display;
-use rand::SeedableRng;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -25,12 +27,6 @@ pub enum DecryptionMode {
     LargeDecrypt,
     BitDecSmallDecrypt,
     BitDecLargeDecrypt,
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq)]
-pub enum SetupMode {
-    AllProtos,
-    NoPrss,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq)]
@@ -245,7 +241,13 @@ impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> BaseSessionH
     }
 
     fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool> {
-        Ok(self.corrupt_roles.insert(role))
+        // Observe we never add ourself to the list of corrupt parties to keep the execution going
+        // This is logically the attack model we expect and hence make testing malicious behaviour easier
+        if role != self.my_role()? {
+            Ok(self.corrupt_roles.insert(role))
+        } else {
+            Ok(false)
+        }
     }
 }
 
@@ -258,46 +260,38 @@ pub type SmallSession64 = SmallSession<crate::algebra::residue_poly::ResiduePoly
 pub type SmallSession128 = SmallSession<crate::algebra::residue_poly::ResiduePoly128>;
 
 pub trait SmallSessionHandles<Z: Ring, R: Rng + CryptoRng>: BaseSessionHandles<R> {
-    /// Return the mutable prss state as an [Option]
-    fn prss_as_mut(&mut self) -> anyhow::Result<&mut PRSSState<Z>>;
+    fn prss_as_mut(&mut self) -> &mut PRSSState<Z>;
     /// Returns the non-mutable prss state if it exists or return an error
-    fn prss(&self) -> anyhow::Result<PRSSState<Z>>;
-    /// Set the prss state
-    fn set_prss(&mut self, state: Option<PRSSState<Z>>);
+    fn prss(&self) -> PRSSState<Z>;
 }
 
 #[derive(Clone)]
 pub struct SmallSessionStruct<Z: Ring, R: Rng + CryptoRng + Send + Sync, P: ParameterHandles> {
-    pub parameters: P,
-    pub network: NetworkingImpl,
-    pub rng: R,
-    pub corrupt_roles: HashSet<Role>,
-    pub prss_state: Option<PRSSState<Z>>,
+    pub base_session: BaseSessionStruct<R, P>,
+    pub prss_state: PRSSState<Z>,
 }
 impl<Z> SmallSession<Z>
 where
     Z: Ring,
 {
-    pub fn new(
-        session_id: SessionId,
-        role_assignments: HashMap<Role, Identity>,
-        network: NetworkingImpl,
-        threshold: u8,
-        prss_setup: Option<PRSSSetup<Z>>, // TODO this will be shared a lot so maybe it should just be a box?
-        own_identity: Identity,
-        rng: Option<AesRng>,
+    pub async fn new_and_init_prss_state(
+        mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
+    ) -> anyhow::Result<Self>
+    where
+        Z: ErrorCorrect + RingEmbed + HenselLiftInverse,
+    {
+        let prss_setup = PRSSSetup::robust_init(&mut base_session, &RealVss::default()).await?;
+        let session_id = base_session.session_id();
+        Self::new_from_prss_state(base_session, prss_setup.new_prss_session_state(session_id))
+    }
+
+    pub fn new_from_prss_state(
+        base_session: BaseSessionStruct<AesRng, SessionParameters>,
+        prss_state: PRSSState<Z>,
     ) -> anyhow::Result<Self> {
         Ok(SmallSessionStruct {
-            parameters: SessionParameters::new(
-                threshold,
-                session_id,
-                own_identity,
-                role_assignments,
-            )?,
-            rng: rng.unwrap_or_else(AesRng::from_entropy),
-            network,
-            corrupt_roles: HashSet::new(),
-            prss_state: prss_setup.map(|x| x.new_prss_session_state(session_id)),
+            base_session,
+            prss_state,
         })
     }
 }
@@ -306,42 +300,42 @@ impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> Par
     for SmallSessionStruct<Z, R, P>
 {
     fn my_role(&self) -> anyhow::Result<Role> {
-        self.parameters.my_role()
+        self.base_session.my_role()
     }
 
     fn my_identity(&self) -> anyhow::Result<Identity> {
-        self.parameters.my_identity()
+        self.base_session.my_identity()
     }
 
     fn identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
-        self.parameters.identity_from(role)
+        self.base_session.identity_from(role)
     }
 
     fn num_parties(&self) -> usize {
-        self.parameters.num_parties()
+        self.base_session.num_parties()
     }
 
     fn role_from(&self, identity: &Identity) -> anyhow::Result<Role> {
-        self.parameters.role_from(identity)
+        self.base_session.role_from(identity)
     }
 
     fn threshold(&self) -> u8 {
-        self.parameters.threshold()
+        self.base_session.threshold()
     }
 
     fn session_id(&self) -> SessionId {
-        self.parameters.session_id()
+        self.base_session.session_id()
     }
 
     fn own_identity(&self) -> Identity {
-        self.parameters.own_identity()
+        self.base_session.own_identity()
     }
 
     fn role_assignments(&self) -> &HashMap<Role, Identity> {
-        self.parameters.role_assignments()
+        self.base_session.role_assignments()
     }
     fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
-        self.parameters.set_role_assignments(role_assignments);
+        self.base_session.set_role_assignments(role_assignments);
     }
 }
 
@@ -349,50 +343,31 @@ impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> Bas
     for SmallSessionStruct<Z, R, P>
 {
     fn rng(&mut self) -> &mut R {
-        &mut self.rng
+        self.base_session.rng()
     }
 
     fn network(&self) -> &NetworkingImpl {
-        &self.network
+        self.base_session.network()
     }
 
     fn corrupt_roles(&self) -> &HashSet<Role> {
-        &self.corrupt_roles
+        self.base_session.corrupt_roles()
     }
 
     fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool> {
-        // Observe we never add ourself to the list of corrupt parties to keep the execution going
-        // This is logically the attack model we expect and hence make testing malicious behaviour easier
-        if role != self.my_role()? {
-            Ok(self.corrupt_roles.insert(role))
-        } else {
-            Ok(false)
-        }
+        self.base_session.add_corrupt(role)
     }
 }
 
 impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles>
     SmallSessionHandles<Z, R> for SmallSessionStruct<Z, R, P>
 {
-    fn prss_as_mut(&mut self) -> anyhow::Result<&mut PRSSState<Z>> {
-        match self.prss_state {
-            Some(ref mut state) => Ok(state),
-            None => Err(anyhow_error_and_log("No PRSS state exist".to_string())),
-        }
+    fn prss_as_mut(&mut self) -> &mut PRSSState<Z> {
+        &mut self.prss_state
     }
 
-    fn prss(&self) -> anyhow::Result<PRSSState<Z>> {
-        let state = match &self.prss_state {
-            Some(state) => state,
-            None => {
-                return Err(anyhow_error_and_log("No PRSS state exist".to_string()));
-            }
-        };
-        Ok(state.to_owned())
-    }
-
-    fn set_prss(&mut self, state: Option<PRSSState<Z>>) {
-        self.prss_state = state;
+    fn prss(&self) -> PRSSState<Z> {
+        self.prss_state.to_owned()
     }
 }
 
@@ -400,12 +375,7 @@ impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles>
     ToBaseSession<R, BaseSessionStruct<R, P>> for SmallSessionStruct<Z, R, P>
 {
     fn to_base_session(&self) -> BaseSessionStruct<R, P> {
-        BaseSessionStruct {
-            parameters: self.parameters.clone(),
-            network: self.network.clone(),
-            rng: self.rng.clone(),
-            corrupt_roles: self.corrupt_roles.clone(),
-        }
+        self.base_session.clone()
     }
 }
 
@@ -422,95 +392,87 @@ pub trait LargeSessionHandles<R: Rng + CryptoRng>: BaseSessionHandles<R> {
     fn disputed_roles(&self) -> &DisputeSet;
     fn my_disputes(&self) -> anyhow::Result<&BTreeSet<Role>>;
     fn add_dispute(&mut self, party_a: &Role, party_b: &Role) -> anyhow::Result<()>;
-    //NOTE: REMOVED EVERYTHING WHICH HAS TO DO WITH add_dispute_and_bcast AS IT IS NOT USED ANYWHERE
-    //async fn add_dispute_and_bcast(&mut self, disputed_parties: &[Role]) -> anyhow::Result<()>;
 }
 #[derive(Clone)]
 pub struct LargeSessionStruct<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> {
-    pub parameters: P,
-    pub network: NetworkingImpl,
-    pub rng: R,
-    pub corrupt_roles: HashSet<Role>,
+    pub base_session: BaseSessionStruct<R, P>,
     pub disputed_roles: DisputeSet,
 }
 impl LargeSession {
     /// Make a new [LargeSession] without any corruptions or disputes
-    pub fn new(parameters: SessionParameters, network: NetworkingImpl) -> anyhow::Result<Self> {
-        let parties = parameters.num_parties();
-        Ok(LargeSession {
-            parameters,
-            network,
-            rng: AesRng::from_entropy(),
-            corrupt_roles: HashSet::new(),
-            disputed_roles: DisputeSet::new(parties),
-        })
+    pub fn new(base_session: BaseSessionStruct<AesRng, SessionParameters>) -> Self {
+        let num_parties = base_session.num_parties();
+        Self {
+            base_session,
+            disputed_roles: DisputeSet::new(num_parties),
+        }
     }
 }
 impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
     for LargeSessionStruct<R, P>
 {
     fn my_role(&self) -> anyhow::Result<Role> {
-        self.parameters.my_role()
+        self.base_session.my_role()
     }
 
     fn my_identity(&self) -> anyhow::Result<Identity> {
-        self.parameters.my_identity()
+        self.base_session.my_identity()
     }
 
     fn identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
-        self.parameters.identity_from(role)
+        self.base_session.identity_from(role)
     }
 
     fn num_parties(&self) -> usize {
-        self.parameters.num_parties()
+        self.base_session.num_parties()
     }
 
     /// Return Role for given Identity in this session
     fn role_from(&self, identity: &Identity) -> anyhow::Result<Role> {
-        self.parameters.role_from(identity)
+        self.base_session.role_from(identity)
     }
 
     fn threshold(&self) -> u8 {
-        self.parameters.threshold()
+        self.base_session.threshold()
     }
 
     fn session_id(&self) -> SessionId {
-        self.parameters.session_id()
+        self.base_session.session_id()
     }
 
     fn own_identity(&self) -> Identity {
-        self.parameters.own_identity()
+        self.base_session.own_identity()
     }
 
     fn role_assignments(&self) -> &HashMap<Role, Identity> {
-        self.parameters.role_assignments()
+        self.base_session.role_assignments()
     }
     fn set_role_assignments(&mut self, role_assignments: HashMap<Role, Identity>) {
-        self.parameters.set_role_assignments(role_assignments);
+        self.base_session.set_role_assignments(role_assignments);
     }
 }
 impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
     for LargeSessionStruct<R, P>
 {
     fn rng(&mut self) -> &mut R {
-        &mut self.rng
+        self.base_session.rng()
     }
 
     fn network(&self) -> &NetworkingImpl {
-        &self.network
+        self.base_session.network()
     }
 
     fn corrupt_roles(&self) -> &HashSet<Role> {
-        &self.corrupt_roles
+        self.base_session.corrupt_roles()
     }
 
     fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool> {
-        let res = self.corrupt_roles.insert(role);
+        let res = self.base_session.add_corrupt(role);
         //Make sure we now have this role in dispute with everyone
-        for role_b in self.parameters.role_assignments().keys() {
+        for role_b in self.base_session.role_assignments().keys() {
             self.disputed_roles.add(&role, role_b)?;
         }
-        Ok(res)
+        res
     }
 }
 
@@ -518,12 +480,7 @@ impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles>
     ToBaseSession<R, BaseSessionStruct<R, P>> for LargeSessionStruct<R, P>
 {
     fn to_base_session(&self) -> BaseSessionStruct<R, P> {
-        BaseSessionStruct {
-            parameters: self.parameters.clone(),
-            network: self.network.clone(),
-            rng: self.rng.clone(),
-            corrupt_roles: self.corrupt_roles.clone(),
-        }
+        self.base_session.clone()
     }
 }
 
@@ -610,10 +567,9 @@ impl DisputeSet {
 #[cfg(test)]
 mod tests {
     use super::SessionParameters;
-    use crate::algebra::residue_poly::ResiduePoly128;
     use crate::execution::runtime::party::Role;
     use crate::{
-        execution::runtime::session::BaseSessionHandles, tests::helper::tests::get_small_session,
+        execution::runtime::session::BaseSessionHandles, tests::helper::tests::get_base_session,
     };
     use crate::{
         execution::runtime::session::ParameterHandles,
@@ -652,7 +608,7 @@ mod tests {
 
     #[test]
     fn wont_add_self_to_corrupt() {
-        let mut session = get_small_session::<ResiduePoly128>();
+        let mut session = get_base_session();
         // Check that I cannot add myself to the corruption set directly
         assert!(!session.add_corrupt(session.my_role().unwrap()).unwrap());
         assert_eq!(0, session.corrupt_roles().len());

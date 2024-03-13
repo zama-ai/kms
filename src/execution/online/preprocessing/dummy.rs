@@ -397,7 +397,7 @@ mod tests {
             residue_poly::{ResiduePoly, ResiduePoly128},
             structure_traits::Zero,
         },
-        tests::helper::tests::{get_small_session, get_small_session_for_parties},
+        tests::helper::tests::{get_base_session, get_networkless_base_session_for_parties},
     };
     use aes_prng::AesRng;
     use paste::paste;
@@ -412,13 +412,15 @@ mod tests {
     use crate::execution::online::preprocessing::TriplePreprocessing;
     use crate::execution::online::triple::Triple;
     use crate::execution::runtime::session::BaseSessionHandles;
+    use crate::execution::runtime::session::BaseSessionStruct;
     use crate::execution::runtime::session::ParameterHandles;
+    use crate::execution::runtime::session::SessionParameters;
     use crate::execution::runtime::session::SmallSession;
     use itertools::Itertools;
 
     #[test]
     fn test_debug_dummy_rand() {
-        let session = get_small_session::<ResiduePoly128>();
+        let session = get_base_session();
         let mut preprocessing =
             DummyDebugPreprocessing::<ResiduePoly128, _, _>::new(42, session.clone());
         let rand = preprocessing.next_random_vec(2).unwrap();
@@ -433,7 +435,7 @@ mod tests {
 
     #[test]
     fn test_debug_dummy_triple() {
-        let session = get_small_session::<ResiduePoly128>();
+        let session = get_base_session();
         let mut preprocessing =
             DummyDebugPreprocessing::<ResiduePoly128, _, _>::new(42, session.clone());
         let trips: Vec<Triple<ResiduePoly128>> = preprocessing.next_triple_vec(2).unwrap();
@@ -451,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_debug_dummy_multiple_calls() {
-        let session = get_small_session::<ResiduePoly128>();
+        let session = get_base_session();
         let mut preprocessing =
             DummyDebugPreprocessing::<ResiduePoly128, _, _>::new(42, session.clone());
         let rand_a: Share<ResiduePoly128> = preprocessing.next_random().unwrap();
@@ -480,7 +482,7 @@ mod tests {
                 #[test]
                 fn [<test_threshold_dummy_share $z:lower>]() {
                     let msg = ResiduePoly::<$z>::from_scalar(Wrapping(42));
-                    let mut session = get_small_session_for_parties::<ResiduePoly<$z>>(10, 3, Role::indexed_by_one(1));
+                    let mut session = get_networkless_base_session_for_parties(10, 3, Role::indexed_by_one(1));
                     let shares = DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::share(
                         session.num_parties(),
                         session.threshold(),
@@ -498,8 +500,8 @@ mod tests {
                     let threshold = 3;
                     let mut preps = Vec::new();
                     for i in 1..=parties {
-                        let session = get_small_session_for_parties(parties, threshold, Role::indexed_by_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session));
+                        let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(i));
+                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, AesRng, _>::new(42, session));
                     }
                     let recon = [<get_rand_ $z:lower>](parties, threshold, 2, &mut preps);
                     // Check that the values are different
@@ -512,9 +514,9 @@ mod tests {
                     parties: usize,
                     threshold: u8,
                     amount: usize,
-                    preps: &mut [DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>],
+                    preps: &mut [DummyPreprocessing::<ResiduePoly<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>],
                 ) -> Vec<ResiduePoly<$z>> {
-                    let session = get_small_session_for_parties::<ResiduePoly<$z>>(parties, threshold, Role::indexed_by_one(1));
+                    let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(1));
                     let mut res = Vec::new();
                     let mut temp: Vec<Vec<Share<ResiduePoly<$z>>>> = Vec::new();
                     for i in 1..=parties {
@@ -539,8 +541,8 @@ mod tests {
                     let threshold = 3;
                     let mut preps = Vec::new();
                     for i in 1..=parties {
-                        let session = get_small_session_for_parties(parties, threshold, Role::indexed_by_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session));
+                        let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(i));
+                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>::new(42, session));
                     }
                     let trips = [<get_trip_ $z:lower>](parties, threshold, 2, &mut preps);
                     assert_ne!(trips[0], trips[1]);
@@ -550,9 +552,9 @@ mod tests {
                     parties: usize,
                     threshold: u8,
                     amount: usize,
-                    preps: &mut [DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>],
+                    preps: &mut [DummyPreprocessing::<ResiduePoly<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>],
                 ) -> Vec<(ResiduePoly<$z>, ResiduePoly<$z>, ResiduePoly<$z>)> {
-                    let session = get_small_session_for_parties::<ResiduePoly<$z>>(parties, threshold, Role::indexed_by_one(1));
+                    let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(1));
                     let mut res = Vec::new();
                     let mut a_shares = Vec::new();
                     let mut b_shares = Vec::new();
@@ -589,8 +591,8 @@ mod tests {
                     let threshold = 3;
                     let mut preps = Vec::new();
                     for i in 1..=parties {
-                        let session = get_small_session_for_parties(parties, threshold, Role::indexed_by_one(i));
-                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, AesRng, SmallSession<ResiduePoly<$z>>>::new(42, session));
+                        let session = get_networkless_base_session_for_parties(parties, threshold, Role::indexed_by_one(i));
+                        preps.push(DummyPreprocessing::<ResiduePoly<$z>, AesRng, BaseSessionStruct<AesRng, SessionParameters>>::new(42, session));
                     }
                     let rand_a = [<get_rand_ $z:lower>](parties, threshold, 1, &mut preps)[0];
                     let trip_a = [<get_trip_ $z:lower>](parties, threshold, 1, &mut preps)[0];

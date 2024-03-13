@@ -413,7 +413,7 @@ mod tests {
         algebra::residue_poly::ResiduePoly64,
         computation::SessionId,
         execution::runtime::{
-            session::{LargeSession, ParameterHandles, SessionParameters},
+            session::{LargeSession, ParameterHandles},
             test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         },
         tests::helper::tests::{
@@ -423,7 +423,7 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use rstest::rstest;
-    use std::{collections::HashMap, sync::Arc};
+    use std::collections::HashMap;
     use tokio::task::JoinSet;
     use zk_poc::proofs;
 
@@ -442,21 +442,9 @@ mod tests {
         let _guard = rt.enter();
 
         let mut set = JoinSet::new();
-        for (index_id, identity) in runtime.identities.clone().into_iter().enumerate() {
-            let role_assignments = runtime.role_assignments.clone();
-            let net = Arc::clone(&runtime.user_nets[index_id]);
-            let threshold = runtime.threshold;
-
+        for (index_id, _identity) in runtime.identities.clone().into_iter().enumerate() {
+            let mut session = runtime.large_session_for_party(session_id, index_id);
             set.spawn(async move {
-                let session_params = SessionParameters::new(
-                    threshold,
-                    session_id,
-                    identity.clone(),
-                    role_assignments,
-                )
-                .unwrap();
-                let mut session = LargeSession::new(session_params, net).unwrap();
-
                 let real_ceremony = RealCeremony::default();
                 let out = real_ceremony
                     .execute::<ResiduePoly64, _, _>(&mut session, witness_dim)

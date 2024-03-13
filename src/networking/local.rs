@@ -3,6 +3,7 @@ use crate::error::error_handler::anyhow_error_and_log;
 use super::constants::NETWORK_TIMEOUT;
 use super::*;
 use dashmap::DashMap;
+use std::cmp::min;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -178,7 +179,7 @@ impl Networking for LocalNetworking {
             tracing::debug!(
                 "@ round {} - dropped value {:?} from round {}",
                 network_round,
-                tagged_value.value[..16].to_vec(),
+                tagged_value.value[..min(tagged_value.value.len(), 16)].to_vec(),
                 tagged_value.send_counter
             );
             tagged_value = rx.recv().await?;

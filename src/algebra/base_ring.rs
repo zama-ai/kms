@@ -37,6 +37,21 @@ macro_rules! ring_impl {
 
 pub type Z64 = Wrapping<u64>;
 pub type Z128 = Wrapping<u128>;
+pub trait ToZ64 {
+    fn to_z64(self) -> Z64;
+}
+
+impl ToZ64 for Z64 {
+    fn to_z64(self) -> Z64 {
+        self
+    }
+}
+
+impl ToZ64 for Z128 {
+    fn to_z64(self) -> Z64 {
+        Z64::from_u128(self.0)
+    }
+}
 
 impl BaseRing for Z128 {}
 impl BaseRing for Z64 {}

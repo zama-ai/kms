@@ -1,13 +1,13 @@
 //! CLI tool for interacting with a group of flamins
 use clap::Parser;
+use distributed_decryption::computation::SessionId;
 use distributed_decryption::execution::constants::REAL_PARAM_PATH;
+use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use distributed_decryption::file_handling::read_as_json;
-use distributed_decryption::lwe::ThresholdLWEParameters;
 use distributed_decryption::{
     choreography::{choreographer::ChoreoRuntime, parse_session_config_file_with_computation},
     execution::runtime::session::DecryptionMode,
 };
-use distributed_decryption::{computation::SessionId, execution::runtime::session::SetupMode};
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
 use std::path::PathBuf;
@@ -73,14 +73,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         // set keys. this can be done once per epoch
         // TODO allow for non-default parameters
-        let default_params: ThresholdLWEParameters = read_as_json(REAL_PARAM_PATH.to_string())?;
+        let default_params: NoiseFloodParameters = read_as_json(REAL_PARAM_PATH.to_string())?;
         runtime
-            .initiate_keygen(
-                &SessionId::from(args.epoch),
-                threshold,
-                default_params,
-                SetupMode::AllProtos,
-            )
+            .initiate_keygen(&SessionId::from(args.epoch), threshold, default_params)
             .await?
     };
     let (ct, _id) = FheUint64::encrypt(args.msg, &pk).into_raw_parts();

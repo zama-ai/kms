@@ -5,9 +5,11 @@ use distributed_decryption::{
     computation::SessionId,
     conf::{choreo::ChoreoConf, telemetry::init_tracing, Settings},
     error::error_handler::anyhow_error_and_log,
-    execution::{runtime::party::RoleAssignment, tfhe_internals::parameters::DkgParamsAvailable},
+    execution::{
+        runtime::party::RoleAssignment, tfhe_internals::parameters::DkgParamsAvailable,
+        tfhe_internals::parameters::NoiseFloodParameters,
+    },
     file_handling::{self, read_as_json},
-    lwe::ThresholdLWEParameters,
 };
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;
@@ -119,7 +121,7 @@ async fn init_command(
     runtime: &ChoreoRuntime,
     init_opts: &ChoreoConf,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let default_params: ThresholdLWEParameters = read_as_json(init_opts.params_file.to_owned())?;
+    let default_params: NoiseFloodParameters = read_as_json(init_opts.params_file.to_owned())?;
 
     // keys can be set once per epoch (currently stored in a SessionID)
     let pk = runtime
@@ -127,7 +129,6 @@ async fn init_command(
             &SessionId::from(init_opts.epoch()),
             init_opts.threshold_topology.threshold,
             default_params,
-            init_opts.setup_mode.clone(),
         )
         .await?;
 

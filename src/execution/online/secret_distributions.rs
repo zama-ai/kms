@@ -1,11 +1,8 @@
-use serde::{Deserialize, Serialize};
-
 use super::preprocessing::BitPreprocessing;
-use crate::algebra::structure_traits::Ring;
-use crate::execution::sharing::share::Share;
-
-#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Debug)]
-pub struct TUniformBound(pub usize);
+use crate::{
+    algebra::structure_traits::Ring,
+    execution::{sharing::share::Share, tfhe_internals::parameters::TUniformBound},
+};
 
 pub trait SecretDistributions {
     fn t_uniform<Z, P>(

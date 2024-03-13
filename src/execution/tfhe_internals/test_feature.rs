@@ -1,0 +1,585 @@
+use std::{num::Wrapping, sync::Arc};
+
+use aes_prng::AesRng;
+use rand::{CryptoRng, Rng};
+use serde::{Deserialize, Serialize};
+use tfhe::{
+    core_crypto::{
+        algorithms::{
+            allocate_and_generate_new_binary_glwe_secret_key,
+            allocate_and_generate_new_binary_lwe_secret_key,
+            convert_standard_lwe_bootstrap_key_to_fourier_128, decrypt_lwe_ciphertext,
+            par_generate_lwe_bootstrap_key,
+        },
+        commons::{
+            generators::{DeterministicSeeder, EncryptionRandomGenerator},
+            math::random::ActivatedRandomGenerator,
+            traits::Numeric,
+        },
+        entities::{
+            Fourier128LweBootstrapKey, GlweSecretKey, LweBootstrapKey, LweSecretKey,
+            LweSecretKeyOwned,
+        },
+        seeders::Seeder,
+    },
+    integer::{block_decomposition::BlockRecomposer, parameters::PolynomialSize},
+    shortint::{self, ClassicPBSParameters, ShortintParameterSet},
+    ClientKey,
+};
+use tokio::{task::JoinSet, time::timeout_at};
+
+use crate::{
+    algebra::{
+        base_ring::Z128,
+        poly::Poly,
+        residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
+        structure_traits::{Ring, RingEmbed},
+    },
+    error::error_handler::anyhow_error_and_log,
+    execution::{
+        constants::INPUT_PARTY_ID,
+        endpoints::keygen::PrivateKeySet,
+        random::{secret_rng_from_seed, seed_from_rng},
+        runtime::{
+            party::Role,
+            session::{
+                BaseSession, BaseSessionHandles, ParameterHandles, SessionParameters, SmallSession,
+                SmallSessionStruct, ToBaseSession,
+            },
+        },
+        sharing::{input::robust_input, share::Share},
+        small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
+        tfhe_internals::{glwe_key::GlweSecretKeyShare, lwe_key::LweSecretKeyShare},
+    },
+    networking::value::NetworkValue,
+};
+
+use super::{
+    parameters::{
+        AugmentedCiphertextParameters, Ciphertext128, Ciphertext128Block, NoiseFloodParameters,
+    },
+    switch_and_squash::{from_expanded_msg, SwitchAndSquashKey},
+};
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct KeySet {
+    pub public_key: tfhe::CompactPublicKey,
+    pub server_key: tfhe::ServerKey,
+    pub client_key: tfhe::ClientKey,
+    pub client_output_key: LargeClientKey,
+    pub conversion_key: SwitchAndSquashKey,
+}
+impl KeySet {
+    pub fn get_raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
+        let (inner_client_key, _) = self.client_key.clone().into_raw_parts();
+        let short_client_key = inner_client_key.into_raw_parts();
+        let (_glwe_secret_key, lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
+        lwe_secret_key
+    }
+    pub fn get_raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
+        let (inner_client_key, _) = self.client_key.clone().into_raw_parts();
+        let short_client_key = inner_client_key.into_raw_parts();
+        let (glwe_secret_key, _lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
+        glwe_secret_key
+    }
+}
+
+pub fn gen_key_set<R: Rng + CryptoRng>(
+    threshold_lwe_parameters: NoiseFloodParameters,
+    rng: &mut R,
+) -> KeySet {
+    let input_param = threshold_lwe_parameters.ciphertext_parameters;
+    let mut secret_rng = secret_rng_from_seed(seed_from_rng(rng).0);
+
+    let input_lwe_secret_key: LweSecretKey<Vec<u64>> =
+        allocate_and_generate_new_binary_lwe_secret_key(
+            threshold_lwe_parameters.ciphertext_parameters.lwe_dimension,
+            &mut secret_rng,
+        );
+    let input_glwe_secret_key: GlweSecretKey<Vec<u64>> =
+        allocate_and_generate_new_binary_glwe_secret_key(
+            input_param.glwe_dimension,
+            input_param.polynomial_size,
+            &mut secret_rng,
+        );
+
+    let client_key = to_hl_client_key(
+        threshold_lwe_parameters.ciphertext_parameters,
+        input_lwe_secret_key,
+        input_glwe_secret_key,
+    );
+    let public_key = tfhe::CompactPublicKey::new(&client_key);
+    let server_key = tfhe::ServerKey::new(&client_key);
+    let (client_output_key, conversion_key) =
+        generate_large_keys(threshold_lwe_parameters, client_key.clone(), rng);
+
+    KeySet {
+        client_key,
+        public_key,
+        server_key,
+        conversion_key,
+        client_output_key,
+    }
+}
+
+/// Helper method for converting a low level client key into a high level client key.
+pub fn to_hl_client_key(
+    params: ClassicPBSParameters,
+    lwe_secret_key: LweSecretKey<Vec<u64>>,
+    glwe_secret_key: GlweSecretKey<Vec<u64>>,
+) -> tfhe::ClientKey {
+    let sps = ShortintParameterSet::new_pbs_param_set(tfhe::shortint::PBSParameters::PBS(params));
+    let sck = shortint::ClientKey::from_raw_parts(glwe_secret_key, lwe_secret_key, sps);
+    ClientKey::from_raw_parts(sck.into(), None)
+}
+
+pub async fn initialize_key_material(
+    session: &mut SmallSession<ResiduePoly128>,
+    params: NoiseFloodParameters,
+) -> anyhow::Result<(
+    PrivateKeySet,
+    SwitchAndSquashKey,
+    Option<PRSSSetup<ResiduePoly128>>,
+)> {
+    let prss_setup = Some(
+        PRSSSetup::init_with_abort::<
+            DummyAgreeRandom,
+            AesRng,
+            SmallSessionStruct<ResiduePoly128, AesRng, SessionParameters>,
+        >(session)
+        .await?,
+    );
+
+    let own_role = session.my_role()?;
+
+    let mut keyset: Option<KeySet> = None;
+
+    if own_role.one_based() == INPUT_PARTY_ID {
+        keyset = Some(gen_key_set(params, &mut session.rng()));
+        tracing::info!("Keyset generated by input party {}", own_role);
+    }
+
+    let sk_container64: Vec<u64> = keyset
+        .as_ref()
+        .map(|s| s.clone().get_raw_lwe_client_key().into_container())
+        .unwrap_or_else(|| {
+            // TODO: This needs to be refactor, since we have done this hack in order all the
+            // parties that are not INPUT_PARTY_ID wait for INPUT_PARTY_ID to generate the keyset
+            // and distribute the lwe secret key vector to the rest. Otherwise if we would have set
+            // Vec::new() here, the other parties would have continued to transfer_pk and would
+            // have panicked because they would have received something different from a PK.
+            vec![Numeric::ZERO; params.ciphertext_parameters.lwe_dimension.0]
+        });
+
+    let sk_container128: Vec<u128> = keyset
+        .as_ref()
+        .map(|s| s.clone().client_output_key.large_key.into_container())
+        .unwrap_or_else(|| {
+            // TODO: This needs to be refactor, since we have done this hack in order all the
+            // parties that are not INPUT_PARTY_ID wait for INPUT_PARTY_ID to generate the keyset
+            // and distribute the lwe secret key vector to the rest. Otherwise if we would have set
+            // Vec::new() here, the other parties would have continued to transfer_pk and would
+            // have panicked because they would have received something different from a PK.
+            vec![
+                Numeric::ZERO;
+                params.sns_parameters.polynomial_size.0 * params.sns_parameters.glwe_dimension.0
+            ]
+        });
+
+    // iterate through sk and share each element
+
+    let mut key_shares64 = Vec::new();
+    // iterate through sk and share each element
+    // TODO(Dragos) this sharing can be done in a single round
+    tracing::info!("Sharing key64 to be send {}", sk_container64.len());
+    for cur in sk_container64 {
+        let secret = match own_role.one_based() {
+            1 => Some(ResiduePoly::from_scalar(Wrapping::<u64>(cur))),
+            _ => None,
+        };
+        let share = robust_input::<_, AesRng>(
+            &mut session.to_base_session(),
+            &secret,
+            &own_role,
+            INPUT_PARTY_ID,
+        )
+        .await?; //TODO(Daniel) batch this for all big_ell
+
+        key_shares64.push(Share::new(own_role, share));
+    }
+
+    let mut key_shares128 = Vec::new();
+    // TODO(Dragos) this sharing can be done in a single round
+    tracing::info!("Sharing key128 to be send {}", sk_container128.len());
+    for cur in sk_container128 {
+        let secret = match own_role.one_based() {
+            1 => Some(ResiduePoly::from_scalar(Wrapping::<u128>(cur))),
+            _ => None,
+        };
+        let share = robust_input::<_, AesRng>(
+            &mut session.to_base_session(),
+            &secret,
+            &own_role,
+            INPUT_PARTY_ID,
+        )
+        .await?; //TODO(Daniel) batch this for all big_ell
+
+        key_shares128.push(Share::new(own_role, share));
+    }
+
+    let transferred_pk = transfer_sns_key::<ResiduePoly128>(
+        &session.to_base_session(),
+        keyset.map(|set| set.conversion_key),
+        &own_role,
+        INPUT_PARTY_ID,
+    )
+    .await?;
+
+    let shared_sk = PrivateKeySet {
+        lwe_secret_key_share: LweSecretKeyShare { data: key_shares64 },
+        //USING A DUMMY GLWE SECRET KEY AS IT IS NOT NEEDED IN TESTS
+        glwe_secret_key_share: GlweSecretKeyShare {
+            data: vec![],
+            polynomial_size: PolynomialSize(0),
+        },
+        glwe_secret_key_share_sns_as_lwe: Some(LweSecretKeyShare {
+            data: key_shares128,
+        }),
+        parameters: params.ciphertext_parameters,
+    };
+
+    Ok((shared_sk, transferred_pk, prss_setup))
+}
+
+pub async fn transfer_sns_key<Z: Ring>(
+    session: &BaseSession,
+    pubkey: Option<SwitchAndSquashKey>,
+    role: &Role,
+    input_party_id: usize,
+) -> anyhow::Result<SwitchAndSquashKey> {
+    session.network().increase_round_counter().await?;
+    if role.one_based() == input_party_id {
+        let pubkey_raw = pubkey
+            .ok_or_else(|| anyhow_error_and_log("I have no public key to send!".to_string()))?;
+        let num_parties = session.num_parties();
+        let pkval = NetworkValue::<Z>::SwitchAndSquashKey(Box::new(pubkey_raw.clone()));
+
+        let mut set = JoinSet::new();
+        for to_send_role in 1..=num_parties {
+            if to_send_role != input_party_id {
+                let identity = session.identity_from(&Role::indexed_by_one(to_send_role))?;
+
+                let networking = Arc::clone(session.network());
+                let session_id = session.session_id();
+                let send_pk = pkval.clone();
+
+                set.spawn(async move {
+                    let _ = networking
+                        .send(send_pk.to_network(), &identity, &session_id)
+                        .await;
+                });
+            }
+        }
+        while (set.join_next().await).is_some() {}
+        Ok(pubkey_raw)
+    } else {
+        let receiver = session.identity_from(&Role::indexed_by_one(input_party_id))?;
+        let networking = Arc::clone(session.network());
+        let session_id = session.session_id();
+        let timeout = session.network().get_timeout_current_round()?;
+        tracing::debug!(
+            "Waiting for receiving public key from input party with timeout {:?}",
+            timeout
+        );
+        let data = tokio::spawn(timeout_at(timeout, async move {
+            networking.receive(&receiver, &session_id).await
+        }))
+        .await??;
+
+        let pk = match NetworkValue::<Z>::from_network(data)? {
+            NetworkValue::SwitchAndSquashKey(pk) => pk,
+            _ => Err(anyhow_error_and_log(
+                "I have received sth different from a public key!".to_string(),
+            ))?,
+        };
+        Ok(*pk)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LargeClientKey {
+    pub large_key: LweSecretKeyOwned<u128>,
+    pub params: ClassicPBSParameters,
+}
+impl LargeClientKey {
+    pub fn new(params: ClassicPBSParameters, large_key: LweSecretKeyOwned<u128>) -> Self {
+        LargeClientKey { large_key, params }
+    }
+
+    pub fn decrypt_128(&self, ct: &Ciphertext128) -> u128 {
+        if ct.is_empty() {
+            return 0;
+        }
+
+        let bits_in_block = self.params.message_modulus_log();
+        let mut recomposer = BlockRecomposer::<u128>::new(bits_in_block);
+
+        for encrypted_block in ct {
+            let decrypted_block = self.decrypt_block_128(encrypted_block);
+            if !recomposer.add_unmasked(decrypted_block.0) {
+                // End of T::BITS reached no need to try more
+                // recomposition
+                break;
+            };
+        }
+
+        recomposer.value()
+    }
+
+    pub(crate) fn decrypt_block_128(&self, ct: &Ciphertext128Block) -> Z128 {
+        let total_bits = self.params.total_block_bits() as usize;
+        let raw_plaintext = decrypt_lwe_ciphertext(&self.large_key, ct);
+        from_expanded_msg(raw_plaintext.0, total_bits)
+    }
+}
+
+/// Function for generating a pair of keys for the noise drowning algorithms.
+/// That is, the method takes a client key working over u64 and generates a random client key working over u128.
+/// Then, the method constructs a key switching key to convert ciphertext encrypted with the key over u64,
+/// to ciphertexts encrypted over u128.
+pub fn generate_large_keys<R: Rng + CryptoRng>(
+    threshold_lwe_parameters: NoiseFloodParameters,
+    input_sk: ClientKey,
+    rng: &mut R,
+) -> (LargeClientKey, SwitchAndSquashKey) {
+    let output_param = threshold_lwe_parameters.sns_parameters;
+    let input_param = threshold_lwe_parameters.ciphertext_parameters;
+
+    let mut secret_rng = secret_rng_from_seed(seed_from_rng(rng).0);
+    let mut deterministic_seeder =
+        DeterministicSeeder::<ActivatedRandomGenerator>::new(seed_from_rng(rng));
+    let mut enc_rng = EncryptionRandomGenerator::<ActivatedRandomGenerator>::new(
+        deterministic_seeder.seed(),
+        &mut deterministic_seeder,
+    );
+
+    // Generate output secret key
+    let output_glwe_secret_key_out = allocate_and_generate_new_binary_glwe_secret_key(
+        output_param.glwe_dimension,
+        output_param.polynomial_size,
+        &mut secret_rng,
+    );
+    let output_lwe_secret_key_out = output_glwe_secret_key_out.clone().into_lwe_secret_key();
+    let client_output_key = LargeClientKey::new(input_param, output_lwe_secret_key_out);
+
+    // Generate conversion key
+    let (short_sk, _whopbs_param) = input_sk.into_raw_parts();
+    let (_raw_input_glwe_secret_key, raw_input_lwe_secret_key, _short_param) =
+        short_sk.into_raw_parts().into_raw_parts();
+    let mut input_lwe_secret_key_out =
+        LweSecretKey::new_empty_key(0_u128, input_param.lwe_dimension);
+    // Convert input secret key to a u128 bit key
+    input_lwe_secret_key_out
+        .as_mut()
+        .iter_mut()
+        .zip(raw_input_lwe_secret_key.as_ref().iter())
+        .for_each(|(dst, &src)| *dst = src as u128);
+
+    let mut bsk_out = LweBootstrapKey::new(
+        0_u128,
+        output_param.glwe_dimension.to_glwe_size(),
+        output_param.polynomial_size,
+        output_param.pbs_base_log,
+        output_param.pbs_level,
+        input_param.lwe_dimension,
+        output_param.ciphertext_modulus,
+    );
+
+    par_generate_lwe_bootstrap_key(
+        &input_lwe_secret_key_out,
+        &output_glwe_secret_key_out,
+        &mut bsk_out,
+        output_param.glwe_noise_distribution,
+        &mut enc_rng,
+    );
+
+    let mut fbsk_out = Fourier128LweBootstrapKey::new(
+        input_param.lwe_dimension,
+        output_param.glwe_dimension.to_glwe_size(),
+        output_param.polynomial_size,
+        output_param.pbs_base_log,
+        output_param.pbs_level,
+    );
+
+    convert_standard_lwe_bootstrap_key_to_fourier_128(&bsk_out, &mut fbsk_out);
+    drop(bsk_out);
+
+    let conversion_key = SwitchAndSquashKey::new(fbsk_out);
+    (client_output_key, conversion_key)
+}
+
+/// keygen that generates secret key shares for many parties
+pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
+    lwe_secret_key: LweSecretKey<Vec<u64>>,
+    glwe_secret_key: GlweSecretKey<Vec<u64>>,
+    glwe_secret_key_sns_as_lwe: LweSecretKey<Vec<u128>>,
+    parameters: ClassicPBSParameters,
+    rng: &mut R,
+    num_parties: usize,
+    threshold: usize,
+) -> anyhow::Result<Vec<PrivateKeySet>> {
+    let s_vector = glwe_secret_key_sns_as_lwe.into_container();
+    let s_length = s_vector.len();
+    let mut vv128: Vec<Vec<Share<ResiduePoly128>>> =
+        vec![Vec::with_capacity(s_length); num_parties];
+
+    // for each bit in the secret key generate all parties shares
+    for (i, bit) in s_vector.iter().enumerate() {
+        let embedded_secret = ResiduePoly128::from_scalar(Wrapping(*bit));
+        let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
+
+        for (party_id, v) in vv128.iter_mut().enumerate().take(num_parties) {
+            v.insert(
+                i,
+                Share::new(
+                    Role::indexed_by_zero(party_id),
+                    poly.eval(&ResiduePoly::embed_exceptional_set(party_id + 1)?),
+                ),
+            );
+        }
+    }
+
+    // do the same for 64 bit lwe key
+    let s_vector64 = lwe_secret_key.into_container();
+    let s_length64 = s_vector64.len();
+    let mut vv64_lwe_key: Vec<Vec<Share<ResiduePoly64>>> =
+        vec![Vec::with_capacity(s_length64); num_parties];
+    // for each bit in the secret key generate all parties shares
+    for (i, bit) in s_vector64.iter().enumerate() {
+        let embedded_secret = ResiduePoly64::from_scalar(Wrapping(*bit));
+        let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
+
+        for (party_id, v) in vv64_lwe_key.iter_mut().enumerate().take(num_parties) {
+            v.insert(
+                i,
+                Share::new(
+                    Role::indexed_by_zero(party_id),
+                    poly.eval(&ResiduePoly::embed_exceptional_set(party_id + 1)?),
+                ),
+            );
+        }
+    }
+
+    // do the same for 64 bit glwe key
+    let glwe_poly_size = glwe_secret_key.polynomial_size();
+    let s_vector64 = glwe_secret_key.into_container();
+    let s_length64 = s_vector64.len();
+    let mut vv64_glwe_key: Vec<Vec<Share<ResiduePoly64>>> =
+        vec![Vec::with_capacity(s_length64); num_parties];
+    // for each bit in the secret key generate all parties shares
+    for (i, bit) in s_vector64.iter().enumerate() {
+        let embedded_secret = ResiduePoly64::from_scalar(Wrapping(*bit));
+        let poly = Poly::sample_random_with_fixed_constant(rng, embedded_secret, threshold);
+
+        for (party_id, v) in vv64_glwe_key.iter_mut().enumerate().take(num_parties) {
+            v.insert(
+                i,
+                Share::new(
+                    Role::indexed_by_zero(party_id),
+                    poly.eval(&ResiduePoly::embed_exceptional_set(party_id + 1)?),
+                ),
+            );
+        }
+    }
+
+    // put the individual parties shares into SecretKeyShare structs
+    let shared_sks: Vec<_> = (0..num_parties)
+        .map(|p| PrivateKeySet {
+            lwe_secret_key_share: LweSecretKeyShare {
+                data: vv64_lwe_key[p].clone(),
+            },
+            glwe_secret_key_share: GlweSecretKeyShare {
+                data: vv64_glwe_key[p].clone(),
+                polynomial_size: glwe_poly_size,
+            },
+            glwe_secret_key_share_sns_as_lwe: Some(LweSecretKeyShare {
+                data: vv128[p].clone(),
+            }),
+            parameters,
+        })
+        .collect();
+
+    Ok(shared_sks)
+}
+
+#[cfg(test)]
+mod tests {
+    use tfhe::{
+        generate_keys,
+        prelude::{FheDecrypt, FheEncrypt},
+        set_server_key,
+        shortint::PBSParameters::PBS,
+        ConfigBuilder, FheUint8,
+    };
+
+    use crate::{
+        execution::{
+            constants::REAL_KEY_PATH,
+            tfhe_internals::test_feature::{to_hl_client_key, KeySet},
+        },
+        file_handling::read_element,
+    };
+
+    #[test]
+    #[ignore]
+    fn hl_sk_key_conversion() {
+        let config = ConfigBuilder::default().build();
+        let (client_key, _server_key) = generate_keys(config);
+        let (raw_sk, _whobs) = client_key.clone().into_raw_parts();
+        let (glwe_key, lwe_key, params) = raw_sk.into_raw_parts().into_raw_parts();
+
+        let input_param = match params.pbs_parameters() {
+            Some(PBS(param)) => param,
+            _ => panic!("Only support for ClassicPBSParameters"),
+        };
+
+        let hl_client_key = to_hl_client_key(input_param, lwe_key, glwe_key);
+        assert_eq!(
+            hl_client_key.into_raw_parts(),
+            client_key.clone().into_raw_parts()
+        );
+        let ct = FheUint8::encrypt(42_u8, &client_key);
+        let msg: u8 = ct.decrypt(&client_key);
+        assert_eq!(42, msg);
+    }
+
+    // TODO does not work with test key. Enable if test keys get updated
+    // // #[test]
+    // fn sunshine_hl_keys_test() {
+    //     sunshine_hl_keys(SMALL_TEST_KEY_PATH);
+    // }
+
+    #[test]
+    fn sunshine_hl_keys_real() {
+        sunshine_hl_keys(REAL_KEY_PATH);
+    }
+
+    /// Helper method for validating conversion to high level API keys.
+    /// Method tries to encrypt using both public and client keys and validates
+    /// that the results are correct and consistent.
+    fn sunshine_hl_keys(path: &str) {
+        let keyset: KeySet = read_element(path.to_string()).unwrap();
+        let ct_a = FheUint8::encrypt(42_u8, &keyset.client_key);
+        let decrypted_a: u8 = ct_a.decrypt(&keyset.client_key);
+        assert_eq!(42, decrypted_a);
+        set_server_key(keyset.server_key);
+        let ct_b = FheUint8::encrypt(55_u8, &keyset.public_key);
+        let ct_sum = ct_a.clone() + ct_b;
+        let sum: u8 = ct_sum.decrypt(&keyset.client_key);
+        assert_eq!(42 + 55, sum);
+        let ct_c = FheUint8::encrypt(5_u8, &keyset.client_key);
+        let ct_product = ct_a * ct_c;
+        let product: u8 = ct_product.decrypt(&keyset.client_key);
+        assert_eq!(42 * 5, product);
+    }
+}

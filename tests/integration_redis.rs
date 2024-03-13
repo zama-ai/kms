@@ -15,7 +15,7 @@ use distributed_decryption::{
     algebra::residue_poly::ResiduePoly64,
     computation::SessionId,
     execution::{
-        endpoints::keygen::distributed_keygen,
+        endpoints::keygen::distributed_keygen_z64,
         online::preprocessing::orchestrator::PreprocessingOrchestrator,
         runtime::{
             session::ParameterHandles,
@@ -207,9 +207,7 @@ fn test_dkg_orchestrator_large(
                 .iter()
                 .zip(0..num_sessions)
                 .map(|(runtime, session_id)| {
-                    runtime
-                        .large_session_for_party(SessionId(session_id), party_id)
-                        .unwrap()
+                    runtime.large_session_for_party(SessionId(session_id), party_id)
                 })
                 .collect_vec();
 
@@ -229,7 +227,7 @@ fn test_dkg_orchestrator_large(
             let dkg_session = sessions.get_mut(0).unwrap();
 
             let (pk, sk) = rt_handle.block_on(async {
-                distributed_keygen(dkg_session, preproc.as_mut(), params)
+                distributed_keygen_z64(dkg_session, preproc.as_mut(), params)
                     .await
                     .unwrap()
             });

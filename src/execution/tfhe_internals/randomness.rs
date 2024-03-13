@@ -176,7 +176,6 @@ impl<Gen: ByteRandomGenerator> MPCMaskRandomGenerator<Gen> {
     ) -> Result<impl Iterator<Item = Self>, ForkError> {
         // We try to fork the generators
         let mask_iter = self.gen.try_fork(n_child, mask_bytes)?;
-
         // We return a proper iterator.
         Ok(mask_iter.map(|gen| Self { gen }))
     }

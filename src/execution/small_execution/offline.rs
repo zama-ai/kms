@@ -10,6 +10,7 @@ use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{
     BasePreprocessing, RandomPreprocessing, TriplePreprocessing,
 };
+use crate::execution::runtime::session::BaseSessionHandles;
 use crate::execution::sharing::shamir::RevealOp;
 use crate::{
     algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
@@ -79,7 +80,7 @@ where
         for _ in 0..self.batch_sizes.randoms {
             res.push(Share::new(
                 my_role,
-                session.prss_as_mut()?.prss_next(my_role.one_based())?,
+                session.prss_as_mut().prss_next(my_role.one_based())?,
             ));
         }
         self.elements.append_randoms(res);
@@ -95,8 +96,8 @@ where
         session: &mut Ses,
         amount: usize,
     ) -> anyhow::Result<()> {
-        let prss_base_ctr = session.prss()?.prss_ctr;
-        let przs_base_ctr = session.prss()?.przs_ctr;
+        let prss_base_ctr = session.prss().prss_ctr;
+        let przs_base_ctr = session.prss().przs_ctr;
 
         let vec_x_single = Self::prss_list(session, amount)?;
         let vec_y_single = Self::prss_list(session, amount)?;
@@ -189,7 +190,7 @@ where
     /// Helper method to parse the result of the broadcast by turning taking the i'th share from each party and combine them in a vector for which reconstruction is then computed.
     /// Hence the method returns a list of length `amount` which contain the reconstructed values.
     /// In case a wrong amount of elements or a wrong type is returned then the culpit is added to the list of corrupt parties.
-    fn compute_d_values<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
+    fn compute_d_values<Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
         session: &mut Ses,
         amount: usize,
         d_recons: HashMap<Role, BroadcastValue<Z>>,
@@ -295,7 +296,7 @@ where
         let my_id = session.my_role()?.one_based();
         let mut vec_prss = Vec::with_capacity(amount);
         for _i in 0..amount {
-            vec_prss.push(session.prss_as_mut()?.prss_next(my_id)?);
+            vec_prss.push(session.prss_as_mut().prss_next(my_id)?);
         }
         Ok(vec_prss)
     }
@@ -308,7 +309,7 @@ where
         let threshold = session.threshold();
         let mut vec_przs = Vec::with_capacity(amount);
         for _i in 0..amount {
-            vec_przs.push(session.prss_as_mut()?.przs_next(my_id, threshold)?);
+            vec_przs.push(session.prss_as_mut().przs_next(my_id, threshold)?);
         }
         Ok(vec_przs)
     }
@@ -322,16 +323,16 @@ where
         amount: u128,
         shared_d_double: HashMap<Role, Option<Z>>,
     ) -> anyhow::Result<()> {
-        let vec_x = session.prss()?.prss_check(session, prss_ctr).await?;
+        let vec_x = session.prss().prss_check(session, prss_ctr).await?;
         let vec_y = session
-            .prss()?
+            .prss()
             .prss_check(session, prss_ctr + amount)
             .await?;
         let vec_v = session
-            .prss()?
+            .prss()
             .prss_check(session, prss_ctr + 2 * amount)
             .await?;
-        let vec_z_double = session.prss()?.przs_check(session, przs_ctr).await?;
+        let vec_z_double = session.prss().przs_check(session, przs_ctr).await?;
         for (cur_role, cur_d_share) in shared_d_double {
             let v_single = vec_v
                 .get(&cur_role)
@@ -425,15 +426,14 @@ mod test {
                 agree_random::DummyAgreeRandom,
                 offline::{BatchParams, SmallPreprocessing},
                 prf::PRSSConversions,
-                prss::PRSSSetup,
             },
         },
         networking::value::BroadcastValue,
         tests::helper::{
-            tests::get_small_session_for_parties, tests_and_benches::execute_protocol_small,
+            tests::get_networkless_base_session_for_parties,
+            tests_and_benches::execute_protocol_small,
         },
     };
-    use aes_prng::AesRng;
 
     const RANDOM_BATCH_SIZE: usize = 10;
     const TRIPLE_BATCH_SIZE: usize = 10;
@@ -443,16 +443,6 @@ mod test {
         let threshold = 1;
 
         let mut task = |mut session: SmallSession<Z>| async move {
-            let prss_setup =
-                PRSSSetup::init_with_abort::<DummyAgreeRandom, AesRng, SmallSession<Z>>(
-                    &mut session,
-                )
-                .await
-                .unwrap();
-            session.set_prss(Some(
-                prss_setup.new_prss_session_state(session.session_id()),
-            ));
-
             let default_batch_size = BatchParams {
                 triples: 0,
                 randoms: RANDOM_BATCH_SIZE,
@@ -510,15 +500,6 @@ mod test {
         let threshold = 1;
 
         let mut task = |mut session: SmallSession<Z>| async move {
-            let prss_setup =
-                PRSSSetup::init_with_abort::<DummyAgreeRandom, AesRng, SmallSession<Z>>(
-                    &mut session,
-                )
-                .await
-                .unwrap();
-            session.set_prss(Some(
-                prss_setup.new_prss_session_state(session.session_id()),
-            ));
             let default_batch_size = BatchParams {
                 triples: TRIPLE_BATCH_SIZE,
                 randoms: 0,
@@ -579,16 +560,7 @@ mod test {
                 triples: 3,
                 randoms: 2,
             };
-            let prss_setup = PRSSSetup::init_with_abort::<
-                DummyAgreeRandom,
-                AesRng,
-                SmallSession<ResiduePoly128>,
-            >(&mut session)
-            .await
-            .unwrap();
-            session.set_prss(Some(
-                prss_setup.new_prss_session_state(session.session_id()),
-            ));
+
             let mut preproc =
                 SmallPreprocessing::<_, DummyAgreeRandom>::init(&mut session, batch_size)
                     .await
@@ -611,7 +583,7 @@ mod test {
     #[tracing_test::traced_test]
     #[test]
     fn test_wrong_type() {
-        let mut session = get_small_session_for_parties(2, 1, Role::indexed_by_one(1));
+        let mut session = get_networkless_base_session_for_parties(2, 1, Role::indexed_by_one(1));
         // Observe party 1 inputs a vector of size 1 and party 2 inputs a single element
         let d_recons = HashMap::from([
             (
@@ -654,17 +626,6 @@ mod test {
             let mut triple_res = Vec::new();
             let mut rand_res = Vec::new();
             if session.my_role().unwrap() != Role::indexed_by_one(BAD_ID) {
-                let prss_setup = PRSSSetup::init_with_abort::<
-                    DummyAgreeRandom,
-                    AesRng,
-                    SmallSession<ResiduePoly128>,
-                >(&mut session)
-                .await
-                .unwrap();
-                session.set_prss(Some(
-                    prss_setup.new_prss_session_state(session.session_id()),
-                ));
-
                 let default_batch_size = BatchParams {
                     triples: TRIPLE_BATCH_SIZE,
                     randoms: RANDOM_BATCH_SIZE,
@@ -745,16 +706,7 @@ mod test {
                 triples: 10,
                 randoms: 10,
             };
-            let prss_setup = PRSSSetup::init_with_abort::<
-                DummyAgreeRandom,
-                AesRng,
-                SmallSession<ResiduePoly128>,
-            >(&mut session)
-            .await
-            .unwrap();
-            session.set_prss(Some(
-                prss_setup.new_prss_session_state(session.session_id()),
-            ));
+
             if session.my_role().unwrap() != Role::indexed_by_one(BAD_ID) {
                 let mut preproc = SmallPreprocessing::<_, DummyAgreeRandom>::init(
                     &mut session,
@@ -828,20 +780,12 @@ mod test {
         const BAD_ID: usize = 2;
 
         async fn task(mut session: SmallSession<ResiduePoly128>) -> SmallSession<ResiduePoly128> {
-            let prss_setup = PRSSSetup::init_with_abort::<
-                DummyAgreeRandom,
-                AesRng,
-                SmallSession<ResiduePoly128>,
-            >(&mut session)
-            .await
-            .unwrap();
-            let mut prss_state = prss_setup.new_prss_session_state(session.session_id());
             if session.my_role().unwrap() == Role::indexed_by_one(BAD_ID) {
                 // Change the counter offset to make the party use wrong values
+                let prss_state = session.prss_as_mut();
                 prss_state.prss_ctr = 12;
                 prss_state.przs_ctr = 234;
             };
-            session.set_prss(Some(prss_state));
 
             let base_preprocessing =
                 create_memory_factory().create_base_preprocessing_residue_128();

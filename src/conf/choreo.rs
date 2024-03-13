@@ -6,7 +6,7 @@ use tonic::transport::Uri;
 
 use crate::choreography::choreographer::NetworkTopology;
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
-use crate::execution::runtime::session::{DecryptionMode, SetupMode};
+use crate::execution::runtime::session::DecryptionMode;
 
 use super::Tracing;
 
@@ -79,7 +79,6 @@ pub struct ChoreoConf {
     storage_folder: String,
     session_file: String,
     pub params_file: String,
-    pub setup_mode: SetupMode,
     pub decrypt_mode: DecryptionMode,
     epoch_id: Option<usize>,
     pub witness_dim: Option<u32>,

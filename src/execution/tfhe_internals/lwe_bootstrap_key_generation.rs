@@ -133,15 +133,19 @@ mod tests {
             },
             commons::{
                 generators::{DeterministicSeeder, EncryptionRandomGenerator},
-                math::{decomposition::SignedDecomposer, random::ActivatedRandomGenerator},
+                math::{
+                    decomposition::SignedDecomposer,
+                    random::{ActivatedRandomGenerator, TUniform},
+                },
                 traits::{ContiguousEntityContainer, ContiguousEntityContainerMut},
             },
             entities::{GlweSecretKeyOwned, LweSecretKeyOwned, PlaintextList},
         },
+        integer::parameters::DynamicDistribution,
         shortint::{
             parameters::{
                 CoreCiphertextModulus, DecompositionBaseLog, DecompositionLevelCount,
-                PolynomialSize, StandardDev,
+                PolynomialSize,
             },
             wopbs::PlaintextCount,
         },
@@ -153,15 +157,14 @@ mod tests {
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
                 preprocessing::dummy::DummyPreprocessing,
-                secret_distributions::{
-                    RealSecretDistributions, SecretDistributions, TUniformBound,
-                },
+                secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
             random::{get_rng, seed_from_rng},
             runtime::session::{LargeSession, ParameterHandles},
             tfhe_internals::{
                 glwe_key::GlweSecretKeyShare,
                 lwe_key::LweSecretKeyShare,
+                parameters::TUniformBound,
                 randomness::{
                     EncryptionType, MPCEncryptionRandomGenerator, MPCMaskRandomGenerator,
                     MPCNoiseRandomGenerator,
@@ -316,7 +319,7 @@ mod tests {
             &glwe_secret_key,
             DecompositionBaseLog(bk_base_log),
             DecompositionLevelCount(bk_level_count),
-            StandardDev(1e-37),
+            DynamicDistribution::TUniform(TUniform::new(t_uniform_bound_glwe.try_into().unwrap())),
             CoreCiphertextModulus::<u128>::new_native(),
             &mut enc_rng,
         );

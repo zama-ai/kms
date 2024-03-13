@@ -2,10 +2,14 @@ use itertools::{EitherOrBoth, Itertools};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use tfhe::{
-    core_crypto::{commons::traits::ByteRandomGenerator, entities::LweCompactPublicKeyOwned},
+    core_crypto::{
+        commons::traits::ByteRandomGenerator,
+        entities::{LweCompactPublicKey, LweCompactPublicKeyOwned},
+    },
     shortint::{
+        self,
         parameters::{LweDimension, PolynomialSize},
-        CiphertextModulus,
+        CiphertextModulus, ClassicPBSParameters, ShortintParameterSet,
     },
 };
 
@@ -115,6 +119,20 @@ where
     }
 }
 
+pub(crate) fn to_tfhe_hl_api_compact_public_key(
+    compact_lwe_pk: LweCompactPublicKey<Vec<u64>>,
+    params: ClassicPBSParameters,
+) -> tfhe::CompactPublicKey {
+    let sps = ShortintParameterSet::new_pbs_param_set(tfhe::shortint::PBSParameters::PBS(params));
+    let ipk = shortint::CompactPublicKey::from_raw_parts(
+        compact_lwe_pk,
+        sps,
+        params.encryption_key_choice.into(),
+    );
+    let cpk = tfhe::integer::public_key::CompactPublicKey::from_raw_parts(ipk);
+    tfhe::CompactPublicKey::from_raw_parts(cpk)
+}
+
 impl<Z: BaseRing> LweSecretKeyShare<Z> {
     pub fn new_from_preprocessing<P: BitPreprocessing<ResiduePoly<Z>> + ?Sized>(
         dimension: LweDimension,
@@ -185,30 +203,35 @@ mod tests {
             },
             commons::{
                 generators::{EncryptionRandomGenerator, SecretRandomGenerator},
-                math::random::{ActivatedRandomGenerator, RandomGenerator},
+                math::random::{ActivatedRandomGenerator, RandomGenerator, TUniform},
             },
             entities::{LweCiphertext, LweSecretKeyOwned, Plaintext},
             seeders::new_seeder,
         },
-        shortint::{
-            parameters::{LweDimension, StandardDev},
-            CiphertextModulus,
-        },
+        integer::parameters::DynamicDistribution,
+        shortint::{parameters::LweDimension, CiphertextModulus},
         Seed,
     };
+    #[cfg(feature = "slow_tests")]
+    use tfhe::{
+        prelude::{FheDecrypt, FheEncrypt},
+        shortint::PBSParameters::PBS,
+        ConfigBuilder, FheUint8,
+    };
 
+    #[cfg(feature = "slow_tests")]
+    use crate::execution::tfhe_internals::lwe_key::to_tfhe_hl_api_compact_public_key;
     use crate::{
         algebra::{base_ring::Z64, residue_poly::ResiduePoly64},
         execution::{
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
                 preprocessing::dummy::DummyPreprocessing,
-                secret_distributions::{
-                    RealSecretDistributions, SecretDistributions, TUniformBound,
-                },
+                secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
             runtime::session::{LargeSession, ParameterHandles},
             tfhe_internals::{
+                parameters::TUniformBound,
                 randomness::{
                     MPCEncryptionRandomGenerator, MPCMaskRandomGenerator, MPCNoiseRandomGenerator,
                 },
@@ -221,7 +244,6 @@ mod tests {
     use super::{allocate_and_generate_new_lwe_compact_public_key, LweSecretKeyShare};
 
     #[test]
-    #[ignore] //This test requires a seeder which corresponds to a different feature depending on the architecture
     fn test_pk_generation() {
         let lwe_dimension = 1024_usize;
         let message_log_modulus = 3_usize;
@@ -320,12 +342,14 @@ mod tests {
         let mut secret_random_generator: SecretRandomGenerator<ActivatedRandomGenerator> =
             SecretRandomGenerator::new(seeder.seed());
 
+        let noise_distrib =
+            DynamicDistribution::TUniform(TUniform::new(t_uniform_bound.try_into().unwrap()));
         encrypt_lwe_ciphertext_with_compact_public_key(
             &opened_pk_ref,
             &mut ct,
             plaintext,
-            StandardDev(3.15283466779972e-16),
-            StandardDev(3.15283466779972e-16),
+            noise_distrib,
+            noise_distrib,
             &mut secret_random_generator,
             &mut encryption_random_generator,
         );
@@ -335,5 +359,26 @@ mod tests {
         let decoded = divide_round(decrypted.0, 1 << scaling) % (1 << message_log_modulus);
 
         assert_eq!(msg, decoded);
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn hl_pk_key_conversion() {
+        let config = ConfigBuilder::default().build();
+        let (client_key, _server_key) = tfhe::generate_keys(config);
+        let pk = tfhe::CompactPublicKey::new(&client_key);
+        let raw_pk = pk.clone().into_raw_parts().into_raw_parts();
+        let (lcpk, params, _order) = raw_pk.into_raw_parts();
+
+        let input_param = match params.pbs_parameters() {
+            Some(PBS(param)) => param,
+            _ => panic!("Only support for ClassicPBSParameters"),
+        };
+
+        let hl_client_key = to_tfhe_hl_api_compact_public_key(lcpk, input_param);
+        assert_eq!(hl_client_key.into_raw_parts(), pk.clone().into_raw_parts());
+        let ct = FheUint8::encrypt(42_u8, &pk);
+        let msg: u8 = ct.decrypt(&client_key);
+        assert_eq!(42, msg);
     }
 }

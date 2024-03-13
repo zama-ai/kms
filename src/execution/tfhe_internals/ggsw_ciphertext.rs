@@ -375,7 +375,7 @@ mod tests {
         },
     };
 
-    use crate::execution::{online::secret_distributions::TUniformBound, sharing::shamir::InputOp};
+    use crate::execution::{sharing::shamir::InputOp, tfhe_internals::parameters::TUniformBound};
     use crate::{
         algebra::residue_poly::ResiduePoly64,
         execution::{

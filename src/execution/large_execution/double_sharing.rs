@@ -161,6 +161,7 @@ pub(crate) mod tests {
     use crate::algebra::structure_traits::ErrorCorrect;
     use crate::algebra::structure_traits::HenselLiftInverse;
     use crate::algebra::structure_traits::RingEmbed;
+    use crate::execution::runtime::session::BaseSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::{
         algebra::structure_traits::{Ring, Sample},
@@ -281,12 +282,12 @@ pub(crate) mod tests {
                 for _ in 0..num_output {
                     res.push(double_sharing.next(&mut session).await.unwrap());
                 }
-                assert!(session.corrupt_roles.contains(&Role::indexed_by_zero(1)));
+                assert!(session.corrupt_roles().contains(&Role::indexed_by_zero(1)));
             } else {
                 for _ in 0..num_output {
                     res.push(DoubleShare {
-                        degree_t: ResiduePoly128::sample(&mut session.rng),
-                        degree_2t: ResiduePoly128::sample(&mut session.rng),
+                        degree_t: ResiduePoly128::sample(session.rng()),
+                        degree_2t: ResiduePoly128::sample(session.rng()),
                     })
                 }
             }

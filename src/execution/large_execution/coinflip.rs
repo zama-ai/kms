@@ -101,8 +101,8 @@ pub(crate) mod tests {
             sharing::open::robust_open_to_all,
         },
         tests::helper::tests::{
-            execute_protocol_large_w_disputes_and_malicious, get_large_session_for_parties,
-            TestingParameters,
+            execute_protocol_large_w_disputes_and_malicious,
+            get_networkless_large_session_for_parties, TestingParameters,
         },
     };
     use aes_prng::AesRng;
@@ -130,7 +130,7 @@ pub(crate) mod tests {
 
         let mut set = JoinSet::new();
         for (party_nb, _) in runtime.identities.iter().enumerate() {
-            let mut session = get_large_session_for_parties(
+            let mut session = get_networkless_large_session_for_parties(
                 identities.len(),
                 threshold,
                 Role::indexed_by_zero(party_nb),

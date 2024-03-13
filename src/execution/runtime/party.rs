@@ -1,10 +1,22 @@
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use zeroize::Zeroize;
 
 /// Role/party ID of a party (1...N)
 #[derive(
-    Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Serialize, Deserialize,
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Display,
+    Serialize,
+    Deserialize,
+    Zeroize,
 )]
 pub struct Role(u64);
 

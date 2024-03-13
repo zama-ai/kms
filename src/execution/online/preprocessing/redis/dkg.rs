@@ -12,7 +12,7 @@ use crate::{
             },
             secret_distributions::{RealSecretDistributions, SecretDistributions},
         },
-        runtime::session::{BaseSession, ParameterHandles, SmallSession},
+        runtime::session::{BaseSession, ParameterHandles, SmallSession, SmallSessionHandles},
         sharing::share::Share,
         small_execution::{prf::PRSSConversions, prss::PRSSState},
         tfhe_internals::parameters::DKGParams,
@@ -87,10 +87,7 @@ where
     ) -> anyhow::Result<()> {
         let my_role = session.my_role()?;
         let my_role_one_based = my_role.one_based();
-        let prss_state = session
-            .prss_state
-            .as_mut()
-            .ok_or_else(|| anyhow_error_and_log("PRSS_State not initialized".to_string()))?;
+        let prss_state = session.prss_as_mut();
 
         let mut fill_noise = |prss_state: &mut PRSSState<Z>, num: usize, bound: NoiseBounds| {
             self.append_noises(

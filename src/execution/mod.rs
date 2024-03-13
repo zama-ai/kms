@@ -42,6 +42,7 @@ pub mod large_execution {
     pub mod single_sharing;
     pub mod vss;
 }
+
 #[cfg(feature = "non-wasm")]
 pub mod online {
     pub mod bit_manipulation;
@@ -51,6 +52,7 @@ pub mod online {
     pub mod secret_distributions;
     pub mod triple;
 }
+
 pub mod sharing {
     #[cfg(feature = "non-wasm")]
     pub mod input;
@@ -60,19 +62,32 @@ pub mod sharing {
     pub mod share;
 }
 
-#[cfg(feature = "non-wasm")]
 pub mod tfhe_internals {
+    #[cfg(feature = "non-wasm")]
     pub mod ggsw_ciphertext;
+    #[cfg(feature = "non-wasm")]
     pub mod glwe_ciphertext;
+    #[cfg(feature = "non-wasm")]
     pub mod glwe_key;
+    #[cfg(feature = "non-wasm")]
     pub mod lwe_bootstrap_key;
+    #[cfg(feature = "non-wasm")]
     pub mod lwe_bootstrap_key_generation;
+    #[cfg(feature = "non-wasm")]
     pub mod lwe_ciphertext;
+    #[cfg(feature = "non-wasm")]
     pub mod lwe_key;
+    #[cfg(feature = "non-wasm")]
     pub mod lwe_keyswitch_key;
+    #[cfg(feature = "non-wasm")]
     pub mod lwe_keyswitch_key_generation;
     pub mod parameters;
+    #[cfg(feature = "non-wasm")]
     pub mod randomness;
+    pub mod switch_and_squash;
+    #[cfg(any(test, feature = "testing"))]
+    pub mod test_feature;
+    #[cfg(feature = "non-wasm")]
     pub mod utils;
 }
 pub mod config;

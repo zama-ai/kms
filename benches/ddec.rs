@@ -10,9 +10,9 @@ use distributed_decryption::{
             session::DecryptionMode,
             test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         },
+        tfhe_internals::test_feature::{keygen_all_party_shares, KeySet},
     },
     file_handling::read_element,
-    lwe::{keygen_all_party_shares, KeySet},
 };
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
@@ -58,7 +58,20 @@ fn ddec_nsmall(c: &mut Criterion) {
     let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
-        let key_shares = keygen_all_party_shares(&keyset, &mut rng, config.n, config.t).unwrap();
+        let lwe_secret_key = keyset.get_raw_lwe_client_key();
+        let glwe_secret_key = keyset.get_raw_glwe_client_key();
+        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key.clone();
+        let params = keyset.client_output_key.params;
+        let key_shares = keygen_all_party_shares(
+            lwe_secret_key,
+            glwe_secret_key,
+            glwe_secret_key_sns_as_lwe,
+            params,
+            &mut rng,
+            config.n,
+            config.t,
+        )
+        .unwrap();
         let ct = FheUint8::encrypt(message, &keyset.public_key);
         let (raw_ct, _id) = ct.into_raw_parts();
 
@@ -104,7 +117,20 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
     let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
-        let key_shares = keygen_all_party_shares(&keyset, &mut rng, config.n, config.t).unwrap();
+        let lwe_secret_key = keyset.get_raw_lwe_client_key();
+        let glwe_secret_key = keyset.get_raw_glwe_client_key();
+        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key.clone();
+        let params = keyset.client_output_key.params;
+        let key_shares = keygen_all_party_shares(
+            lwe_secret_key,
+            glwe_secret_key,
+            glwe_secret_key_sns_as_lwe,
+            params,
+            &mut rng,
+            config.n,
+            config.t,
+        )
+        .unwrap();
         let ct = FheUint8::encrypt(message, &keyset.public_key);
         let (raw_ct, _id) = ct.into_raw_parts();
 
@@ -150,7 +176,20 @@ fn ddec_nlarge(c: &mut Criterion) {
     let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
-        let key_shares = keygen_all_party_shares(&keyset, &mut rng, config.n, config.t).unwrap();
+        let lwe_secret_key = keyset.get_raw_lwe_client_key();
+        let glwe_secret_key = keyset.get_raw_glwe_client_key();
+        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key.clone();
+        let params = keyset.client_output_key.params;
+        let key_shares = keygen_all_party_shares(
+            lwe_secret_key,
+            glwe_secret_key,
+            glwe_secret_key_sns_as_lwe,
+            params,
+            &mut rng,
+            config.n,
+            config.t,
+        )
+        .unwrap();
         let ct = FheUint8::encrypt(message, &keyset.public_key);
         let (raw_ct, _id) = ct.into_raw_parts();
 
@@ -196,7 +235,20 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
     let mut rng = AesRng::from_entropy();
     for config in params {
         let message = rng.gen::<u64>();
-        let key_shares = keygen_all_party_shares(&keyset, &mut rng, config.n, config.t).unwrap();
+        let lwe_secret_key = keyset.get_raw_lwe_client_key();
+        let glwe_secret_key = keyset.get_raw_glwe_client_key();
+        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key.clone();
+        let params = keyset.client_output_key.params;
+        let key_shares = keygen_all_party_shares(
+            lwe_secret_key,
+            glwe_secret_key,
+            glwe_secret_key_sns_as_lwe,
+            params,
+            &mut rng,
+            config.n,
+            config.t,
+        )
+        .unwrap();
         let ct = FheUint8::encrypt(message, &keyset.public_key);
         let (raw_ct, _id) = ct.into_raw_parts();
 

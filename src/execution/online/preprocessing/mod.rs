@@ -2,11 +2,9 @@ use self::redis::{redis_factory, CorrelatedRandomnessType, RedisConf};
 
 use super::triple::Triple;
 use crate::algebra::residue_poly::{ResiduePoly128, ResiduePoly64};
-use crate::execution::online::{
-    preprocessing::memory::memory_factory, secret_distributions::TUniformBound,
-};
+use crate::execution::online::preprocessing::memory::memory_factory;
 use crate::execution::runtime::session::{BaseSession, SmallSession};
-use crate::execution::tfhe_internals::parameters::DKGParams;
+use crate::execution::tfhe_internals::parameters::{DKGParams, TUniformBound};
 use crate::{
     algebra::structure_traits::Ring, error::error_handler::anyhow_error_and_log,
     execution::sharing::share::Share,

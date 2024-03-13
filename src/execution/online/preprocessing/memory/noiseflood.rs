@@ -8,9 +8,10 @@ use crate::{
         online::{
             gen_bits::{BitGenEven, RealBitGenEven},
             preprocessing::BasePreprocessing,
-            secret_distributions::{RealSecretDistributions, SecretDistributions, TUniformBound},
+            secret_distributions::{RealSecretDistributions, SecretDistributions},
         },
         runtime::session::{ParameterHandles, SmallSession},
+        tfhe_internals::parameters::TUniformBound,
     },
 };
 
@@ -67,13 +68,8 @@ impl NoiseFloodPreprocessing for InMemoryNoiseFloodPreprocessing {
     ) -> anyhow::Result<()> {
         let own_role = session.my_role()?;
 
-        let prss_state = session
-            .prss_state
-            .as_mut()
-            .ok_or_else(|| anyhow_error_and_log("PRSS_State not initialized".to_string()))?;
-
         let masks = (0..amount)
-            .map(|_| prss_state.mask_next(own_role.one_based(), BD1))
+            .map(|_| session.prss_state.mask_next(own_role.one_based(), BD1))
             .try_collect()?;
 
         self.append_masks(masks);

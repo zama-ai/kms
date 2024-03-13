@@ -146,8 +146,8 @@ mod tests {
     };
 
     use crate::execution::{
-        online::secret_distributions::TUniformBound,
         sharing::shamir::{InputOp, RevealOp},
+        tfhe_internals::parameters::TUniformBound,
     };
     use crate::{
         algebra::residue_poly::ResiduePoly64,

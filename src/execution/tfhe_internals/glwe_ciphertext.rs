@@ -156,9 +156,7 @@ mod tests {
             online::{
                 gen_bits::{BitGenEven, RealBitGenEven},
                 preprocessing::dummy::DummyPreprocessing,
-                secret_distributions::{
-                    RealSecretDistributions, SecretDistributions, TUniformBound,
-                },
+                secret_distributions::{RealSecretDistributions, SecretDistributions},
             },
             runtime::{
                 party::Role,
@@ -166,6 +164,7 @@ mod tests {
             },
             sharing::{shamir::ShamirSharings, share::Share},
             tfhe_internals::{
+                parameters::TUniformBound,
                 randomness::{EncryptionType, MPCMaskRandomGenerator, MPCNoiseRandomGenerator},
                 utils::tests::{reconstruct_bit_vec, reconstruct_glwe_body_vec},
             },

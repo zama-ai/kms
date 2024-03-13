@@ -14,30 +14,35 @@ use self::gen::{
 use crate::algebra::base_ring::Z64;
 use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
-use crate::algebra::structure_traits::Ring;
+use crate::algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, RingEmbed};
+use crate::choreography::NetworkingStrategy;
 use crate::execution::endpoints::decryption::decrypt_using_noiseflooding;
 use crate::execution::endpoints::decryption::{Large, Small};
-use crate::execution::endpoints::keygen::{distributed_keygen, initialize_key_material};
+use crate::execution::endpoints::keygen::{
+    distributed_keygen_z128, distributed_keygen_z64, PrivateKeySet,
+};
+use crate::execution::large_execution::vss::RealVss;
 use crate::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
 use crate::execution::online::preprocessing::PreprocessorFactory;
 use crate::execution::runtime::party::{Identity, Role};
-use crate::execution::runtime::session::{
-    DecryptionMode, LargeSession, SessionParameters, SmallSessionStruct,
-};
+use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
+use crate::execution::runtime::session::{DecryptionMode, LargeSession, SessionParameters};
 use crate::execution::tfhe_internals::parameters::DKGParams;
+use crate::execution::tfhe_internals::parameters::{Ciphertext64, NoiseFloodParameters};
+use crate::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use crate::execution::zk::ceremony::{Ceremony, PublicParameter, RealCeremony};
-use crate::lwe::{Ciphertext64, PubConKeyPair, SecretKeyShare, ThresholdLWEParameters};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::{
     choreography::grpc::gen::DecryptionRequest, execution::runtime::session::SmallSession,
 };
-use crate::{choreography::NetworkingStrategy, execution::runtime::session::SetupMode};
 use crate::{computation::SessionId, execution::small_execution::prss::PRSSSetup};
+use aes_prng::AesRng;
 use async_cell::sync::AsyncCell;
 use async_trait::async_trait;
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use itertools::Itertools;
+use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -70,7 +75,7 @@ enum SupportedPRSSSetup {
 /// Structure that holds data from the one-time (per-epoch) init phase
 #[derive(Clone)]
 struct InitInfo {
-    pub secret_key_share: SecretKeyShare,
+    pub secret_key_share: PrivateKeySet,
     pub prss_setup: HashMap<SupportedRing, SupportedPRSSSetup>,
 }
 type ResultStores = DashMap<SessionId, Arc<AsyncCell<ComputationOutputs>>>;
@@ -81,7 +86,7 @@ type CrsStore = DashMap<SessionId, Arc<AsyncCell<(PublicParameter, Duration)>>>;
 
 struct GrpcDataStores {
     init_store: Arc<InitStore>,
-    pubkey_store: Arc<Mutex<Option<PubConKeyPair>>>,
+    sns_key_store: Arc<Mutex<Option<SwitchAndSquashKey>>>,
     crs_store: Arc<CrsStore>,
     init_epoch_id: AsyncCell<SessionId>,
     crs_epoch_id: AsyncCell<SessionId>,
@@ -92,7 +97,7 @@ pub struct GrpcChoreography {
     own_identity: Identity,
     networking_strategy: NetworkingStrategy,
     factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
-    num_sessions_created: Mutex<usize>,
+    num_sessions_created: Arc<Mutex<usize>>,
     data: GrpcDataStores,
 }
 
@@ -106,7 +111,7 @@ impl GrpcChoreography {
             own_identity,
             networking_strategy,
             factory: Arc::new(Mutex::new(factory)),
-            num_sessions_created: Mutex::new(0),
+            num_sessions_created: Arc::new(Mutex::new(0)),
             data: GrpcDataStores::default(),
         }
     }
@@ -153,49 +158,48 @@ impl Choreography for GrpcChoreography {
             tonic::Status::new(tonic::Code::Aborted, "nb_sessions must be at most 255")
         })?;
 
-        fn create_sessions<Z: Ring>(
-            num_sessions: usize,
-            start_session: usize,
-            networking_strategy: &NetworkingStrategy,
-            own_identity: Identity,
-            threshold: u8,
-            role_assignments: HashMap<Role, Identity>,
+        async fn create_sessions<Z: ErrorCorrect + HenselLiftInverse + RingEmbed>(
+            mut base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
         ) -> Vec<SmallSession<Z>> {
-            (start_session..start_session + num_sessions)
-                .map(|session_id| {
-                    let session_id = SessionId(session_id as u128);
-                    let networking = (networking_strategy)(session_id, role_assignments.clone());
-                    SmallSession::new(
-                        session_id,
-                        role_assignments.clone(),
-                        Arc::clone(&networking),
-                        threshold,
-                        None,
-                        own_identity.clone(),
-                        None,
-                    )
-                    .unwrap()
+            let prss_setup =
+                PRSSSetup::<Z>::robust_init(&mut base_sessions[0], &RealVss::default())
+                    .await
+                    .unwrap();
+            base_sessions
+                .into_iter()
+                .map(|base_session| {
+                    let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
+                    SmallSession::new_from_prss_state(base_session, prss_state).unwrap()
                 })
                 .collect_vec()
         }
 
         let own_identity = self.own_identity.clone();
         let factory = self.factory.clone();
+        let start_session = {
+            let mut start_session_lock = self.num_sessions_created.try_lock().unwrap();
+            let start_session = *start_session_lock;
+            *start_session_lock += num_sessions as usize;
+            start_session
+        };
+        let base_sessions = (start_session..start_session + num_sessions as usize)
+            .map(|session_id| {
+                let session_id = SessionId(session_id as u128);
+                let params = SessionParameters::new(
+                    threshold,
+                    session_id,
+                    own_identity.clone(),
+                    role_assignments.clone(),
+                )
+                .unwrap();
+                let networking = (self.networking_strategy)(session_id, role_assignments.clone());
+                BaseSessionStruct::new(params.clone(), networking, AesRng::from_entropy()).unwrap()
+            })
+            .collect_vec();
         match params {
             DKGParams::WithoutSnS(_) => {
-                let sessions = {
-                    let start_session = self.num_sessions_created.try_lock().unwrap();
-                    create_sessions(
-                        num_sessions as usize,
-                        *start_session,
-                        &self.networking_strategy,
-                        own_identity.clone(),
-                        threshold,
-                        role_assignments,
-                    )
-                };
-
                 tokio::spawn(async move {
+                    let sessions = create_sessions(base_sessions).await;
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
@@ -210,25 +214,14 @@ impl Choreography for GrpcChoreography {
                     //At some point this should replace the keygen endpoint,
                     //but probably best to sync with kms ppl
 
-                    distributed_keygen(&mut sessions[0], preproc.as_mut(), params)
+                    distributed_keygen_z64(&mut sessions[0], preproc.as_mut(), params)
                         .await
                         .unwrap()
                 });
             }
             DKGParams::WithSnS(_) => {
-                let sessions = {
-                    let start_session = self.num_sessions_created.try_lock().unwrap();
-                    create_sessions(
-                        num_sessions as usize,
-                        *start_session,
-                        &self.networking_strategy,
-                        own_identity.clone(),
-                        threshold,
-                        role_assignments,
-                    )
-                };
-
                 tokio::spawn(async move {
+                    let sessions = create_sessions(base_sessions).await;
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
@@ -242,17 +235,13 @@ impl Choreography for GrpcChoreography {
                     //TODO: We dont do anything with the keys,
                     //At some point this should replace the keygen endpoint,
                     //but probably best to sync with kms ppl
-                    distributed_keygen(&mut sessions[0], preproc.as_mut(), params)
+                    distributed_keygen_z128(&mut sessions[0], preproc.as_mut(), params)
                         .await
                         .unwrap()
                 });
             }
         }
 
-        {
-            let mut num_sessions_created_guard = self.num_sessions_created.try_lock().unwrap();
-            *num_sessions_created_guard += num_sessions as usize;
-        }
         Ok(tonic::Response::new(PreprocResponse {}))
     }
 
@@ -340,9 +329,9 @@ impl Choreography for GrpcChoreography {
                 );
 
                 let result_stores = Arc::clone(&self.data.result_stores);
-                let pks = Arc::clone(&self.data.pubkey_store);
+                let pks = Arc::clone(&self.data.sns_key_store);
                 let ck = match pks.lock().unwrap().clone() {
-                    Some(pks) => pks.conversion_key,
+                    Some(pks) => pks,
                     None => {
                         return Err(tonic::Status::new(
                             tonic::Code::Aborted,
@@ -350,6 +339,16 @@ impl Choreography for GrpcChoreography {
                         ))
                     }
                 };
+                let params = SessionParameters::new(
+                    threshold,
+                    session_id,
+                    own_identity.clone(),
+                    role_assignments,
+                )
+                .unwrap();
+                let base_session =
+                    BaseSessionStruct::new(params, Arc::clone(&networking), AesRng::from_entropy())
+                        .unwrap();
                 match mode {
                     DecryptionMode::PRSSDecrypt => {
                         let prss_setup =
@@ -357,14 +356,9 @@ impl Choreography for GrpcChoreography {
                                 Some(SupportedPRSSSetup::ResiduePoly128(v)) => v.clone(),
                                 _ => None,
                             };
-                        let mut session = SmallSession::new(
-                            session_id,
-                            role_assignments,
-                            Arc::clone(&networking),
-                            threshold,
-                            prss_setup,
-                            own_identity.clone(),
-                            None,
+                        let mut session = SmallSession::new_from_prss_state(
+                            base_session,
+                            prss_setup.unwrap().new_prss_session_state(session_id)
                         )
                         .map_err(|e| {
                             tonic::Status::new(
@@ -398,15 +392,7 @@ impl Choreography for GrpcChoreography {
                         });
                     }
                     DecryptionMode::LargeDecrypt => {
-                        let session_params = SessionParameters::new(
-                            threshold,
-                            session_id,
-                            own_identity.clone(),
-                            role_assignments,
-                        )
-                        .unwrap();
-                        let mut session =
-                            LargeSession::new(session_params, Arc::clone(&networking)).unwrap();
+                        let mut session = LargeSession::new(base_session);
                         tokio::spawn(async move {
                             let mut protocol = Large::new(session.clone());
                             let (results, elapsed_time) = decrypt_using_noiseflooding(
@@ -511,20 +497,13 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
-        let params: ThresholdLWEParameters =
+        let dkg_params: NoiseFloodParameters =
             bincode::deserialize(&request.params).map_err(|_e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
                     "failed to parse parameters".to_string(),
                 )
             })?;
-
-        let setup_mode: SetupMode = bincode::deserialize(&request.setup_mode).map_err(|_e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                "failed to parse setup mode".to_string(),
-            )
-        })?;
 
         let role_assignments: HashMap<Role, Identity> =
             bincode::deserialize(&request.role_assignment).map_err(|_e| {
@@ -552,22 +531,32 @@ impl Choreography for GrpcChoreography {
                 let networking = (self.networking_strategy)(epoch_id, role_assignments.clone());
 
                 tracing::debug!("own identity: {:?}", own_identity);
-
-                let mut session: SmallSessionStruct<ResiduePoly128,aes_prng::AesRng, SessionParameters> = SmallSession::new(
-                    epoch_id, role_assignments, Arc::clone(&networking), threshold, None, own_identity, None,)
-                .map_err(|e| {
+                let session_params =
+                    SessionParameters::new(threshold, epoch_id, own_identity, role_assignments)
+                    .map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("could not make a valid session parameters with current parameters. Failed with error \"{:?}\"", e).to_string(),
+                        )
+                    })?;
+                let base_session =
+                    BaseSessionStruct::new(session_params, Arc::clone(&networking), AesRng::from_entropy())
+                    .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("could not make a valid session with current parameters. Failed with error \"{:?}\"", e).to_string(),
+                        format!("could not make a valid base session with current parameters. Failed with error \"{:?}\"", e).to_string(),
                     )
                 })?;
 
                 let init_store = Arc::clone(&self.data.init_store);
-                let pks = Arc::clone(&self.data.pubkey_store);
+                let pks = Arc::clone(&self.data.sns_key_store);
 
                 tokio::spawn(async move {
+                    let mut session = SmallSession::new_and_init_prss_state(base_session)
+                        .await
+                        .unwrap();
                     let (sk, pk, prss_setup) =
-                        initialize_key_material(&mut session, setup_mode, params)
+                        local_initialize_key_material(&mut session, dkg_params)
                             .await
                             .unwrap();
 
@@ -623,7 +612,7 @@ impl Choreography for GrpcChoreography {
         // make sure that key was generated completely
         comp.get().await;
 
-        let pks = Arc::clone(&self.data.pubkey_store);
+        let pks = Arc::clone(&self.data.sns_key_store);
         let pkl = pks.lock().unwrap().clone().ok_or_else(|| {
             tonic::Status::new(
                 tonic::Code::Aborted,
@@ -681,14 +670,22 @@ impl Choreography for GrpcChoreography {
                 let own_identity = self.own_identity.clone();
                 let networking = (self.networking_strategy)(epoch_id, role_assignments.clone());
 
-                let mut session: SmallSessionStruct<ResiduePoly128,aes_prng::AesRng, SessionParameters> = SmallSession::new(
-                        epoch_id, role_assignments, Arc::clone(&networking), threshold, None, own_identity, None,)
+                let session_params =
+                    SessionParameters::new(threshold, epoch_id, own_identity, role_assignments)
                     .map_err(|e| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("could not make a valid session with current parameters. Failed with error \"{:?}\"", e).to_string(),
+                            format!("could not make a valid session parameters with current parameters. Failed with error \"{:?}\"", e).to_string(),
                         )
                     })?;
+                let mut base_session =
+                    BaseSessionStruct::new(session_params, Arc::clone(&networking), AesRng::from_entropy())
+                    .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("could not make a valid base session with current parameters. Failed with error \"{:?}\"", e).to_string(),
+                    )
+                })?;
 
                 let crs_store = Arc::clone(&self.data.crs_store);
 
@@ -697,7 +694,7 @@ impl Choreography for GrpcChoreography {
 
                     let real_ceremony = RealCeremony::default();
                     let pp = real_ceremony
-                        .execute::<Z64, _, _>(&mut session, request.witness_dim as usize)
+                        .execute::<Z64, _, _>(&mut base_session, request.witness_dim as usize)
                         .await
                         .unwrap();
 
@@ -764,4 +761,28 @@ impl Choreography for GrpcChoreography {
             duration_secs: dur.as_secs_f32(),
         }))
     }
+}
+
+#[cfg(feature = "testing")]
+async fn local_initialize_key_material(
+    session: &mut SmallSession<ResiduePoly128>,
+    params: NoiseFloodParameters,
+) -> anyhow::Result<(
+    PrivateKeySet,
+    SwitchAndSquashKey,
+    Option<PRSSSetup<ResiduePoly128>>,
+)> {
+    crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params).await
+}
+
+#[cfg(not(feature = "testing"))]
+async fn local_initialize_key_material(
+    _session: &mut SmallSession<ResiduePoly128>,
+    _params: NoiseFloodParameters,
+) -> anyhow::Result<(
+    PrivateKeySet,
+    SwitchAndSquashKey,
+    Option<PRSSSetup<ResiduePoly128>>,
+)> {
+    todo!()
 }

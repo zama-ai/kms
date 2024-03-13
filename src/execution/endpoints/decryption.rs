@@ -10,26 +10,28 @@ use crate::execution::online::preprocessing::create_memory_factory;
 use crate::execution::online::preprocessing::BitDecPreprocessing;
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 use crate::execution::runtime::party::Identity;
+#[cfg(any(test, feature = "testing"))]
+use crate::execution::runtime::session::BaseSessionStruct;
 use crate::execution::runtime::session::ToBaseSession;
 use crate::execution::runtime::session::{DecryptionMode, SmallSession64};
 use crate::execution::sharing::share::Share;
 use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
+use crate::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
+use crate::execution::tfhe_internals::parameters::Ciphertext128;
+use crate::execution::tfhe_internals::parameters::Ciphertext128Block;
+use crate::execution::tfhe_internals::parameters::Ciphertext64;
+use crate::execution::tfhe_internals::parameters::Ciphertext64Block;
+use crate::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use crate::execution::{
     online::bit_manipulation::{bit_dec_batch, BatchedBits},
     sharing::open::robust_opens_to_all,
 };
 #[cfg(any(test, feature = "testing"))]
 use crate::execution::{
-    runtime::{
-        party::RoleAssignment,
-        session::{NetworkingImpl, SessionParameters},
-        test_runtime::DistributedTestRuntime,
-    },
+    runtime::{session::SessionParameters, test_runtime::DistributedTestRuntime},
     small_execution::prss::PRSSSetup,
 };
-use crate::lwe::combine128;
-use crate::lwe::ConversionKey;
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
@@ -43,7 +45,6 @@ use crate::{
         large_execution::offline::{RealLargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
         runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
     },
-    lwe::{Ciphertext128, Ciphertext128Block, Ciphertext64, Ciphertext64Block, SecretKeyShare},
 };
 #[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
@@ -58,11 +59,13 @@ use std::num::Wrapping;
 #[cfg(any(test, feature = "testing"))]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tfhe::integer::block_decomposition::BlockRecomposer;
 use tfhe::integer::IntegerCiphertext;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
 use tracing::instrument;
 
+use super::keygen::PrivateKeySet;
 use super::reconstruct::reconstruct_message;
 
 #[enum_dispatch]
@@ -181,9 +184,9 @@ impl ProtocolDecryption for Large {
 pub async fn decrypt_using_noiseflooding<S, P, R>(
     session: &mut S,
     protocol: &mut P,
-    ck: &ConversionKey,
+    ck: &SwitchAndSquashKey,
     ct: Ciphertext64,
-    secret_key_share: &SecretKeyShare,
+    secret_key_share: &PrivateKeySet,
     _mode: DecryptionMode,
     _own_identity: Identity,
 ) -> anyhow::Result<(HashMap<String, Z64>, Duration)>
@@ -241,9 +244,9 @@ where
 pub async fn partial_decrypt_using_noiseflooding<S, P, R>(
     session: &mut S,
     protocol: &mut P,
-    ck: &ConversionKey,
+    ck: &SwitchAndSquashKey,
     ct: Ciphertext64,
-    secret_key_share: &SecretKeyShare,
+    secret_key_share: &PrivateKeySet,
     _mode: DecryptionMode,
 ) -> anyhow::Result<(HashMap<String, Vec<ResiduePoly128>>, Duration)>
 where
@@ -292,42 +295,42 @@ fn combine_plaintext_blocks(
     Ok(Wrapping(res as u64))
 }
 
+/// Helper function that takes a vector of decrypted plaintexts (each of [bits_in_block] plaintext bits)
+/// and combine them into the integer message (u128) of many bits.
+pub fn combine128(bits_in_block: u32, decryptions: Vec<Z128>) -> anyhow::Result<u128> {
+    let mut recomposer = BlockRecomposer::<u128>::new(bits_in_block);
+
+    for block in decryptions {
+        if !recomposer.add_unmasked(block.0) {
+            // End of T::BITS reached no need to try more
+            // recomposition
+            break;
+        };
+    }
+    Ok(recomposer.value())
+}
+
 #[cfg(any(test, feature = "testing"))]
 async fn setup_small_session<Z>(
-    session_id: SessionId,
-    role_assignments: RoleAssignment,
-    threshold: u8,
-    network: NetworkingImpl,
-    identity: Identity,
+    mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
 ) -> SmallSession<Z>
 where
     Z: Ring,
     Z: RingEmbed,
     Z: HenselLiftInverse,
 {
-    use crate::execution::runtime::session::{ParameterHandles, SmallSessionHandles};
-
-    let mut session = SmallSession::<Z>::new(
-        session_id,
-        role_assignments,
-        network,
-        threshold,
-        None,
-        identity.clone(),
-        Some(AesRng::from_entropy()),
-    )
-    .unwrap();
+    use crate::execution::runtime::session::{ParameterHandles, SmallSessionStruct};
+    let session_id = base_session.session_id();
 
     let prss_setup =
-        PRSSSetup::init_with_abort::<RealAgreeRandom, AesRng, SmallSession<Z>>(&mut session)
+        PRSSSetup::<Z>::init_with_abort::<RealAgreeRandom, AesRng, _>(&mut base_session)
             .await
             .unwrap();
-
-    session.set_prss(Some(
-        prss_setup.new_prss_session_state(session.session_id()),
-    ));
-
-    session
+    SmallSessionStruct::new_from_prss_state(
+        base_session,
+        prss_setup.new_prss_session_state(session_id),
+    )
+    .unwrap()
 }
 
 pub async fn init_prep_bitdec_small(
@@ -442,18 +445,17 @@ pub fn threshold_decrypt64<Z: Ring>(
             mode
         );
 
+        let session_params =
+            SessionParameters::new(threshold, session_id, identity.clone(), role_assignments)
+                .unwrap();
+        let base_session =
+            BaseSessionStruct::new(session_params, net, AesRng::from_entropy()).unwrap();
+
         match mode {
             DecryptionMode::PRSSDecrypt => {
                 let large_ct = large_ct.unwrap();
                 set.spawn(async move {
-                    let mut session = setup_small_session::<ResiduePoly128>(
-                        session_id,
-                        role_assignments,
-                        threshold,
-                        net,
-                        identity.clone(),
-                    )
-                    .await;
+                    let mut session = setup_small_session::<ResiduePoly128>(base_session).await;
 
                     let mut noiseflood_preprocessing = Small::new(session.clone())
                         .init_prep_noiseflooding(ct.blocks().len())
@@ -473,14 +475,7 @@ pub fn threshold_decrypt64<Z: Ring>(
             DecryptionMode::LargeDecrypt => {
                 let large_ct = large_ct.unwrap();
                 set.spawn(async move {
-                    let session_params = SessionParameters::new(
-                        threshold,
-                        session_id,
-                        identity.clone(),
-                        role_assignments,
-                    )
-                    .unwrap();
-                    let mut session = LargeSession::new(session_params, net).unwrap();
+                    let mut session = LargeSession::new(base_session);
                     let mut noiseflood_preprocessing = Large::new(session.clone())
                         .init_prep_noiseflooding(ct.blocks().len())
                         .await;
@@ -498,14 +493,7 @@ pub fn threshold_decrypt64<Z: Ring>(
             }
             DecryptionMode::BitDecLargeDecrypt => {
                 set.spawn(async move {
-                    let session_params = SessionParameters::new(
-                        threshold,
-                        session_id,
-                        identity.clone(),
-                        role_assignments,
-                    )
-                    .unwrap();
-                    let mut session = LargeSession::new(session_params, net).unwrap();
+                    let mut session = LargeSession::new(base_session);
                     let mut prep = init_prep_bitdec_large(&mut session, ct.blocks().len()).await;
                     let out =
                         run_decryption_bitdec(&mut session, prep.as_mut(), &party_keyshare, ct)
@@ -517,14 +505,7 @@ pub fn threshold_decrypt64<Z: Ring>(
             }
             DecryptionMode::BitDecSmallDecrypt => {
                 set.spawn(async move {
-                    let mut session = setup_small_session::<ResiduePoly64>(
-                        session_id,
-                        role_assignments,
-                        threshold,
-                        net,
-                        identity.clone(),
-                    )
-                    .await;
+                    let mut session = setup_small_session::<ResiduePoly64>(base_session).await;
                     let mut prep = init_prep_bitdec_small(&mut session, ct.blocks().len()).await;
                     let out =
                         run_decryption_bitdec(&mut session, prep.as_mut(), &party_keyshare, ct)
@@ -550,10 +531,10 @@ pub fn threshold_decrypt64<Z: Ring>(
 async fn open_masked_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &S,
     res: Vec<ResiduePoly128>,
-    keyshares: &SecretKeyShare,
+    keyshares: &PrivateKeySet,
 ) -> anyhow::Result<Vec<Z128>> {
     let openeds = robust_opens_to_all(session, &res, session.threshold() as usize).await?;
-    reconstruct_message(openeds, &keyshares.threshold_lwe_parameters)
+    reconstruct_message(openeds, &keyshares.parameters)
 }
 
 async fn open_bit_composed_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
@@ -586,7 +567,7 @@ pub async fn run_decryption_noiseflood<
 >(
     session: &mut S,
     preprocessing: &mut P,
-    keyshares: &SecretKeyShare,
+    keyshares: &PrivateKeySet,
     ciphertext: Ciphertext128,
 ) -> anyhow::Result<Z64> {
     let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
@@ -597,10 +578,7 @@ pub async fn run_decryption_noiseflood<
         shared_masked_ptxts.push(res);
     }
     let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
-    let usable_message_bits = keyshares
-        .threshold_lwe_parameters
-        .output_cipher_parameters
-        .message_modulus_log() as usize;
+    let usable_message_bits = keyshares.parameters.message_modulus_log() as usize;
     combine_plaintext_blocks(usable_message_bits, partial_decrypted)
 }
 
@@ -612,7 +590,7 @@ pub async fn run_decryption_bitdec<
 >(
     session: &mut Ses,
     prep: &mut P,
-    keyshares: &SecretKeyShare,
+    keyshares: &PrivateKeySet,
     ciphertext: Ciphertext64,
 ) -> anyhow::Result<Z64> {
     let own_role = session.my_role()?;
@@ -627,10 +605,7 @@ pub async fn run_decryption_bitdec<
         .await
         .unwrap();
 
-    let total_bits = keyshares
-        .threshold_lwe_parameters
-        .input_cipher_parameters
-        .total_block_bits() as usize;
+    let total_bits = keyshares.parameters.total_block_bits() as usize;
 
     // bit-compose the plaintexts
     let ptxt_sums = BatchedBits::extract_ptxts(bits, total_bits, prep, session).await?;
@@ -643,10 +618,7 @@ pub async fn run_decryption_bitdec<
         .map(|ptxt| Wrapping(ptxt.0 as u128))
         .collect();
 
-    let usable_message_bits = keyshares
-        .threshold_lwe_parameters
-        .input_cipher_parameters
-        .message_modulus_log() as usize;
+    let usable_message_bits = keyshares.parameters.message_modulus_log() as usize;
 
     // combine outputs to form the decrypted integer on party 0
     combine_plaintext_blocks(usable_message_bits, ptxts128)
@@ -654,16 +626,22 @@ pub async fn run_decryption_bitdec<
 
 /// computes b - <a, s> with no rounding of the noise. This is used for noise flooding decryption
 pub fn partial_decrypt128(
-    sk_share: &SecretKeyShare,
+    sk_share: &PrivateKeySet,
     ct: &Ciphertext128Block,
 ) -> anyhow::Result<ResiduePoly128> {
+    let sns_secret_key = match &sk_share.glwe_secret_key_share_sns_as_lwe {
+        Some(key) => key.data_as_raw_vec(),
+        None => {
+            return Err(anyhow_error_and_log(
+                "Missing the switch and squash secret key".to_string(),
+            ))
+        }
+    };
     // NOTE eventually this secret key share will be a vector of ResiduePoly128 elements
     let (mask, body) = ct.get_mask_and_body();
-    let a_time_s =
-        (0..sk_share.input_key_share128.len()).fold(ResiduePoly128::ZERO, |acc, column| {
-            acc + sk_share.input_key_share128[column]
-                * ResiduePoly128::from_scalar(Wrapping(mask.as_ref()[column]))
-        });
+    let a_time_s = (0..sns_secret_key.len()).fold(ResiduePoly128::ZERO, |acc, column| {
+        acc + sns_secret_key[column] * ResiduePoly128::from_scalar(Wrapping(mask.as_ref()[column]))
+    });
     // b-<a, s>
     let res = ResiduePoly128::from_scalar(Wrapping(*body.data)) - a_time_s;
     Ok(res)
@@ -671,22 +649,17 @@ pub fn partial_decrypt128(
 
 // computes b - <a, s> + \Delta/2 for the bitwise decryption method
 pub fn partial_decrypt64(
-    sk_share: &SecretKeyShare,
+    sk_share: &PrivateKeySet,
     ct_block: &Ciphertext64Block,
 ) -> anyhow::Result<ResiduePoly64> {
     let ciphertext_modulus = 64;
     let (mask, body) = ct_block.ct.get_mask_and_body();
-    let key_share64 = sk_share.input_key_share64.clone();
+    let key_share64 = sk_share.lwe_secret_key_share.data_as_raw_vec().clone();
     let a_time_s = (0..key_share64.len()).fold(ResiduePoly64::ZERO, |acc, column| {
         acc + key_share64[column] * ResiduePoly64::from_scalar(Wrapping(mask.as_ref()[column]))
     });
     // b-<a, s>
-    let delta_pad_bits = ciphertext_modulus
-        - (sk_share
-            .threshold_lwe_parameters
-            .input_cipher_parameters
-            .total_block_bits()
-            + 1);
+    let delta_pad_bits = ciphertext_modulus - (sk_share.parameters.total_block_bits() + 1);
     let delta_pad_half = (1_u64 << delta_pad_bits) >> 1;
     let scalar_delta_half = ResiduePoly64::from_scalar(Wrapping(delta_pad_half));
     let res = ResiduePoly64::from_scalar(Wrapping(*body.data)) - a_time_s + scalar_delta_half;
@@ -696,8 +669,10 @@ pub fn partial_decrypt64(
 #[cfg(test)]
 mod tests {
     use crate::execution::sharing::shamir::RevealOp;
+    use crate::execution::tfhe_internals::test_feature::KeySet;
     use crate::{
         algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
+        execution::tfhe_internals::test_feature::keygen_all_party_shares,
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             endpoints::decryption::threshold_decrypt64,
@@ -709,7 +684,6 @@ mod tests {
             sharing::{shamir::ShamirSharings, share::Share},
         },
         file_handling::read_element,
-        lwe::{keygen_all_party_shares, KeySet},
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;
@@ -719,14 +693,32 @@ mod tests {
     #[test]
     fn reconstruct_key() {
         let parties = 5;
-        let keyset = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
-        let shares =
-            keygen_all_party_shares(&keyset, &mut AesRng::seed_from_u64(0), parties, 1).unwrap();
+        let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let lwe_secret_key = keyset.get_raw_lwe_client_key();
+        let glwe_secret_key = keyset.get_raw_glwe_client_key();
+        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key.clone();
+        let params = keyset.client_output_key.params;
+        let shares = keygen_all_party_shares(
+            lwe_secret_key,
+            glwe_secret_key,
+            glwe_secret_key_sns_as_lwe,
+            params,
+            &mut AesRng::seed_from_u64(0),
+            parties,
+            1,
+        )
+        .unwrap();
         let mut first_bit_shares = Vec::with_capacity(parties);
         (0..parties).for_each(|i| {
             first_bit_shares.push(Share::new(
                 Role::indexed_by_zero(i),
-                *shares[i].input_key_share128.get(0).unwrap(),
+                *shares[i]
+                    .glwe_secret_key_share_sns_as_lwe
+                    .as_ref()
+                    .unwrap()
+                    .data_as_raw_vec()
+                    .first()
+                    .unwrap(),
             ));
         });
         let first_bit_sharing = ShamirSharings::create(first_bit_shares);
@@ -745,10 +737,23 @@ mod tests {
         let msg: u8 = 3;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
 
+        let lwe_secret_key = keyset.get_raw_lwe_client_key();
+        let glwe_secret_key = keyset.get_raw_glwe_client_key();
+        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key;
+        let params = keyset.client_output_key.params;
+
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares =
-            keygen_all_party_shares(&keyset, &mut rng, num_parties, threshold).unwrap();
+        let key_shares = keygen_all_party_shares(
+            lwe_secret_key,
+            glwe_secret_key,
+            glwe_secret_key_sns_as_lwe,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
@@ -773,10 +778,23 @@ mod tests {
         let msg: u8 = 3;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
 
+        let lwe_secret_key = keyset.get_raw_lwe_client_key();
+        let glwe_secret_key = keyset.get_raw_glwe_client_key();
+        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key;
+        let params = keyset.client_output_key.params;
+
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares =
-            keygen_all_party_shares(&keyset, &mut rng, num_parties, threshold).unwrap();
+        let key_shares = keygen_all_party_shares(
+            lwe_secret_key,
+            glwe_secret_key,
+            glwe_secret_key_sns_as_lwe,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
@@ -801,10 +819,23 @@ mod tests {
         let msg: u8 = 3;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
 
+        let lwe_secret_key = keyset.get_raw_lwe_client_key();
+        let glwe_secret_key = keyset.get_raw_glwe_client_key();
+        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key;
+        let params = keyset.client_output_key.params;
+
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares =
-            keygen_all_party_shares(&keyset, &mut rng, num_parties, threshold).unwrap();
+        let key_shares = keygen_all_party_shares(
+            lwe_secret_key,
+            glwe_secret_key,
+            glwe_secret_key_sns_as_lwe,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
@@ -827,10 +858,23 @@ mod tests {
         let msg: u8 = 15;
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
 
+        let lwe_secret_key = keyset.get_raw_lwe_client_key();
+        let glwe_secret_key = keyset.get_raw_glwe_client_key();
+        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key;
+        let params = keyset.client_output_key.params;
+
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
-        let key_shares =
-            keygen_all_party_shares(&keyset, &mut rng, num_parties, threshold).unwrap();
+        let key_shares = keygen_all_party_shares(
+            lwe_secret_key,
+            glwe_secret_key,
+            glwe_secret_key_sns_as_lwe,
+            params,
+            &mut rng,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
         let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);

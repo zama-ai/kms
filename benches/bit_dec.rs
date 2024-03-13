@@ -9,13 +9,10 @@ use distributed_decryption::execution::online::bit_manipulation::bit_dec_batch;
 use distributed_decryption::execution::online::preprocessing::dummy::DummyPreprocessing;
 use distributed_decryption::execution::online::preprocessing::BitDecPreprocessing;
 use distributed_decryption::execution::runtime::session::ParameterHandles;
-use distributed_decryption::execution::runtime::session::SmallSessionHandles;
 use distributed_decryption::execution::runtime::session::{LargeSession, SmallSession};
 use distributed_decryption::execution::sharing::shamir::InputOp;
 use distributed_decryption::execution::sharing::shamir::ShamirSharings;
 use distributed_decryption::execution::sharing::share::Share;
-use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandom;
-use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::tests::helper::tests_and_benches::{
     execute_protocol_large, execute_protocol_small,
 };
@@ -122,18 +119,6 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
             |b, &config| {
                 b.iter(|| {
                     let mut computation = |mut session: SmallSession<ResiduePoly64>| async move {
-                        let prss_setup = PRSSSetup::init_with_abort::<
-                            RealAgreeRandom,
-                            AesRng,
-                            SmallSession<ResiduePoly64>,
-                        >(&mut session)
-                        .await
-                        .unwrap();
-
-                        session.set_prss(Some(
-                            prss_setup.new_prss_session_state(session.session_id()),
-                        ));
-
                         let mut bitdec_prep =
                             init_prep_bitdec_small(&mut session, config.batch_size).await;
 

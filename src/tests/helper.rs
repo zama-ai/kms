@@ -4,7 +4,7 @@
 /// TODO(Dragos) Investigate this afterwards.
 pub mod tests_and_benches {
 
-    use crate::algebra::structure_traits::{ErrorCorrect, Ring};
+    use crate::algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed};
     use aes_prng::AesRng;
     use futures::Future;
     use rand::SeedableRng;
@@ -13,7 +13,7 @@ pub mod tests_and_benches {
     use crate::{
         computation::SessionId,
         execution::runtime::{
-            session::{BaseSessionHandles, LargeSession, SmallSession},
+            session::{LargeSession, SmallSession},
             test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         },
         networking::Networking,
@@ -24,7 +24,11 @@ pub mod tests_and_benches {
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
     /// `expected_rounds` can be used to test that the protocol needs the specified amount of comm rounds, or be set to None to allow any number of rounds
-    pub fn execute_protocol_small<Z: Ring + ErrorCorrect, TaskOutputT, OutputT>(
+    pub fn execute_protocol_small<
+        Z: ErrorCorrect + RingEmbed + HenselLiftInverse,
+        TaskOutputT,
+        OutputT,
+    >(
         parties: usize,
         threshold: u8,
         expected_rounds: Option<usize>,
@@ -44,13 +48,11 @@ pub mod tests_and_benches {
 
         let mut tasks = JoinSet::new();
         for party_id in 0..parties {
-            let session = test_runtime
-                .small_session_for_party(
-                    session_id,
-                    party_id,
-                    Some(AesRng::seed_from_u64(party_id as u64)),
-                )
-                .unwrap();
+            let session = test_runtime.small_session_for_party(
+                session_id,
+                party_id,
+                Some(AesRng::seed_from_u64(party_id as u64)),
+            );
             tasks.spawn(task(session));
         }
         let res = rt.block_on(async {
@@ -100,12 +102,7 @@ pub mod tests_and_benches {
 
         let mut tasks = JoinSet::new();
         for party_id in 0..parties {
-            let session = test_runtime
-                .large_session_for_party(session_id, party_id)
-                .unwrap();
-            // TODO why is the following cloned session needed?
-            let session =
-                LargeSession::new(session.parameters.clone(), session.network().clone()).unwrap();
+            let session = test_runtime.large_session_for_party(session_id, party_id);
             tasks.spawn(task(session));
         }
         let res = rt.block_on(async {
@@ -148,15 +145,19 @@ pub mod tests {
         computation::SessionId,
         execution::{
             constants::SMALL_TEST_KEY_PATH,
-            runtime::party::{Identity, Role},
-            runtime::session::{
-                BaseSessionHandles, DisputeSet, LargeSession, LargeSessionHandles,
-                ParameterHandles, SessionParameters, SmallSession,
+            runtime::{
+                party::{Identity, Role},
+                session::{
+                    BaseSessionStruct, LargeSession, LargeSessionHandles, SessionParameters,
+                },
+                test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
-            runtime::test_runtime::{generate_fixed_identities, DistributedTestRuntime},
+            tfhe_internals::{
+                parameters::{Ciphertext64, NoiseFloodParameters},
+                test_feature::{gen_key_set, KeySet},
+            },
         },
         file_handling::read_element,
-        lwe::{gen_key_set, Ciphertext64, KeySet, ThresholdLWEParameters},
         networking::{local::LocalNetworkingProducer, Networking},
         tests::test_data_setup::tests::DEFAULT_SEED,
     };
@@ -285,7 +286,7 @@ pub mod tests {
     }
 
     /// Deterministic key generation
-    pub fn generate_keys(params: ThresholdLWEParameters) -> KeySet {
+    pub fn generate_keys(params: NoiseFloodParameters) -> KeySet {
         let mut seeded_rng = AesRng::seed_from_u64(DEFAULT_SEED);
         gen_key_set(params, &mut seeded_rng)
     }
@@ -333,65 +334,50 @@ pub mod tests {
         }
     }
 
-    /// Returns a small session to be used with a single party, with role 1, suitable for testing with dummy constructs
-    pub fn get_small_session<Z: Ring>() -> SmallSession<Z> {
+    /// Returns a base session to be used with a single party, with role 1, suitable for testing with dummy constructs
+    pub fn get_base_session() -> BaseSessionStruct<AesRng, SessionParameters> {
         let parameters = get_dummy_parameters();
         let id = parameters.own_identity.clone();
         let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-        SmallSession {
+        BaseSessionStruct {
             parameters,
             network: Arc::new(net_producer.user_net(id)),
             rng: AesRng::seed_from_u64(42),
             corrupt_roles: HashSet::new(),
-            prss_state: None,
         }
     }
 
-    /// Returns a small session to be used with multiple parties
-    pub fn get_small_session_for_parties<Z: Ring>(
+    /// Returns a base session to be used with multiple parties
+    pub fn get_networkless_base_session_for_parties(
         amount: usize,
         threshold: u8,
         role: Role,
-    ) -> SmallSession<Z> {
+    ) -> BaseSessionStruct<AesRng, SessionParameters> {
         let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
         let id = parameters.own_identity.clone();
         let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-        SmallSession {
+        BaseSessionStruct {
             parameters,
             network: Arc::new(net_producer.user_net(id)),
-            rng: AesRng::seed_from_u64(42),
+            rng: AesRng::seed_from_u64(role.zero_based() as u64),
             corrupt_roles: HashSet::new(),
-            prss_state: None,
         }
     }
 
     /// Return a large session to be used with a single party, with role 1
     pub fn get_large_session() -> LargeSession {
-        let parameters = get_dummy_parameters();
-        let id = parameters.own_identity.clone();
-        let parties = parameters.num_parties();
-        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-        LargeSession {
-            parameters,
-            network: Arc::new(net_producer.user_net(id)),
-            rng: AesRng::seed_from_u64(42),
-            corrupt_roles: HashSet::new(),
-            disputed_roles: DisputeSet::new(parties),
-        }
+        let base_session = get_base_session();
+        LargeSession::new(base_session)
     }
 
     /// Return a large session to be used with a multiple parties
-    pub fn get_large_session_for_parties(amount: usize, threshold: u8, role: Role) -> LargeSession {
-        let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
-        let id = parameters.own_identity.clone();
-        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-        LargeSession {
-            parameters,
-            network: Arc::new(net_producer.user_net(id)),
-            rng: AesRng::seed_from_u64(42),
-            corrupt_roles: HashSet::new(),
-            disputed_roles: DisputeSet::new(amount),
-        }
+    pub fn get_networkless_large_session_for_parties(
+        amount: usize,
+        threshold: u8,
+        role: Role,
+    ) -> LargeSession {
+        let base_session = get_networkless_base_session_for_parties(amount, threshold, role);
+        LargeSession::new(base_session)
     }
 
     /// Helper method for executing networked tests with multiple parties some honest some dishonest.
@@ -438,20 +424,8 @@ pub mod tests {
         let mut honest_tasks = JoinSet::new();
         let mut malicious_tasks = JoinSet::new();
         for party_id in 0..parties {
-            let session = test_runtime
-                .small_session_for_party(
-                    session_id,
-                    party_id,
-                    Some(AesRng::seed_from_u64(party_id as u64)),
-                )
-                .unwrap();
-            let mut session = LargeSession {
-                parameters: session.parameters.clone(),
-                network: session.network().clone(),
-                rng: AesRng::seed_from_u64(party_id as u64),
-                corrupt_roles: HashSet::new(),
-                disputed_roles: DisputeSet::new(parties),
-            };
+            let mut session = test_runtime.large_session_for_party(session_id, party_id);
+
             if malicious_roles.contains(&Role::indexed_by_zero(party_id)) {
                 let malicious_strategy_cloned = malicious_strategy.clone();
                 malicious_tasks.spawn(task_malicious(session, malicious_strategy_cloned));

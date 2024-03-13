@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
@@ -6,7 +6,7 @@ use distributed_decryption::{
     computation::SessionId,
     execution::{
         runtime::{
-            session::{ParameterHandles, SmallSession64},
+            session::ParameterHandles,
             test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         },
         zk::ceremony::{Ceremony, RealCeremony},
@@ -40,24 +40,12 @@ fn bench_ceremony(c: &mut Criterion) {
 
                 b.iter(|| {
                     let mut set = JoinSet::new();
-                    for (index_id, identity) in runtime.identities.clone().into_iter().enumerate() {
-                        let role_assignments = runtime.role_assignments.clone();
-                        let net = Arc::clone(&runtime.user_nets[index_id]);
-                        let threshold = runtime.threshold;
-
+                    for (index_id, _identity) in runtime.identities.clone().into_iter().enumerate()
+                    {
                         let dim = *dim;
+                        let mut session =
+                            runtime.small_session_for_party(session_id, index_id, None);
                         set.spawn(async move {
-                            let mut session = SmallSession64::new(
-                                session_id,
-                                role_assignments,
-                                net,
-                                threshold,
-                                None,
-                                identity,
-                                None,
-                            )
-                            .unwrap();
-
                             let real_ceremony = RealCeremony::default();
                             let out = real_ceremony
                                 .execute::<ResiduePoly64, _, _>(&mut session, dim)

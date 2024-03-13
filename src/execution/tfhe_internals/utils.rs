@@ -239,24 +239,18 @@ pub mod tests {
         output_bit_vec
     }
 
-    pub fn reconstruct_lwe_secret_key_from_file<Z: BaseRing, Params: DKGParamsBasics + ?Sized>(
+    pub fn reconstruct_lwe_secret_key_from_file<Params: DKGParamsBasics + ?Sized>(
         parties: usize,
         threshold: usize,
         params: &Params,
-    ) -> LweSecretKeyOwned<u64>
-    where
-        ResiduePoly<Z>: ErrorCorrect,
-    {
+        prefix_path: String,
+    ) -> LweSecretKeyOwned<u64> {
         let mut sk_shares = HashMap::new();
         for party in 0..parties {
             sk_shares.insert(
                 Role::indexed_by_zero(party),
-                PrivateKeySet::<Z>::read_from_file(format!(
-                    "{}/sk_p{}.der",
-                    params.get_prefix_path(),
-                    party
-                ))
-                .unwrap(),
+                PrivateKeySet::read_from_file(format!("{}/sk_p{}.der", prefix_path, party))
+                    .unwrap(),
             );
         }
 
@@ -275,24 +269,18 @@ pub mod tests {
         LweSecretKeyOwned::from_container(lwe_key)
     }
 
-    pub fn reconstruct_glwe_secret_key_from_file<Z: BaseRing>(
+    pub fn reconstruct_glwe_secret_key_from_file(
         parties: usize,
         threshold: usize,
         params: DKGParams,
-    ) -> (GlweSecretKeyOwned<u64>, Option<GlweSecretKeyOwned<u128>>)
-    where
-        ResiduePoly<Z>: ErrorCorrect,
-    {
+        prefix_path: String,
+    ) -> (GlweSecretKeyOwned<u64>, Option<LweSecretKeyOwned<u128>>) {
         let mut sk_shares = HashMap::new();
         for party in 0..parties {
             sk_shares.insert(
                 Role::indexed_by_zero(party),
-                PrivateKeySet::<Z>::read_from_file(format!(
-                    "{}/sk_p{}.der",
-                    params.get_params_basics_handle().get_prefix_path(),
-                    party
-                ))
-                .unwrap(),
+                PrivateKeySet::read_from_file(format!("{}/sk_p{}.der", prefix_path, party))
+                    .unwrap(),
             );
         }
 
@@ -305,7 +293,7 @@ pub mod tests {
                 DKGParams::WithoutSnS(_) => (),
                 DKGParams::WithSnS(_) => {
                     let _ = big_glwe_key_shares
-                        .insert(role, sk.glwe_secret_key_share_sns.unwrap().data);
+                        .insert(role, sk.glwe_secret_key_share_sns_as_lwe.unwrap().data);
                 }
             }
         }
@@ -330,10 +318,13 @@ pub mod tests {
                 .into_iter()
                 .map(|bit| bit as u128)
                 .collect_vec();
-                Some(GlweSecretKeyOwned::from_container(
-                    big_glwe_key,
-                    sns_params.polynomial_size_sns(),
-                ))
+                Some(
+                    GlweSecretKeyOwned::from_container(
+                        big_glwe_key,
+                        sns_params.polynomial_size_sns(),
+                    )
+                    .into_lwe_secret_key(),
+                )
             }
             DKGParams::WithoutSnS(_) => None,
         };
