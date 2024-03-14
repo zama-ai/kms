@@ -522,7 +522,8 @@ mod tests {
     #[cfg(test)]
     #[ctor::ctor]
     fn setup_data_for_integration() {
-        let _ = std::fs::create_dir(TEMP_DIR);
+        // Ensure temp dir exists
+        let _ = std::fs::create_dir_all(TEMP_DIR);
 
         let (mut rng, request, client_signcryption_keys, _fhe_cipher) = test_setup();
         let (_server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
@@ -534,9 +535,6 @@ mod tests {
             &server_sig_key,
         )
         .unwrap();
-        // Ensure temp dir exists
-        std::fs::create_dir_all(TEMP_DIR).unwrap();
-        // Dump encodings for use in client implementation validation
         let enc_req = to_vec(&request).unwrap();
         write_element(TEMP_DIR.to_string() + "/client_req.der", &enc_req).unwrap();
         let enc_pk = to_vec(&client_signcryption_keys.pk).unwrap();

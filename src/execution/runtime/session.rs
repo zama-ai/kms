@@ -42,7 +42,6 @@ pub trait ParameterHandles: Sync + Send + Clone {
     fn session_id(&self) -> SessionId;
     fn own_identity(&self) -> Identity;
     fn my_role(&self) -> anyhow::Result<Role>;
-    fn my_identity(&self) -> anyhow::Result<Identity>;
     fn identity_from(&self, role: &Role) -> anyhow::Result<Identity>;
     fn num_parties(&self) -> usize;
     fn role_from(&self, identity: &Identity) -> anyhow::Result<Role>;
@@ -82,10 +81,6 @@ impl ParameterHandles for SessionParameters {
     fn my_role(&self) -> anyhow::Result<Role> {
         // Note that if `new` has been used and data has not been modified this should never result in an error
         Self::role_from(self, &self.own_identity)
-    }
-
-    fn my_identity(&self) -> anyhow::Result<Identity> {
-        self.identity_from(&self.my_role()?)
     }
 
     fn identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
@@ -186,10 +181,6 @@ impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHan
 {
     fn my_role(&self) -> anyhow::Result<Role> {
         self.parameters.my_role()
-    }
-
-    fn my_identity(&self) -> anyhow::Result<Identity> {
-        self.identity_from(&self.my_role()?)
     }
 
     fn identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
@@ -303,10 +294,6 @@ impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> Par
         self.base_session.my_role()
     }
 
-    fn my_identity(&self) -> anyhow::Result<Identity> {
-        self.base_session.my_identity()
-    }
-
     fn identity_from(&self, role: &Role) -> anyhow::Result<Identity> {
         self.base_session.identity_from(role)
     }
@@ -413,10 +400,6 @@ impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHan
 {
     fn my_role(&self) -> anyhow::Result<Role> {
         self.base_session.my_role()
-    }
-
-    fn my_identity(&self) -> anyhow::Result<Identity> {
-        self.base_session.my_identity()
     }
 
     fn identity_from(&self, role: &Role) -> anyhow::Result<Identity> {

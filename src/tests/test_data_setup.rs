@@ -2,7 +2,7 @@
 pub mod tests {
     use crate::execution::constants::{
         PARAMS_DIR, REAL_KEY_PATH, REAL_PARAM_PATH, SMALL_TEST_KEY_PATH, SMALL_TEST_PARAM_PATH,
-        TEMP_DIR, TEMP_DKG_DIR,
+        TEMP_DKG_DIR,
     };
     use crate::execution::tfhe_internals::parameters::{
         NoiseFloodParameters, SwitchAndSquashParameters,
@@ -97,37 +97,21 @@ pub mod tests {
         sns_parameters: PARAM_4_BITS_CGGI_COMPACT_PKE_PBS_KS_SNS,
     };
 
+    /// run this once before all other tests to make sure the required keys and parameters exist
     #[ctor]
-    #[test]
-    fn create_temp_dir() {
-        // Ensure temp dir exists to store generated keys
-        let _ = fs::create_dir(TEMP_DIR);
-    }
-
-    #[ctor]
-    #[test]
-    fn create_temp_dkg_dir() {
-        // Ensure temp/dkg dir exists
-        let _ = fs::create_dir(TEMP_DKG_DIR);
-    }
-
-    #[ctor]
-    #[test]
-    fn create_parameters_dir() {
+    fn setup_directories_params_and_keys() {
+        // Ensure temp/dkg dir exists (also creates the temp dir)
+        let _ = fs::create_dir_all(TEMP_DKG_DIR);
         // Ensure parameters dir exists to store generated parameters json files
-        let _ = fs::create_dir(PARAMS_DIR);
-    }
+        let _ = fs::create_dir_all(PARAMS_DIR);
 
-    #[ctor]
-    #[test]
-    fn ensure_default_keys_exist() {
-        ensure_keys_exist(REAL_KEY_PATH, REAL_PARAMETERS);
-    }
+        // write parameter JSON files
+        write_as_json(SMALL_TEST_PARAM_PATH.to_string(), &TEST_PARAMETERS).unwrap();
+        write_as_json(REAL_PARAM_PATH.to_string(), &REAL_PARAMETERS).unwrap();
 
-    #[ctor]
-    #[test]
-    fn ensure_small_test_keys_exist() {
+        // make sure keys exist (generate them if they do not)
         ensure_keys_exist(SMALL_TEST_KEY_PATH, TEST_PARAMETERS);
+        ensure_keys_exist(REAL_KEY_PATH, REAL_PARAMETERS);
     }
 
     fn ensure_keys_exist(path: &str, params: NoiseFloodParameters) {
@@ -138,17 +122,5 @@ pub mod tests {
                 write_element(path.to_string(), &keys).unwrap();
             }
         }
-    }
-
-    #[ctor]
-    #[test]
-    fn ensure_small_test_params_exist() {
-        write_as_json(SMALL_TEST_PARAM_PATH.to_string(), &TEST_PARAMETERS).unwrap();
-    }
-
-    #[ctor]
-    #[test]
-    fn ensure_default_params_exist() {
-        write_as_json(REAL_PARAM_PATH.to_string(), &REAL_PARAMETERS).unwrap();
     }
 }

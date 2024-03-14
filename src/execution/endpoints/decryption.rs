@@ -130,10 +130,10 @@ impl ProtocolDecryption for Large {
         num_ctxt: usize,
     ) -> Box<dyn NoiseFloodPreprocessing> {
         let session = self.session.get_mut();
-        let nb_preproc = 2 * num_ctxt * ((STATSEC + LOG_BD) as usize + 2);
+        let num_preproc = 2 * num_ctxt * ((STATSEC + LOG_BD) as usize + 2);
         let batch_size = BatchParams {
-            triples: nb_preproc,
-            randoms: nb_preproc,
+            triples: num_preproc,
+            randoms: num_preproc,
         };
 
         let mut large_preproc = RealLargePreprocessing::init(
@@ -240,7 +240,7 @@ where
 /// 4. The results are returned
 ///
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(session_id = ?session.session_id(), own_identity = %session.my_identity()?, mode = %_mode))]
+#[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(session_id = ?session.session_id(), own_identity = %session.own_identity(), mode = %_mode))]
 pub async fn partial_decrypt_using_noiseflooding<S, P, R>(
     session: &mut S,
     protocol: &mut P,
