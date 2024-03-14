@@ -31,7 +31,6 @@ use itertools::Itertools;
 use std::{fs, sync::Arc, thread};
 
 #[ctor]
-#[test]
 fn redis_tidy() {
     let redis_conf = RedisConf::default();
     let client = redis::Client::open(redis_conf.host).unwrap();
