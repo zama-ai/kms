@@ -15,8 +15,8 @@ On the other hand there is only 1 manual pipeline for running long tests and ben
 ```mermaid
 graph
     subgraph P[Pull Request]
-        BD[Build] --> D[Done]
-        DC[Docker] --> D[Done]
+        BD[Build] --> D((Done))
+        DC[Docker] --> D((Done))
     end
     subgraph M[Merge Main]
         BD1[Build] --> DC1[Docker]
@@ -30,15 +30,16 @@ graph
         DC2[Docker] --> DP2[Deploy]
         DP2[Deploy] --> D2((Done))
     end
-    subgraph Heavy Processing Manual
+    subgraph H[Heavy Processing Manual]
         BD3[Build] --> D3((Done))
         IN3[Int-Tests] --> D3((Done))
         BM3[Benchmarks] --> D3((Done))
     end
-    subgraph Docker Image Tag
-        P --> |short_commit_hash| B((ghcr.io))
-        M --> |short_commit_hash| B
+    subgraph CICD[CI/CD Pipelines]
+        P
+        M --> |short_commit_hash| B((ghcr.io/zama-ai))
         R --> |Git Tag| B
+        H
     end
 ```
 

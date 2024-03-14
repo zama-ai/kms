@@ -38,10 +38,21 @@ echo ""
 echo ""
 '''
 
-[tasks.choreo]
-env = { "RUST_LOG" = "info", "RUST_BACKTRACE" = "1"}
+[tasks.choreo-with-dkg]
+condition = { env_set = ["DKG_PARAMS", "NUM_SESSIONS_PREPROC"] }
 command = "cargo"
 args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "--dkg-params", "${DKG_PARAMS}", "--num-sessions-preproc", "${NUM_SESSIONS_PREPROC}", "${CHOREO_COMMAND}" ]
+
+
+[tasks.choreo-without-dkg]
+condition = { env_not_set = ["DKG_PARAMS", "NUM_SESSIONS_PREPROC"] }
+command = "cargo"
+args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "${CHOREO_COMMAND}" ]
+
+
+[tasks.choreo]
+env = { "RUST_LOG" = "info", "RUST_BACKTRACE" = "1"}
+run_task = { name = ["choreo-with-dkg", "choreo-without-dkg"] }
 
 
 [tasks.choreo-init]
@@ -101,7 +112,7 @@ run_task = { name = ["generate-experiment", "experiment-name", "start-parties", 
 
 [tasks.docker-image-ci]
 command = "docker"
-args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "operations/docker/ci.dockerfile", "-t", "ddec", "."]
+args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "operations/docker/bench.dockerfile", "-t", "ddec", "."]
 
 [tasks.gen-local-cluster]
 command = "cargo"
@@ -113,7 +124,7 @@ args = ["compose", "-f", "temp/local-cluster.yml", "up", "--quiet-pull"]
 dependencies = ["gen-local-cluster"]
 
 [tasks.ci-test]
-run_task = { name = ["docker-image-ci", "grpc-bench-4-1-1-prss"] }
+run_task = { name = ["docker-image-ci", "grpc-bench-4-1-10-prss"] }
 
 [tasks.grpc-bench-4-1-1-prss]
 env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "1", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg1_prss" }

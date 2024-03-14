@@ -12,7 +12,6 @@
 
 # Rust
 **/target
-**/Cargo.lock
 
 # vim swap files
 *.sw?

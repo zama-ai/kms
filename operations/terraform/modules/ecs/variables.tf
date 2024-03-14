@@ -48,4 +48,18 @@ variable "subnet_id_private" {
   description = "The subnet ID to deploy the app service to"
 }
 
+variable "lb_target_group_arn" {
+  type = string
+  description = "The ARN of the load balancer target group"
+}
+
+variable "grafana_secret_arn" {
+  type = string
+  description = "The secret to use for Grafana"
+}
+
+variable "key_name" {
+  type = string
+  description = "The name of the key pair to use for the EC2 instance"
+}
 

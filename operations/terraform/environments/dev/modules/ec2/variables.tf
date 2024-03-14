@@ -27,3 +27,8 @@ variable "repository_arn_aws_creds" {
   type = string
   description = "The ARN of the AWS Secrets Manager secret containing the Docker repository credentials"
 }
+
+variable "key_name" {
+  type = string
+  description = "The name of the key pair to use for the EC2 instance"
+}

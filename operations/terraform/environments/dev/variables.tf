@@ -48,4 +48,17 @@ variable "ami_ecs_optimized" {
   description = "The AMI ID to use for the ECS-optimized EC2 instance"
 }
 
+variable "grafana_secret_arn" {
+  type = string
+  description = "The secret to use for Grafana"
+}
 
+variable "subnet_lb_ids" {
+  type = list(string)
+  description = "The subnet IDs to deploy the app service to"
+}
+
+variable "key_name" {
+  type = string
+  description = "The key pair name to use for the EC2 instance"
+}

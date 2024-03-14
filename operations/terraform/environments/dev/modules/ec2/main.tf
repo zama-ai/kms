@@ -118,7 +118,7 @@ resource "aws_instance" "ddec-choreo-instance-test" {
   }
   ami = data.aws_ami.amazon-linux-2.id
   instance_type = "t2.micro" # change this to your preferred instance type
-  key_name = "kms_team_ddec_choreo_test"
+  key_name = var.key_name
   iam_instance_profile = aws_iam_instance_profile.ddec_choreo_ec2_profile.name
   subnet_id = var.subnet_id
   associate_public_ip_address = true

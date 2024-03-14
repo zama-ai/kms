@@ -17,6 +17,13 @@ module "cloudwatch" {
   environment = var.environment
 }
 
+module "lb" {
+  source = "../../modules/lb"
+  environment = var.environment
+  subnet_ids = var.subnet_lb_ids
+  vpc_id = var.vpc_id_private
+}
+
 module "ecs" {
   source = "../../modules/ecs"
   environment = var.environment
@@ -29,6 +36,9 @@ module "ecs" {
   instance_type = var.instance_type
   ami_ecs_optimized = var.ami_ecs_optimized
   subnet_id_private = var.subnet_id_private
+  lb_target_group_arn = module.lb.lb_target_group_arn
+  grafana_secret_arn = var.grafana_secret_arn
+  key_name = var.key_name
 }
 
 module "ec2" {
@@ -39,6 +49,7 @@ module "ec2" {
   vpc_id = var.vpc_id_private
   image = var.image
   repository_arn_aws_creds = var.repository_arn_aws_creds
+  key_name = var.key_name
 }
 
 

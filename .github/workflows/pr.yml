@@ -16,7 +16,18 @@ jobs:
       SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
 
-  docker-build:
+  small-bench-test:
+    uses: ./.github/workflows/common-small-bench-run.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+
+  docker:
      uses: ./.github/workflows/common-docker.yml
      permissions:
        contents: 'read'
@@ -35,5 +46,6 @@ jobs:
         run: echo Pipeline Done
     needs:
       - build
-      - docker-build
+      - small-bench-test
+      - docker
 
