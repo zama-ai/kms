@@ -156,6 +156,7 @@ pub fn slice_wrapping_scalar_mul_assign<Z: BaseRing>(lhs: &mut [ResiduePoly<Z>],
 #[cfg(test)]
 pub mod tests {
     use std::collections::HashMap;
+    use std::num::Wrapping;
 
     use itertools::Itertools;
     use tfhe::core_crypto::entities::{GlweSecretKeyOwned, LweSecretKeyOwned};
@@ -264,17 +265,19 @@ pub mod tests {
         }
 
         //Reconstruct the keys
-
         let lwe_key = reconstruct_bit_vec(lwe_key_shares, params.lwe_dimension().0, threshold);
         LweSecretKeyOwned::from_container(lwe_key)
     }
 
-    pub fn reconstruct_glwe_secret_key_from_file(
+    #[allow(clippy::type_complexity)]
+    pub fn read_secret_key_shares_from_file(
         parties: usize,
-        threshold: usize,
         params: DKGParams,
         prefix_path: String,
-    ) -> (GlweSecretKeyOwned<u64>, Option<LweSecretKeyOwned<u128>>) {
+    ) -> (
+        HashMap<Role, Vec<Share<ResiduePoly<Wrapping<u64>>>>>,
+        HashMap<Role, Vec<Share<ResiduePoly<Wrapping<u128>>>>>,
+    ) {
         let mut sk_shares = HashMap::new();
         for party in 0..parties {
             sk_shares.insert(
@@ -297,7 +300,17 @@ pub mod tests {
                 }
             }
         }
+        (glwe_key_shares, big_glwe_key_shares)
+    }
 
+    pub fn reconstruct_glwe_secret_key_from_file(
+        parties: usize,
+        threshold: usize,
+        params: DKGParams,
+        prefix_path: String,
+    ) -> (GlweSecretKeyOwned<u64>, Option<LweSecretKeyOwned<u128>>) {
+        let (glwe_key_shares, big_glwe_key_shares) =
+            read_secret_key_shares_from_file(parties, params, prefix_path);
         let glwe_key = reconstruct_bit_vec(
             glwe_key_shares,
             params.get_params_basics_handle().glwe_sk_num_bits(),

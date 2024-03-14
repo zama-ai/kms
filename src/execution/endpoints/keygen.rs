@@ -1,14 +1,14 @@
 use crate::algebra::base_ring::{Z128, Z64};
 use crate::algebra::residue_poly::ResiduePoly64;
-use crate::algebra::structure_traits::ErrorCorrect;
 use crate::execution::online::preprocessing::{DKGPreprocessing, NoiseBounds, RandomPreprocessing};
 use crate::execution::sharing::share::Share;
+use crate::execution::tfhe_internals::lwe_key::LweCompactPublicKeyShare;
 use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
 use crate::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use crate::{
     algebra::{
         residue_poly::{ResiduePoly, ResiduePoly128},
-        structure_traits::{BaseRing, Ring},
+        structure_traits::{BaseRing, ErrorCorrect, Ring},
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
@@ -236,9 +236,8 @@ async fn sample_seed<
         .fold(0_u128, |acc, x| (acc << 8) + (x as u128)))
 }
 
-///Generates the lwe private key share and associated public keyglwe_secret_key_share
-#[instrument(skip( mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
-async fn generate_lwe_private_public_key_pair<
+///Generates the lwe private key share and associated public key
+fn generate_lwe_key_shares<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
     R: Rng + CryptoRng,
@@ -249,7 +248,7 @@ async fn generate_lwe_private_public_key_pair<
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen>,
     session: &mut S,
     preprocessing: &mut P,
-) -> anyhow::Result<(LweSecretKeyShare<Z>, LweCompactPublicKey<Vec<u64>>)>
+) -> anyhow::Result<(LweSecretKeyShare<Z>, LweCompactPublicKeyShare<Z>)>
 where
     ResiduePoly<Z>: ErrorCorrect,
 {
@@ -277,6 +276,29 @@ where
         &lwe_secret_key_share,
         mpc_encryption_rng,
     )?;
+
+    Ok((lwe_secret_key_share, lwe_public_key_shared))
+}
+
+///Generates the lwe private key share and associated public key
+#[instrument(skip( mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
+async fn generate_lwe_private_public_key_pair<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+    Gen: ByteRandomGenerator,
+>(
+    params: &DKGParams,
+    mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen>,
+    session: &mut S,
+    preprocessing: &mut P,
+) -> anyhow::Result<(LweSecretKeyShare<Z>, LweCompactPublicKey<Vec<u64>>)>
+where
+    ResiduePoly<Z>: ErrorCorrect,
+{
+    let (lwe_secret_key_share, lwe_public_key_shared) =
+        generate_lwe_key_shares(params, mpc_encryption_rng, session, preprocessing)?;
 
     //Open the public key and cast it to TFHE-RS type
     Ok((
@@ -425,6 +447,54 @@ where
         params.kind_to_str()
     );
     Ok(bk)
+}
+
+/// This function generates a bootstrapping key (bsk)
+/// that is used for the homomorphic PRF.
+/// Typically bootstrapping keys are encryptions of some
+/// LWE ciphertext. In thise use case, the LWE ciphertext
+/// is the PRF seed/key and it is randomly sampled and discarded.
+pub async fn distributed_homprf_bsk_gen<
+    Z: BaseRing,
+    P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+    Scalar: UnsignedInteger,
+>(
+    glwe_secret_key_share: &GlweSecretKeyShare<Z>,
+    params: &DKGParams,
+    preprocessing: &mut P,
+    session: &mut S,
+) -> anyhow::Result<LweBootstrapKey<Vec<Scalar>>>
+where
+    ResiduePoly<Z>: ErrorCorrect,
+{
+    let params_basics_handle = params.get_params_basics_handle();
+    let seed = sample_seed(params_basics_handle.get_sec(), session, preprocessing).await?;
+    //Init the XOF with the seed computed above
+    let mut mpc_encryption_rng =
+        MPCEncryptionRandomGenerator::<Z, SoftwareRandomGenerator>::new_from_seed(seed);
+
+    // the `lwe_secret_key_share` is the PRF key/seed
+    // we don't need the public component
+    let lwe_secret_key_share = LweSecretKeyShare::new_from_preprocessing(
+        params_basics_handle.lwe_dimension(),
+        preprocessing,
+    )?;
+
+    // now generate the bootstrapping key
+    let bsk = generate_bootstrap_key(
+        glwe_secret_key_share,
+        &lwe_secret_key_share,
+        &params.get_params_without_sns(),
+        &mut mpc_encryption_rng,
+        session,
+        preprocessing,
+    )
+    .await?;
+
+    // lwe_secret_key_share is dropped here
+    Ok(bsk)
 }
 
 ///Runs the distributed key generation protocol.
@@ -603,6 +673,16 @@ pub mod tests {
 
     use concrete_csprng::seeders::Seeder;
     use itertools::Itertools;
+    #[cfg(feature = "slow_tests")]
+    use tfhe::{
+        core_crypto::{
+            algorithms::par_convert_standard_lwe_bootstrap_key_to_fourier,
+            entities::FourierLweBootstrapKey,
+        },
+        integer::parameters::PolynomialSize,
+        shortint::server_key::ShortintBootstrappingKey,
+        Seed,
+    };
     use tfhe::{
         core_crypto::{
             algorithms::{
@@ -652,7 +732,16 @@ pub mod tests {
         },
         tests::helper::tests_and_benches::{execute_protocol_large, execute_protocol_small},
     };
+    #[cfg(feature = "slow_tests")]
+    use crate::{
+        execution::tfhe_internals::{
+            glwe_key::GlweSecretKeyShare, utils::tests::read_secret_key_shares_from_file,
+        },
+        file_handling::{read_element, write_element},
+    };
 
+    #[cfg(feature = "slow_tests")]
+    use super::distributed_homprf_bsk_gen;
     use super::{distributed_keygen_z128, DKGParams, PubKeySet};
 
     struct TestKeySize {
@@ -932,6 +1021,57 @@ pub mod tests {
             .unwrap();
     }
 
+    #[cfg(feature = "slow_tests")]
+    fn run_homprf_keygen_and_save(
+        params: DKGParams,
+        num_parties: usize,
+        threshold: usize,
+    ) -> LweBootstrapKey<Vec<u64>> {
+        let mut task = |mut session: LargeSession| async move {
+            // assume private key shares exist
+            // TODO how to pass it into this closure nicely?
+            let prefix_path = params.get_params_basics_handle().get_prefix_path();
+            let (glwe_key_shares, _) =
+                read_secret_key_shares_from_file(num_parties, params, prefix_path);
+
+            let my_role = session.my_role().unwrap();
+            let mut large_preproc = DummyPreprocessing::new(1_u64, session.clone());
+
+            let share_ref = glwe_key_shares.get(&my_role).unwrap();
+            let share = GlweSecretKeyShare {
+                data: share_ref.to_vec(),
+                polynomial_size: PolynomialSize(share_ref.len()),
+            };
+            let bsk = distributed_homprf_bsk_gen::<_, _, _, _, u64>(
+                &share,
+                &params,
+                &mut large_preproc,
+                &mut session,
+            )
+            .await
+            .unwrap();
+            (my_role, bsk)
+        };
+
+        let results =
+            execute_protocol_large::<ResiduePoly128, _, _>(num_parties, threshold, None, &mut task);
+
+        let bsk_ref = results[0].1.clone();
+
+        for (_, bsk) in results {
+            assert_eq!(bsk, bsk_ref);
+        }
+
+        let params_basics_handles = params.get_params_basics_handle();
+        write_element(
+            format!("{}/homprf_bsk.der", params_basics_handles.get_prefix_path()),
+            &bsk_ref,
+        )
+        .unwrap();
+
+        bsk_ref
+    }
+
     fn run_switch_and_squash(prefix_path: String, num_parties: usize, threshold: usize) {
         let params = DKGParamsSnS::read_from_file(prefix_path.clone() + "/params.json").unwrap();
         let message = (params.get_message_modulus().0 - 1) as u8;
@@ -1177,5 +1317,91 @@ pub mod tests {
 
         let clear_res: u8 = encrypted_res.decrypt(client_key);
         assert_eq!(clear_res, 1);
+    }
+
+    // TODO: ideally we'd like to verify the homPRF output
+    // against the plaintext output. But no plaintext implementation
+    // of the PRF exists so we simply check that the PRF output
+    // is different when the PRF key is different.
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn keygen_params32_small_no_sns_w_homprf() {
+        let params = PARAMS_P32_SMALL_NO_SNS;
+        let params_basics_handles = params.get_params_basics_handle();
+        let num_parties = 2;
+        let threshold = 0;
+
+        if !std::path::Path::new(&params_basics_handles.get_prefix_path()).exists() {
+            _ = fs::create_dir(params_basics_handles.get_prefix_path());
+            run_dkg_and_save(
+                params,
+                num_parties,
+                threshold,
+                params_basics_handles.get_prefix_path(),
+            );
+        }
+        run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
+            params_basics_handles.get_prefix_path(),
+            num_parties,
+            threshold,
+        );
+
+        // generate new bsk used for the hom-prf
+        // this assumes the regular evaluation keys exist
+        let homprf_bsk_path = format!("{}/homprf_bsk.der", params_basics_handles.get_prefix_path());
+        let homprf_bsk = if std::path::Path::new(&homprf_bsk_path).exists() {
+            read_element(homprf_bsk_path).unwrap()
+        } else {
+            run_homprf_keygen_and_save(params, num_parties, threshold)
+        };
+
+        // we need to create a new ServerKey with the new bsk
+        let (sk, pk) = retrieve_keys_from_files::<Z128>(
+            params,
+            num_parties,
+            threshold,
+            params_basics_handles.get_prefix_path(),
+        );
+        let orig_pk = pk.get_tfhe_shortint_server_key(params);
+        let mut homprf_pk = orig_pk.clone();
+        let mut homprf_fourier_bsk = FourierLweBootstrapKey::new(
+            homprf_bsk.input_lwe_dimension(),
+            homprf_bsk.glwe_size(),
+            homprf_bsk.polynomial_size(),
+            homprf_bsk.decomposition_base_log(),
+            homprf_bsk.decomposition_level_count(),
+        );
+
+        // substitute bsk part of the original evaluation key
+        par_convert_standard_lwe_bootstrap_key_to_fourier(&homprf_bsk, &mut homprf_fourier_bsk);
+        homprf_pk.bootstrapping_key = ShortintBootstrappingKey::Classic(homprf_fourier_bsk);
+
+        // run the homprf and make sure it's different
+        // if we run the homprf using the original bsk
+        let mut equals = 0usize;
+        let count = 1000usize;
+        // the probability for one output to be equal is 4/16
+        // 4 possible ways to be equal out of 16 by counting
+        // so expected value is (1/4)*count
+        for s in 0..count {
+            let ct = homprf_pk.generate_oblivious_pseudo_random(Seed(s as u128), 2);
+            let out = sk.decrypt_message_and_carry(&ct);
+            // run the homprf on a different set of keys and we should see some differences
+            let ct2 = orig_pk.generate_oblivious_pseudo_random(Seed(s as u128), 2);
+            let out2 = sk.decrypt_message_and_carry(&ct2);
+
+            if out == out2 {
+                equals += 1;
+            }
+        }
+
+        // we can compute the exact binomial distribution
+        // so k out of n are equals is
+        // P(n,k,p) = binomial(n, k)*p^k*(1-p)^(n-k)
+        // if we're interested in a range of k, then just sum it
+        // sum_{i=k}^n P(n,i,p)
+        // for n = 1000, k > 350 this is less than 1e-12
+        println!("{equals} / {count}");
+        assert!(equals < 350);
     }
 }
