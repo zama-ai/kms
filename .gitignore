@@ -1,5 +1,7 @@
 /target
 /temp
 /keys
+/crs
 .vscode/launch.json
 .DS_Store
+.vscode/

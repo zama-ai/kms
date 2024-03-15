@@ -17,6 +17,8 @@ service KmsEndpoint {
   rpc Decrypt(DecryptionRequest) returns (DecryptionResponse);
   // Reencrypt a ciphertext under a user-specified key and return a signcrypted share of the dercrypted plaintext.
   rpc Reencrypt(ReencryptionRequest) returns (ReencryptionResponse);
+  rpc CrsCeremony(CrsCeremonyRequest) returns  (CrsResponse);
+  rpc CrsRequest(CrsHandle) returns  (CrsResponse);
 }
 
 // The plaintext types that can be encrypted in a fhevm ciphertext.
@@ -57,6 +59,20 @@ enum ParamChoice {
   Test = 0;
   Default = 1;
 }
+
+message CrsCeremonyRequest {
+  string crs_handle = 1;
+  ParamChoice params = 2;
+}
+
+message CrsHandle {
+  string crs_handle = 1;
+}
+
+message CrsResponse {
+  string crs_uri = 1;
+}
+
 
 message DecryptionRequest {
   // Version of the request format.

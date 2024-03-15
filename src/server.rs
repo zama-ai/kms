@@ -1,15 +1,16 @@
-use kms_lib::core::kms_core::SoftwareKmsKeys;
+use kms_lib::core::kms_core::{CrsHashMap, SoftwareKmsKeys};
 use kms_lib::file_handling::read_element;
 use kms_lib::rpc::kms_rpc::server_handle;
-use kms_lib::setup_rpc::KEY_HANDLE;
-use kms_lib::write_default_keys;
+use kms_lib::setup_rpc::{
+    CRS_PATH_PREFIX, DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CRS_HANDLE,
+    DEFAULT_SOFTWARE_CENTRAL_KEY_PATH, KEY_HANDLE, TMP_PATH_PREFIX,
+};
+use kms_lib::{write_default_crs_store, write_default_keys};
 use std::env;
 use std::path::Path;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{filter, Layer};
-
-pub const DEFAULT_SOFTWARE_CENTRAL_KEY_PATH: &str = "temp/";
 
 // Starts a server where the first argument is the URL and following arguments are key handles of
 // existing keys.
@@ -31,16 +32,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         args[1].to_owned()
     };
     let keys: SoftwareKmsKeys = if Path::new(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH).exists() {
-        read_element(&format!(
-            "{DEFAULT_SOFTWARE_CENTRAL_KEY_PATH}default-software-keys.bin"
-        ))?
+        read_element(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH)?
     } else {
         tracing::info!(
             "Could not find default keys. Generating new keys with default parameters and handle \"{}\"...", KEY_HANDLE
         );
-        write_default_keys(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH)
+        write_default_keys(TMP_PATH_PREFIX)
     };
 
-    server_handle(&url, keys).await?;
+    let crs_store: CrsHashMap = if Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
+        read_element(DEFAULT_CENTRAL_CRS_PATH)?
+    } else {
+        tracing::info!(
+            "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", DEFAULT_CRS_HANDLE
+        );
+        write_default_crs_store(CRS_PATH_PREFIX)
+    };
+
+    server_handle(&url, keys, Some(crs_store)).await?;
     Ok(())
 }

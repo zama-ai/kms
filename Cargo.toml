@@ -48,6 +48,7 @@ tracing = { version = "~0.1", features = ["log"] }
 tracing-test = "0.2.4"
 tracing-subscriber = "0.3.18"
 url = "2.5.0"
+zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "169f1e28125e13ae481e7b1012f9afeff0c261b8" } # must match ddec!
 
 [target.'cfg(unix)'.dependencies]
 tfhe = { version = "0.5.1", features = ["seeder_unix"] }

@@ -11,6 +11,7 @@ use crate::rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, Signcryption
 use crate::setup_rpc::{FhePrivateKey, FhePublicKey, KEY_HANDLE};
 use aes_prng::AesRng;
 use distributed_decryption::error::error_handler::anyhow_error_and_log;
+use distributed_decryption::execution::zk::ceremony::{make_proof_deterministic, PublicParameter};
 use distributed_decryption::lwe::{ConversionKey, KeySet, LargeClientKey, ThresholdLWEParameters};
 use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
@@ -24,6 +25,12 @@ use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
     generate_keys, ConfigBuilder, FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8,
 };
+use zk_poc::curve;
+
+// Number of rounds that the CRS ceremony runs on the centralized KMS, emulating a real execution
+// with 2 parties. This corresponds to run the same number of rounds of the ceremony in Fig. 83
+// ("Ceremony for the CRS Generation") of the NIST doc
+const CRS_CEREMONY_ROUNDS: usize = 2;
 
 pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
     let sk = SigningKey::random(rng);
@@ -58,6 +65,42 @@ pub fn generate_fhe_keys(params: ThresholdLWEParameters) -> FheKeys {
         client_output_key: None,
         client_key,
     }
+}
+
+/// Compute an estimate for the witness dim from given LWE params. This might come out of tfhe-rs in
+/// the future.
+fn compute_witness_dimension(params: &ThresholdLWEParameters) -> usize {
+    let d = params.input_cipher_parameters.lwe_dimension.0;
+    let k = 32_usize; // this is an upper estimate for a packed 64 bit message and in line with the example in https://eprint.iacr.org/2023/800.pdf p.68
+    let t = params.input_cipher_parameters.message_modulus.0;
+    let b = 1_u64 << 42; // this is an estimate from https://eprint.iacr.org/2023/800.pdf p.68 and will come from the parameters in the future
+
+    // dimension computation taken from https://eprint.iacr.org/2023/800.pdf p.68. Will come from the parameters in the future.
+    let big_d =
+        d + k * t.ilog2() as usize + (d + k) * (1 + b.ilog2() as usize + d.ilog2() as usize);
+
+    big_d + 1
+}
+
+/// compute the CRS in the centralized KMS.
+pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
+    params: &ThresholdLWEParameters,
+    rng: &mut R,
+) -> PublicParameter {
+    let witness_dim = compute_witness_dimension(params);
+    tracing::info!("Generating CRS with witness dimension {}.", witness_dim);
+    let mut pparam = PublicParameter::new(witness_dim);
+
+    // run multiple rounds of CRS ceremony on the centralized server
+    for round in 1..=CRS_CEREMONY_ROUNDS {
+        let tau = curve::Zp::rand(rng);
+        let r = curve::Zp::rand(rng);
+        let pproof = make_proof_deterministic(&pparam, tau, round, r);
+        pparam = pproof.new_pp;
+        //TODO zeroize tau and r (needs Zeroize in zk-poc)
+    }
+
+    pparam
 }
 
 #[derive(Clone)]
@@ -157,10 +200,13 @@ pub struct SoftwareKmsKeys {
     pub sig_pk: PublicSigKey,
 }
 
+pub type CrsHashMap = HashMap<String, PublicParameter>;
+
 /// Software based KMS where keys are stored in a local file
 pub struct SoftwareKms {
     base_kms: BaseKmsStruct,
     pub fhe_keys: Arc<Mutex<HashMap<String, FheKeys>>>,
+    pub crs_store: Arc<Mutex<CrsHashMap>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -225,6 +271,34 @@ impl TryFrom<&FheKeys> for FhePublicKeySet {
             server_key,
             conversion_key: value.conversion_key.clone(),
         })
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SignedCRS {
+    pub crs: PublicParameter,
+    pub signature: Signature,
+}
+
+impl SignedCRS {
+    pub fn new<K: BaseKms>(crs: &PublicParameter, base_kms: &K) -> anyhow::Result<Self> {
+        let serialized = bincode::serialize(crs)?;
+        let signature = base_kms.sign(&serialized)?;
+        Ok(SignedCRS {
+            crs: crs.clone(),
+            signature,
+        })
+    }
+
+    pub fn verify_signature(&self, verf_key: &PublicSigKey) -> bool {
+        let serialized = match bincode::serialize(&self.crs) {
+            Ok(serialized) => serialized,
+            Err(_) => {
+                tracing::warn!("Could not serialize CRS");
+                return false;
+            }
+        };
+        BaseKmsStruct::verify_sig(&serialized, &self.signature, verf_key)
     }
 }
 
@@ -375,10 +449,21 @@ impl Kms for SoftwareKms {
 }
 
 impl SoftwareKms {
-    pub fn new(fhe_keys: HashMap<String, FheKeys>, sig_key: PrivateSigKey) -> Self {
+    pub fn new(
+        fhe_keys: HashMap<String, FheKeys>,
+        sig_key: PrivateSigKey,
+        crs_store: Option<CrsHashMap>,
+    ) -> Self {
+        // use crs_store passed in if it exists, otherwise create a new one
+        let cs = match crs_store {
+            Some(crs_store) => crs_store,
+            None => CrsHashMap::new(),
+        };
+
         SoftwareKms {
             base_kms: BaseKmsStruct::new(sig_key),
             fhe_keys: Arc::new(Mutex::new(fhe_keys)),
+            crs_store: Arc::new(Mutex::new(cs)),
         }
     }
 }
@@ -408,25 +493,25 @@ pub fn decrypt_signcryption(
 
 #[cfg(test)]
 mod tests {
+    use crate::core::kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms};
+    use crate::core::request::ephemeral_key_generation;
+    use crate::file_handling::read_element;
     use crate::kms::FheType;
     use crate::rpc::rpc_types::{Kms, Plaintext};
     use crate::setup_rpc::{
-        ensure_central_key_ct_exist, ensure_central_multiple_keys_ct_exist,
-        ensure_threshold_key_ct_exist, CentralizedTestingKeys, KEY_HANDLE, TEST_CENTRAL_CT_PATH,
-        TEST_CENTRAL_KEYS_PATH, TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH,
+        ensure_central_crs_store_exists, ensure_central_key_ct_exist,
+        ensure_central_multiple_keys_ct_exist, ensure_dir_exist, ensure_threshold_key_ct_exist,
+        CentralizedTestingKeys, KEY_HANDLE, OTHER_KEY_HANDLE, TEST_CENTRAL_CRS_PATH,
+        TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_MULTI_CT_PATH,
+        TEST_CENTRAL_MULTI_KEYS_PATH, TEST_CRS_HANDLE, TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH,
+        TEST_THRESHOLD_KEYS_PATH,
     };
     #[cfg(feature = "slow_tests")]
     use crate::setup_rpc::{
-        DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_MULTI_CT_PATH,
-        DEFAULT_CENTRAL_MULTI_KEYS_PATH, DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_CT_PATH,
-        DEFAULT_THRESHOLD_KEYS_PATH,
+        DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH,
+        DEFAULT_CENTRAL_MULTI_CT_PATH, DEFAULT_CENTRAL_MULTI_KEYS_PATH, DEFAULT_CRS_HANDLE,
+        DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
     };
-    use crate::{
-        core::kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms},
-        setup_rpc::TEST_CENTRAL_MULTI_KEYS_PATH,
-    };
-    use crate::{core::request::ephemeral_key_generation, setup_rpc::TEST_CENTRAL_MULTI_CT_PATH};
-    use crate::{file_handling::read_element, setup_rpc::OTHER_KEY_HANDLE};
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use serial_test::serial;
@@ -465,10 +550,17 @@ mod tests {
             DEFAULT_CENTRAL_MULTI_CT_PATH,
         );
     }
-
     #[cfg(test)]
     #[ctor::ctor]
-    fn test_setup_key_and_ct_test() {
+    fn ensure_testing_material_exists() {
+        ensure_dir_exist();
+
+        ensure_central_crs_store_exists(
+            TEST_PARAM_PATH,
+            TEST_CENTRAL_CRS_PATH,
+            Some(TEST_CRS_HANDLE.to_string()),
+        );
+
         ensure_central_key_ct_exist(
             TEST_PARAM_PATH,
             TEST_CENTRAL_KEYS_PATH,
@@ -480,12 +572,27 @@ mod tests {
             TEST_THRESHOLD_KEYS_PATH,
             TEST_THRESHOLD_CT_PATH,
         );
+
+        ensure_central_multiple_keys_ct_exist(
+            TEST_PARAM_PATH,
+            TEST_CENTRAL_MULTI_KEYS_PATH,
+            OTHER_KEY_HANDLE,
+            TEST_CENTRAL_MULTI_CT_PATH,
+        );
     }
 
     #[cfg(feature = "slow_tests")]
     #[cfg(test)]
     #[ctor::ctor]
-    fn test_setup_key_and_ct_default() {
+    fn ensure_default_material_exists() {
+        ensure_dir_exist();
+
+        ensure_central_crs_store_exists(
+            DEFAULT_PARAM_PATH,
+            DEFAULT_CENTRAL_CRS_PATH,
+            Some(DEFAULT_CRS_HANDLE.to_string()),
+        );
+
         ensure_central_key_ct_exist(
             DEFAULT_PARAM_PATH,
             DEFAULT_CENTRAL_KEYS_PATH,
@@ -497,28 +604,12 @@ mod tests {
             DEFAULT_THRESHOLD_KEYS_PATH,
             DEFAULT_THRESHOLD_CT_PATH,
         );
-    }
 
-    #[cfg(feature = "slow_tests")]
-    #[cfg(test)]
-    #[ctor::ctor]
-    fn multiple_default_keys_exist() {
         ensure_central_multiple_keys_ct_exist(
             DEFAULT_PARAM_PATH,
             DEFAULT_CENTRAL_MULTI_KEYS_PATH,
             OTHER_KEY_HANDLE,
             DEFAULT_CENTRAL_MULTI_CT_PATH,
-        );
-    }
-
-    #[cfg(test)]
-    #[ctor::ctor]
-    fn multiple_test_keys_exist() {
-        ensure_central_multiple_keys_ct_exist(
-            TEST_PARAM_PATH,
-            TEST_CENTRAL_MULTI_KEYS_PATH,
-            OTHER_KEY_HANDLE,
-            TEST_CENTRAL_MULTI_CT_PATH,
         );
     }
 
@@ -552,6 +643,7 @@ mod tests {
         let kms = SoftwareKms::new(
             keys.software_kms_keys.fhe_keys.clone(),
             keys.software_kms_keys.sig_sk,
+            None,
         );
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
         let plaintext: Plaintext = kms.decrypt(&ct, fhe_type, key_handle).unwrap();
@@ -600,6 +692,7 @@ mod tests {
         let kms = SoftwareKms::new(
             keys.software_kms_keys.fhe_keys.clone(),
             keys.software_kms_keys.sig_sk,
+            None,
         );
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
         let link = vec![42_u8, 42, 42];

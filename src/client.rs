@@ -19,9 +19,10 @@ use kms_lib::core::signcryption::{encryption_key_generation, sign, verify_sig, R
 use kms_lib::file_handling::read_element;
 use kms_lib::kms::kms_endpoint_client::KmsEndpointClient;
 use kms_lib::kms::{
-    AggregatedDecryptionResponse, AggregatedReencryptionResponse, DecryptionRequest,
-    DecryptionResponsePayload, FheType, GetAllKeysRequest, GetKeyRequest, KeyGenRequest,
-    ParamChoice, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
+    AggregatedDecryptionResponse, AggregatedReencryptionResponse, CrsCeremonyRequest, CrsHandle,
+    DecryptionRequest, DecryptionResponsePayload, FheType, GetAllKeysRequest, GetKeyRequest,
+    KeyGenRequest, ParamChoice, ReencryptionRequest, ReencryptionRequestPayload,
+    ReencryptionResponse,
 };
 use kms_lib::rpc::kms_rpc::{some_or_err, CURRENT_FORMAT_VERSION};
 use kms_lib::rpc::rpc_types::{
@@ -179,6 +180,27 @@ impl Client {
     pub fn get_key_request(&self, key_handle: &str) -> anyhow::Result<GetKeyRequest> {
         Ok(GetKeyRequest {
             key_handle: key_handle.to_string(),
+        })
+    }
+
+    pub fn crs_gen_request(
+        &self,
+        crs_handle: &str,
+        param: Option<ParamChoice>,
+    ) -> anyhow::Result<CrsCeremonyRequest> {
+        let parsed_param: i32 = match param {
+            Some(parsed_param) => parsed_param.into(),
+            None => ParamChoice::Default.into(),
+        };
+        Ok(CrsCeremonyRequest {
+            crs_handle: crs_handle.to_string(),
+            params: parsed_param,
+        })
+    }
+
+    pub fn get_crs_request(&self, crs_handle: &str) -> anyhow::Result<CrsHandle> {
+        Ok(CrsHandle {
+            crs_handle: crs_handle.to_string(),
         })
     }
 
@@ -724,22 +746,24 @@ pub fn num_blocks(fhe_type: FheType, params: ThresholdLWEParameters) -> usize {
 pub(crate) mod tests {
     use crate::{num_blocks, Client};
     use distributed_decryption::lwe::ThresholdLWEParameters;
-    use kms_lib::core::kms_core::SoftwareKmsKeys;
+    use kms_lib::core::kms_core::{CrsHashMap, SignedCRS, SignedFhePublicKeySet, SoftwareKmsKeys};
     use kms_lib::file_handling::{read_as_json, read_element, read_element_async};
     use kms_lib::kms::kms_endpoint_client::KmsEndpointClient;
     use kms_lib::kms::{
-        AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType, ParamChoice,
+        AggregatedDecryptionResponse, AggregatedReencryptionResponse, CrsHandle, FheType,
+        ParamChoice,
     };
-    use kms_lib::rpc::kms_rpc::{priv_key_path, pub_key_path, server_handle};
+    use kms_lib::rpc::kms_rpc::{crs_path, priv_key_path, pub_key_path, server_handle};
     use kms_lib::setup_rpc::{
-        CentralizedTestingKeys, ThresholdTestingKeys, AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT,
-        DEFAULT_URL, KEY_HANDLE, TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_FHE_TYPE,
-        TEST_MSG, TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
+        CentralizedTestingKeys, ThresholdTestingKeys, AMOUNT_PARTIES, BASE_PORT,
+        DEFAULT_CENTRAL_CRS_PATH, DEFAULT_PROT, DEFAULT_URL, KEY_HANDLE, TEST_CENTRAL_CRS_PATH,
+        TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_CRS_HANDLE, TEST_FHE_TYPE, TEST_MSG,
+        TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
     };
     #[cfg(feature = "slow_tests")]
     use kms_lib::setup_rpc::{
-        DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_THRESHOLD_CT_PATH,
-        DEFAULT_THRESHOLD_KEYS_PATH,
+        DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CRS_HANDLE,
+        DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
     };
     use kms_lib::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
     use serial_test::serial;
@@ -749,10 +773,13 @@ pub(crate) mod tests {
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::{Channel, Uri};
 
-    async fn setup(kms_keys: SoftwareKmsKeys) -> (JoinHandle<()>, KmsEndpointClient<Channel>) {
+    async fn setup(
+        kms_keys: SoftwareKmsKeys,
+        crs_store: Option<CrsHashMap>,
+    ) -> (JoinHandle<()>, KmsEndpointClient<Channel>) {
         let server_handle = tokio::spawn(async move {
             let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
-            let _ = server_handle(url.as_str(), kms_keys).await;
+            let _ = server_handle(url.as_str(), kms_keys, crs_store).await;
         });
         // We have to wait for the server to start since it will keep running in the background
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -768,9 +795,14 @@ pub(crate) mod tests {
     /// an internal client (for constructing requests and validating responses).
     async fn centralized_handles(
         centralized_key_path: &str,
+        centralized_crs_path: Option<&str>,
     ) -> (JoinHandle<()>, KmsEndpointClient<Channel>, Client) {
         let keys: CentralizedTestingKeys = read_element(centralized_key_path).unwrap();
-        let (kms_server, kms_client) = setup(keys.software_kms_keys).await;
+
+        let crs_path = centralized_crs_path.unwrap_or(DEFAULT_CENTRAL_CRS_PATH);
+        println!("Reading CRS from {}", crs_path);
+        let crs_store: CrsHashMap = read_element(crs_path).unwrap();
+        let (kms_server, kms_client) = setup(keys.software_kms_keys, Some(crs_store)).await;
         let internal_client = Client::new(
             HashSet::from_iter(keys.server_keys.iter().cloned()),
             keys.client_pk,
@@ -895,7 +927,7 @@ pub(crate) mod tests {
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
-            centralized_handles(centralized_key_path).await;
+            centralized_handles(centralized_key_path, None).await;
         let ref_uri = pub_key_path(key_handle);
         // Remove the keys to ensure that the test is idempotent
         let _ = fs::remove_file(ref_uri.clone());
@@ -918,6 +950,93 @@ pub(crate) mod tests {
             .unwrap();
         let res_uri = get_response.into_inner().key_uri;
         assert_eq!(res_uri, ref_uri);
+
+        // check that key signature is verified correctly
+        let signed_key: SignedFhePublicKeySet = read_element(&res_uri).unwrap();
+        let mut verified = false;
+
+        // try verification with each of the server keys
+        for vk in internal_client.server_pks {
+            let v = signed_key.verify_signature(&vk);
+            verified = verified || v;
+        }
+
+        // check that verification (with at least 1 server key) worked
+        assert!(verified);
+
+        kms_server.abort();
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test]
+    #[serial]
+    async fn default_crs_gen_centralized() {
+        crs_gen_centralized(
+            DEFAULT_CENTRAL_KEYS_PATH,
+            DEFAULT_CENTRAL_CRS_PATH,
+            DEFAULT_CRS_HANDLE,
+            Some(ParamChoice::Default),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_crs_gen_centralized() {
+        crs_gen_centralized(
+            TEST_CENTRAL_KEYS_PATH,
+            TEST_CENTRAL_CRS_PATH,
+            TEST_CRS_HANDLE,
+            Some(ParamChoice::Test),
+        )
+        .await;
+    }
+
+    /// test centralized crs generation
+    async fn crs_gen_centralized(
+        centralized_key_path: &str,
+        centralized_crs_path: &str,
+        crs_handle: &str,
+        params: Option<ParamChoice>,
+    ) {
+        let (kms_server, mut kms_client, internal_client) =
+            centralized_handles(centralized_key_path, Some(centralized_crs_path)).await;
+        let ref_uri = crs_path(crs_handle);
+        // Remove the keys to ensure that the test is idempotent
+        let _ = fs::remove_file(ref_uri.clone());
+
+        let ceremony_req = internal_client.crs_gen_request(crs_handle, params).unwrap();
+
+        let gen_response = kms_client
+            .crs_ceremony(tonic::Request::new(ceremony_req.clone()))
+            .await
+            .unwrap();
+        let res_uri = gen_response.into_inner().crs_uri;
+        assert_eq!(res_uri, ref_uri);
+
+        // Check that we can retrieve the CRS under that handle
+        let get_req = CrsHandle {
+            crs_handle: crs_handle.to_string(),
+        };
+        let get_response = kms_client
+            .crs_request(tonic::Request::new(get_req.clone()))
+            .await
+            .unwrap();
+        let res_uri = get_response.into_inner().crs_uri;
+        assert_eq!(res_uri, ref_uri);
+
+        // check that CRS signature is verified correctly
+        let signed_crs: SignedCRS = read_element(&res_uri).unwrap();
+        let mut verified = false;
+
+        // try verification with each of the server keys
+        for vk in internal_client.server_pks {
+            let v = signed_crs.verify_signature(&vk);
+            verified = verified || v;
+        }
+
+        // check that verification (with at least 1 server key) worked
+        assert!(verified);
 
         kms_server.abort();
     }
@@ -947,7 +1066,7 @@ pub(crate) mod tests {
         let _ = fs::remove_file(priv_uri_2);
 
         let (kms_server, mut kms_client, internal_client) =
-            centralized_handles(centralized_key_path).await;
+            centralized_handles(centralized_key_path, None).await;
         let gen_req = internal_client.key_gen_request("1", params).unwrap();
         let _ = kms_client
             .key_gen(tonic::Request::new(gen_req.clone()))
@@ -993,7 +1112,7 @@ pub(crate) mod tests {
         // TODO refactor with setup and teardown setting up servers that can be used to run tests in
         // parallel
         let (kms_server, mut kms_client, mut internal_client) =
-            centralized_handles(centralized_key_path).await;
+            centralized_handles(centralized_key_path, None).await;
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
 
         let req = internal_client
@@ -1032,7 +1151,7 @@ pub(crate) mod tests {
 
     async fn reencryption_centralized(centralized_key_path: &str, cipher_path: &str) {
         let (kms_server, mut kms_client, mut internal_client) =
-            centralized_handles(centralized_key_path).await;
+            centralized_handles(centralized_key_path, None).await;
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
         let (req, enc_pk, enc_sk) = internal_client
             .reencyption_request(ct, fhe_type, None)
@@ -1162,7 +1281,7 @@ pub(crate) mod tests {
     #[serial]
     async fn test_largecipher() {
         let keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH).unwrap();
-        let (kms_server, mut kms_client) = setup(keys.software_kms_keys).await;
+        let (kms_server, mut kms_client) = setup(keys.software_kms_keys, None).await;
         let ct = Vec::from([1_u8; 1000000]);
         let fhe_type = FheType::Euint32;
         let mut internal_client = Client::new(

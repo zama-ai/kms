@@ -1,12 +1,14 @@
 use aes_prng::AesRng;
 use anyhow::anyhow;
-use core::kms_core::{gen_sig_keys, SoftwareKmsKeys};
+use core::kms_core::{gen_sig_keys, CrsHashMap, SoftwareKmsKeys};
 use distributed_decryption::lwe::{gen_key_set, ThresholdLWEParameters};
-use file_handling::read_as_json;
-use file_handling::write_element;
+use file_handling::{read_as_json, write_element};
 use rand::SeedableRng;
-use setup_rpc::KEY_HANDLE;
-use std::{collections::HashMap, panic::Location};
+use setup_rpc::{DEFAULT_CRS_HANDLE, KEY_HANDLE};
+use std::collections::HashMap;
+use std::panic::Location;
+
+use crate::core::kms_core::gen_centralized_crs;
 
 use self::setup_rpc::DEFAULT_PARAM_PATH;
 
@@ -71,18 +73,52 @@ pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
     software_kms_keys
 }
 
+pub fn write_default_crs_store(path: &str) -> CrsHashMap {
+    let mut rng = AesRng::from_entropy();
+    let params: ThresholdLWEParameters = read_as_json(DEFAULT_PARAM_PATH.to_owned()).unwrap();
+
+    // ensure that path ends with a '/' to avoid problems with file handling in the rest of this fn
+    let mut path_string = path.to_string();
+    if !path_string.ends_with('/') {
+        path_string.push('/');
+    }
+
+    let crs = gen_centralized_crs(&params, &mut rng);
+    let crs_store = CrsHashMap::from([(DEFAULT_CRS_HANDLE.to_string(), crs)]);
+
+    write_element(format!("{path_string}default-crs-store.bin"), &crs_store).unwrap();
+
+    crs_store
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::setup_rpc::ensure_dir_exist;
+    use crate::setup_rpc::{CRS_PATH_PREFIX, DEFAULT_CENTRAL_CRS_PATH};
+    use crate::write_default_crs_store;
+    use std::path::Path;
+
     #[cfg(feature = "slow_tests")]
     #[cfg(test)]
     #[ctor::ctor]
     fn ensure_server_keys_exist() {
-        use crate::write_default_keys;
-        use std::path::Path;
+        use crate::{
+            setup_rpc::{DEFAULT_SOFTWARE_CENTRAL_KEY_PATH, TMP_PATH_PREFIX},
+            write_default_keys,
+        };
+        ensure_dir_exist();
 
-        let path = "temp/";
-        if !Path::new(format!("{path}default-software-keys.bin").as_str()).exists() {
-            let _ = write_default_keys(path);
+        if !Path::new(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH).exists() {
+            let _ = write_default_keys(TMP_PATH_PREFIX);
+        }
+    }
+
+    #[cfg(test)]
+    #[ctor::ctor]
+    fn ensure_crs_store_exist() {
+        ensure_dir_exist();
+        if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
+            let _ = write_default_crs_store(CRS_PATH_PREFIX);
         }
     }
 }

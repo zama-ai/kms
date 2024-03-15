@@ -4,8 +4,9 @@ use crate::core::kms_core::BaseKmsStruct;
 use crate::core::signcryption::signcrypt;
 use crate::kms::kms_endpoint_server::{KmsEndpoint, KmsEndpointServer};
 use crate::kms::{
-    DecryptionRequest, DecryptionResponse, FheType, GetAllKeysRequest, GetAllKeysResponse,
-    GetKeyRequest, KeyGenRequest, KeyResponse, ReencryptionRequest, ReencryptionResponse,
+    CrsCeremonyRequest, CrsHandle, CrsResponse, DecryptionRequest, DecryptionResponse, FheType,
+    GetAllKeysRequest, GetAllKeysResponse, GetKeyRequest, KeyGenRequest, KeyResponse,
+    ReencryptionRequest, ReencryptionResponse,
 };
 use crate::rpc::kms_rpc::{
     handle_potential_err, process_response, some_or_err, validate_decrypt_req,
@@ -507,5 +508,19 @@ impl KmsEndpoint for ThresholdKms {
             signature: sig.sig.to_vec(),
             payload: Some(sig_payload.into()),
         }))
+    }
+
+    async fn crs_ceremony(
+        &self,
+        _request: Request<CrsCeremonyRequest>,
+    ) -> Result<Response<CrsResponse>, Status> {
+        todo!();
+    }
+
+    async fn crs_request(
+        &self,
+        _request: Request<CrsHandle>,
+    ) -> Result<Response<CrsResponse>, Status> {
+        todo!();
     }
 }

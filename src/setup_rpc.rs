@@ -1,6 +1,7 @@
 use crate::core::der_types::{PrivateSigKey, PublicSigKey};
 use crate::core::kms_core::{
-    gen_default_kms_keys, gen_sig_keys, generate_fhe_keys, SoftwareKmsKeys,
+    gen_centralized_crs, gen_default_kms_keys, gen_sig_keys, generate_fhe_keys, CrsHashMap,
+    SoftwareKmsKeys,
 };
 use crate::file_handling::read_as_json;
 use crate::kms::FheType;
@@ -19,15 +20,22 @@ pub type FhePublicKey = tfhe::CompactPublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
 
 pub const KEY_PATH_PREFIX: &str = "keys";
+pub const CRS_PATH_PREFIX: &str = "crs";
+pub const TMP_PATH_PREFIX: &str = "temp";
 
 pub const DEFAULT_PARAM_PATH: &str = "parameters/default_params.json";
 pub const DEFAULT_THRESHOLD_KEYS_PATH: &str = "temp/default-threshold-keys";
 pub const DEFAULT_THRESHOLD_CT_PATH: &str = "temp/default-threshold-ciphertext.bin";
 pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
+pub const DEFAULT_SOFTWARE_CENTRAL_KEY_PATH: &str = "temp/default-software-keys.bin";
+pub const DEFAULT_CENTRAL_CRS_PATH: &str = "crs/default-crs-store.bin";
 pub const DEFAULT_CENTRAL_MULTI_KEYS_PATH: &str = "temp/default-central-multi-keys.bin";
 pub const DEFAULT_CENTRAL_CT_PATH: &str = "temp/default-central-ciphertext.bin";
 pub const DEFAULT_CENTRAL_MULTI_CT_PATH: &str = "temp/default-central-multi-keys-ciphertext.bin";
 pub const KEY_HANDLE: &str = "default";
+
+pub const DEFAULT_CRS_HANDLE: &str = "default";
+pub const TEST_CRS_HANDLE: &str = "test";
 
 // TODO Test should be in a test module, however I have spend an hour trying to refactor this
 // without success. Someone with good rust skills are very welcome to try this
@@ -43,6 +51,7 @@ pub const TEST_PARAM_PATH: &str = "parameters/small_test_params.json";
 pub const TEST_THRESHOLD_KEYS_PATH: &str = "temp/test-threshold-keys";
 pub const TEST_THRESHOLD_CT_PATH: &str = "temp/test-threshold-ciphertext.bin";
 pub const TEST_CENTRAL_KEYS_PATH: &str = "temp/test-central-keys.bin";
+pub const TEST_CENTRAL_CRS_PATH: &str = "crs/test-crs-store.bin";
 pub const TEST_CENTRAL_MULTI_KEYS_PATH: &str = "temp/test-central-multi-keys.bin";
 pub const TEST_CENTRAL_CT_PATH: &str = "temp/test-central-ciphertext.bin";
 pub const TEST_CENTRAL_MULTI_CT_PATH: &str = "temp/test-central-multi-keys-ciphertext.bin";
@@ -67,8 +76,10 @@ pub struct CentralizedTestingKeys {
     pub server_keys: Vec<PublicSigKey>,
 }
 
-fn ensure_dir_exist() {
-    fs::create_dir_all("temp").unwrap();
+pub fn ensure_dir_exist() {
+    fs::create_dir_all(TMP_PATH_PREFIX).unwrap();
+    fs::create_dir_all(KEY_PATH_PREFIX).unwrap();
+    fs::create_dir_all(CRS_PATH_PREFIX).unwrap();
 }
 
 fn ensure_threshold_keys_exist(param_path: &str, threshold_key_path: &str) {
@@ -129,6 +140,22 @@ fn ensure_central_keys_exist(param_path: &str, central_key_path: &str, key_handl
     }
 }
 
+pub fn ensure_central_crs_store_exists(
+    param_path: &str,
+    central_crs_path: &str,
+    crs_handle: Option<String>,
+) {
+    if !Path::new(central_crs_path).exists() {
+        tracing::info!("Generating new centralized CRS store");
+        let params: ThresholdLWEParameters = read_as_json(param_path.to_owned()).unwrap();
+        let mut rng = AesRng::seed_from_u64(42);
+        let crs = gen_centralized_crs(&params, &mut rng);
+        let handle = crs_handle.unwrap_or(DEFAULT_CRS_HANDLE.to_string());
+        let crs_store = CrsHashMap::from([(handle, crs)]);
+        assert!(write_element(central_crs_path.to_string(), &crs_store,).is_ok());
+    }
+}
+
 pub fn ensure_central_multiple_keys_ct_exist(
     param_path: &str,
     central_keys_path: &str,
@@ -185,14 +212,11 @@ pub fn ensure_ciphertext_exist(ciphertext_path: &str, fhe_pk: FhePublicKey) {
     }
 }
 
-// Observe that this basically does the same as `ensure_central_multiple_keys_ct_exist` and is only included for compeleteness
-// in integration testing, to explicitely test the case when the KMS is setup with only a single key.
 pub fn ensure_central_key_ct_exist(
     param_path: &str,
     central_key_path: &str,
     ciphertext_path: &str,
 ) {
-    ensure_dir_exist();
     if !Path::new(central_key_path).exists() {
         ensure_central_keys_exist(param_path, central_key_path, Some(KEY_HANDLE.to_string()));
     }
@@ -214,7 +238,6 @@ pub fn ensure_threshold_key_ct_exist(
     threshold_key_path: &str,
     ciphertext_path: &str,
 ) {
-    ensure_dir_exist();
     // Observe we just test for the first key for simplicity
     if !Path::new(&format!("{threshold_key_path}-1.bin")).exists() {
         ensure_threshold_keys_exist(param_path, threshold_key_path);

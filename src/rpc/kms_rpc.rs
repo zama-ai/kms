@@ -2,19 +2,23 @@ use super::rpc_types::{BaseKms, DecryptionRequestSerializable, ReencryptionReque
 use crate::anyhow_error_and_warn_log;
 use crate::core::der_types::{PublicEncKey, PublicSigKey};
 use crate::core::kms_core::{
-    generate_fhe_keys, BaseKmsStruct, FheKeys, FhePublicKeySet, SignedFhePublicKeySet, SoftwareKms,
-    SoftwareKmsKeys,
+    gen_centralized_crs, generate_fhe_keys, BaseKmsStruct, CrsHashMap, FheKeys, FhePublicKeySet,
+    SignedCRS, SignedFhePublicKeySet, SoftwareKms, SoftwareKmsKeys,
 };
 use crate::file_handling::read_as_json;
 use crate::kms::kms_endpoint_server::{KmsEndpoint, KmsEndpointServer};
 use crate::kms::{
-    DecryptionRequest, DecryptionResponse, FheType, GetAllKeysRequest, GetAllKeysResponse,
-    GetKeyRequest, KeyGenRequest, KeyResponse, ParamChoice, ReencryptionRequest,
-    ReencryptionResponse,
+    CrsCeremonyRequest, CrsHandle, CrsResponse, DecryptionRequest, DecryptionResponse, FheType,
+    GetAllKeysRequest, GetAllKeysResponse, GetKeyRequest, KeyGenRequest, KeyResponse, ParamChoice,
+    ReencryptionRequest, ReencryptionResponse,
 };
 use crate::rpc::rpc_types::{DecryptionResponseSigPayload, Kms};
-use crate::setup_rpc::{DEFAULT_PARAM_PATH, KEY_PATH_PREFIX, TEST_PARAM_PATH};
-use distributed_decryption::{file_handling::write_element, lwe::ThresholdLWEParameters};
+use crate::setup_rpc::{CRS_PATH_PREFIX, DEFAULT_PARAM_PATH, KEY_PATH_PREFIX, TEST_PARAM_PATH};
+use aes_prng::AesRng;
+use distributed_decryption::execution::zk::ceremony::PublicParameter;
+use distributed_decryption::file_handling::write_element;
+use distributed_decryption::lwe::ThresholdLWEParameters;
+use rand::SeedableRng;
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -26,7 +30,11 @@ use url::Url;
 
 pub static CURRENT_FORMAT_VERSION: u32 = 1;
 
-pub async fn server_handle(url_str: &str, kms_keys: SoftwareKmsKeys) -> anyhow::Result<()> {
+pub async fn server_handle(
+    url_str: &str,
+    kms_keys: SoftwareKmsKeys,
+    crs_store: Option<CrsHashMap>,
+) -> anyhow::Result<()> {
     let url = Url::parse(url_str)?;
     if url.scheme() != "http" && url.scheme() != "https" {
         return Err(anyhow::anyhow!(
@@ -37,7 +45,7 @@ pub async fn server_handle(url_str: &str, kms_keys: SoftwareKmsKeys) -> anyhow::
     let port = url.port_or_known_default().ok_or("Invalid port in URL.");
     let socket: SocketAddr = format!("{}:{}", host_str.unwrap(), port.unwrap()).parse()?;
 
-    let kms = SoftwareKms::new(kms_keys.fhe_keys, kms_keys.sig_sk);
+    let kms = SoftwareKms::new(kms_keys.fhe_keys, kms_keys.sig_sk, crs_store);
     tracing::info!("Starting centralized KMS server ...");
     Server::builder()
         .add_service(KmsEndpointServer::new(kms))
@@ -205,6 +213,85 @@ impl KmsEndpoint for SoftwareKms {
             payload: Some(sig_payload.into()),
         }))
     }
+
+    async fn crs_ceremony(
+        &self,
+        request: Request<CrsCeremonyRequest>,
+    ) -> Result<Response<CrsResponse>, Status> {
+        let inner = request.into_inner();
+        let handle = inner.crs_handle.as_str();
+
+        // ensure the handle is valid
+        if !validate_user_input(handle) {
+            tracing::warn!("CRS handle {} is not allowed!", handle);
+            return Err(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("CRS handle {} is not allowed!", handle),
+            ));
+        }
+
+        // ensure that the CRS under that handle does not exist yet
+        if crs_exists(handle) {
+            tracing::warn!(
+                "CRS with handle {} already exist - cannot create it again!",
+                handle
+            );
+            return Err(tonic::Status::new(
+                tonic::Code::NotFound,
+                format!(
+                    "CRS with handle {} already exist - cannot create it again!",
+                    handle
+                ),
+            ));
+        }
+
+        let params = handle_potential_err(
+            retrieve_paramters(inner.params),
+            "Parameter choice is not recognized".to_string(),
+        )?;
+
+        // generate the CRS
+        let mut rng = AesRng::from_entropy();
+        let crs = gen_centralized_crs(&params, &mut rng);
+
+        let crs_uri = handle_potential_err(
+            store_crs(self, &crs, handle),
+            format!("Failed to store CRS from request {:?}", inner),
+        )?;
+
+        let mut crs_store = handle_potential_err(
+            self.crs_store.lock(),
+            "Could not get handle for storing CRS".to_string(),
+        )?;
+        crs_store.insert(handle.to_string(), crs);
+
+        Ok(Response::new(CrsResponse { crs_uri }))
+    }
+
+    async fn crs_request(
+        &self,
+        request: Request<CrsHandle>,
+    ) -> Result<Response<CrsResponse>, Status> {
+        let inner = request.into_inner();
+
+        if !validate_user_input(&inner.crs_handle) {
+            tracing::warn!("CRS handle {} is not allowed!", inner.crs_handle);
+            return Err(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("CRS handle {} is not allowed!", inner.crs_handle),
+            ));
+        }
+        if !crs_exists(&inner.crs_handle) {
+            tracing::warn!("CRS with handle {} does not exist!", inner.crs_handle);
+            return Err(tonic::Status::new(
+                tonic::Code::NotFound,
+                format!("CRS with handle {} does not exist!", inner.crs_handle),
+            ));
+        }
+        Ok(Response::new(CrsResponse {
+            crs_uri: crs_path(&inner.crs_handle),
+        }))
+    }
 }
 
 pub fn pub_key_path(key_handle: &str) -> String {
@@ -215,10 +302,19 @@ pub fn priv_key_path(key_handle: &str) -> String {
     format!("{}/{}-private.bin", KEY_PATH_PREFIX, key_handle)
 }
 
+pub fn crs_path(crs_handle: &str) -> String {
+    format!("{}/{}-crs.bin", CRS_PATH_PREFIX, crs_handle)
+}
+
 fn keys_exists(key_handle: &str) -> bool {
     let private_key_path = pub_key_path(key_handle);
     let public_key_path = priv_key_path(key_handle);
     Path::new(&private_key_path).exists() || Path::new(&public_key_path).exists()
+}
+
+fn crs_exists(crs_handle: &str) -> bool {
+    let crs_path = crs_path(crs_handle);
+    Path::new(&crs_path).exists()
 }
 
 /// Store generated keys by writing them to the file system and returning the path of the public
@@ -233,6 +329,20 @@ fn store_keys<K: BaseKms>(kms: &K, keys: &FheKeys, key_handle: &str) -> anyhow::
     let public_key_path = format!("{}/{}-public.bin", KEY_PATH_PREFIX, key_handle);
     write_element(public_key_path.clone(), &signed_pks)?;
     Ok(public_key_path)
+}
+
+/// Store generated CRS by signing it and writing it to the file system, returning the path to it.
+fn store_crs<K: BaseKms>(
+    kms: &K,
+    crs: &PublicParameter,
+    crs_handle: &str,
+) -> anyhow::Result<String> {
+    fs::create_dir_all(CRS_PATH_PREFIX)?;
+    let crs_path = format!("{}/{}-crs.bin", CRS_PATH_PREFIX, crs_handle);
+    let signed_crs = SignedCRS::new(crs, kms)?;
+    write_element(crs_path.clone(), &signed_crs)?;
+
+    Ok(crs_path)
 }
 
 fn get_all_key_uris(
@@ -270,7 +380,8 @@ fn validate_user_input(input: &str) -> bool {
 /// Returns ciphertext, FheType, digest, client encryption key, client verification key,
 /// servers_needed key_handle.
 /// Observe that the key handle is NOT checked for existence here.
-/// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key is needed.
+/// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
+/// is needed.
 pub async fn validate_reencrypt_req(
     req: &ReencryptionRequest,
 ) -> anyhow::Result<(
@@ -323,7 +434,8 @@ pub async fn validate_reencrypt_req(
 
 /// Returns ciphertext, FheType, digest, servers_needed, key_handle
 /// Observe that the key handle is NOT checked for existence here.
-/// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key is needed.
+/// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
+/// is needed.
 pub async fn validate_decrypt_req(
     req: &DecryptionRequest,
 ) -> anyhow::Result<(Vec<u8>, FheType, Vec<u8>, u32, String)> {
