@@ -9,25 +9,26 @@ use serde_asn1_der::from_bytes;
 use std::fmt;
 
 pub trait BaseKms {
-    fn verify_sig<T: fmt::Debug + Serialize>(
+    fn verify_sig<T: Serialize>(
         payload: &T,
         signature: &Signature,
         verification_key: &PublicSigKey,
     ) -> bool;
-    fn sign<T: fmt::Debug + Serialize>(&self, msg: &T) -> anyhow::Result<Signature>;
+    fn sign<T: Serialize>(&self, msg: &T) -> anyhow::Result<Signature>;
     fn get_verf_key(&self) -> PublicSigKey;
     fn digest<T: fmt::Debug + Serialize>(msg: &T) -> anyhow::Result<Vec<u8>>;
 }
 /// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
 pub trait Kms: BaseKms {
-    fn decrypt(&self, ct: &[u8], fhe_type: FheType) -> anyhow::Result<Plaintext>;
+    fn decrypt(&self, ct: &[u8], fhe_type: FheType, key_handle: &str) -> anyhow::Result<Plaintext>;
     fn reencrypt(
         &self,
         ct: &[u8],
         ct_type: FheType,
-        digest_link: Vec<u8>,
+        digest_link: &[u8],
         enc_key: &PublicEncKey,
         pub_verf_key: &PublicSigKey,
+        key_handle: &str,
     ) -> anyhow::Result<Option<Vec<u8>>>;
 }
 
@@ -204,19 +205,21 @@ impl TryFrom<RawDecryption> for Plaintext {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DecryptionRequestSerializable {
     pub version: u32,
-    pub shares_needed: u32,
+    pub servers_needed: u32,
     pub fhe_type: FheType,
-    pub ciphertext: Vec<u8>,
     pub randomness: Vec<u8>,
+    pub key_handle: String,
+    pub ciphertext: Vec<u8>,
 }
 impl From<DecryptionRequestSerializable> for DecryptionRequest {
     fn from(val: DecryptionRequestSerializable) -> DecryptionRequest {
         DecryptionRequest {
             version: val.version,
-            shares_needed: val.shares_needed,
+            servers_needed: val.servers_needed,
             fhe_type: val.fhe_type.into(),
-            ciphertext: val.ciphertext,
             randomness: val.randomness,
+            key_handle: val.key_handle,
+            ciphertext: val.ciphertext,
         }
     }
 }
@@ -226,10 +229,11 @@ impl TryFrom<DecryptionRequest> for DecryptionRequestSerializable {
     fn try_from(val: DecryptionRequest) -> Result<Self, Self::Error> {
         Ok(DecryptionRequestSerializable {
             version: val.version,
-            shares_needed: val.shares_needed,
+            servers_needed: val.servers_needed,
             fhe_type: val.fhe_type.try_into()?,
-            ciphertext: val.ciphertext,
             randomness: val.randomness,
+            ciphertext: val.ciphertext,
+            key_handle: val.key_handle,
         })
     }
 }
@@ -240,21 +244,19 @@ impl TryFrom<DecryptionRequest> for DecryptionRequestSerializable {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DecryptionResponseSigPayload {
     pub version: u32,
-    pub shares_needed: u32,
+    pub servers_needed: u32,
     pub verification_key: Vec<u8>,
     pub plaintext: Vec<u8>,
     pub digest: Vec<u8>,
-    pub randomness: Vec<u8>,
 }
 impl From<DecryptionResponseSigPayload> for DecryptionResponsePayload {
     fn from(val: DecryptionResponseSigPayload) -> DecryptionResponsePayload {
         DecryptionResponsePayload {
             version: val.version,
-            shares_needed: val.shares_needed,
+            servers_needed: val.servers_needed,
             verification_key: val.verification_key,
             plaintext: val.plaintext,
             digest: val.digest,
-            randomness: val.randomness,
         }
     }
 }
@@ -262,11 +264,10 @@ impl From<DecryptionResponsePayload> for DecryptionResponseSigPayload {
     fn from(val: DecryptionResponsePayload) -> Self {
         DecryptionResponseSigPayload {
             version: val.version,
-            shares_needed: val.shares_needed,
+            servers_needed: val.servers_needed,
             verification_key: val.verification_key,
             plaintext: val.plaintext,
             digest: val.digest,
-            randomness: val.randomness,
         }
     }
 }
@@ -277,23 +278,25 @@ impl From<DecryptionResponsePayload> for DecryptionResponseSigPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ReencryptionRequestSigPayload {
     pub version: u32,
-    pub shares_needed: u32,
+    pub servers_needed: u32,
     pub verification_key: Vec<u8>,
     pub enc_key: Vec<u8>,
     pub fhe_type: FheType,
-    pub ciphertext: Vec<u8>,
     pub randomness: Vec<u8>,
+    pub ciphertext: Vec<u8>,
+    pub key_handle: String,
 }
 impl From<ReencryptionRequestSigPayload> for ReencryptionRequestPayload {
     fn from(val: ReencryptionRequestSigPayload) -> ReencryptionRequestPayload {
         ReencryptionRequestPayload {
             version: val.version,
-            shares_needed: val.shares_needed,
+            servers_needed: val.servers_needed,
             verification_key: val.verification_key,
             enc_key: val.enc_key,
             fhe_type: val.fhe_type.into(),
-            ciphertext: val.ciphertext,
             randomness: val.randomness,
+            ciphertext: val.ciphertext,
+            key_handle: val.key_handle,
         }
     }
 }
@@ -303,12 +306,13 @@ impl TryFrom<ReencryptionRequestPayload> for ReencryptionRequestSigPayload {
     fn try_from(val: ReencryptionRequestPayload) -> Result<Self, Self::Error> {
         Ok(ReencryptionRequestSigPayload {
             version: val.version,
-            shares_needed: val.shares_needed,
+            servers_needed: val.servers_needed,
             verification_key: val.verification_key,
             enc_key: val.enc_key,
             fhe_type: val.fhe_type.try_into()?,
-            ciphertext: val.ciphertext,
             randomness: val.randomness,
+            ciphertext: val.ciphertext,
+            key_handle: val.key_handle,
         })
     }
 }
@@ -349,16 +353,15 @@ impl<'de> Visitor<'de> for FheTypeVisitor {
 }
 pub trait MetaResponse {
     fn version(&self) -> u32;
-    fn shares_needed(&self) -> u32;
+    fn servers_needed(&self) -> u32;
     fn verification_key(&self) -> Vec<u8>;
     fn fhe_type(&self) -> anyhow::Result<FheType>;
     fn digest(&self) -> Vec<u8>;
-    fn randomness(&self) -> Option<Vec<u8>>;
 }
 
 impl MetaResponse for ReencryptionResponse {
-    fn shares_needed(&self) -> u32 {
-        self.shares_needed
+    fn servers_needed(&self) -> u32 {
+        self.servers_needed
     }
 
     fn verification_key(&self) -> Vec<u8> {
@@ -373,18 +376,14 @@ impl MetaResponse for ReencryptionResponse {
         self.digest.to_owned()
     }
 
-    fn randomness(&self) -> Option<Vec<u8>> {
-        None
-    }
-
     fn version(&self) -> u32 {
         self.version
     }
 }
 
 impl MetaResponse for DecryptionResponsePayload {
-    fn shares_needed(&self) -> u32 {
-        self.shares_needed
+    fn servers_needed(&self) -> u32 {
+        self.servers_needed
     }
 
     fn verification_key(&self) -> Vec<u8> {
@@ -398,10 +397,6 @@ impl MetaResponse for DecryptionResponsePayload {
 
     fn digest(&self) -> Vec<u8> {
         self.digest.to_owned()
-    }
-
-    fn randomness(&self) -> Option<Vec<u8>> {
-        Some(self.randomness.to_owned())
     }
 
     fn version(&self) -> u32 {

@@ -9,12 +9,13 @@
         "pbs_level": 1,
         "ks_base_log": 8,
         "ks_level": 4,
-        "message_modulus_log": 4,
-        "usable_message_modulus_log": 2,
+        "message_modulus": 4,
+        "carry_modulus": 4,
         "ciphertext_modulus": {
             "modulus": 0,
             "scalar_bits": 64
-        }
+        },
+        "encryption_key_choice": "Small"
     },
     "output_cipher_parameters": {
         "lwe_dimension": 96,
@@ -26,11 +27,12 @@
         "pbs_level": 2,
         "ks_base_log": 30,
         "ks_level": 2,
-        "message_modulus_log": 4,
-        "usable_message_modulus_log": 2,
+        "message_modulus": 4,
+        "carry_modulus": 4,
         "ciphertext_modulus": {
             "modulus": 0,
             "scalar_bits": 128
-        }
+        },
+        "encryption_key_choice": "Small"
     }
 }

@@ -52,6 +52,4 @@ jobs:
         run: cargo clippy --all-targets --workspace -- -D warnings
 
       - name: Run Tests
-        run: cargo test ${{ inputs.args_build }} --features tfhe/seeder_unix tfhe/x86_64 --release -- --ignored
-
-
+        run: cargo test ${{ inputs.args_build }} --features tfhe/seeder_unix tfhe/x86_64 --release --features slow_tests

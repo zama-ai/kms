@@ -2,7 +2,20 @@ syntax = "proto3";
 package kms;
 
 service KmsEndpoint {
+  // Generate new keys under a certain handle and return a URI where they can be accessed.
+  // The keys at the URI contains signature and authentication information.
+  rpc KeyGen(KeyGenRequest) returns (KeyResponse);
+  // Return URIs for all keys in the KMS.
+  // The keys at the URIs contain signatures and authentication information.
+  // NOTE: Unprivileged and insecure call
+  rpc GetAllKeys(GetAllKeysRequest) returns (GetAllKeysResponse);
+  // Return the URI of a key with a specific handle.
+  // The keys at the URI contains signature and authentication information.
+  // NOTE: Unprivileged and insecure call
+  rpc GetKey(GetKeyRequest) returns (KeyResponse);
+  // Decrypt a ciphertext and return the signed plaintext.
   rpc Decrypt(DecryptionRequest) returns (DecryptionResponse);
+  // Reencrypt a ciphertext under a user-specified key and return a signcrypted share of the dercrypted plaintext.
   rpc Reencrypt(ReencryptionRequest) returns (ReencryptionResponse);
 }
 
@@ -16,50 +29,79 @@ enum FheType {
   Euint64 = 5;
 }
 
+// Request for generating new keys under a certain handle and return a URI where they can be accessed.
+// TODO handle the potential need for randomness in the signed stored keys which may be needed to ensure provable EU-CMA security of ECDSA.
+message KeyGenRequest {
+  // Name of the key handle
+  string key_handle = 1;
+  ParamChoice params = 2;
+}
+
+message KeyResponse {
+  // The URI of the public part of the key in question.
+  string key_uri = 1;
+}
+
+message GetAllKeysRequest {}
+
+message GetAllKeysResponse {
+  map<string, string> handles = 1;
+}
+
+message GetKeyRequest {
+  // Handle of the key to retrieve
+  string key_handle = 4;
+}
+
+enum ParamChoice {
+  Test = 0;
+  Default = 1;
+}
+
 message DecryptionRequest {
   // Version of the request format.
   uint32 version = 1;
-  // The amount of shares needed to recombine the result.
+  // The amount of responses needed to sure security of the result.
   // This implies the threshold used.
   // Needed to avoid a single malicious server taking over a request that should
   // have been distributed.
-  uint32 shares_needed = 2;
-  // The type of plaintext encrypted.
-  FheType fhe_type = 3;
-  // The actual ciphertext to decrypt, taken directly from the fhevm.
-  bytes ciphertext = 4;
+  uint32 servers_needed = 2;
   // Randomness added to the request.
   // Required to ensure formal EU-CMA security when using ECDSA.
-  bytes randomness = 5;
+  bytes randomness = 3;
+  // The type of plaintext encrypted.
+  FheType fhe_type = 4;
+  // The key handle to use for decryption
+  string key_handle = 5;
+  // The actual ciphertext to decrypt, taken directly from the fhevm.
+  bytes ciphertext = 6;
 }
 
 message DecryptionResponsePayload {
   // Version of the response format.
   uint32 version = 1;
-  // TODO shares_needed are not really needed since there is a link to the
+  // TODO servers_needed are not really needed since there is a link to the
   // digest, however, it seems better to be able to handle a response without
   // getting data from the request as well. but this is also a security issue
   // since it is possible to get meaning from the response without directly
   // linking it to a request
   //
-  // The amount of shares needed to recombine the result.
+  // The amount of responses needed to sure security of the result.
   // This implies the threshold used.
-  uint32 shares_needed = 2;
+  uint32 servers_needed = 2;
   // The server's signature verification key.
   // Encoded using SEC1.
   // Needed to validate the response, but MUST also be linked to a list of
   // trusted keys.
   bytes verification_key = 3;
-  // Little endian encoding of the plaintext.
-  bytes plaintext = 4;
   // Digest of the request validated.
   // Needed to ensure that the response is for the expected request.
-  bytes digest = 5;
+  bytes digest = 4;
   // Randomness specified in the request to ensure EU-CMA of the signed
   // response.
   // TODO check that we don't need two types of randomness. One for the reuqest
   // and one for the response
-  bytes randomness = 6;
+  bytes plaintext = 5;
 }
 
 message DecryptionResponse {
@@ -79,23 +121,25 @@ message ReencryptionRequestPayload {
   // This implies the threshold used.
   // Needed to avoid a single malicious server taking over a request that should
   // have been distributed.
-  uint32 shares_needed = 2;
+  uint32 servers_needed = 2;
   // The server's signature verification key.
   // Encoded using SEC1.
+  // TODO not needed in the request! Should be removed
   bytes verification_key = 3;
+  // Randomness specified in the request to ensure EU-CMA of the signed response.
+  // TODO check that we don't need two types of randomness. One for the reuqest and one for the response
+  // TODO also check potentiel risk with repeated calls
+  bytes randomness = 4;
   // Encoding of the user's public encryption key for this request.
   // Encoding using the default encoding of libsodium, i.e. the 32 bytes of a
   // Montgomery point.
-  bytes enc_key = 4;
+  bytes enc_key = 5;
   // The type of plaintext encrypted.
-  FheType fhe_type = 5;
+  FheType fhe_type = 6;
+  // The key handle to use for decryption
+  string key_handle = 7;
   // The actual ciphertext to decrypt, taken directly from the fhevm.
-  bytes ciphertext = 6;
-  // Randomness specified in the request to ensure EU-CMA of the signed
-  // response.
-  // TODO check that we don't need two types of randomness. One for the reuqest
-  // and one for the response
-  bytes randomness = 7;
+  bytes ciphertext = 8;
 }
 
 message ReencryptionRequest {
@@ -107,7 +151,7 @@ message ReencryptionRequest {
 message ReencryptionResponse {
   // Version of the response format.
   uint32 version = 1;
-  // TODO shares_needed are not really needed since there is a link to the
+  // TODO servers_needed are not really needed since there is a link to the
   // digest, however, it seems better to be able to handle a response without
   // getting data from the request as well. but this is also a security issue
   // since it is possible to get meaning from the response without directly
@@ -115,20 +159,20 @@ message ReencryptionResponse {
   //
   // The amount of shares needed to recombine the result.
   // This implies the threshold used.
-  uint32 shares_needed = 2;
+  uint32 servers_needed = 2;
   // The server's signature verification key.
   // Encoded using SEC1.
   // Needed to validate the response, but MUST also be linked to a list of
   // trusted keys.
   bytes verification_key = 3;
-  // The type of plaintext encrypted.
-  FheType fhe_type = 4;
-  // The signcrypted payload, using a hybrid encryption approach in
-  // sign-then-encrypt.
-  bytes signcrypted_ciphertext = 5;
   // Digest of the request validated.
   // Needed to ensure that the response is for the expected request.
-  bytes digest = 6;
+  bytes digest = 4;
+  // The type of plaintext encrypted.
+  FheType fhe_type = 5;
+  // The signcrypted payload, using a hybrid encryption approach in
+  // sign-then-encrypt.
+  bytes signcrypted_ciphertext = 6;
 }
 
 message AggregatedReencryptionResponse {

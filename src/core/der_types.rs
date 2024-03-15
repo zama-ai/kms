@@ -4,8 +4,8 @@ use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 
-// Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server uses to
-// encrypt its payload
+// Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server
+// uses to encrypt its payload
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct PublicEncKey(pub(crate) crypto_box::PublicKey);
 impl Serialize for PublicEncKey {
@@ -49,8 +49,8 @@ impl<'de> Visitor<'de> for PublicEncKeyVisitor {
     }
 }
 
-// Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the server's
-// encrypted payload
+// Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the
+// server's encrypted payload
 pub type PrivateEncKey = crypto_box::SecretKey;
 
 // Struct wrapping signature verification key used by both the user's wallet and server
@@ -68,7 +68,7 @@ impl Serialize for PublicSigKey {
     }
 }
 impl<'de> Deserialize<'de> for PublicSigKey {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
@@ -117,7 +117,7 @@ impl Serialize for PrivateSigKey {
     }
 }
 impl<'de> Deserialize<'de> for PrivateSigKey {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {

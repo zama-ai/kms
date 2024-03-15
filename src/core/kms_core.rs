@@ -1,4 +1,6 @@
-use super::der_types::{Cipher, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair};
+use super::der_types::{
+    Cipher, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
+};
 use super::signcryption::{
     hash_element, sign, signcrypt, validate_and_decrypt, verify_sig, RND_SIZE,
 };
@@ -6,17 +8,21 @@ use crate::anyhow_error_and_warn_log;
 use crate::kms::FheType;
 use crate::rpc::kms_rpc::handle_potential_err;
 use crate::rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, SigncryptionPayload};
-use crate::setup_rpc::FhePrivateKey;
+use crate::setup_rpc::{FhePrivateKey, FhePublicKey, KEY_HANDLE};
 use aes_prng::AesRng;
+use distributed_decryption::error::error_handler::anyhow_error_and_log;
+use distributed_decryption::lwe::{ConversionKey, KeySet, LargeClientKey, ThresholdLWEParameters};
 use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::{from_bytes, to_vec};
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use tfhe::prelude::FheDecrypt;
+use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
-    generate_keys, ClientKey, Config, FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8,
+    generate_keys, ConfigBuilder, FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8,
 };
 
 pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
@@ -25,14 +31,32 @@ pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSi
     (PublicSigKey { pk: *pk }, PrivateSigKey { sk })
 }
 
-pub fn gen_kms_keys<R: CryptoRng + RngCore>(config: Config, rng: &mut R) -> SoftwareKmsKeys {
-    let (fhe_sk, _fhe_server_key) = generate_keys(config.clone());
+pub fn gen_default_kms_keys<R: CryptoRng + RngCore>(
+    params: ThresholdLWEParameters,
+    rng: &mut R,
+    key_handle: Option<String>,
+) -> SoftwareKmsKeys {
+    let fhe_keys = generate_fhe_keys(params);
     let (sig_pk, sig_sk) = gen_sig_keys(rng);
-    // TODO do we need this to be a mutex as well to allow for parallel queries
+    let handle = key_handle.unwrap_or(KEY_HANDLE.to_string());
     SoftwareKmsKeys {
-        fhe_sk,
+        fhe_keys: HashMap::from([(handle, fhe_keys)]),
         sig_sk,
         sig_pk,
+    }
+}
+
+pub fn generate_fhe_keys(params: ThresholdLWEParameters) -> FheKeys {
+    let pbs_params: ClassicPBSParameters = params.input_cipher_parameters.into();
+    let config = ConfigBuilder::with_custom_parameters(pbs_params, None);
+    let (client_key, server_key) = generate_keys(config);
+    let public_key = FhePublicKey::new(&client_key);
+    FheKeys {
+        public_key: Some(public_key),
+        server_key: Some(server_key),
+        conversion_key: None,
+        client_output_key: None,
+        client_key,
     }
 }
 
@@ -69,14 +93,14 @@ impl BaseKms for BaseKmsStruct {
         key: &PublicSigKey,
     ) -> bool
     where
-        T: fmt::Debug + Serialize,
+        T: Serialize,
     {
-        let msg = match to_vec(&payload) {
+        let msg = match to_vec(payload) {
             Ok(msg) => msg,
-            Err(_) => {
+            Err(e) => {
                 tracing::warn!(
-                    "Could not encode payload for signature verification {:?}",
-                    payload
+                    "Could not encode payload for signature verification: {:?}",
+                    e,
                 );
                 return false;
             }
@@ -89,15 +113,15 @@ impl BaseKms for BaseKmsStruct {
 
     fn sign<T>(&self, msg: &T) -> anyhow::Result<super::der_types::Signature>
     where
-        T: fmt::Debug + Serialize,
+        T: Serialize,
     {
-        let to_sign = match to_vec(&msg) {
+        let to_sign = match to_vec(msg) {
             Ok(to_sign) => to_sign,
-            Err(_) => {
+            Err(e) => {
                 return Err(anyhow_error_and_warn_log(format!(
-                    "Could not encode message for signing {:?}",
-                    msg
-                )))
+                    "Could not encode message for signing: {:?}",
+                    e
+                )));
             }
         };
         sign(&to_sign, &self.sig_key)
@@ -113,12 +137,12 @@ impl BaseKms for BaseKmsStruct {
     where
         T: fmt::Debug + Serialize,
     {
-        let to_hash = match to_vec(&msg) {
+        let to_hash = match to_vec(msg) {
             Ok(to_sign) => to_sign,
-            Err(_) => {
+            Err(e) => {
                 return Err(anyhow_error_and_warn_log(format!(
-                    "Could not encode message for signing {:?}",
-                    msg
+                    "Could not encode message for signing {:?} with error: {:?}",
+                    msg, e
                 )))
             }
         };
@@ -128,7 +152,7 @@ impl BaseKms for BaseKmsStruct {
 
 #[derive(Serialize, Deserialize)]
 pub struct SoftwareKmsKeys {
-    pub fhe_sk: FhePrivateKey,
+    pub fhe_keys: HashMap<String, FheKeys>,
     pub sig_sk: PrivateSigKey,
     pub sig_pk: PublicSigKey,
 }
@@ -136,7 +160,103 @@ pub struct SoftwareKmsKeys {
 /// Software based KMS where keys are stored in a local file
 pub struct SoftwareKms {
     base_kms: BaseKmsStruct,
-    fhe_dec_key: FhePrivateKey,
+    pub fhe_keys: Arc<Mutex<HashMap<String, FheKeys>>>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FheKeys {
+    pub public_key: Option<FhePublicKey>,
+    pub server_key: Option<tfhe::ServerKey>,
+    pub conversion_key: Option<ConversionKey>,
+    pub client_output_key: Option<LargeClientKey>,
+    // TODO should contain an optional FhePublicKeySet instead
+    pub client_key: FhePrivateKey,
+}
+impl From<KeySet> for FheKeys {
+    fn from(value: KeySet) -> Self {
+        FheKeys {
+            public_key: Some(value.public_key),
+            server_key: Some(value.server_key),
+            conversion_key: Some(value.conversion_key),
+            client_output_key: Some(value.client_output_key),
+            client_key: value.client_key,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FhePublicKeySet {
+    pub public_key: FhePublicKey,
+    pub server_key: tfhe::ServerKey,
+    pub conversion_key: Option<ConversionKey>,
+}
+impl TryFrom<FheKeys> for FhePublicKeySet {
+    type Error = anyhow::Error;
+
+    fn try_from(value: FheKeys) -> Result<Self, Self::Error> {
+        let public_key = value
+            .public_key
+            .ok_or(anyhow::anyhow!("Public key missing"))?;
+        let server_key = value
+            .server_key
+            .ok_or(anyhow::anyhow!("Server key missing"))?;
+        Ok(FhePublicKeySet {
+            public_key,
+            server_key,
+            conversion_key: value.conversion_key,
+        })
+    }
+}
+
+impl TryFrom<&FheKeys> for FhePublicKeySet {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &FheKeys) -> Result<Self, Self::Error> {
+        let public_key = value
+            .public_key
+            .clone()
+            .ok_or(anyhow::anyhow!("Public key missing"))?;
+        let server_key = value
+            .server_key
+            .clone()
+            .ok_or(anyhow::anyhow!("Server key missing"))?;
+        Ok(FhePublicKeySet {
+            public_key,
+            server_key,
+            conversion_key: value.conversion_key.clone(),
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SignedFhePublicKeySet {
+    pub public_key_set: FhePublicKeySet,
+    pub signature: Signature,
+}
+
+impl SignedFhePublicKeySet {
+    pub fn new<K: BaseKms>(public_key_set: FhePublicKeySet, base_kms: &K) -> anyhow::Result<Self> {
+        // TODO it should not be needed to "preserialize" here
+        // However, due to lack of support in serde_asn1, this currently does not work for tfhe-rs
+        // public keys Hence we need another approach to serialize these for now.
+        let serialized = bincode::serialize(&public_key_set)?;
+        let signature = base_kms.sign(&serialized)?;
+        Ok(SignedFhePublicKeySet {
+            public_key_set,
+            signature,
+        })
+    }
+
+    pub fn verify_signature(&self, verf_key: &PublicSigKey) -> bool {
+        let serialized = match bincode::serialize(&self.public_key_set) {
+            Ok(serialized) => serialized,
+            Err(_) => {
+                tracing::warn!("Could not serialize keyset");
+                return false;
+            }
+        };
+        BaseKmsStruct::verify_sig(&serialized, &self.signature, verf_key)
+    }
 }
 
 // impl fmt::Debug for SoftwareKms, we don't want to include the decryption key in the debug output
@@ -149,7 +269,7 @@ impl fmt::Debug for SoftwareKms {
 }
 
 impl BaseKms for SoftwareKms {
-    fn verify_sig<T: fmt::Debug + Serialize>(
+    fn verify_sig<T: Serialize>(
         payload: &T,
         signature: &super::der_types::Signature,
         verification_key: &PublicSigKey,
@@ -157,13 +277,11 @@ impl BaseKms for SoftwareKms {
         BaseKmsStruct::verify_sig(payload, signature, verification_key)
     }
 
-    fn sign<T: fmt::Debug + Serialize>(
-        &self,
-        msg: &T,
-    ) -> anyhow::Result<super::der_types::Signature> {
+    fn sign<T: Serialize>(&self, msg: &T) -> anyhow::Result<super::der_types::Signature> {
         self.base_kms.sign(msg)
     }
 
+    // TODO should just return reference
     fn get_verf_key(&self) -> PublicSigKey {
         self.base_kms.get_verf_key()
     }
@@ -174,36 +292,53 @@ impl BaseKms for SoftwareKms {
 }
 
 impl Kms for SoftwareKms {
-    fn decrypt(&self, high_level_ct: &[u8], fhe_type: FheType) -> anyhow::Result<Plaintext> {
+    fn decrypt(
+        &self,
+        high_level_ct: &[u8],
+        fhe_type: FheType,
+        key_handle: &str,
+    ) -> anyhow::Result<Plaintext> {
+        let fhe_keys = handle_potential_err(
+            self.fhe_keys.lock(),
+            "Could not get handle on fhe keys".to_string(),
+        )?;
+        let client_key = match fhe_keys.get(key_handle) {
+            Some(key_set) => &key_set.client_key,
+            None => {
+                return Err(anyhow_error_and_log(format!(
+                    "The key handle {key_handle} does not exist"
+                )))
+            }
+        };
         Ok(match fhe_type {
             FheType::Bool => {
                 let cipher: FheBool = bincode::deserialize(high_level_ct)?;
-                let plaintext: bool = cipher.decrypt(&self.fhe_dec_key);
+                let plaintext: bool = cipher.decrypt(client_key);
                 Plaintext::from_bool(plaintext)
             }
             FheType::Euint4 => {
                 let cipher: FheUint4 = bincode::deserialize(high_level_ct)?;
-                let plaintext: u8 = cipher.decrypt(&self.fhe_dec_key);
+                let plaintext: u8 = cipher.decrypt(client_key);
                 Plaintext::from_u4(plaintext)
             }
             FheType::Euint8 => {
                 let cipher: FheUint8 = bincode::deserialize(high_level_ct)?;
-                let plaintext: u8 = cipher.decrypt(&self.fhe_dec_key);
+                let plaintext: u8 = cipher.decrypt(client_key);
                 Plaintext::from_u8(plaintext)
             }
             FheType::Euint16 => {
                 let cipher: FheUint16 = bincode::deserialize(high_level_ct)?;
-                let plaintext: u16 = cipher.decrypt(&self.fhe_dec_key);
+                let plaintext: u16 = cipher.decrypt(client_key);
                 Plaintext::from_u16(plaintext)
             }
             FheType::Euint32 => {
                 let cipher: FheUint32 = bincode::deserialize(high_level_ct)?;
-                let plaintext: u32 = cipher.decrypt(&self.fhe_dec_key);
+                let plaintext: u32 = cipher.decrypt(client_key);
                 Plaintext::from_u32(plaintext)
             }
             FheType::Euint64 => {
                 let cipher: FheUint64 = bincode::deserialize(high_level_ct)?;
-                let plaintext: u64 = cipher.decrypt(&self.fhe_dec_key);
+                let plaintext: u64 = cipher.decrypt(client_key);
                 Plaintext::from_u64(plaintext)
             }
         })
@@ -213,17 +348,18 @@ impl Kms for SoftwareKms {
         &self,
         ct: &[u8],
         fhe_type: FheType,
-        req_digest: Vec<u8>,
+        req_digest: &[u8],
         client_enc_key: &PublicEncKey,
         client_verf_key: &PublicSigKey,
+        key_handle: &str,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        let plaintext = Kms::decrypt(self, ct, fhe_type)?;
+        let plaintext = Kms::decrypt(self, ct, fhe_type, key_handle)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<Residuepoly<Z128>> element
         let raw_decryption = RawDecryption::new(plaintext.value.to_le_bytes().to_vec(), fhe_type);
         let signcryption_msg = SigncryptionPayload {
             raw_decryption,
-            req_digest,
+            req_digest: req_digest.to_vec(),
         };
         let enc_res = signcrypt(
             &mut self.base_kms.new_rng()?,
@@ -239,10 +375,10 @@ impl Kms for SoftwareKms {
 }
 
 impl SoftwareKms {
-    pub fn new(fhe_dec_key: ClientKey, sig_key: PrivateSigKey) -> Self {
+    pub fn new(fhe_keys: HashMap<String, FheKeys>, sig_key: PrivateSigKey) -> Self {
         SoftwareKms {
             base_kms: BaseKmsStruct::new(sig_key),
-            fhe_dec_key,
+            fhe_keys: Arc::new(Mutex::new(fhe_keys)),
         }
     }
 }
@@ -272,98 +408,211 @@ pub fn decrypt_signcryption(
 
 #[cfg(test)]
 mod tests {
-    use crate::core::kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms};
-    use crate::core::request::ephemeral_key_generation;
-    use crate::file_handling::read_element;
     use crate::kms::FheType;
     use crate::rpc::rpc_types::{Kms, Plaintext};
     use crate::setup_rpc::{
-        ensure_central_key_cipher_exist, CentralizedTestingKeys, DEFAULT_CENTRAL_CIPHER_PATH,
-        DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_PARAM_PATH, TEST_CENTRAL_CIPHER_PATH,
-        TEST_CENTRAL_KEYS_PATH, TEST_PARAM_PATH,
+        ensure_central_key_ct_exist, ensure_central_multiple_keys_ct_exist,
+        ensure_threshold_key_ct_exist, CentralizedTestingKeys, KEY_HANDLE, TEST_CENTRAL_CT_PATH,
+        TEST_CENTRAL_KEYS_PATH, TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH,
     };
+    #[cfg(feature = "slow_tests")]
+    use crate::setup_rpc::{
+        DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_MULTI_CT_PATH,
+        DEFAULT_CENTRAL_MULTI_KEYS_PATH, DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_CT_PATH,
+        DEFAULT_THRESHOLD_KEYS_PATH,
+    };
+    use crate::{
+        core::kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms},
+        setup_rpc::TEST_CENTRAL_MULTI_KEYS_PATH,
+    };
+    use crate::{core::request::ephemeral_key_generation, setup_rpc::TEST_CENTRAL_MULTI_CT_PATH};
+    use crate::{file_handling::read_element, setup_rpc::OTHER_KEY_HANDLE};
     use aes_prng::AesRng;
     use rand::SeedableRng;
-    use tfhe::prelude::FheEncrypt;
-    use tfhe::FheUint8;
+    use serial_test::serial;
 
     #[test]
     fn sunshine_test_decrypt() {
-        ensure_central_key_cipher_exist(
-            TEST_PARAM_PATH,
-            TEST_CENTRAL_KEYS_PATH,
-            TEST_CENTRAL_CIPHER_PATH,
+        sunshine_decrypt(TEST_CENTRAL_KEYS_PATH, KEY_HANDLE, TEST_CENTRAL_CT_PATH);
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn sunshine_default_decrypt() {
+        sunshine_decrypt(
+            DEFAULT_CENTRAL_KEYS_PATH,
+            KEY_HANDLE,
+            DEFAULT_CENTRAL_CT_PATH,
         );
-        sunshine_decrypt(TEST_CENTRAL_KEYS_PATH)
     }
 
     #[test]
-    #[ignore]
-    fn sunshine_default_decrypt() {
-        ensure_central_key_cipher_exist(
-            DEFAULT_PARAM_PATH,
-            DEFAULT_CENTRAL_KEYS_PATH,
-            DEFAULT_CENTRAL_CIPHER_PATH,
+    #[serial]
+    fn multiple_test_keys_decrypt() {
+        sunshine_decrypt(
+            TEST_CENTRAL_MULTI_KEYS_PATH,
+            OTHER_KEY_HANDLE,
+            TEST_CENTRAL_MULTI_CT_PATH,
         );
-        sunshine_decrypt(DEFAULT_CENTRAL_KEYS_PATH)
     }
 
-    fn sunshine_decrypt(kms_key_path: &str) {
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn multiple_default_keys_decrypt() {
+        sunshine_decrypt(
+            DEFAULT_CENTRAL_MULTI_KEYS_PATH,
+            OTHER_KEY_HANDLE,
+            DEFAULT_CENTRAL_MULTI_CT_PATH,
+        );
+    }
+
+    #[cfg(test)]
+    #[ctor::ctor]
+    fn test_setup_key_and_ct_test() {
+        ensure_central_key_ct_exist(
+            TEST_PARAM_PATH,
+            TEST_CENTRAL_KEYS_PATH,
+            TEST_CENTRAL_CT_PATH,
+        );
+
+        ensure_threshold_key_ct_exist(
+            TEST_PARAM_PATH,
+            TEST_THRESHOLD_KEYS_PATH,
+            TEST_THRESHOLD_CT_PATH,
+        );
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[cfg(test)]
+    #[ctor::ctor]
+    fn test_setup_key_and_ct_default() {
+        ensure_central_key_ct_exist(
+            DEFAULT_PARAM_PATH,
+            DEFAULT_CENTRAL_KEYS_PATH,
+            DEFAULT_CENTRAL_CT_PATH,
+        );
+
+        ensure_threshold_key_ct_exist(
+            DEFAULT_PARAM_PATH,
+            DEFAULT_THRESHOLD_KEYS_PATH,
+            DEFAULT_THRESHOLD_CT_PATH,
+        );
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[cfg(test)]
+    #[ctor::ctor]
+    fn multiple_default_keys_exist() {
+        ensure_central_multiple_keys_ct_exist(
+            DEFAULT_PARAM_PATH,
+            DEFAULT_CENTRAL_MULTI_KEYS_PATH,
+            OTHER_KEY_HANDLE,
+            DEFAULT_CENTRAL_MULTI_CT_PATH,
+        );
+    }
+
+    #[cfg(test)]
+    #[ctor::ctor]
+    fn multiple_test_keys_exist() {
+        ensure_central_multiple_keys_ct_exist(
+            TEST_PARAM_PATH,
+            TEST_CENTRAL_MULTI_KEYS_PATH,
+            OTHER_KEY_HANDLE,
+            TEST_CENTRAL_MULTI_CT_PATH,
+        );
+    }
+
+    #[test]
+    fn multiple_test_keys_access() {
+        let central_keys: CentralizedTestingKeys =
+            read_element(TEST_CENTRAL_MULTI_KEYS_PATH).unwrap();
+
+        // try to get keys with the default handle
+        let default_key = central_keys.software_kms_keys.fhe_keys.get(KEY_HANDLE);
+        assert!(default_key.is_some());
+
+        // try to get keys with the some other handle
+        let some_key = central_keys
+            .software_kms_keys
+            .fhe_keys
+            .get(OTHER_KEY_HANDLE);
+        assert!(some_key.is_some());
+
+        // try to get keys with a non-existent handle
+        let no_key = central_keys
+            .software_kms_keys
+            .fhe_keys
+            .get("wrongKeyHandle");
+        assert!(no_key.is_none());
+    }
+
+    fn sunshine_decrypt(kms_key_path: &str, key_handle: &str, cipher_path: &str) {
         let msg = 42_u8;
         let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
         let kms = SoftwareKms::new(
-            keys.software_kms_keys.fhe_sk.clone(),
+            keys.software_kms_keys.fhe_keys.clone(),
             keys.software_kms_keys.sig_sk,
         );
-        let ct = FheUint8::encrypt(msg, &keys.software_kms_keys.fhe_sk);
-        let mut serialized_ct = Vec::new();
-        bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
-        let plaintext: Plaintext = kms.decrypt(&serialized_ct, FheType::Euint8).unwrap();
+        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
+        let plaintext: Plaintext = kms.decrypt(&ct, fhe_type, key_handle).unwrap();
         assert_eq!(plaintext.as_u8(), msg);
     }
 
     #[test]
     fn sunshine_test_reencrypt() {
-        ensure_central_key_cipher_exist(
-            TEST_PARAM_PATH,
-            TEST_CENTRAL_KEYS_PATH,
-            TEST_CENTRAL_CIPHER_PATH,
+        sunshine_reencrypt(TEST_CENTRAL_KEYS_PATH, KEY_HANDLE, TEST_CENTRAL_CT_PATH);
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn sunshine_default_reencrypt() {
+        sunshine_reencrypt(
+            DEFAULT_CENTRAL_KEYS_PATH,
+            KEY_HANDLE,
+            DEFAULT_CENTRAL_CT_PATH,
         );
-        sunshine_reencrypt(TEST_CENTRAL_KEYS_PATH);
     }
 
     #[test]
-    #[ignore]
-    fn sunshine_default_reencrypt() {
-        ensure_central_key_cipher_exist(
-            DEFAULT_PARAM_PATH,
-            DEFAULT_CENTRAL_KEYS_PATH,
-            DEFAULT_CENTRAL_CIPHER_PATH,
+    #[serial]
+    fn multiple_test_keys_reencrypt() {
+        sunshine_reencrypt(
+            TEST_CENTRAL_MULTI_KEYS_PATH,
+            OTHER_KEY_HANDLE,
+            TEST_CENTRAL_MULTI_CT_PATH,
         );
-        sunshine_reencrypt(DEFAULT_CENTRAL_KEYS_PATH);
     }
 
-    fn sunshine_reencrypt(kms_key_path: &str) {
+    #[cfg(feature = "slow_tests")]
+    #[test]
+    fn multiple_default_keys_reencrypt() {
+        sunshine_reencrypt(
+            DEFAULT_CENTRAL_MULTI_KEYS_PATH,
+            OTHER_KEY_HANDLE,
+            DEFAULT_CENTRAL_MULTI_CT_PATH,
+        );
+    }
+
+    fn sunshine_reencrypt(kms_key_path: &str, key_handle: &str, cipher_path: &str) {
         let msg = 42_u8;
         let mut rng = AesRng::seed_from_u64(1);
         let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
         let kms = SoftwareKms::new(
-            keys.software_kms_keys.fhe_sk.clone(),
+            keys.software_kms_keys.fhe_keys.clone(),
             keys.software_kms_keys.sig_sk,
         );
-        let ct = FheUint8::encrypt(msg, &keys.software_kms_keys.fhe_sk);
-        let mut serialized_ct = Vec::new();
-        bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
+        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
         let link = vec![42_u8, 42, 42];
         let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
         let client_keys = ephemeral_key_generation(&mut rng, &client_sig_key);
         let raw_cipher = kms
             .reencrypt(
-                &serialized_ct,
-                FheType::Euint8,
-                link.clone(),
+                &ct,
+                fhe_type,
+                &link,
                 &client_keys.pk.enc_key,
                 &client_keys.pk.verification_key,
+                key_handle,
             )
             .unwrap()
             .unwrap();

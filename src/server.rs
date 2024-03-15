@@ -1,15 +1,18 @@
-use kms_lib::{
-    core::kms_core::SoftwareKmsKeys, file_handling::read_element, rpc::kms_rpc::server_handle,
-    write_default_keys,
-};
-use std::{env, path::Path};
+use kms_lib::core::kms_core::SoftwareKmsKeys;
+use kms_lib::file_handling::read_element;
+use kms_lib::rpc::kms_rpc::server_handle;
+use kms_lib::setup_rpc::KEY_HANDLE;
+use kms_lib::write_default_keys;
+use std::env;
+use std::path::Path;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{filter, Layer};
 
 pub const DEFAULT_SOFTWARE_CENTRAL_KEY_PATH: &str = "temp/";
 
-// URL format is without protocol e.g.: 0.0.0.0:50051
+// Starts a server where the first argument is the URL and following arguments are key handles of
+// existing keys.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stdout_log = tracing_subscriber::fmt::layer().pretty();
@@ -29,14 +32,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let keys: SoftwareKmsKeys = if Path::new(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH).exists() {
         read_element(&format!(
-            "{DEFAULT_SOFTWARE_CENTRAL_KEY_PATH}/default-software-keys.bin"
+            "{DEFAULT_SOFTWARE_CENTRAL_KEY_PATH}default-software-keys.bin"
         ))?
     } else {
         tracing::info!(
-            "Could not find default keys. Generating new keys with default parameters..."
+            "Could not find default keys. Generating new keys with default parameters and handle \"{}\"...", KEY_HANDLE
         );
         write_default_keys(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH)
     };
+
     server_handle(&url, keys).await?;
     Ok(())
 }

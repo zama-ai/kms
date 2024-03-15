@@ -7,7 +7,7 @@ use distributed_decryption::execution::runtime::party::Role;
 use distributed_decryption::execution::sharing::open::{
     fill_indexed_shares, reconstruct_w_errors_sync,
 };
-use distributed_decryption::execution::sharing::shamir::ShamirSharing;
+use distributed_decryption::execution::sharing::shamir::ShamirSharings;
 use distributed_decryption::lwe::ThresholdLWEParameters;
 use itertools::Itertools;
 use kms_lib::core::der_types::{
@@ -20,8 +20,8 @@ use kms_lib::file_handling::read_element;
 use kms_lib::kms::kms_endpoint_client::KmsEndpointClient;
 use kms_lib::kms::{
     AggregatedDecryptionResponse, AggregatedReencryptionResponse, DecryptionRequest,
-    DecryptionResponsePayload, FheType, ReencryptionRequest, ReencryptionRequestPayload,
-    ReencryptionResponse,
+    DecryptionResponsePayload, FheType, GetAllKeysRequest, GetKeyRequest, KeyGenRequest,
+    ParamChoice, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
 };
 use kms_lib::rpc::kms_rpc::{some_or_err, CURRENT_FORMAT_VERSION};
 use kms_lib::rpc::rpc_types::{
@@ -29,7 +29,7 @@ use kms_lib::rpc::rpc_types::{
     ReencryptionRequestSigPayload,
 };
 use kms_lib::setup_rpc::{
-    CentralizedTestingKeys, DEFAULT_CENTRAL_CIPHER_PATH, DEFAULT_CENTRAL_KEYS_PATH,
+    CentralizedTestingKeys, DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH, KEY_HANDLE,
 };
 use kms_lib::threshold::threshold_kms::decrypted_blocks_to_raw_decryption;
 use rand::{RngCore, SeedableRng};
@@ -78,7 +78,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = &args[1];
 
     let mut kms_client = retry!(KmsEndpointClient::connect(url.to_owned()).await, 5, 100)?;
-    let (ct, fhe_type): (Vec<u8>, FheType) = read_element(DEFAULT_CENTRAL_CIPHER_PATH)?;
+    let (ct, fhe_type): (Vec<u8>, FheType) = read_element(DEFAULT_CENTRAL_CT_PATH)?;
     let central_keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH)?;
     let mut internal_client = Client::new(
         HashSet::from_iter(central_keys.server_keys.iter().cloned()),
@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // DECRYPTION REQUEST
-    let req = internal_client.decryption_request(ct.clone(), fhe_type)?;
+    let req = internal_client.decryption_request(ct.clone(), fhe_type, None)?;
     let response = kms_client.decrypt(tonic::Request::new(req.clone())).await?;
     tracing::debug!("DECRYPT RESPONSE={:?}", response);
     let responses = AggregatedDecryptionResponse {
@@ -107,7 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // REENCRYPTION REQUEST
-    let (req, enc_pk, enc_sk) = internal_client.reencyption_request(ct, fhe_type)?;
+    let (req, enc_pk, enc_sk) = internal_client.reencyption_request(ct, fhe_type, None)?;
     let response = kms_client
         .reencrypt(tonic::Request::new(req.clone()))
         .await?;
@@ -132,6 +132,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Simple client to interact with the KMS servers. This can be seen as a proof-of-concept
 /// and reference code for validating the KMS. The logic supplied by the client will be
 /// distributed accross the aggregator/proxy and smart contracts.
+/// TODO should probably aggregate the KmsEndpointClient to void having two client code bases
+/// exposed in tests and MVP
 pub struct Client {
     rng: Box<AesRng>,
     server_pks: HashSet<PublicSigKey>,
@@ -159,24 +161,52 @@ impl Client {
         }
     }
 
+    pub fn key_gen_request(
+        &self,
+        key_handle: &str,
+        param: Option<ParamChoice>,
+    ) -> anyhow::Result<KeyGenRequest> {
+        let parsed_param: i32 = match param {
+            Some(parsed_param) => parsed_param.into(),
+            None => ParamChoice::Default.into(),
+        };
+        Ok(KeyGenRequest {
+            key_handle: key_handle.to_string(),
+            params: parsed_param,
+        })
+    }
+
+    pub fn get_key_request(&self, key_handle: &str) -> anyhow::Result<GetKeyRequest> {
+        Ok(GetKeyRequest {
+            key_handle: key_handle.to_string(),
+        })
+    }
+
+    pub fn get_all_keys_request(&self) -> GetAllKeysRequest {
+        GetAllKeysRequest {}
+    }
+
     /// Creates a decryption request to send to the KMS servers.
     pub fn decryption_request(
         &mut self,
         ct: Vec<u8>,
         fhe_type: FheType,
+        key_handle: Option<String>,
     ) -> anyhow::Result<DecryptionRequest> {
         // Observe that this randomness can be reused across the servers since each server will have
         // a unique PK that is included in their response, hence it will still be validated
         // that each request contains a unique message to be signed hence ensuring CCA
         // security. TODO this argument should be validated
         let mut randomness: Vec<u8> = Vec::with_capacity(RND_SIZE);
+        let handle = key_handle.unwrap_or(KEY_HANDLE.to_string());
         self.rng.fill_bytes(&mut randomness);
         let serialized_req = DecryptionRequestSerializable {
             version: CURRENT_FORMAT_VERSION,
-            shares_needed: self.shares_needed,
+            servers_needed: self.shares_needed,
             fhe_type,
             ciphertext: ct,
             randomness,
+            key_handle: handle,
         };
         Ok(serialized_req.into())
     }
@@ -191,18 +221,21 @@ impl Client {
         &mut self,
         ct: Vec<u8>,
         fhe_type: FheType,
+        key_handle: Option<String>,
     ) -> anyhow::Result<(ReencryptionRequest, PublicEncKey, PrivateEncKey)> {
         let (enc_pk, enc_sk) = encryption_key_generation(&mut self.rng);
         let mut randomness = Vec::with_capacity(RND_SIZE);
+        let handle = key_handle.unwrap_or(KEY_HANDLE.to_string());
         self.rng.fill_bytes(&mut randomness);
         let sig_payload = ReencryptionRequestSigPayload {
             version: CURRENT_FORMAT_VERSION,
-            shares_needed: self.shares_needed,
+            servers_needed: self.shares_needed,
             enc_key: to_vec(&enc_pk)?,
             verification_key: to_vec(&self.client_pk)?,
             fhe_type,
             ciphertext: ct,
             randomness,
+            key_handle: handle,
         };
         let sig = sign(&to_vec(&sig_payload)?, &self.client_sk)?;
         Ok((
@@ -226,6 +259,8 @@ impl Client {
         if !self.validate_decryption_resp(request, &agg_resp)? {
             return Ok(None);
         }
+        // TODO pivot should actually be picked as the most common response instead of just an
+        // arbitrary one. The same in reencryption
         let pivot = some_or_err(
             agg_resp.responses.iter().last(),
             "No elements in decryption response".to_string(),
@@ -244,12 +279,11 @@ impl Client {
             };
             // Observe that the values contained in the pivot has already been validated to be
             // correct
-            // TODO I think tthis is redundant
+            // TODO I think this is redundant
             if cur_payload.digest != pivot_payload.digest
                 || cur_payload.fhe_type()? != pivot_payload.fhe_type()?
                 || cur_payload.plaintext != pivot_payload.plaintext
-                || cur_payload.randomness != pivot_payload.randomness
-                || cur_payload.shares_needed != pivot_payload.shares_needed
+                || cur_payload.servers_needed != pivot_payload.servers_needed
             {
                 tracing::warn!("Some server did not provide the proper response!");
                 return Ok(None);
@@ -319,7 +353,7 @@ impl Client {
         match request {
             Some(req) => {
                 let resp_parsed_payloads = some_or_err(
-                    self.validate_individual_dec_resp(req.shares_needed, agg_resp)?,
+                    self.validate_individual_dec_resp(req.servers_needed, agg_resp)?,
                     "Could not validate the aggregated responses".to_string(),
                 )?;
                 let pivot_payload = resp_parsed_payloads[0].clone();
@@ -419,7 +453,7 @@ impl Client {
             Some(req) => match req.payload {
                 Some(req_payload) => {
                     let resp_parsed = some_or_err(
-                        self.validate_individual_reenc_resp(req_payload.shares_needed, agg_resp)?,
+                        self.validate_individual_reenc_resp(req_payload.servers_needed, agg_resp)?,
                         "Could not validate the aggregated responses".to_string(),
                     )?;
                     let pivot_resp = resp_parsed.values().collect_vec()[0];
@@ -531,8 +565,8 @@ impl Client {
         for cur_block_shares in sharings {
             if let Ok(Some(r)) = reconstruct_w_errors_sync(
                 amount_shares,
-                (req_payload.shares_needed - 1) as usize,
-                (req_payload.shares_needed - 1) as usize,
+                (req_payload.servers_needed - 1) as usize,
+                (req_payload.servers_needed - 1) as usize,
                 &cur_block_shares,
             ) {
                 decrypted_blocks.push(r);
@@ -557,11 +591,11 @@ impl Client {
         agg_resp: HashMap<u32, ReencryptionResponse>,
         fhe_type: FheType,
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Vec<ShamirSharing<ResiduePoly<Z128>>>> {
+    ) -> anyhow::Result<Vec<ShamirSharings<ResiduePoly<Z128>>>> {
         let num_blocks = num_blocks(fhe_type, self.params);
         let mut sharings = Vec::new();
         for _i in 0..num_blocks {
-            sharings.push(ShamirSharing::new());
+            sharings.push(ShamirSharings::new());
         }
         for (cur_role_id, cur_resp) in &agg_resp {
             // Observe that it has already been verified in [validate_meta_data] that server
@@ -626,12 +660,12 @@ impl Client {
                 );
             return Ok(false);
         }
-        if pivot_resp.shares_needed() != other_resp.shares_needed() {
+        if pivot_resp.servers_needed() != other_resp.servers_needed() {
             tracing::warn!(
                     "Response from server with verification key {:?} say {:?} shares are needed for reconstruction, whereas the pivot server says {:?} shares are needed for reconstruction, and its verification key is {:?}",
                     pivot_resp.verification_key(),
-                    pivot_resp.shares_needed(),
-                    other_resp.shares_needed(),
+                    pivot_resp.servers_needed(),
+                    other_resp.servers_needed(),
                     other_resp.verification_key()
                 );
             return Ok(false);
@@ -640,18 +674,8 @@ impl Client {
             tracing::warn!(
                     "Response from server with verification key {:?} gave digest {:?}, whereas the pivot server gave digest {:?}, and its verification key is {:?}",
                     pivot_resp.verification_key(),
-                    pivot_resp.shares_needed(),
-                    other_resp.shares_needed(),
-                    other_resp.verification_key()
-                );
-            return Ok(false);
-        }
-        if pivot_resp.randomness() != other_resp.randomness() {
-            tracing::warn!(
-                    "Response from server with verification key {:?} gave randomness {:?}, whereas the pivot server gave randomness {:?}, and its verification key is {:?}",
-                    pivot_resp.verification_key(),
-                    pivot_resp.randomness(),
-                    other_resp.randomness(),
+                    pivot_resp.servers_needed(),
+                    other_resp.servers_needed(),
                     other_resp.verification_key()
                 );
             return Ok(false);
@@ -661,8 +685,8 @@ impl Client {
             tracing::warn!("Server key is incorrect in reencryption request");
             return Ok(false);
         }
-        if pivot_resp.shares_needed() != self.shares_needed {
-            tracing::warn!("Response says only {:?} shares are needed for reconstruction, but client is setup to require {:?} shares", pivot_resp.shares_needed(), self.shares_needed);
+        if pivot_resp.servers_needed() != self.shares_needed {
+            tracing::warn!("Response says only {:?} shares are needed for reconstruction, but client is setup to require {:?} shares", pivot_resp.servers_needed(), self.shares_needed);
             return Ok(false);
         }
 
@@ -676,22 +700,22 @@ impl Client {
 pub fn num_blocks(fhe_type: FheType, params: ThresholdLWEParameters) -> usize {
     match fhe_type {
         FheType::Bool => {
-            8_usize.div_ceil(params.output_cipher_parameters.usable_message_modulus_log.0)
+            8_usize.div_ceil(params.output_cipher_parameters.message_modulus_log() as usize)
         }
         FheType::Euint4 => {
-            8_usize.div_ceil(params.output_cipher_parameters.usable_message_modulus_log.0)
+            8_usize.div_ceil(params.output_cipher_parameters.message_modulus_log() as usize)
         }
         FheType::Euint8 => {
-            8_usize.div_ceil(params.output_cipher_parameters.usable_message_modulus_log.0)
+            8_usize.div_ceil(params.output_cipher_parameters.message_modulus_log() as usize)
         }
         FheType::Euint16 => {
-            16_usize.div_ceil(params.output_cipher_parameters.usable_message_modulus_log.0)
+            16_usize.div_ceil(params.output_cipher_parameters.message_modulus_log() as usize)
         }
         FheType::Euint32 => {
-            32_usize.div_ceil(params.output_cipher_parameters.usable_message_modulus_log.0)
+            32_usize.div_ceil(params.output_cipher_parameters.message_modulus_log() as usize)
         }
         FheType::Euint64 => {
-            64_usize.div_ceil(params.output_cipher_parameters.usable_message_modulus_log.0)
+            64_usize.div_ceil(params.output_cipher_parameters.message_modulus_log() as usize)
         }
     }
 }
@@ -703,19 +727,24 @@ pub(crate) mod tests {
     use kms_lib::core::kms_core::SoftwareKmsKeys;
     use kms_lib::file_handling::{read_as_json, read_element, read_element_async};
     use kms_lib::kms::kms_endpoint_client::KmsEndpointClient;
-    use kms_lib::kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType};
-    use kms_lib::rpc::kms_rpc::server_handle;
+    use kms_lib::kms::{
+        AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType, ParamChoice,
+    };
+    use kms_lib::rpc::kms_rpc::{priv_key_path, pub_key_path, server_handle};
     use kms_lib::setup_rpc::{
-        ensure_central_key_cipher_exist, ensure_threshold_key_cipher_exist, CentralizedTestingKeys,
-        ThresholdTestingKeys, AMOUNT_PARTIES, BASE_PORT, DEFAULT_CENTRAL_CIPHER_PATH,
-        DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_PARAM_PATH, DEFAULT_PROT, DEFAULT_THRESHOLD_CIPHER_PATH,
-        DEFAULT_THRESHOLD_KEYS_PATH, DEFAULT_URL, TEST_CENTRAL_CIPHER_PATH, TEST_CENTRAL_KEYS_PATH,
-        TEST_FHE_TYPE, TEST_MSG, TEST_PARAM_PATH, TEST_THRESHOLD_CIPHER_PATH,
-        TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
+        CentralizedTestingKeys, ThresholdTestingKeys, AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT,
+        DEFAULT_URL, KEY_HANDLE, TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_FHE_TYPE,
+        TEST_MSG, TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
+    };
+    #[cfg(feature = "slow_tests")]
+    use kms_lib::setup_rpc::{
+        DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_THRESHOLD_CT_PATH,
+        DEFAULT_THRESHOLD_KEYS_PATH,
     };
     use kms_lib::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
     use serial_test::serial;
     use std::collections::{HashMap, HashSet};
+    use std::fs;
     use std::str::FromStr;
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::{Channel, Uri};
@@ -732,6 +761,24 @@ pub(crate) mod tests {
         let channel = Channel::builder(uri).connect().await.unwrap();
         let client = KmsEndpointClient::new(channel);
         (server_handle, client)
+    }
+
+    /// Read the centralized keys for testing from `centralized_key_path` and construct a KMS
+    /// server, client end-point connection (which is needed to communicate with the server) and
+    /// an internal client (for constructing requests and validating responses).
+    async fn centralized_handles(
+        centralized_key_path: &str,
+    ) -> (JoinHandle<()>, KmsEndpointClient<Channel>, Client) {
+        let keys: CentralizedTestingKeys = read_element(centralized_key_path).unwrap();
+        let (kms_server, kms_client) = setup(keys.software_kms_keys).await;
+        let internal_client = Client::new(
+            HashSet::from_iter(keys.server_keys.iter().cloned()),
+            keys.client_pk,
+            keys.client_sk,
+            1,
+            keys.params,
+        );
+        (kms_server, kms_client, internal_client)
     }
 
     async fn setup_threshold(
@@ -796,45 +843,161 @@ pub(crate) mod tests {
         (server_handles, client_handles)
     }
 
-    #[tokio::test]
-    #[serial]
-    async fn test_decryption_central() {
-        ensure_central_key_cipher_exist(
-            TEST_PARAM_PATH,
-            TEST_CENTRAL_KEYS_PATH,
-            TEST_CENTRAL_CIPHER_PATH,
+    /// Reads the testing keys for the threshold servers and starts them up, and returns a hash map
+    /// of the servers, based on their ID, which starts from 1. A smiliar map is also returned
+    /// is the client endpoints needed to talk with each of the servers, finally the internal
+    /// client is returned (which is responsible for constructing requests and validating
+    /// responses).
+    async fn threshold_handles(
+        threshold_key_path: &str,
+    ) -> (
+        HashMap<u32, JoinHandle<()>>,
+        HashMap<u32, KmsEndpointClient<Channel>>,
+        Client,
+    ) {
+        let (kms_servers, kms_clients) =
+            setup_threshold(AMOUNT_PARTIES, THRESHOLD as u8, threshold_key_path).await;
+        let keys: ThresholdTestingKeys = read_element_async(format!("{threshold_key_path}-1.bin"))
+            .await
+            .unwrap();
+        let internal_client = Client::new(
+            HashSet::from_iter(keys.server_keys.iter().cloned()),
+            keys.client_pk,
+            keys.client_sk,
+            (THRESHOLD as u32) + 1,
+            keys.params,
         );
-        decryption_centralized(TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_CIPHER_PATH).await;
+
+        (kms_servers, kms_clients, internal_client)
     }
 
     #[tokio::test]
     #[serial]
-    #[ignore]
-    async fn default_decryption_centralized() {
-        ensure_central_key_cipher_exist(
-            DEFAULT_PARAM_PATH,
-            DEFAULT_CENTRAL_KEYS_PATH,
-            DEFAULT_CENTRAL_CIPHER_PATH,
+    async fn test_key_gen_centralized() {
+        key_gen_centralized(
+            TEST_CENTRAL_KEYS_PATH,
+            "someHandle",
+            Some(ParamChoice::Test),
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test]
+    #[serial]
+    async fn default_key_gen_centralized() {
+        key_gen_centralized(DEFAULT_CENTRAL_KEYS_PATH, "someHandle", None).await;
+    }
+
+    async fn key_gen_centralized(
+        centralized_key_path: &str,
+        key_handle: &str,
+        params: Option<ParamChoice>,
+    ) {
+        let (kms_server, mut kms_client, internal_client) =
+            centralized_handles(centralized_key_path).await;
+        let ref_uri = pub_key_path(key_handle);
+        // Remove the keys to ensure that the test is idempotent
+        let _ = fs::remove_file(ref_uri.clone());
+        let priv_uri = priv_key_path(key_handle);
+        let _ = fs::remove_file(priv_uri);
+
+        let gen_req = internal_client.key_gen_request(key_handle, params).unwrap();
+        let gen_response = kms_client
+            .key_gen(tonic::Request::new(gen_req.clone()))
+            .await
+            .unwrap();
+        let res_uri = gen_response.into_inner().key_uri;
+        assert_eq!(res_uri, ref_uri);
+
+        // Check that we can retrieve the key
+        let get_req = internal_client.get_key_request(key_handle).unwrap();
+        let get_response = kms_client
+            .get_key(tonic::Request::new(get_req.clone()))
+            .await
+            .unwrap();
+        let res_uri = get_response.into_inner().key_uri;
+        assert_eq!(res_uri, ref_uri);
+
+        kms_server.abort();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_get_all_keys_centralized() {
+        get_all_keys_centralized(TEST_CENTRAL_KEYS_PATH, Some(ParamChoice::Test)).await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test]
+    #[serial]
+    async fn default_get_all_keys_centralized() {
+        get_all_keys_centralized(DEFAULT_CENTRAL_KEYS_PATH, None).await;
+    }
+
+    async fn get_all_keys_centralized(centralized_key_path: &str, params: Option<ParamChoice>) {
+        let ref_1 = pub_key_path("1");
+        let ref_2 = pub_key_path("2");
+        // Remove the keys to ensure that the test is idempotent in case they already exist
+        let _ = fs::remove_file(ref_1.clone());
+        let priv_uri_1 = priv_key_path("1");
+        let _ = fs::remove_file(priv_uri_1);
+        let _ = fs::remove_file(ref_2.clone());
+        let priv_uri_2 = priv_key_path("2");
+        let _ = fs::remove_file(priv_uri_2);
+
+        let (kms_server, mut kms_client, internal_client) =
+            centralized_handles(centralized_key_path).await;
+        let gen_req = internal_client.key_gen_request("1", params).unwrap();
+        let _ = kms_client
+            .key_gen(tonic::Request::new(gen_req.clone()))
+            .await
+            .unwrap();
+
+        let gen_req = internal_client.key_gen_request("2", params).unwrap();
+        let _ = kms_client
+            .key_gen(tonic::Request::new(gen_req.clone()))
+            .await
+            .unwrap();
+
+        // Check that we can retrieve both keys
+        let get_req = internal_client.get_all_keys_request();
+        let get_response = kms_client
+            .get_all_keys(tonic::Request::new(get_req.clone()))
+            .await
+            .unwrap();
+        let res = get_response.into_inner().handles;
+        assert_eq!(
+            res.get(KEY_HANDLE).unwrap().to_owned(),
+            pub_key_path(KEY_HANDLE)
         );
-        decryption_centralized(DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_CIPHER_PATH).await;
+        assert_eq!(res.get("1").unwrap().to_owned(), pub_key_path("1"));
+        assert_eq!(res.get("2").unwrap().to_owned(), pub_key_path("2"));
+        kms_server.abort();
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_decryption_central() {
+        decryption_centralized(TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_CT_PATH).await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test]
+    #[serial]
+    async fn default_decryption_centralized() {
+        decryption_centralized(DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_CT_PATH).await;
     }
     // TODO speed up
     async fn decryption_centralized(centralized_key_path: &str, cipher_path: &str) {
         // TODO refactor with setup and teardown setting up servers that can be used to run tests in
-        // parapllel
-        let keys: CentralizedTestingKeys = read_element(centralized_key_path).unwrap();
-        let (kms_server, mut kms_client) = setup(keys.software_kms_keys).await;
+        // parallel
+        let (kms_server, mut kms_client, mut internal_client) =
+            centralized_handles(centralized_key_path).await;
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
-        let mut internal_client = Client::new(
-            HashSet::from_iter(keys.server_keys.iter().cloned()),
-            keys.client_pk,
-            keys.client_sk,
-            1,
-            keys.params,
-        );
 
         let req = internal_client
-            .decryption_request(ct.clone(), fhe_type)
+            .decryption_request(ct.clone(), fhe_type, None)
             .unwrap();
         let response = kms_client
             .decrypt(tonic::Request::new(req.clone()))
@@ -857,39 +1020,23 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_reencryption_centralized() {
-        ensure_central_key_cipher_exist(
-            TEST_PARAM_PATH,
-            TEST_CENTRAL_KEYS_PATH,
-            TEST_CENTRAL_CIPHER_PATH,
-        );
-        reencryption_centralized(TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_CIPHER_PATH).await;
+        reencryption_centralized(TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_CT_PATH).await;
     }
 
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[serial]
-    #[ignore]
     async fn default_reencryption_centralized() {
-        ensure_central_key_cipher_exist(
-            DEFAULT_PARAM_PATH,
-            DEFAULT_CENTRAL_KEYS_PATH,
-            DEFAULT_CENTRAL_CIPHER_PATH,
-        );
-        reencryption_centralized(DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_CIPHER_PATH).await;
+        reencryption_centralized(DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_CT_PATH).await;
     }
 
     async fn reencryption_centralized(centralized_key_path: &str, cipher_path: &str) {
-        let keys: CentralizedTestingKeys = read_element(centralized_key_path).unwrap();
-        let (kms_server, mut kms_client) = setup(keys.software_kms_keys).await;
+        let (kms_server, mut kms_client, mut internal_client) =
+            centralized_handles(centralized_key_path).await;
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
-        let mut internal_client = Client::new(
-            HashSet::from_iter(keys.server_keys.iter().cloned()),
-            keys.client_pk,
-            keys.client_sk,
-            1,
-            keys.params,
-        );
-
-        let (req, enc_pk, enc_sk) = internal_client.reencyption_request(ct, fhe_type).unwrap();
+        let (req, enc_pk, enc_sk) = internal_client
+            .reencyption_request(ct, fhe_type, None)
+            .unwrap();
         let response = kms_client
             .reencrypt(tonic::Request::new(req.clone()))
             .await
@@ -911,43 +1058,25 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_decryption_threshold() {
-        ensure_threshold_key_cipher_exist(
-            TEST_PARAM_PATH,
-            TEST_THRESHOLD_KEYS_PATH,
-            TEST_THRESHOLD_CIPHER_PATH,
-        );
-        decryption_threshold(TEST_THRESHOLD_KEYS_PATH, TEST_THRESHOLD_CIPHER_PATH).await;
+        decryption_threshold(TEST_THRESHOLD_KEYS_PATH, TEST_THRESHOLD_CT_PATH).await;
     }
 
+    #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    #[ignore]
     async fn default_decryption_threshold() {
-        ensure_threshold_key_cipher_exist(
-            DEFAULT_PARAM_PATH,
-            DEFAULT_THRESHOLD_KEYS_PATH,
-            DEFAULT_THRESHOLD_CIPHER_PATH,
-        );
-        decryption_threshold(DEFAULT_THRESHOLD_KEYS_PATH, DEFAULT_THRESHOLD_CIPHER_PATH).await;
+        decryption_threshold(DEFAULT_THRESHOLD_KEYS_PATH, DEFAULT_THRESHOLD_CT_PATH).await;
     }
 
     async fn decryption_threshold(threshold_key_path: &str, cipher_path: &str) {
-        let (kms_servers, kms_clients) =
-            setup_threshold(AMOUNT_PARTIES, THRESHOLD as u8, threshold_key_path).await;
+        let (kms_servers, kms_clients, mut internal_client) =
+            threshold_handles(threshold_key_path).await;
         let (ct, fhe_type): (Vec<u8>, FheType) =
             read_element_async(cipher_path.to_string()).await.unwrap();
-        let keys: ThresholdTestingKeys = read_element_async(format!("{threshold_key_path}-1.bin"))
-            .await
-            .unwrap();
-        let mut internal_client = Client::new(
-            HashSet::from_iter(keys.server_keys.iter().cloned()),
-            keys.client_pk,
-            keys.client_sk,
-            (THRESHOLD as u32) + 1,
-            keys.params,
-        );
 
-        let req = internal_client.decryption_request(ct, fhe_type).unwrap();
+        let req = internal_client
+            .decryption_request(ct, fhe_type, None)
+            .unwrap();
         let mut tasks = JoinSet::new();
         for i in 1..=AMOUNT_PARTIES as u32 {
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
@@ -975,44 +1104,25 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_reencryption_threshold() {
-        ensure_threshold_key_cipher_exist(
-            TEST_PARAM_PATH,
-            TEST_THRESHOLD_KEYS_PATH,
-            TEST_THRESHOLD_CIPHER_PATH,
-        );
-        reencryption_threshold(TEST_THRESHOLD_KEYS_PATH, TEST_THRESHOLD_CIPHER_PATH).await;
+        reencryption_threshold(TEST_THRESHOLD_KEYS_PATH, TEST_THRESHOLD_CT_PATH).await;
     }
 
+    #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    #[ignore]
     async fn default_reencryption_threshold() {
-        ensure_threshold_key_cipher_exist(
-            DEFAULT_PARAM_PATH,
-            DEFAULT_THRESHOLD_KEYS_PATH,
-            DEFAULT_THRESHOLD_CIPHER_PATH,
-        );
-        reencryption_threshold(DEFAULT_THRESHOLD_KEYS_PATH, DEFAULT_THRESHOLD_CIPHER_PATH).await;
+        reencryption_threshold(DEFAULT_THRESHOLD_KEYS_PATH, DEFAULT_THRESHOLD_CT_PATH).await;
     }
 
     async fn reencryption_threshold(threshold_key_path: &str, cipher_path: &str) {
-        let (kms_servers, kms_clients) =
-            setup_threshold(AMOUNT_PARTIES, THRESHOLD as u8, threshold_key_path).await;
+        let (kms_servers, kms_clients, mut internal_client) =
+            threshold_handles(threshold_key_path).await;
         let (ct, fhe_type): (Vec<u8>, FheType) =
             read_element_async(cipher_path.to_string()).await.unwrap();
-        // Use one set of server keys to get the necesary public keys
-        let keys: ThresholdTestingKeys = read_element_async(format!("{threshold_key_path}-1.bin"))
-            .await
-            .unwrap();
-        let mut internal_client = Client::new(
-            HashSet::from_iter(keys.server_keys.iter().cloned()),
-            keys.client_pk,
-            keys.client_sk,
-            (THRESHOLD as u32) + 1,
-            keys.params,
-        );
 
-        let (req, enc_pk, enc_sk) = internal_client.reencyption_request(ct, fhe_type).unwrap();
+        let (req, enc_pk, enc_sk) = internal_client
+            .reencyption_request(ct, fhe_type, None)
+            .unwrap();
         let mut tasks = JoinSet::new();
         tracing::info!("Client did reencryption request");
         for i in 1..=AMOUNT_PARTIES as u32 {
@@ -1047,9 +1157,9 @@ pub(crate) mod tests {
     }
 
     // Validate bug-fix to ensure that the server fails gracefully when the ciphertext is too large
+    #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[serial]
-    #[ignore]
     async fn test_largecipher() {
         let keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH).unwrap();
         let (kms_server, mut kms_client) = setup(keys.software_kms_keys).await;
@@ -1063,7 +1173,9 @@ pub(crate) mod tests {
             keys.params,
         );
 
-        let (req, _enc_pk, _enc_sk) = internal_client.reencyption_request(ct, fhe_type).unwrap();
+        let (req, _enc_pk, _enc_sk) = internal_client
+            .reencyption_request(ct, fhe_type, None)
+            .unwrap();
         let response = kms_client.reencrypt(tonic::Request::new(req.clone())).await;
         assert!(response.is_err());
         assert!(response

@@ -73,7 +73,8 @@ where
     true
 }
 
-/// Compute the signcryption of a message based on the public keys received from a client and the server's signing key.
+/// Compute the signcryption of a message based on the public keys received from a client and the
+/// server's signing key.
 ///
 /// Returns the signcrypted message.
 ///
@@ -277,21 +278,19 @@ where
 
 #[cfg(test)]
 mod tests {
-    use aes_prng::AesRng;
-    use k256::ecdsa::SigningKey;
-    use rand::{CryptoRng, RngCore, SeedableRng};
-    use serde_asn1_der::{from_bytes, to_vec};
-    use signature::Signer;
-    use tracing_test::traced_test;
-
+    use super::{PrivateSigKey, PublicSigKey, SigncryptionPair};
     use crate::core::der_types::Signature;
     use crate::core::request::{ephemeral_key_generation, ClientRequest};
     use crate::core::signcryption::{
         check_signature, encryption_key_generation, hash_element, parse_msg, sign, signcrypt,
         validate_and_decrypt, verify_sig, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
     };
-
-    use super::{PrivateSigKey, PublicSigKey, SigncryptionPair};
+    use aes_prng::AesRng;
+    use k256::ecdsa::SigningKey;
+    use rand::{CryptoRng, RngCore, SeedableRng};
+    use serde_asn1_der::{from_bytes, to_vec};
+    use signature::Signer;
+    use tracing_test::traced_test;
 
     /// Helper method for generating keys for digital signatures
     pub fn signing_key_generation(
@@ -313,31 +312,6 @@ mod tests {
         };
         let (request, keys) = ClientRequest::new(&cipher, &client_sig_key, &mut rng).unwrap();
         (rng, request, keys, cipher.to_vec())
-    }
-
-    #[cfg(test)]
-    #[ctor::ctor]
-    fn setup_data_for_integration() {
-        use crate::file_handling::write_element;
-
-        let (mut rng, request, client_signcryption_keys, _fhe_cipher) = test_setup();
-        let (_server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
-        let msg = "A message".as_bytes();
-        let cipher = signcrypt(
-            &mut rng,
-            &msg,
-            &client_signcryption_keys.pk.enc_key,
-            &request.payload.client_signcryption_key.verification_key,
-            &server_sig_key,
-        )
-        .unwrap();
-        // Dump encodings for use in client implementation validation
-        let enc_req = to_vec(&request).unwrap();
-        write_element("temp/client_req.der".to_string(), &enc_req).unwrap();
-        let enc_pk = to_vec(&client_signcryption_keys.pk).unwrap();
-        write_element("temp/client_signcryption_pk.der".to_string(), &enc_pk).unwrap();
-        let enc_cipher = to_vec(&cipher).unwrap();
-        write_element("temp/signcryption.der".to_string(), &enc_cipher).unwrap();
     }
 
     #[test]

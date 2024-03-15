@@ -85,16 +85,17 @@ pub async fn read_element_async<T: DeserializeOwned + Serialize>(
 
 #[cfg(test)]
 mod tests {
+    use super::read_as_json_async;
     use crate::file_handling::{
         read_as_json, read_element, read_element_async, write_as_json, write_as_json_async,
         write_element, write_element_async,
     };
     use serde::{Deserialize, Serialize};
+    use serial_test::serial;
     use std::fs::remove_file;
 
-    use super::read_as_json_async;
-
     #[test]
+    #[serial]
     fn read_write_element() {
         let msg = "I am a teacup!".to_owned();
         let file_name = "temp/test_element.bin".to_string();
@@ -105,6 +106,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn read_write_json() {
         #[derive(Serialize, Deserialize, PartialEq, Debug)]
         struct Test {
@@ -119,6 +121,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn read_write_element_async() {
         let msg = "I am a teacup!".to_owned();
         let file_name = "temp/test_element_async.bin".to_string();
@@ -131,6 +134,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn read_write_json_async() {
         #[derive(Serialize, Deserialize, PartialEq, Debug)]
         struct Test {
