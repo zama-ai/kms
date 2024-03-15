@@ -696,8 +696,8 @@ mod tests {
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key.clone();
-        let params = keyset.client_output_key.params;
+        let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key.clone();
+        let params = keyset.sns_secret_key.params;
         let shares = keygen_all_party_shares(
             lwe_secret_key,
             glwe_secret_key,
@@ -724,10 +724,7 @@ mod tests {
         let first_bit_sharing = ShamirSharings::create(first_bit_shares);
         let rec = first_bit_sharing.err_reconstruct(1, 0).unwrap();
         let inner_rec = rec.to_scalar().unwrap();
-        assert_eq!(
-            keyset.client_output_key.large_key.into_container()[0],
-            inner_rec.0
-        );
+        assert_eq!(keyset.sns_secret_key.key.into_container()[0], inner_rec.0);
     }
 
     #[test]
@@ -739,8 +736,8 @@ mod tests {
 
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key;
-        let params = keyset.client_output_key.params;
+        let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key;
+        let params = keyset.sns_secret_key.params;
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
@@ -759,7 +756,7 @@ mod tests {
         let identities = generate_fixed_identities(num_parties);
         let mut runtime = DistributedTestRuntime::new(identities, threshold as u8);
 
-        runtime.setup_conversion_key(Arc::new(keyset.conversion_key.clone()));
+        runtime.setup_conversion_key(Arc::new(keyset.public_keys.sns_key.clone().unwrap()));
         runtime.setup_sks(key_shares);
 
         let results_dec =
@@ -780,8 +777,8 @@ mod tests {
 
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key;
-        let params = keyset.client_output_key.params;
+        let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key;
+        let params = keyset.sns_secret_key.params;
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
@@ -800,7 +797,7 @@ mod tests {
         let identities = generate_fixed_identities(num_parties);
         let mut runtime = DistributedTestRuntime::new(identities, threshold as u8);
 
-        runtime.setup_conversion_key(Arc::new(keyset.conversion_key.clone()));
+        runtime.setup_conversion_key(Arc::new(keyset.public_keys.sns_key.clone().unwrap()));
         runtime.setup_sks(key_shares);
 
         let results_dec =
@@ -821,8 +818,8 @@ mod tests {
 
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key;
-        let params = keyset.client_output_key.params;
+        let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key;
+        let params = keyset.sns_secret_key.params;
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys
@@ -860,8 +857,8 @@ mod tests {
 
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key;
-        let params = keyset.client_output_key.params;
+        let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key;
+        let params = keyset.sns_secret_key.params;
 
         let mut rng = AesRng::seed_from_u64(42);
         // generate keys

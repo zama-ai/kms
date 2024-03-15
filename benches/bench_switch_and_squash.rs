@@ -20,13 +20,13 @@ fn bench_switch_and_squash(c: &mut Criterion) {
     let keyset = gen_key_set(params, &mut get_rng());
 
     let msg8 = 5_u8;
-    let ct8 = FheUint8::encrypt(msg8, &keyset.public_key);
+    let ct8 = FheUint8::encrypt(msg8, &keyset.public_keys.public_key);
     let msg16 = 5_u16;
-    let ct16 = FheUint16::encrypt(msg16, &keyset.public_key);
+    let ct16 = FheUint16::encrypt(msg16, &keyset.public_keys.public_key);
 
-    let public_key = bincode::serialize(&(keyset.public_key)).unwrap();
-    let server_key = bincode::serialize(&(keyset.server_key)).unwrap();
-    let conversion_key = bincode::serialize(&(keyset.conversion_key)).unwrap();
+    let public_key = bincode::serialize(&(keyset.public_keys.public_key)).unwrap();
+    let server_key = bincode::serialize(&(keyset.public_keys.server_key)).unwrap();
+    let conversion_key = bincode::serialize(&(keyset.public_keys.sns_key)).unwrap();
     let client_key = bincode::serialize(&(keyset.client_key)).unwrap();
 
     println!(
@@ -42,7 +42,10 @@ fn bench_switch_and_squash(c: &mut Criterion) {
         b.iter(|| {
             let (raw_ct, _id) = ct8.clone().into_raw_parts();
             let _ = keyset
-                .conversion_key
+                .public_keys
+                .sns_key
+                .as_ref()
+                .unwrap()
                 .to_large_ciphertext_block(&raw_ct.blocks()[0]);
         });
     });
@@ -51,7 +54,12 @@ fn bench_switch_and_squash(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("s+s", "u8_sequential"), |b| {
         b.iter(|| {
             let (raw_ct, _id) = ct8.clone().into_raw_parts();
-            let _ = keyset.conversion_key.to_large_ciphertext(&raw_ct);
+            let _ = keyset
+                .public_keys
+                .sns_key
+                .as_ref()
+                .unwrap()
+                .to_large_ciphertext(&raw_ct);
         });
     });
 
@@ -59,7 +67,12 @@ fn bench_switch_and_squash(c: &mut Criterion) {
     group.bench_function(BenchmarkId::new("s+s", "u16_sequential"), |b| {
         b.iter(|| {
             let (raw_ct, _id) = ct16.clone().into_raw_parts();
-            let _ = keyset.conversion_key.to_large_ciphertext(&raw_ct);
+            let _ = keyset
+                .public_keys
+                .sns_key
+                .as_ref()
+                .unwrap()
+                .to_large_ciphertext(&raw_ct);
         });
     });
 }

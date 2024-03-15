@@ -386,8 +386,8 @@ mod tests {
         let mut rng = AesRng::from_entropy();
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key.clone();
-        let params = keyset.client_output_key.params;
+        let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key.clone();
+        let params = keyset.sns_secret_key.params;
         let mut key_shares = keygen_all_party_shares(
             lwe_secret_key,
             glwe_secret_key,
@@ -436,7 +436,7 @@ mod tests {
         }
         // sanity check that we can still reconstruct
         let expected_sk = (
-            keyset.client_output_key.large_key.clone().into_container(),
+            keyset.sns_secret_key.key.clone().into_container(),
             keyset.get_raw_lwe_client_key().to_owned().into_container(),
             keyset.get_raw_glwe_client_key().to_owned().into_container(),
         );
@@ -518,8 +518,8 @@ mod tests {
     }
 
     fn truncate_client_keys(keyset: &mut KeySet) {
-        keyset.client_output_key.large_key =
-            LweSecretKey::from_container(keyset.client_output_key.large_key.as_ref()[..8].to_vec());
+        keyset.sns_secret_key.key =
+            LweSecretKey::from_container(keyset.sns_secret_key.key.as_ref()[..8].to_vec());
         let (glwe_raw, lwe_raw, params) = keyset
             .client_key
             .to_owned()
@@ -548,7 +548,7 @@ mod tests {
         let new_params = ShortintParameterSet::new_pbs_param_set(
             tfhe::shortint::PBSParameters::PBS(new_pbs_params),
         );
-        keyset.client_output_key.params = new_pbs_params;
+        keyset.sns_secret_key.params = new_pbs_params;
         let con: Vec<u64> = lwe_raw.into_container();
         let con = con[..8].to_vec();
         let new_lwe_raw = LweSecretKey::from_container(con);

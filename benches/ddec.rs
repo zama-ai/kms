@@ -60,8 +60,8 @@ fn ddec_nsmall(c: &mut Criterion) {
         let message = rng.gen::<u64>();
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key.clone();
-        let params = keyset.client_output_key.params;
+        let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key.clone();
+        let params = keyset.sns_secret_key.params;
         let key_shares = keygen_all_party_shares(
             lwe_secret_key,
             glwe_secret_key,
@@ -72,14 +72,14 @@ fn ddec_nsmall(c: &mut Criterion) {
             config.t,
         )
         .unwrap();
-        let ct = FheUint8::encrypt(message, &keyset.public_key);
+        let ct = FheUint8::encrypt(message, &keyset.public_keys.public_key);
         let (raw_ct, _id) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
         let mut runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities, config.t as u8);
         let ctc = Arc::new(raw_ct);
 
-        let keyset_ck = Arc::new(keyset.conversion_key.clone());
+        let keyset_ck = Arc::new(keyset.public_keys.sns_key.clone().unwrap());
         let key_shares = Arc::new(key_shares);
         runtime.conversion_keys = Some(keyset_ck.clone());
         runtime.setup_sks(key_shares.clone().to_vec());
@@ -119,8 +119,8 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
         let message = rng.gen::<u64>();
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key.clone();
-        let params = keyset.client_output_key.params;
+        let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key.clone();
+        let params = keyset.sns_secret_key.params;
         let key_shares = keygen_all_party_shares(
             lwe_secret_key,
             glwe_secret_key,
@@ -131,7 +131,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
             config.t,
         )
         .unwrap();
-        let ct = FheUint8::encrypt(message, &keyset.public_key);
+        let ct = FheUint8::encrypt(message, &keyset.public_keys.public_key);
         let (raw_ct, _id) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
@@ -178,8 +178,8 @@ fn ddec_nlarge(c: &mut Criterion) {
         let message = rng.gen::<u64>();
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key.clone();
-        let params = keyset.client_output_key.params;
+        let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key.clone();
+        let params = keyset.sns_secret_key.params;
         let key_shares = keygen_all_party_shares(
             lwe_secret_key,
             glwe_secret_key,
@@ -190,14 +190,14 @@ fn ddec_nlarge(c: &mut Criterion) {
             config.t,
         )
         .unwrap();
-        let ct = FheUint8::encrypt(message, &keyset.public_key);
+        let ct = FheUint8::encrypt(message, &keyset.public_keys.public_key);
         let (raw_ct, _id) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
         let mut runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities, config.t as u8);
 
         let ctc = Arc::new(raw_ct);
-        let conversion_key = Arc::new(keyset.conversion_key.clone());
+        let conversion_key = Arc::new(keyset.public_keys.sns_key.clone().unwrap());
         let key_shares = Arc::new(key_shares);
         runtime.setup_conversion_key(conversion_key.clone());
         runtime.setup_sks(key_shares.clone().to_vec());
@@ -237,8 +237,8 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
         let message = rng.gen::<u64>();
         let lwe_secret_key = keyset.get_raw_lwe_client_key();
         let glwe_secret_key = keyset.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keyset.client_output_key.large_key.clone();
-        let params = keyset.client_output_key.params;
+        let glwe_secret_key_sns_as_lwe = keyset.sns_secret_key.key.clone();
+        let params = keyset.sns_secret_key.params;
         let key_shares = keygen_all_party_shares(
             lwe_secret_key,
             glwe_secret_key,
@@ -249,7 +249,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
             config.t,
         )
         .unwrap();
-        let ct = FheUint8::encrypt(message, &keyset.public_key);
+        let ct = FheUint8::encrypt(message, &keyset.public_keys.public_key);
         let (raw_ct, _id) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);

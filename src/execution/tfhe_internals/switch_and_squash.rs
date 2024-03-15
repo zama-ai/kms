@@ -278,11 +278,13 @@ mod tests {
         let keyset: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
         let small_ct = FheUint8::encrypt(message, &keyset.client_key);
         let large_ct = keyset
-            .conversion_key
+            .public_keys
+            .sns_key
+            .unwrap()
             .to_large_ciphertext(&small_ct.clone().into_raw_parts().0)
             .unwrap();
         let res_small: u8 = small_ct.decrypt(&keyset.client_key);
-        let res_large = keyset.client_output_key.decrypt_128(&large_ct);
+        let res_large = keyset.sns_secret_key.decrypt_128(&large_ct);
         assert_eq!(message, res_small);
         assert_eq!(message as u128, res_large);
     }
@@ -291,12 +293,18 @@ mod tests {
     fn sunshine_enc_dec() {
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
         for msg in 0_u8..8 {
-            let small_ct = FheUint8::encrypt(msg, &keys.public_key);
+            let small_ct = FheUint8::encrypt(msg, &keys.public_keys.public_key);
             let (raw_ct, _id) = small_ct.clone().into_raw_parts();
             let small_res: u8 = small_ct.decrypt(&keys.client_key);
             assert_eq!(msg, small_res);
-            let large_ct = keys.conversion_key.to_large_ciphertext(&raw_ct).unwrap();
-            let large_res = keys.client_output_key.decrypt_128(&large_ct);
+            let large_ct = keys
+                .public_keys
+                .sns_key
+                .as_ref()
+                .unwrap()
+                .to_large_ciphertext(&raw_ct)
+                .unwrap();
+            let large_res = keys.sns_secret_key.decrypt_128(&large_ct);
             assert_eq!(msg as u128, large_res);
         }
     }

@@ -879,8 +879,8 @@ mod tests {
         // generate keys
         let lwe_secret_key = keys.get_raw_lwe_client_key();
         let glwe_secret_key = keys.get_raw_glwe_client_key();
-        let glwe_secret_key_sns_as_lwe = keys.client_output_key.large_key;
-        let params = keys.client_output_key.params;
+        let glwe_secret_key_sns_as_lwe = keys.sns_secret_key.key;
+        let params = keys.sns_secret_key.params;
         let key_shares = keygen_all_party_shares(
             lwe_secret_key,
             glwe_secret_key,
@@ -891,13 +891,13 @@ mod tests {
             threshold,
         )
         .unwrap();
-        let ct = FheUint8::encrypt(msg, &keys.public_key);
+        let ct = FheUint8::encrypt(msg, &keys.public_keys.public_key);
         let (raw_ct, _id) = ct.into_raw_parts();
 
         let mut runtime = DistributedTestRuntime::new(identities, threshold as u8);
 
         runtime.setup_sks(key_shares);
-        runtime.setup_conversion_key(Arc::new(keys.conversion_key.clone()));
+        runtime.setup_conversion_key(Arc::new(keys.public_keys.sns_key.clone().unwrap()));
 
         let mut seed = [0_u8; aes_prng::SEED_SIZE];
         // create sessions for each prss party

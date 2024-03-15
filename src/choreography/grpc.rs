@@ -18,6 +18,7 @@ use crate::algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, RingEmbe
 use crate::choreography::NetworkingStrategy;
 use crate::execution::endpoints::decryption::decrypt_using_noiseflooding;
 use crate::execution::endpoints::decryption::{Large, Small};
+use crate::execution::endpoints::keygen::PubKeySet;
 use crate::execution::endpoints::keygen::{
     distributed_keygen_z128, distributed_keygen_z64, PrivateKeySet,
 };
@@ -25,6 +26,7 @@ use crate::execution::large_execution::vss::RealVss;
 use crate::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
 use crate::execution::online::preprocessing::PreprocessorFactory;
 use crate::execution::runtime::party::{Identity, Role};
+use crate::execution::runtime::session::BaseSession;
 use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
 use crate::execution::runtime::session::{DecryptionMode, LargeSession, SessionParameters};
 use crate::execution::tfhe_internals::parameters::DKGParams;
@@ -541,7 +543,7 @@ impl Choreography for GrpcChoreography {
                             format!("could not make a valid session parameters with current parameters. Failed with error \"{:?}\"", e).to_string(),
                         )
                     })?;
-                let base_session =
+                let mut base_session =
                     BaseSessionStruct::new(session_params, Arc::clone(&networking), AesRng::from_entropy())
                     .map_err(|e| {
                     tonic::Status::new(
@@ -555,33 +557,36 @@ impl Choreography for GrpcChoreography {
                 let pks = Arc::clone(&self.data.pubkey_store);
 
                 tokio::spawn(async move {
-                    let mut session = SmallSession::new_and_init_prss_state(base_session)
-                        .await
-                        .unwrap();
-                    let (sk, sns_key, compact_pk, prss_setup) =
-                        local_initialize_key_material(&mut session, dkg_params)
+                    let prss_setup = PRSSSetup::<ResiduePoly128>::robust_init(
+                        &mut base_session,
+                        &RealVss::default(),
+                    )
+                    .await
+                    .unwrap();
+                    let (pub_keys, priv_keys) =
+                        local_initialize_key_material(&mut base_session, dkg_params)
                             .await
                             .unwrap();
 
                     let mut map_setup = HashMap::new();
                     map_setup.insert(
                         SupportedRing::ResiduePoly128,
-                        SupportedPRSSSetup::ResiduePoly128(prss_setup),
+                        SupportedPRSSSetup::ResiduePoly128(Some(prss_setup)),
                     );
 
                     init_store
                         .get(&epoch_id)
                         .map(|setup_result_cell| {
                             setup_result_cell.set(InitInfo {
-                                secret_key_share: sk,
+                                secret_key_share: priv_keys,
                                 prss_setup: map_setup,
                             });
                         })
                         .expect("Epoch key store disappeared unexpectedly");
 
                     // store the public key
-                    *pks.lock().unwrap() = compact_pk;
-                    *sns_keys.lock().unwrap() = Some(sns_key);
+                    *pks.lock().unwrap() = Some(pub_keys.public_key);
+                    *sns_keys.lock().unwrap() = pub_keys.sns_key;
                     tracing::debug!("Key material stored.");
                 });
 
@@ -769,26 +774,16 @@ impl Choreography for GrpcChoreography {
 
 #[cfg(feature = "testing")]
 async fn local_initialize_key_material(
-    session: &mut SmallSession<ResiduePoly128>,
+    session: &mut BaseSession,
     params: NoiseFloodParameters,
-) -> anyhow::Result<(
-    PrivateKeySet,
-    SwitchAndSquashKey,
-    Option<tfhe::CompactPublicKey>,
-    Option<PRSSSetup<ResiduePoly128>>,
-)> {
+) -> anyhow::Result<(PubKeySet, PrivateKeySet)> {
     crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params).await
 }
 
 #[cfg(not(feature = "testing"))]
 async fn local_initialize_key_material(
-    _session: &mut SmallSession<ResiduePoly128>,
+    _session: &mut BaseSession,
     _params: NoiseFloodParameters,
-) -> anyhow::Result<(
-    PrivateKeySet,
-    SwitchAndSquashKey,
-    Option<tfhe::CompactPublicKey>,
-    Option<PRSSSetup<ResiduePoly128>>,
-)> {
+) -> anyhow::Result<(PubKeySet, PrivateKeySet)> {
     todo!()
 }

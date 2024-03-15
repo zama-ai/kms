@@ -49,12 +49,11 @@ use tfhe::{
 };
 use tracing::instrument;
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PubKeySet {
-    pub lwe_public_key: LweCompactPublicKey<Vec<u64>>,
-    pub ksk: LweKeyswitchKey<Vec<u64>>,
-    pub bk: LweBootstrapKey<Vec<u64>>,
-    pub bk_sns: Option<LweBootstrapKey<Vec<u128>>>,
+    pub public_key: tfhe::CompactPublicKey,
+    pub server_key: tfhe::ServerKey,
+    pub sns_key: Option<SwitchAndSquashKey>,
 }
 
 impl PubKeySet {
@@ -65,8 +64,28 @@ impl PubKeySet {
     pub fn read_from_file(path: String) -> anyhow::Result<Self> {
         read_element(path)
     }
+}
 
-    pub fn get_switch_and_squash_key(&self) -> Option<SwitchAndSquashKey> {
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+struct RawPubKeySet {
+    pub lwe_public_key: LweCompactPublicKey<Vec<u64>>,
+    pub ksk: LweKeyswitchKey<Vec<u64>>,
+    pub bk: LweBootstrapKey<Vec<u64>>,
+    pub bk_sns: Option<LweBootstrapKey<Vec<u128>>>,
+}
+
+impl RawPubKeySet {
+    #[allow(dead_code)]
+    pub fn write_to_file(&self, path: String) -> anyhow::Result<()> {
+        write_element(path, self)
+    }
+
+    #[allow(dead_code)]
+    pub fn read_from_file(path: String) -> anyhow::Result<Self> {
+        read_element(path)
+    }
+
+    pub fn compute_switch_and_squash_key(&self) -> Option<SwitchAndSquashKey> {
         match &self.bk_sns {
             Some(bk_sns) => {
                 let mut fourier_bk = Fourier128LweBootstrapKey::new(
@@ -85,7 +104,7 @@ impl PubKeySet {
         }
     }
 
-    pub fn get_tfhe_shortint_server_key(&self, params: DKGParams) -> tfhe::shortint::ServerKey {
+    pub fn compute_tfhe_shortint_server_key(&self, params: DKGParams) -> tfhe::shortint::ServerKey {
         let regular_params = params.get_params_basics_handle();
         let max_value =
             regular_params.get_message_modulus().0 * regular_params.get_carry_modulus().0 - 1;
@@ -123,17 +142,28 @@ impl PubKeySet {
         )
     }
 
-    pub fn get_tfhe_hl_api_server_key(&self, params: DKGParams) -> tfhe::ServerKey {
-        let shortint_key = self.get_tfhe_shortint_server_key(params);
+    pub fn compute_tfhe_hl_api_server_key(&self, params: DKGParams) -> tfhe::ServerKey {
+        let shortint_key = self.compute_tfhe_shortint_server_key(params);
         let integer_key = tfhe::integer::ServerKey::from_raw_parts(shortint_key);
         tfhe::ServerKey::from_raw_parts(integer_key, None)
     }
 
-    pub fn get_tfhe_hl_api_compact_public_key(&self, params: DKGParams) -> tfhe::CompactPublicKey {
+    pub fn compute_tfhe_hl_api_compact_public_key(
+        &self,
+        params: DKGParams,
+    ) -> tfhe::CompactPublicKey {
         let params = params
             .get_params_basics_handle()
             .to_classic_pbs_parameters();
         to_tfhe_hl_api_compact_public_key(self.lwe_public_key.clone(), params)
+    }
+
+    pub fn to_pubkeyset(&self, params: DKGParams) -> PubKeySet {
+        PubKeySet {
+            public_key: self.compute_tfhe_hl_api_compact_public_key(params),
+            server_key: self.compute_tfhe_hl_api_server_key(params),
+            sns_key: self.compute_switch_and_squash_key(),
+        }
     }
 }
 
@@ -505,7 +535,7 @@ where
 /// - params: [`DKGParams`] parameters for the Distributed Key Generation
 ///
 /// Outputs:
-/// - A [`PubKeySet`] composed of the public key, the KSK, the BK and the BK_sns if required
+/// - A [`RawPubKeySet`] composed of the public key, the KSK, the BK and the BK_sns if required
 /// - a [`PrivateKeySet`] composed of shares of the lwe and glwe private keys
 ///
 ///If the [`DKGParams::o_flag`] is set in the params, then the sharing domain must be [`ResiduePoly128`] but the domain of
@@ -521,7 +551,7 @@ async fn distributed_keygen<
     session: &mut S,
     preprocessing: &mut P,
     params: DKGParams,
-) -> anyhow::Result<(PubKeySet, GenericPrivateKeySet<Z>)>
+) -> anyhow::Result<(RawPubKeySet, GenericPrivateKeySet<Z>)>
 where
     ResiduePoly<Z>: ErrorCorrect,
 {
@@ -606,7 +636,7 @@ where
         DKGParams::WithoutSnS(_) => (None, None),
     };
 
-    let pub_key_set = PubKeySet {
+    let pub_key_set = RawPubKeySet {
         lwe_public_key,
         ksk,
         bk,
@@ -638,7 +668,7 @@ pub async fn distributed_keygen_z64<
     }
     let (pub_key_set, priv_key_set) = distributed_keygen(session, preprocessing, params).await?;
     Ok((
-        pub_key_set,
+        pub_key_set.to_pubkeyset(params),
         priv_key_set.finalize_keyset(
             params
                 .get_params_basics_handle()
@@ -658,7 +688,7 @@ pub async fn distributed_keygen_z128<
 ) -> anyhow::Result<(PubKeySet, PrivateKeySet)> {
     let (pub_key_set, priv_key_set) = distributed_keygen(session, preprocessing, params).await?;
     Ok((
-        pub_key_set,
+        pub_key_set.to_pubkeyset(params),
         priv_key_set.finalize_keyset(
             params
                 .get_params_basics_handle()
@@ -702,10 +732,13 @@ pub mod tests {
         FheUint32, FheUint64, FheUint8,
     };
 
-    use crate::execution::tfhe_internals::{
-        parameters::{PARAMS_P32_REAL_WITH_SNS, PARAMS_P8_REAL_WITH_SNS},
-        test_feature::LargeClientKey,
-        utils::tests::reconstruct_lwe_secret_key_from_file,
+    use crate::execution::{
+        endpoints::keygen::RawPubKeySet,
+        tfhe_internals::{
+            parameters::{PARAMS_P32_REAL_WITH_SNS, PARAMS_P8_REAL_WITH_SNS},
+            test_feature::SnsClientKey,
+            utils::tests::reconstruct_lwe_secret_key_from_file,
+        },
     };
     use crate::execution::{
         random::{get_rng, seed_from_rng},
@@ -742,7 +775,7 @@ pub mod tests {
 
     #[cfg(feature = "slow_tests")]
     use super::distributed_homprf_bsk_gen;
-    use super::{distributed_keygen_z128, DKGParams, PubKeySet};
+    use super::{distributed_keygen, DKGParams};
 
     struct TestKeySize {
         public_key_material_size: u64,
@@ -958,11 +991,19 @@ pub mod tests {
                 .unwrap();
 
             let my_role = session.my_role().unwrap();
-            let (pk, sk) = distributed_keygen_z128(&mut session, dkg_preproc.as_mut(), params)
+            let (pk, sk) = distributed_keygen(&mut session, dkg_preproc.as_mut(), params)
                 .await
                 .unwrap();
 
-            (my_role, pk, sk)
+            (
+                my_role,
+                pk,
+                sk.finalize_keyset(
+                    params
+                        .get_params_basics_handle()
+                        .to_classic_pbs_parameters(),
+                ),
+            )
         };
 
         let results =
@@ -998,11 +1039,20 @@ pub mod tests {
             let my_role = session.my_role().unwrap();
             let mut large_preproc = DummyPreprocessing::new(0_u64, session.clone());
 
-            let (pk, sk) = distributed_keygen_z128(&mut session, &mut large_preproc, params)
-                .await
-                .unwrap();
+            let (pk, sk) =
+                distributed_keygen::<Z128, _, _, _>(&mut session, &mut large_preproc, params)
+                    .await
+                    .unwrap();
 
-            (my_role, pk, sk)
+            (
+                my_role,
+                pk,
+                sk.finalize_keyset(
+                    params
+                        .get_params_basics_handle()
+                        .to_classic_pbs_parameters(),
+                ),
+            )
         };
 
         let results =
@@ -1089,20 +1139,20 @@ pub mod tests {
             DKGParams::WithSnS(params),
             prefix_path.clone(),
         );
-        let sk_large = LargeClientKey::new(
+        let sk_large = SnsClientKey::new(
             threshold_lwe_parameters.ciphertext_parameters,
             big_sk_glwe.clone().unwrap(),
         );
-        let pk = PubKeySet::read_from_file(format!("{}/pk.der", prefix_path)).unwrap();
+        let pk = RawPubKeySet::read_from_file(format!("{}/pk.der", prefix_path)).unwrap();
 
-        let ddec_pk = pk.get_tfhe_hl_api_compact_public_key(DKGParams::WithSnS(params));
+        let ddec_pk = pk.compute_tfhe_hl_api_compact_public_key(DKGParams::WithSnS(params));
         let ddec_sk = to_hl_client_key(
             threshold_lwe_parameters.ciphertext_parameters,
             sk_lwe.clone(),
             sk_glwe,
         );
 
-        let ck = pk.get_switch_and_squash_key().unwrap();
+        let ck = pk.compute_switch_and_squash_key().unwrap();
         //Try and generate the bk_sns directly from the private keys
         let sk_lwe_lifted_128 = LweSecretKey::from_container(
             sk_lwe
@@ -1180,7 +1230,7 @@ pub mod tests {
             .to_dkg_params();
         let (shortint_sk, pk) =
             retrieve_keys_from_files::<Z>(params, num_parties, threshold, prefix_path);
-        let shortint_pk = pk.get_tfhe_shortint_server_key(params);
+        let shortint_pk = pk.compute_tfhe_shortint_server_key(params);
         for _ in 0..100 {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
         }
@@ -1199,13 +1249,13 @@ pub mod tests {
             .to_dkg_params();
         let (shortint_sk, pk) =
             retrieve_keys_from_files::<Z>(params, num_parties, threshold, prefix_path);
-        let shortint_pk = pk.get_tfhe_shortint_server_key(params);
+        let shortint_pk = pk.compute_tfhe_shortint_server_key(params);
         for _ in 0..100 {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
         }
 
         let tfhe_sk = tfhe::ClientKey::from_raw_parts(shortint_sk.into(), None);
-        let tfhe_pk = pk.get_tfhe_hl_api_server_key(params);
+        let tfhe_pk = pk.compute_tfhe_hl_api_server_key(params);
 
         try_tfhe_fheuint_computation(&tfhe_sk, &tfhe_pk);
     }
@@ -1217,7 +1267,7 @@ pub mod tests {
         num_parties: usize,
         threshold: usize,
         prefix_path: String,
-    ) -> (tfhe::shortint::ClientKey, PubKeySet)
+    ) -> (tfhe::shortint::ClientKey, RawPubKeySet)
     where
         ResiduePoly<Z>: ErrorCorrect,
     {
@@ -1237,7 +1287,7 @@ pub mod tests {
             params,
             prefix_path.clone(),
         );
-        let pk = PubKeySet::read_from_file(format!("{}/pk.der", prefix_path)).unwrap();
+        let pk = RawPubKeySet::read_from_file(format!("{}/pk.der", prefix_path)).unwrap();
 
         let shortint_client_key = tfhe::shortint::ClientKey::from_raw_parts(
             glwe_secret_key,
@@ -1362,7 +1412,7 @@ pub mod tests {
             threshold,
             params_basics_handles.get_prefix_path(),
         );
-        let orig_pk = pk.get_tfhe_shortint_server_key(params);
+        let orig_pk = pk.compute_tfhe_shortint_server_key(params);
         let mut homprf_pk = orig_pk.clone();
         let mut homprf_fourier_bsk = FourierLweBootstrapKey::new(
             homprf_bsk.input_lwe_dimension(),

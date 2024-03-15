@@ -1,9 +1,6 @@
 use crate::{
     error::error_handler::anyhow_error_and_log,
-    execution::runtime::{
-        party::Role,
-        session::{BaseSession, BaseSessionHandles, ParameterHandles},
-    },
+    execution::runtime::{party::Role, session::BaseSessionHandles},
     networking::value::NetworkValue,
 };
 use rand::{CryptoRng, Rng};
@@ -14,8 +11,8 @@ use super::shamir::ShamirSharings;
 use crate::algebra::structure_traits::Ring;
 use crate::execution::sharing::shamir::InputOp;
 
-pub async fn robust_input<Z, R: Rng + CryptoRng>(
-    session: &mut BaseSession,
+pub async fn robust_input<Z, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    session: &mut S,
     value: &Option<Z>,
     role: &Role,
     input_party_id: usize,
