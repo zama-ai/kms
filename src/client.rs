@@ -98,13 +98,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     match internal_client.process_decryption_resp(Some(req), responses) {
         Ok(Some(plaintext)) => {
-            println!(
+            tracing::info!(
                 "Decryption response is ok: {:?} of type {:?}",
                 plaintext.as_u32(),
                 plaintext.fhe_type()
             )
         }
-        _ => println!("Decryption response is NOT valid"),
+        _ => tracing::warn!("Decryption response is NOT valid"),
     };
 
     // REENCRYPTION REQUEST
@@ -118,13 +118,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     match internal_client.process_reencryption_resp(Some(req), responses, &enc_pk, &enc_sk) {
         Ok(Some(plaintext)) => {
-            println!(
+            tracing::info!(
                 "Reencryption response is ok: {:?} of type {:?}",
                 plaintext.as_u32(),
                 plaintext.fhe_type()
             )
         }
-        _ => println!("Reencryption response is NOT valid"),
+        _ => tracing::warn!("Reencryption response is NOT valid"),
     };
 
     Ok(())
@@ -800,7 +800,6 @@ pub(crate) mod tests {
         let keys: CentralizedTestingKeys = read_element(centralized_key_path).unwrap();
 
         let crs_path = centralized_crs_path.unwrap_or(DEFAULT_CENTRAL_CRS_PATH);
-        println!("Reading CRS from {}", crs_path);
         let crs_store: CrsHashMap = read_element(crs_path).unwrap();
         let (kms_server, kms_client) = setup(keys.software_kms_keys, Some(crs_store)).await;
         let internal_client = Client::new(

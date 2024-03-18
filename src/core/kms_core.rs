@@ -27,11 +27,6 @@ use tfhe::{
 };
 use zk_poc::curve;
 
-// Number of rounds that the CRS ceremony runs on the centralized KMS, emulating a real execution
-// with 2 parties. This corresponds to run the same number of rounds of the ceremony in Fig. 83
-// ("Ceremony for the CRS Generation") of the NIST doc
-const CRS_CEREMONY_ROUNDS: usize = 2;
-
 pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
     let sk = SigningKey::random(rng);
     let pk = SigningKey::verifying_key(&sk);
@@ -89,18 +84,13 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
 ) -> PublicParameter {
     let witness_dim = compute_witness_dimension(params);
     tracing::info!("Generating CRS with witness dimension {}.", witness_dim);
-    let mut pparam = PublicParameter::new(witness_dim);
+    let pparam = PublicParameter::new(witness_dim);
 
-    // run multiple rounds of CRS ceremony on the centralized server
-    for round in 1..=CRS_CEREMONY_ROUNDS {
-        let tau = curve::Zp::rand(rng);
-        let r = curve::Zp::rand(rng);
-        let pproof = make_proof_deterministic(&pparam, tau, round, r);
-        pparam = pproof.new_pp;
-        //TODO zeroize tau and r (needs Zeroize in zk-poc)
-    }
-
-    pparam
+    let tau = curve::Zp::rand(rng);
+    let r = curve::Zp::rand(rng);
+    let pproof = make_proof_deterministic(&pparam, tau, 1, r);
+    //TODO zeroize tau and r (needs Zeroize in zk-poc)
+    pproof.new_pp
 }
 
 #[derive(Clone)]
