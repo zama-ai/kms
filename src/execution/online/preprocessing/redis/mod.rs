@@ -20,7 +20,6 @@ use super::RandomPreprocessing;
 use crate::execution::online::preprocessing::BitDecPreprocessing;
 use crate::execution::online::preprocessing::NoiseFloodPreprocessing;
 
-use bincode;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

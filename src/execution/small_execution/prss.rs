@@ -30,7 +30,6 @@ use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
-use std::default::Default;
 
 pub(crate) fn create_sets(n: usize, t: usize) -> Vec<Vec<usize>> {
     (1..=n).combinations(n - t).collect()

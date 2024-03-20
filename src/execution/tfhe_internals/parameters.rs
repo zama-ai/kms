@@ -36,7 +36,7 @@ pub struct SwitchAndSquashParameters {
     pub ciphertext_modulus: CiphertextModulus<u128>,
 }
 
-pub(crate) trait AugmentedCiphertextParameters {
+pub trait AugmentedCiphertextParameters {
     // Return the minimum amount of bits that can be used for a message in each block.
     fn message_modulus_log(&self) -> u32;
 
@@ -119,17 +119,17 @@ impl DKGParams {
 #[allow(non_snake_case)]
 pub struct DKGParamsRegular {
     ///Security parameter (related to the size of the XOF seed)
-    sec: u64,
-    ciphertext_parameters: ClassicPBSParameters,
+    pub sec: u64,
+    pub ciphertext_parameters: ClassicPBSParameters,
     ///States whether we want compressed ciphertexts
-    flag: bool,
+    pub flag: bool,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug)]
 #[allow(non_snake_case)]
 pub struct DKGParamsSnS {
-    regular_params: DKGParamsRegular,
-    sns_params: SwitchAndSquashParameters,
+    pub regular_params: DKGParamsRegular,
+    pub sns_params: SwitchAndSquashParameters,
 }
 
 pub trait DKGParamsBasics: Sync {
