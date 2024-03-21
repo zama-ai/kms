@@ -91,14 +91,13 @@ pub fn write_default_crs_store(path: &str) -> CrsHashMap {
     crs_store
 }
 
+#[cfg(feature = "slow_tests")]
 #[cfg(test)]
 mod tests {
-    use crate::setup_rpc::ensure_dir_exist;
-    use crate::setup_rpc::{CRS_PATH_PREFIX, DEFAULT_CENTRAL_CRS_PATH};
+    use crate::setup_rpc::{ensure_dir_exist, CRS_PATH_PREFIX, DEFAULT_CENTRAL_CRS_PATH};
     use crate::write_default_crs_store;
     use std::path::Path;
 
-    #[cfg(feature = "slow_tests")]
     #[cfg(test)]
     #[ctor::ctor]
     fn ensure_server_keys_exist() {

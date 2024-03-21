@@ -755,15 +755,15 @@ pub(crate) mod tests {
     };
     use kms_lib::rpc::kms_rpc::{crs_path, priv_key_path, pub_key_path, server_handle};
     use kms_lib::setup_rpc::{
-        CentralizedTestingKeys, ThresholdTestingKeys, AMOUNT_PARTIES, BASE_PORT,
-        DEFAULT_CENTRAL_CRS_PATH, DEFAULT_PROT, DEFAULT_URL, KEY_HANDLE, TEST_CENTRAL_CRS_PATH,
-        TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_CRS_HANDLE, TEST_FHE_TYPE, TEST_MSG,
-        TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
+        CentralizedTestingKeys, ThresholdTestingKeys, AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT,
+        DEFAULT_URL, KEY_HANDLE, TEST_CENTRAL_CRS_PATH, TEST_CENTRAL_CT_PATH,
+        TEST_CENTRAL_KEYS_PATH, TEST_CRS_HANDLE, TEST_FHE_TYPE, TEST_MSG, TEST_PARAM_PATH,
+        TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
     };
     #[cfg(feature = "slow_tests")]
     use kms_lib::setup_rpc::{
-        DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CRS_HANDLE,
-        DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
+        DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH,
+        DEFAULT_CRS_HANDLE, DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
     };
     use kms_lib::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
     use serial_test::serial;
@@ -799,9 +799,11 @@ pub(crate) mod tests {
     ) -> (JoinHandle<()>, KmsEndpointClient<Channel>, Client) {
         let keys: CentralizedTestingKeys = read_element(centralized_key_path).unwrap();
 
-        let crs_path = centralized_crs_path.unwrap_or(DEFAULT_CENTRAL_CRS_PATH);
-        let crs_store: CrsHashMap = read_element(crs_path).unwrap();
-        let (kms_server, kms_client) = setup(keys.software_kms_keys, Some(crs_store)).await;
+        // set crs_store if path is provided, else set it to None
+        let crs_store =
+            centralized_crs_path.map(|crs_path| read_element::<CrsHashMap>(crs_path).unwrap());
+
+        let (kms_server, kms_client) = setup(keys.software_kms_keys, crs_store).await;
         let internal_client = Client::new(
             HashSet::from_iter(keys.server_keys.iter().cloned()),
             keys.client_pk,
