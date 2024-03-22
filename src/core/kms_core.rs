@@ -483,7 +483,8 @@ pub fn decrypt_signcryption(
 
 #[cfg(test)]
 mod tests {
-    use crate::core::kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms};
+    use crate::core::der_types::PrivateSigKey;
+    use crate::core::kms_core::{decrypt_signcryption, gen_sig_keys, FheKeys, SoftwareKms};
     use crate::core::request::ephemeral_key_generation;
     use crate::file_handling::read_element;
     use crate::kms::FheType;
@@ -503,12 +504,34 @@ mod tests {
         DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
     };
     use aes_prng::AesRng;
-    use rand::SeedableRng;
+    use distributed_decryption::lwe::ThresholdLWEParameters;
+    use rand::{RngCore, SeedableRng};
     use serial_test::serial;
+    use tfhe::shortint::ClassicPBSParameters;
+    use tfhe::ConfigBuilder;
+
+    #[derive(Clone, PartialEq, Eq)]
+    enum SimulationType {
+        NoError,
+        BadFheKey,
+        // below are only used for reencryption
+        BadSigKey,
+        BadEphemeralKey,
+    }
 
     #[test]
     fn sunshine_test_decrypt() {
         sunshine_decrypt(TEST_CENTRAL_KEYS_PATH, KEY_HANDLE, TEST_CENTRAL_CT_PATH);
+    }
+
+    #[test]
+    fn decrypt_with_bad_fhe_key() {
+        simulate_decrypt(
+            SimulationType::BadFheKey,
+            TEST_CENTRAL_KEYS_PATH,
+            KEY_HANDLE,
+            TEST_CENTRAL_CT_PATH,
+        );
     }
 
     #[cfg(feature = "slow_tests")]
@@ -628,21 +651,75 @@ mod tests {
     }
 
     fn sunshine_decrypt(kms_key_path: &str, key_handle: &str, cipher_path: &str) {
+        simulate_decrypt(
+            SimulationType::NoError,
+            kms_key_path,
+            key_handle,
+            cipher_path,
+        )
+    }
+
+    fn simulate_decrypt(
+        sim_type: SimulationType,
+        kms_key_path: &str,
+        key_handle: &str,
+        cipher_path: &str,
+    ) {
         let msg = 42_u8;
         let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
-        let kms = SoftwareKms::new(
-            keys.software_kms_keys.fhe_keys.clone(),
-            keys.software_kms_keys.sig_sk,
-            None,
-        );
+        let kms = {
+            let inner = SoftwareKms::new(
+                keys.software_kms_keys.fhe_keys.clone(),
+                keys.software_kms_keys.sig_sk,
+                None,
+            );
+            if sim_type == SimulationType::BadFheKey {
+                set_wrong_fhe_key(&inner, key_handle, keys.params);
+            }
+            inner
+        };
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
         let plaintext: Plaintext = kms.decrypt(&ct, fhe_type, key_handle).unwrap();
-        assert_eq!(plaintext.as_u8(), msg);
+        if sim_type == SimulationType::BadFheKey {
+            assert_ne!(plaintext.as_u8(), msg);
+        } else {
+            assert_eq!(plaintext.as_u8(), msg);
+        }
     }
 
     #[test]
     fn sunshine_test_reencrypt() {
         sunshine_reencrypt(TEST_CENTRAL_KEYS_PATH, KEY_HANDLE, TEST_CENTRAL_CT_PATH);
+    }
+
+    #[test]
+    fn reencrypt_with_bad_ephemeral_key() {
+        simulate_reencrypt(
+            SimulationType::BadEphemeralKey,
+            TEST_CENTRAL_KEYS_PATH,
+            KEY_HANDLE,
+            TEST_CENTRAL_CT_PATH,
+        )
+    }
+
+    #[test]
+    fn reencrypt_with_bad_sig_key() {
+        simulate_reencrypt(
+            SimulationType::BadSigKey,
+            TEST_CENTRAL_KEYS_PATH,
+            KEY_HANDLE,
+            TEST_CENTRAL_CT_PATH,
+        )
+    }
+
+    #[test]
+    fn reencrypt_with_bad_fhe_key() {
+        simulate_reencrypt(
+            SimulationType::BadFheKey,
+            TEST_CENTRAL_KEYS_PATH,
+            KEY_HANDLE,
+            TEST_CENTRAL_CT_PATH,
+        )
     }
 
     #[cfg(feature = "slow_tests")]
@@ -676,18 +753,75 @@ mod tests {
     }
 
     fn sunshine_reencrypt(kms_key_path: &str, key_handle: &str, cipher_path: &str) {
+        simulate_reencrypt(
+            SimulationType::NoError,
+            kms_key_path,
+            key_handle,
+            cipher_path,
+        )
+    }
+
+    fn set_wrong_fhe_key(inner: &SoftwareKms, key_handle: &str, params: ThresholdLWEParameters) {
+        let pbs_params: ClassicPBSParameters = params.input_cipher_parameters.into();
+        let config = ConfigBuilder::with_custom_parameters(pbs_params, None);
+        let wrong_client_key = tfhe::ClientKey::generate(config);
+        let mut fhe_keys = inner.fhe_keys.lock().unwrap();
+        let x = fhe_keys.get_mut(key_handle).unwrap();
+        let wrong_fhe_keys = FheKeys {
+            public_key: x.public_key.clone(),
+            server_key: x.server_key.clone(),
+            conversion_key: x.conversion_key.clone(),
+            client_output_key: x.client_output_key.clone(),
+            client_key: wrong_client_key,
+        };
+        *x = wrong_fhe_keys;
+    }
+
+    fn set_wrong_sig_key(inner: &mut SoftwareKms, rng: &mut AesRng) {
+        // move to the next state so ensure we're generating a different ecdsa key
+        _ = rng.next_u64();
+        let wrong_ecdsa_key = k256::ecdsa::SigningKey::random(rng);
+        assert_ne!(wrong_ecdsa_key, inner.base_kms.sig_key.sk);
+        inner.base_kms.sig_key = PrivateSigKey {
+            sk: wrong_ecdsa_key,
+        };
+    }
+
+    fn simulate_reencrypt(
+        sim_type: SimulationType,
+        kms_key_path: &str,
+        key_handle: &str,
+        cipher_path: &str,
+    ) {
         let msg = 42_u8;
         let mut rng = AesRng::seed_from_u64(1);
         let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
-        let kms = SoftwareKms::new(
-            keys.software_kms_keys.fhe_keys.clone(),
-            keys.software_kms_keys.sig_sk,
-            None,
-        );
+        let params = keys.params;
+        let kms = {
+            let mut inner = SoftwareKms::new(
+                keys.software_kms_keys.fhe_keys.clone(),
+                keys.software_kms_keys.sig_sk,
+                None,
+            );
+            if sim_type == SimulationType::BadFheKey {
+                set_wrong_fhe_key(&inner, key_handle, params);
+            }
+            if sim_type == SimulationType::BadSigKey {
+                set_wrong_sig_key(&mut inner, &mut rng);
+            }
+            inner
+        };
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
         let link = vec![42_u8, 42, 42];
         let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
-        let client_keys = ephemeral_key_generation(&mut rng, &client_sig_key);
+        let client_keys = {
+            let mut keys = ephemeral_key_generation(&mut rng, &client_sig_key);
+            if sim_type == SimulationType::BadEphemeralKey {
+                let bad_keys = ephemeral_key_generation(&mut rng, &client_sig_key);
+                keys.sk = bad_keys.sk;
+            }
+            keys
+        };
         let raw_cipher = kms
             .reencrypt(
                 &ct,
@@ -699,16 +833,32 @@ mod tests {
             )
             .unwrap()
             .unwrap();
-        let decrypted_msg = decrypt_signcryption(
+        let decrypted = decrypt_signcryption(
             &raw_cipher,
             &link,
             &client_keys,
             &keys.software_kms_keys.sig_pk,
-        )
-        .unwrap()
-        .unwrap();
+        );
+        if sim_type == SimulationType::BadEphemeralKey {
+            assert!(decrypted.is_err());
+            assert!(decrypted
+                .unwrap_err()
+                .to_string()
+                .contains("Could not decrypt message"));
+            return;
+        }
+        let decrypted = decrypted.unwrap();
+        if sim_type == SimulationType::BadSigKey {
+            assert!(decrypted.is_none());
+            return;
+        }
+        let decrypted_msg = decrypted.unwrap();
         let plaintext: Plaintext = decrypted_msg.try_into().unwrap();
-        assert_eq!(plaintext.as_u8(), msg);
+        if sim_type == SimulationType::BadFheKey {
+            assert_ne!(plaintext.as_u8(), msg);
+        } else {
+            assert_eq!(plaintext.as_u8(), msg);
+        }
         assert_eq!(plaintext.fhe_type(), FheType::Euint8);
     }
 }
