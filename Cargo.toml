@@ -70,7 +70,7 @@ typed-builder = "0.18.1"
 x509-parser = "~0.15"
 zeroize = { version = "~1.7", features = ["zeroize_derive"] }
 # this is defined as optional since there's a bug that does not allow us to build it for 32-bit platforms
-zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "169f1e28125e13ae481e7b1012f9afeff0c261b8", optional = true }
+zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "77f4af18d078c7d3a7324fb45a39acf43b488bcf", optional = true }
 
 # wasm
 wasm-bindgen = { version = "0.2.86", features = [

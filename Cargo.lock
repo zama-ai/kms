@@ -4530,7 +4530,7 @@ dependencies = [
 [[package]]
 name = "zk-poc"
 version = "0.1.0"
-source = "git+ssh://git@github.com/zama-ai/zk-poc.git?rev=169f1e28125e13ae481e7b1012f9afeff0c261b8#169f1e28125e13ae481e7b1012f9afeff0c261b8"
+source = "git+ssh://git@github.com/zama-ai/zk-poc.git?rev=77f4af18d078c7d3a7324fb45a39acf43b488bcf#77f4af18d078c7d3a7324fb45a39acf43b488bcf"
 dependencies = [
  "ark-bls12-381",
  "ark-ec",
@@ -4541,4 +4541,5 @@ dependencies = [
  "rayon",
  "serde",
  "sha3",
+ "zeroize",
 ]
