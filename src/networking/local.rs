@@ -173,7 +173,7 @@ impl Networking for LocalNetworking {
         let network_round: usize = *self
             .network_round
             .lock()
-            .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e.to_string())))?;
+            .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e)))?;
 
         while tagged_value.send_counter < network_round {
             tracing::debug!(
@@ -197,7 +197,7 @@ impl Networking for LocalNetworking {
                 self.owner
             );
         } else {
-            return Err(anyhow_error_and_log("Couldn't lock mutex".to_string()));
+            return Err(anyhow_error_and_log("Couldn't lock mutex"));
         }
         Ok(())
     }
@@ -210,9 +210,7 @@ impl Networking for LocalNetworking {
 
             Ok(*init_time + *NETWORK_TIMEOUT * (*net_round as u32))
         } else {
-            Err(anyhow_error_and_log(
-                "Couldn't lock network round mutex".to_string(),
-            ))
+            Err(anyhow_error_and_log("Couldn't lock network round mutex"))
         }
     }
 
@@ -220,9 +218,7 @@ impl Networking for LocalNetworking {
         if let Ok(net_round) = self.network_round.lock() {
             Ok(*net_round)
         } else {
-            Err(anyhow_error_and_log(
-                "Couldn't lock network round mutex".to_string(),
-            ))
+            Err(anyhow_error_and_log("Couldn't lock network round mutex"))
         }
     }
 }

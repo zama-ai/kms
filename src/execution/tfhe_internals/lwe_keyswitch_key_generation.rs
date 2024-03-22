@@ -51,7 +51,7 @@ where
                     let shift = 64 - decomp_base_log.0 * level.0;
                     *message = (*input_key_element) << shift;
                 } else {
-                    return Err(anyhow_error_and_log("zip error".to_string()));
+                    return Err(anyhow_error_and_log("zip error"));
                 }
             }
 
@@ -62,7 +62,7 @@ where
                 generator,
             )?;
         } else {
-            return Err(anyhow_error_and_log("zip error".to_string()));
+            return Err(anyhow_error_and_log("zip error"));
         }
     }
     Ok(())

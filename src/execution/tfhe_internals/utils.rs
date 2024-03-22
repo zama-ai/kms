@@ -109,7 +109,7 @@ pub fn slice_wrapping_dot_product<Z: BaseRing>(
             if let EitherOrBoth::Both(&left, &right) = left_right {
                 Ok(acc + right * left)
             } else {
-                Err(anyhow_error_and_log("zip error".to_string()))
+                Err(anyhow_error_and_log("zip error"))
             }
         })
 }
@@ -132,7 +132,7 @@ pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing>(
         if let EitherOrBoth::Both(poly_1, poly_2) = poly_1_poly_2 {
             pol_output_body = pol_output_body + pol_mul_reduce(poly_1, poly_2, pol_dimension)?;
         } else {
-            return Err(anyhow_error_and_log("zip error".to_string()));
+            return Err(anyhow_error_and_log("zip error"));
         }
     }
 
@@ -143,7 +143,7 @@ pub fn polynomial_wrapping_add_multisum_assign<Z: BaseRing>(
         if let EitherOrBoth::Both(coef_output, coef_pol) = coef_output_coef_pol {
             *coef_output = *coef_pol;
         } else {
-            return Err(anyhow_error_and_log("zip error".to_string()));
+            return Err(anyhow_error_and_log("zip error"));
         }
     }
     Ok(())

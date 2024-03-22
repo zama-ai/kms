@@ -85,7 +85,7 @@ impl<Z: Ring + RingEmbed + HenselLiftInverse + Derive + ErrorCorrect, S: LocalSi
         Ok(self
             .available_shares
             .pop()
-            .ok_or_else(|| anyhow_error_and_log("Trying to pop an empty vector".to_string()))?)
+            .ok_or_else(|| anyhow_error_and_log("Trying to pop an empty vector"))?)
     }
 }
 
@@ -135,7 +135,7 @@ fn compute_next_batch<Z: Ring>(
 ) -> anyhow::Result<Vec<Z>> {
     let res = formated_lsl
         .pop()
-        .ok_or_else(|| anyhow_error_and_log("Can not pop empty formated_lsl vector".to_string()))?
+        .ok_or_else(|| anyhow_error_and_log("Can not pop empty formated_lsl vector"))?
         .matmul(vdm)?;
     Ok(res.into_raw_vec())
 }

@@ -1,6 +1,6 @@
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Ring},
-    error::error_handler::anyhow_error_and_log,
+    error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
         runtime::session::BaseSessionHandles,
         sharing::{open::robust_opens_to_all, share::Share},
@@ -107,12 +107,20 @@ pub async fn mult_list<
     // Compute the linear equation of shares to get the result
     let mut res = Vec::with_capacity(amount);
     for i in 0..amount {
-        let y = *y_vec.get(i).with_context(|| "Missing y value")?;
+        let y = *y_vec
+            .get(i)
+            .with_context(|| log_error_wrapper("Missing y value"))?;
         // Observe that the list of epsilons and rhos have already been reversed above, because of the use of pop,
         // so we get the elements in the original order by popping again here
-        let epsilon = epsilon_vec.pop().with_context(|| "Missing epsilon value")?;
-        let rho = rho_vec.pop().with_context(|| "Missing rho value")?;
-        let trip = triples.get(i).with_context(|| "Missing triple")?;
+        let epsilon = epsilon_vec
+            .pop()
+            .with_context(|| log_error_wrapper("Missing epsilon value"))?;
+        let rho = rho_vec
+            .pop()
+            .with_context(|| log_error_wrapper("Missing rho value"))?;
+        let trip = triples
+            .get(i)
+            .with_context(|| log_error_wrapper("Missing triple"))?;
         res.push(y * epsilon - trip.a * rho + trip.c);
     }
     Ok(res)

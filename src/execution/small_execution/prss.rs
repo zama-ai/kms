@@ -10,7 +10,7 @@ use crate::{
     },
     commitment::KEY_BYTE_LEN,
     computation::SessionId,
-    error::error_handler::anyhow_error_and_log,
+    error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
         communication::broadcast::broadcast_from_all_w_corruption,
         constants::PRSS_SIZE_MAX,
@@ -393,7 +393,7 @@ where
             let (value_max, _) = value_votes
                 .iter()
                 .max_by_key(|&(_, votes)| votes.len())
-                .with_context(|| "No votes found!")?;
+                .with_context(|| log_error_wrapper("No votes found!"))?;
 
             true_prf_vals.insert(prss_set, value_max);
         }
@@ -523,7 +523,7 @@ where
 
         let ars = A::agree_random::<Z, R, S>(session)
             .await
-            .with_context(|| "AgreeRandom failed!")?;
+            .with_context(|| log_error_wrapper("AgreeRandom failed!"))?;
 
         let f_a_points = party_compute_f_a_points(&party_sets, num_parties)?;
         let alpha_powers =
@@ -651,7 +651,7 @@ async fn agree_random_robust<
     let converted_shares = shares.iter().map(|s| s.to_owned()).collect_vec();
     let r_vec = robust_opens_to_all(session, &converted_shares, session.threshold() as usize)
         .await?
-        .with_context(|| "No valid result from open")?;
+        .with_context(|| log_error_wrapper("No valid result from open"))?;
     // TODO should be updated to SHA3, see https://github.com/zama-ai/distributed-decryption/issues/196
     let mut hasher = blake3::Hasher::new();
     let s_vec = r_vec

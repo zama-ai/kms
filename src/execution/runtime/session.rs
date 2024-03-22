@@ -70,7 +70,7 @@ impl SessionParameters {
         };
         if res.role_from(&own_identity).is_err() {
             return Err(anyhow_error_and_log(
-                "Your own role is not contained in the role_assignments".to_string(),
+                "Your own role is not contained in the role_assignments",
             ));
         }
         Ok(res)
@@ -528,12 +528,12 @@ impl DisputeSet {
         let disputed_roles = &mut self.disputed_roles;
         let a_disputes = disputed_roles
             .get_mut(role_a.zero_based())
-            .ok_or_else(|| anyhow_error_and_log("Role does not exist".to_string()))?;
+            .ok_or_else(|| anyhow_error_and_log("Role does not exist"))?;
         let _ = a_disputes.insert(*role_b);
         // Insert the second pair of disputes
         let b_disputes: &mut BTreeSet<Role> = disputed_roles
             .get_mut(role_b.zero_based())
-            .ok_or_else(|| anyhow_error_and_log("Role does not exist".to_string()))?;
+            .ok_or_else(|| anyhow_error_and_log("Role does not exist"))?;
         let _ = b_disputes.insert(*role_a);
         Ok(())
     }
@@ -542,7 +542,7 @@ impl DisputeSet {
         if let Some(cur) = self.disputed_roles.get(role.zero_based()) {
             Ok(cur)
         } else {
-            Err(anyhow_error_and_log("Role does not exist".to_string()))
+            Err(anyhow_error_and_log("Role does not exist"))
         }
     }
 }

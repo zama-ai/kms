@@ -5,6 +5,7 @@ use std::{cmp::min, collections::HashMap};
 use tracing::instrument;
 
 use super::{agree_random::AgreeRandom, prf::PRSSConversions};
+use crate::error::error_handler::log_error_wrapper;
 use crate::execution::config::BatchParams;
 use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
 use crate::execution::online::preprocessing::{
@@ -107,19 +108,19 @@ where
         for i in 0..amount {
             let x_single = vec_x_single
                 .get(i)
-                .with_context(|| "Expected x does not exist")?
+                .with_context(|| log_error_wrapper("Expected x does not exist"))?
                 .to_owned();
             let y_single = vec_y_single
                 .get(i)
-                .with_context(|| "Expected y does not exist")?
+                .with_context(|| log_error_wrapper("Expected y does not exist"))?
                 .to_owned();
             let v_single = vec_v_single
                 .get(i)
-                .with_context(|| "Expected v does not exist")?
+                .with_context(|| log_error_wrapper("Expected v does not exist"))?
                 .to_owned();
             let z_double = vec_z_double
                 .get(i)
-                .with_context(|| "Expected z does not exist")?
+                .with_context(|| log_error_wrapper("Expected z does not exist"))?
                 .to_owned();
             let v_double = z_double + v_single;
             let d_double = x_single * y_single + v_double;
@@ -134,21 +135,21 @@ where
         for i in 0..amount {
             if let Some(d) = recons_vec_d
                 .get(i)
-                .with_context(|| "Not all expected d values exist")?
+                .with_context(|| log_error_wrapper("Not all expected d values exist"))?
             {
                 triples.push(Triple {
                     a: Share::new(
                         session.my_role()?,
                         vec_x_single
                             .get(i)
-                            .with_context(|| "Not all expected x values exist")?
+                            .with_context(|| log_error_wrapper("Not all expected x values exist"))?
                             .to_owned(),
                     ),
                     b: Share::new(
                         session.my_role()?,
                         vec_y_single
                             .get(i)
-                            .with_context(|| "Not all expected y values exist")?
+                            .with_context(|| log_error_wrapper("Not all expected y values exist"))?
                             .to_owned(),
                     ),
                     c: Share::new(
@@ -156,7 +157,9 @@ where
                         d.to_owned()
                             - vec_v_single
                                 .get(i)
-                                .with_context(|| "Not all expected v values exist")?
+                                .with_context(|| {
+                                    log_error_wrapper("Not all expected v values exist")
+                                })?
                                 .to_owned(),
                     ),
                 });
@@ -177,7 +180,7 @@ where
                     amount as u128,
                     d_shares
                         .get(i)
-                        .with_context(|| "Expected d share does not exist")?
+                        .with_context(|| log_error_wrapper("Expected d share does not exist"))?
                         .to_owned(),
                 )
                 .await?;
@@ -336,20 +339,20 @@ where
         for (cur_role, cur_d_share) in shared_d_double {
             let v_single = vec_v
                 .get(&cur_role)
-                .with_context(|| "Not all expected v check values exist")?
+                .with_context(|| log_error_wrapper("Not all expected v check values exist"))?
                 .to_owned();
             let z_double = vec_z_double
                 .get(&cur_role)
-                .with_context(|| "Not all expected z check values exist")?
+                .with_context(|| log_error_wrapper("Not all expected z check values exist"))?
                 .to_owned();
             let v_double = v_single + z_double;
             let x = vec_x
                 .get(&cur_role)
-                .with_context(|| "Not all expected x check values exist")?
+                .with_context(|| log_error_wrapper("Not all expected x check values exist"))?
                 .to_owned();
             let y = vec_y
                 .get(&cur_role)
-                .with_context(|| "Not all expected y check values exist")?
+                .with_context(|| log_error_wrapper("Not all expected y check values exist"))?
                 .to_owned();
             let d_double_prime = x * y + v_double;
             if cur_d_share.is_none() || cur_d_share.is_some_and(|d_share| d_double_prime != d_share)

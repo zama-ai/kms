@@ -96,7 +96,7 @@ impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + HenselLiftInverse, S: LocalDo
         let res = self
             .available_shares
             .pop()
-            .ok_or_else(|| anyhow_error_and_log("Trying to pop an empty vector".to_string()))?;
+            .ok_or_else(|| anyhow_error_and_log("Trying to pop an empty vector"))?;
         Ok(DoubleShare {
             degree_t: res.0,
             degree_2t: res.1,
@@ -142,9 +142,9 @@ fn compute_next_batch<Z: Ring>(
     formated_ldl: &mut Vec<DoubleArrayShares<Z>>,
     vdm: &ArrayD<Z>,
 ) -> anyhow::Result<Vec<(Z, Z)>> {
-    let next_formated_ldl = formated_ldl.pop().ok_or_else(|| {
-        anyhow_error_and_log("Can not acces pop empty formated_ldl vector".to_string())
-    })?;
+    let next_formated_ldl = formated_ldl
+        .pop()
+        .ok_or_else(|| anyhow_error_and_log("Can not acces pop empty formated_ldl vector"))?;
     let res_t = next_formated_ldl.0.matmul(vdm)?.into_raw_vec();
     let res_2t = next_formated_ldl.1.matmul(vdm)?.into_raw_vec();
     let res = res_t.into_iter().zip(res_2t).collect_vec();

@@ -161,7 +161,7 @@ impl ShareDispute for RealShareDispute {
                     }
                     _ => {
                         return Err(anyhow_error_and_log(
-                            "Unexpected type appeared in my own map".to_string(),
+                            "Unexpected type appeared in my own map",
                         ));
                     }
                 }
@@ -205,7 +205,7 @@ impl ShareDispute for RealShareDispute {
                     }
                     _ => {
                         return Err(anyhow_error_and_log(
-                            "Unexpected type appeared in my own map".to_string(),
+                            "Unexpected type appeared in my own map",
                         ));
                     }
                 }
@@ -233,7 +233,7 @@ async fn send_and_receive_share_dispute_double<
         session.my_role()?,
         polypoints_map
             .get(&session.my_role()?)
-            .ok_or_else(|| anyhow_error_and_log("Can not find my own share".to_string()))?
+            .ok_or_else(|| anyhow_error_and_log("Can not find my own share"))?
             .clone(),
     );
 
@@ -255,7 +255,7 @@ async fn send_and_receive_share_dispute_double<
             polypoints_map_2t.insert(role, vec_residue_2t);
         } else {
             return Err(anyhow_error_and_log(
-                "I had an incorrect type inside my own share sampling.".to_string(),
+                "I had an incorrect type inside my own share sampling.",
             ));
         }
     }
@@ -335,7 +335,7 @@ async fn send_and_receive_share_dispute_single<
                 Ok((role, value))
             } else {
                 Err(anyhow_error_and_log(
-                    "I had an incorrect type inside my own share sampling.".to_string(),
+                    "I had an incorrect type inside my own share sampling.",
                 ))
             }
         })

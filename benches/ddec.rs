@@ -275,9 +275,9 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
 }
 
 criterion_group! {
-    name = prep;
+    name = ddec;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
     targets = ddec_nsmall, ddec_bitdec_nsmall, ddec_nlarge, ddec_bitdec_nlarge,
 }
 
-criterion_main!(prep);
+criterion_main!(ddec);

@@ -229,8 +229,8 @@ pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 ) -> anyhow::Result<PubKeySet> {
     session.network().increase_round_counter().await?;
     if role.one_based() == input_party_id {
-        let pubkey_raw = pubkey
-            .ok_or_else(|| anyhow_error_and_log("I have no public key to send!".to_string()))?;
+        let pubkey_raw =
+            pubkey.ok_or_else(|| anyhow_error_and_log("I have no public key to send!"))?;
         let num_parties = session.num_parties();
         let pkval = NetworkValue::<Z128>::PubKeySet(Box::new(pubkey_raw.clone()));
 
@@ -269,7 +269,7 @@ pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         let pk = match NetworkValue::<Z128>::from_network(data)? {
             NetworkValue::PubKeySet(pk) => pk,
             _ => Err(anyhow_error_and_log(
-                "I have received sth different from a public key!".to_string(),
+                "I have received sth different from a public key!",
             ))?,
         };
         Ok(*pk)

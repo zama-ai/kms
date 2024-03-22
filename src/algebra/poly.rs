@@ -535,9 +535,9 @@ pub fn gao_decoding<F: Field>(
     let n = points.len();
 
     // d = n-k+1
-    let d = (n + 1).checked_sub(k).ok_or_else(|| {
-        anyhow_error_and_log("Gao decoding failure: overflow computing d".to_string())
-    })?;
+    let d = (n + 1)
+        .checked_sub(k)
+        .ok_or_else(|| anyhow_error_and_log("Gao decoding failure: overflow computing d"))?;
 
     // sanity checks for parameter sizes
     if values.len() != points.len() {

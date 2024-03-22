@@ -74,7 +74,7 @@ impl<Z: Ring> NetworkValue<Z> {
 
     pub fn from_network(serialized: anyhow::Result<Vec<u8>>) -> anyhow::Result<Self> {
         bincode::deserialize::<Self>(&serialized?)
-            .map_err(|_e| anyhow_error_and_log("failed to parse value".to_string()))
+            .map_err(|_e| anyhow_error_and_log("failed to parse value"))
     }
 }
 

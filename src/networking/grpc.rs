@@ -138,9 +138,8 @@ impl Networking for GrpcNetworking {
                 round_counter: ctr,
             };
 
-            let bytes = bincode::serialize(&tagged_value).map_err(|e| {
-                anyhow_error_and_log(format!("networking error: {:?}", e.to_string()))
-            })?;
+            let bytes = bincode::serialize(&tagged_value)
+                .map_err(|e| anyhow_error_and_log(format!("networking error: {:?}", e)))?;
             let request = SendValueRequest {
                 tag: bytes,
                 value: value.clone(),
@@ -155,11 +154,8 @@ impl Networking for GrpcNetworking {
 
             match client.send_value(request).await {
                 Ok(_) => Ok(()),
-                Err(e) => Err(anyhow_error_and_log(format!(
-                    "networking error: {:?}",
-                    e.to_string()
-                )))
-                .map_err(|e| e.into()),
+                Err(e) => Err(anyhow_error_and_log(format!("networking error: {:?}", e)))
+                    .map_err(|e| e.into()),
             }
         };
 
@@ -185,22 +181,18 @@ impl Networking for GrpcNetworking {
     async fn receive(&self, sender: &Identity, _session_id: &SessionId) -> anyhow::Result<Vec<u8>> {
         if !self.message_queues.contains_key(&self.session_id) {
             return Err(anyhow_error_and_log(
-                "Did not have session id key for message storage inside receive call".to_string(),
+                "Did not have session id key for message storage inside receive call",
             ));
         }
 
         let rx = self
             .message_queues
             .get(&self.session_id)
-            .ok_or_else(|| {
-                anyhow_error_and_log("couldn't retrieve channels from store".to_string())
-            })
+            .ok_or_else(|| anyhow_error_and_log("couldn't retrieve channels from store"))
             .map(|s| {
                 s.get(sender)
                     .ok_or_else(|| {
-                        anyhow_error_and_log(
-                            "couldn't retrieve session store from message stores".to_string(),
-                        )
+                        anyhow_error_and_log("couldn't retrieve session store from message stores")
                     })
                     .map(|s| s.value().1.clone())
             })??;
@@ -237,7 +229,7 @@ impl Networking for GrpcNetworking {
                 self.owner
             );
         } else {
-            return Err(anyhow_error_and_log("Couldn't lock mutex".to_string()));
+            return Err(anyhow_error_and_log("Couldn't lock mutex"));
         }
         Ok(())
     }
@@ -250,7 +242,7 @@ impl Networking for GrpcNetworking {
         if let Ok(net_round) = self.network_round.lock() {
             Ok(*init_time + *NETWORK_TIMEOUT_LONG * (*net_round as u32))
         } else {
-            Err(anyhow_error_and_log("Couldn't lock mutex".to_string()))
+            Err(anyhow_error_and_log("Couldn't lock mutex"))
         }
     }
 
@@ -314,16 +306,12 @@ impl Gnetworking for NetworkingImpl {
                 .message_queues
                 .get(&tag.session_id)
                 .ok_or_else(|| {
-                    anyhow_error_and_log(
-                        "couldn't retrieve session store from message stores".to_string(),
-                    )
+                    anyhow_error_and_log("couldn't retrieve session store from message stores")
                 })
                 .map(|s| {
                     s.get(&tag.sender)
                         .ok_or_else(|| {
-                            anyhow_error_and_log(
-                                "couldn't retrieve channels from session store".to_string(),
-                            )
+                            anyhow_error_and_log("couldn't retrieve channels from session store")
                         })
                         .map(|s| s.value().0.clone())
                         .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))

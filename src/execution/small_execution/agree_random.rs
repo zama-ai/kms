@@ -1,11 +1,10 @@
 use crate::{
     algebra::structure_traits::Ring,
     commitment::{commit, verify, Commitment, Opening, KEY_BYTE_LEN},
-    error::error_handler::anyhow_error_and_log,
+    error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
         communication::p2p::{receive_from_parties, send_to_honest_parties},
-        runtime::party::Role,
-        runtime::session::BaseSessionHandles,
+        runtime::{party::Role, session::BaseSessionHandles},
     },
     networking::value::{AgreeRandomValue, NetworkValue},
 };
@@ -138,20 +137,20 @@ fn verify_keys_equal(
     for set in party_sets {
         let mykey = &keys[party_id - 1]
             .pop()
-            .with_context(|| "could not find my own key!")?;
+            .with_context(|| log_error_wrapper("could not find my own key!"))?;
 
         // for each party in the set, xor the received randomness s
         for p in set {
             // check values received from the other parties
             if *p != party_id {
-                let k = rcv_keys[*p - 1]
-                    .pop()
-                    .with_context(|| format!("could not find key value for party {p}!"))?;
+                let k = rcv_keys[*p - 1].pop().with_context(|| {
+                    log_error_wrapper(format!("could not find key value for party {p}!"))
+                })?;
 
                 if &k != mykey {
-                    return Err(anyhow_error_and_log(format!(
+                    return Err(anyhow_error_and_log(log_error_wrapper(format!(
                         "received a key from party {p} that does not match my own!"
-                    )));
+                    ))));
                 }
             }
         }
@@ -190,17 +189,17 @@ fn verify_and_xor_keys(
                     &mut s,
                     &keys_opens[*p - 1]
                         .pop()
-                        .with_context(|| "could not find my own key!")?
+                        .with_context(|| log_error_wrapper("could not find my own key!"))?
                         .0
                          .0,
                 );
             } else {
-                let ko = rcv_keys_opens[*p - 1]
-                    .pop()
-                    .with_context(|| format!("could not find KeyOpenValue for party {p}!"))?;
-                let com = rcv_coms[*p - 1]
-                    .pop()
-                    .with_context(|| format!("could not find CommitmentValue for party {p}!"))?;
+                let ko = rcv_keys_opens[*p - 1].pop().with_context(|| {
+                    log_error_wrapper(format!("could not find KeyOpenValue for party {p}!"))
+                })?;
+                let com = rcv_coms[*p - 1].pop().with_context(|| {
+                    log_error_wrapper(format!("could not find CommitmentValue for party {p}!"))
+                })?;
 
                 // check that randomnes was properly committed to in the first round
                 if !verify(&ko.0 .0, &com, &ko.1) {

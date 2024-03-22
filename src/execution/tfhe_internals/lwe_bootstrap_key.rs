@@ -183,7 +183,7 @@ where
                         });
                     *c = m
                     } else {
-                        return Err(anyhow_error_and_log("zip error".to_string()));
+                        return Err(anyhow_error_and_log("zip error"));
                     }
                 }
 
@@ -205,7 +205,7 @@ where
                         });
                     *c = m
                     } else {
-                        return Err(anyhow_error_and_log("zip error".to_string()));
+                        return Err(anyhow_error_and_log("zip error"));
                     }
                 }
                 glwe_index += 1;

@@ -72,9 +72,7 @@ impl PreprocessingOrchestrator<ResiduePoly64> {
         params: DKGParams,
     ) -> anyhow::Result<Self> {
         if let DKGParams::WithSnS(_) = params {
-            return Err(anyhow_error_and_log(
-                "Cant have SnS with ResiduePoly64".to_string(),
-            ));
+            return Err(anyhow_error_and_log("Cant have SnS with ResiduePoly64"));
         }
 
         Ok(Self {
@@ -101,7 +99,7 @@ impl PreprocessingOrchestrator<ResiduePoly128> {
     ) -> anyhow::Result<Self> {
         if let DKGParams::WithoutSnS(_) = params {
             return Err(anyhow_error_and_log(
-                "Should not have no SNS with ResiduePoly128".to_string(),
+                "Should not have no SNS with ResiduePoly128",
             ));
         }
 
@@ -158,9 +156,7 @@ where
         let mut basic_sessions = (0..num_basic_sessions)
             .map(|_| {
                 sessions.pop().ok_or_else(|| {
-                    anyhow_error_and_log(
-                        "Fail to retrieve sessions for basic preprocessing".to_string(),
-                    )
+                    anyhow_error_and_log("Fail to retrieve sessions for basic preprocessing")
                 })
             })
             .try_collect()?;
@@ -203,28 +199,26 @@ where
         });
 
         let mut res_sessions = Vec::new();
-        res_sessions.append(&mut basic_orchestrator_thread.join().map_err(|_| {
-            anyhow_error_and_log("Error joining on basic orchestrator thread".to_string())
-        })??);
-        res_sessions.append(&mut bit_orchestrator_thread.join().map_err(|_| {
-            anyhow_error_and_log("Error joining on bit orchestrator thread".to_string())
-        })??);
+        res_sessions.append(
+            &mut basic_orchestrator_thread.join().map_err(|_| {
+                anyhow_error_and_log("Error joining on basic orchestrator thread")
+            })??,
+        );
+        res_sessions.append(
+            &mut bit_orchestrator_thread
+                .join()
+                .map_err(|_| anyhow_error_and_log("Error joining on bit orchestrator thread"))??,
+        );
 
         {
             let mut base_preproc = self.base_preproc.try_write().map_err(|_| {
-                anyhow_error_and_log(
-                    "Error locking the base preprocessing store for write".to_string(),
-                )
+                anyhow_error_and_log("Error locking the base preprocessing store for write")
             })?;
             let mut bit_preproc = self.bit_preproc.try_write().map_err(|_| {
-                anyhow_error_and_log(
-                    "Error locking the bit preprocessing store for write ".to_string(),
-                )
+                anyhow_error_and_log("Error locking the bit preprocessing store for write ")
             })?;
             let mut dkg_preproc = self.dkg_preproc.try_write().map_err(|_| {
-                anyhow_error_and_log(
-                    "Error locking the dkg preprocessing store for write ".to_string(),
-                )
+                anyhow_error_and_log("Error locking the dkg preprocessing store for write ")
             })?;
 
             dkg_preproc.fill_from_triples_and_bit_preproc(
@@ -233,8 +227,7 @@ where
                     .first()
                     .ok_or_else(|| {
                         anyhow_error_and_log(
-                            "Error retrieving the first session to fill dkg preprocessing"
-                                .to_string(),
+                            "Error retrieving the first session to fill dkg preprocessing",
                         )
                     })?
                     .to_base_session(),
@@ -244,12 +237,10 @@ where
         }
 
         let dkg_preproc_return = Arc::into_inner(self.dkg_preproc).ok_or_else(|| {
-            anyhow_error_and_log(
-                "Error getting hold of dkg preprocessing store inside the Arc".to_string(),
-            )
+            anyhow_error_and_log("Error getting hold of dkg preprocessing store inside the Arc")
         })?;
         let dkg_preproc_return = dkg_preproc_return.into_inner().map_err(|_| {
-            anyhow_error_and_log("Error consuming dkg preprocessing inside the Lock".to_string())
+            anyhow_error_and_log("Error consuming dkg preprocessing inside the Lock")
         })?;
         Ok((res_sessions, dkg_preproc_return))
     }
@@ -289,9 +280,7 @@ where
         let mut basic_sessions = (0..num_basic_sessions)
             .map(|_| {
                 sessions.pop().ok_or_else(|| {
-                    anyhow_error_and_log(
-                        "Fail to retrieve sessions for basic preprocessing".to_string(),
-                    )
+                    anyhow_error_and_log("Fail to retrieve sessions for basic preprocessing")
                 })
             })
             .try_collect()?;
@@ -334,28 +323,26 @@ where
         });
 
         let mut res_sessions = Vec::new();
-        res_sessions.append(&mut basic_orchestrator_thread.join().map_err(|_| {
-            anyhow_error_and_log("Error joining on basic orchestrator thread".to_string())
-        })??);
-        res_sessions.append(&mut bit_orchestrator_thread.join().map_err(|_| {
-            anyhow_error_and_log("Error joining on bit orchestrator thread".to_string())
-        })??);
+        res_sessions.append(
+            &mut basic_orchestrator_thread.join().map_err(|_| {
+                anyhow_error_and_log("Error joining on basic orchestrator thread")
+            })??,
+        );
+        res_sessions.append(
+            &mut bit_orchestrator_thread
+                .join()
+                .map_err(|_| anyhow_error_and_log("Error joining on bit orchestrator thread"))??,
+        );
 
         {
             let mut base_preproc = self.base_preproc.try_write().map_err(|_| {
-                anyhow_error_and_log(
-                    "Error locking the base preprocessing store for write".to_string(),
-                )
+                anyhow_error_and_log("Error locking the base preprocessing store for write")
             })?;
             let mut bit_preproc = self.bit_preproc.try_write().map_err(|_| {
-                anyhow_error_and_log(
-                    "Error locking the bit preprocessing store for write ".to_string(),
-                )
+                anyhow_error_and_log("Error locking the bit preprocessing store for write ")
             })?;
             let mut dkg_preproc = self.dkg_preproc.try_write().map_err(|_| {
-                anyhow_error_and_log(
-                    "Error locking the dkg preprocessing store for write ".to_string(),
-                )
+                anyhow_error_and_log("Error locking the dkg preprocessing store for write ")
             })?;
 
             dkg_preproc.fill_from_triples_and_bit_preproc(
@@ -364,8 +351,7 @@ where
                     .first()
                     .ok_or_else(|| {
                         anyhow_error_and_log(
-                            "Error retrieving the first session to fill dkg preprocessing"
-                                .to_string(),
+                            "Error retrieving the first session to fill dkg preprocessing",
                         )
                     })?
                     .to_base_session(),
@@ -375,12 +361,10 @@ where
         }
 
         let dkg_preproc_return = Arc::into_inner(self.dkg_preproc).ok_or_else(|| {
-            anyhow_error_and_log(
-                "Error getting hold of dkg preprocessing store inside the Arc".to_string(),
-            )
+            anyhow_error_and_log("Error getting hold of dkg preprocessing store inside the Arc")
         })?;
         let dkg_preproc_return = dkg_preproc_return.into_inner().map_err(|_| {
-            anyhow_error_and_log("Error consuming dkg preprocessing inside the Lock".to_string())
+            anyhow_error_and_log("Error consuming dkg preprocessing inside the Lock")
         })?;
 
         Ok((res_sessions, dkg_preproc_return))
@@ -511,9 +495,7 @@ where
             Some(_) => {
                 //push, and try pushing whats in map
                 (*self.base_preproc.try_write().map_err(|_| {
-                    anyhow_error_and_log(
-                        "Error locking the base preprocessing store for write ".to_string(),
-                    )
+                    anyhow_error_and_log("Error locking the base preprocessing store for write ")
                 })?)
                 .append_triples(data);
                 let results_keys = results.keys().cloned().collect_vec();
@@ -522,8 +504,7 @@ where
                         Some(_) => {
                             (*self.base_preproc.try_write().map_err(|_| {
                                 anyhow_error_and_log(
-                                    "Error locking the base preprocessing store for write "
-                                        .to_string(),
+                                    "Error locking the base preprocessing store for write ",
                                 )
                             })?)
                             .append_triples(
@@ -531,8 +512,7 @@ where
                                     .remove_entry(&sid)
                                     .ok_or_else(|| {
                                         anyhow_error_and_log(
-                                            "Error trying to access an entry that should be here"
-                                                .to_string(),
+                                            "Error trying to access an entry that should be here",
                                         )
                                     })?
                                     .1,
@@ -561,9 +541,7 @@ where
             Some(_) => {
                 //push, and try pushing whats in map
                 (*self.base_preproc.try_write().map_err(|_| {
-                    anyhow_error_and_log(
-                        "Error locking the base preprocessing store for write ".to_string(),
-                    )
+                    anyhow_error_and_log("Error locking the base preprocessing store for write ")
                 })?)
                 .append_randoms(data);
                 let results_keys = results.keys().cloned().collect_vec();
@@ -572,8 +550,7 @@ where
                         Some(_) => {
                             (*self.base_preproc.try_write().map_err(|_| {
                                 anyhow_error_and_log(
-                                    "Error locking the base preprocessing store for write "
-                                        .to_string(),
+                                    "Error locking the base preprocessing store for write ",
                                 )
                             })?)
                             .append_randoms(
@@ -581,8 +558,7 @@ where
                                     .remove_entry(&sid)
                                     .ok_or_else(|| {
                                         anyhow_error_and_log(
-                                            "Error trying to access an entry that should be here"
-                                                .to_string(),
+                                            "Error trying to access an entry that should be here",
                                         )
                                     })?
                                     .1,
@@ -611,9 +587,7 @@ where
             Some(_) => {
                 //push, and try pushing whats in map
                 (*self.bit_preproc.try_write().map_err(|_| {
-                    anyhow_error_and_log(
-                        "Error locking the bit preprocessing store for write ".to_string(),
-                    )
+                    anyhow_error_and_log("Error locking the bit preprocessing store for write ")
                 })?)
                 .append_bits(data);
                 let results_keys = results.keys().cloned().collect_vec();
@@ -622,8 +596,7 @@ where
                         Some(_) => {
                             (*self.bit_preproc.try_write().map_err(|_| {
                                 anyhow_error_and_log(
-                                    "Error locking the bit preprocessing store for write "
-                                        .to_string(),
+                                    "Error locking the bit preprocessing store for write ",
                                 )
                             })?)
                             .append_bits(
@@ -631,8 +604,7 @@ where
                                     .remove_entry(&sid)
                                     .ok_or_else(|| {
                                         anyhow_error_and_log(
-                                            "Error trying to access an entry that should be here"
-                                                .to_string(),
+                                            "Error trying to access an entry that should be here",
                                         )
                                     })?
                                     .1,
@@ -685,9 +657,9 @@ where
             let mut bit_gen_tasks = JoinSet::new();
             for _ in 0..num_sessions {
                 basic_gen_tasks.spawn(task_basic_gen(
-                    sessions.pop().ok_or_else(|| {
-                        anyhow_error_and_log("Error trying to pop sessions".to_string())
-                    })?,
+                    sessions
+                        .pop()
+                        .ok_or_else(|| anyhow_error_and_log("Error trying to pop sessions"))?,
                     tracing::Span::current(),
                 ));
             }
@@ -741,7 +713,7 @@ where
                 let mut bit_results: BTreeMap<SessionId, Vec<Share<R>>> = BTreeMap::new();
                 while let Some(task_output) = bit_gen_tasks.join_next().await {
                     let (new_session, bits) =
-                        task_output.map_err(|_| anyhow_error_and_log("error".to_string()))??;
+                        task_output.map_err(|_| anyhow_error_and_log("error"))??;
                     let sid = new_session.session_id();
                     self.process_bits(bits, sid, &mut next_sid_to_push, &mut bit_results)?;
 

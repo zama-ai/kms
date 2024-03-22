@@ -72,7 +72,7 @@ where
                 encryption_type,
             )?;
         } else {
-            return Err(anyhow_error_and_log("zip error".to_string()));
+            return Err(anyhow_error_and_log("zip error"));
         }
     }
     Ok(())

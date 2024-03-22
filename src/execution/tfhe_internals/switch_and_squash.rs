@@ -178,7 +178,7 @@ impl SwitchAndSquashKey {
     {
         if !input.ciphertext_modulus().is_native_modulus() {
             return Err(anyhow_error_and_log(
-                "Ciphertext modulus is not native, which is the only kind supported".to_string(),
+                "Ciphertext modulus is not native, which is the only kind supported",
             ));
         }
 
@@ -190,7 +190,7 @@ impl SwitchAndSquashKey {
         let modulus_up: CiphertextModulus<OutputScalar> = input
             .ciphertext_modulus()
             .try_to()
-            .map_err(|_| anyhow_error_and_log("Could not parse ciphertext modulus".to_string()))?;
+            .map_err(|_| anyhow_error_and_log("Could not parse ciphertext modulus"))?;
 
         lwe_ciphertext_cleartext_mul_assign(
             output,

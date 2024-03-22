@@ -62,7 +62,7 @@ impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, 
     ) -> anyhow::Result<HashMap<Role, DoubleShares<Z>>> {
         if secrets.is_empty() {
             return Err(anyhow_error_and_log(
-                "Passed an empty secrets vector to LocalDoubleShare".to_string(),
+                "Passed an empty secrets vector to LocalDoubleShare",
             ));
         }
         //Keeps executing til verification passes
@@ -277,12 +277,10 @@ async fn verify_sharing<
             &mut result_map_2t,
         )?;
 
-        let result_map_t = result_map_t.ok_or_else(|| {
-            anyhow_error_and_log("Can not unwrap result_map_t I created.".to_string())
-        })?;
-        let result_map_2t = result_map_2t.ok_or_else(|| {
-            anyhow_error_and_log("Can not unwrap result_map_2t I created.".to_string())
-        })?;
+        let result_map_t = result_map_t
+            .ok_or_else(|| anyhow_error_and_log("Can not unwrap result_map_t I created."))?;
+        let result_map_2t = result_map_2t
+            .ok_or_else(|| anyhow_error_and_log("Can not unwrap result_map_2t I created."))?;
 
         //Merge newly_corrupt into a single set
         bcast_corrupts.extend(newly_corrupt);

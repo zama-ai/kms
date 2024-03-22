@@ -133,7 +133,7 @@ impl<Z> ResiduePoly<Z> {
         }
         Ok(ResiduePoly {
             coefs: coefs.try_into().map_err(|_| {
-                anyhow_error_and_log("Error converting coefficient vector into Z64Poly".to_string())
+                anyhow_error_and_log("Error converting coefficient vector into Z64Poly")
             })?,
         })
     }
@@ -792,7 +792,7 @@ where
     /// invert and lift an Integer to the large Ring
     fn invert(self) -> anyhow::Result<Self> {
         if self == Self::ZERO {
-            return Err(anyhow_error_and_log("Cannot invert 0".to_string()));
+            return Err(anyhow_error_and_log("Cannot invert 0"));
         }
 
         let alpha_k = self.bit_compose(0);
@@ -896,7 +896,7 @@ impl<Z: BaseRing> Solve for ResiduePoly<Z> {
         // Validate the result, i.e. x+x^2 = input
         if v != &(x + x * x) {
             return Err(anyhow_error_and_log(
-                "The outer Newton Raphson inversion computation in solve() failed".to_string(),
+                "The outer Newton Raphson inversion computation in solve() failed",
             ));
         }
         Ok(x)
