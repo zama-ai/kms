@@ -13,15 +13,14 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v3
 
-    - name: Install Rust
-      uses: actions-rs/toolchain@v1
+    - name: Set up Rust.
+      uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
-        toolchain: stable
-        override: true
-    
+        toolchain: nightly
+
     - name: Install Protoc
       uses: arduino/setup-protoc@v3
-    
+
     - name: Setup usage of private repo
       run: git config --global url."https://${{ secrets.CONCRETE_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
 
