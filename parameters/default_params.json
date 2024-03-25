@@ -1,14 +1,24 @@
 {
-    "input_cipher_parameters": {
+    "ciphertext_parameters": {
         "lwe_dimension": 1024,
         "glwe_dimension": 1,
         "polynomial_size": 2048,
-        "lwe_modular_std_dev": 4.99029381172945e-8,
-        "glwe_modular_std_dev": 3.15283466779972e-16,
+        "lwe_noise_distribution": {
+            "TUniform": {
+                "bound_log2": 41,
+                "_phantom": null
+            }
+        },
+        "glwe_noise_distribution": {
+            "TUniform": {
+                "bound_log2": 14,
+                "_phantom": null
+            }
+        },
         "pbs_base_log": 21,
         "pbs_level": 1,
-        "ks_base_log": 8,
-        "ks_level": 4,
+        "ks_base_log": 6,
+        "ks_level": 3,
         "message_modulus": 4,
         "carry_modulus": 4,
         "ciphertext_modulus": {
@@ -17,22 +27,18 @@
         },
         "encryption_key_choice": "Small"
     },
-    "output_cipher_parameters": {
-        "lwe_dimension": 3524,
+    "sns_parameters": {
         "glwe_dimension": 2,
+        "glwe_noise_distribution": {
+            "bound_log2": 24,
+            "_phantom": null
+        },
         "polynomial_size": 2048,
-        "lwe_modular_std_dev": 4.78655158300599e-28,
-        "glwe_modular_std_dev": 1.25858184417075e-32,
-        "pbs_base_log": 33,
-        "pbs_level": 2,
-        "ks_base_log": 30,
-        "ks_level": 2,
-        "message_modulus": 4,
-        "carry_modulus": 4,
+        "pbs_base_log": 24,
+        "pbs_level": 3,
         "ciphertext_modulus": {
             "modulus": 0,
             "scalar_bits": 128
-        },
-        "encryption_key_choice": "Small"
+        }
     }
 }

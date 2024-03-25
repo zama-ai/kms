@@ -1,5 +1,4 @@
 use super::rpc_types::{BaseKms, DecryptionRequestSerializable, ReencryptionRequestSigPayload};
-use crate::anyhow_error_and_warn_log;
 use crate::core::der_types::{PublicEncKey, PublicSigKey};
 use crate::core::kms_core::{
     gen_centralized_crs, generate_fhe_keys, BaseKmsStruct, CrsHashMap, FheKeys, FhePublicKeySet,
@@ -13,11 +12,13 @@ use crate::kms::{
     ReencryptionRequest, ReencryptionResponse,
 };
 use crate::rpc::rpc_types::{DecryptionResponseSigPayload, Kms};
-use crate::setup_rpc::{CRS_PATH_PREFIX, DEFAULT_PARAM_PATH, KEY_PATH_PREFIX, TEST_PARAM_PATH};
+use crate::setup_rpc::{DEFAULT_PARAM_PATH, KEY_PATH_PREFIX, TEST_PARAM_PATH};
+use crate::{anyhow_error_and_warn_log, setup_rpc::CRS_PATH_PREFIX};
 use aes_prng::AesRng;
-use distributed_decryption::execution::zk::ceremony::PublicParameter;
-use distributed_decryption::file_handling::write_element;
-use distributed_decryption::lwe::ThresholdLWEParameters;
+use distributed_decryption::{
+    execution::{tfhe_internals::parameters::NoiseFloodParameters, zk::ceremony::PublicParameter},
+    file_handling::write_element,
+};
 use rand::SeedableRng;
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
@@ -355,13 +356,13 @@ fn get_all_key_uris(
     Ok(res)
 }
 
-fn retrieve_paramters(param_choice: i32) -> anyhow::Result<ThresholdLWEParameters> {
+fn retrieve_paramters(param_choice: i32) -> anyhow::Result<NoiseFloodParameters> {
     let param_choice = ParamChoice::try_from(param_choice)?;
     let param_path = match param_choice {
         ParamChoice::Test => TEST_PARAM_PATH,
         ParamChoice::Default => DEFAULT_PARAM_PATH,
     };
-    let params: ThresholdLWEParameters = read_as_json(param_path.to_owned())?;
+    let params: NoiseFloodParameters = read_as_json(param_path.to_owned())?;
     Ok(params)
 }
 

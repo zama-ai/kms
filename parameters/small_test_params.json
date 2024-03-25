@@ -1,10 +1,20 @@
 {
-    "input_cipher_parameters": {
+    "ciphertext_parameters": {
         "lwe_dimension": 32,
         "glwe_dimension": 1,
         "polynomial_size": 64,
-        "lwe_modular_std_dev": 1e-37,
-        "glwe_modular_std_dev": 1e-37,
+        "lwe_noise_distribution": {
+            "TUniform": {
+                "bound_log2": 1,
+                "_phantom": null
+            }
+        },
+        "glwe_noise_distribution": {
+            "TUniform": {
+                "bound_log2": 1,
+                "_phantom": null
+            }
+        },
         "pbs_base_log": 21,
         "pbs_level": 1,
         "ks_base_log": 8,
@@ -17,22 +27,18 @@
         },
         "encryption_key_choice": "Small"
     },
-    "output_cipher_parameters": {
-        "lwe_dimension": 96,
+    "sns_parameters": {
         "glwe_dimension": 2,
+        "glwe_noise_distribution": {
+            "bound_log2": 1,
+            "_phantom": null
+        },
         "polynomial_size": 256,
-        "lwe_modular_std_dev": 1e-37,
-        "glwe_modular_std_dev": 1e-37,
         "pbs_base_log": 33,
         "pbs_level": 2,
-        "ks_base_log": 30,
-        "ks_level": 2,
-        "message_modulus": 4,
-        "carry_modulus": 4,
         "ciphertext_modulus": {
             "modulus": 0,
             "scalar_bits": 128
-        },
-        "encryption_key_choice": "Small"
+        }
     }
 }

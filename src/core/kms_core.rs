@@ -10,9 +10,17 @@ use crate::rpc::kms_rpc::handle_potential_err;
 use crate::rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, SigncryptionPayload};
 use crate::setup_rpc::{FhePrivateKey, FhePublicKey, KEY_HANDLE};
 use aes_prng::AesRng;
-use distributed_decryption::error::error_handler::anyhow_error_and_log;
-use distributed_decryption::execution::zk::ceremony::{make_proof_deterministic, PublicParameter};
-use distributed_decryption::lwe::{ConversionKey, KeySet, LargeClientKey, ThresholdLWEParameters};
+use distributed_decryption::{
+    error::error_handler::anyhow_error_and_log,
+    execution::{
+        tfhe_internals::{
+            parameters::NoiseFloodParameters,
+            switch_and_squash::SwitchAndSquashKey,
+            test_feature::{KeySet, SnsClientKey},
+        },
+        zk::ceremony::{make_proof_deterministic, PublicParameter},
+    },
+};
 use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -34,7 +42,7 @@ pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSi
 }
 
 pub fn gen_default_kms_keys<R: CryptoRng + RngCore>(
-    params: ThresholdLWEParameters,
+    params: NoiseFloodParameters,
     rng: &mut R,
     key_handle: Option<String>,
 ) -> SoftwareKmsKeys {
@@ -48,8 +56,8 @@ pub fn gen_default_kms_keys<R: CryptoRng + RngCore>(
     }
 }
 
-pub fn generate_fhe_keys(params: ThresholdLWEParameters) -> FheKeys {
-    let pbs_params: ClassicPBSParameters = params.input_cipher_parameters.into();
+pub fn generate_fhe_keys(params: NoiseFloodParameters) -> FheKeys {
+    let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
     let config = ConfigBuilder::with_custom_parameters(pbs_params, None);
     let (client_key, server_key) = generate_keys(config);
     let public_key = FhePublicKey::new(&client_key);
@@ -64,10 +72,10 @@ pub fn generate_fhe_keys(params: ThresholdLWEParameters) -> FheKeys {
 
 /// Compute an estimate for the witness dim from given LWE params. This might come out of tfhe-rs in
 /// the future.
-fn compute_witness_dimension(params: &ThresholdLWEParameters) -> usize {
-    let d = params.input_cipher_parameters.lwe_dimension.0;
+fn compute_witness_dimension(params: &NoiseFloodParameters) -> usize {
+    let d = params.ciphertext_parameters.lwe_dimension.0;
     let k = 32_usize; // this is an upper estimate for a packed 64 bit message and in line with the example in https://eprint.iacr.org/2023/800.pdf p.68
-    let t = params.input_cipher_parameters.message_modulus.0;
+    let t = params.ciphertext_parameters.message_modulus.0;
     let b = 1_u64 << 42; // this is an estimate from https://eprint.iacr.org/2023/800.pdf p.68 and will come from the parameters in the future
 
     // dimension computation taken from https://eprint.iacr.org/2023/800.pdf p.68. Will come from the parameters in the future.
@@ -79,7 +87,7 @@ fn compute_witness_dimension(params: &ThresholdLWEParameters) -> usize {
 
 /// compute the CRS in the centralized KMS.
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
-    params: &ThresholdLWEParameters,
+    params: &NoiseFloodParameters,
     rng: &mut R,
 ) -> PublicParameter {
     let witness_dim = compute_witness_dimension(params);
@@ -203,18 +211,18 @@ pub struct SoftwareKms {
 pub struct FheKeys {
     pub public_key: Option<FhePublicKey>,
     pub server_key: Option<tfhe::ServerKey>,
-    pub conversion_key: Option<ConversionKey>,
-    pub client_output_key: Option<LargeClientKey>,
+    pub conversion_key: Option<SwitchAndSquashKey>,
+    pub client_output_key: Option<SnsClientKey>,
     // TODO should contain an optional FhePublicKeySet instead
     pub client_key: FhePrivateKey,
 }
 impl From<KeySet> for FheKeys {
     fn from(value: KeySet) -> Self {
         FheKeys {
-            public_key: Some(value.public_key),
-            server_key: Some(value.server_key),
-            conversion_key: Some(value.conversion_key),
-            client_output_key: Some(value.client_output_key),
+            public_key: Some(value.public_keys.public_key),
+            server_key: Some(value.public_keys.server_key),
+            conversion_key: value.public_keys.sns_key,
+            client_output_key: Some(value.sns_secret_key),
             client_key: value.client_key,
         }
     }
@@ -224,7 +232,7 @@ impl From<KeySet> for FheKeys {
 pub struct FhePublicKeySet {
     pub public_key: FhePublicKey,
     pub server_key: tfhe::ServerKey,
-    pub conversion_key: Option<ConversionKey>,
+    pub conversion_key: Option<SwitchAndSquashKey>,
 }
 impl TryFrom<FheKeys> for FhePublicKeySet {
     type Error = anyhow::Error;
@@ -450,7 +458,7 @@ impl SoftwareKms {
         sig_key: PrivateSigKey,
         crs_store: Option<CrsHashMap>,
     ) -> Self {
-        // use crs_store passed in if it exists, otherwise create a new one
+        // Use crs_store passed in if it exists, otherwise create a new one
         let cs = match crs_store {
             Some(crs_store) => crs_store,
             None => CrsHashMap::new(),
@@ -510,7 +518,7 @@ mod tests {
         DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
     };
     use aes_prng::AesRng;
-    use distributed_decryption::lwe::ThresholdLWEParameters;
+    use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use rand::{RngCore, SeedableRng};
     use serial_test::serial;
     use tfhe::shortint::ClassicPBSParameters;
@@ -773,8 +781,8 @@ mod tests {
         )
     }
 
-    fn set_wrong_fhe_key(inner: &SoftwareKms, key_handle: &str, params: ThresholdLWEParameters) {
-        let pbs_params: ClassicPBSParameters = params.input_cipher_parameters.into();
+    fn set_wrong_fhe_key(inner: &SoftwareKms, key_handle: &str, params: NoiseFloodParameters) {
+        let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
         let config = ConfigBuilder::with_custom_parameters(pbs_params, None);
         let wrong_client_key = tfhe::ClientKey::generate(config);
         let mut fhe_keys = inner.fhe_keys.lock().unwrap();

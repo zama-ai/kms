@@ -1,8 +1,10 @@
 use aes_prng::AesRng;
 use anyhow::anyhow;
 use core::kms_core::{gen_sig_keys, CrsHashMap, SoftwareKmsKeys};
-use distributed_decryption::lwe::{gen_key_set, ThresholdLWEParameters};
-use file_handling::{read_as_json, write_element};
+use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+use distributed_decryption::execution::tfhe_internals::test_feature::gen_key_set;
+use file_handling::read_as_json;
+use file_handling::write_element;
 use rand::SeedableRng;
 use setup_rpc::{DEFAULT_CRS_HANDLE, KEY_HANDLE};
 use std::collections::HashMap;
@@ -45,7 +47,7 @@ pub fn anyhow_error_and_warn_log(msg: String) -> anyhow::Error {
 
 pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
     let mut rng = AesRng::from_entropy();
-    let params: ThresholdLWEParameters = read_as_json(DEFAULT_PARAM_PATH.to_owned()).unwrap();
+    let params: NoiseFloodParameters = read_as_json(DEFAULT_PARAM_PATH.to_owned()).unwrap();
     let key_set = gen_key_set(params, &mut rng);
     let (server_pk, server_sk) = gen_sig_keys(&mut rng);
 
@@ -55,9 +57,17 @@ pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
         path_string.push('/');
     }
 
-    write_element(format!("{path_string}pks.bin"), &key_set.public_key).unwrap();
+    write_element(
+        format!("{path_string}pks.bin"),
+        &key_set.public_keys.public_key,
+    )
+    .unwrap();
     write_element(format!("{path_string}sks.bin"), &key_set.client_key).unwrap();
-    write_element(format!("{path_string}cks.bin"), &key_set.server_key).unwrap();
+    write_element(
+        format!("{path_string}cks.bin"),
+        &key_set.public_keys.server_key,
+    )
+    .unwrap();
 
     let software_kms_keys = SoftwareKmsKeys {
         fhe_keys: HashMap::from([(KEY_HANDLE.to_string(), key_set.into())]),
@@ -75,7 +85,7 @@ pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
 
 pub fn write_default_crs_store(path: &str) -> CrsHashMap {
     let mut rng = AesRng::from_entropy();
-    let params: ThresholdLWEParameters = read_as_json(DEFAULT_PARAM_PATH.to_owned()).unwrap();
+    let params: NoiseFloodParameters = read_as_json(DEFAULT_PARAM_PATH.to_owned()).unwrap();
 
     // ensure that path ends with a '/' to avoid problems with file handling in the rest of this fn
     let mut path_string = path.to_string();

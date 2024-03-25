@@ -1,14 +1,19 @@
 use aes_prng::AesRng;
-use distributed_decryption::algebra::base_ring::Z128;
-use distributed_decryption::algebra::residue_poly::ResiduePoly;
-use distributed_decryption::error::error_handler::anyhow_error_and_log;
-use distributed_decryption::execution::endpoints::decryption::reconstruct_message;
-use distributed_decryption::execution::runtime::party::Role;
-use distributed_decryption::execution::sharing::open::{
-    fill_indexed_shares, reconstruct_w_errors_sync,
+use distributed_decryption::execution::sharing::shamir::{fill_indexed_shares, ShamirSharings};
+use distributed_decryption::execution::{
+    endpoints::reconstruct::reconstruct_message, runtime::party::Role,
 };
-use distributed_decryption::execution::sharing::shamir::ShamirSharings;
-use distributed_decryption::lwe::ThresholdLWEParameters;
+use distributed_decryption::{
+    algebra::base_ring::Z128, execution::tfhe_internals::parameters::NoiseFloodParameters,
+};
+use distributed_decryption::{
+    algebra::residue_poly::ResiduePoly,
+    execution::tfhe_internals::parameters::AugmentedCiphertextParameters,
+};
+use distributed_decryption::{
+    error::error_handler::anyhow_error_and_log,
+    execution::sharing::shamir::reconstruct_w_errors_sync,
+};
 use itertools::Itertools;
 use kms_lib::core::der_types::{
     PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
@@ -141,7 +146,7 @@ pub struct Client {
     client_pk: PublicSigKey,
     client_sk: PrivateSigKey,
     shares_needed: u32,
-    params: ThresholdLWEParameters,
+    params: NoiseFloodParameters,
 }
 
 impl Client {
@@ -150,7 +155,7 @@ impl Client {
         client_pk: PublicSigKey,
         client_sk: PrivateSigKey,
         shares_needed: u32,
-        params: ThresholdLWEParameters,
+        params: NoiseFloodParameters,
     ) -> Self {
         Client {
             rng: Box::new(AesRng::from_entropy()),
@@ -598,7 +603,8 @@ impl Client {
                 ));
             }
         }
-        let recon_blocks = reconstruct_message(Some(decrypted_blocks), &self.params)?;
+        let recon_blocks =
+            reconstruct_message(Some(decrypted_blocks), &self.params.ciphertext_parameters)?;
         Ok(Some(decrypted_blocks_to_raw_decryption(
             &self.params,
             req_payload.fhe_type(),
@@ -719,25 +725,25 @@ impl Client {
 /// Calculates the number of blocks needed to encode a message of the given FHE
 /// type, based on the usable message modulus log from the
 /// parameters. Rounds up to ensure enough blocks.
-pub fn num_blocks(fhe_type: FheType, params: ThresholdLWEParameters) -> usize {
+pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
     match fhe_type {
         FheType::Bool => {
-            8_usize.div_ceil(params.output_cipher_parameters.message_modulus_log() as usize)
+            8_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
         }
         FheType::Euint4 => {
-            8_usize.div_ceil(params.output_cipher_parameters.message_modulus_log() as usize)
+            8_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
         }
         FheType::Euint8 => {
-            8_usize.div_ceil(params.output_cipher_parameters.message_modulus_log() as usize)
+            8_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
         }
         FheType::Euint16 => {
-            16_usize.div_ceil(params.output_cipher_parameters.message_modulus_log() as usize)
+            16_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
         }
         FheType::Euint32 => {
-            32_usize.div_ceil(params.output_cipher_parameters.message_modulus_log() as usize)
+            32_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
         }
         FheType::Euint64 => {
-            64_usize.div_ceil(params.output_cipher_parameters.message_modulus_log() as usize)
+            64_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
         }
     }
 }
@@ -745,7 +751,7 @@ pub fn num_blocks(fhe_type: FheType, params: ThresholdLWEParameters) -> usize {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::{num_blocks, Client};
-    use distributed_decryption::lwe::ThresholdLWEParameters;
+    use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use kms_lib::core::kms_core::{CrsHashMap, SignedCRS, SignedFhePublicKeySet, SoftwareKmsKeys};
     use kms_lib::file_handling::{read_as_json, read_element, read_element_async};
     use kms_lib::kms::kms_endpoint_client::KmsEndpointClient;
@@ -898,7 +904,7 @@ pub(crate) mod tests {
             keys.client_pk,
             keys.client_sk,
             (THRESHOLD as u32) + 1,
-            keys.params,
+            keys.params.to_noiseflood_parameters(),
         );
 
         (kms_servers, kms_clients, internal_client)
@@ -1308,7 +1314,7 @@ pub(crate) mod tests {
 
     #[test]
     fn num_blocks_sunshine() {
-        let params: ThresholdLWEParameters = read_as_json(TEST_PARAM_PATH.to_owned()).unwrap();
+        let params: NoiseFloodParameters = read_as_json(TEST_PARAM_PATH.to_owned()).unwrap();
         let cur_type = FheType::Bool;
         // 2 bits per block, using Euint8 as internal representation
         assert_eq!(num_blocks(cur_type, params), 4);

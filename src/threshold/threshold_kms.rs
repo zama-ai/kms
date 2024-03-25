@@ -1,4 +1,3 @@
-use crate::anyhow_error_and_log;
 use crate::core::der_types::{self, PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::core::kms_core::BaseKmsStruct;
 use crate::core::signcryption::signcrypt;
@@ -16,24 +15,44 @@ use crate::rpc::rpc_types::{
     BaseKms, DecryptionResponseSigPayload, Plaintext, RawDecryption, SigncryptionPayload,
 };
 use crate::setup_rpc::KEY_HANDLE;
+use crate::{
+    anyhow_error_and_log,
+    setup_rpc::{COMPRESSED, SEC_PAR},
+};
 use aes_prng::AesRng;
-use distributed_decryption::algebra::base_ring::{Z128, Z64};
-use distributed_decryption::algebra::residue_poly::ResiduePoly128;
-use distributed_decryption::choreography::NetworkingStrategy;
-use distributed_decryption::computation::SessionId;
-use distributed_decryption::execution::endpoints::decryption::{
-    decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, Small,
-};
-use distributed_decryption::execution::runtime::party::{Identity, Role, RoleAssignment};
 use distributed_decryption::execution::runtime::session::{
-    DecryptionMode, ParameterHandles, SessionParameters, SmallSession, SmallSessionStruct,
+    BaseSessionStruct, DecryptionMode, ParameterHandles, SessionParameters, SmallSession,
 };
-use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandomWithAbort;
-use distributed_decryption::execution::small_execution::prss::PRSSSetup;
-use distributed_decryption::lwe::{
-    combine128, Ciphertext64, ConversionKey, SecretKeyShare, ThresholdLWEParameters,
+use distributed_decryption::execution::{
+    endpoints::decryption::{
+        decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, Small,
+    },
+    tfhe_internals::parameters::DKGParamsRegular,
+};
+use distributed_decryption::execution::{
+    endpoints::keygen::PrivateKeySet, small_execution::agree_random::RealAgreeRandomWithAbort,
+};
+use distributed_decryption::execution::{
+    runtime::party::{Identity, Role, RoleAssignment},
+    tfhe_internals::switch_and_squash::SwitchAndSquashKey,
+};
+use distributed_decryption::execution::{
+    small_execution::prss::PRSSSetup, tfhe_internals::parameters::AugmentedCiphertextParameters,
 };
 use distributed_decryption::networking::grpc::GrpcNetworkingManager;
+use distributed_decryption::{
+    algebra::base_ring::{Z128, Z64},
+    execution::tfhe_internals::parameters::NoiseFloodParameters,
+};
+use distributed_decryption::{
+    algebra::residue_poly::ResiduePoly128, execution::endpoints::decryption::combine128,
+};
+use distributed_decryption::{
+    choreography::NetworkingStrategy, execution::tfhe_internals::parameters::Ciphertext64,
+};
+use distributed_decryption::{
+    computation::SessionId, execution::tfhe_internals::parameters::DKGParamsSnS,
+};
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::to_vec;
 use std::collections::HashMap;
@@ -87,11 +106,11 @@ pub async fn threshold_server_start(
 /// Helper method for combining reconstructed messages after decryption.
 // TODO is this the right place for this function? Should probably be in ddec. Related to this issue https://github.com/zama-ai/distributed-decryption/issues/352
 pub fn decrypted_blocks_to_raw_decryption(
-    params: &ThresholdLWEParameters,
+    params: &NoiseFloodParameters,
     fhe_type: FheType,
     recon_blocks: Vec<Z128>,
 ) -> anyhow::Result<Plaintext> {
-    let bits_in_block = params.output_cipher_parameters.message_modulus_log();
+    let bits_in_block = params.ciphertext_parameters.message_modulus_log();
     let res = match combine128(bits_in_block, recon_blocks) {
         Ok(res) => res,
         Err(error) => {
@@ -102,6 +121,19 @@ pub fn decrypted_blocks_to_raw_decryption(
         }
     };
     Ok(Plaintext::new(res, fhe_type))
+}
+
+/// Helper method for turning [NoiseFloodParameters] into [DKGParamsSnS] parameters
+/// using default flag and security parameter.
+pub fn noise_param_to_dkg_param(noise_params: NoiseFloodParameters) -> DKGParamsSnS {
+    DKGParamsSnS {
+        regular_params: DKGParamsRegular {
+            sec: SEC_PAR,
+            ciphertext_parameters: noise_params.ciphertext_parameters,
+            flag: COMPRESSED,
+        },
+        sns_params: noise_params.sns_parameters,
+    }
 }
 
 impl FheType {
@@ -145,17 +177,16 @@ impl FheType {
     }
 }
 
-//  TODO is not really needed or at least only needed for tests.
 #[derive(Serialize, Deserialize)]
 pub struct ThresholdKmsKeys {
-    pub params: ThresholdLWEParameters,
-    pub fhe_dec_key_share: SecretKeyShare,
-    pub conversion_key: ConversionKey,
+    pub params: DKGParamsSnS,
+    pub fhe_dec_key_share: PrivateKeySet,
+    pub conversion_key: SwitchAndSquashKey,
     pub sig_sk: PrivateSigKey,
     pub sig_pk: PublicSigKey,
 }
 pub struct ThresholdKms {
-    fhe_keys: HashMap<String, (SecretKeyShare, ConversionKey)>,
+    fhe_keys: HashMap<String, (PrivateKeySet, SwitchAndSquashKey)>,
     base_kms: BaseKmsStruct,
     threshold: u8,
     my_id: usize,
@@ -231,22 +262,21 @@ impl ThresholdKms {
         let session_id = SessionId(1);
         let networking = (self.networking_strategy)(session_id, self.role_assignments.clone());
 
-        let mut session = SmallSession::new(
-            session_id,
-            self.role_assignments.clone(),
-            networking,
+        let parameters = SessionParameters::new(
             self.threshold,
-            None,
-            own_identity,
-            Some(self.base_kms.new_rng()?),
+            session_id,
+            own_identity.clone(),
+            self.role_assignments.clone(),
         )?;
+        let mut base_session =
+            BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng()?)?;
 
         self.prss_setup = Some(
             PRSSSetup::init_with_abort::<
                 RealAgreeRandomWithAbort,
                 AesRng,
-                SmallSessionStruct<ResiduePoly128, AesRng, SessionParameters>,
-            >(&mut session)
+                BaseSessionStruct<AesRng, SessionParameters>,
+            >(&mut base_session)
             .await?,
         );
         Ok(())
@@ -387,16 +417,18 @@ impl ThresholdKms {
         let session_id = SessionId::new(&low_level_ct)?;
         let networking = (self.networking_strategy)(session_id, self.role_assignments.clone());
         let own_identity = self.own_identity()?;
-        let session = SmallSession::new(
-            session_id,
-            self.role_assignments.clone(),
-            networking,
+        let parameters = SessionParameters::new(
             self.threshold,
-            self.prss_setup.clone(),
+            session_id,
             own_identity.clone(),
-            Some(self.base_kms.new_rng()?),
+            self.role_assignments.clone(),
         )?;
-
+        let prss_setup = some_or_err(self.prss_setup.clone(), "No PRSS setup exists".to_string())?;
+        let prss_state = prss_setup.new_prss_session_state(session_id);
+        let session = SmallSession {
+            base_session: BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng()?)?,
+            prss_state,
+        };
         Ok((session, low_level_ct))
     }
 }

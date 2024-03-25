@@ -7,8 +7,13 @@ use crate::file_handling::read_as_json;
 use crate::kms::FheType;
 use crate::threshold::threshold_kms::ThresholdKmsKeys;
 use aes_prng::AesRng;
-use distributed_decryption::file_handling::{read_element, write_element};
-use distributed_decryption::lwe::{gen_key_set, keygen_all_party_shares, ThresholdLWEParameters};
+use distributed_decryption::{
+    execution::tfhe_internals::{
+        parameters::{DKGParamsRegular, DKGParamsSnS, NoiseFloodParameters},
+        test_feature::{gen_key_set, keygen_all_party_shares},
+    },
+    file_handling::{read_element, write_element},
+};
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -46,6 +51,9 @@ pub const TEST_MSG: u8 = 42;
 pub const TEST_FHE_TYPE: FheType = FheType::Euint8;
 pub const AMOUNT_PARTIES: usize = 4;
 pub const THRESHOLD: usize = 1;
+// TODO do we want to load this from a configuration?
+pub const SEC_PAR: u64 = 128;
+pub const COMPRESSED: bool = true;
 
 pub const TEST_PARAM_PATH: &str = "parameters/small_test_params.json";
 pub const TEST_THRESHOLD_KEYS_PATH: &str = "temp/test-threshold-keys";
@@ -57,9 +65,11 @@ pub const TEST_CENTRAL_CT_PATH: &str = "temp/test-central-ciphertext.bin";
 pub const TEST_CENTRAL_MULTI_CT_PATH: &str = "temp/test-central-multi-keys-ciphertext.bin";
 pub const OTHER_KEY_HANDLE: &str = "otherKeyHandle";
 
+pub const TEST_SEC_PAR: u64 = 40;
+
 #[derive(Serialize, Deserialize)]
 pub struct ThresholdTestingKeys {
-    pub params: ThresholdLWEParameters,
+    pub params: DKGParamsSnS,
     pub fhe_pub: FhePublicKey,
     pub kms_keys: ThresholdKmsKeys,
     pub client_pk: PublicSigKey,
@@ -69,7 +79,7 @@ pub struct ThresholdTestingKeys {
 
 #[derive(Serialize, Deserialize)]
 pub struct CentralizedTestingKeys {
-    pub params: ThresholdLWEParameters,
+    pub params: NoiseFloodParameters,
     pub software_kms_keys: SoftwareKmsKeys,
     pub client_pk: PublicSigKey,
     pub client_sk: PrivateSigKey,
@@ -86,10 +96,26 @@ fn ensure_threshold_keys_exist(param_path: &str, threshold_key_path: &str) {
     if !Path::new(threshold_key_path).exists() {
         tracing::info!("Generating new threshold keys");
         let mut rng = AesRng::seed_from_u64(1);
-        let params: ThresholdLWEParameters = read_as_json(param_path.to_owned()).unwrap();
-        let key_set = gen_key_set(params, &mut rng);
-        let key_shares =
-            keygen_all_party_shares(&key_set, &mut rng, AMOUNT_PARTIES, THRESHOLD).unwrap();
+        let noise_params: NoiseFloodParameters = read_as_json(param_path.to_owned()).unwrap();
+        let params = DKGParamsSnS {
+            regular_params: DKGParamsRegular {
+                sec: SEC_PAR,
+                ciphertext_parameters: noise_params.ciphertext_parameters,
+                flag: COMPRESSED,
+            },
+            sns_params: noise_params.sns_parameters,
+        };
+        let key_set = gen_key_set(params.to_noiseflood_parameters(), &mut rng);
+        let key_shares = keygen_all_party_shares(
+            key_set.get_raw_lwe_client_key(),
+            key_set.get_raw_glwe_client_key(),
+            key_set.sns_secret_key.key,
+            params.to_noiseflood_parameters().ciphertext_parameters,
+            &mut rng,
+            AMOUNT_PARTIES,
+            THRESHOLD,
+        )
+        .unwrap();
         let (client_pk, client_sk) = gen_sig_keys(&mut rng);
         let mut pks = Vec::with_capacity(AMOUNT_PARTIES);
         let mut sks = Vec::with_capacity(AMOUNT_PARTIES);
@@ -98,19 +124,20 @@ fn ensure_threshold_keys_exist(param_path: &str, threshold_key_path: &str) {
             pks.push(sig_pk);
             sks.push(sig_sk);
         }
+        let sns_key = key_set.public_keys.sns_key.unwrap();
         for i in 1..=AMOUNT_PARTIES {
             tracing::info!("Generating ket for party {i}");
             let kms_keys = ThresholdKmsKeys {
                 params,
                 fhe_dec_key_share: key_shares[i - 1].to_owned(),
-                conversion_key: key_set.conversion_key.clone(),
+                conversion_key: sns_key.clone(),
                 sig_sk: sks[i - 1].clone(),
                 sig_pk: pks[i - 1].clone(),
             };
             let threshold_testing_keys = ThresholdTestingKeys {
                 params,
                 kms_keys,
-                fhe_pub: key_set.public_key.to_owned(),
+                fhe_pub: key_set.public_keys.public_key.to_owned(),
                 client_pk: client_pk.clone(),
                 client_sk: client_sk.clone(),
                 server_keys: pks.clone(),
@@ -124,7 +151,7 @@ fn ensure_threshold_keys_exist(param_path: &str, threshold_key_path: &str) {
 fn ensure_central_keys_exist(param_path: &str, central_key_path: &str, key_handle: Option<String>) {
     if !Path::new(central_key_path).exists() {
         tracing::info!("Generating new centralized keys");
-        let params: ThresholdLWEParameters = read_as_json(param_path.to_owned()).unwrap();
+        let params: NoiseFloodParameters = read_as_json(param_path.to_owned()).unwrap();
         let mut rng = AesRng::seed_from_u64(1);
         let software_kms_keys = gen_default_kms_keys(params, &mut rng, key_handle);
         let server_keys = vec![software_kms_keys.sig_pk.clone()];
@@ -147,7 +174,7 @@ pub fn ensure_central_crs_store_exists(
 ) {
     if !Path::new(central_crs_path).exists() {
         tracing::info!("Generating new centralized CRS store");
-        let params: ThresholdLWEParameters = read_as_json(param_path.to_owned()).unwrap();
+        let params: NoiseFloodParameters = read_as_json(param_path.to_owned()).unwrap();
         let mut rng = AesRng::seed_from_u64(42);
         let crs = gen_centralized_crs(&params, &mut rng);
         let handle = crs_handle.unwrap_or(DEFAULT_CRS_HANDLE.to_string());
@@ -164,7 +191,7 @@ pub fn ensure_central_multiple_keys_ct_exist(
 ) {
     if !Path::new(central_keys_path).exists() {
         tracing::info!("Generating new centralized multiple keys");
-        let params: ThresholdLWEParameters = read_as_json(param_path.to_owned()).unwrap();
+        let params: NoiseFloodParameters = read_as_json(param_path.to_owned()).unwrap();
         let mut rng = AesRng::seed_from_u64(1);
         // Generate keys with default handle
         let mut software_kms_keys =
