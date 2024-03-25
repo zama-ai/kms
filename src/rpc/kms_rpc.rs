@@ -1,8 +1,7 @@
 use super::rpc_types::{BaseKms, DecryptionRequestSerializable, ReencryptionRequestSigPayload};
-use crate::core::der_types::{PublicEncKey, PublicSigKey};
 use crate::core::kms_core::{
-    gen_centralized_crs, generate_fhe_keys, BaseKmsStruct, CrsHashMap, FheKeys, FhePublicKeySet,
-    SignedCRS, SignedFhePublicKeySet, SoftwareKms, SoftwareKmsKeys,
+    gen_centralized_crs, generate_fhe_keys, BaseKmsStruct, CrsHashMap, SignedCRS,
+    SignedFhePublicKeySet, SoftwareKms, SoftwareKmsKeys,
 };
 use crate::file_handling::read_as_json;
 use crate::kms::kms_endpoint_server::{KmsEndpoint, KmsEndpointServer};
@@ -14,9 +13,16 @@ use crate::kms::{
 use crate::rpc::rpc_types::{DecryptionResponseSigPayload, Kms};
 use crate::setup_rpc::{DEFAULT_PARAM_PATH, KEY_PATH_PREFIX, TEST_PARAM_PATH};
 use crate::{anyhow_error_and_warn_log, setup_rpc::CRS_PATH_PREFIX};
+use crate::{
+    core::der_types::{PublicEncKey, PublicSigKey},
+    setup_rpc::FhePrivateKey,
+};
 use aes_prng::AesRng;
 use distributed_decryption::{
-    execution::{tfhe_internals::parameters::NoiseFloodParameters, zk::ceremony::PublicParameter},
+    execution::{
+        endpoints::keygen::PubKeySet, tfhe_internals::parameters::NoiseFloodParameters,
+        zk::ceremony::PublicParameter,
+    },
     file_handling::write_element,
 };
 use rand::SeedableRng;
@@ -46,7 +52,7 @@ pub async fn server_handle(
     let port = url.port_or_known_default().ok_or("Invalid port in URL.");
     let socket: SocketAddr = format!("{}:{}", host_str.unwrap(), port.unwrap()).parse()?;
 
-    let kms = SoftwareKms::new(kms_keys.fhe_keys, kms_keys.sig_sk, crs_store);
+    let kms = SoftwareKms::new(kms_keys.client_keys, kms_keys.sig_sk, crs_store);
     tracing::info!("Starting centralized KMS server ...");
     Server::builder()
         .add_service(KmsEndpointServer::new(kms))
@@ -80,16 +86,16 @@ impl KmsEndpoint for SoftwareKms {
             retrieve_paramters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
-        let keys = generate_fhe_keys(params);
+        let (client_key, pub_keys) = generate_fhe_keys(params);
         let pk_uri = handle_potential_err(
-            store_keys(self, &keys, &inner.key_handle),
+            store_keys(self, &client_key, &pub_keys, &inner.key_handle),
             format!("Failed to store generated keys from request {:?}", inner),
         )?;
-        let mut fhe_keys = handle_potential_err(
-            self.fhe_keys.lock(),
+        let mut client_key_map = handle_potential_err(
+            self.client_keys.lock(),
             "Could not get handle on fhe keys".to_string(),
         )?;
-        fhe_keys.insert(inner.key_handle, keys);
+        client_key_map.insert(inner.key_handle, client_key);
         Ok(Response::new(KeyResponse { key_uri: pk_uri }))
     }
 
@@ -97,12 +103,12 @@ impl KmsEndpoint for SoftwareKms {
         &self,
         _request: Request<GetAllKeysRequest>,
     ) -> Result<Response<GetAllKeysResponse>, Status> {
-        let fhe_keys = handle_potential_err(
-            self.fhe_keys.lock(),
+        let client_keys = handle_potential_err(
+            self.client_keys.lock(),
             "Could not get handle on fhe keys".to_string(),
         )?;
         let all_keys = handle_potential_err(
-            get_all_key_uris(&fhe_keys),
+            get_all_key_uris(&client_keys),
             "Could not get the URIs for all keys".to_string(),
         )?;
         Ok(Response::new(GetAllKeysResponse { handles: all_keys }))
@@ -321,12 +327,16 @@ fn crs_exists(crs_handle: &str) -> bool {
 /// Store generated keys by writing them to the file system and returning the path of the public
 /// keys. Note that this is only for developer version for a more secure deployment without Nitro
 /// keys should instead be stored in environment variables.
-fn store_keys<K: BaseKms>(kms: &K, keys: &FheKeys, key_handle: &str) -> anyhow::Result<String> {
+fn store_keys<K: BaseKms>(
+    kms: &K,
+    client_key: &FhePrivateKey,
+    pub_fhe_keys: &PubKeySet,
+    key_handle: &str,
+) -> anyhow::Result<String> {
     fs::create_dir_all(KEY_PATH_PREFIX)?;
     let private_key_path = format!("{}/{}-private.bin", KEY_PATH_PREFIX, key_handle);
-    write_element(private_key_path, &keys.client_key)?;
-    let pk_keys: FhePublicKeySet = keys.try_into()?;
-    let signed_pks = SignedFhePublicKeySet::new(pk_keys, kms)?;
+    write_element(private_key_path, &client_key)?;
+    let signed_pks = SignedFhePublicKeySet::new(pub_fhe_keys.to_owned(), kms)?;
     let public_key_path = format!("{}/{}-public.bin", KEY_PATH_PREFIX, key_handle);
     write_element(public_key_path.clone(), &signed_pks)?;
     Ok(public_key_path)
@@ -347,10 +357,10 @@ fn store_crs<K: BaseKms>(
 }
 
 fn get_all_key_uris(
-    fhe_keys: &HashMap<String, FheKeys>,
+    client_keys: &HashMap<String, FhePrivateKey>,
 ) -> anyhow::Result<HashMap<String, String>> {
-    let mut res = HashMap::with_capacity(fhe_keys.len());
-    for key_handle in fhe_keys.keys() {
+    let mut res = HashMap::with_capacity(client_keys.len());
+    for key_handle in client_keys.keys() {
         res.insert(key_handle.to_string(), pub_key_path(key_handle));
     }
     Ok(res)

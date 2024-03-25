@@ -14,7 +14,6 @@ use crate::rpc::kms_rpc::{
 use crate::rpc::rpc_types::{
     BaseKms, DecryptionResponseSigPayload, Plaintext, RawDecryption, SigncryptionPayload,
 };
-use crate::setup_rpc::KEY_HANDLE;
 use crate::{
     anyhow_error_and_log,
     setup_rpc::{COMPRESSED, SEC_PAR},
@@ -177,16 +176,21 @@ impl FheType {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThresholdFheKeys {
+    pub private_keys: PrivateKeySet,
+    pub sns_key: SwitchAndSquashKey,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct ThresholdKmsKeys {
-    pub params: DKGParamsSnS,
-    pub fhe_dec_key_share: PrivateKeySet,
-    pub conversion_key: SwitchAndSquashKey,
+    pub fhe_keys: HashMap<String, ThresholdFheKeys>,
     pub sig_sk: PrivateSigKey,
     pub sig_pk: PublicSigKey,
 }
+
 pub struct ThresholdKms {
-    fhe_keys: HashMap<String, (PrivateKeySet, SwitchAndSquashKey)>,
+    fhe_keys: HashMap<String, ThresholdFheKeys>,
     base_kms: BaseKmsStruct,
     threshold: u8,
     my_id: usize,
@@ -238,13 +242,8 @@ impl ThresholdKms {
         let networking_strategy: NetworkingStrategy =
             Box::new(move |session_id, roles| networking_manager.new_session(session_id, roles));
         let base_kms = BaseKmsStruct::new(keys.sig_sk);
-        // TOOD key handle argument
-        let fhe_keys = HashMap::from([(
-            KEY_HANDLE.to_string(),
-            (keys.fhe_dec_key_share, keys.conversion_key),
-        )]);
         Ok(ThresholdKms {
-            fhe_keys,
+            fhe_keys: keys.fhe_keys,
             base_kms,
             threshold,
             my_id,
@@ -271,6 +270,7 @@ impl ThresholdKms {
         let mut base_session =
             BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng()?)?;
 
+        // TODO does this work with base session? we have a catch 22 otherwise
         self.prss_setup = Some(
             PRSSSetup::init_with_abort::<
                 RealAgreeRandomWithAbort,
@@ -326,7 +326,7 @@ impl ThresholdKms {
         let (mut session, low_level_ct) = self.prepare_ddec_data(ct, fhe_type)?;
         let mut protocol = Small::new(session.clone());
         let id = session.own_identity();
-        let (secret_key_share, conversion_key) = match self.fhe_keys.get(key_handle) {
+        let keys = match self.fhe_keys.get(key_handle) {
             Some(keys) => keys,
             None => {
                 return Err(anyhow_error_and_log(
@@ -337,9 +337,9 @@ impl ThresholdKms {
         let (partial_dec, _time) = decrypt_using_noiseflooding(
             &mut session,
             &mut protocol,
-            conversion_key,
+            &keys.sns_key,
             low_level_ct,
-            secret_key_share,
+            &keys.private_keys,
             DECRYPTION_MODE,
             id,
         )
@@ -364,7 +364,7 @@ impl ThresholdKms {
     ) -> anyhow::Result<Option<Vec<u8>>> {
         let (mut session, low_level_ct) = self.prepare_ddec_data(ct, fhe_type)?;
         let mut protocol = Small::new(session.clone());
-        let (secret_key_share, conversion_key) = match self.fhe_keys.get(key_handle) {
+        let keys = match self.fhe_keys.get(key_handle) {
             Some(keys) => keys,
             None => {
                 return Err(anyhow_error_and_log(
@@ -375,9 +375,9 @@ impl ThresholdKms {
         let (partial_dec, _time) = partial_decrypt_using_noiseflooding(
             &mut session,
             &mut protocol,
-            conversion_key,
+            &keys.sns_key,
             low_level_ct,
-            secret_key_share,
+            &keys.private_keys,
             DECRYPTION_MODE,
         )
         .await?;

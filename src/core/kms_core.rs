@@ -13,11 +13,8 @@ use aes_prng::AesRng;
 use distributed_decryption::{
     error::error_handler::anyhow_error_and_log,
     execution::{
-        tfhe_internals::{
-            parameters::NoiseFloodParameters,
-            switch_and_squash::SwitchAndSquashKey,
-            test_feature::{KeySet, SnsClientKey},
-        },
+        endpoints::keygen::PubKeySet,
+        tfhe_internals::parameters::NoiseFloodParameters,
         zk::ceremony::{make_proof_deterministic, PublicParameter},
     },
 };
@@ -30,9 +27,8 @@ use std::sync::{Arc, Mutex};
 use std::{fmt, panic};
 use tfhe::prelude::FheDecrypt;
 use tfhe::shortint::ClassicPBSParameters;
-use tfhe::{
-    generate_keys, ConfigBuilder, FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8,
-};
+use tfhe::ClientKey;
+use tfhe::{ConfigBuilder, FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
 use zk_poc::curve;
 
 pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
@@ -45,29 +41,36 @@ pub fn gen_default_kms_keys<R: CryptoRng + RngCore>(
     params: NoiseFloodParameters,
     rng: &mut R,
     key_handle: Option<String>,
-) -> SoftwareKmsKeys {
-    let fhe_keys = generate_fhe_keys(params);
+) -> (SoftwareKmsKeys, PubKeySet) {
+    let (client_key, fhe_pub_keys) = generate_fhe_keys(params);
     let (sig_pk, sig_sk) = gen_sig_keys(rng);
     let handle = key_handle.unwrap_or(KEY_HANDLE.to_string());
-    SoftwareKmsKeys {
-        fhe_keys: HashMap::from([(handle, fhe_keys)]),
-        sig_sk,
-        sig_pk,
-    }
+    (
+        SoftwareKmsKeys {
+            client_keys: HashMap::from([(handle, client_key)]),
+            sig_sk,
+            sig_pk,
+        },
+        fhe_pub_keys,
+    )
 }
 
-pub fn generate_fhe_keys(params: NoiseFloodParameters) -> FheKeys {
+pub fn generate_fhe_keys(params: NoiseFloodParameters) -> (FhePrivateKey, PubKeySet) {
+    let client_key = generate_client_fhe_key(params);
+    let server_key = client_key.generate_server_key();
+    let public_key = FhePublicKey::new(&client_key);
+    let pks = PubKeySet {
+        public_key,
+        server_key,
+        sns_key: None,
+    };
+    (client_key, pks)
+}
+
+pub fn generate_client_fhe_key(params: NoiseFloodParameters) -> ClientKey {
     let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
     let config = ConfigBuilder::with_custom_parameters(pbs_params, None);
-    let (client_key, server_key) = generate_keys(config);
-    let public_key = FhePublicKey::new(&client_key);
-    FheKeys {
-        public_key: Some(public_key),
-        server_key: Some(server_key),
-        conversion_key: None,
-        client_output_key: None,
-        client_key,
-    }
+    ClientKey::generate(config)
 }
 
 /// Compute an estimate for the witness dim from given LWE params. This might come out of tfhe-rs in
@@ -193,7 +196,7 @@ impl BaseKms for BaseKmsStruct {
 
 #[derive(Serialize, Deserialize)]
 pub struct SoftwareKmsKeys {
-    pub fhe_keys: HashMap<String, FheKeys>,
+    pub client_keys: HashMap<String, FhePrivateKey>,
     pub sig_sk: PrivateSigKey,
     pub sig_pk: PublicSigKey,
 }
@@ -203,73 +206,8 @@ pub type CrsHashMap = HashMap<String, PublicParameter>;
 /// Software based KMS where keys are stored in a local file
 pub struct SoftwareKms {
     base_kms: BaseKmsStruct,
-    pub fhe_keys: Arc<Mutex<HashMap<String, FheKeys>>>,
+    pub client_keys: Arc<Mutex<HashMap<String, FhePrivateKey>>>,
     pub crs_store: Arc<Mutex<CrsHashMap>>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct FheKeys {
-    pub public_key: Option<FhePublicKey>,
-    pub server_key: Option<tfhe::ServerKey>,
-    pub conversion_key: Option<SwitchAndSquashKey>,
-    pub client_output_key: Option<SnsClientKey>,
-    // TODO should contain an optional FhePublicKeySet instead
-    pub client_key: FhePrivateKey,
-}
-impl From<KeySet> for FheKeys {
-    fn from(value: KeySet) -> Self {
-        FheKeys {
-            public_key: Some(value.public_keys.public_key),
-            server_key: Some(value.public_keys.server_key),
-            conversion_key: value.public_keys.sns_key,
-            client_output_key: Some(value.sns_secret_key),
-            client_key: value.client_key,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct FhePublicKeySet {
-    pub public_key: FhePublicKey,
-    pub server_key: tfhe::ServerKey,
-    pub conversion_key: Option<SwitchAndSquashKey>,
-}
-impl TryFrom<FheKeys> for FhePublicKeySet {
-    type Error = anyhow::Error;
-
-    fn try_from(value: FheKeys) -> Result<Self, Self::Error> {
-        let public_key = value
-            .public_key
-            .ok_or(anyhow::anyhow!("Public key missing"))?;
-        let server_key = value
-            .server_key
-            .ok_or(anyhow::anyhow!("Server key missing"))?;
-        Ok(FhePublicKeySet {
-            public_key,
-            server_key,
-            conversion_key: value.conversion_key,
-        })
-    }
-}
-
-impl TryFrom<&FheKeys> for FhePublicKeySet {
-    type Error = anyhow::Error;
-
-    fn try_from(value: &FheKeys) -> Result<Self, Self::Error> {
-        let public_key = value
-            .public_key
-            .clone()
-            .ok_or(anyhow::anyhow!("Public key missing"))?;
-        let server_key = value
-            .server_key
-            .clone()
-            .ok_or(anyhow::anyhow!("Server key missing"))?;
-        Ok(FhePublicKeySet {
-            public_key,
-            server_key,
-            conversion_key: value.conversion_key.clone(),
-        })
-    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -302,12 +240,12 @@ impl SignedCRS {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct SignedFhePublicKeySet {
-    pub public_key_set: FhePublicKeySet,
+    pub public_key_set: PubKeySet,
     pub signature: Signature,
 }
 
 impl SignedFhePublicKeySet {
-    pub fn new<K: BaseKms>(public_key_set: FhePublicKeySet, base_kms: &K) -> anyhow::Result<Self> {
+    pub fn new<K: BaseKms>(public_key_set: PubKeySet, base_kms: &K) -> anyhow::Result<Self> {
         // TODO it should not be needed to "preserialize" here
         // However, due to lack of support in serde_asn1, this currently does not work for tfhe-rs
         // public keys Hence we need another approach to serialize these for now.
@@ -370,12 +308,12 @@ impl Kms for SoftwareKms {
         fhe_type: FheType,
         key_handle: &str,
     ) -> anyhow::Result<Plaintext> {
-        let fhe_keys = handle_potential_err(
-            self.fhe_keys.lock(),
-            "Could not get handle on fhe keys".to_string(),
+        let client_keys = handle_potential_err(
+            self.client_keys.lock(),
+            "Could not get handle on client keys".to_string(),
         )?;
-        let client_key = match fhe_keys.get(key_handle) {
-            Some(key_set) => &key_set.client_key,
+        let client_key = match client_keys.get(key_handle) {
+            Some(client_key) => client_key,
             None => {
                 return Err(anyhow_error_and_log(format!(
                     "The key handle {key_handle} does not exist"
@@ -454,7 +392,7 @@ impl Kms for SoftwareKms {
 
 impl SoftwareKms {
     pub fn new(
-        fhe_keys: HashMap<String, FheKeys>,
+        client_keys: HashMap<String, FhePrivateKey>,
         sig_key: PrivateSigKey,
         crs_store: Option<CrsHashMap>,
     ) -> Self {
@@ -466,7 +404,7 @@ impl SoftwareKms {
 
         SoftwareKms {
             base_kms: BaseKmsStruct::new(sig_key),
-            fhe_keys: Arc::new(Mutex::new(fhe_keys)),
+            client_keys: Arc::new(Mutex::new(client_keys)),
             crs_store: Arc::new(Mutex::new(cs)),
         }
     }
@@ -498,7 +436,7 @@ pub fn decrypt_signcryption(
 #[cfg(test)]
 mod tests {
     use crate::core::der_types::PrivateSigKey;
-    use crate::core::kms_core::{decrypt_signcryption, gen_sig_keys, FheKeys, SoftwareKms};
+    use crate::core::kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms};
     use crate::core::request::ephemeral_key_generation;
     use crate::file_handling::read_element;
     use crate::kms::FheType;
@@ -539,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn decrypt_with_bad_fhe_key() {
+    fn decrypt_with_bad_client_key() {
         simulate_decrypt(
             SimulationType::BadFheKey,
             TEST_CENTRAL_KEYS_PATH,
@@ -646,20 +584,20 @@ mod tests {
             read_element(TEST_CENTRAL_MULTI_KEYS_PATH).unwrap();
 
         // try to get keys with the default handle
-        let default_key = central_keys.software_kms_keys.fhe_keys.get(KEY_HANDLE);
+        let default_key = central_keys.software_kms_keys.client_keys.get(KEY_HANDLE);
         assert!(default_key.is_some());
 
         // try to get keys with the some other handle
         let some_key = central_keys
             .software_kms_keys
-            .fhe_keys
+            .client_keys
             .get(OTHER_KEY_HANDLE);
         assert!(some_key.is_some());
 
         // try to get keys with a non-existent handle
         let no_key = central_keys
             .software_kms_keys
-            .fhe_keys
+            .client_keys
             .get("wrongKeyHandle");
         assert!(no_key.is_none());
     }
@@ -683,12 +621,12 @@ mod tests {
         let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
         let kms = {
             let inner = SoftwareKms::new(
-                keys.software_kms_keys.fhe_keys.clone(),
+                keys.software_kms_keys.client_keys.clone(),
                 keys.software_kms_keys.sig_sk,
                 None,
             );
             if sim_type == SimulationType::BadFheKey {
-                set_wrong_fhe_key(&inner, key_handle, keys.params);
+                set_wrong_client_key(&inner, key_handle, keys.params);
             }
             inner
         };
@@ -733,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn reencrypt_with_bad_fhe_key() {
+    fn reencrypt_with_bad_client_key() {
         simulate_reencrypt(
             SimulationType::BadFheKey,
             TEST_CENTRAL_KEYS_PATH,
@@ -781,20 +719,13 @@ mod tests {
         )
     }
 
-    fn set_wrong_fhe_key(inner: &SoftwareKms, key_handle: &str, params: NoiseFloodParameters) {
+    fn set_wrong_client_key(inner: &SoftwareKms, key_handle: &str, params: NoiseFloodParameters) {
         let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
         let config = ConfigBuilder::with_custom_parameters(pbs_params, None);
         let wrong_client_key = tfhe::ClientKey::generate(config);
-        let mut fhe_keys = inner.fhe_keys.lock().unwrap();
-        let x = fhe_keys.get_mut(key_handle).unwrap();
-        let wrong_fhe_keys = FheKeys {
-            public_key: x.public_key.clone(),
-            server_key: x.server_key.clone(),
-            conversion_key: x.conversion_key.clone(),
-            client_output_key: x.client_output_key.clone(),
-            client_key: wrong_client_key,
-        };
-        *x = wrong_fhe_keys;
+        let mut client_keys = inner.client_keys.lock().unwrap();
+        let x = client_keys.get_mut(key_handle).unwrap();
+        *x = wrong_client_key;
     }
 
     fn set_wrong_sig_key(inner: &mut SoftwareKms, rng: &mut AesRng) {
@@ -819,12 +750,12 @@ mod tests {
         let params = keys.params;
         let kms = {
             let mut inner = SoftwareKms::new(
-                keys.software_kms_keys.fhe_keys.clone(),
+                keys.software_kms_keys.client_keys.clone(),
                 keys.software_kms_keys.sig_sk,
                 None,
             );
             if sim_type == SimulationType::BadFheKey {
-                set_wrong_fhe_key(&inner, key_handle, params);
+                set_wrong_client_key(&inner, key_handle, params);
             }
             if sim_type == SimulationType::BadSigKey {
                 set_wrong_sig_key(&mut inner, &mut rng);

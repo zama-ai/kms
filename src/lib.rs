@@ -1,3 +1,5 @@
+use self::setup_rpc::DEFAULT_PARAM_PATH;
+use crate::core::kms_core::gen_centralized_crs;
 use aes_prng::AesRng;
 use anyhow::anyhow;
 use core::kms_core::{gen_sig_keys, CrsHashMap, SoftwareKmsKeys};
@@ -9,10 +11,6 @@ use rand::SeedableRng;
 use setup_rpc::{DEFAULT_CRS_HANDLE, KEY_HANDLE};
 use std::collections::HashMap;
 use std::panic::Location;
-
-use crate::core::kms_core::gen_centralized_crs;
-
-use self::setup_rpc::DEFAULT_PARAM_PATH;
 
 pub mod kms {
     tonic::include_proto!("kms"); // The string specified here must match the proto package name
@@ -48,6 +46,7 @@ pub fn anyhow_error_and_warn_log(msg: String) -> anyhow::Error {
 pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
     let mut rng = AesRng::from_entropy();
     let params: NoiseFloodParameters = read_as_json(DEFAULT_PARAM_PATH.to_owned()).unwrap();
+    // Generate keys for SnS
     let key_set = gen_key_set(params, &mut rng);
     let (server_pk, server_sk) = gen_sig_keys(&mut rng);
 
@@ -70,7 +69,7 @@ pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
     .unwrap();
 
     let software_kms_keys = SoftwareKmsKeys {
-        fhe_keys: HashMap::from([(KEY_HANDLE.to_string(), key_set.into())]),
+        client_keys: HashMap::from([(KEY_HANDLE.to_string(), key_set.client_key)]),
         sig_sk: server_sk,
         sig_pk: server_pk.clone(),
     };
@@ -99,35 +98,4 @@ pub fn write_default_crs_store(path: &str) -> CrsHashMap {
     write_element(format!("{path_string}default-crs-store.bin"), &crs_store).unwrap();
 
     crs_store
-}
-
-#[cfg(feature = "slow_tests")]
-#[cfg(test)]
-mod tests {
-    use crate::setup_rpc::{ensure_dir_exist, CRS_PATH_PREFIX, DEFAULT_CENTRAL_CRS_PATH};
-    use crate::write_default_crs_store;
-    use std::path::Path;
-
-    #[cfg(test)]
-    #[ctor::ctor]
-    fn ensure_server_keys_exist() {
-        use crate::{
-            setup_rpc::{DEFAULT_SOFTWARE_CENTRAL_KEY_PATH, TMP_PATH_PREFIX},
-            write_default_keys,
-        };
-        ensure_dir_exist();
-
-        if !Path::new(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH).exists() {
-            let _ = write_default_keys(TMP_PATH_PREFIX);
-        }
-    }
-
-    #[cfg(test)]
-    #[ctor::ctor]
-    fn ensure_crs_store_exist() {
-        ensure_dir_exist();
-        if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
-            let _ = write_default_crs_store(CRS_PATH_PREFIX);
-        }
-    }
 }
