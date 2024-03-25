@@ -18,8 +18,8 @@ use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
-use std::fmt;
 use std::sync::{Arc, Mutex};
+use std::{fmt, panic};
 use tfhe::prelude::FheDecrypt;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
@@ -374,38 +374,44 @@ impl Kms for SoftwareKms {
                 )))
             }
         };
-        Ok(match fhe_type {
-            FheType::Bool => {
-                let cipher: FheBool = bincode::deserialize(high_level_ct)?;
-                let plaintext: bool = cipher.decrypt(client_key);
-                Plaintext::from_bool(plaintext)
-            }
-            FheType::Euint4 => {
-                let cipher: FheUint4 = bincode::deserialize(high_level_ct)?;
-                let plaintext: u8 = cipher.decrypt(client_key);
-                Plaintext::from_u4(plaintext)
-            }
-            FheType::Euint8 => {
-                let cipher: FheUint8 = bincode::deserialize(high_level_ct)?;
-                let plaintext: u8 = cipher.decrypt(client_key);
-                Plaintext::from_u8(plaintext)
-            }
-            FheType::Euint16 => {
-                let cipher: FheUint16 = bincode::deserialize(high_level_ct)?;
-                let plaintext: u16 = cipher.decrypt(client_key);
-                Plaintext::from_u16(plaintext)
-            }
-            FheType::Euint32 => {
-                let cipher: FheUint32 = bincode::deserialize(high_level_ct)?;
-                let plaintext: u32 = cipher.decrypt(client_key);
-                Plaintext::from_u32(plaintext)
-            }
-            FheType::Euint64 => {
-                let cipher: FheUint64 = bincode::deserialize(high_level_ct)?;
-                let plaintext: u64 = cipher.decrypt(client_key);
-                Plaintext::from_u64(plaintext)
-            }
-        })
+        let f = || -> anyhow::Result<Plaintext> {
+            Ok(match fhe_type {
+                FheType::Bool => {
+                    let cipher: FheBool = bincode::deserialize(high_level_ct)?;
+                    let plaintext = cipher.decrypt(client_key);
+                    Plaintext::from_bool(plaintext)
+                }
+                FheType::Euint4 => {
+                    let cipher: FheUint4 = bincode::deserialize(high_level_ct)?;
+                    let plaintext: u8 = cipher.decrypt(client_key);
+                    Plaintext::from_u4(plaintext)
+                }
+                FheType::Euint8 => {
+                    let cipher: FheUint8 = bincode::deserialize(high_level_ct)?;
+                    let plaintext: u8 = cipher.decrypt(client_key);
+                    Plaintext::from_u8(plaintext)
+                }
+                FheType::Euint16 => {
+                    let cipher: FheUint16 = bincode::deserialize(high_level_ct)?;
+                    let plaintext: u16 = cipher.decrypt(client_key);
+                    Plaintext::from_u16(plaintext)
+                }
+                FheType::Euint32 => {
+                    let cipher: FheUint32 = bincode::deserialize(high_level_ct)?;
+                    let plaintext: u32 = cipher.decrypt(client_key);
+                    Plaintext::from_u32(plaintext)
+                }
+                FheType::Euint64 => {
+                    let cipher: FheUint64 = bincode::deserialize(high_level_ct)?;
+                    let plaintext: u64 = cipher.decrypt(client_key);
+                    Plaintext::from_u64(plaintext)
+                }
+            })
+        };
+        match panic::catch_unwind(f) {
+            Ok(x) => x,
+            Err(_) => Err(anyhow_error_and_log("decryption panicked".to_string())),
+        }
     }
 
     fn reencrypt(
@@ -679,7 +685,13 @@ mod tests {
             inner
         };
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
-        let plaintext: Plaintext = kms.decrypt(&ct, fhe_type, key_handle).unwrap();
+        let plaintext: Plaintext = match kms.decrypt(&ct, fhe_type, key_handle) {
+            Ok(x) => x,
+            Err(e) => {
+                assert!(e.to_string().contains("decryption panicked"));
+                return;
+            }
+        };
         if sim_type == SimulationType::BadFheKey {
             assert_ne!(plaintext.as_u8(), msg);
         } else {
@@ -822,17 +834,27 @@ mod tests {
             }
             keys
         };
-        let raw_cipher = kms
-            .reencrypt(
-                &ct,
-                fhe_type,
-                &link,
-                &client_keys.pk.enc_key,
-                &client_keys.pk.verification_key,
-                key_handle,
-            )
-            .unwrap()
-            .unwrap();
+        let raw_cipher = kms.reencrypt(
+            &ct,
+            fhe_type,
+            &link,
+            &client_keys.pk.enc_key,
+            &client_keys.pk.verification_key,
+            key_handle,
+        );
+        // if bad FHE key is used, then it *might* panic
+        let raw_cipher = if sim_type == SimulationType::BadFheKey {
+            match raw_cipher {
+                Ok(x) => x,
+                Err(e) => {
+                    assert!(e.to_string().contains("decryption panicked"));
+                    return;
+                }
+            }
+        } else {
+            raw_cipher.unwrap()
+        }
+        .unwrap();
         let decrypted = decrypt_signcryption(
             &raw_cipher,
             &link,
