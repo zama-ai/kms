@@ -1,4 +1,4 @@
-use tfhe::shortint::ClassicPBSParameters;
+use tfhe::{integer::block_decomposition::BlockRecomposer, shortint::ClassicPBSParameters};
 
 use crate::{
     algebra::{base_ring::Z128, residue_poly::ResiduePoly},
@@ -31,4 +31,19 @@ pub fn reconstruct_message(
         }
     };
     Ok(out)
+}
+
+/// Helper function that takes a vector of decrypted plaintexts (each of [bits_in_block] plaintext bits)
+/// and combine them into the integer message (u128) of many bits.
+pub fn combine128(bits_in_block: u32, decryptions: Vec<Z128>) -> anyhow::Result<u128> {
+    let mut recomposer = BlockRecomposer::<u128>::new(bits_in_block);
+
+    for block in decryptions {
+        if !recomposer.add_unmasked(block.0) {
+            // End of T::BITS reached no need to try more
+            // recomposition
+            break;
+        };
+    }
+    Ok(recomposer.value())
 }

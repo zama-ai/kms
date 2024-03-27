@@ -59,14 +59,13 @@ use std::num::Wrapping;
 #[cfg(any(test, feature = "testing"))]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tfhe::integer::block_decomposition::BlockRecomposer;
 use tfhe::integer::IntegerCiphertext;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
 use tracing::instrument;
 
 use super::keygen::PrivateKeySet;
-use super::reconstruct::reconstruct_message;
+use super::reconstruct::{combine128, reconstruct_message};
 
 #[enum_dispatch]
 #[allow(clippy::large_enum_variant)]
@@ -293,21 +292,6 @@ fn combine_plaintext_blocks(
         }
     };
     Ok(Wrapping(res as u64))
-}
-
-/// Helper function that takes a vector of decrypted plaintexts (each of [bits_in_block] plaintext bits)
-/// and combine them into the integer message (u128) of many bits.
-pub fn combine128(bits_in_block: u32, decryptions: Vec<Z128>) -> anyhow::Result<u128> {
-    let mut recomposer = BlockRecomposer::<u128>::new(bits_in_block);
-
-    for block in decryptions {
-        if !recomposer.add_unmasked(block.0) {
-            // End of T::BITS reached no need to try more
-            // recomposition
-            break;
-        };
-    }
-    Ok(recomposer.value())
 }
 
 #[cfg(any(test, feature = "testing"))]
