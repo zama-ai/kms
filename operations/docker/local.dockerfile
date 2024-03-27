@@ -1,6 +1,6 @@
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.76-slim-buster as base
+FROM rust:1.77-slim-buster as base
 
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
     apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config libssl-dev
@@ -46,5 +46,5 @@ ENV PATH="$PATH:/app/kms/bin"
 COPY --from=base /app/kms/bin/ /app/kms/bin/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
 
-CMD ["kms-server"]
+CMD ["kms-server", "dev"]
 

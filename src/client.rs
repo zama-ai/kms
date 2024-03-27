@@ -788,6 +788,7 @@ pub(crate) mod tests {
     use serial_test::serial;
     use std::collections::{HashMap, HashSet};
     use std::fs;
+    use std::net::SocketAddr;
     use std::str::FromStr;
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::{Channel, Uri};
@@ -800,7 +801,8 @@ pub(crate) mod tests {
     ) -> (JoinHandle<()>, KmsEndpointClient<Channel>) {
         let server_handle = tokio::spawn(async move {
             let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
-            let _ = server_handle(url.as_str(), kms_keys, crs_store).await;
+            let add = SocketAddr::from_str(url.as_str()).unwrap();
+            let _ = server_handle(add, kms_keys, crs_store).await;
         });
         // We have to wait for the server to start since it will keep running in the background
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;

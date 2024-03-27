@@ -1,4 +1,4 @@
-FROM rust:1.76
+FROM rust:1.76-bookworm as builder
 
 WORKDIR /usr/src/kms-server
 COPY . .
@@ -15,5 +15,11 @@ RUN apt-get update \
     protobuf-compiler
 
 RUN --mount=type=ssh cargo install --path . --bin kms-server
+
+FROM debian:bookworm
+COPY --from=builder /usr/src/kms-server/target/release/kms-server /usr/local/bin/kms-server
+RUN mkdir -p -m 0600 /app/parameters
+COPY --from=builder /usr/src/kms-server/parameters /app/parameters
+WORKDIR /app
 
 CMD ["kms-server"]

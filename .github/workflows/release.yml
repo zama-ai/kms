@@ -19,6 +19,8 @@ jobs:
       contents: 'read'
       id-token: 'write'
       packages: 'write'
+    with:
+      push_image: true
     needs:
       - build
     secrets:
@@ -27,6 +29,19 @@ jobs:
       SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
 
+  docker-enclave:
+    uses: ./.github/workflows/common-docker-enclave.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
+    with:
+      push_image: true
+    needs:
+      - build
+    secrets:
+      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+
   deploy:
     uses: ./.github/workflows/common-deploy.yml
     permissions:
@@ -34,8 +49,11 @@ jobs:
       id-token: 'write'
     needs:
       - docker
+      - docker-enclave
     with:
       image_name: ${{ needs.docker.outputs.image_name }}
+      eif_pcr0: ${{ needs.docker.outputs.eif_pcr0 }}
+      image_eif: ${{ needs.docker.outputs.image_eif }}
     secrets:
       AWS_ACCESS_KEY_ID_TERRAFORM: ${{ secrets.AWS_ACCESS_KEY_ID_TERRAFORM }}
       AWS_SECRET_ACCESS_KEY_TERRAFORM: ${{ secrets.AWS_SECRET_ACCESS_KEY_TERRAFORM }}

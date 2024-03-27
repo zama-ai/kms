@@ -1,6 +1,6 @@
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.76-slim-buster as base
+FROM rust:1.77-slim-buster as base
 
 ARG CONCRETE_ACTIONS_TOKEN
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
@@ -16,7 +16,7 @@ RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 # Install the binary leaving it in the WORKDIR/bin folder
 RUN mkdir -p /app/kms/bin
 RUN git config --global url."https://${CONCRETE_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
+RUN --mount=type=ssh --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
     cargo install --path . --root . --bin kms-server

@@ -5,3 +5,5 @@
 .vscode/launch.json
 .DS_Store
 .vscode/
+*.eif
+

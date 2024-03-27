@@ -42,6 +42,7 @@ pub mod threshold {
 pub mod file_handling;
 pub mod rpc {
     #[cfg(feature = "non-wasm")]
+    pub mod kms_proxy_rpc;
     pub mod kms_rpc;
     pub mod rpc_types;
 }
@@ -115,4 +116,34 @@ pub fn write_default_crs_store(path: &str) -> CrsHashMap {
     write_element(format!("{path_string}default-crs-store.bin"), &crs_store).unwrap();
 
     crs_store
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::consts::{
+        CRS_PATH_PREFIX, DEFAULT_CENTRAL_CRS_PATH, DEFAULT_SOFTWARE_CENTRAL_KEY_PATH,
+        TMP_PATH_PREFIX,
+    };
+    use crate::setup_rpc::ensure_dir_exist;
+    use crate::write_default_crs_store;
+    use std::path::Path;
+
+    #[cfg(test)]
+    #[ctor::ctor]
+    fn ensure_server_keys_exist() {
+        use crate::write_default_keys;
+        ensure_dir_exist();
+
+        if !Path::new(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH).exists() {
+            let _ = write_default_keys(TMP_PATH_PREFIX);
+        }
+    }
+    #[cfg(test)]
+    #[ctor::ctor]
+    fn ensure_crs_store_exist() {
+        ensure_dir_exist();
+        if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
+            let _ = write_default_crs_store(CRS_PATH_PREFIX);
+        }
+    }
 }

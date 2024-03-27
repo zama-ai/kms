@@ -5,6 +5,13 @@ on:
       image_name:
         type: string
         required: true
+      image_eif:
+        type: string
+        required: true
+      eif_pcr0:
+        type: string
+        required: false
+        default: ''
     secrets:
       AWS_ACCESS_KEY_ID_TERRAFORM:
         required: true
@@ -43,8 +50,11 @@ jobs:
         run: terraform -chdir=operations/terraform/environments/${{env.NAMESPACE}} init
 
       - name: Execute Plan terraform
-        run: terraform -chdir=operations/terraform/environments/${{env.NAMESPACE}} plan -var='image=${{ inputs.image_name }}'
+        run: terraform -chdir=operations/terraform/environments/${{env.NAMESPACE}} plan -var='image=${{ inputs.image_name }}' -var='image_eif=${{ inputs.image_eif }}' -var='eif_pcr0=${{ inputs.eif_pcr0 }}'
 
       - name: Apply terraform
-        run: terraform -chdir=operations/terraform/environments/${{env.NAMESPACE}} apply -var='image=${{ inputs.image_name }}' -auto-approve
+        run: terraform -chdir=operations/terraform/environments/${{env.NAMESPACE}} apply -var='image=${{ inputs.image_name }}' -var='image_eif=${{ inputs.image_eif }}' -var='eif_pcr0=${{ inputs.eif_pcr0 }}' -auto-approve
+
+      - name: Output terraform
+        run: terraform -chdir=operations/terraform/environments/${{env.NAMESPACE}} output
 

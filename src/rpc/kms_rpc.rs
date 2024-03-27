@@ -26,6 +26,7 @@ use distributed_decryption::{
     file_handling::write_element,
 };
 use rand::SeedableRng;
+
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -33,25 +34,15 @@ use std::path::Path;
 use std::{fmt, fs};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
-use url::Url;
 
 pub async fn server_handle(
-    url_str: &str,
+    socket: SocketAddr,
     kms_keys: SoftwareKmsKeys,
     crs_store: Option<CrsHashMap>,
 ) -> anyhow::Result<()> {
-    let url = Url::parse(url_str)?;
-    if url.scheme() != "http" && url.scheme() != "https" {
-        return Err(anyhow::anyhow!(
-            "Invalid scheme in URL. Only http and https are supported."
-        ));
-    }
-    let host_str = url.host_str().ok_or("Invalid host in URL.");
-    let port = url.port_or_known_default().ok_or("Invalid port in URL.");
-    let socket: SocketAddr = format!("{}:{}", host_str.unwrap(), port.unwrap()).parse()?;
-
     let kms = SoftwareKms::new(kms_keys.client_keys, kms_keys.sig_sk, crs_store);
     tracing::info!("Starting centralized KMS server ...");
+
     Server::builder()
         .add_service(KmsEndpointServer::new(kms))
         .serve(socket)

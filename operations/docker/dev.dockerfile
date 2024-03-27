@@ -1,6 +1,6 @@
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.76-slim-buster as base
+FROM rust:1.77-slim-buster as base
 
 ARG CONCRETE_ACTIONS_TOKEN
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
@@ -58,5 +58,5 @@ COPY --from=base /app/kms/temp/cks.bin /app/kms/temp/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
 COPY ./parameters/default_params.json /app/kms/parameters/
 
-CMD ["kms-server"]
+CMD ["kms-server", "dev"]
 

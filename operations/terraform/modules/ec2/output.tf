@@ -1,5 +1,5 @@
 # ec2/output.tf
-output "ec2_public_ip" {
-  value = aws_instance.kms_cent_instance.public_ip
-  description = "The public IP address of the KMS Centralized Server EC2 instance"
+output "kms_cent_ec2_role_arn" {
+  value = aws_iam_role.kms_instance_role.arn
+  description = "The ARN of the IAM role for the KMS Centralized EC2 instance"
 }

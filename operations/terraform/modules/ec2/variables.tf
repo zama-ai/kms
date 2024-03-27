@@ -32,3 +32,15 @@ variable "ssh_key_name" {
   type = string
   description = "The name of the SSH key to use for the app service"
 }
+
+variable "image_eif" {
+  type = string
+  description = "The name of the Docker image url with its tag to use for the app service"
+}
+
+variable "eif_pcr0" {
+  type = string
+  description = "The PCR0 value from the EIF build"
+}
+
+
