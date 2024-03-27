@@ -688,6 +688,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1010,7 +1020,7 @@ dependencies = [
 [[package]]
 name = "distributed-decryption"
 version = "0.1.0"
-source = "git+ssh://git@github.com/zama-ai/distributed-decryption?rev=f66f6d4#f66f6d456d23af2264fecb1ec481f354613ddf6a"
+source = "git+ssh://git@github.com/zama-ai/distributed-decryption?rev=3b93aaa#3b93aaa32f47b0784350f2b9ca7a40be1180fd78"
 dependencies = [
  "aes",
  "aes-prng",
@@ -1753,6 +1763,7 @@ dependencies = [
  "aes-prng",
  "anyhow",
  "bincode",
+ "console_error_panic_hook",
  "crypto_box",
  "ctor",
  "distributed-decryption",
@@ -1764,6 +1775,7 @@ dependencies = [
  "rayon",
  "reqwest",
  "serde",
+ "serde-wasm-bindgen",
  "serde_asn1_der",
  "serde_json",
  "serial_test",
@@ -1777,6 +1789,7 @@ dependencies = [
  "tracing-subscriber",
  "tracing-test",
  "url",
+ "wasm-bindgen",
  "zk-poc",
 ]
 
@@ -2965,6 +2978,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "serde_asn1_der"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3871,6 +3895,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4be2531df63900aeb2bca0daaaddec08491ee64ceecbee5076636a3b026795a8"
 dependencies = [
  "cfg-if",
+ "serde",
+ "serde_json",
  "wasm-bindgen-macro",
 ]
 

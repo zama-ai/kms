@@ -1,4 +1,25 @@
+use crate::consts::KEY_HANDLE;
+use crate::core::signcryption::{
+    decrypt_signcryption, encryption_key_generation, safe_hash_element, sign, verify_sig, RND_SIZE,
+};
+use crate::kms::{
+    AggregatedDecryptionResponse, AggregatedReencryptionResponse, CrsCeremonyRequest, CrsHandle,
+    DecryptionRequest, DecryptionResponsePayload, FheType, GetAllKeysRequest, GetKeyRequest,
+    KeyGenRequest, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
+};
+use crate::rpc::rpc_types::{
+    DecryptionRequestSerializable, DecryptionResponseSigPayload, MetaResponse, Plaintext,
+    ReencryptionRequestSigPayload, CURRENT_FORMAT_VERSION,
+};
+use crate::{
+    core::der_types::{
+        PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
+        SigncryptionPrivKey, SigncryptionPubKey,
+    },
+    kms::ParamChoice,
+};
 use aes_prng::AesRng;
+use distributed_decryption::execution::endpoints::reconstruct::combine128;
 use distributed_decryption::execution::sharing::shamir::{fill_indexed_shares, ShamirSharings};
 use distributed_decryption::execution::{
     endpoints::reconstruct::reconstruct_message, runtime::party::Role,
@@ -15,124 +36,37 @@ use distributed_decryption::{
     execution::sharing::shamir::reconstruct_w_errors_sync,
 };
 use itertools::Itertools;
-use kms_lib::core::der_types::{
-    PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
-    SigncryptionPrivKey, SigncryptionPubKey,
-};
-use kms_lib::core::kms_core::{decrypt_signcryption, BaseKmsStruct};
-use kms_lib::core::signcryption::{encryption_key_generation, sign, verify_sig, RND_SIZE};
-use kms_lib::file_handling::read_element;
-use kms_lib::kms::kms_endpoint_client::KmsEndpointClient;
-use kms_lib::kms::{
-    AggregatedDecryptionResponse, AggregatedReencryptionResponse, CrsCeremonyRequest, CrsHandle,
-    DecryptionRequest, DecryptionResponsePayload, FheType, GetAllKeysRequest, GetKeyRequest,
-    KeyGenRequest, ParamChoice, ReencryptionRequest, ReencryptionRequestPayload,
-    ReencryptionResponse,
-};
-use kms_lib::rpc::kms_rpc::{some_or_err, CURRENT_FORMAT_VERSION};
-use kms_lib::rpc::rpc_types::{
-    BaseKms, DecryptionRequestSerializable, DecryptionResponseSigPayload, MetaResponse, Plaintext,
-    ReencryptionRequestSigPayload,
-};
-use kms_lib::setup_rpc::{
-    CentralizedTestingKeys, DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH, KEY_HANDLE,
-};
-use kms_lib::threshold::threshold_kms::decrypted_blocks_to_raw_decryption;
 use rand::{RngCore, SeedableRng};
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::{HashMap, HashSet};
-use std::env;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{filter, Layer};
+use std::fmt;
+use wasm_bindgen::prelude::*;
 
-/// Retries a function a given number of times with a given interval between retries.
-macro_rules! retry {
-    ($f:expr, $count:expr, $interval:expr) => {{
-        let mut retries = 0;
-        let result = loop {
-            let result = $f;
-            if result.is_ok() {
-                break result;
-            } else if retries > $count {
-                break result;
-            } else {
-                retries += 1;
-                tokio::time::sleep(std::time::Duration::from_millis($interval)).await;
-            }
-        };
-        result
-    }};
-    ($f:expr) => {
-        retry!($f, 5, 100)
-    };
+fn some_or_err<T: fmt::Debug>(input: Option<T>, error: String) -> anyhow::Result<T> {
+    input.ok_or_else(|| {
+        tracing::warn!(error);
+        anyhow::Error::msg("Invalid request")
+    })
 }
 
-/// This client serves test purposes.
-/// URL format is without protocol e.g.: 0.0.0.0:50051
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let stdout_log = tracing_subscriber::fmt::layer().pretty();
-    tracing_subscriber::registry()
-        .with(stdout_log.with_filter(filter::LevelFilter::WARN))
-        .init();
-
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        return Err("Missing required argument: server URL. Please provide the server URL as the second argument.".into());
-    }
-    let url = &args[1];
-
-    let mut kms_client = retry!(KmsEndpointClient::connect(url.to_owned()).await, 5, 100)?;
-    let (ct, fhe_type): (Vec<u8>, FheType) = read_element(DEFAULT_CENTRAL_CT_PATH)?;
-    let central_keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH)?;
-    let mut internal_client = Client::new(
-        HashSet::from_iter(central_keys.server_keys.iter().cloned()),
-        central_keys.client_pk,
-        central_keys.client_sk,
-        1,
-        central_keys.params,
-    );
-
-    // DECRYPTION REQUEST
-    let req = internal_client.decryption_request(ct.clone(), fhe_type, None)?;
-    let response = kms_client.decrypt(tonic::Request::new(req.clone())).await?;
-    tracing::debug!("DECRYPT RESPONSE={:?}", response);
-    let responses = AggregatedDecryptionResponse {
-        responses: vec![response.into_inner()],
-    };
-    match internal_client.process_decryption_resp(Some(req), responses) {
-        Ok(Some(plaintext)) => {
-            tracing::info!(
-                "Decryption response is ok: {:?} of type {:?}",
-                plaintext.as_u32(),
-                plaintext.fhe_type()
-            )
+/// Helper method for combining reconstructed messages after decryption.
+// TODO is this the right place for this function? Should probably be in ddec. Related to this issue https://github.com/zama-ai/distributed-decryption/issues/352
+fn decrypted_blocks_to_raw_decryption(
+    params: &NoiseFloodParameters,
+    fhe_type: FheType,
+    recon_blocks: Vec<Z128>,
+) -> anyhow::Result<Plaintext> {
+    let bits_in_block = params.ciphertext_parameters.message_modulus_log();
+    let res = match combine128(bits_in_block, recon_blocks) {
+        Ok(res) => res,
+        Err(error) => {
+            eprint!("Panicked in combining {error}");
+            return Err(anyhow_error_and_log(format!(
+                "Panicked in combining {error}"
+            )));
         }
-        _ => tracing::warn!("Decryption response is NOT valid"),
     };
-
-    // REENCRYPTION REQUEST
-    let (req, enc_pk, enc_sk) = internal_client.reencyption_request(ct, fhe_type, None)?;
-    let response = kms_client
-        .reencrypt(tonic::Request::new(req.clone()))
-        .await?;
-    tracing::debug!("REENCRYPT RESPONSE={:?}", response);
-    let responses = AggregatedReencryptionResponse {
-        responses: HashMap::from([(1, response.into_inner())]),
-    };
-    match internal_client.process_reencryption_resp(Some(req), responses, &enc_pk, &enc_sk) {
-        Ok(Some(plaintext)) => {
-            tracing::info!(
-                "Reencryption response is ok: {:?} of type {:?}",
-                plaintext.as_u32(),
-                plaintext.fhe_type()
-            )
-        }
-        _ => tracing::warn!("Reencryption response is NOT valid"),
-    };
-
-    Ok(())
+    Ok(Plaintext::new(res, fhe_type))
 }
 
 /// Simple client to interact with the KMS servers. This can be seen as a proof-of-concept
@@ -140,6 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// distributed accross the aggregator/proxy and smart contracts.
 /// TODO should probably aggregate the KmsEndpointClient to void having two client code bases
 /// exposed in tests and MVP
+#[wasm_bindgen]
 pub struct Client {
     rng: Box<AesRng>,
     server_pks: HashSet<PublicSigKey>,
@@ -147,6 +82,84 @@ pub struct Client {
     client_sk: PrivateSigKey,
     shares_needed: u32,
     params: NoiseFloodParameters,
+}
+
+#[cfg(not(feature = "non-wasm"))]
+#[wasm_bindgen]
+pub fn js_new_client(
+    server_pks: Vec<PublicSigKey>,
+    client_pk: PublicSigKey,
+    client_sk: PrivateSigKey,
+    shares_needed: u32,
+    params: JsValue, // we cannot create bindings for NoiseFloodParameters, so use JsValue
+) -> Client {
+    console_error_panic_hook::set_once();
+    let server_pks = HashSet::from_iter(server_pks);
+    let params: NoiseFloodParameters = serde_wasm_bindgen::from_value(params).unwrap();
+    Client {
+        rng: Box::new(AesRng::from_entropy()),
+        server_pks,
+        client_pk,
+        client_sk,
+        shares_needed,
+        params,
+    }
+}
+
+/// An extra struct for the response is needed since
+/// wasm cannot support tuples (or hashmap, hashset)
+#[cfg(not(feature = "non-wasm"))]
+#[wasm_bindgen(getter_with_clone)]
+pub struct JsReencryptionRequestResult {
+    pub req: ReencryptionRequest,
+    pub public_enc_key: PublicEncKey,
+    pub private_enc_key: PrivateEncKey,
+}
+
+#[cfg(not(feature = "non-wasm"))]
+#[wasm_bindgen]
+pub fn js_reencyption_request(
+    client: &mut Client,
+    ct: Vec<u8>,
+    fhe_type: FheType,
+    key_handle: Option<String>,
+) -> Result<JsReencryptionRequestResult, JsError> {
+    match client.reencyption_request(ct, fhe_type, key_handle) {
+        Ok((req, pk, sk)) => Ok(JsReencryptionRequestResult {
+            req,
+            public_enc_key: pk,
+            private_enc_key: sk,
+        }),
+        Err(e) => Err(JsError::new(&e.to_string())),
+    }
+}
+
+/// This function takes `AggregatedReencryptionResponse` normally
+/// but wasm does not support HashMap so we need to take two parameters:
+/// `agg_resp` and `agg_resp_id`.
+#[cfg(not(feature = "non-wasm"))]
+#[wasm_bindgen]
+pub fn js_process_reencryption_resp(
+    client: &mut Client,
+    request: Option<ReencryptionRequest>,
+    agg_resp: Vec<ReencryptionResponse>,
+    agg_resp_ids: Vec<u32>,
+    enc_pk: &PublicEncKey,
+    enc_sk: &PrivateEncKey,
+) -> Result<Plaintext, JsError> {
+    let mut hm = AggregatedReencryptionResponse {
+        responses: HashMap::new(),
+    };
+    for (k, v) in agg_resp_ids.into_iter().zip(agg_resp) {
+        hm.responses.insert(k, v);
+    }
+    match client.process_reencryption_resp(request, hm, enc_pk, enc_sk) {
+        Ok(resp) => match resp {
+            Some(out) => Ok(out),
+            None => Err(JsError::new("no response")),
+        },
+        Err(e) => Err(JsError::new(&e.to_string())),
+    }
 }
 
 impl Client {
@@ -393,7 +406,7 @@ impl Client {
                     return Ok(false);
                 }
                 let sig_payload: DecryptionRequestSerializable = req.try_into()?;
-                if BaseKmsStruct::digest(&to_vec(&sig_payload)?)? != pivot_payload.digest {
+                if safe_hash_element(&to_vec(&sig_payload)?)? != pivot_payload.digest {
                     tracing::warn!("The decryption response is not linked to the correct request");
                     return Ok(false);
                 }
@@ -493,7 +506,7 @@ impl Client {
                         return Ok(None);
                     }
                     let sig_payload: ReencryptionRequestSigPayload = req_payload.try_into()?;
-                    let req_digest = BaseKmsStruct::digest(&to_vec(&sig_payload)?)?;
+                    let req_digest = safe_hash_element(&to_vec(&sig_payload)?)?;
                     if req_digest != pivot_resp.digest {
                         tracing::warn!(
                             "The reencryption response is not linked to the correct request"
@@ -750,34 +763,36 @@ pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use crate::{num_blocks, Client};
-    use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
-    use kms_lib::core::kms_core::{CrsHashMap, SignedCRS, SignedFhePublicKeySet, SoftwareKmsKeys};
-    use kms_lib::file_handling::{read_as_json, read_element, read_element_async};
-    use kms_lib::kms::kms_endpoint_client::KmsEndpointClient;
-    use kms_lib::kms::{
-        AggregatedDecryptionResponse, AggregatedReencryptionResponse, CrsHandle, FheType,
-        ParamChoice,
-    };
-    use kms_lib::rpc::kms_rpc::{crs_path, priv_key_path, pub_key_path, server_handle};
-    use kms_lib::setup_rpc::{
-        CentralizedTestingKeys, ThresholdTestingKeys, AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT,
-        DEFAULT_URL, KEY_HANDLE, TEST_CENTRAL_CRS_PATH, TEST_CENTRAL_CT_PATH,
-        TEST_CENTRAL_KEYS_PATH, TEST_CRS_HANDLE, TEST_FHE_TYPE, TEST_MSG, TEST_PARAM_PATH,
-        TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
+    use crate::client::num_blocks;
+    use crate::consts::{
+        AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, KEY_HANDLE, TEST_CENTRAL_CRS_PATH,
+        TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_CRS_HANDLE, TEST_FHE_TYPE, TEST_MSG,
+        TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
     };
     #[cfg(feature = "slow_tests")]
-    use kms_lib::setup_rpc::{
+    use crate::consts::{
         DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH,
         DEFAULT_CRS_HANDLE, DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
     };
-    use kms_lib::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
+    use crate::core::kms_core::{CrsHashMap, SignedCRS, SignedFhePublicKeySet, SoftwareKmsKeys};
+    use crate::file_handling::{read_as_json, read_element, read_element_async};
+    use crate::kms::kms_endpoint_client::KmsEndpointClient;
+    use crate::kms::{
+        AggregatedDecryptionResponse, AggregatedReencryptionResponse, CrsHandle, FheType,
+        ParamChoice,
+    };
+    use crate::rpc::kms_rpc::{crs_path, priv_key_path, pub_key_path, server_handle};
+    use crate::setup_rpc::{CentralizedTestingKeys, ThresholdTestingKeys};
+    use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
+    use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use serial_test::serial;
     use std::collections::{HashMap, HashSet};
     use std::fs;
     use std::str::FromStr;
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::{Channel, Uri};
+
+    use super::Client;
 
     async fn setup(
         kms_keys: SoftwareKmsKeys,

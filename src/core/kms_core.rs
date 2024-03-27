@@ -1,27 +1,21 @@
-use super::der_types::{
-    Cipher, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
-};
-use super::signcryption::{
-    hash_element, sign, signcrypt, validate_and_decrypt, verify_sig, RND_SIZE,
-};
+use super::der_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature};
+use super::signcryption::{safe_hash_element, sign, signcrypt, verify_sig, RND_SIZE};
 use crate::anyhow_error_and_warn_log;
+use crate::consts::KEY_HANDLE;
 use crate::kms::FheType;
-use crate::rpc::kms_rpc::handle_potential_err;
 use crate::rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, SigncryptionPayload};
-use crate::setup_rpc::{FhePrivateKey, FhePublicKey, KEY_HANDLE};
+use crate::setup_rpc::{FhePrivateKey, FhePublicKey};
 use aes_prng::AesRng;
+use distributed_decryption::execution::endpoints::keygen::PubKeySet;
+use distributed_decryption::execution::zk::ceremony::{make_proof_deterministic, PublicParameter};
 use distributed_decryption::{
     error::error_handler::anyhow_error_and_log,
-    execution::{
-        endpoints::keygen::PubKeySet,
-        tfhe_internals::parameters::NoiseFloodParameters,
-        zk::ceremony::{make_proof_deterministic, PublicParameter},
-    },
+    execution::tfhe_internals::parameters::NoiseFloodParameters,
 };
 use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
-use serde_asn1_der::{from_bytes, to_vec};
+use serde_asn1_der::to_vec;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::{fmt, panic};
@@ -30,6 +24,13 @@ use tfhe::shortint::ClassicPBSParameters;
 use tfhe::ClientKey;
 use tfhe::{ConfigBuilder, FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
 use zk_poc::curve;
+
+fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> anyhow::Result<T> {
+    resp.map_err(|_| {
+        tracing::warn!(error);
+        anyhow::Error::msg(format!("Invalid request: \"{}\"", error))
+    })
+}
 
 pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
     let sk = SigningKey::random(rng);
@@ -181,16 +182,7 @@ impl BaseKms for BaseKmsStruct {
     where
         T: fmt::Debug + Serialize,
     {
-        let to_hash = match to_vec(msg) {
-            Ok(to_sign) => to_sign,
-            Err(e) => {
-                return Err(anyhow_error_and_warn_log(format!(
-                    "Could not encode message for signing {:?} with error: {:?}",
-                    msg, e
-                )))
-            }
-        };
-        Ok(hash_element(&to_hash))
+        safe_hash_element(msg)
     }
 }
 
@@ -372,7 +364,8 @@ impl Kms for SoftwareKms {
         let plaintext = Kms::decrypt(self, ct, fhe_type, key_handle)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<Residuepoly<Z128>> element
-        let raw_decryption = RawDecryption::new(plaintext.value.to_le_bytes().to_vec(), fhe_type);
+        let raw_decryption =
+            RawDecryption::new(plaintext.as_u128().to_le_bytes().to_vec(), fhe_type);
         let signcryption_msg = SigncryptionPayload {
             raw_decryption,
             req_digest: req_digest.to_vec(),
@@ -410,50 +403,30 @@ impl SoftwareKms {
     }
 }
 
-pub fn decrypt_signcryption(
-    cipher: &[u8],
-    link: &[u8],
-    client_keys: &SigncryptionPair,
-    server_verf_key: &PublicSigKey,
-) -> anyhow::Result<Option<RawDecryption>> {
-    let cipher: Cipher = from_bytes(cipher)?;
-    let decrypted_signcryption = match validate_and_decrypt(&cipher, client_keys, server_verf_key)?
-    {
-        Some(decrypted_signcryption) => decrypted_signcryption,
-        None => {
-            tracing::warn!("Signcryption validation failed");
-            return Ok(None);
-        }
-    };
-    let signcrypted_msg: SigncryptionPayload = serde_asn1_der::from_bytes(&decrypted_signcryption)?;
-    if link != signcrypted_msg.req_digest {
-        tracing::warn!("Link validation for signcryption failed");
-        return Ok(None);
-    }
-    Ok(Some(signcrypted_msg.raw_decryption))
-}
-
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "slow_tests")]
+    use crate::consts::{
+        DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH,
+        DEFAULT_CENTRAL_MULTI_CT_PATH, DEFAULT_CENTRAL_MULTI_KEYS_PATH, DEFAULT_CRS_HANDLE,
+        DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
+    };
+    use crate::consts::{
+        KEY_HANDLE, OTHER_KEY_HANDLE, TEST_CENTRAL_CRS_PATH, TEST_CENTRAL_CT_PATH,
+        TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_MULTI_CT_PATH, TEST_CENTRAL_MULTI_KEYS_PATH,
+        TEST_CRS_HANDLE, TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH,
+    };
     use crate::core::der_types::PrivateSigKey;
-    use crate::core::kms_core::{decrypt_signcryption, gen_sig_keys, SoftwareKms};
+    use crate::core::kms_core::{gen_sig_keys, SoftwareKms};
     use crate::core::request::ephemeral_key_generation;
+    use crate::core::signcryption::decrypt_signcryption;
     use crate::file_handling::read_element;
     use crate::kms::FheType;
     use crate::rpc::rpc_types::{Kms, Plaintext};
     use crate::setup_rpc::{
         ensure_central_crs_store_exists, ensure_central_key_ct_exist,
         ensure_central_multiple_keys_ct_exist, ensure_dir_exist, ensure_threshold_key_ct_exist,
-        CentralizedTestingKeys, KEY_HANDLE, OTHER_KEY_HANDLE, TEST_CENTRAL_CRS_PATH,
-        TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_MULTI_CT_PATH,
-        TEST_CENTRAL_MULTI_KEYS_PATH, TEST_CRS_HANDLE, TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH,
-        TEST_THRESHOLD_KEYS_PATH,
-    };
-    #[cfg(feature = "slow_tests")]
-    use crate::setup_rpc::{
-        DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH,
-        DEFAULT_CENTRAL_MULTI_CT_PATH, DEFAULT_CENTRAL_MULTI_KEYS_PATH, DEFAULT_CRS_HANDLE,
-        DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
+        CentralizedTestingKeys,
     };
     use aes_prng::AesRng;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;

@@ -1,10 +1,10 @@
-use kms_lib::core::kms_core::{CrsHashMap, SoftwareKmsKeys};
-use kms_lib::file_handling::read_element;
-use kms_lib::rpc::kms_rpc::server_handle;
-use kms_lib::setup_rpc::{
+use kms_lib::consts::{
     CRS_PATH_PREFIX, DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CRS_HANDLE,
     DEFAULT_SOFTWARE_CENTRAL_KEY_PATH, KEY_HANDLE, TMP_PATH_PREFIX,
 };
+use kms_lib::core::kms_core::{CrsHashMap, SoftwareKmsKeys};
+use kms_lib::file_handling::read_element;
+use kms_lib::rpc::kms_rpc::server_handle;
 use kms_lib::{write_default_crs_store, write_default_keys};
 use std::env;
 use std::path::Path;

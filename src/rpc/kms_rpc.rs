@@ -1,4 +1,9 @@
-use super::rpc_types::{BaseKms, DecryptionRequestSerializable, ReencryptionRequestSigPayload};
+use super::rpc_types::{
+    BaseKms, DecryptionRequestSerializable, ReencryptionRequestSigPayload, CURRENT_FORMAT_VERSION,
+};
+use crate::anyhow_error_and_warn_log;
+use crate::consts::{CRS_PATH_PREFIX, DEFAULT_PARAM_PATH, KEY_PATH_PREFIX, TEST_PARAM_PATH};
+use crate::core::der_types::{PublicEncKey, PublicSigKey};
 use crate::core::kms_core::{
     gen_centralized_crs, generate_fhe_keys, BaseKmsStruct, CrsHashMap, SignedCRS,
     SignedFhePublicKeySet, SoftwareKms, SoftwareKmsKeys,
@@ -11,12 +16,7 @@ use crate::kms::{
     ReencryptionRequest, ReencryptionResponse,
 };
 use crate::rpc::rpc_types::{DecryptionResponseSigPayload, Kms};
-use crate::setup_rpc::{DEFAULT_PARAM_PATH, KEY_PATH_PREFIX, TEST_PARAM_PATH};
-use crate::{anyhow_error_and_warn_log, setup_rpc::CRS_PATH_PREFIX};
-use crate::{
-    core::der_types::{PublicEncKey, PublicSigKey},
-    setup_rpc::FhePrivateKey,
-};
+use crate::setup_rpc::FhePrivateKey;
 use aes_prng::AesRng;
 use distributed_decryption::{
     execution::{
@@ -34,8 +34,6 @@ use std::{fmt, fs};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 use url::Url;
-
-pub static CURRENT_FORMAT_VERSION: u32 = 1;
 
 pub async fn server_handle(
     url_str: &str,
@@ -82,16 +80,16 @@ impl KmsEndpoint for SoftwareKms {
                 format!("Keys with handle {} already exist!", inner.key_handle),
             ));
         }
-        let params = handle_potential_err(
+        let params = tonic_handle_potential_err(
             retrieve_paramters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
         let (client_key, pub_keys) = generate_fhe_keys(params);
-        let pk_uri = handle_potential_err(
+        let pk_uri = tonic_handle_potential_err(
             store_keys(self, &client_key, &pub_keys, &inner.key_handle),
             format!("Failed to store generated keys from request {:?}", inner),
         )?;
-        let mut client_key_map = handle_potential_err(
+        let mut client_key_map = tonic_handle_potential_err(
             self.client_keys.lock(),
             "Could not get handle on fhe keys".to_string(),
         )?;
@@ -103,11 +101,11 @@ impl KmsEndpoint for SoftwareKms {
         &self,
         _request: Request<GetAllKeysRequest>,
     ) -> Result<Response<GetAllKeysResponse>, Status> {
-        let client_keys = handle_potential_err(
+        let client_keys = tonic_handle_potential_err(
             self.client_keys.lock(),
             "Could not get handle on fhe keys".to_string(),
         )?;
-        let all_keys = handle_potential_err(
+        let all_keys = tonic_handle_potential_err(
             get_all_key_uris(&client_keys),
             "Could not get the URIs for all keys".to_string(),
         )?;
@@ -151,7 +149,7 @@ impl KmsEndpoint for SoftwareKms {
             client_verf_key,
             servers_needed,
             key_handle,
-        ) = handle_potential_err(
+        ) = tonic_handle_potential_err(
             validate_reencrypt_req(&inner).await,
             format!("Invalid key in request {:?}", inner),
         )?;
@@ -172,7 +170,7 @@ impl KmsEndpoint for SoftwareKms {
             signcrypted_ciphertext: return_cipher,
             fhe_type: fhe_type.into(),
             digest: req_digest,
-            verification_key: handle_potential_err(
+            verification_key: tonic_handle_potential_err(
                 to_vec(&self.get_verf_key()),
                 "Could not serialize server verification key".to_string(),
             )?,
@@ -185,22 +183,23 @@ impl KmsEndpoint for SoftwareKms {
     ) -> Result<Response<DecryptionResponse>, Status> {
         tracing::info!("Received a new request!");
         let inner = request.into_inner();
-        let (ciphertext, fhe_type, req_digest, servers_needed, key_handle) = handle_potential_err(
-            validate_decrypt_req(&inner).await,
-            format!("Invalid key in request {:?}", inner),
-        )?;
-        let plaintext = handle_potential_err(
+        let (ciphertext, fhe_type, req_digest, servers_needed, key_handle) =
+            tonic_handle_potential_err(
+                validate_decrypt_req(&inner).await,
+                format!("Invalid key in request {:?}", inner),
+            )?;
+        let plaintext = tonic_handle_potential_err(
             Kms::decrypt(self, &ciphertext, fhe_type, &key_handle),
             format!("Decryption failed for request {:?}", inner),
         )?;
-        let plaintext_bytes = handle_potential_err(
+        let plaintext_bytes = tonic_handle_potential_err(
             to_vec(&plaintext),
             format!(
                 "Could not convert plaintext to bytes in request {:?}",
                 inner
             ),
         )?;
-        let server_verf_key = handle_potential_err(
+        let server_verf_key = tonic_handle_potential_err(
             to_vec(&self.get_verf_key()),
             "Could not serialize server verification key".to_string(),
         )?;
@@ -211,7 +210,7 @@ impl KmsEndpoint for SoftwareKms {
             verification_key: server_verf_key,
             digest: req_digest,
         };
-        let sig = handle_potential_err(
+        let sig = tonic_handle_potential_err(
             self.sign(&sig_payload),
             format!("Could not sign payload {:?}", sig_payload),
         )?;
@@ -252,7 +251,7 @@ impl KmsEndpoint for SoftwareKms {
             ));
         }
 
-        let params = handle_potential_err(
+        let params = tonic_handle_potential_err(
             retrieve_paramters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
@@ -261,12 +260,12 @@ impl KmsEndpoint for SoftwareKms {
         let mut rng = AesRng::from_entropy();
         let crs = gen_centralized_crs(&params, &mut rng);
 
-        let crs_uri = handle_potential_err(
+        let crs_uri = tonic_handle_potential_err(
             store_crs(self, &crs, handle),
             format!("Failed to store CRS from request {:?}", inner),
         )?;
 
-        let mut crs_store = handle_potential_err(
+        let mut crs_store = tonic_handle_potential_err(
             self.crs_store.lock(),
             "Could not get handle for storing CRS".to_string(),
         )?;
@@ -404,7 +403,7 @@ pub async fn validate_reencrypt_req(
     u32,
     String,
 )> {
-    let payload = some_or_err(
+    let payload = tonic_some_or_err(
         req.payload.clone(),
         format!("The request {:?} does not have a payload", req),
     )?;
@@ -416,12 +415,12 @@ pub async fn validate_reencrypt_req(
     }
     let sig_payload: ReencryptionRequestSigPayload = payload.clone().try_into()?;
     let sig_payload_serialized = to_vec(&sig_payload)?;
-    let req_digest = handle_potential_err(
+    let req_digest = tonic_handle_potential_err(
         BaseKmsStruct::digest(&sig_payload_serialized),
         format!("Could not hash payload {:?}", req),
     )?;
     let fhe_type = payload.fhe_type();
-    let client_verf_key: PublicSigKey = handle_potential_err(
+    let client_verf_key: PublicSigKey = tonic_handle_potential_err(
         from_bytes(&payload.verification_key),
         format!("Invalid verification key in request {:?}", req),
     )?;
@@ -459,18 +458,18 @@ pub async fn validate_decrypt_req(
         )));
     }
     let fhetype = req.fhe_type();
-    let req_serialized: DecryptionRequestSerializable = handle_potential_err(
+    let req_serialized: DecryptionRequestSerializable = tonic_handle_potential_err(
         req.clone().try_into(),
         format!(
             "Could not make signature payload from protobuf request {:?}",
             req
         ),
     )?;
-    let serialized_req = handle_potential_err(
+    let serialized_req = tonic_handle_potential_err(
         to_vec(&req_serialized),
         format!("Could not serialize payload {:?}", req),
     )?;
-    let req_digest = handle_potential_err(
+    let req_digest = tonic_handle_potential_err(
         BaseKmsStruct::digest(&serialized_req),
         format!("Could not hash payload {:?}", req),
     )?;
@@ -503,14 +502,22 @@ pub fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Resul
     }
 }
 
-pub fn some_or_err<T: fmt::Debug>(input: Option<T>, error: String) -> Result<T, Status> {
+#[cfg(feature = "non-wasm")]
+pub fn tonic_some_or_err<T: fmt::Debug>(
+    input: Option<T>,
+    error: String,
+) -> Result<T, tonic::Status> {
     input.ok_or_else(|| {
         tracing::warn!(error);
         tonic::Status::new(tonic::Code::Aborted, "Invalid request".to_string())
     })
 }
 
-pub fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> Result<T, Status> {
+#[cfg(feature = "non-wasm")]
+pub fn tonic_handle_potential_err<T, E>(
+    resp: Result<T, E>,
+    error: String,
+) -> Result<T, tonic::Status> {
     resp.map_err(|_| {
         tracing::warn!(error);
         tonic::Status::new(tonic::Code::Aborted, "Invalid request".to_string())

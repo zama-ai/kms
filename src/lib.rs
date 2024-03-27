@@ -1,32 +1,47 @@
-use self::setup_rpc::DEFAULT_PARAM_PATH;
-use crate::core::kms_core::gen_centralized_crs;
 use aes_prng::AesRng;
 use anyhow::anyhow;
+use consts::{DEFAULT_CRS_HANDLE, DEFAULT_PARAM_PATH, KEY_HANDLE};
+#[cfg(feature = "non-wasm")]
 use core::kms_core::{gen_sig_keys, CrsHashMap, SoftwareKmsKeys};
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+#[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::tfhe_internals::test_feature::gen_key_set;
-use file_handling::read_as_json;
-use file_handling::write_element;
+#[cfg(feature = "non-wasm")]
+use file_handling::{read_as_json, write_element};
 use rand::SeedableRng;
-use setup_rpc::{DEFAULT_CRS_HANDLE, KEY_HANDLE};
+#[cfg(feature = "non-wasm")]
 use std::collections::HashMap;
 use std::panic::Location;
 
-pub mod kms {
-    tonic::include_proto!("kms"); // The string specified here must match the proto package name
+// copied from tonic since we're cannot pull in tonic for wasm
+macro_rules! my_include_proto {
+    ($package: tt) => {
+        include!(concat!(env!("OUT_DIR"), concat!("/", $package, ".rs")));
+    };
 }
+pub mod kms {
+    my_include_proto!("kms"); // The string specified here must match the proto package name
+}
+pub mod client;
+pub mod consts;
+#[cfg(feature = "non-wasm")]
 pub mod setup_rpc;
 pub mod core {
     pub mod der_types;
+    #[cfg(feature = "non-wasm")]
     pub mod kms_core;
+    #[cfg(feature = "non-wasm")]
     pub mod request;
     pub mod signcryption;
 }
+#[cfg(feature = "non-wasm")]
 pub mod threshold {
     pub mod threshold_kms;
 }
+#[cfg(feature = "non-wasm")]
 pub mod file_handling;
 pub mod rpc {
+    #[cfg(feature = "non-wasm")]
     pub mod kms_rpc;
     pub mod rpc_types;
 }
@@ -43,6 +58,7 @@ pub fn anyhow_error_and_warn_log(msg: String) -> anyhow::Error {
     anyhow!("Warning in {}: {}", Location::caller(), msg)
 }
 
+#[cfg(feature = "non-wasm")]
 pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
     let mut rng = AesRng::from_entropy();
     let params: NoiseFloodParameters = read_as_json(DEFAULT_PARAM_PATH.to_owned()).unwrap();
@@ -82,6 +98,7 @@ pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
     software_kms_keys
 }
 
+#[cfg(feature = "non-wasm")]
 pub fn write_default_crs_store(path: &str) -> CrsHashMap {
     let mut rng = AesRng::from_entropy();
     let params: NoiseFloodParameters = read_as_json(DEFAULT_PARAM_PATH.to_owned()).unwrap();
@@ -92,7 +109,7 @@ pub fn write_default_crs_store(path: &str) -> CrsHashMap {
         path_string.push('/');
     }
 
-    let crs = gen_centralized_crs(&params, &mut rng);
+    let crs = crate::core::kms_core::gen_centralized_crs(&params, &mut rng);
     let crs_store = CrsHashMap::from([(DEFAULT_CRS_HANDLE.to_string(), crs)]);
 
     write_element(format!("{path_string}default-crs-store.bin"), &crs_store).unwrap();

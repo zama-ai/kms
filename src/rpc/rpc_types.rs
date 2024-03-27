@@ -7,6 +7,9 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_asn1_der::from_bytes;
 use std::fmt;
+use wasm_bindgen::prelude::wasm_bindgen;
+
+pub static CURRENT_FORMAT_VERSION: u32 = 1;
 
 pub trait BaseKms {
     fn verify_sig<T: Serialize>(
@@ -53,8 +56,9 @@ impl RawDecryption {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[wasm_bindgen]
 pub struct Plaintext {
-    pub value: u128,
+    value: u128,
     fhe_type: FheType,
 }
 
@@ -147,12 +151,15 @@ impl Plaintext {
         }
         self.value as u32
     }
-
     pub fn as_u64(&self) -> u64 {
         if self.fhe_type != FheType::Euint64 {
             tracing::warn!("Plaintext is not of type u32. Returning the value modulo 2^64");
         }
         self.value as u64
+    }
+
+    pub fn as_u128(&self) -> u128 {
+        self.value
     }
 
     pub fn fhe_type(&self) -> FheType {

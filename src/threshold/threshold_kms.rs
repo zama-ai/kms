@@ -1,3 +1,4 @@
+use crate::anyhow_error_and_log;
 use crate::core::der_types::{self, PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::core::kms_core::BaseKmsStruct;
 use crate::core::signcryption::signcrypt;
@@ -8,26 +9,24 @@ use crate::kms::{
     ReencryptionRequest, ReencryptionResponse,
 };
 use crate::rpc::kms_rpc::{
-    handle_potential_err, process_response, some_or_err, validate_decrypt_req,
-    validate_reencrypt_req, CURRENT_FORMAT_VERSION,
+    process_response, tonic_handle_potential_err, tonic_some_or_err, validate_decrypt_req,
+    validate_reencrypt_req,
 };
 use crate::rpc::rpc_types::{
     BaseKms, DecryptionResponseSigPayload, Plaintext, RawDecryption, SigncryptionPayload,
-};
-use crate::{
-    anyhow_error_and_log,
-    setup_rpc::{COMPRESSED, SEC_PAR},
+    CURRENT_FORMAT_VERSION,
 };
 use aes_prng::AesRng;
+use distributed_decryption::algebra::base_ring::Z64;
+use distributed_decryption::algebra::residue_poly::ResiduePoly128;
+use distributed_decryption::computation::SessionId;
+use distributed_decryption::execution::endpoints::decryption::{
+    decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, Small,
+};
 use distributed_decryption::execution::runtime::session::{
     BaseSessionStruct, DecryptionMode, ParameterHandles, SessionParameters, SmallSession,
 };
-use distributed_decryption::execution::{
-    endpoints::decryption::{
-        decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, Small,
-    },
-    tfhe_internals::parameters::DKGParamsRegular,
-};
+use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::execution::{
     endpoints::keygen::PrivateKeySet, small_execution::agree_random::RealAgreeRandomWithAbort,
 };
@@ -35,22 +34,9 @@ use distributed_decryption::execution::{
     runtime::party::{Identity, Role, RoleAssignment},
     tfhe_internals::switch_and_squash::SwitchAndSquashKey,
 };
-use distributed_decryption::execution::{
-    small_execution::prss::PRSSSetup, tfhe_internals::parameters::AugmentedCiphertextParameters,
-};
 use distributed_decryption::networking::grpc::GrpcNetworkingManager;
 use distributed_decryption::{
-    algebra::base_ring::{Z128, Z64},
-    execution::tfhe_internals::parameters::NoiseFloodParameters,
-};
-use distributed_decryption::{
-    algebra::residue_poly::ResiduePoly128, execution::endpoints::decryption::combine128,
-};
-use distributed_decryption::{
     choreography::NetworkingStrategy, execution::tfhe_internals::parameters::Ciphertext64,
-};
-use distributed_decryption::{
-    computation::SessionId, execution::tfhe_internals::parameters::DKGParamsSnS,
 };
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::to_vec;
@@ -100,39 +86,6 @@ pub async fn threshold_server_start(
         .await?;
     tracing::info!("Started server {my_id}");
     Ok(())
-}
-
-/// Helper method for combining reconstructed messages after decryption.
-// TODO is this the right place for this function? Should probably be in ddec. Related to this issue https://github.com/zama-ai/distributed-decryption/issues/352
-pub fn decrypted_blocks_to_raw_decryption(
-    params: &NoiseFloodParameters,
-    fhe_type: FheType,
-    recon_blocks: Vec<Z128>,
-) -> anyhow::Result<Plaintext> {
-    let bits_in_block = params.ciphertext_parameters.message_modulus_log();
-    let res = match combine128(bits_in_block, recon_blocks) {
-        Ok(res) => res,
-        Err(error) => {
-            eprint!("Panicked in combining {error}");
-            return Err(anyhow_error_and_log(format!(
-                "Panicked in combining {error}"
-            )));
-        }
-    };
-    Ok(Plaintext::new(res, fhe_type))
-}
-
-/// Helper method for turning [NoiseFloodParameters] into [DKGParamsSnS] parameters
-/// using default flag and security parameter.
-pub fn noise_param_to_dkg_param(noise_params: NoiseFloodParameters) -> DKGParamsSnS {
-    DKGParamsSnS {
-        regular_params: DKGParamsRegular {
-            sec: SEC_PAR,
-            ciphertext_parameters: noise_params.ciphertext_parameters,
-            flag: COMPRESSED,
-        },
-        sns_params: noise_params.sns_parameters,
-    }
 }
 
 impl FheType {
@@ -218,7 +171,7 @@ impl ThresholdKms {
                 (role, identity)
             })
             .collect();
-        let own_identity = some_or_err(
+        let own_identity = tonic_some_or_err(
             role_assignment.get(&Role::indexed_by_one(my_id)),
             "Could not find my own identity".to_string(),
         )?;
@@ -283,7 +236,7 @@ impl ThresholdKms {
     }
 
     pub fn own_identity(&self) -> anyhow::Result<Identity> {
-        let id = some_or_err(
+        let id = tonic_some_or_err(
             self.role_assignments.get(&Role::indexed_by_one(self.my_id)),
             "Could not find my own identity in role assignments".to_string(),
         )?;
@@ -346,7 +299,7 @@ impl ThresholdKms {
         .await?;
         tracing::info!("Server {} completed decryption", self.my_id);
         let session_id_string = format!("{}", session.session_id());
-        let res = some_or_err(
+        let res = tonic_some_or_err(
             partial_dec.get(&session_id_string),
             "Result for the session does not exist".to_string(),
         )?;
@@ -383,7 +336,7 @@ impl ThresholdKms {
         .await?;
         tracing::info!("Server {} did partial decryption", self.my_id);
         let session_id_string = format!("{}", session.session_id());
-        let partial_dec = some_or_err(
+        let partial_dec = tonic_some_or_err(
             partial_dec.get(&session_id_string),
             "Result for the session does not exist".to_string(),
         )?;
@@ -423,7 +376,8 @@ impl ThresholdKms {
             own_identity.clone(),
             self.role_assignments.clone(),
         )?;
-        let prss_setup = some_or_err(self.prss_setup.clone(), "No PRSS setup exists".to_string())?;
+        let prss_setup =
+            tonic_some_or_err(self.prss_setup.clone(), "No PRSS setup exists".to_string())?;
         let prss_state = prss_setup.new_prss_session_state(session_id);
         let session = SmallSession {
             base_session: BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng()?)?,
@@ -469,7 +423,7 @@ impl KmsEndpoint for ThresholdKms {
             client_verf_key,
             servers_needed,
             key_handle,
-        ) = handle_potential_err(
+        ) = tonic_handle_potential_err(
             validate_reencrypt_req(&inner).await,
             format!("Invalid key in request {:?}", inner),
         )?;
@@ -492,7 +446,7 @@ impl KmsEndpoint for ThresholdKms {
             signcrypted_ciphertext: return_cipher,
             fhe_type: fhe_type.into(),
             digest: req_digest,
-            verification_key: handle_potential_err(
+            verification_key: tonic_handle_potential_err(
                 to_vec(&self.get_verf_key()),
                 "Could not serialize server verification key".to_string(),
             )?,
@@ -505,23 +459,24 @@ impl KmsEndpoint for ThresholdKms {
     ) -> Result<Response<DecryptionResponse>, Status> {
         tracing::info!("Received a new request!");
         let inner = request.into_inner();
-        let (ciphertext, fhe_type, req_digest, servers_needed, key_handle) = handle_potential_err(
-            validate_decrypt_req(&inner).await,
-            format!("Invalid key in request {:?}", inner),
-        )?;
-        let raw_decryption = handle_potential_err(
+        let (ciphertext, fhe_type, req_digest, servers_needed, key_handle) =
+            tonic_handle_potential_err(
+                validate_decrypt_req(&inner).await,
+                format!("Invalid key in request {:?}", inner),
+            )?;
+        let raw_decryption = tonic_handle_potential_err(
             self.inner_decrypt(fhe_type, &ciphertext, &key_handle).await,
             format!("Decryption failed for request {:?}", inner),
         )?;
         let plaintext = Plaintext::new(raw_decryption.0 as u128, fhe_type);
-        let decrypted_bytes = handle_potential_err(
+        let decrypted_bytes = tonic_handle_potential_err(
             to_vec(&plaintext),
             format!(
                 "Could not convert plaintext to bytes in request {:?}",
                 inner
             ),
         )?;
-        let server_verf_key = handle_potential_err(
+        let server_verf_key = tonic_handle_potential_err(
             to_vec(&self.get_verf_key()),
             "Could not serialize server verification key".to_string(),
         )?;
@@ -532,7 +487,7 @@ impl KmsEndpoint for ThresholdKms {
             verification_key: server_verf_key,
             digest: req_digest,
         };
-        let sig = handle_potential_err(
+        let sig = tonic_handle_potential_err(
             self.sign(&sig_payload),
             format!("Could not sign payload {:?}", sig_payload),
         )?;

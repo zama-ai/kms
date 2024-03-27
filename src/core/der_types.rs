@@ -1,11 +1,14 @@
 use super::signcryption::SIG_SIZE;
+use crypto_box::SecretKey;
 use k256::ecdsa::VerifyingKey;
 use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
+use wasm_bindgen::prelude::wasm_bindgen;
 
-// Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server
-// uses to encrypt its payload
+// Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server uses to
+// encrypt its payload
+#[wasm_bindgen]
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct PublicEncKey(pub(crate) crypto_box::PublicKey);
 impl Serialize for PublicEncKey {
@@ -49,11 +52,54 @@ impl<'de> Visitor<'de> for PublicEncKeyVisitor {
     }
 }
 
-// Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the
-// server's encrypted payload
-pub type PrivateEncKey = crypto_box::SecretKey;
+// Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the server's
+// encrypted payload
+#[wasm_bindgen]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct PrivateEncKey(pub(crate) crypto_box::SecretKey);
+
+impl Serialize for PrivateEncKey {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_bytes(&self.0.to_bytes())
+    }
+}
+
+impl<'de> Deserialize<'de> for PrivateEncKey {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_bytes(PrivateEncKeyVisitor)
+    }
+}
+
+struct PrivateEncKeyVisitor;
+impl<'de> Visitor<'de> for PrivateEncKeyVisitor {
+    type Value = PrivateEncKey;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("An ephemeral private decryption key")
+    }
+
+    fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        match SecretKey::from_slice(v) {
+            Ok(sk) => Ok(PrivateEncKey(sk)),
+            Err(e) => Err(E::custom(format!(
+                "Could not decode decryption key: {:?}",
+                e
+            ))),
+        }
+    }
+}
 
 // Struct wrapping signature verification key used by both the user's wallet and server
+#[wasm_bindgen]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PublicSigKey {
     pub(crate) pk: k256::ecdsa::VerifyingKey,
@@ -104,6 +150,7 @@ impl<'de> Visitor<'de> for PublicSigKeyVisitor {
 }
 // Struct wrapping signature signing key used by both the client and server to authenticate their
 // messages to one another
+#[wasm_bindgen]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PrivateSigKey {
     pub(crate) sk: k256::ecdsa::SigningKey,

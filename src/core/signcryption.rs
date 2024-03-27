@@ -13,6 +13,7 @@ use super::der_types::{
     Cipher, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
     SigncryptionPubKey,
 };
+use crate::rpc::rpc_types::{RawDecryption, SigncryptionPayload};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use ::signature::{Signer, Verifier};
 use crypto_box::aead::{Aead, AeadCore};
@@ -21,8 +22,9 @@ use k256::ecdsa::SigningKey;
 use nom::AsBytes;
 use rand::{CryptoRng, RngCore};
 use serde::Serialize;
-use serde_asn1_der::to_vec;
+use serde_asn1_der::{from_bytes, to_vec};
 use sha3::{Digest, Sha3_256};
+use std::fmt;
 
 const DIGEST_BYTES: usize = 256 / 8; // SHA3-256 digest
 pub(crate) const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
@@ -36,7 +38,7 @@ pub fn encryption_key_generation(
     rng: &mut (impl CryptoRng + RngCore),
 ) -> (PublicEncKey, PrivateEncKey) {
     let sk = SecretKey::generate(rng);
-    (PublicEncKey(sk.public_key()), sk)
+    (PublicEncKey(sk.public_key()), PrivateEncKey(sk))
 }
 
 /// Computing the signature on message based on the server's signing key.
@@ -121,7 +123,7 @@ where
     ]
     .concat();
 
-    let enc_box = SalsaBox::new(&client_pk.0, &server_enc_sk);
+    let enc_box = SalsaBox::new(&client_pk.0, &server_enc_sk.0);
     let nonce = SalsaBox::generate_nonce(rng);
     let ciphertext = match enc_box.encrypt(&nonce, &to_encrypt[..]) {
         Ok(ciphertext) => ciphertext,
@@ -148,7 +150,7 @@ pub fn validate_and_decrypt(
     server_verf_key: &PublicSigKey,
 ) -> anyhow::Result<Option<Vec<u8>>> {
     let nonce = Nonce::from_slice(cipher.nonce.as_bytes());
-    let dec_box = SalsaBox::new(&cipher.server_enc_key.0, &client_keys.sk.decryption_key);
+    let dec_box = SalsaBox::new(&cipher.server_enc_key.0, &client_keys.sk.decryption_key.0);
     let decrypted_plaintext = match dec_box.decrypt(nonce, cipher.bytes.as_ref()) {
         Ok(decrypted_plaintext) => decrypted_plaintext,
         Err(e) => {
@@ -274,6 +276,45 @@ where
     hasher.update(element.as_ref());
     let digest = hasher.finalize();
     digest.to_vec()
+}
+
+pub(crate) fn safe_hash_element<T>(msg: &T) -> anyhow::Result<Vec<u8>>
+where
+    T: fmt::Debug + Serialize,
+{
+    let to_hash = match to_vec(msg) {
+        Ok(to_sign) => to_sign,
+        Err(e) => {
+            return Err(anyhow_error_and_warn_log(format!(
+                "Could not encode message {:?} with error: {:?}",
+                msg, e
+            )))
+        }
+    };
+    Ok(hash_element(&to_hash))
+}
+
+pub fn decrypt_signcryption(
+    cipher: &[u8],
+    link: &[u8],
+    client_keys: &SigncryptionPair,
+    server_verf_key: &PublicSigKey,
+) -> anyhow::Result<Option<RawDecryption>> {
+    let cipher: Cipher = from_bytes(cipher)?;
+    let decrypted_signcryption = match validate_and_decrypt(&cipher, client_keys, server_verf_key)?
+    {
+        Some(decrypted_signcryption) => decrypted_signcryption,
+        None => {
+            tracing::warn!("Signcryption validation failed");
+            return Ok(None);
+        }
+    };
+    let signcrypted_msg: SigncryptionPayload = serde_asn1_der::from_bytes(&decrypted_signcryption)?;
+    if link != signcrypted_msg.req_digest {
+        tracing::warn!("Link validation for signcryption failed");
+        return Ok(None);
+    }
+    Ok(Some(signcrypted_msg.raw_decryption))
 }
 
 #[cfg(test)]
