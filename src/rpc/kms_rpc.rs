@@ -493,7 +493,6 @@ pub fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Resul
     }
 }
 
-#[cfg(feature = "non-wasm")]
 pub fn tonic_some_or_err<T: fmt::Debug>(
     input: Option<T>,
     error: String,
@@ -504,7 +503,6 @@ pub fn tonic_some_or_err<T: fmt::Debug>(
     })
 }
 
-#[cfg(feature = "non-wasm")]
 pub fn tonic_handle_potential_err<T, E>(
     resp: Result<T, E>,
     error: String,

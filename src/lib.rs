@@ -43,6 +43,7 @@ pub mod file_handling;
 pub mod rpc {
     #[cfg(feature = "non-wasm")]
     pub mod kms_proxy_rpc;
+    #[cfg(feature = "non-wasm")]
     pub mod kms_rpc;
     pub mod rpc_types;
 }
