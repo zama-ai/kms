@@ -30,7 +30,7 @@ jobs:
           mode: start
           github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
           region: eu-west-3
-          ec2-image-id: ami-078ca339f448f301f
+          ec2-image-id:	ami-006a9a76dbf4d880c
           ec2-instance-type: m6i.4xlarge
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
