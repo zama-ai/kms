@@ -800,7 +800,7 @@ pub(crate) mod tests {
         crs_store: Option<CrsHashMap>,
     ) -> (JoinHandle<()>, KmsEndpointClient<Channel>) {
         let server_handle = tokio::spawn(async move {
-            let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
+            let url = format!("{DEFAULT_URL}:{}", BASE_PORT + 1);
             let add = SocketAddr::from_str(url.as_str()).unwrap();
             let _ = server_handle(add, kms_keys, crs_store).await;
         });
