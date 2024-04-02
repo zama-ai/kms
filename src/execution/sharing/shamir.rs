@@ -7,11 +7,23 @@ use crate::{algebra::structure_traits::Ring, error::error_handler::anyhow_error_
 use rand::{CryptoRng, Rng};
 use std::ops::{Add, Mul, Sub};
 
+pub trait HenselLiftInverse: Sized {
+    fn invert(self) -> anyhow::Result<Self>;
+}
+
 /// This data structure holds a collection of party_ids and their corresponding Shamir shares (each a ResiduePoly<Z>)
 #[derive(Clone, Default, PartialEq, Debug)]
 pub struct ShamirSharings<Z: Ring> {
     pub shares: Vec<Share<Z>>,
 }
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct ShamirSharing<T> {
+    pub share: T,
+    pub party_id: u8,
+}
+
+pub type ShamirFieldPoly<F> = Poly<F>;
 
 impl<Z: Ring> ShamirSharings<Z> {
     pub fn new() -> Self {

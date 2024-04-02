@@ -1,8 +1,6 @@
 use super::poly::Poly;
-use crate::{
-    algebra::error_correction::MemoizedExceptionals,
-    execution::{runtime::party::Role, sharing::shamir::ShamirSharings},
-};
+use crate::execution::{runtime::party::Role, sharing::shamir::ShamirSharings};
+use rand::CryptoRng;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -27,7 +25,7 @@ pub trait ZConsts {
 
 /// Sample random element(s)
 pub trait Sample {
-    fn sample<R: Rng>(rng: &mut R) -> Self;
+    fn sample<R: Rng + CryptoRng>(rng: &mut R) -> Self;
 }
 
 pub trait Ring: 'static
@@ -109,7 +107,7 @@ pub trait RingEmbed: Sized {
     fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self>;
 }
 
-pub trait ErrorCorrect: Ring + MemoizedExceptionals {
+pub trait ErrorCorrect: Ring {
     fn error_correct(
         sharing: &ShamirSharings<Self>,
         threshold: usize,

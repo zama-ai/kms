@@ -6,7 +6,7 @@ use super::{
 use crate::algebra::residue_poly::LutMulReduction;
 use crate::algebra::residue_poly::ResiduePoly;
 use crate::error::error_handler::anyhow_error_and_log;
-use rand::Rng;
+use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 
@@ -263,7 +263,7 @@ where
     F: Zero + One,
 {
     /// sample a random poly of given degree with `zero_coef` as fixed value for the constant term
-    pub fn sample_random_with_fixed_constant<U: Rng>(
+    pub fn sample_random_with_fixed_constant<U: Rng + CryptoRng>(
         rng: &mut U,
         zero_coef: F,
         degree: usize,
@@ -480,9 +480,9 @@ pub fn lagrange_polynomials<F: Field>(points: &[F]) -> Vec<Poly<F>> {
                 if i != j {
                     numerator = numerator
                         * Poly {
-                            coefs: vec![*xj, F::ONE],
+                            coefs: vec![-*xj, F::ONE],
                         };
-                    denominator *= *xi + *xj;
+                    denominator *= *xi - *xj;
                 }
             }
             numerator / &denominator

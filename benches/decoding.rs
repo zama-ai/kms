@@ -1,9 +1,12 @@
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use distributed_decryption::execution::sharing::shamir::{InputOp, RevealOp};
+use distributed_decryption::algebra::structure_traits::FromU128;
+use distributed_decryption::execution::sharing::shamir::ShamirSharing;
+use distributed_decryption::execution::sharing::shamir::{InputOp, RevealOp, ShamirFieldPoly};
+use distributed_decryption::experimental::bgv_algebra::LevelOne;
 use distributed_decryption::{
     algebra::{
-        gf256::{error_correction, ShamirZ2Poly, ShamirZ2Sharing, GF256},
+        gf256::{error_correction, GF256},
         residue_poly::{ResiduePoly128, ResiduePoly64},
     },
     execution::sharing::shamir::ShamirSharings,
@@ -27,14 +30,14 @@ fn bench_decode_z2(c: &mut Criterion) {
             }
 
             // f = a0 + ... + a_{t} * X^t
-            let f = ShamirZ2Poly { coefs };
+            let f = ShamirFieldPoly { coefs };
 
             // compute f(1),...,f(t+1)
             let party_ids: Vec<u8> = (1..2 * threshold + 2).map(|x| x as u8).collect();
 
             let shares: Vec<_> = party_ids
                 .iter()
-                .map(|x| ShamirZ2Sharing {
+                .map(|x| ShamirSharing::<GF256> {
                     share: f.eval(&GF256::from(*x)),
                     party_id: *x,
                 })
@@ -96,9 +99,32 @@ fn bench_decode_z64(c: &mut Criterion) {
     }
 }
 
+fn bench_decode_large_field(c: &mut Criterion) {
+    // params are (num_parties, threshold, max_errors)
+    let params = vec![(4, 1, 0), (10, 3, 0), (10, 3, 2), (40, 13, 0)];
+    let mut group = c.benchmark_group("decode_large_field");
+
+    for p in &params {
+        let (num_parties, threshold, max_err) = *p;
+        let p_str = format!("n:{num_parties}/t:{threshold}/e:{max_err}");
+        assert!(num_parties >= (threshold + 1) + 2 * max_err);
+
+        group.bench_function(BenchmarkId::new("decode", p_str), |b| {
+            let mut rng = AesRng::seed_from_u64(0);
+            let secret = LevelOne::from_u128(2345);
+            let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
+            b.iter(|| {
+                let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
+                assert_eq!(f_zero.to_scalar().unwrap(), secret.to_scalar().unwrap());
+            });
+        });
+    }
+}
+
 criterion_group! {
     name = decode;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
     targets = bench_decode_z2, bench_decode_z128, bench_decode_z64,
+    bench_decode_large_field
 }
 criterion_main!(decode);

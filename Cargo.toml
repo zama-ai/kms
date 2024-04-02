@@ -20,6 +20,7 @@ clap = { version = "~4", features = ["derive", "env"] }
 concrete-csprng = {git = "ssh://git@github.com/zama-ai/tfhe-rs.git", rev = "55f666d" }
 config = "0.14.0"
 const_format = "0.2.32"
+crypto-bigint = { version = "~0.6.0-pre.12", features = ["serde", "rand_core"] }
 crypto_box = { version = "~0.9.1", features = ["salsa20"] }
 dashmap = "~5"
 derive_more = "~0.99"
@@ -126,6 +127,17 @@ required-features = ["testing"]
 [[bench]]
 name = "decoding"
 harness = false
+required-features = ["experimental"]
+
+[[bench]]
+name = "algebra"
+harness = false
+required-features = ["experimental"]
+
+[[bench]]
+name = "bgv"
+harness = false
+required-features = ["experimental"]
 
 [[bench]]
 name = "bench_switch_and_squash"
@@ -154,10 +166,14 @@ required-features = ["testing"]
 [profile.bench]
 debug = true
 
+[profile.test]
+opt-level = 3
+
 [features]
 default = ["non-wasm"]
 testing = []
 slow_tests = []
+experimental = []
 templating = ["minijinja"]
 choreographer = ["prettytable-rs"]
 # put all the dependencies that does not work well with wasm

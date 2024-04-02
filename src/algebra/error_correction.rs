@@ -1,6 +1,6 @@
 use super::{
     bivariate::compute_powers,
-    gf256::{error_correction, ShamirZ2Sharing, GF256},
+    gf256::{error_correction, GF256},
     poly::Poly,
     residue_poly::ResiduePoly,
     structure_traits::{BaseRing, ErrorCorrect, RingEmbed, Zero},
@@ -9,6 +9,7 @@ use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
 use crate::algebra::{poly::BitwisePoly, residue_poly::F_DEG};
 use crate::error::error_handler::anyhow_error_and_log;
+use crate::execution::sharing::shamir::ShamirSharing;
 use crate::execution::sharing::shamir::ShamirSharings;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
@@ -98,6 +99,7 @@ fn accumulate_and_lift_bitwise_poly<Z: BaseRing>(
         }
     }
 }
+
 impl<Z: BaseRing> ErrorCorrect for ResiduePoly<Z>
 where
     ResiduePoly<Z>: MemoizedExceptionals,
@@ -126,10 +128,10 @@ where
         let mut res = Poly::<ResiduePoly<Z>>::zero();
 
         for bit_idx in 0..ring_size {
-            let binary_shares: Vec<ShamirZ2Sharing> = parties
+            let binary_shares: Vec<ShamirSharing<GF256>> = parties
                 .iter()
                 .zip(y.iter())
-                .map(|(party_id, sh)| ShamirZ2Sharing {
+                .map(|(party_id, sh)| ShamirSharing::<GF256> {
                     share: sh.bit_compose(bit_idx),
                     party_id: *party_id as u8,
                 })

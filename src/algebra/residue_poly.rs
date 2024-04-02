@@ -1,7 +1,7 @@
 use super::{
     base_ring::ToZ64,
     bivariate::compute_powers_list,
-    gf256::{ShamirZ2Poly, GF256},
+    gf256::GF256,
     poly::Poly,
     structure_traits::{
         BaseRing, Derive, FromU128, HenselLiftInverse, One, Ring, RingEmbed, Sample, Solve,
@@ -9,8 +9,8 @@ use super::{
     },
     syndrome::lagrange_numerators,
 };
-use crate::algebra::structure_traits::Field;
 use crate::error::error_handler::anyhow_error_and_log;
+use crate::{algebra::structure_traits::Field, execution::sharing::shamir::ShamirFieldPoly};
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
@@ -23,7 +23,7 @@ use crate::{
     },
 };
 use itertools::Itertools;
-use rand::Rng;
+use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -158,7 +158,7 @@ impl<Z> ResiduePoly<Z> {
 }
 
 impl<Z: Zero + Sample + Copy> Sample for ResiduePoly<Z> {
-    fn sample<R: Rng>(rng: &mut R) -> Self {
+    fn sample<R: Rng + CryptoRng>(rng: &mut R) -> Self {
         let mut coefs = [Z::ZERO; F_DEG];
         for coef in coefs.iter_mut() {
             *coef = Z::sample(rng);
@@ -710,7 +710,7 @@ impl<Z: BaseRing> Syndrome for ResiduePoly<Z> {
                 .map(|c| c.bit_compose(bit_idx))
                 .collect();
 
-            let sliced_syndrome = ShamirZ2Poly {
+            let sliced_syndrome = ShamirFieldPoly::<GF256> {
                 coefs: sliced_syndrome_coefs,
             };
 
@@ -811,7 +811,10 @@ where
 }
 
 impl<Z: BaseRing> ResiduePoly<Z> {
-    pub fn shamir_bit_lift(x: &ShamirZ2Poly, pos: usize) -> anyhow::Result<Poly<ResiduePoly<Z>>> {
+    pub fn shamir_bit_lift(
+        x: &ShamirFieldPoly<GF256>,
+        pos: usize,
+    ) -> anyhow::Result<Poly<ResiduePoly<Z>>> {
         let coefs: Vec<ResiduePoly<Z>> = x
             .coefs
             .iter()

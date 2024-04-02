@@ -1,12 +1,16 @@
 use std::collections::HashMap;
 
-use crate::{algebra::poly::lagrange_polynomials, error::error_handler::anyhow_error_and_log};
+use crate::{
+    algebra::poly::lagrange_polynomials, error::error_handler::anyhow_error_and_log,
+    execution::sharing::shamir::ShamirFieldPoly,
+};
 
 use super::{
     poly::{gao_decoding, Poly},
     structure_traits::{Field, FromU128, One, Ring, Sample, Zero},
     syndrome::decode_syndrome,
 };
+use crate::execution::sharing::shamir::ShamirSharing;
 use g2p::{g2p, GaloisField};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
@@ -18,12 +22,6 @@ g2p!(
     8,
     modulus: 0b_1_0001_1011,
 );
-
-#[derive(Clone, PartialEq, Debug)]
-pub struct ShamirZ2Sharing {
-    pub share: GF256,
-    pub party_id: u8,
-}
 
 impl Zero for GF256 {
     const ZERO: Self = <GF256 as GaloisField>::ZERO;
@@ -135,15 +133,16 @@ impl Field for GF256 {
     }
 }
 
-pub type ShamirZ2Poly = Poly<GF256>;
-
-pub fn error_correction(
-    shares: &[ShamirZ2Sharing],
+pub fn error_correction<F: Field>(
+    shares: &[ShamirSharing<F>],
     threshold: usize,
     max_correctable_errs: usize,
-) -> anyhow::Result<ShamirZ2Poly> {
-    let xs: Vec<GF256> = shares.iter().map(|s| GF256::from(s.party_id)).collect();
-    let ys: Vec<GF256> = shares.iter().map(|s| s.share).collect();
+) -> anyhow::Result<ShamirFieldPoly<F>> {
+    let xs: Vec<F> = shares
+        .iter()
+        .map(|s| F::from_u128(s.party_id.into()))
+        .collect();
+    let ys: Vec<F> = shares.iter().map(|s| s.share).collect();
 
     // call Gao decoding with the shares as points/values, set Gao parameter k = v = threshold+1
     gao_decoding(&xs, &ys, threshold + 1, max_correctable_errs)
@@ -151,7 +150,7 @@ pub fn error_correction(
 
 pub fn syndrome_decoding_z2(
     parties: &[usize],
-    syndrome: &ShamirZ2Poly,
+    syndrome: &ShamirFieldPoly<GF256>,
     threshold: usize,
 ) -> Vec<GF256> {
     let xs: Vec<GF256> = parties.iter().map(|s| GF256::from(*s as u8)).collect();
@@ -161,11 +160,13 @@ pub fn syndrome_decoding_z2(
 
 #[cfg(test)]
 mod tests {
+    use crate::execution::sharing::shamir::ShamirFieldPoly;
+
     use super::*;
 
     #[test]
     fn test_error_correction() {
-        let f = ShamirZ2Poly {
+        let f = ShamirFieldPoly::<GF256> {
             coefs: vec![GF256::from(25), GF256::from(2), GF256::from(233)],
         };
 
@@ -174,7 +175,7 @@ mod tests {
         let max_err = (num_parties as usize - threshold) / 2; // = 2 here
 
         let mut shares: Vec<_> = (1..=num_parties)
-            .map(|x| ShamirZ2Sharing {
+            .map(|x| ShamirSharing::<GF256> {
                 share: f.eval(&GF256::from(x)),
                 party_id: x,
             })

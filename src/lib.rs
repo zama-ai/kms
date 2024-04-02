@@ -14,5 +14,7 @@ pub mod algebra;
 #[cfg(feature = "non-wasm")]
 pub mod conf;
 pub mod error;
+#[cfg(feature = "experimental")]
+pub mod experimental;
 #[cfg(feature = "non-wasm")]
 pub mod grpc;
