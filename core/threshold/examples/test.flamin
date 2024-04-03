@@ -1,0 +1,3 @@
+ldsi s0, 42 # 1
+asm_open 3, False, c0, s0 # 2
+print_reg_plain c0 # 3

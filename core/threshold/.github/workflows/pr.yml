@@ -1,0 +1,51 @@
+name: "[Pull Request] Pipeline Run"
+
+on:
+  pull_request:
+    branches: ['main']
+
+jobs:
+  build:
+    uses: ./.github/workflows/common-build-long-test.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+
+  small-bench-test:
+    uses: ./.github/workflows/common-small-bench-run.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+
+  docker:
+     uses: ./.github/workflows/common-docker.yml
+     permissions:
+       contents: 'read'
+       id-token: 'write'
+       packages: 'write'
+     with:
+       push_image: false
+     secrets:
+       CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+
+  done:
+    runs-on: ubuntu-latest
+    name: Pipeline Done
+    steps:
+      - name: Success
+        run: echo Pipeline Done
+    needs:
+      - build
+      - small-bench-test
+      - docker
+

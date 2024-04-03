@@ -1,0 +1,97 @@
+[package]
+name = "kms"
+version = "0.1.0"
+edition = "2021"
+
+[lib] # Central KMS
+name = "kms_lib"
+path = "src/lib.rs"
+crate-type = ["lib", "cdylib"]
+
+[[bin]]
+name = "kms-gen"
+path = "src/gen.rs"
+
+[[bin]] # Bin to run the gRPC server
+name = "kms-server"
+path = "src/server.rs"
+
+[[bin]] # Bin to run the gRPC client
+name = "kms-client"
+path = "src/client_bin.rs"
+
+[dependencies]
+aes = "0.8.4"
+aes-prng = "~0.2"
+anyhow = "~1.0"
+aws-config = { version = "1.1.8", optional = true }
+aws-nitro-enclaves-nsm-api = { version = "0.4.0", optional = true }
+aws-sdk-kms = { version = "1.18.0", optional = true }
+aws-sdk-s3 = { version = "1.18.0", optional = true }
+backoff = { version = "0.4.0", features = ["tokio"], optional = true }
+bincode = "~1.3"
+clap = { version = "4.5.1", features = ["derive"] }
+cbc = { version = "0.1.2", features = ["alloc"] }
+cms = "0.2.3"
+crypto_box = { version = "~0.9.1", features = ["salsa20"] }
+der = "0.7.8"
+distributed-decryption = { path = "../core/threshold/" }
+ctor = "~0.2"
+itertools = "0.12"
+k256 = "0.13.3"
+nom = "7.1.3"
+prost = "0.12.3"
+rand = { version = "~0.8", features = ["std", "std_rng"] }
+# TODO needed for now to avoid tests timing out
+rayon = "1.8.1"
+reqwest = { version = "0.11", features = ["json"], optional = true }
+rsa = { version = "0.9.6", features = ["sha2"] }
+serde = { version = "~1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+serde_asn1_der = "0.8.0"
+serde_bytes = "0.11"
+serial_test = "3.0.0"
+sha3 = "~0.10.8"
+signature = "~2.2"
+tonic = { version = "~0.10", optional = true }
+tokio = { version = "1.35", features = ["macros", "rt-multi-thread"], optional = true }
+# TODO should be a stable version once we get things synced in DDec with a stable tfhe-rs version
+tfhe = { git = "ssh://git@github.com/zama-ai/tfhe-rs.git", features = [ "boolean", "shortint", "integer"], rev = "55f666d" }
+tracing = { version = "~0.1", features = ["log"] }
+tracing-test = "0.2.4"
+tracing-subscriber = "0.3.18"
+url = "2.5.0"
+zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "77f4af18d078c7d3a7324fb45a39acf43b488bcf", optional = true } # must match ddec!
+
+# [target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2.86", features = [
+    "serde-serialize",
+] }
+console_error_panic_hook = { version = "0.1.7" }
+serde-wasm-bindgen = { version = "0.6.0" }
+
+[target.'cfg(unix)'.dependencies]
+tfhe = { git = "ssh://git@github.com/zama-ai/tfhe-rs.git", features = [ "seeder_unix"], rev = "55f666d" }
+
+[dev-dependencies]
+ctor = "~0.2"
+
+[build-dependencies]
+tonic-build = "0.10"
+
+[features]
+default = [ "non-wasm" ]
+non-wasm = [
+    "distributed-decryption/non-wasm",
+    "distributed-decryption/testing",
+    "dep:aws-config",
+    "dep:aws-nitro-enclaves-nsm-api",
+    "dep:aws-sdk-kms",
+    "dep:aws-sdk-s3",
+    "dep:backoff",
+    "dep:tokio",
+    "dep:reqwest",
+    "dep:tonic",
+    "dep:zk-poc",
+]
+slow_tests = []

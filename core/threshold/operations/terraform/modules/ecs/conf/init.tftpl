@@ -1,0 +1,8 @@
+#!/bin/bash
+
+echo ECS_CLUSTER=${cluster-name} >> /etc/ecs/ecs.config # Join the ECS cluster
+
+yum install -y aws-cfn-bootstrap # Install the AWS CloudFormation helper scripts
+
+/opt/aws/bin/cfn-signal -e $? --stack ddec-ecs-stack --resource ${party-asg} --region ${region} # Signal the ASG
+

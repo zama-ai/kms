@@ -1,6 +1,11 @@
 name: Run Docker On Big Instance
 on:
   workflow_call:
+    inputs:
+      build-publish-docs:
+        type: boolean
+        required: false
+        default: false
     secrets:
       SLAB_ACTION_TOKEN:
         required: true
@@ -8,7 +13,7 @@ on:
         required: true
       JOB_SECRET:
         required: true
-      CONCRETE_ACTIONS_TOKEN:
+      BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
 
 env:
@@ -38,9 +43,10 @@ jobs:
     needs: start-runner
     uses: ./.github/workflows/common-build.yml
     secrets:
-      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
     with:
       runs-on: ${{ needs.start-runner.outputs.label }}
+      build-publish-docs: ${{ inputs.build-publish-docs }}
 
   stop-runner:
     name: Stops self-hosted EC2 runner

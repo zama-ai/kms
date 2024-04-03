@@ -3,9 +3,13 @@ name: Docker Build and Push
 on:
   workflow_call:
     secrets:
-      CONCRETE_ACTIONS_TOKEN:
+      BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
     inputs:
+      working-directory:
+        type: string
+        required: true
+        default: './'
       push_image:
         type: boolean
         default: true
@@ -76,10 +80,10 @@ jobs:
       - name: Docker Build and Push
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${{ inputs.working-directory }}
           build-args: |
-            CONCRETE_ACTIONS_TOKEN=${{ secrets.CONCRETE_ACTIONS_TOKEN }}
-          file: operations/docker/ci.dockerfile
+            BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          file: ${{ inputs.working-directory}}/operations/docker/ci.dockerfile
           push: ${{ inputs.push_image }}
           pull: false
           tags: ghcr.io/zama-ai/kms:${{env.DOCKER_TAG_IMAGE}}
@@ -104,11 +108,11 @@ jobs:
         if: github.event_name == 'release'
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${{ inputs.working-directory }}
           platforms: linux/amd64,linux/arm64
           build-args: |
-            CONCRETE_ACTIONS_TOKEN=${{ secrets.CONCRETE_ACTIONS_TOKEN }}
-          file: operations/docker/dev.dockerfile
+            BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          file: ${{ inputs.working-directory}}/operations/docker/dev.dockerfile
           push: ${{ inputs.push_image }}
           pull: false
           tags: ghcr.io/zama-ai/kms-dev:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/kms-dev:latest
@@ -120,79 +124,4 @@ jobs:
         id: export-image
         run: echo "image=ghcr.io/zama-ai/kms:${{env.DOCKER_TAG_IMAGE}}" >> "${GITHUB_OUTPUT}"
 
-      - name: Get Docker sock path
-        if: ${{ inputs.with_enclave }}
-        run: echo "DOCKER_SOCK_PATH=$(docker context inspect | jq -r '.[0].Endpoints.docker.Host' | sed "s^unix://^^")" >> $GITHUB_ENV
 
-      - name: Create EIF file
-        if: ${{ inputs.with_enclave }}
-        uses: addnab/docker-run-action@v3
-        with:
-          image: amazonlinux@sha256:62ebd855c09b363009221442fcb1d09aca167d4ba58f2cfd14e00e59ca2f2d54
-          options: -v ${{ github.workspace }}/eif-output:/output -v ${{env.DOCKER_SOCK_PATH}}:/var/run/docker.sock
-          run: |
-            dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel -y
-
-            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/kms:${{env.DOCKER_TAG_IMAGE}} --output-file /output/enclave.eif
-
-            nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
-
-      - name: Write Eif file and path
-        if: ${{ inputs.with_enclave }}
-        id: eif
-        run: |
-          echo "eif_file_path=${{ github.workspace }}/eif-output/enclave.eif" >> "$GITHUB_OUTPUT"
-          echo "eif_info_path=${{ github.workspace }}/eif-output/eif-info.txt" >> "$GITHUB_OUTPUT"
-          EIF_MEASUREMENT_PCR0=$(cat ${{ github.workspace}}/eif-output/eif-info.txt | jq '.Measurements.PCR0')
-          echo "eif_pcr0=${EIF_MEASUREMENT_PCR0}" >> "$GITHUB_OUTPUT"
-
-      - name: Setup oras
-        if: ${{ inputs.with_enclave }}
-        uses: oras-project/setup-oras@ee7dbe1144cb00080a89497f937dae78f85fce29  # oras-project/setup-oras@v1.1.0
-        with:
-          version: 1.1.0
-
-      - name: Install Cosign
-        if: ${{ inputs.with_enclave }}
-        uses: sigstore/cosign-installer@e1523de7571e31dbe865fd2e80c5c7c23ae71eb4
-
-      - name: Push Enclave file to ghcr.io
-        if: ${{ inputs.with_enclave }}
-        id: push-file
-        shell: bash
-        env:
-          EIF_FILE_PATH: ${{ steps.run-build-script.outputs.eif-file-path }}
-          EIF_INFO_PATH: ${{ steps.run-build-script.outputs.eif-info-path }}
-        run: |
-          WORKDIR="${{ github.workspace }}/artifact-push/"
-
-          mkdir ${WORKDIR}
-          cd ${WORKDIR}
-
-          cp "${{ github.workspace}}/eif-output/enclave.eif" "${WORKDIR}/kms-enclave.eif"
-          cp "${{ github.workspace}}/eif-output/eif-info.txt" "${WORKDIR}/kms-eif-info.txt"
-
-          mkdir tmp/
-
-          oras push \
-            --export-manifest tmp/manifest.json \
-            "ghcr.io/zama-ai/kms-enclave:${{env.DOCKER_TAG_IMAGE}}" \
-            "kms-enclave.eif" \
-            "kms-eif-info.txt"
-
-          DIGEST=$(sha256sum tmp/manifest.json | cut -d " " -f 1)
-
-          echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
-          echo "image-eif=ghcr.io/zama-ai/kms-enclave:${{env.DOCKER_TAG_IMAGE}}@sha256:${DIGEST}" >> "${GITHUB_OUTPUT}"
-
-      - name: Sign artifact
-        if: ${{ inputs.with_enclave }}
-        id: sign-artifact
-        shell: bash
-        env:
-          ARTIFACT_PATH: ${{ steps.push-file.outputs.image-eif }}
-        run: |
-          RESPONSE=$(cosign sign --yes ${ARTIFACT_PATH} 2>&1)
-          echo "${RESPONSE}"
-          LOG_INDEX=$(echo "${RESPONSE}" | grep "tlog entry created with index: " | cut -d ":" -f 2 | tr -d " ")
-          echo "log_index=${LOG_INDEX}" >> "${GITHUB_OUTPUT}"

@@ -3,6 +3,10 @@ name: Compile Rust Project and Run Tests
 on:
   workflow_call:
     inputs:
+      build-publish-docs:
+        type: boolean
+        required: false
+        default: false
       runs-on:
         type: string
         required: false
@@ -10,9 +14,9 @@ on:
       args_build:
         type: string
         required: false
-        default: ''
+        default: '--lib'
     secrets:
-      CONCRETE_ACTIONS_TOKEN:
+      BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
 
 env:
@@ -43,7 +47,7 @@ jobs:
         uses: arduino/setup-protoc@v3
 
       - name: Setup usage of private repo
-        run: git config --global url."https://${{ secrets.CONCRETE_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
+        run: git config --global url."https://${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com
 
       - name: Formatting
         run: cargo fmt --all -- --check
@@ -52,10 +56,21 @@ jobs:
         run: cargo clippy --all-targets --workspace -- -D warnings
 
       - name: Run Tests
-        run: cargo test ${{ inputs.args_build }} -F tfhe/seeder_unix -F tfhe/x86_64 -F slow_tests --release
+        run: cargo test ${{ inputs.args_build }} -F tfhe/seeder_unix -F tfhe/x86_64 --release
 
       - name: Install wasm-pack
         run: wasm-pack --version > /dev/null 2>&1 || cargo install wasm-pack
 
       - name: Build wasm
         run: RUSTFLAGS="$RUSTFLAGS -A dead_code -A unused_imports" wasm-pack build --target web . --no-default-features
+
+      - name: Build Documentation
+        if: ${{ inputs.build-publish-docs }}
+        run: RUSTDOCFLAGS="--enable-index-page -Zunstable-options" cargo +nightly doc --no-deps
+
+      - name: Deploy to GitHub Pages
+        if: ${{ inputs.build-publish-docs }}
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target/doc

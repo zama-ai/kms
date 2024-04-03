@@ -1,0 +1,29 @@
+**/.mypy*
+**/__pycache__
+**/venv
+**/*.egg-info/
+**/.eggs/
+**/build/
+**/dist/
+**/temp/
+
+**/.vscode
+**/.DS_Store
+
+# Rust
+**/target
+
+# vim swap files
+*.sw?
+
+*.whl
+*.so
+*.bin
+
+#coverage
+lcov.info
+*.profdata
+coverage/*
+
+#bench
+flamegraph.svg

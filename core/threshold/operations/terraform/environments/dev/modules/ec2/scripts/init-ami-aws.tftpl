@@ -1,0 +1,40 @@
+#!/bin/bash
+
+groupadd docker
+usermod -aG docker ec2-user
+usermod -aG ne ec2-user
+
+systemctl enable --now docker
+echo "Docker installed successfully"
+
+mkdir -p /home/ec2-user/temp
+
+cd /home/ec2-user
+if [[ ! -d ./utils ]]; then
+  mkdir -p ./utils
+
+  cd ./utils
+  cat <<'EOF' >>pull_docker_image.sh
+#!/usr/bin/bash
+
+set -x
+set -e
+
+account_id=$( aws sts get-caller-identity | jq -r '.Account' )
+region=$( curl -s http://169.254.169.254/latest/dynamic/instance-identity/document | jq -r '.region' )
+read username password < <(echo $(aws secretsmanager get-secret-value --region $region --secret-id ${secret_key} --query SecretString --output text | jq -r '.username, .password'))
+sudo docker login -u $username -p $password https://ghcr.io/zama-ai
+sudo docker pull ${image}
+sudo docker tag ${image} ghcr.io/zama-ai/ddec:latest
+
+EOF
+
+  chmod +x pull_docker_image.sh
+  chown -R ec2-user:ec2-user /home/ec2-user/utils
+
+  sudo -H -u ec2-user bash -c "cd /home/ec2-user/utils && ./pull_docker_image.sh"
+
+  sudo rm -rf /home/ec2-user/utils
+
+fi
+
