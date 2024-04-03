@@ -1,0 +1,173 @@
+[config]
+unstable_features = ["CTRL_C_HANDLING"]
+
+[tasks.docker-image]
+command = "docker"
+args = ["build", "-f", "operations/docker/local.dockerfile", "--ssh", "default", "-t", "ddec", "."]
+
+[tasks.generate-experiment]
+command = "cargo"
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-s", "${PROTOCOL}", "-o", "${EXPERIMENT_NAME}", "-m", "${NUM_MESSAGES}", "-e", "${EPOCH_ID}"]
+
+[tasks.start-parties]
+command = "docker"
+args = ["compose", "--progress=quiet", "-f", "temp/${EXPERIMENT_NAME}.yml", "up", "--wait", "--quiet-pull"]
+
+[tasks.stop-parties]
+script = '''
+docker compose -f temp/${EXPERIMENT_NAME}.yml logs > temp/${EXPERIMENT_NAME}.log
+docker compose --progress=quiet -f temp/${EXPERIMENT_NAME}.yml down
+'''
+
+[tasks.experiment-name]
+script = '''
+echo ""
+echo ""
+echo "========================================================="
+echo "=                                                       ="
+echo "= Experiment: ${EXPERIMENT_NAME}                        "
+echo "=                                                       "
+echo "= Parties: ${NUM_PARTIES}                               "
+echo "= Threshold: ${THRESHOLD}                               "
+echo "= Messages: ${NUM_MESSAGES}                             "
+echo "= Protocol: ${PROTOCOL}                                 "
+echo "= Epoch: ${EPOCH_ID}                                 "
+echo "=                                                       ="
+echo "========================================================="
+echo ""
+echo ""
+'''
+
+[tasks.choreo-with-dkg]
+condition = { env_set = ["DKG_PARAMS", "NUM_SESSIONS_PREPROC"] }
+command = "cargo"
+args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "--dkg-params", "${DKG_PARAMS}", "--num-sessions-preproc", "${NUM_SESSIONS_PREPROC}", "${CHOREO_COMMAND}" ]
+
+
+[tasks.choreo-without-dkg]
+condition = { env_not_set = ["DKG_PARAMS", "NUM_SESSIONS_PREPROC"] }
+command = "cargo"
+args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "${CHOREO_COMMAND}" ]
+
+
+[tasks.choreo]
+env = { "RUST_LOG" = "info", "RUST_BACKTRACE" = "1"}
+run_task = { name = ["choreo-with-dkg", "choreo-without-dkg"] }
+
+
+[tasks.choreo-init]
+env = { "CHOREO_COMMAND" = "init"}
+run_task = { name = ["choreo"] }
+
+[tasks.choreo-start-crs]
+env = { "CHOREO_COMMAND" = "start-crs-ceremony"}
+run_task = { name = ["choreo"] }
+
+[tasks.choreo-retrieve-crs]
+env = { "CHOREO_COMMAND" = "retrieve-crs"}
+run_task = { name = ["choreo"] }
+
+[tasks.choreo-decrypt]
+env = { "CHOREO_COMMAND" = "decrypt"}
+run_task = { name = ["choreo"] }
+
+[tasks.choreo-results]
+env = { "CHOREO_COMMAND" = "results"}
+run_task = { name = ["choreo"] }
+
+[tasks.gen-local-choreo]
+command = "cargo"
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-m", "${PROTOCOL}", "-o", "local-cluster", "-e", "${NUM_MESSAGES}", "experiment"]
+
+[tasks.local-choreo-init]
+env = { "CHOREO_COMMAND" = "init", EXPERIMENT_NAME = "local-cluster" }
+run_task = { name = ["choreo"] }
+dependencies = ["gen-local-choreo"]
+
+[tasks.local-choreo-decrypt]
+env = { "CHOREO_COMMAND" = "decrypt", EXPERIMENT_NAME = "local-cluster" }
+run_task = { name = ["choreo"] }
+dependencies = ["gen-local-choreo"]
+
+[tasks.local-choreo-results]
+env = { "CHOREO_COMMAND" = "results", EXPERIMENT_NAME = "local-cluster" }
+run_task = { name = ["choreo"] }
+dependencies = ["gen-local-choreo"]
+
+[tasks.gen-local-choreo-dkg]
+command = "cargo"
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-m", "0", "-o", "local-cluster", "-e", "0", "experiment"]
+
+[tasks.local-choreo-preprocessing]
+env = { "CHOREO_COMMAND" = "preprocessing", "DKG_PARAMS" = "${DKG_PARAMS}", "NUM_SESSIONS_PREPROC" = "${NUM_SESSIONS_PREPROC}", EXPERIMENT_NAME = "local-cluster" }
+run_task = { name = ["choreo"] }
+dependencies = ["gen-local-choreo-dkg"]
+
+[tasks.sleep]
+command = "sleep"
+args = ["2"]
+
+[tasks.grpc-bench]
+run_task = { name = ["generate-experiment", "experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "sleep", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
+
+[tasks.docker-image-ci]
+command = "docker"
+args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "operations/docker/bench.dockerfile", "-t", "ddec", "."]
+
+[tasks.gen-local-cluster]
+command = "cargo"
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-o", "local-cluster", "-f", "temp", "cluster"]
+
+[tasks.run-local-cluster]
+command = "docker"
+args = ["compose", "-f", "temp/local-cluster.yml", "up", "--quiet-pull"]
+dependencies = ["gen-local-cluster"]
+
+[tasks.ci-test]
+run_task = { name = ["docker-image-ci", "grpc-bench-4-1-10-prss"] }
+
+[tasks.grpc-bench-4-1-1-prss]
+env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "1", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg1_prss" }
+run_task = { name = ["grpc-bench"] }
+description = "4 parties, 1 threshold, 1 messages, PRSS"
+
+[tasks.grpc-bench-4-1-10-prss]
+env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg10_prss" }
+run_task = { name = ["grpc-bench"] }
+description = "4 parties, 1 threshold, 10 messages, PRSS"
+
+[tasks.grpc-bench-4-1-30-prss]
+env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "30", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg30_prss" }
+run_task = { name = ["grpc-bench"] }
+description = "4 parties, 1 threshold, 30 messages, PRSS"
+
+[tasks.grpc-bench-10-2-20-prss]
+env = { "NUM_PARTIES" = "10", "THRESHOLD" = "2", "NUM_MESSAGES" = "20", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p10_t2_msg20_prss" }
+run_task = { name = ["grpc-bench"] }
+description = "10 parties, 2 threshold, 20 messages, PRSS"
+
+[tasks.grpc-bench-16-5-40-prss]
+env = { "NUM_PARTIES" = "16", "THRESHOLD" = "5", "NUM_MESSAGES" = "40", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p16_t5_msg40_prss" }
+run_task = { name = ["grpc-bench"] }
+description = "16 parties, 5 threshold, 40 messages, PRSS"
+
+[tasks.grpc-bench-5-1-10-large]
+env = { "NUM_PARTIES" = "5", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "EPOCH_ID" = "1", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p5_t1_msg10_large" }
+run_task = { name = ["grpc-bench"] }
+description = "5 parties, 1 threshold, 10 messages, LargeDecryption"
+
+[tasks.grpc-bench-10-2-20-large]
+env = { "NUM_PARTIES" = "10", "THRESHOLD" = "2", "NUM_MESSAGES" = "20", "EPOCH_ID" = "1", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p10_t2_msg20_large" }
+run_task = { name = ["grpc-bench"] }
+description = "10 parties, 2 threshold, 20 messages, LargeDecryption"
+
+[tasks.grpc-bench-100-10-40-large]
+env = { "NUM_PARTIES" = "100", "THRESHOLD" = "10", "NUM_MESSAGES" = "40", "EPOCH_ID" = "1", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p100_t10_msg40_large" }
+run_task = { name = ["grpc-bench"] }
+description = "100 parties, 10 threshold, 40 messages, LargeDecryption"
+
+[tasks.run-grpc-prss-benchmarks]
+run_task = { name = ["docker-image", "grpc-bench-4-1-10-prss", "grpc-bench-10-2-20-prss", "grpc-bench-16-5-40-prss"] }
+
+[tasks.run-grpc-large-benchmarks]
+run_task = { name = ["docker-image", "grpc-bench-5-1-10-large", "grpc-bench-10-2-20-large", "grpc-bench-100-10-40-large"] }

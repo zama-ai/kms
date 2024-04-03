@@ -1,0 +1,21 @@
+[computation]
+path = "./circuits/ddec-2-plaintext-4/ddec.flamin"
+
+[security]
+threshold = 1
+
+[[roles]]
+id = 1
+identity = "localhost:50000"
+
+[[roles]]
+id = 2
+identity = "localhost:50001"
+
+[[roles]]
+id = 3
+identity = "localhost:50002"
+
+[[roles]]
+id = 4
+identity = "localhost:50003"

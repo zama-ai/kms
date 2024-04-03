@@ -1,0 +1,197 @@
+[package]
+name = "distributed-decryption"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+aes = "0.8.2"
+aes-prng = "0.2.1"
+aligned-vec = "~0.5"
+anyhow = "~1.0"
+async-channel = "~2.1"
+async-trait = "~0.1"
+async_cell = "~0.2"
+backoff = { version = "~0.4", features = ["tokio"], optional = true }
+bincode = "~1.3"
+blake3 = { version = "~1.5", features = ["std"] }
+clap = { version = "~4", features = ["derive", "env"] }
+concrete-csprng = {git = "ssh://git@github.com/zama-ai/tfhe-rs.git", rev = "55f666d" }
+config = "0.14.0"
+const_format = "0.2.32"
+crypto-bigint = { version = "~0.6.0-pre.12", features = ["serde", "rand_core"] }
+crypto_box = { version = "~0.9.1", features = ["salsa20"] }
+dashmap = "~5"
+derive_more = "~0.99"
+enum_dispatch = "0.3.12"
+futures = "~0.3"
+g2p = "1.0.1"
+itertools = "0.12"
+k256 = "0.13.1"
+lazy_static = "~1.4"
+minijinja = { version = "1.0.11", features = ["loader"], optional = true }
+mockall = "~0.12.1"
+ndarray = { version = "~0.15", features = ["serde"] }
+ndarray-stats = "~0.5"
+noisy_float = "0.2.0"
+nom = "7.1.3"
+num-integer = "0.1.45"
+num-traits = "0.2"
+opentelemetry = { version = "0.21.0", optional = true }
+opentelemetry-otlp = { version = "0.14.0", features = ["tokio"], optional = true }
+opentelemetry-semantic-conventions = { version = "0.13.0", optional = true }
+opentelemetry-stdout = { version = "0.2.0", features = ["trace"], optional = true }
+opentelemetry_sdk = { version = "0.21.2", features = ["rt-tokio", "logs"], optional = true }
+opentelemetry-http = { version = "0.10.0", optional = true }
+prettytable-rs = { version = "~0.10", optional = true }
+paste = "1.0.12"
+prost = "0.12"
+rand = "~0.8"
+rayon = "~1.8"
+redis = { version = "0.24.0", optional = true }
+serde = { version = "~1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+serde_asn1_der = "0.8.0"
+sha3 = "~0.10.8"
+signature = "~2.2"
+strum = { version = "0.26", features = ["derive"] }
+strum_macros = "0.26"
+tokio = { version = "~1.36", features = ["full", "sync"], optional = true }
+toml = "~0.8"
+tonic = { version = "~0.10", features = ["tls"], optional = true }
+tonic-health = { version = "~0.10", optional = true }
+tower = { version = "0.4", features = ["retry", "timeout"], optional = true }
+tower-http = { version = "0.4", features = ["trace"], optional = true }
+tfhe = { git = "ssh://git@github.com/zama-ai/tfhe-rs.git", features = ["boolean", "shortint", "integer"], rev = "55f666d"}
+tracing = { version = "~0.1", features = ["log"] }
+tracing-opentelemetry = "0.22"
+tracing-subscriber = { version = "~0.3.16", features = ["env-filter", "fmt"] }
+typed-builder = "0.18.1"
+x509-parser = "~0.15"
+zeroize = { version = "~1.7", features = ["zeroize_derive"] }
+# this is defined as optional since there's a bug that does not allow us to build it for 32-bit platforms
+zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "77f4af18d078c7d3a7324fb45a39acf43b488bcf", optional = true }
+
+# we need getrandom to have the js feature so that it can target wasm
+# this is an indirect dependency
+getrandom = { version = "0.2", features = ["js"] }
+
+[build-dependencies]
+tonic-build = "~0.10"
+
+[target.'cfg(unix)'.dependencies]
+# TODO this should be based on a specific release version to ensure consistenty
+tfhe = { git = "ssh://git@github.com/zama-ai/tfhe-rs.git", features = ["seeder_unix"], rev = "55f666d" }
+
+[dev-dependencies]
+criterion = "~0.5"
+ctor = "~0.2"
+proptest = "~1.4"
+pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
+rstest = "~0.18"
+test-log = { version = "0.2", features = ["trace"] }
+tracing-test = "0.2"
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[[bin]]
+name = "flamin"
+path = "src/bin/flamingo/flamin.rs"
+
+[[bin]]
+name = "flamingo"
+path = "src/bin/flamingo/flamingo.rs"
+
+[[bin]]
+name = "moby"
+path = "src/bin/moby/moby.rs"
+
+[[bin]]
+name = "mobygo"
+path = "src/bin/moby/mobygo.rs"
+required-features = ["choreographer"]
+
+[[bin]]
+name = "gen-experiment"
+path = "src/bin/benches/gen-experiment.rs"
+required-features = ["templating"]
+
+
+[[bench]]
+name = "ddec"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
+name = "decoding"
+harness = false
+required-features = ["experimental"]
+
+[[bench]]
+name = "algebra"
+harness = false
+required-features = ["experimental"]
+
+[[bench]]
+name = "bgv"
+harness = false
+required-features = ["experimental"]
+
+[[bench]]
+name = "bench_switch_and_squash"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
+name = "bench_prss"
+harness = false
+
+[[bench]]
+name = "prep"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
+name = "bit_dec"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
+name = "ceremony"
+harness = false
+required-features = ["testing"]
+
+[profile.bench]
+debug = true
+
+[profile.test]
+opt-level = 3
+
+[features]
+default = ["non-wasm"]
+testing = []
+slow_tests = []
+experimental = []
+templating = ["minijinja"]
+choreographer = ["prettytable-rs"]
+# put all the dependencies that does not work well with wasm
+# namely libraries that doesn't work on 32-bit architectures
+# or uses tokio
+non-wasm = [
+    "dep:tokio",
+    "dep:tonic",
+    "dep:tonic-health",
+    "dep:backoff",
+    "dep:tower",
+    "dep:tower-http",
+    "dep:opentelemetry",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-semantic-conventions",
+    "dep:opentelemetry-stdout",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-http",
+    "dep:redis",
+    "dep:zk-poc",
+]

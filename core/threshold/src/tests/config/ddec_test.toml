@@ -1,0 +1,16 @@
+[protocol.host]
+address = "p1"
+port = 50000
+id = 1
+
+[[protocol.peers]]
+address = "p2"
+port = 50001
+id = 2
+
+[[protocol.peers]]
+address = "p3"
+port = 50002
+id = 3
+
+
