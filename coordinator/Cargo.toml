@@ -35,9 +35,7 @@ cbc = { version = "0.1.2", features = ["alloc"] }
 cms = "0.2.3"
 crypto_box = { version = "~0.9.1", features = ["salsa20"] }
 der = "0.7.8"
-# Run ssh-add to authenticate your SSH keys to access the private github repo below
-# use no default features, only enable non-wasm feature if this crate also uses non-wasm
-distributed-decryption = { git = "ssh://git@github.com/zama-ai/distributed-decryption", rev = "3b93aaa", default-features = false }
+distributed-decryption = { path = "../core/threshold/" }
 ctor = "~0.2"
 itertools = "0.12"
 k256 = "0.13.3"

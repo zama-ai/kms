@@ -1,4 +1,4 @@
-name: "[Pull Request] Pipeline Run"
+name: "[PR] Pipeline Run"
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ jobs:
       contents: 'read'
       id-token: 'write'
     secrets:
-      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
       SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
@@ -23,9 +23,10 @@ jobs:
       id-token: 'write'
       packages: 'write'
     with:
+      working-directory: "./coordinator"
       push_image: false
     secrets:
-      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
   docker-enclave:
     uses: ./.github/workflows/common-docker-enclave.yml
@@ -34,9 +35,10 @@ jobs:
       id-token: 'write'
       packages: 'write'
     with:
+      working-directory: "./coordinator"
       push_image: false
     secrets:
-      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
   done:
     runs-on: ubuntu-latest

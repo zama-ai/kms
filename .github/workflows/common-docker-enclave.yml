@@ -3,9 +3,13 @@ name: Docker Build and Push Enclave
 on:
   workflow_call:
     secrets:
-      CONCRETE_ACTIONS_TOKEN:
+      BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
     inputs:
+      working-directory:
+        type: string
+        required: true
+        default: './'
       push_image:
         type: boolean
         default: true
@@ -68,10 +72,10 @@ jobs:
       - name: Docker Build and Push
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${{ inputs.working-directory }}
           build-args: |
-            CONCRETE_ACTIONS_TOKEN=${{ secrets.CONCRETE_ACTIONS_TOKEN }}
-          file: operations/docker/enclave.dockerfile
+            BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          file: ${{ inputs.working-directory}}/operations/docker/enclave.dockerfile
           push: false
           pull: false
           load: true
@@ -123,13 +127,13 @@ jobs:
           EIF_FILE_PATH: ${{ steps.run-build-script.outputs.eif-file-path }}
           EIF_INFO_PATH: ${{ steps.run-build-script.outputs.eif-info-path }}
         run: |
-          WORKDIR="${{ github.workspace }}/artifact-push/"
+          WORKDIR="${{ github.workspace }}/${{ inputs.working-directory}}/artifact-push/"
 
           mkdir ${WORKDIR}
           cd ${WORKDIR}
 
-          cp "${{ github.workspace}}/eif-output/enclave.eif" "${WORKDIR}/kms-enclave.eif"
-          cp "${{ github.workspace}}/eif-output/eif-info.txt" "${WORKDIR}/kms-eif-info.txt"
+          cp "${{ github.workspace}}/${{ inputs.working-directory}}/eif-output/enclave.eif" "${WORKDIR}/kms-enclave.eif"
+          cp "${{ github.workspace}}/${{ inputs.working-directory}}/eif-output/eif-info.txt" "${WORKDIR}/kms-eif-info.txt"
 
           mkdir tmp/
 

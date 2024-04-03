@@ -1,6 +1,6 @@
 FROM rust:1.77-bookworm as builder
 
-ARG CONCRETE_ACTIONS_TOKEN
+ARG BLOCKCHAIN_ACTIONS_TOKEN
 WORKDIR /usr/src/kms-server
 COPY . .
 
@@ -16,7 +16,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
 
 RUN cargo install vsock-proxy --root /usr/local
 
-RUN git config --global url."https://${CONCRETE_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
+RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \

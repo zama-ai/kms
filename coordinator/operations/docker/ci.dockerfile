@@ -2,7 +2,7 @@
 # First stage builds the binary
 FROM rust:1.77-slim-buster as base
 
-ARG CONCRETE_ACTIONS_TOKEN
+ARG BLOCKCHAIN_ACTIONS_TOKEN
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
     apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config libssl-dev
 
@@ -15,7 +15,7 @@ RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 
 # Install the binary leaving it in the WORKDIR/bin folder
 RUN mkdir -p /app/kms/bin
-RUN git config --global url."https://${CONCRETE_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
+RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
 RUN --mount=type=ssh --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \

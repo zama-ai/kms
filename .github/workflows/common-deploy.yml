@@ -2,6 +2,10 @@ name: Deploy to AWS ECS
 on:
   workflow_call:
     inputs:
+      working-directory:
+        type: string
+        required: true
+        default: './'
       image_name:
         type: string
         required: true
@@ -48,13 +52,17 @@ jobs:
 
       - name: Initialize terraform
         run: terraform -chdir=operations/terraform/environments/${{env.NAMESPACE}} init
+        working-directory: ${{ inputs.working-directory }}
 
       - name: Execute Plan terraform
         run: terraform -chdir=operations/terraform/environments/${{env.NAMESPACE}} plan -var='image=${{ inputs.image_name }}' -var='image_eif=${{ inputs.image_eif }}' -var='eif_pcr0=${{ inputs.eif_pcr0 }}'
+        working-directory: ${{ inputs.working-directory }}
 
       - name: Apply terraform
         run: terraform -chdir=operations/terraform/environments/${{env.NAMESPACE}} apply -var='image=${{ inputs.image_name }}' -var='image_eif=${{ inputs.image_eif }}' -var='eif_pcr0=${{ inputs.eif_pcr0 }}' -auto-approve
+        working-directory: ${{ inputs.working-directory }}
 
       - name: Output terraform
         run: terraform -chdir=operations/terraform/environments/${{env.NAMESPACE}} output
+        working-directory: ${{ inputs.working-directory }}
 

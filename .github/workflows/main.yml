@@ -7,11 +7,13 @@ on:
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml
+    with:
+      build-publish-docs: true
     permissions:
       contents: 'read'
       id-token: 'write'
     secrets:
-      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
       SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
@@ -23,11 +25,12 @@ jobs:
       id-token: 'write'
       packages: 'write'
     with:
+      working-directory: "./coordinator"
       push_image: true
     needs:
       - build
     secrets:
-      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
   docker-enclave:
     uses: ./.github/workflows/common-docker-enclave.yml
@@ -36,11 +39,12 @@ jobs:
       id-token: 'write'
       packages: 'write'
     with:
+      working-directory: "./coordinator"
       push_image: true
     needs:
       - build
     secrets:
-      CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
   deploy:
     uses: ./.github/workflows/common-deploy.yml
@@ -51,6 +55,7 @@ jobs:
       - docker
       - docker-enclave
     with:
+      working-directory: "./coordinator"
       image_name: ${{ needs.docker.outputs.image_name }}
       eif_pcr0: ${{ needs.docker-enclave.outputs.eif_pcr0 }}
       image_eif: ${{ needs.docker-enclave.outputs.image_eif }}
