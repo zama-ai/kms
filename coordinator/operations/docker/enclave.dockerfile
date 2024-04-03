@@ -20,7 +20,7 @@ RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".ins
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path . --root . --bin kms-server
+    cargo install --path coordinator --root coordinator --bin kms-server
 
 FROM debian:bookworm
 
@@ -33,10 +33,10 @@ RUN --mount=target=/var/lib/apt/lists,type=cache,sharing=locked \
 RUN mkdir -p -m 0600 /etc/ssl/certs
 RUN mkdir -p -m 0600 /app/parameters
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /usr/src/kms-server/parameters /app/parameters
+COPY --from=builder /usr/src/kms-server/coordinator/parameters /app/parameters
 
 COPY --from=builder /usr/local/bin/vsock-proxy /usr/local/bin/vsock-proxy
-COPY --from=builder /usr/src/kms-server/bin/kms-server /usr/local/bin/kms-server
+COPY --from=builder /usr/src/kms-server/coordinator/bin/kms-server /usr/local/bin/kms-server
 ENV RUST_LOG=debug,aws_config=debug,aws_smithy_runtime=trace
 RUN <<EOF cat >> /app/run.sh
 #!/bin/sh

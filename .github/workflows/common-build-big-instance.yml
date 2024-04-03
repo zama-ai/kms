@@ -2,7 +2,19 @@ name: Run Docker On Big Instance
 on:
   workflow_call:
     inputs:
+      args-tests:
+        type: string
+        required: true
+        default: ''
+      working-directory:
+        type: string
+        required: true
+        default: ''
       build-publish-docs:
+        type: boolean
+        required: false
+        default: false
+      run-redis:
         type: boolean
         required: false
         default: false
@@ -47,6 +59,9 @@ jobs:
     with:
       runs-on: ${{ needs.start-runner.outputs.label }}
       build-publish-docs: ${{ inputs.build-publish-docs }}
+      working-directory: ${{ inputs.working-directory }}
+      args-tests: ${{ inputs.args-tests }}
+      run-redis: ${{ inputs.run-redis }}
 
   stop-runner:
     name: Stops self-hosted EC2 runner

@@ -10,6 +10,10 @@ on:
         type: string
         required: true
         default: './'
+      image-name:
+        type: string
+        required: true
+        default: 'kms'
       push_image:
         type: boolean
         default: true
@@ -80,13 +84,13 @@ jobs:
       - name: Docker Build and Push
         uses: docker/build-push-action@v5
         with:
-          context: ${{ inputs.working-directory }}
+          context: .
           build-args: |
             BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           file: ${{ inputs.working-directory}}/operations/docker/ci.dockerfile
           push: ${{ inputs.push_image }}
           pull: false
-          tags: ghcr.io/zama-ai/kms:${{env.DOCKER_TAG_IMAGE}}
+          tags: ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -99,8 +103,8 @@ jobs:
             org.opencontainers.image.description="KMS Centralized Dev Docker Image ${{ env.DOCKER_TAG_IMAGE }}"
           labels: |
             zama.kms.version=${{ env.DOCKER_TAG_IMAGE }}
-            zama.kms.description="KMS Image"
-          images: ghcr.io/kms-dev:${{ env.DOCKER_TAG_IMAGE }}
+            zama.kms.description="${{ inputs.image-name }} Image"
+          images: ghcr.io/${{ inputs.image-name }}-dev:${{ env.DOCKER_TAG_IMAGE }}
         env:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: index
 
@@ -108,20 +112,20 @@ jobs:
         if: github.event_name == 'release'
         uses: docker/build-push-action@v5
         with:
-          context: ${{ inputs.working-directory }}
+          context: .
           platforms: linux/amd64,linux/arm64
           build-args: |
             BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           file: ${{ inputs.working-directory}}/operations/docker/dev.dockerfile
           push: ${{ inputs.push_image }}
           pull: false
-          tags: ghcr.io/zama-ai/kms-dev:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/kms-dev:latest
+          tags: ghcr.io/zama-ai//${{ inputs.image-name }}-dev:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-name }}-dev:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
       - name: Export image name
         id: export-image
-        run: echo "image=ghcr.io/zama-ai/kms:${{env.DOCKER_TAG_IMAGE}}" >> "${GITHUB_OUTPUT}"
+        run: echo "image=ghcr.io/zama-ai/${{inputs.image-name}}:${{env.DOCKER_TAG_IMAGE}}" >> "${GITHUB_OUTPUT}"
 
 

@@ -19,7 +19,7 @@ RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".ins
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path . --root . --bin kms-server --bin kms-gen
+    cargo install --path coordinator --root coordinator --bin kms-server --bin kms-gen
 
 # Generate the default software keys
 RUN /app/kms/bin/kms-gen /app/kms/temp/
@@ -50,13 +50,13 @@ RUN mkdir -p /app/kms/parameters
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="$PATH:/app/kms/bin"
 # Copy the binaries from the base stage
-COPY --from=base /app/kms/bin/ /app/kms/bin/
+COPY --from=base /app/kms/coordinator/bin/ /app/kms/bin/
 COPY --from=base /app/kms/temp/default-software-keys.bin /app/kms/temp/
 COPY --from=base /app/kms/temp/pks.bin /app/kms/temp/
 COPY --from=base /app/kms/temp/sks.bin /app/kms/temp/
 COPY --from=base /app/kms/temp/cks.bin /app/kms/temp/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
-COPY ./parameters/default_params.json /app/kms/parameters/
+COPY ./coordinator/parameters/default_params.json /app/kms/parameters/
 
 CMD ["kms-server", "dev"]
 

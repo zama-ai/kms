@@ -10,6 +10,10 @@ on:
         type: string
         required: true
         default: './'
+      image-name:
+        type: string
+        required: true
+        default: 'kms'
       push_image:
         type: boolean
         default: true
@@ -72,14 +76,14 @@ jobs:
       - name: Docker Build and Push
         uses: docker/build-push-action@v5
         with:
-          context: ${{ inputs.working-directory }}
+          context: .
           build-args: |
             BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           file: ${{ inputs.working-directory}}/operations/docker/enclave.dockerfile
           push: false
           pull: false
           load: true
-          tags: ghcr.io/zama-ai/kms-enclave:${{env.DOCKER_TAG_IMAGE}}
+          tags: ghcr.io/zama-ai/${{ inputs.image-name }}-enclave:${{env.DOCKER_TAG_IMAGE}}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -96,7 +100,7 @@ jobs:
           run: |
             dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel -y
 
-            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/kms-enclave:${{env.DOCKER_TAG_IMAGE}} --output-file /output/enclave.eif
+            nitro-cli build-enclave --docker-uri ghcr.io/zama-ai/${{ inputs.image-name }}-enclave:${{env.DOCKER_TAG_IMAGE}} --output-file /output/enclave.eif
 
             nitro-cli describe-eif --eif-path /output/enclave.eif > /output/eif-info.txt
 
@@ -132,21 +136,21 @@ jobs:
           mkdir ${WORKDIR}
           cd ${WORKDIR}
 
-          cp "${{ github.workspace}}/${{ inputs.working-directory}}/eif-output/enclave.eif" "${WORKDIR}/kms-enclave.eif"
-          cp "${{ github.workspace}}/${{ inputs.working-directory}}/eif-output/eif-info.txt" "${WORKDIR}/kms-eif-info.txt"
+          cp "${{ github.workspace}}/${{ inputs.working-directory}}/eif-output/enclave.eif" "${WORKDIR}/${{ inputs.image-name }}-enclave.eif"
+          cp "${{ github.workspace}}/${{ inputs.working-directory}}/eif-output/eif-info.txt" "${WORKDIR}/${{ inputs.image-name }}-eif-info.txt"
 
           mkdir tmp/
 
           oras push \
             --export-manifest tmp/manifest.json \
-            "ghcr.io/zama-ai/kms-enclave:${{env.DOCKER_TAG_IMAGE}}" \
-            "kms-enclave.eif" \
-            "kms-eif-info.txt"
+            "ghcr.io/zama-ai/${{ inputs.image-name }}-enclave:${{env.DOCKER_TAG_IMAGE}}" \
+            "${{ inputs.image-name }}-enclave.eif" \
+            "${{ inputs.image-name }}-eif-info.txt"
 
           DIGEST=$(sha256sum tmp/manifest.json | cut -d " " -f 1)
 
           echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
-          echo "image-eif=ghcr.io/zama-ai/kms-enclave:${{env.DOCKER_TAG_IMAGE}}@sha256:${DIGEST}" >> "${GITHUB_OUTPUT}"
+          echo "image-eif=ghcr.io/zama-ai/${{ inputs.image-name }}-enclave:${{env.DOCKER_TAG_IMAGE}}@sha256:${DIGEST}" >> "${GITHUB_OUTPUT}"
 
       - name: Sign artifact
         if: ${{ inputs.push_image }}

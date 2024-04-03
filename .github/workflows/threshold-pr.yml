@@ -1,12 +1,17 @@
-name: "[PR] Pipeline Run"
+name: "[Threshold-PR] Pipeline Run"
 
 on:
   pull_request:
     branches: ['*']
+    paths:
+      - core/threshold/**
 
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml
+    with:
+      working-directory: './core/threshold'
+      args-tests: '--lib'
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -23,20 +28,9 @@ jobs:
       id-token: 'write'
       packages: 'write'
     with:
-      working-directory: "./coordinator"
+      working-directory: "./core/threshold"
       push_image: false
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-
-  docker-enclave:
-    uses: ./.github/workflows/common-docker-enclave.yml
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
-    with:
-      working-directory: "./coordinator"
-      push_image: false
+      image-name: 'kms-core-threshold'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
@@ -49,5 +43,4 @@ jobs:
     needs:
       - build
       - docker
-      - docker-enclave
 

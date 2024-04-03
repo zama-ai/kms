@@ -3,6 +3,10 @@ name: Compile Rust Project and Run Tests
 on:
   workflow_call:
     inputs:
+      working-directory:
+        type: string
+        required: true
+        default: './'
       build-publish-docs:
         type: boolean
         required: false
@@ -11,10 +15,14 @@ on:
         type: string
         required: false
         default: 'ubuntu-latest'
-      args_build:
+      args-tests:
         type: string
         required: false
-        default: '--lib'
+        default: ''
+      run-redis:
+        type: boolean
+        required: false
+        default: false
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
@@ -25,6 +33,15 @@ env:
 jobs:
   compile-rust-unit-tests:
     runs-on: ${{ inputs.runs-on }}
+    services:
+      redis:
+        image: ${{ inputs.run-redis && 'redis/redis-stack:latest' || '' }}
+        ports:
+          - 6379:6379
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
 
     steps:
       - name: Checkout Project
@@ -56,7 +73,7 @@ jobs:
         run: cargo clippy --all-targets --workspace -- -D warnings
 
       - name: Run Tests
-        run: cargo test ${{ inputs.args_build }} -F tfhe/seeder_unix -F tfhe/x86_64 --release
+        run: cargo test ${{ inputs.args-tests }} -F tfhe/seeder_unix -F tfhe/x86_64 --release
 
       - name: Install wasm-pack
         run: wasm-pack --version > /dev/null 2>&1 || cargo install wasm-pack

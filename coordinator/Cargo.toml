@@ -35,7 +35,7 @@ cbc = { version = "0.1.2", features = ["alloc"] }
 cms = "0.2.3"
 crypto_box = { version = "~0.9.1", features = ["salsa20"] }
 der = "0.7.8"
-distributed-decryption = { path = "../core/threshold/" }
+distributed-decryption = { path = "../core/threshold/", default-features=false }
 ctor = "~0.2"
 itertools = "0.12"
 k256 = "0.13.3"

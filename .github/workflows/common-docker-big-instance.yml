@@ -10,6 +10,10 @@ on:
         type: boolean
         required: false
         default: true
+      image-name:
+        type: string
+        required: true
+        default: 'kms'
     secrets:
       SLAB_ACTION_TOKEN:
         required: true
@@ -59,6 +63,7 @@ jobs:
       working-directory: ${{ inputs.working-directory }}
       push_image: ${{ inputs.push_image }}
       runs_on: ${{ needs.start-runner.outputs.label }}
+      image-name: ${{ inputs.image-name }}
 
   stop-runner:
     name: Stops self-hosted EC2 runner

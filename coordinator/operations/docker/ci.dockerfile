@@ -16,10 +16,10 @@ RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 # Install the binary leaving it in the WORKDIR/bin folder
 RUN mkdir -p /app/kms/bin
 RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-RUN --mount=type=ssh --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
+RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path . --root . --bin kms-server
+    cargo install --path coordinator --root coordinator --bin kms-server
 
 # Second stage builds the runtime image.
 # This stage will be the final image
@@ -45,7 +45,7 @@ WORKDIR /app/kms
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="$PATH:/app/kms/bin"
 # Copy the binaries from the base stage
-COPY --from=base /app/kms/bin/ /app/kms/bin/
+COPY --from=base /app/kms/coordinator/bin/ /app/kms/bin/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
 
 CMD ["kms-server"]

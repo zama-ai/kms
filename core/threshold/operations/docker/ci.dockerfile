@@ -17,7 +17,7 @@ RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 # Install the binary leaving it in the WORKDIR/bin folder
 RUN mkdir -p /app/ddec/bin
 RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-RUN --mount=type=cache,target=/usr/local/cargo/registry cargo install --path . --root . --bins --features=choreographer
+RUN --mount=type=cache,target=/usr/local/cargo/registry cargo install --path core/threshold --root core/threshold --bins --features=choreographer
 
 # Second stage builds the runtime image.
 # This stage will be the final image
@@ -48,8 +48,8 @@ ENV PATH="$PATH:/app/ddec/bin"
 
 
 # Copy the binaries from the base stage
-COPY --from=base /app/ddec/bin/ /app/ddec/bin/
+COPY --from=base /app/ddec/core/threshold/bin/ /app/ddec/bin/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/ddec/bin/grpc-health-probe
-COPY ./config/default.toml /app/ddec/config/default.toml
+COPY ./core/threshold/config/default.toml /app/ddec/config/default.toml
 
 EXPOSE 50000

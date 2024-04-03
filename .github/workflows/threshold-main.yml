@@ -1,14 +1,19 @@
-name: "[Merge Main] Pipeline Run"
+name: "[core/threshold-Merge Main] Pipeline Run"
 
 on:
   push:
     branches: ['main']
+    paths:
+      - core/threshold/**
 
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
+      working-directory: './core/threshold'
       build-publish-docs: true
+      args-tests: '-F slow_tests'
+      run-redis: true
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -25,22 +30,9 @@ jobs:
       id-token: 'write'
       packages: 'write'
     with:
-      working-directory: "./coordinator"
+      working-directory: "./core/threshold"
       push_image: true
-    needs:
-      - build
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-
-  docker-enclave:
-    uses: ./.github/workflows/common-docker-enclave.yml
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
-    with:
-      working-directory: "./coordinator"
-      push_image: true
+      image-name: 'kms-core-threshold'
     needs:
       - build
     secrets:
@@ -53,12 +45,9 @@ jobs:
       id-token: 'write'
     needs:
       - docker
-      - docker-enclave
     with:
-      working-directory: "./coordinator"
+      working-directory: "./core/threshold"
       image_name: ${{ needs.docker.outputs.image_name }}
-      eif_pcr0: ${{ needs.docker-enclave.outputs.eif_pcr0 }}
-      image_eif: ${{ needs.docker-enclave.outputs.image_eif }}
     secrets:
       AWS_ACCESS_KEY_ID_TERRAFORM: ${{ secrets.AWS_ACCESS_KEY_ID_TERRAFORM }}
       AWS_SECRET_ACCESS_KEY_TERRAFORM: ${{ secrets.AWS_SECRET_ACCESS_KEY_TERRAFORM }}
