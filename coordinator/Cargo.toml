@@ -35,7 +35,7 @@ cbc = { version = "0.1.2", features = ["alloc"] }
 cms = "0.2.3"
 crypto_box = { version = "~0.9.1", features = ["salsa20"] }
 der = "0.7.8"
-distributed-decryption = { path = "../core/threshold/", default-features=false }
+distributed-decryption = { path = "../core/threshold/", default-features = false }
 ctor = "~0.2"
 itertools = "0.12"
 k256 = "0.13.3"
@@ -61,7 +61,7 @@ tracing = { version = "~0.1", features = ["log"] }
 tracing-test = "0.2.4"
 tracing-subscriber = "0.3.18"
 url = "2.5.0"
-zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "77f4af18d078c7d3a7324fb45a39acf43b488bcf", optional = true } # must match ddec!
+zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "6be985e", optional = true } # must match ddec
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { version = "0.2.86", features = [

@@ -12,7 +12,7 @@ use rand::{CryptoRng, Rng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg};
-use zk_poc::curve;
+use zk_poc::curve_api::bls12_446 as curve;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct PartialProof {
@@ -425,7 +425,7 @@ mod tests {
     use rstest::rstest;
     use std::collections::HashMap;
     use tokio::task::JoinSet;
-    use zk_poc::proofs;
+    use zk_poc::{curve_api::Bls12_446, proofs};
 
     #[test]
     fn test_honest_crs_ceremony() {
@@ -474,7 +474,8 @@ mod tests {
 
         // check that we can use pp to make a proof
         let mut rng = AesRng::from_entropy();
-        let public_params = proofs::range::PublicParams::from_vec(pp.inner.0, pp.inner.1);
+        let public_params =
+            proofs::range::PublicParams::<Bls12_446>::from_vec(pp.inner.0, pp.inner.1);
         let l = 6;
         let x = rng.gen::<u64>() % (1 << l);
         let (public_commit, private_commit) = proofs::range::commit(x, l, &public_params, &mut rng);

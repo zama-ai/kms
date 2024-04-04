@@ -17,7 +17,7 @@ backoff = { version = "~0.4", features = ["tokio"], optional = true }
 bincode = "~1.3"
 blake3 = { version = "~1.5", features = ["std"] }
 clap = { version = "~4", features = ["derive", "env"] }
-concrete-csprng = {git = "ssh://git@github.com/zama-ai/tfhe-rs.git", rev = "55f666d" }
+concrete-csprng = { git = "ssh://git@github.com/zama-ai/tfhe-rs.git", rev = "55f666d" }
 config = "0.14.0"
 const_format = "0.2.32"
 crypto-bigint = { version = "~0.6.0-pre.12", features = ["serde", "rand_core"], optional = true }
@@ -71,7 +71,7 @@ typed-builder = "0.18.1"
 x509-parser = "~0.15"
 zeroize = { version = "~1.7", features = ["zeroize_derive"] }
 # this is defined as optional since there's a bug that does not allow us to build it for 32-bit platforms
-zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "77f4af18d078c7d3a7324fb45a39acf43b488bcf", optional = true }
+zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "6be985e", optional = true }
 
 # we need getrandom to have the js feature so that it can target wasm
 # this is an indirect dependency
