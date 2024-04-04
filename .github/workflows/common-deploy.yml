@@ -11,7 +11,8 @@ on:
         required: true
       image_eif:
         type: string
-        required: true
+        required: false
+        default: ''
       eif_pcr0:
         type: string
         required: false

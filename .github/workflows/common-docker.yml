@@ -14,6 +14,10 @@ on:
         type: string
         required: true
         default: 'kms'
+      image-dev:
+        type: string
+        required: true
+        default: 'kms'
       push_image:
         type: boolean
         default: true
@@ -23,6 +27,10 @@ on:
         required: false
         default: 'ubuntu-latest'
       with_enclave:
+        type: boolean
+        default: false
+        required: false
+      generate-dev-image:
         type: boolean
         default: false
         required: false
@@ -95,7 +103,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Extract Docker metadata
-        if: github.event_name == 'release'
+        if: ${{ github.event_name == 'release' && inputs.generate-dev-image }}
         id: meta
         uses: docker/metadata-action@v5.5.1
         with:
@@ -103,13 +111,13 @@ jobs:
             org.opencontainers.image.description="KMS Centralized Dev Docker Image ${{ env.DOCKER_TAG_IMAGE }}"
           labels: |
             zama.kms.version=${{ env.DOCKER_TAG_IMAGE }}
-            zama.kms.description="${{ inputs.image-name }} Image"
-          images: ghcr.io/${{ inputs.image-name }}-dev:${{ env.DOCKER_TAG_IMAGE }}
+            zama.kms.description="${{ inputs.image-dev }} Image"
+          images: ghcr.io/${{ inputs.image-dev }}-dev:${{ env.DOCKER_TAG_IMAGE }}
         env:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: index
 
       - name: Docker Build and Push Dev Image
-        if: github.event_name == 'release'
+        if: ${{ github.event_name == 'release' && inputs.generate-dev-image }}
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -119,7 +127,7 @@ jobs:
           file: ${{ inputs.working-directory}}/operations/docker/dev.dockerfile
           push: ${{ inputs.push_image }}
           pull: false
-          tags: ghcr.io/zama-ai//${{ inputs.image-name }}-dev:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-name }}-dev:latest
+          tags: ghcr.io/zama-ai//${{ inputs.image-dev }}-dev:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-dev }}-dev:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: ${{ steps.meta.outputs.labels }}

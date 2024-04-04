@@ -14,6 +14,14 @@ on:
         type: string
         required: true
         default: 'kms'
+      image-dev:
+        type: string
+        required: false
+        default: 'kms'
+      generate-dev-image:
+        type: boolean
+        default: false
+        required: false
     secrets:
       SLAB_ACTION_TOKEN:
         required: true
@@ -64,6 +72,8 @@ jobs:
       push_image: ${{ inputs.push_image }}
       runs_on: ${{ needs.start-runner.outputs.label }}
       image-name: ${{ inputs.image-name }}
+      image-dev: ${{ inputs.image-dev }}
+      generate-dev-image: ${{ inputs.generate-dev-image }}
 
   stop-runner:
     name: Stops self-hosted EC2 runner

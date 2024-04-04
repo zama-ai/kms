@@ -4,7 +4,7 @@ on:
   push:
     branches: ['main']
     paths:
-      - coordinator/**
+      - 'coordinator/**'
 
 jobs:
   build:
@@ -12,7 +12,7 @@ jobs:
     with:
       working-directory: './coordinator'
       build-publish-docs: true
-      args-tests: '-F args-tests'
+      args-tests: '-F slow_tests'
     permissions:
       contents: 'read'
       id-token: 'write'
