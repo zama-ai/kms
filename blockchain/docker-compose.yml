@@ -71,7 +71,7 @@ services:
 
   kms_chain:
     build:
-      context: .
+      context: blockchain
       dockerfile: Dockerfile
     ports:
       - "36658:36658"
@@ -82,7 +82,6 @@ services:
       timeout: 5s
       retries: 20
       start_period: 20s
-
 
   blockexplorer:
     build:
