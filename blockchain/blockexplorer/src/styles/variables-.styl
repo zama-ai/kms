@@ -1,0 +1,96 @@
+//==============================================================================
+// variables
+:root
+  // change for dark/light themes
+  // --app-fg hsl(233, 43%, 12%)
+  // --app-bg hsl(233, 37%, 20%)
+  --app-bg-light hsl(233, 40%, 14%)
+  // --app-bg-alpha hsla(237, 18%, 20%, 95%)
+  // --txt hsl(0, 0%, 100%)
+  // --dim hsl(240, 5%, 75%)
+  // --bc hsl(233, 22%, 23%)
+  // --bc-dim hsl(233, 33%, 16%)
+  --bc-light hsl(233, 37%, 22%)
+  --box-shadow hsla(0,0,0,0.2)
+  --hover-bg hsla(233, 88%, 90%, 0.2)
+  // --input-bc hsl(233, 22%, 33%)
+  --input-bc-hover hsl(233, 22%, 40%)
+
+  // change for rebranding
+  // --mc hsl(325, 96%, 59%)
+  --accent hsl(279, 92%, 58%)
+  --accent-alpha hsla(279, 92%, 58%, 0.5)
+  --primary hsl(233, 88%, 57%)
+  --primary-bc hsl(233, 88%, 43%)
+  --link hsl(233, 88%, 82%)
+  --hover hsl(233, 88%, 67%)
+
+  // don't change
+  // --input-bg transparent
+  --success hsl(120,58%,55%)
+  --success-bc hsl(120,58%,41%)
+  --warning hsl(35,100%,50%)
+  --warning-bc hsl(35,75%,38%)
+  --danger hsl(0,100%,55%)
+  --danger-bc hsl(0,100%,41%)
+
+  // main colors
+  mhue = 210
+  msat = 80%
+  mlit = 20%
+  --mc = hsl(mhue,msat,mlit)
+  accent1 = hsl(60,38%,70%)
+  accent2 = hsl(345,85%,49%)
+
+  // app colors
+  --app-bg = #070b0f
+  --app-fg = hsla(mhue,25%,15%,0.875)
+  --app-bg-alpha = alpha(--app-bg, 85%)
+
+  // text colors
+  bright = hsl(mhue, 32%, 86%)
+  --txt = hsl(mhue, 32%, 70%)
+  --dim = hsl(mhue, 32%, 50%)
+  faint = hsl(mhue,32%, 30%)
+
+  // anchor
+  link = hsl(mhue,75%,65%)
+
+  // border color
+  bc-bright = hsl(mhue, 16%, 68%)
+  bc-vivid = hsl(mhue, 41%, 49%)
+  --bc = hsl(mhue, 26%, 36%)
+  --bc-dim = hsl(mhue, 22%, 24%)
+  bc-faint = hsl(mhue, 18%, 12%)
+
+  // background colors
+  --input-bg = transparent
+  --input-bc = bc
+
+// typography
+x = 16px
+px = 0.0625rem
+sans = -apple-system, ".SFNSText-Regular", "San Francisco", "Roboto", "Segoe UI", "Helvetica Neue", "Lucida Grande", sans-serif
+mono = Consolas, Monaco, monospace
+
+//==============================================================================
+// methods
+
+df()
+  font-size x
+  line-height 1.5
+  font-family sans
+  color txt
+
+mono()
+  font-family Consolas, Monaco, monospace
+  font-weight normal
+
+font-label()
+  font-size 0.75rem
+  color txt
+  white-space nowrap
+  text-overflow ellipsis
+  overflow hidden
+  text-transform uppercase
+  color bright

@@ -1,0 +1,95 @@
+flex-version = flex
+support-for-ie = false
+vendor-prefixes = official
+@require '../../node_modules/nib/index.styl'
+@require 'variables'
+@require 'vendor/*'
+@require 'defaults/*'
+
+global-reset()
+reset-html5()
+
+*
+  box-sizing border-box
+
+html, body, #app
+  background var(--app-bg)
+
+html
+  overflow hidden
+
+a
+  color var(--link)
+  text-decoration none
+
+  &:hover
+    color var(--hover)
+
+.desktop-only
+  display none
+
+.dont-break-out
+  /* These are technically the same, but use both */
+  overflow-wrap break-word
+  word-wrap break-word
+
+  -ms-word-break break-all
+  /* This is the dangerous one in WebKit, as it breaks things wherever */
+  word-break break-all
+  /* Instead use this non-standard one */
+  word-break break-word
+
+  /* Adds a hyphen where the word breaks, if supported (No Blink)
+  -ms-hyphens auto
+  -moz-hyphens auto
+  -webkit-hyphens auto
+  hyphens auto
+  */
+
+#app
+  df()
+  color var(--txt)
+  padding-top 3rem
+  height 100vh
+  width 100vw
+  max-width 100% // fixes bug where horizontal scrollbar appears
+  font-weight var(--font-weight, 300) // fixes 300 weight too thin on windows
+
+  display flex
+  flex-flow column nowrap
+  min-width 0
+
+.tm-field, .tm-field
+  border-radius 2px!important
+  padding 0.5rem !important
+
+input.ni-field
+  height inherit !important
+
+.ni-select .ni-field-select-addon
+  height 100% !important
+menu {
+  -webkit-margin-before: 0;
+  -webkit-margin-after: 0;
+  -webkit-padding-start 0
+  -webkit-padding-end 0
+}
+#app-content
+  flex 1
+  display flex
+  flex-flow column no-wrap
+
+#app-header
+  background var(--app-fg)
+
+@media screen and (min-width: 1024px)
+  #app
+    padding-top 0
+    flex-flow row nowrap
+
+  #app-content
+    display flex
+    min-width 0
+
+ .desktop-only
+    display inline
