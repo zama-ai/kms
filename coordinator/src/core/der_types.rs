@@ -200,7 +200,7 @@ pub struct Cipher {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SigncryptionPrivKey {
-    pub signing_key: PrivateSigKey,
+    pub signing_key: Option<PrivateSigKey>,
     pub decryption_key: PrivateEncKey,
 }
 

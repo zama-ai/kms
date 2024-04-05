@@ -13,6 +13,7 @@ jobs:
       working-directory: './coordinator'
       build-publish-docs: true
       args-tests: '-F slow_tests'
+      run-wasm: true
     permissions:
       contents: 'read'
       id-token: 'write'

@@ -3,6 +3,8 @@ use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use signature::{Signer, Verifier};
 
+use crate::anyhow_error_and_log;
+
 use super::der_types::{
     PrivateSigKey, PublicSigKey, Signature, SigncryptionPair, SigncryptionPrivKey,
     SigncryptionPubKey,
@@ -49,10 +51,17 @@ impl ClientRequest {
         // DER encode the payload
         let to_sign = serde_asn1_der::to_vec(&payload)?;
         // Sign the public key and digest of the message
-        let signature: Signature = Signature {
-            sig: keys.sk.signing_key.sk.sign(&to_sign[..]),
+        let signature: k256::ecdsa::Signature = match &keys.sk.signing_key {
+            Some(sk) => sk.sk.sign(&to_sign[..]),
+            None => return Err(anyhow_error_and_log("signing key is None".to_string())),
         };
-        Ok((ClientRequest { payload, signature }, keys))
+        Ok((
+            ClientRequest {
+                payload,
+                signature: Signature { sig: signature },
+            },
+            keys,
+        ))
     }
 
     /// Verify the request.
@@ -98,7 +107,7 @@ pub(crate) fn ephemeral_key_generation(
     let (enc_pk, enc_sk) = encryption_key_generation(rng);
     SigncryptionPair {
         sk: SigncryptionPrivKey {
-            signing_key: sig_key.clone(),
+            signing_key: Some(sig_key.clone()),
             decryption_key: enc_sk,
         },
         pk: SigncryptionPubKey {

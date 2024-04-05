@@ -158,10 +158,21 @@ message ReencryptionRequestPayload {
   bytes ciphertext = 8;
 }
 
+// https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator
+// eventually chain_id, verifying_contract and salt will be parsed in to solidity types
+message Eip712DomainMsg {
+  string name = 1;
+  string version = 2;
+  bytes chain_id = 3;
+  string verifying_contract = 4;
+  bytes salt = 5;
+}
+
 message ReencryptionRequest {
+  // Signature of the ASN1 DER serialization of [ReencryptionRequestPayload].
   bytes signature = 1;
-  // Signature of the ASN1 DER serialization of [DecryptionResponsePayload].
   ReencryptionRequestPayload payload = 2;
+  Eip712DomainMsg domain = 3;
 }
 
 message ReencryptionResponse {

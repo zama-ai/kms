@@ -29,7 +29,6 @@ pub mod operator;
 /// serialization/deserialization solutions for complex cryptographic data types.
 pub mod serde_ops;
 
-
 pub fn add(left: usize, right: usize) -> usize {
     left + right
 }

@@ -313,4 +313,3 @@ fn channel_send<T>(tx: &Sender<T>, value: T) -> Result<(), Error> {
 fn channel_recv<T>(rx: &Receiver<T>) -> Result<T, Error> {
     rx.recv().map_err(Error::channel_recv)
 }
-

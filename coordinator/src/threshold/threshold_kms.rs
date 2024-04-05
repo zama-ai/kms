@@ -17,6 +17,7 @@ use crate::rpc::rpc_types::{
     CURRENT_FORMAT_VERSION,
 };
 use aes_prng::AesRng;
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use distributed_decryption::algebra::base_ring::Z64;
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
 use distributed_decryption::computation::SessionId;
@@ -267,6 +268,23 @@ impl BaseKms for ThresholdKms {
 
     fn digest<T: fmt::Debug + Serialize>(msg: &T) -> anyhow::Result<Vec<u8>> {
         BaseKmsStruct::digest(&msg)
+    }
+
+    fn verify_sig_eip712<T: SolStruct>(
+        payload: &T,
+        domain: &Eip712Domain,
+        signature: &der_types::Signature,
+        verification_key: &PublicSigKey,
+    ) -> bool {
+        BaseKmsStruct::verify_sig_eip712(payload, domain, signature, verification_key)
+    }
+
+    fn sign_eip712<T: SolStruct>(
+        &self,
+        msg: &T,
+        domain: &Eip712Domain,
+    ) -> anyhow::Result<der_types::Signature> {
+        self.base_kms.sign_eip712(msg, domain)
     }
 }
 impl ThresholdKms {

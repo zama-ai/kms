@@ -16,6 +16,7 @@ use super::der_types::{
 use crate::rpc::rpc_types::{RawDecryption, SigncryptionPayload};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use ::signature::{Signer, Verifier};
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use crypto_box::aead::{Aead, AeadCore};
 use crypto_box::{Nonce, SalsaBox, SecretKey};
 use k256::ecdsa::SigningKey;
@@ -54,6 +55,18 @@ where
     Ok(Signature { sig })
 }
 
+pub fn sign_eip712<T: SolStruct>(
+    msg: &T,
+    domain: &alloy_sol_types::Eip712Domain,
+    server_sig_key: &PrivateSigKey,
+) -> anyhow::Result<Signature> {
+    let signing_hash = msg.eip712_signing_hash(domain);
+    let sig: k256::ecdsa::Signature = server_sig_key.sk.try_sign(&signing_hash[..])?;
+    // Normalize s value to ensure a consistant signature and protect against malleability
+    sig.normalize_s();
+    Ok(Signature { sig })
+}
+
 /// Verify a plain signature.
 ///
 /// Returns true if the signature is ok and false otherwise.
@@ -68,6 +81,29 @@ where
 
     // Verify signature
     if server_verf_key.pk.verify(msg.as_ref(), &sig.sig).is_err() {
+        tracing::warn!("Signature {:X?} is not valid", sig.sig);
+        return false;
+    }
+
+    true
+}
+
+pub fn verify_sig_eip712<T: SolStruct>(
+    msg: &T,
+    domain: &Eip712Domain,
+    sig: &Signature,
+    server_verf_key: &PublicSigKey,
+) -> bool {
+    // Check that the signature is normalized
+    if !check_normalized(sig) {
+        return false;
+    }
+    let signing_hash = msg.eip712_signing_hash(domain);
+    if server_verf_key
+        .pk
+        .verify(&signing_hash[..], &sig.sig)
+        .is_err()
+    {
         tracing::warn!("Signature {:X?} is not valid", sig.sig);
         return false;
     }
@@ -423,6 +459,7 @@ mod tests {
             sig: client_signcryption_keys
                 .sk
                 .signing_key
+                .unwrap()
                 .sk
                 .sign("not a key".as_ref()),
         };

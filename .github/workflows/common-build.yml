@@ -23,6 +23,10 @@ on:
         type: boolean
         required: false
         default: false
+      run-wasm:
+        type: boolean
+        required: false
+        default: false
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
@@ -51,7 +55,7 @@ jobs:
         if: ${{ inputs.runs-on != 'ubuntu-latest' }}
         run: echo "HOME=/home/ubuntu" >> ${GITHUB_ENV}
 
-      - name: Set up Rust.
+      - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
@@ -75,11 +79,6 @@ jobs:
       - name: Run Tests
         run: cargo test ${{ inputs.args-tests }} -F tfhe/seeder_unix -F tfhe/x86_64 --release
 
-      - name: Install wasm-pack
-        run: wasm-pack --version > /dev/null 2>&1 || cargo install wasm-pack
-
-      - name: Build wasm
-        run: RUSTFLAGS="$RUSTFLAGS -A dead_code -A unused_imports" wasm-pack build --target web . --no-default-features
 
       - name: Build Documentation
         if: ${{ inputs.build-publish-docs }}
@@ -91,3 +90,27 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./target/doc
+
+      - name: Install wasm-pack
+        if: ${{ inputs.run-wasm }}
+        run: wasm-pack --version > /dev/null 2>&1 || cargo install wasm-pack
+
+      - name: Build wasm with tests
+        if: ${{ inputs.run-wasm }}
+        run: RUSTFLAGS="$RUSTFLAGS -A dead_code -A unused_imports" wasm-pack build --target nodejs . --no-default-features -F wasm_tests
+
+      - name: Install node
+        if: ${{ inputs.run-wasm }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Generate wasm test files
+        if: ${{ inputs.run-wasm }}
+        run: |
+          cargo test test_reencryption_threshold_and_write_transcript ${{ inputs.args_build }} -F tfhe/seeder_unix -F tfhe/x86_64 -F wasm_tests --release
+          cargo test test_reencryption_centralized_and_write_transcript ${{ inputs.args_build }} -F tfhe/seeder_unix -F tfhe/x86_64 -F wasm_tests --release
+
+      - name: Test wasm
+        if: ${{ inputs.run-wasm }}
+        run: node --test tests/js

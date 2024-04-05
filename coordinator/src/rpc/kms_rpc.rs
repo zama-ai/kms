@@ -1,5 +1,6 @@
 use super::rpc_types::{
-    BaseKms, DecryptionRequestSerializable, ReencryptionRequestSigPayload, CURRENT_FORMAT_VERSION,
+    protobuf_to_alloy_domain, BaseKms, DecryptionRequestSerializable,
+    ReencryptionRequestSigPayload, CURRENT_FORMAT_VERSION,
 };
 use crate::anyhow_error_and_warn_log;
 use crate::consts::{CRS_PATH_PREFIX, DEFAULT_PARAM_PATH, KEY_PATH_PREFIX, TEST_PARAM_PATH};
@@ -18,6 +19,7 @@ use crate::kms::{
 use crate::rpc::rpc_types::{DecryptionResponseSigPayload, Kms};
 use crate::setup_rpc::FhePrivateKey;
 use aes_prng::AesRng;
+use alloy_sol_types::SolStruct;
 use distributed_decryption::{
     execution::{
         endpoints::keygen::PubKeySet, tfhe_internals::parameters::NoiseFloodParameters,
@@ -26,7 +28,6 @@ use distributed_decryption::{
     file_handling::write_element,
 };
 use rand::SeedableRng;
-
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -406,7 +407,12 @@ pub async fn validate_reencrypt_req(
     }
     let sig_payload: ReencryptionRequestSigPayload = payload.clone().try_into()?;
     let sig_payload_serialized = to_vec(&sig_payload)?;
-    let req_digest = tonic_handle_potential_err(
+    let domain = protobuf_to_alloy_domain(&tonic_some_or_err(
+        req.domain.clone(),
+        "domain not found".to_string(),
+    )?)?;
+    let req_digest = sig_payload.eip712_signing_hash(&domain).to_vec();
+    tonic_handle_potential_err(
         BaseKmsStruct::digest(&sig_payload_serialized),
         format!("Could not hash payload {:?}", req),
     )?;
@@ -416,7 +422,12 @@ pub async fn validate_reencrypt_req(
         format!("Invalid verification key in request {:?}", req),
     )?;
     let client_enc_key: PublicEncKey = from_bytes(&sig_payload.enc_key)?;
-    if !BaseKmsStruct::verify_sig(&sig_payload, &from_bytes(&req.signature)?, &client_verf_key) {
+    if !BaseKmsStruct::verify_sig_eip712(
+        &sig_payload,
+        &domain,
+        &from_bytes(&req.signature)?,
+        &client_verf_key,
+    ) {
         return Err(anyhow_error_and_warn_log(format!(
             "Could not validate signature in request {:?}",
             req

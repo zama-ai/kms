@@ -34,6 +34,17 @@ macro_rules! retry {
     };
 }
 
+// TODO correctly implement domain parsing in CLI when
+// it's more clear what fields are needed
+fn dummy_domain() -> alloy_sol_types::Eip712Domain {
+    alloy_sol_types::eip712_domain!(
+        name: "dummy",
+        version: "1",
+        chain_id: 1,
+        verifying_contract: alloy_primitives::Address::ZERO,
+    )
+}
+
 /// This client serves test purposes.
 /// URL format is without protocol e.g.: 0.0.0.0:50051
 #[cfg(feature = "non-wasm")]
@@ -56,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut internal_client = Client::new(
         HashSet::from_iter(central_keys.server_keys.iter().cloned()),
         central_keys.client_pk,
-        central_keys.client_sk,
+        Some(central_keys.client_sk),
         1,
         central_keys.params,
     );
@@ -80,7 +91,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // REENCRYPTION REQUEST
-    let (req, enc_pk, enc_sk) = internal_client.reencyption_request(ct, fhe_type, None)?;
+    let (req, enc_pk, enc_sk) =
+        internal_client.reencyption_request(ct, &dummy_domain(), fhe_type, None)?;
     let response = kms_client
         .reencrypt(tonic::Request::new(req.clone()))
         .await?;

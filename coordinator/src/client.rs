@@ -1,6 +1,7 @@
 use crate::consts::KEY_HANDLE;
 use crate::core::signcryption::{
-    decrypt_signcryption, encryption_key_generation, safe_hash_element, sign, verify_sig, RND_SIZE,
+    decrypt_signcryption, encryption_key_generation, safe_hash_element, sign_eip712, verify_sig,
+    RND_SIZE,
 };
 use crate::kms::{
     AggregatedDecryptionResponse, AggregatedReencryptionResponse, CrsCeremonyRequest, CrsHandle,
@@ -8,8 +9,9 @@ use crate::kms::{
     KeyGenRequest, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
 };
 use crate::rpc::rpc_types::{
-    DecryptionRequestSerializable, DecryptionResponseSigPayload, MetaResponse, Plaintext,
-    ReencryptionRequestSigPayload, CURRENT_FORMAT_VERSION,
+    allow_to_protobuf_domain, protobuf_to_alloy_domain, DecryptionRequestSerializable,
+    DecryptionResponseSigPayload, MetaResponse, Plaintext, ReencryptionRequestSigPayload,
+    CURRENT_FORMAT_VERSION,
 };
 use crate::{
     core::der_types::{
@@ -19,6 +21,7 @@ use crate::{
     kms::ParamChoice,
 };
 use aes_prng::AesRng;
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use distributed_decryption::execution::endpoints::reconstruct::combine128;
 use distributed_decryption::execution::sharing::shamir::{fill_indexed_shares, ShamirSharings};
 use distributed_decryption::execution::{
@@ -74,91 +77,220 @@ fn decrypted_blocks_to_raw_decryption(
 /// distributed accross the aggregator/proxy and smart contracts.
 /// TODO should probably aggregate the KmsEndpointClient to void having two client code bases
 /// exposed in tests and MVP
+///
+/// client_sk is optional because sometimes the private signing key is kept
+/// in a secure location, e.g., hardware wallet. Calling functions that requires
+/// client_sk when it is None will return an error.
 #[wasm_bindgen]
 pub struct Client {
     rng: Box<AesRng>,
     server_pks: HashSet<PublicSigKey>,
     client_pk: PublicSigKey,
-    client_sk: PrivateSigKey,
+    client_sk: Option<PrivateSigKey>,
     shares_needed: u32,
     params: NoiseFloodParameters,
 }
 
-#[cfg(not(feature = "non-wasm"))]
+// This testing struct needs to be outside of js_api module
+// since it is needed in the tests to generate the right files for js/wasm tests.
+#[cfg(feature = "wasm_tests")]
 #[wasm_bindgen]
-pub fn js_new_client(
-    server_pks: Vec<PublicSigKey>,
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct TestingReencryptionTranscript {
+    // client
+    server_pks: HashSet<PublicSigKey>,
     client_pk: PublicSigKey,
-    client_sk: PrivateSigKey,
     shares_needed: u32,
-    params: JsValue, // we cannot create bindings for NoiseFloodParameters, so use JsValue
-) -> Client {
-    console_error_panic_hook::set_once();
-    let server_pks = HashSet::from_iter(server_pks);
-    let params: NoiseFloodParameters = serde_wasm_bindgen::from_value(params).unwrap();
-    Client {
-        rng: Box::new(AesRng::from_entropy()),
-        server_pks,
-        client_pk,
-        client_sk,
-        shares_needed,
-        params,
-    }
-}
-
-/// An extra struct for the response is needed since
-/// wasm cannot support tuples (or hashmap, hashset)
-#[cfg(not(feature = "non-wasm"))]
-#[wasm_bindgen(getter_with_clone)]
-pub struct JsReencryptionRequestResult {
-    pub req: ReencryptionRequest,
-    pub public_enc_key: PublicEncKey,
-    pub private_enc_key: PrivateEncKey,
-}
-
-#[cfg(not(feature = "non-wasm"))]
-#[wasm_bindgen]
-pub fn js_reencyption_request(
-    client: &mut Client,
-    ct: Vec<u8>,
-    fhe_type: FheType,
-    key_handle: Option<String>,
-) -> Result<JsReencryptionRequestResult, JsError> {
-    match client.reencyption_request(ct, fhe_type, key_handle) {
-        Ok((req, pk, sk)) => Ok(JsReencryptionRequestResult {
-            req,
-            public_enc_key: pk,
-            private_enc_key: sk,
-        }),
-        Err(e) => Err(JsError::new(&e.to_string())),
-    }
-}
-
-/// This function takes `AggregatedReencryptionResponse` normally
-/// but wasm does not support HashMap so we need to take two parameters:
-/// `agg_resp` and `agg_resp_id`.
-#[cfg(not(feature = "non-wasm"))]
-#[wasm_bindgen]
-pub fn js_process_reencryption_resp(
-    client: &mut Client,
+    params: NoiseFloodParameters,
+    // request
     request: Option<ReencryptionRequest>,
-    agg_resp: Vec<ReencryptionResponse>,
-    agg_resp_ids: Vec<u32>,
-    enc_pk: &PublicEncKey,
-    enc_sk: &PrivateEncKey,
-) -> Result<Plaintext, JsError> {
-    let mut hm = AggregatedReencryptionResponse {
-        responses: HashMap::new(),
+    eph_sk: PrivateEncKey,
+    eph_pk: PublicEncKey,
+    // response
+    agg_resp: HashMap<u32, ReencryptionResponse>,
+}
+
+#[cfg(not(feature = "non-wasm"))]
+pub mod js_api {
+    use crypto_box::{
+        aead::{Aead, AeadCore},
+        Nonce, SalsaBox,
     };
-    for (k, v) in agg_resp_ids.into_iter().zip(agg_resp) {
-        hm.responses.insert(k, v);
+
+    use super::*;
+
+    #[wasm_bindgen]
+    pub fn new_client(
+        server_pks: Vec<PublicSigKey>,
+        client_pk: PublicSigKey,
+        shares_needed: u32,
+        params_json: &str,
+    ) -> Client {
+        console_error_panic_hook::set_once();
+
+        let server_pks = HashSet::from_iter(server_pks);
+        // TODO: we just use parameters stored in json for now
+        // think about how to instantiate different parameters later
+        // when we have an enum that specifies parameters
+        let params: NoiseFloodParameters =
+            serde_json::from_str::<NoiseFloodParameters>(params_json).unwrap();
+        Client {
+            rng: Box::new(AesRng::from_entropy()),
+            server_pks,
+            client_pk,
+            client_sk: None,
+            shares_needed,
+            params,
+        }
     }
-    match client.process_reencryption_resp(request, hm, enc_pk, enc_sk) {
-        Ok(resp) => match resp {
-            Some(out) => Ok(out),
-            None => Err(JsError::new("no response")),
-        },
-        Err(e) => Err(JsError::new(&e.to_string())),
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn new_reenc_transcript_from_bytes(buf: &[u8]) -> JsValue {
+        let obj: TestingReencryptionTranscript = bincode::deserialize(buf).unwrap();
+        serde_wasm_bindgen::to_value(&obj).unwrap()
+    }
+
+    #[wasm_bindgen(getter_with_clone)]
+    #[cfg(feature = "wasm_tests")]
+    pub struct DummyReencResponse {
+        pub req: Option<ReencryptionRequest>,
+        pub agg_resp: Vec<ReencryptionResponse>,
+        pub agg_resp_ids: Vec<u32>,
+        pub enc_pk: PublicEncKey,
+        pub enc_sk: PrivateEncKey,
+    }
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn centralized_reencryption_response_from_transcript(
+        transcript: JsValue,
+    ) -> DummyReencResponse {
+        let transcript: TestingReencryptionTranscript =
+            serde_wasm_bindgen::from_value(transcript).unwrap();
+        DummyReencResponse {
+            req: None,
+            agg_resp: vec![transcript.agg_resp.get(&1).unwrap().clone()],
+            agg_resp_ids: vec![1],
+            enc_pk: transcript.eph_pk.clone(),
+            enc_sk: transcript.eph_sk.clone(),
+        }
+    }
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn threshold_reencryption_response_from_transcript(
+        transcript: JsValue,
+    ) -> DummyReencResponse {
+        let transcript: TestingReencryptionTranscript =
+            serde_wasm_bindgen::from_value(transcript).unwrap();
+        let agg_resp_ids: Vec<_> = (1..=transcript.agg_resp.len() as u32).collect();
+        let agg_resp: Vec<_> = agg_resp_ids
+            .iter()
+            .map(|k| transcript.agg_resp.get(k).unwrap().clone())
+            .collect();
+
+        DummyReencResponse {
+            req: transcript.request,
+            agg_resp,
+            agg_resp_ids,
+            enc_pk: transcript.eph_pk.clone(),
+            enc_sk: transcript.eph_sk.clone(),
+        }
+    }
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn client_from_transcript(transcript: JsValue) -> Client {
+        console_error_panic_hook::set_once();
+        let transcript: TestingReencryptionTranscript =
+            serde_wasm_bindgen::from_value(transcript).unwrap();
+
+        Client {
+            rng: Box::new(AesRng::from_entropy()),
+            server_pks: transcript.server_pks,
+            client_pk: transcript.client_pk,
+            client_sk: None,
+            shares_needed: transcript.shares_needed,
+            params: transcript.params,
+        }
+    }
+
+    #[wasm_bindgen]
+    pub struct CryptoBoxCt {
+        ct: Vec<u8>,
+        nonce: Nonce,
+    }
+
+    #[wasm_bindgen]
+    pub fn cryptobox_keygen() -> PrivateEncKey {
+        let mut rng = AesRng::from_entropy();
+        let sk = crypto_box::SecretKey::generate(&mut rng);
+        PrivateEncKey(sk)
+    }
+
+    #[wasm_bindgen]
+    pub fn cryptobox_get_pk(sk: &PrivateEncKey) -> PublicEncKey {
+        PublicEncKey(sk.0.public_key())
+    }
+
+    #[wasm_bindgen]
+    pub fn cryptobox_pk_to_vec(pk: &PublicEncKey) -> Vec<u8> {
+        to_vec(pk).unwrap()
+    }
+
+    #[wasm_bindgen]
+    pub fn cryptobox_encrypt(
+        msg: &[u8],
+        their_pk: &PublicEncKey,
+        my_sk: &PrivateEncKey,
+    ) -> CryptoBoxCt {
+        let salsa_box = SalsaBox::new(&their_pk.0, &my_sk.0);
+        let mut rng = AesRng::from_entropy();
+        let nonce = SalsaBox::generate_nonce(&mut rng);
+
+        CryptoBoxCt {
+            ct: salsa_box.encrypt(&nonce, msg).unwrap(),
+            nonce,
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn cryptobox_decrypt(
+        ct: &CryptoBoxCt,
+        my_sk: &PrivateEncKey,
+        their_pk: &PublicEncKey,
+    ) -> Vec<u8> {
+        let salsa_box = SalsaBox::new(&their_pk.0, &my_sk.0);
+
+        salsa_box.decrypt(&ct.nonce, &ct.ct[..]).unwrap()
+    }
+
+    /// This function takes `AggregatedReencryptionResponse` normally
+    /// but wasm does not support HashMap so we need to take two parameters:
+    /// `agg_resp` and `agg_resp_id`.
+    #[wasm_bindgen]
+    pub fn process_reencryption_resp(
+        client: &mut Client,
+        request: Option<ReencryptionRequest>,
+        agg_resp: Vec<ReencryptionResponse>,
+        agg_resp_ids: Vec<u32>,
+        enc_pk: &PublicEncKey,
+        enc_sk: &PrivateEncKey,
+    ) -> Result<u8, JsError> {
+        let mut hm = AggregatedReencryptionResponse {
+            responses: HashMap::new(),
+        };
+        for (k, v) in agg_resp_ids.into_iter().zip(agg_resp) {
+            hm.responses.insert(k, v);
+        }
+        match client.process_reencryption_resp(request, hm, enc_pk, enc_sk) {
+            Ok(resp) => match resp {
+                Some(out) => Ok(out.as_u8()),
+                None => Err(JsError::new("no response")),
+            },
+            Err(e) => Err(JsError::new(&e.to_string())),
+        }
     }
 }
 
@@ -166,7 +298,7 @@ impl Client {
     pub fn new(
         server_pks: HashSet<PublicSigKey>,
         client_pk: PublicSigKey,
-        client_sk: PrivateSigKey,
+        client_sk: Option<PrivateSigKey>,
         shares_needed: u32,
         params: NoiseFloodParameters,
     ) -> Self {
@@ -260,6 +392,7 @@ impl Client {
     pub fn reencyption_request(
         &mut self,
         ct: Vec<u8>,
+        domain: &Eip712Domain,
         fhe_type: FheType,
         key_handle: Option<String>,
     ) -> anyhow::Result<(ReencryptionRequest, PublicEncKey, PrivateEncKey)> {
@@ -272,16 +405,21 @@ impl Client {
             servers_needed: self.shares_needed,
             enc_key: to_vec(&enc_pk)?,
             verification_key: to_vec(&self.client_pk)?,
-            fhe_type,
+            fhe_type: fhe_type as u8,
             ciphertext: ct,
             randomness,
             key_handle: handle,
         };
-        let sig = sign(&to_vec(&sig_payload)?, &self.client_sk)?;
+        let sig = match &self.client_sk {
+            Some(sk) => sign_eip712(&sig_payload, domain, sk)?,
+            None => return Err(anyhow_error_and_log("client signing key is None")),
+        };
+        let domain_msg = allow_to_protobuf_domain(domain)?;
         Ok((
             ReencryptionRequest {
                 signature: to_vec(&sig)?,
                 payload: Some(sig_payload.into()),
+                domain: Some(domain_msg),
             },
             enc_pk,
             enc_sk,
@@ -506,7 +644,11 @@ impl Client {
                         return Ok(None);
                     }
                     let sig_payload: ReencryptionRequestSigPayload = req_payload.try_into()?;
-                    let req_digest = safe_hash_element(&to_vec(&sig_payload)?)?;
+                    let domain = protobuf_to_alloy_domain(&some_or_err(
+                        req.domain,
+                        "domain not found".to_string(),
+                    )?)?;
+                    let req_digest = sig_payload.eip712_signing_hash(&domain).to_vec();
                     if req_digest != pivot_resp.digest {
                         tracing::warn!(
                             "The reencryption response is not linked to the correct request"
@@ -764,6 +906,8 @@ pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::client::num_blocks;
+    #[cfg(feature = "wasm_tests")]
+    use crate::client::TestingReencryptionTranscript;
     use crate::consts::{
         AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, KEY_HANDLE, TEST_CENTRAL_CRS_PATH,
         TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_CRS_HANDLE, TEST_FHE_TYPE, TEST_MSG,
@@ -774,6 +918,8 @@ pub(crate) mod tests {
         DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH,
         DEFAULT_CRS_HANDLE, DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
     };
+    #[cfg(feature = "wasm_tests")]
+    use crate::consts::{TEST_CENTRAL_WASM_TRANSCRIPT_PATH, TEST_THRESHOLD_WASM_TRANSCRIPT_PATH};
     use crate::core::kms_core::{CrsHashMap, SignedCRS, SignedFhePublicKeySet, SoftwareKmsKeys};
     use crate::file_handling::{read_as_json, read_element, read_element_async};
     use crate::kms::kms_endpoint_client::KmsEndpointClient;
@@ -784,7 +930,10 @@ pub(crate) mod tests {
     use crate::rpc::kms_rpc::{crs_path, priv_key_path, pub_key_path, server_handle};
     use crate::setup_rpc::{CentralizedTestingKeys, ThresholdTestingKeys};
     use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
+    use alloy_sol_types::Eip712Domain;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+    #[cfg(feature = "wasm_tests")]
+    use distributed_decryption::file_handling::write_element;
     use serial_test::serial;
     use std::collections::{HashMap, HashSet};
     use std::fs;
@@ -830,7 +979,7 @@ pub(crate) mod tests {
         let internal_client = Client::new(
             HashSet::from_iter(keys.server_keys.iter().cloned()),
             keys.client_pk,
-            keys.client_sk,
+            Some(keys.client_sk),
             1,
             keys.params,
         );
@@ -916,10 +1065,11 @@ pub(crate) mod tests {
         let keys: ThresholdTestingKeys = read_element_async(format!("{threshold_key_path}-1.bin"))
             .await
             .unwrap();
+        let server_keys: Vec<_> = keys.server_keys.to_vec();
         let internal_client = Client::new(
-            HashSet::from_iter(keys.server_keys.iter().cloned()),
+            HashSet::from_iter(server_keys.into_iter()),
             keys.client_pk,
-            keys.client_sk,
+            Some(keys.client_sk),
             (THRESHOLD as u32) + 1,
             keys.params.to_noiseflood_parameters(),
         );
@@ -1131,6 +1281,7 @@ pub(crate) mod tests {
     async fn default_decryption_centralized() {
         decryption_centralized(DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_CT_PATH).await;
     }
+
     // TODO speed up
     async fn decryption_centralized(centralized_key_path: &str, cipher_path: &str) {
         // TODO refactor with setup and teardown setting up servers that can be used to run tests in
@@ -1163,30 +1314,70 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_reencryption_centralized() {
-        reencryption_centralized(TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_CT_PATH).await;
+        reencryption_centralized(TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_CT_PATH, false).await;
+    }
+
+    #[cfg(feature = "wasm_tests")]
+    #[tokio::test]
+    #[serial]
+    async fn test_reencryption_centralized_and_write_transcript() {
+        reencryption_centralized(TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_CT_PATH, true).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[serial]
     async fn default_reencryption_centralized() {
-        reencryption_centralized(DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_CT_PATH).await;
+        reencryption_centralized(DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_CT_PATH, false).await;
     }
 
-    async fn reencryption_centralized(centralized_key_path: &str, cipher_path: &str) {
+    fn dummy_domain() -> Eip712Domain {
+        alloy_sol_types::eip712_domain!(
+            name: "dummy",
+            version: "1",
+            chain_id: 1,
+            verifying_contract: alloy_primitives::Address::ZERO,
+        )
+    }
+
+    async fn reencryption_centralized(
+        centralized_key_path: &str,
+        cipher_path: &str,
+        write_transcript: bool,
+    ) {
+        _ = write_transcript;
+
         let (kms_server, mut kms_client, mut internal_client) =
             centralized_handles(centralized_key_path, None).await;
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
         let (req, enc_pk, enc_sk) = internal_client
-            .reencyption_request(ct, fhe_type, None)
+            .reencyption_request(ct, &dummy_domain(), fhe_type, None)
             .unwrap();
         let response = kms_client
             .reencrypt(tonic::Request::new(req.clone()))
             .await
             .unwrap();
+        let response = response.into_inner();
+
+        #[cfg(feature = "wasm_tests")]
+        {
+            if write_transcript {
+                let transcript = TestingReencryptionTranscript {
+                    server_pks: internal_client.server_pks.clone(),
+                    client_pk: internal_client.client_pk.clone(),
+                    shares_needed: 0,
+                    params: internal_client.params,
+                    request: None,
+                    eph_sk: enc_sk.clone(),
+                    eph_pk: enc_pk.clone(),
+                    agg_resp: HashMap::from([(1, response.clone())]),
+                };
+                write_element(TEST_CENTRAL_WASM_TRANSCRIPT_PATH.to_string(), &transcript).unwrap();
+            }
+        }
 
         let responses = AggregatedReencryptionResponse {
-            responses: HashMap::from([(1, response.into_inner())]),
+            responses: HashMap::from([(1, response)]),
         };
         let plaintext = internal_client
             .process_reencryption_resp(Some(req), responses, &enc_pk, &enc_sk)
@@ -1247,24 +1438,42 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_reencryption_threshold() {
-        reencryption_threshold(TEST_THRESHOLD_KEYS_PATH, TEST_THRESHOLD_CT_PATH).await;
+        reencryption_threshold(TEST_THRESHOLD_KEYS_PATH, TEST_THRESHOLD_CT_PATH, false).await;
+    }
+
+    #[tokio::test]
+    #[serial]
+    #[cfg(feature = "wasm_tests")]
+    async fn test_reencryption_threshold_and_write_transcript() {
+        reencryption_threshold(TEST_THRESHOLD_KEYS_PATH, TEST_THRESHOLD_CT_PATH, true).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_reencryption_threshold() {
-        reencryption_threshold(DEFAULT_THRESHOLD_KEYS_PATH, DEFAULT_THRESHOLD_CT_PATH).await;
+        reencryption_threshold(
+            DEFAULT_THRESHOLD_KEYS_PATH,
+            DEFAULT_THRESHOLD_CT_PATH,
+            false,
+        )
+        .await;
     }
 
-    async fn reencryption_threshold(threshold_key_path: &str, cipher_path: &str) {
+    async fn reencryption_threshold(
+        threshold_key_path: &str,
+        cipher_path: &str,
+        write_transcript: bool,
+    ) {
+        _ = write_transcript;
+
         let (kms_servers, kms_clients, mut internal_client) =
             threshold_handles(threshold_key_path).await;
         let (ct, fhe_type): (Vec<u8>, FheType) =
             read_element_async(cipher_path.to_string()).await.unwrap();
 
         let (req, enc_pk, enc_sk) = internal_client
-            .reencyption_request(ct, fhe_type, None)
+            .reencyption_request(ct, &dummy_domain(), fhe_type, None)
             .unwrap();
         let mut tasks = JoinSet::new();
         tracing::info!("Client did reencryption request");
@@ -1285,6 +1494,25 @@ pub(crate) mod tests {
             let (i, resp) = res;
             response_map.insert(i, resp.unwrap().into_inner());
         }
+
+        #[cfg(feature = "wasm_tests")]
+        {
+            if write_transcript {
+                let transcript = TestingReencryptionTranscript {
+                    server_pks: internal_client.server_pks.clone(),
+                    client_pk: internal_client.client_pk.clone(),
+                    shares_needed: THRESHOLD as u32 + 1,
+                    params: internal_client.params,
+                    request: Some(req.clone()),
+                    eph_sk: enc_sk.clone(),
+                    eph_pk: enc_pk.clone(),
+                    agg_resp: response_map.clone(),
+                };
+                write_element(TEST_THRESHOLD_WASM_TRANSCRIPT_PATH.to_string(), &transcript)
+                    .unwrap();
+            }
+        }
+
         let agg = AggregatedReencryptionResponse {
             responses: response_map,
         };
@@ -1311,13 +1539,13 @@ pub(crate) mod tests {
         let mut internal_client = Client::new(
             HashSet::from_iter(keys.server_keys.iter().cloned()),
             keys.client_pk,
-            keys.client_sk,
+            Some(keys.client_sk),
             1,
             keys.params,
         );
 
         let (req, _enc_pk, _enc_sk) = internal_client
-            .reencyption_request(ct, fhe_type, None)
+            .reencyption_request(ct, &dummy_domain(), fhe_type, None)
             .unwrap();
         let response = kms_client.reencrypt(tonic::Request::new(req.clone())).await;
         assert!(response.is_err());

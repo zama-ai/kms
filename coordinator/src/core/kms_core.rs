@@ -1,11 +1,14 @@
 use super::der_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature};
-use super::signcryption::{safe_hash_element, sign, signcrypt, verify_sig, RND_SIZE};
+use super::signcryption::{
+    safe_hash_element, sign, sign_eip712, signcrypt, verify_sig, verify_sig_eip712, RND_SIZE,
+};
 use crate::anyhow_error_and_warn_log;
 use crate::consts::KEY_HANDLE;
 use crate::kms::FheType;
 use crate::rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, SigncryptionPayload};
 use crate::setup_rpc::{FhePrivateKey, FhePublicKey};
 use aes_prng::AesRng;
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use distributed_decryption::execution::endpoints::keygen::PubKeySet;
 use distributed_decryption::execution::zk::ceremony::{make_proof_deterministic, PublicParameter};
 use distributed_decryption::{
@@ -184,6 +187,23 @@ impl BaseKms for BaseKmsStruct {
     {
         safe_hash_element(msg)
     }
+
+    fn verify_sig_eip712<T: SolStruct>(
+        payload: &T,
+        domain: &Eip712Domain,
+        signature: &Signature,
+        verification_key: &PublicSigKey,
+    ) -> bool {
+        verify_sig_eip712(payload, domain, signature, verification_key)
+    }
+
+    fn sign_eip712<T: SolStruct>(
+        &self,
+        msg: &T,
+        domain: &Eip712Domain,
+    ) -> anyhow::Result<Signature> {
+        sign_eip712(msg, domain, &self.sig_key)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -290,6 +310,23 @@ impl BaseKms for SoftwareKms {
 
     fn digest<T: fmt::Debug + Serialize>(msg: &T) -> anyhow::Result<Vec<u8>> {
         BaseKmsStruct::digest(&msg)
+    }
+
+    fn verify_sig_eip712<T: SolStruct>(
+        payload: &T,
+        domain: &Eip712Domain,
+        signature: &Signature,
+        verification_key: &PublicSigKey,
+    ) -> bool {
+        BaseKmsStruct::verify_sig_eip712(payload, domain, signature, verification_key)
+    }
+
+    fn sign_eip712<T: SolStruct>(
+        &self,
+        msg: &T,
+        domain: &Eip712Domain,
+    ) -> anyhow::Result<Signature> {
+        self.base_kms.sign_eip712(msg, domain)
     }
 }
 

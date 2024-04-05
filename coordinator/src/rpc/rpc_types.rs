@@ -1,8 +1,11 @@
+use crate::anyhow_error_and_log;
 use crate::core::der_types::{PublicEncKey, PublicSigKey, Signature};
 use crate::kms::{
-    DecryptionRequest, DecryptionResponsePayload, FheType, ReencryptionRequestPayload,
-    ReencryptionResponse,
+    DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType,
+    ReencryptionRequestPayload, ReencryptionResponse,
 };
+use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::{sol, Eip712Domain, SolStruct};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_asn1_der::from_bytes;
@@ -11,13 +14,82 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 pub static CURRENT_FORMAT_VERSION: u32 = 1;
 
+pub(crate) fn protobuf_to_alloy_domain(
+    pb_domain: &Eip712DomainMsg,
+) -> anyhow::Result<Eip712Domain> {
+    let salt = if pb_domain.salt.is_empty() {
+        None
+    } else {
+        Some(B256::from_slice(&pb_domain.salt))
+    };
+    let out = Eip712Domain::new(
+        Some(pb_domain.name.clone().into()),
+        Some(pb_domain.version.clone().into()),
+        Some(
+            U256::try_from_le_slice(&pb_domain.chain_id)
+                .ok_or(anyhow_error_and_log("invalid chain ID".to_string()))?,
+        ),
+        Some(Address::parse_checksummed(
+            pb_domain.verifying_contract.clone(),
+            None,
+        )?),
+        salt,
+    );
+    Ok(out)
+}
+
+pub(crate) fn allow_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712DomainMsg> {
+    let name = domain
+        .name
+        .as_ref()
+        .ok_or(anyhow_error_and_log("missing domain name".to_string()))?
+        .to_string();
+    let version = domain
+        .version
+        .as_ref()
+        .ok_or(anyhow_error_and_log("missing domain version".to_string()))?
+        .to_string();
+    let chain_id = domain
+        .chain_id
+        .ok_or(anyhow_error_and_log("missing domain chain_id".to_string()))?
+        .to_le_bytes_vec();
+    let verifying_contract = domain
+        .verifying_contract
+        .as_ref()
+        .ok_or(anyhow_error_and_log("missing domain chain_id".to_string()))?
+        .to_string();
+    let salt = match domain.salt {
+        Some(x) => x.to_vec(),
+        None => vec![],
+    };
+    let domain_msg = Eip712DomainMsg {
+        name,
+        version,
+        chain_id,
+        verifying_contract,
+        salt,
+    };
+    Ok(domain_msg)
+}
+
 pub trait BaseKms {
     fn verify_sig<T: Serialize>(
         payload: &T,
         signature: &Signature,
         verification_key: &PublicSigKey,
     ) -> bool;
+    fn verify_sig_eip712<T: SolStruct>(
+        payload: &T,
+        domain: &Eip712Domain,
+        signature: &Signature,
+        verification_key: &PublicSigKey,
+    ) -> bool;
     fn sign<T: Serialize>(&self, msg: &T) -> anyhow::Result<Signature>;
+    fn sign_eip712<T: SolStruct>(
+        &self,
+        msg: &T,
+        domain: &Eip712Domain,
+    ) -> anyhow::Result<Signature>;
     fn get_verf_key(&self) -> PublicSigKey;
     fn digest<T: fmt::Debug + Serialize>(msg: &T) -> anyhow::Result<Vec<u8>>;
 }
@@ -279,19 +351,21 @@ impl From<DecryptionResponsePayload> for DecryptionResponseSigPayload {
     }
 }
 
-/// Observe that this seemingly redundant types are required since the Protobuf compiled types do
-/// not implement the serializable and deserializable traits. Hence [ReencryptionRequestSigPayload]
-/// implement data to be asn1 serialized which will be signed.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ReencryptionRequestSigPayload {
-    pub version: u32,
-    pub servers_needed: u32,
-    pub verification_key: Vec<u8>,
-    pub enc_key: Vec<u8>,
-    pub fhe_type: FheType,
-    pub randomness: Vec<u8>,
-    pub ciphertext: Vec<u8>,
-    pub key_handle: String,
+sol! {
+    /// Observe that this seemingly redundant types are required since the Protobuf compiled types do
+    /// not implement the serializable and deserializable traits. Hence [ReencryptionRequestSigPayload]
+    /// implement data to be asn1 serialized which will be signed.
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+    struct ReencryptionRequestSigPayload {
+        uint32 version;
+        uint32 servers_needed;
+        uint8[] verification_key;
+        uint8[] enc_key;
+        uint8 fhe_type;
+        uint8[] randomness;
+        uint8[] ciphertext;
+        string key_handle;
+    }
 }
 impl From<ReencryptionRequestSigPayload> for ReencryptionRequestPayload {
     fn from(val: ReencryptionRequestSigPayload) -> ReencryptionRequestPayload {

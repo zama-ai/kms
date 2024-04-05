@@ -39,6 +39,8 @@ pub const TEST_CENTRAL_CRS_PATH: &str = "crs/test-crs-store.bin";
 pub const TEST_CENTRAL_MULTI_KEYS_PATH: &str = "temp/test-central-multi-keys.bin";
 pub const TEST_CENTRAL_CT_PATH: &str = "temp/test-central-ciphertext.bin";
 pub const TEST_CENTRAL_MULTI_CT_PATH: &str = "temp/test-central-multi-keys-ciphertext.bin";
+pub const TEST_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/test-central-wasm-transcript.bin";
+pub const TEST_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/test-threshold-wasm-transcript.bin";
 pub const OTHER_KEY_HANDLE: &str = "otherKeyHandle";
 
 pub const TEST_SEC_PAR: u64 = 40;

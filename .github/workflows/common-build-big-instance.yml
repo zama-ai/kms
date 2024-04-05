@@ -18,6 +18,10 @@ on:
         type: boolean
         required: false
         default: false
+      run-wasm:
+        type: boolean
+        required: false
+        default: false
     secrets:
       SLAB_ACTION_TOKEN:
         required: true
@@ -62,6 +66,7 @@ jobs:
       working-directory: ${{ inputs.working-directory }}
       args-tests: ${{ inputs.args-tests }}
       run-redis: ${{ inputs.run-redis }}
+      run-wasm: ${{ inputs.run-wasm }}
 
   stop-runner:
     name: Stops self-hosted EC2 runner
