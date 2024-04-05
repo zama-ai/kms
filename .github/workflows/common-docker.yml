@@ -16,7 +16,7 @@ on:
         default: 'kms'
       image-dev:
         type: string
-        required: true
+        required: false
         default: 'kms'
       push_image:
         type: boolean
