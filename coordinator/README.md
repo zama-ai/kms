@@ -10,6 +10,7 @@ https://github.com/zama-ai/kms/actions/workflows/publish-docker-image.yml
 
 This repository hosts the code for the Zama Key Management System prototypes.
 
+
 ## MVP Specification
 
 The full KMS specification is currently under review. What follows describes a KMS minimal viable product.

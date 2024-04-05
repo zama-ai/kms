@@ -82,7 +82,7 @@ jobs:
 
       - name: Build Documentation
         if: ${{ inputs.build-publish-docs }}
-        run: RUSTDOCFLAGS="--enable-index-page -Zunstable-options" cargo +nightly doc --no-deps
+        run: cargo doc --no-deps
 
       - name: Deploy to GitHub Pages
         if: ${{ inputs.build-publish-docs }}
