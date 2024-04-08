@@ -90,6 +90,7 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./target/doc
+          destination_dir: ${{ inputs.working-directory }}
 
       - name: Install wasm-pack
         if: ${{ inputs.run-wasm }}
