@@ -4,7 +4,7 @@ WORKDIR /app
 COPY . .
 
 # Install the necessary dependencies
-RUN apt update && apt install -y net-tools
+RUN apt update && apt install -y net-tools protobuf-compiler
 
 # Build your application
 RUN cargo build --release

@@ -71,11 +71,11 @@ services:
 
   kms_chain:
     build:
-      context: blockchain
+      context: protocol
       dockerfile: Dockerfile
     ports:
       - "36658:36658"
-    entrypoint: /app/target/release/chain --host 0.0.0.0
+    entrypoint: /app/target/release/chain --host 0.0.0.0 --port 36658
     healthcheck:
       test: "netstat -an | grep 36658 > /dev/null; if [ 0 != $? ]; then exit 1; fi;"
       interval: 5s

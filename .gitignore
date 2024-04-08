@@ -6,7 +6,5 @@
 .DS_Store
 .vscode/
 *.eif
-bin/
 .crates.toml
 .crates2.json
-
