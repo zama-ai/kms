@@ -21,7 +21,7 @@ where
     Z: Ring,
     ShamirSharings<Z>: InputOp<Z>,
 {
-    session.network().increase_round_counter().await?;
+    session.network().increase_round_counter()?;
     if role.one_based() == input_party_id {
         let threshold = session.threshold();
         let si = {

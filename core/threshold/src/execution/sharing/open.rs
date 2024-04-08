@@ -223,7 +223,7 @@ pub async fn robust_opens_to<
     role: &Role,
     output_party_id: usize,
 ) -> anyhow::Result<Option<Vec<Z>>> {
-    session.network().increase_round_counter().await?;
+    session.network().increase_round_counter()?;
     if role.one_based() == output_party_id {
         let mut set = JoinSet::new();
 

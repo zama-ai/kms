@@ -65,7 +65,7 @@ pub async fn send_to_honest_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionH
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &B,
 ) -> anyhow::Result<()> {
-    session.network().increase_round_counter().await?;
+    session.network().increase_round_counter()?;
     let mut send_job = JoinSet::new();
     internal_send_to_parties(
         &mut send_job,
@@ -85,7 +85,7 @@ pub async fn send_to_parties_w_dispute<Z: Ring, R: Rng + CryptoRng, L: LargeSess
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &L,
 ) -> anyhow::Result<()> {
-    session.network().increase_round_counter().await?;
+    session.network().increase_round_counter()?;
     let mut send_job = JoinSet::new();
     internal_send_to_parties(&mut send_job, values_to_send, session, &check_roles)?;
     while (send_job.join_next().await).is_some() {}

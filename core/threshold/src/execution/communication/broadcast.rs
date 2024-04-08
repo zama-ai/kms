@@ -23,7 +23,7 @@ pub async fn send_to_all<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     sender: &Role,
     msg: NetworkValue<Z>,
 ) -> anyhow::Result<()> {
-    session.network().increase_round_counter().await?;
+    session.network().increase_round_counter()?;
     let mut jobs = JoinSet::new();
     for (other_role, other_identity) in session.role_assignments().iter() {
         let networking = Arc::clone(session.network());
@@ -435,7 +435,7 @@ pub async fn reliable_broadcast<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandl
             send_to_all(session, &my_role, msg).await?;
         }
         (None, false) => {
-            session.network().increase_round_counter().await?; // We're not sending, but we must increase the round counter to stay in sync
+            session.network().increase_round_counter()?; // We're not sending, but we must increase the round counter to stay in sync
         }
         (_, _) => {
             return Err(anyhow_error_and_log(
@@ -894,7 +894,7 @@ mod tests {
         // As a cheater I send a different message to all the parties
         // The send calls are followed by receive to get the incoming messages from the others
         let mut round1_data = HashMap::<Role, BroadcastValue<Z>>::new();
-        session.network().increase_round_counter().await?;
+        session.network().increase_round_counter()?;
         match (vec_vi.clone(), is_sender) {
             (Some(vec_vi), true) => {
                 bcast_data.insert(my_role, vec_vi[1].clone());
@@ -1093,7 +1093,7 @@ mod tests {
         // As a cheater I send a different message to all the parties
         // The send calls are followed by receive to get the incoming messages from the others
         let mut round1_data = HashMap::<Role, BroadcastValue<Z>>::new();
-        session.network().increase_round_counter().await?;
+        session.network().increase_round_counter()?;
         match (vec_vi.clone(), is_sender) {
             (Some(vec_vi), true) => {
                 bcast_data.insert(my_role, vec_vi[1].clone());
@@ -1142,7 +1142,7 @@ mod tests {
         // Communication round 2
         // Parties send Echo to the other parties
         // Parties receive Echo from others and process them, if there are enough Echo messages then they can cast a vote
-        session.network().increase_round_counter().await?;
+        session.network().increase_round_counter()?;
         let mut msg_to_p2 = round1_data.clone();
         msg_to_p2.insert(my_role, vec_vi.clone().unwrap()[0].clone());
         let msg_to_others = round1_data;

@@ -188,7 +188,7 @@ impl Networking for LocalNetworking {
         Ok(tagged_value.value)
     }
 
-    async fn increase_round_counter(&self) -> anyhow::Result<()> {
+    fn increase_round_counter(&self) -> anyhow::Result<()> {
         if let Ok(mut net_round) = self.network_round.lock() {
             *net_round += 1;
             tracing::debug!(

@@ -22,7 +22,7 @@ pub trait Networking {
 
     async fn receive(&self, sender: &Identity, session_id: &SessionId) -> anyhow::Result<Vec<u8>>;
 
-    async fn increase_round_counter(&self) -> anyhow::Result<()>;
+    fn increase_round_counter(&self) -> anyhow::Result<()>;
 
     ///Used to compute the timeout in network functions
     fn get_timeout_current_round(&self) -> anyhow::Result<Instant>;

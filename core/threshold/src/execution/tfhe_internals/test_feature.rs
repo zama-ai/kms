@@ -227,7 +227,7 @@ pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     role: &Role,
     input_party_id: usize,
 ) -> anyhow::Result<PubKeySet> {
-    session.network().increase_round_counter().await?;
+    session.network().increase_round_counter()?;
     if role.one_based() == input_party_id {
         let pubkey_raw =
             pubkey.ok_or_else(|| anyhow_error_and_log("I have no public key to send!"))?;
