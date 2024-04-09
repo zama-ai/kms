@@ -61,7 +61,7 @@ tracing = { version = "~0.1", features = ["log"] }
 tracing-test = "0.2.4"
 tracing-subscriber = "0.3.18"
 url = "2.5.0"
-zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "6be985e", optional = true } # must match ddec
+zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "730a9dcfe90aea9af7665f13c4bcb13cd381fddc", optional = true } # must match ddec
 alloy-sol-types = "0.7.0"
 alloy-primitives= "0.7.0"
 

@@ -12,6 +12,7 @@ use rand::{CryptoRng, Rng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg};
+use zeroize::Zeroize;
 use zk_poc::curve_api::bls12_446 as curve;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
@@ -335,13 +336,17 @@ impl Ceremony for RealCeremony {
                 // like creating the CRS. This is recommended over tokio::task::spawn_blocking
                 // since the tokio threadpool has a very high default upper limit.
                 // More info: https://ryhl.io/blog/async-what-is-blocking/
-                let tau = curve::Zp::rand(session.rng());
-                let r = curve::Zp::rand(session.rng());
+                let mut tau = curve::Zp::rand(session.rng());
+                let mut r = curve::Zp::rand(session.rng());
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn(move || {
                     let partial_proof = make_proof_deterministic(&pp, tau, round + 1, r);
                     let _ = send.send(partial_proof);
                 });
+
+                tau.zeroize();
+                r.zeroize();
+
                 let proof = recv.await?;
                 let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
 

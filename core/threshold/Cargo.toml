@@ -71,7 +71,7 @@ typed-builder = "0.18.1"
 x509-parser = "~0.15"
 zeroize = { version = "~1.7", features = ["zeroize_derive"] }
 # this is defined as optional since there's a bug that does not allow us to build it for 32-bit platforms
-zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "6be985e", optional = true }
+zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "730a9dcfe90aea9af7665f13c4bcb13cd381fddc", optional = true }
 
 # we need getrandom to have the js feature so that it can target wasm
 # this is an indirect dependency

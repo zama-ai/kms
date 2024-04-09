@@ -9,6 +9,7 @@ use crate::rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, Signcryption
 use crate::setup_rpc::{FhePrivateKey, FhePublicKey};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
+use der::zeroize::Zeroize;
 use distributed_decryption::execution::endpoints::keygen::PubKeySet;
 use distributed_decryption::execution::zk::ceremony::{make_proof_deterministic, PublicParameter};
 use distributed_decryption::{
@@ -101,10 +102,12 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     tracing::info!("Generating CRS with witness dimension {}.", witness_dim);
     let pparam = PublicParameter::new(witness_dim);
 
-    let tau = curve::Zp::rand(rng);
-    let r = curve::Zp::rand(rng);
+    let mut tau = curve::Zp::rand(rng);
+    let mut r = curve::Zp::rand(rng);
     let pproof = make_proof_deterministic(&pparam, tau, 1, r);
-    //TODO zeroize tau and r (needs Zeroize in zk-poc)
+    tau.zeroize();
+    r.zeroize();
+
     pproof.new_pp
 }
 

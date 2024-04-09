@@ -6976,7 +6976,7 @@ dependencies = [
 [[package]]
 name = "zk-poc"
 version = "0.1.0"
-source = "git+ssh://git@github.com/zama-ai/zk-poc.git?rev=6be985e#6be985e2cc166220fa1233ac5c25b77da75fd6ea"
+source = "git+ssh://git@github.com/zama-ai/zk-poc.git?rev=730a9dcfe90aea9af7665f13c4bcb13cd381fddc#730a9dcfe90aea9af7665f13c4bcb13cd381fddc"
 dependencies = [
  "ark-bls12-381",
  "ark-ec",
