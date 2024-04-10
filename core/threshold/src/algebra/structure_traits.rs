@@ -99,7 +99,7 @@ pub trait Syndrome: Ring {
     ) -> anyhow::Result<Poly<Self>>;
 }
 
-pub trait HenselLiftInverse: Sized {
+pub trait Invert: Sized {
     fn invert(self) -> anyhow::Result<Self>;
 }
 

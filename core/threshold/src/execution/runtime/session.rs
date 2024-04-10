@@ -1,6 +1,6 @@
 use super::party::{Identity, Role};
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
+    algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
     computation::SessionId,
     error::error_handler::anyhow_error_and_log,
     execution::{
@@ -269,7 +269,7 @@ where
         mut base_session: BaseSessionStruct<AesRng, SessionParameters>,
     ) -> anyhow::Result<Self>
     where
-        Z: ErrorCorrect + RingEmbed + HenselLiftInverse,
+        Z: ErrorCorrect + RingEmbed + Invert,
     {
         let prss_setup = PRSSSetup::robust_init(&mut base_session, &RealVss::default()).await?;
         let session_id = base_session.session_id();

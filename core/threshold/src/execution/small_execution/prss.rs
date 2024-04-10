@@ -6,7 +6,7 @@ use crate::{
     algebra::{
         bivariate::{compute_powers_list, MatrixMul},
         poly::Poly,
-        structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
+        structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
     },
     commitment::KEY_BYTE_LEN,
     computation::SessionId,
@@ -85,7 +85,7 @@ pub struct PRSSState<Z: Default + Clone> {
 
 /// computes the points on the polys f_A for all parties in the given sets A
 /// f_A is one at 0, and zero at the party indices not in set A
-fn party_compute_f_a_points<Z: Ring + RingEmbed + HenselLiftInverse>(
+fn party_compute_f_a_points<Z: Ring + RingEmbed + Invert>(
     partysets: &Vec<PartySet>,
     num_parties: usize,
 ) -> anyhow::Result<Vec<Vec<Z>>> {
@@ -136,7 +136,7 @@ impl<Z> PRSSState<Z>
 where
     Z: Ring,
     Z: RingEmbed,
-    Z: HenselLiftInverse,
+    Z: Invert,
     Z: PRSSConversions,
 {
     /// PRSS-Mask.Next() for a single party
@@ -497,7 +497,7 @@ impl<Z> PRSSSetup<Z>
 where
     Z: Ring,
     Z: RingEmbed,
-    Z: HenselLiftInverse,
+    Z: Invert,
 {
     /// initialize the PRSS setup for this epoch and a given party
     pub async fn init_with_abort<A: AgreeRandom, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
@@ -551,7 +551,7 @@ where
     Z: Ring,
     Z: ErrorCorrect,
     Z: RingEmbed,
-    Z: HenselLiftInverse,
+    Z: Invert,
 {
     pub async fn robust_init<V: Vss, R: Rng + CryptoRng, L: BaseSessionHandles<R>>(
         session: &mut L,
@@ -712,7 +712,7 @@ mod tests {
     use tracing_test::traced_test;
 
     // async helper function that creates the prss setups
-    async fn setup_prss_sess<Z: Ring + RingEmbed + HenselLiftInverse, A: AgreeRandom + Send>(
+    async fn setup_prss_sess<Z: Ring + RingEmbed + Invert, A: AgreeRandom + Send>(
         sessions: Vec<SmallSession<Z>>,
     ) -> Option<HashMap<usize, PRSSSetup<Z>>> {
         let mut jobs = JoinSet::new();
@@ -744,7 +744,7 @@ mod tests {
     }
 
     //NOTE: Need to generalize (some of) the tests to ResiduePoly64 ?
-    impl<Z: Ring + RingEmbed + HenselLiftInverse> PRSSSetup<Z> {
+    impl<Z: Ring + RingEmbed + Invert> PRSSSetup<Z> {
         // initializes the epoch for a single party (without actual networking)
         pub fn testing_party_epoch_init(
             num_parties: usize,
@@ -1472,22 +1472,39 @@ mod tests {
     }
 
     #[test]
-    fn sunshine_init_with_abort() {
+    fn sunnshine_init_with_abort_res128() {
+        sunshine_init_with_abort::<ResiduePoly128>();
+    }
+
+    #[cfg(feature = "experimental")]
+    #[test]
+    fn sunnshine_init_with_abort_levelone() {
+        use crate::experimental::bgv_algebra::LevelOne;
+        sunshine_init_with_abort::<LevelOne>();
+    }
+
+    #[cfg(feature = "experimental")]
+    #[test]
+    fn sunnshine_init_with_abort_levelksw() {
+        use crate::experimental::bgv_algebra::LevelKsw;
+        sunshine_init_with_abort::<LevelKsw>();
+    }
+
+    fn sunshine_init_with_abort<Z: ErrorCorrect + Invert + RingEmbed + PRSSConversions>() {
         let parties = 5;
         let threshold = 1;
 
-        async fn task(mut session: SmallSession<ResiduePoly128>) -> Share<ResiduePoly128> {
-            let prss_setup = PRSSSetup::init_with_abort::<
-                DummyAgreeRandom,
-                AesRng,
-                SmallSession<ResiduePoly128>,
-            >(&mut session)
-            .await
-            .unwrap();
+        let mut task = |mut session: SmallSession<Z>| async move {
+            let prss_setup =
+                PRSSSetup::<Z>::init_with_abort::<DummyAgreeRandom, AesRng, SmallSession<Z>>(
+                    &mut session,
+                )
+                .await
+                .unwrap();
             let mut state = prss_setup.new_prss_session_state(session.session_id());
             let role = session.my_role().unwrap();
             Share::new(role, state.prss_next(role.one_based()).unwrap())
-        }
+        };
 
         // init with Dummy AR does not send anything = 0 expected rounds
         let result = execute_protocol_small(parties, threshold, Some(0), &mut task);
@@ -1495,8 +1512,8 @@ mod tests {
         validate_prss_init(ShamirSharings::create(result), parties, threshold as usize);
     }
 
-    fn validate_prss_init(
-        result: ShamirSharings<ResiduePoly128>,
+    fn validate_prss_init<Z: ErrorCorrect>(
+        result: ShamirSharings<Z>,
         parties: usize,
         threshold: usize,
     ) {
@@ -1583,7 +1600,7 @@ mod tests {
             execute_protocol_small::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
 
         let sharing = ShamirSharings::create(result);
-        validate_prss_init(sharing, parties, threshold.into());
+        validate_prss_init::<ResiduePoly128>(sharing, parties, threshold.into());
     }
 
     #[test]

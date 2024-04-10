@@ -14,7 +14,7 @@ use crate::execution::online::preprocessing::{
 use crate::execution::runtime::session::BaseSessionHandles;
 use crate::execution::sharing::shamir::RevealOp;
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
+    algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
     execution::{
         communication::broadcast::broadcast_from_all_w_corruption,
         online::triple::Triple,
@@ -37,7 +37,7 @@ where
     Z: PRSSConversions,
     Z: RingEmbed,
     Z: ErrorCorrect,
-    Z: HenselLiftInverse,
+    Z: Invert,
 {
     /// Initializes the preprocessing for a new epoch, by preprocessing a batch
     /// NOTE: if None is passed for the option for `batch_sizes`, then the default values are used.
@@ -406,7 +406,7 @@ impl<Z: Ring, A: AgreeRandom + Send + Sync> BasePreprocessing<Z> for SmallPrepro
 mod test {
     use std::{collections::HashMap, num::Wrapping};
 
-    use crate::algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed};
+    use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed};
     use crate::execution::online::preprocessing::dummy::reconstruct;
     use crate::{
         algebra::{
@@ -441,7 +441,7 @@ mod test {
     const RANDOM_BATCH_SIZE: usize = 10;
     const TRIPLE_BATCH_SIZE: usize = 10;
 
-    fn test_rand_generation<Z: RingEmbed + PRSSConversions + ErrorCorrect + HenselLiftInverse>() {
+    fn test_rand_generation<Z: RingEmbed + PRSSConversions + ErrorCorrect + Invert>() {
         let parties = 4;
         let threshold = 1;
 
@@ -496,9 +496,7 @@ mod test {
         test_rand_generation::<ResiduePoly64>();
     }
 
-    fn test_triple_generation<
-        Z: Ring + RingEmbed + PRSSConversions + ErrorCorrect + HenselLiftInverse,
-    >() {
+    fn test_triple_generation<Z: Ring + RingEmbed + PRSSConversions + ErrorCorrect + Invert>() {
         let parties = 4;
         let threshold = 1;
 

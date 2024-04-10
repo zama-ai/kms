@@ -90,6 +90,8 @@ impl PsiAes {
     }
 }
 
+//NOTE: I BELIEVE WE NEVER NEED PRSS-MASK TO GENERATE MASK BIGGER THAN 2^126 EVEN FOR BGV
+//AFAICT, ONLY USED IN BGV DDEC WITH BD1<Q1 AND Q1 IS 94BIT LONG
 /// Function Phi that generates bounded randomness for PRSS-Mask.Next()
 /// This currently assumes that the value Bd_1 in the NIST doc is smaller than 2^126
 pub(crate) fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {

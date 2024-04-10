@@ -289,8 +289,12 @@ mod tests {
         let plaintext = bgv_dec(&ct, sk.clone(), pmod);
         assert_eq!(plaintext, mr);
 
-        let q = GenericModulus(*Q1::MODULUS.as_ref());
-        let big_q = GenericModulus(*Q::MODULUS.as_ref());
+        let q = LevelOne {
+            value: GenericModulus(*Q1::MODULUS.as_ref()),
+        };
+        let big_q = LevelEll {
+            value: GenericModulus(*Q::MODULUS.as_ref()),
+        };
         let nz_pmod = NonZero::new(Limb(plaintext_mod)).unwrap();
 
         let ct_prime = modulus_switch::<LevelOne, LevelEll, N65536>(ct, q, big_q, nz_pmod);

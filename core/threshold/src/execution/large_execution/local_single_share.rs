@@ -4,7 +4,7 @@ use super::{
     share_dispute::{ShareDispute, ShareDisputeOutput},
 };
 use crate::{
-    algebra::structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
+    algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed},
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::broadcast_from_all_w_corruption,
@@ -38,7 +38,7 @@ pub trait LocalSingleShare: Send + Sync + Default + Clone {
     /// - A HashMap that maps role to the vector of shares receive from that party (including my own shares).
     /// Corrupt parties are mapped to the default 0 sharing
     async fn execute<
-        Z: Ring + RingEmbed + HenselLiftInverse + Derive + ErrorCorrect,
+        Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect,
         R: Rng + CryptoRng,
         L: LargeSessionHandles<R>,
     >(
@@ -66,7 +66,7 @@ pub struct RealLocalSingleShare<C: Coinflip, S: ShareDispute> {
 #[async_trait]
 impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, S> {
     async fn execute<
-        Z: Ring + RingEmbed + HenselLiftInverse + Derive + ErrorCorrect,
+        Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect,
         R: Rng + CryptoRng,
         L: LargeSessionHandles<R>,
     >(
@@ -110,7 +110,7 @@ async fn send_receive_pads<Z, R, L, S>(
     share_dispute: &S,
 ) -> anyhow::Result<ShareDisputeOutput<Z>>
 where
-    Z: Ring + RingEmbed + HenselLiftInverse,
+    Z: Ring + RingEmbed + Invert,
     R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
     S: ShareDispute,
@@ -362,7 +362,7 @@ pub(crate) mod tests {
     };
     use crate::algebra::residue_poly::ResiduePoly128;
     use crate::algebra::residue_poly::ResiduePoly64;
-    use crate::algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, RingEmbed};
+    use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed};
     #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::{
         coinflip::tests::{DroppingCoinflipAfterVss, MaliciousCoinflipRecons},
@@ -461,7 +461,7 @@ pub(crate) mod tests {
     #[async_trait]
     impl<C: Coinflip, S: ShareDispute> LocalSingleShare for MaliciousSenderLocalSingleShare<C, S> {
         async fn execute<
-            Z: Ring + RingEmbed + Derive + HenselLiftInverse + ErrorCorrect,
+            Z: Ring + RingEmbed + Derive + Invert + ErrorCorrect,
             R: Rng + CryptoRng,
             L: LargeSessionHandles<R>,
         >(
@@ -507,7 +507,7 @@ pub(crate) mod tests {
     #[async_trait]
     impl<C: Coinflip, S: ShareDispute> LocalSingleShare for MaliciousReceiverLocalSingleShare<C, S> {
         async fn execute<
-            Z: Ring + RingEmbed + Derive + ErrorCorrect + HenselLiftInverse,
+            Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
             R: Rng + CryptoRng,
             L: LargeSessionHandles<R>,
         >(
@@ -548,7 +548,7 @@ pub(crate) mod tests {
     }
 
     fn test_lsl_strategies<
-        Z: Ring + RingEmbed + Derive + HenselLiftInverse + ErrorCorrect,
+        Z: Ring + RingEmbed + Derive + Invert + ErrorCorrect,
         L: LocalSingleShare + 'static,
     >(
         params: TestingParameters,

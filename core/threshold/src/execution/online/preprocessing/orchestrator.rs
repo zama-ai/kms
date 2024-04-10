@@ -15,7 +15,7 @@ use tracing::{instrument, Instrument};
 use crate::{
     algebra::{
         residue_poly::{ResiduePoly128, ResiduePoly64},
-        structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, RingEmbed, Solve},
+        structure_traits::{Derive, ErrorCorrect, Invert, RingEmbed, Solve},
     },
     computation::SessionId,
     error::error_handler::anyhow_error_and_log,
@@ -117,7 +117,7 @@ type SmallSessionDkgResult<R> =
 
 impl<R> PreprocessingOrchestrator<R>
 where
-    R: PRSSConversions + ErrorCorrect + HenselLiftInverse + Derive + RingEmbed + Solve,
+    R: PRSSConversions + ErrorCorrect + Invert + Derive + RingEmbed + Solve,
 {
     ///Start the orchestration of the preprocessing, returning a filled [`DKGPreprocessing`].
     ///
@@ -728,7 +728,7 @@ where
 
 ///Auxiliary function used in [`PreprocessingOrchestrator::execute_preprocessing`] to generate bits from filled [`BasePreprocessing`]
 async fn task_bit_gen<
-    Z: RingEmbed + Solve + ErrorCorrect + HenselLiftInverse,
+    Z: RingEmbed + Solve + ErrorCorrect + Invert,
     Rnd: Rng + CryptoRng + Sync,
     S: BaseSessionHandles<Rnd>,
     Prep: BasePreprocessing<Z>,

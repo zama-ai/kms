@@ -20,7 +20,7 @@ clap = { version = "~4", features = ["derive", "env"] }
 concrete-csprng = { git = "ssh://git@github.com/zama-ai/tfhe-rs.git", rev = "55f666d" }
 config = "0.14.0"
 const_format = "0.2.32"
-crypto-bigint = { version = "~0.6.0-pre.12", features = ["serde", "rand_core"], optional = true }
+crypto-bigint = { version = "~0.6.0-pre.12", features = ["serde", "rand_core", "extra-sizes"], optional = true }
 crypto_box = { version = "~0.9.1", features = ["salsa20"] }
 dashmap = "~5"
 derive_more = "~0.99"

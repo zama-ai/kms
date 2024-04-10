@@ -59,7 +59,7 @@ where
     T: CryptoModulus<Modulus = crypto_bigint::Uint<U>, OddModulus = crypto_bigint::Odd<Uint<U>>>,
 {
     fn from(value: T) -> Self {
-        let (is_negative, absolute_val) = compute_abs(value.as_raw(), *T::R);
+        let (is_negative, absolute_val) = compute_abs(value.as_raw(), *T::MODULUS);
         IntQ {
             is_negative,
             data: (&absolute_val).into(),
@@ -266,12 +266,16 @@ where
     fn mod_reduction(&self) -> Self::Output {
         // assuming inputs are bounded by q since are computed from division
         let x: Uint<2> = (&(self.data)).into();
-        let cheap_mod = x.rem(T::R.as_nz_ref());
+        let cheap_mod = x.rem(T::MODULUS.as_nz_ref());
 
         if self.is_negative {
-            GenericModulus(cheap_mod.neg_mod(&T::R))
+            LevelOne {
+                value: GenericModulus(cheap_mod.neg_mod(&T::MODULUS)),
+            }
         } else {
-            GenericModulus(cheap_mod)
+            LevelOne {
+                value: GenericModulus(cheap_mod),
+            }
         }
     }
 }
@@ -300,7 +304,7 @@ mod tests {
         for _ in 0..N65536::VALUE {
             let val = LevelEll::sample(&mut rng);
             a.push(val);
-            let words = val.0.as_words();
+            let words = val.value.0.as_words();
             b.push(words[0] as u128 + ((words[0] as u128) << 64));
         }
 

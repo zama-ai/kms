@@ -1,7 +1,7 @@
 #[cfg(any(test, feature = "testing"))]
 use crate::algebra::structure_traits::Ring;
 #[cfg(any(test, feature = "testing"))]
-use crate::algebra::structure_traits::{HenselLiftInverse, RingEmbed};
+use crate::algebra::structure_traits::{Invert, RingEmbed};
 #[cfg(any(test, feature = "testing"))]
 use crate::computation::SessionId;
 use crate::execution::config::BatchParams;
@@ -301,7 +301,7 @@ async fn setup_small_session<Z>(
 where
     Z: Ring,
     Z: RingEmbed,
-    Z: HenselLiftInverse,
+    Z: Invert,
 {
     use crate::execution::runtime::session::{ParameterHandles, SmallSessionStruct};
     let session_id = base_session.session_id();

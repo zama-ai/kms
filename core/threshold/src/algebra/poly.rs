@@ -1,7 +1,7 @@
 use super::{
     gf256::GF256,
     residue_poly::F_DEG,
-    structure_traits::{Field, HenselLiftInverse, One, Ring, RingEmbed, Sample, Zero},
+    structure_traits::{Field, Invert, One, Ring, RingEmbed, Sample, Zero},
 };
 use crate::algebra::residue_poly::LutMulReduction;
 use crate::algebra::residue_poly::ResiduePoly;
@@ -80,7 +80,7 @@ impl<Z> Poly<Z>
 where
     Z: Ring,
     Z: RingEmbed,
-    Z: HenselLiftInverse,
+    Z: Invert,
 {
     ///Outputs a vector of the monomials (X - embed(party_id))/(party_id)
     /// for all party_id in \[num_parties\]

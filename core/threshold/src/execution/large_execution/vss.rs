@@ -878,7 +878,7 @@ pub(crate) mod tests {
     use crate::algebra::bivariate::{BivariateEval, BivariatePoly};
     use crate::algebra::residue_poly::ResiduePoly;
     use crate::algebra::residue_poly::{ResiduePoly128, ResiduePoly64};
-    use crate::algebra::structure_traits::{ErrorCorrect, HenselLiftInverse};
+    use crate::algebra::structure_traits::{ErrorCorrect, Invert};
     use crate::computation::SessionId;
     use crate::execution::runtime::session::SmallSession;
     use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
@@ -1299,7 +1299,7 @@ pub(crate) mod tests {
         round_1(session, num_secrets, bivariate_poly, map_double_shares).await
     }
 
-    fn test_vss_small<Z: Ring + RingEmbed + ErrorCorrect + HenselLiftInverse>(
+    fn test_vss_small<Z: Ring + RingEmbed + ErrorCorrect + Invert>(
         params: TestingParameters,
         num_secrets: usize,
     ) {

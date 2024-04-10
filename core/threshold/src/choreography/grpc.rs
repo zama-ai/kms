@@ -14,7 +14,7 @@ use self::gen::{
 use crate::algebra::base_ring::Z64;
 use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
-use crate::algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, RingEmbed};
+use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed};
 use crate::choreography::NetworkingStrategy;
 use crate::execution::endpoints::decryption::decrypt_using_noiseflooding;
 use crate::execution::endpoints::decryption::{Large, Small};
@@ -162,7 +162,7 @@ impl Choreography for GrpcChoreography {
             tonic::Status::new(tonic::Code::Aborted, "nb_sessions must be at most 255")
         })?;
 
-        async fn create_sessions<Z: ErrorCorrect + HenselLiftInverse + RingEmbed>(
+        async fn create_sessions<Z: ErrorCorrect + Invert + RingEmbed>(
             mut base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
         ) -> Vec<SmallSession<Z>> {
             let prss_setup =

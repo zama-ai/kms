@@ -2,7 +2,7 @@ use super::local_single_share::LocalSingleShare;
 use crate::{
     algebra::{
         bivariate::{compute_powers, MatrixMul},
-        structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed},
     },
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{party::Role, session::LargeSessionHandles},
@@ -38,8 +38,8 @@ pub struct RealSingleSharing<Z, S: LocalSingleShare> {
 }
 
 #[async_trait]
-impl<Z: Ring + RingEmbed + HenselLiftInverse + Derive + ErrorCorrect, S: LocalSingleShare>
-    SingleSharing<Z> for RealSingleSharing<Z, S>
+impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
+    for RealSingleSharing<Z, S>
 {
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
@@ -148,7 +148,7 @@ pub(crate) mod tests {
     use crate::{
         algebra::{
             residue_poly::ResiduePoly,
-            structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, Ring, RingEmbed, Sample},
+            structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed, Sample},
         },
         execution::{
             large_execution::{
@@ -182,7 +182,7 @@ pub(crate) mod tests {
     }
 
     //#[test]
-    fn test_singlesharing<Z: Ring + RingEmbed + Derive + ErrorCorrect + HenselLiftInverse>(
+    fn test_singlesharing<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert>(
         parties: usize,
         threshold: usize,
     ) {

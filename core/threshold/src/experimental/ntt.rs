@@ -34,25 +34,30 @@ pub trait NTTConstants<T> {
 }
 
 impl NTTConstants<LevelOne> for N65536 {
-    const THETA: LevelOne = GenericModulus(U128::from_be_hex("000000000c2ecaf7fa75a63580eaa266"));
-    const THETA_INV: LevelOne =
-        GenericModulus(U128::from_be_hex("000000000aeb824a788a69a3b51a7c70"));
-    const PHI_INV: LevelOne = GenericModulus(U128::from_be_hex("000000000ffffffff000002bffffffd5"));
+    const THETA: LevelOne = LevelOne {
+        value: GenericModulus(U128::from_be_hex("000000000c2ecaf7fa75a63580eaa266")),
+    };
+    const THETA_INV: LevelOne = LevelOne {
+        value: GenericModulus(U128::from_be_hex("000000000aeb824a788a69a3b51a7c70")),
+    };
+    const PHI_INV: LevelOne = LevelOne {
+        value: GenericModulus(U128::from_be_hex("000000000ffffffff000002bffffffd5")),
+    };
 }
 
 impl NTTConstants<LevelEll> for N65536 {
-    const THETA: LevelEll = GenericModulus(U768::from_be_hex("00000000a92019c7a6ded5d88ea837e6bcaf6aaf8396541b8ed3b0f4c6822547ddaa092d0fe7b3a2666a82ef6a553132b5cff190506dae0e5f0673fde19eac40569e4f111160b6e838791dd491c785a52f094c6ac2c7c0c4c2349568ee359e24"));
-    const THETA_INV: LevelEll = GenericModulus(U768::from_be_hex("0000000108a75494bb4e48150d1954b8f9fe2ba5c65eab2704d356b6773abd21e16146a0caaf14e31ee57d2cf8e9ef211023c16fb10001ef2dbe3364d1dd52289c8a8ab8777e17d044e0f43419260b98b734cf75b5df977a1da7157a6d99e22f"));
-    const PHI_INV: LevelEll = GenericModulus(U768::from_be_hex("00000001335414294a74f512737ae4c66e095258c66b061d69c2c141cce58515954632f711f2d8771e985e1ffc3ff8bf7dd34cab8b52c9d92ead32798dbd34782ab057283f4ab17f4d130118f57580efb15f13e69961e17f30dc9f4af3dc740b"));
+    const THETA: LevelEll = LevelEll{ value: GenericModulus(U768::from_be_hex("00000000a92019c7a6ded5d88ea837e6bcaf6aaf8396541b8ed3b0f4c6822547ddaa092d0fe7b3a2666a82ef6a553132b5cff190506dae0e5f0673fde19eac40569e4f111160b6e838791dd491c785a52f094c6ac2c7c0c4c2349568ee359e24"))};
+    const THETA_INV: LevelEll = LevelEll{value: GenericModulus(U768::from_be_hex("0000000108a75494bb4e48150d1954b8f9fe2ba5c65eab2704d356b6773abd21e16146a0caaf14e31ee57d2cf8e9ef211023c16fb10001ef2dbe3364d1dd52289c8a8ab8777e17d044e0f43419260b98b734cf75b5df977a1da7157a6d99e22f"))};
+    const PHI_INV: LevelEll = LevelEll{value: GenericModulus(U768::from_be_hex("00000001335414294a74f512737ae4c66e095258c66b061d69c2c141cce58515954632f711f2d8771e985e1ffc3ff8bf7dd34cab8b52c9d92ead32798dbd34782ab057283f4ab17f4d130118f57580efb15f13e69961e17f30dc9f4af3dc740b"))};
 }
 
 impl NTTConstants<LevelKsw> for N65536 {
-    const THETA: LevelKsw = GenericModulus(
-        U1536::from_be_hex("00000000000029960afb9d791fd1fdc892f5065badc380c8d05230a924f69f8644641f218e47fbbd831b5754dee6a1f650032a0c5b6368292b777d6b0e19f9670d49b2209cace24ed0e94deb8ed9de80f466df96423313f55c7a429c28a7bef0f42d1329f355e1de471bb2e440d9f134b853a076c62842ed41cd9aebe6124d55b36966c3e48b958024b86f00f4c56775ad05ca5b555a611baf5dfef76fa99e1c55d8bdd5fc80c8b85d642c89ded42da803dafb9723ff166b0f3196632ad08439"));
-    const THETA_INV: LevelKsw = GenericModulus(
-        U1536::from_be_hex("0000000000001e569e9322db3147b1be972262a557abd68d0c077190acd09084b11dcc191af107e7d3e468a6201facadef107cefa647d0f6eca246d08e816b6bd03c737700e064441bd7ee8c297d2a8e311c0f97df8cec7c4eefd2456cad4fc3670f0ff231046ac8e0347175e86c8426757b3de629ec22bbeda9398ef59d65055f558799e827ce828b5d824a13f3447360a0f345122c17b43740775e6a03b474b25879cbdc2b4e5aedf83c9c5bf20cbf560d46a5e1e209bc76160cc035fc5123"));
-    const PHI_INV: LevelKsw = GenericModulus(
-        U1536::from_be_hex("0000000000004cd551df57a78fe1da23561054b3f0188630f3221bf80ac12389d47ec696f20f513a7a9a7dc3df2e1697fd3fdda4b29fb5ff954afe219849b00db08d57ca2076259cbc327fa4938afda39d994c93b1516b521eb84496f409e9aa646c4a541635ea4208ab7e72df78734b09783c9f4519c89ee97fcd5ce1c2fdfd8b8e8172c0dd8566446babf1b0969c0cf70d4f4d2d3d77460d222b4c224cb45b5da28bc271a84418efd3fc355576ebffa7d246412e5f824500f2bb925c7c6ffb"));
+    const THETA: LevelKsw = LevelKsw{value: GenericModulus(
+        U1536::from_be_hex("00000000000029960afb9d791fd1fdc892f5065badc380c8d05230a924f69f8644641f218e47fbbd831b5754dee6a1f650032a0c5b6368292b777d6b0e19f9670d49b2209cace24ed0e94deb8ed9de80f466df96423313f55c7a429c28a7bef0f42d1329f355e1de471bb2e440d9f134b853a076c62842ed41cd9aebe6124d55b36966c3e48b958024b86f00f4c56775ad05ca5b555a611baf5dfef76fa99e1c55d8bdd5fc80c8b85d642c89ded42da803dafb9723ff166b0f3196632ad08439"))};
+    const THETA_INV: LevelKsw = LevelKsw{value :GenericModulus(
+        U1536::from_be_hex("0000000000001e569e9322db3147b1be972262a557abd68d0c077190acd09084b11dcc191af107e7d3e468a6201facadef107cefa647d0f6eca246d08e816b6bd03c737700e064441bd7ee8c297d2a8e311c0f97df8cec7c4eefd2456cad4fc3670f0ff231046ac8e0347175e86c8426757b3de629ec22bbeda9398ef59d65055f558799e827ce828b5d824a13f3447360a0f345122c17b43740775e6a03b474b25879cbdc2b4e5aedf83c9c5bf20cbf560d46a5e1e209bc76160cc035fc5123"))};
+    const PHI_INV: LevelKsw = LevelKsw{value: GenericModulus(
+        U1536::from_be_hex("0000000000004cd551df57a78fe1da23561054b3f0188630f3221bf80ac12389d47ec696f20f513a7a9a7dc3df2e1697fd3fdda4b29fb5ff954afe219849b00db08d57ca2076259cbc327fa4938afda39d994c93b1516b521eb84496f409e9aa646c4a541635ea4208ab7e72df78734b09783c9f4519c89ee97fcd5ce1c2fdfd8b8e8172c0dd8566446babf1b0969c0cf70d4f4d2d3d77460d222b4c224cb45b5da28bc271a84418efd3fc355576ebffa7d246412e5f824500f2bb925c7c6ffb"))};
 }
 
 fn power<T>(base: T, exponent: usize) -> T

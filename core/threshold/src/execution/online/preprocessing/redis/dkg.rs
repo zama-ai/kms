@@ -1,7 +1,7 @@
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed, Solve},
+    algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, Solve},
     error::error_handler::anyhow_error_and_log,
     execution::{
         online::{
@@ -24,7 +24,7 @@ use super::{fetch_correlated_randomness, store_correlated_randomness, RedisPrepr
 #[async_trait]
 impl<Z> DKGPreprocessing<Z> for RedisPreprocessing<Z>
 where
-    Z: Ring + RingEmbed + Solve + HenselLiftInverse + ErrorCorrect + PRSSConversions,
+    Z: Ring + RingEmbed + Solve + Invert + ErrorCorrect + PRSSConversions,
 {
     fn append_noises(&mut self, noises: Vec<Share<Z>>, bound: NoiseBounds) {
         store_correlated_randomness(

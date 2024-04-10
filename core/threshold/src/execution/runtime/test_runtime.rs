@@ -3,7 +3,7 @@ use super::{
     session::{BaseSessionStruct, LargeSession, ParameterHandles, SessionParameters, SmallSession},
 };
 use crate::{
-    algebra::structure_traits::{HenselLiftInverse, Ring, RingEmbed},
+    algebra::structure_traits::{Invert, Ring, RingEmbed},
     computation::SessionId,
     execution::{
         endpoints::keygen::PrivateKeySet,
@@ -115,7 +115,7 @@ impl<Z> DistributedTestRuntime<Z>
 where
     Z: Ring,
     Z: RingEmbed,
-    Z: HenselLiftInverse,
+    Z: Invert,
 {
     pub fn small_session_for_party(
         &self,

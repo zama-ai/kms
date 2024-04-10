@@ -4,7 +4,7 @@
 /// TODO(Dragos) Investigate this afterwards.
 pub mod tests_and_benches {
 
-    use crate::algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed};
+    use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed};
     use aes_prng::AesRng;
     use futures::Future;
     use rand::SeedableRng;
@@ -24,11 +24,7 @@ pub mod tests_and_benches {
     /// The result of the computation is a vector of [OutputT] which contains the result of each of the parties
     /// interactive computation.
     /// `expected_rounds` can be used to test that the protocol needs the specified amount of comm rounds, or be set to None to allow any number of rounds
-    pub fn execute_protocol_small<
-        Z: ErrorCorrect + RingEmbed + HenselLiftInverse,
-        TaskOutputT,
-        OutputT,
-    >(
+    pub fn execute_protocol_small<Z: ErrorCorrect + RingEmbed + Invert, TaskOutputT, OutputT>(
         parties: usize,
         threshold: u8,
         expected_rounds: Option<usize>,

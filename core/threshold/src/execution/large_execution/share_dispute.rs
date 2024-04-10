@@ -1,7 +1,7 @@
 use crate::{
     algebra::{
         poly::Poly,
-        structure_traits::{HenselLiftInverse, Ring, RingEmbed},
+        structure_traits::{Invert, Ring, RingEmbed},
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
@@ -35,11 +35,7 @@ pub trait ShareDispute: Send + Sync + Clone + Default {
     /// Returns:
     /// - a hashmap which maps roles to shares I received
     /// - another hashmap which maps roles to shares I sent
-    async fn execute<
-        Z: Ring + RingEmbed + HenselLiftInverse,
-        R: Rng + CryptoRng,
-        L: LargeSessionHandles<R>,
-    >(
+    async fn execute<Z: Ring + RingEmbed + Invert, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,
         secrets: &[Z],
@@ -49,7 +45,7 @@ pub trait ShareDispute: Send + Sync + Clone + Default {
     /// actually sharing the secret using a sharing of degree t and one of degree 2t
     /// Needed for doubleSharings
     async fn execute_double<
-        Z: Ring + RingEmbed + HenselLiftInverse,
+        Z: Ring + RingEmbed + Invert,
         R: Rng + CryptoRng,
         L: LargeSessionHandles<R>,
     >(
@@ -88,7 +84,7 @@ fn share_secrets<Z, R: Rng + CryptoRng>(
     degree: usize,
 ) -> anyhow::Result<Vec<Vec<Z>>>
 where
-    Z: Ring + RingEmbed + HenselLiftInverse,
+    Z: Ring + RingEmbed + Invert,
 {
     secrets
         .iter()
@@ -118,7 +114,7 @@ fn fill_incomplete_output<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>
 #[async_trait]
 impl ShareDispute for RealShareDispute {
     async fn execute_double<
-        Z: Ring + RingEmbed + HenselLiftInverse,
+        Z: Ring + RingEmbed + Invert,
         R: Rng + CryptoRng,
         L: LargeSessionHandles<R>,
     >(
@@ -172,7 +168,7 @@ impl ShareDispute for RealShareDispute {
     }
 
     async fn execute<
-        Z: Ring + RingEmbed + HenselLiftInverse,
+        Z: Ring + RingEmbed + Invert,
         R: Rng + CryptoRng,
         L: LargeSessionHandles<R>,
     >(
@@ -374,7 +370,7 @@ pub fn interpolate_poly_w_punctures<Z, R: Rng + CryptoRng>(
 where
     Z: Ring,
     Z: RingEmbed,
-    Z: HenselLiftInverse,
+    Z: Invert,
 {
     if threshold < dispute_party_ids.len() {
         return Err(anyhow_error_and_log(format!(
@@ -410,7 +406,7 @@ pub fn evaluate_w_zero_roots<Z>(
 where
     Z: Ring,
     Z: RingEmbed,
-    Z: HenselLiftInverse,
+    Z: Invert,
 {
     let (normalized_parties_root, x_coords) = Poly::<Z>::normalized_parties_root(num_parties)?;
     let mut poly = base_poly.clone();
@@ -435,7 +431,7 @@ pub(crate) mod tests {
         algebra::{
             poly::Poly,
             residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
-            structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed, Zero},
+            structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, Zero},
         },
         execution::{
             communication::p2p::send_to_parties_w_dispute,
@@ -592,7 +588,7 @@ pub(crate) mod tests {
     #[async_trait]
     impl ShareDispute for MaliciousShareDisputeRecons {
         async fn execute_double<
-            Z: Ring + RingEmbed + HenselLiftInverse,
+            Z: Ring + RingEmbed + Invert,
             R: Rng + CryptoRng,
             L: LargeSessionHandles<R>,
         >(
@@ -650,7 +646,7 @@ pub(crate) mod tests {
         }
 
         async fn execute<
-            Z: Ring + RingEmbed + HenselLiftInverse,
+            Z: Ring + RingEmbed + Invert,
             R: Rng + CryptoRng,
             L: LargeSessionHandles<R>,
         >(
@@ -698,7 +694,7 @@ pub(crate) mod tests {
     /// Accepts a set of dispute pairs that will be inserted to the honest parties' sessions
     /// before executing the protocol
     fn test_share_dispute_strategies<
-        Z: Ring + RingEmbed + ErrorCorrect + HenselLiftInverse,
+        Z: Ring + RingEmbed + ErrorCorrect + Invert,
         S: ShareDispute + 'static,
     >(
         params: TestingParameters,

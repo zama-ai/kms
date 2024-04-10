@@ -1,7 +1,7 @@
 use tonic::async_trait;
 
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed, Solve},
+    algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, Solve},
     error::error_handler::anyhow_error_and_log,
     execution::{
         online::{
@@ -90,7 +90,7 @@ impl<Z: Ring> BitPreprocessing<Z> for InMemoryDKGPreprocessing<Z> {
 #[async_trait]
 impl<Z> DKGPreprocessing<Z> for InMemoryDKGPreprocessing<Z>
 where
-    Z: Ring + RingEmbed + HenselLiftInverse + PRSSConversions + ErrorCorrect + Solve,
+    Z: Ring + RingEmbed + Invert + PRSSConversions + ErrorCorrect + Solve,
 {
     ///Store a vec of noise, each following the same TUniform distribution specified by bound.
     fn append_noises(&mut self, noises: Vec<Share<Z>>, bound: NoiseBounds) {

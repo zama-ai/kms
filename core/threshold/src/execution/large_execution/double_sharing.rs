@@ -5,7 +5,7 @@ use super::{
 use crate::{
     algebra::{
         bivariate::MatrixMul,
-        structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, Ring, RingEmbed},
+        structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed},
     },
     error::error_handler::anyhow_error_and_log,
     execution::runtime::{party::Role, session::LargeSessionHandles},
@@ -49,8 +49,8 @@ pub struct RealDoubleSharing<Z, S: LocalDoubleShare> {
 }
 
 #[async_trait]
-impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + HenselLiftInverse, S: LocalDoubleShare>
-    DoubleSharing<Z> for RealDoubleSharing<Z, S>
+impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, S: LocalDoubleShare> DoubleSharing<Z>
+    for RealDoubleSharing<Z, S>
 {
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
@@ -159,7 +159,7 @@ pub(crate) mod tests {
     use crate::algebra::residue_poly::ResiduePoly64;
     use crate::algebra::structure_traits::Derive;
     use crate::algebra::structure_traits::ErrorCorrect;
-    use crate::algebra::structure_traits::HenselLiftInverse;
+    use crate::algebra::structure_traits::Invert;
     use crate::algebra::structure_traits::RingEmbed;
     use crate::execution::runtime::session::BaseSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
@@ -193,7 +193,7 @@ pub(crate) mod tests {
         }
     }
     //#[test]
-    fn test_doublesharing<Z: Ring + RingEmbed + ErrorCorrect + Derive + HenselLiftInverse>(
+    fn test_doublesharing<Z: Ring + RingEmbed + ErrorCorrect + Derive + Invert>(
         parties: usize,
         threshold: usize,
     ) {

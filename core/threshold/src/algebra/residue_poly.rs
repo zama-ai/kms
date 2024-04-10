@@ -4,8 +4,8 @@ use super::{
     gf256::GF256,
     poly::Poly,
     structure_traits::{
-        BaseRing, Derive, FromU128, HenselLiftInverse, One, Ring, RingEmbed, Sample, Solve,
-        Syndrome, ZConsts, Zero,
+        BaseRing, Derive, FromU128, Invert, One, Ring, RingEmbed, Sample, Solve, Syndrome, ZConsts,
+        Zero,
     },
     syndrome::lagrange_numerators,
 };
@@ -785,7 +785,7 @@ impl<Z: BaseRing> Syndrome for ResiduePoly<Z> {
     }
 }
 
-impl<Z> HenselLiftInverse for ResiduePoly<Z>
+impl<Z> Invert for ResiduePoly<Z>
 where
     Z: BaseRing,
 {

@@ -207,7 +207,7 @@ pub type RealLargePreprocessing<Z> =
 mod tests {
 
     use super::{TrueDoubleSharing, TrueSingleSharing};
-    use crate::algebra::structure_traits::{Derive, ErrorCorrect, HenselLiftInverse, RingEmbed};
+    use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, RingEmbed};
     use crate::execution::config::BatchParams;
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
@@ -288,7 +288,7 @@ mod tests {
     }
 
     fn test_offline_strategies<
-        Z: Ring + RingEmbed + Derive + HenselLiftInverse + ErrorCorrect,
+        Z: Ring + RingEmbed + Derive + Invert + ErrorCorrect,
         S: SingleSharing<Z>,
         D: DoubleSharing<Z>,
         P: GenericMaliciousPreprocessing<Z, S, D> + 'static,

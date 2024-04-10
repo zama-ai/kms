@@ -11,7 +11,7 @@ pub trait HenselLiftInverse: Sized {
     fn invert(self) -> anyhow::Result<Self>;
 }
 
-/// This data structure holds a collection of party_ids and their corresponding Shamir shares (each a ResiduePoly<Z>)
+/// This data structure holds a collection of party_ids and their corresponding Shamir shares
 #[derive(Clone, Default, PartialEq, Debug)]
 pub struct ShamirSharings<Z: Ring> {
     pub shares: Vec<Share<Z>>,

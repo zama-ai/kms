@@ -3,7 +3,7 @@ use super::{
     triple::{mult_list, open_list},
 };
 use crate::{
-    algebra::structure_traits::{ErrorCorrect, HenselLiftInverse, Ring, RingEmbed, Solve},
+    algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, Solve},
     execution::{runtime::session::BaseSessionHandles, sharing::share::Share},
 };
 use async_trait::async_trait;
@@ -14,7 +14,7 @@ use tracing::instrument;
 #[async_trait]
 pub trait BitGenEven {
     async fn gen_bits_even<
-        Z: Ring + RingEmbed + Solve + HenselLiftInverse + ErrorCorrect,
+        Z: Ring + RingEmbed + Solve + Invert + ErrorCorrect,
         Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
         P: BasePreprocessing<Z> + Send + ?Sized,
@@ -38,7 +38,7 @@ impl BitGenEven for RealBitGenEven {
     /// The code only works when the modulo of the ring used is even.
     #[instrument(skip(preproc, session), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
     async fn gen_bits_even<
-        Z: Ring + RingEmbed + HenselLiftInverse + Solve + ErrorCorrect,
+        Z: Ring + RingEmbed + Invert + Solve + ErrorCorrect,
         Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
         P: BasePreprocessing<Z> + Send + ?Sized,
