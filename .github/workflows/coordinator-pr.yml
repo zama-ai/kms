@@ -5,6 +5,7 @@ on:
     branches: ['*']
     paths:
       - 'coordinator/**'
+      - '.github/workflows/coordinator-pr.yml'
 
 jobs:
   build:

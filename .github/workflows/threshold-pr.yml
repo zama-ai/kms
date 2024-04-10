@@ -5,6 +5,7 @@ on:
     branches: ['*']
     paths:
       - 'core/threshold/**'
+      - '.github/workflows/threshold-pr.yml'
 
 jobs:
   build:
