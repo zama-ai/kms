@@ -6,7 +6,7 @@ use std::path::Path;
 pub fn write_as_json<T: serde::Serialize>(file_path: String, to_store: &T) -> anyhow::Result<()> {
     let json_data = serde_json::to_string(&to_store)?;
     let path = Path::new(&file_path);
-    // Create the parent directories of the file path of they don't exist
+    // Create the parent directories of the file path if they don't exist
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?
     };
@@ -24,11 +24,21 @@ pub fn write_element<T: serde::Serialize>(file_path: String, element: &T) -> any
     let mut serialized_data = Vec::new();
     let _ = bincode::serialize_into(&mut serialized_data, &element);
     let path = Path::new(&file_path);
-    // Create the parent directories of the file path of they don't exist
+    // Create the parent directories of the file path if they don't exist
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?
     };
     std::fs::write(path, serialized_data.as_slice())?;
+    Ok(())
+}
+
+pub fn write_bytes<B: AsRef<[u8]>>(file_path: String, bytes: B) -> anyhow::Result<()> {
+    let path = Path::new(&file_path);
+    // Create the parent directories of the file path if they don't exist
+    if let Some(p) = path.parent() {
+        std::fs::create_dir_all(p)?
+    };
+    std::fs::write(path, bytes)?;
     Ok(())
 }
 
@@ -44,7 +54,7 @@ pub async fn write_as_json_async<T: serde::Serialize>(
 ) -> anyhow::Result<()> {
     let json_data = serde_json::to_string(&to_store)?;
     let path = Path::new(&file_path);
-    // Create the parent directories of the file path of they don't exist
+    // Create the parent directories of the file path if they don't exist
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?
     };
@@ -67,7 +77,7 @@ pub async fn write_element_async<T: serde::Serialize>(
     let mut serialized_data = Vec::new();
     let _ = bincode::serialize_into(&mut serialized_data, &element);
     let path = Path::new(&file_path);
-    // Create the parent directories of the file path of they don't exist
+    // Create the parent directories of the file path if they don't exist
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?
     };

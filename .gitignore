@@ -2,6 +2,7 @@
 /temp
 /keys
 /crs
+/tls
 .vscode/launch.json
 .DS_Store
 .vscode/
