@@ -1,0 +1,44 @@
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  background-size: 100%;
+  background-repeat: no-repeat;
+  background-color: black !important;
+  background-image: url(./assets/background.jpg);
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/*
+ * .page is the base node within the JavaScript application. It is the direct child of .root,
+ * whichlives outside of JavaScript. The .page has a Header and a .container.
+ */
+/*
+.page {
+}
+*/
+
+.white-row {
+  background-color: rgba(255, 255, 255, 0.8);
+  color: #222;
+}
+
+.white-row-first {
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+  padding-top: 1rem;
+}
+
+.white-row-last {
+  border-bottom-left-radius: 10px;
+  border-bottom-right-radius: 10px;
+  padding-bottom: 0;
+}

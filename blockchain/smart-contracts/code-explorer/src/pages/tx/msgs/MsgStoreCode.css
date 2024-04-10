@@ -1,0 +1,4 @@
+.long-inline-code {
+  overflow-wrap: break-word;
+  word-break: break-all;
+}

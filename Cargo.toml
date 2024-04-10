@@ -6,4 +6,5 @@ members = [
     "core/threshold",
     "blockchain/protocol",
     "blockchain/proofs",
+    "blockchain/smart-contracts/counter-test",
 ]
