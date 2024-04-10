@@ -91,12 +91,18 @@ jobs:
         if: ${{ inputs.push_image }}
         run: echo "DOCKER_SOCK_PATH=$(docker context inspect | jq -r '.[0].Endpoints.docker.Host' | sed "s^unix://^^")" >> $GITHUB_ENV
 
+      - name: Set EIF output dir
+        if: ${{ inputs.push_image }}
+        run: |
+          echo "EIF_OUTPUT_DIR=${{ github.workspace }}/${{ inputs.working-directory }}/eif-output" >> "$GITHUB_ENV"
+
+
       - name: Create EIF file
         if: ${{ inputs.push_image }}
         uses: addnab/docker-run-action@v3
         with:
           image: amazonlinux@sha256:62ebd855c09b363009221442fcb1d09aca167d4ba58f2cfd14e00e59ca2f2d54
-          options: -v ${{ github.workspace }}/eif-output:/output -v ${{env.DOCKER_SOCK_PATH}}:/var/run/docker.sock
+          options: -v ${{ env.EIF_OUTPUT_DIR }}:/output -v ${{env.DOCKER_SOCK_PATH}}:/var/run/docker.sock
           run: |
             dnf install aws-nitro-enclaves-cli aws-nitro-enclaves-cli-devel -y
 
@@ -108,9 +114,9 @@ jobs:
         if: ${{ inputs.push_image }}
         id: eif
         run: |
-          echo "eif_file_path=${{ github.workspace }}/eif-output/enclave.eif" >> "$GITHUB_OUTPUT"
-          echo "eif_info_path=${{ github.workspace }}/eif-output/eif-info.txt" >> "$GITHUB_OUTPUT"
-          EIF_MEASUREMENT_PCR0=$(cat ${{ github.workspace}}/eif-output/eif-info.txt | jq '.Measurements.PCR0')
+          echo "eif_file_path=${{ env.EIF_OUTPUT_DIR }}/enclave.eif" >> "$GITHUB_OUTPUT"
+          echo "eif_info_path=${{ env.EIF_OUTPUT_DIR }}/eif-info.txt" >> "$GITHUB_OUTPUT"
+          EIF_MEASUREMENT_PCR0=$(cat ${{ env.EIF_OUTPUT_DIR }}/eif-info.txt | jq '.Measurements.PCR0')
           echo "eif_pcr0=${EIF_MEASUREMENT_PCR0}" >> "$GITHUB_OUTPUT"
 
       - name: Setup oras
@@ -136,8 +142,8 @@ jobs:
           mkdir ${WORKDIR}
           cd ${WORKDIR}
 
-          cp "${{ github.workspace}}/${{ inputs.working-directory}}/eif-output/enclave.eif" "${WORKDIR}/${{ inputs.image-name }}-enclave.eif"
-          cp "${{ github.workspace}}/${{ inputs.working-directory}}/eif-output/eif-info.txt" "${WORKDIR}/${{ inputs.image-name }}-eif-info.txt"
+          cp "${{ env.EIF_OUTPUT_DIR }}/enclave.eif" "${WORKDIR}/${{ inputs.image-name }}-enclave.eif"
+          cp "${{ env.EIF_OUTPUT_DIR }}/eif-info.txt" "${WORKDIR}/${{ inputs.image-name }}-eif-info.txt"
 
           mkdir tmp/
 
