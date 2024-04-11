@@ -67,10 +67,8 @@ fn bench_decode_z128(c: &mut Criterion) {
             let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
 
             b.iter(|| {
-                //let recon = sharings.error_correct(threshold, max_err).unwrap();
-                //let f_zero = recon.eval(&ResiduePoly::ZERO);
                 let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
-                assert_eq!(f_zero.to_scalar().unwrap(), secret.to_scalar().unwrap());
+                assert_eq!(f_zero, secret);
             });
         });
     }
@@ -93,7 +91,7 @@ fn bench_decode_z64(c: &mut Criterion) {
 
             b.iter(|| {
                 let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
-                assert_eq!(f_zero.to_scalar().unwrap(), secret.to_scalar().unwrap());
+                assert_eq!(f_zero, secret);
             });
         });
     }
@@ -115,7 +113,7 @@ fn bench_decode_large_field(c: &mut Criterion) {
             let sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
             b.iter(|| {
                 let f_zero = sharing.err_reconstruct(threshold, max_err).unwrap();
-                assert_eq!(f_zero.to_scalar().unwrap(), secret.to_scalar().unwrap());
+                assert_eq!(f_zero, secret);
             });
         });
     }

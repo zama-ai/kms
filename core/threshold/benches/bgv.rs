@@ -38,8 +38,12 @@ fn bench_modswitch(c: &mut Criterion) {
     let mut group = c.benchmark_group("modswitch");
     group.sample_size(10);
     group.bench_function("modswitch_large", |b| {
-        let q = GenericModulus(*Q1::MODULUS.as_ref());
-        let big_q = GenericModulus(*Q::MODULUS.as_ref());
+        let q = LevelOne {
+            value: GenericModulus(*Q1::MODULUS.as_ref()),
+        };
+        let big_q = LevelEll {
+            value: GenericModulus(*Q::MODULUS.as_ref()),
+        };
         b.iter(|| {
             let ct_prime = modulus_switch::<LevelOne, LevelEll, N65536>(ct.clone(), q, big_q, pmod);
             let plaintext = bgv_dec(&ct_prime, sk.clone(), pmod);
