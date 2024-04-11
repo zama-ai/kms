@@ -16,8 +16,8 @@ services:
       - "26657:26657"
       - "8545:8545"
     volumes:
-      - ./scripts/run_developer_image.sh:/start.sh
-      - ./temp/:/config/res/keys/
+      - ./blockchain/scripts/run_developer_image.sh:/start.sh
+      - ./blockchain/temp/:/config/res/keys/
     entrypoint: ["/bin/bash", "/start.sh"]
     healthcheck:
       test: "curl -f http://localhost:26657/status"
@@ -51,6 +51,7 @@ services:
       -c "/opt/setup_wasmd.sh cosmos1pkptre7fdkl6gfrzlesjjvhxhlc3r4gmmk8rs6;
       sed -i .back -re 's/^(enabled-unsafe-cors =.*)$.*/enabled-unsafe-cors = true/g' /root/.wasmd/config/app.toml;
       sed -i .back -re 's/^(cors_allowed_origins =.*)$.*/cors_allowed_origins = \[\"*\"\]/g' /root/.wasmd/config/config.toml;
+      sed -i .back -re 's/^(timeout_commit =.*)$.*/timeout_commit = \"500ms\"/g' /root/.wasmd/config/config.toml;
       /opt/run_wasmd.sh"
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"
@@ -61,37 +62,24 @@ services:
 
   kms-smart-contract-deploy:
     build:
-      context: smart-contracts/counter-test
-      dockerfile: Dockerfile
+      context: blockchain/smart-contracts
     entrypoint: "/bin/sh"
     command: >
       -c "
       sleep 5;
-      echo \"1234567890\" | wasmd tx wasm upload /app/counter_test.wasm --from validator --chain-id testing --node tcp://kms-full-node:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json"
+      echo \"1234567890\" | wasmd tx wasm upload /app/counter_test.wasm --from validator --chain-id testing --node tcp://kms-full-node:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json;
+      echo \"1234567890\" | wasmd tx wasm instantiate 1 '{\"count\":12}' --label \"counter_test_0\" --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --no-admin;
+      echo \"1234567890\" | wasmd tx wasm upload /app/configuration.wasm --from validator --chain-id testing --node tcp://kms-full-node:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json;
+      echo \"1234567890\" | wasmd tx wasm instantiate 2 '{\"key\":\"foo\", \"value\": \"bar\"}' --label \"configuration_0\" --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --no-admin;"
     depends_on:
       kms-full-node:
         condition: service_healthy
     volumes:
       - validator-data:/root/.wasmd
 
-  kms-smart-contract-instantiate:
-    build:
-      context: smart-contracts/counter-test
-      dockerfile: Dockerfile
-    entrypoint: "/bin/sh"
-    command: >
-      -c "
-      sleep 5;
-      echo \"1234567890\" | wasmd tx wasm instantiate 1 '{\"count\":12}' --label \"counter_test_0\" --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --no-admin"
-    depends_on:
-      kms-smart-contract-deploy:
-        condition: service_completed_successfully
-    volumes:
-      - validator-data:/root/.wasmd
-
   smart-contract-explorer:
     build:
-      context: ./smart-contracts/code-explorer
+      context: blockchain/code-explorer
     ports:
       - "3000:3000"
     depends_on:

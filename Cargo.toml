@@ -7,4 +7,5 @@ members = [
     "blockchain/protocol",
     "blockchain/proofs",
     "blockchain/smart-contracts/counter-test",
+    "blockchain/smart-contracts/configuration",
 ]

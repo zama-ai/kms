@@ -1,0 +1,18 @@
+[package]
+name = "configuration"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+cosmwasm-std = { version = "2.0.1", features = ["staking"] }
+sylvia = "1.0.0"
+schemars = "0.8.16"
+cosmwasm-schema = "2.0.1"
+serde = "1.0.197"
+cw-storage-plus = "2.0.0"
+
+[dev-dependencies]
+sylvia = { version = "1.0.0", features = ["mt"] }
