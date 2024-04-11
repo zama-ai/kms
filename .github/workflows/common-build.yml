@@ -74,11 +74,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Linting
-        run: cargo clippy --all-targets --workspace -- -D warnings
+        run: cargo clippy --all-targets --all-features --workspace -- -D warnings
 
       - name: Run Tests
         run: cargo test ${{ inputs.args-tests }} -F tfhe/seeder_unix -F tfhe/x86_64 --release
-
 
       - name: Build Documentation
         if: ${{ inputs.build-publish-docs }}
