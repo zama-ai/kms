@@ -125,6 +125,11 @@ impl FheType {
                 let (radix_ct, _id) = hl_ct.into_raw_parts();
                 radix_ct
             }
+            &FheType::Euint128 | &FheType::Euint160 => {
+                return Err(anyhow_error_and_log(
+                    "Euint128 or Euint160 are not supported yet!".to_string(),
+                ));
+            }
         };
         Ok(radix_ct)
     }

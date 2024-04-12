@@ -23,9 +23,9 @@ use serde_asn1_der::to_vec;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::{fmt, panic};
-use tfhe::prelude::FheDecrypt;
-use tfhe::shortint::ClassicPBSParameters;
 use tfhe::ClientKey;
+use tfhe::{integer::U256, shortint::ClassicPBSParameters};
+use tfhe::{prelude::FheDecrypt, FheUint128, FheUint160};
 use tfhe::{ConfigBuilder, FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
 use zk_poc::curve_api::bls12_446 as curve;
 
@@ -384,6 +384,16 @@ impl Kms for SoftwareKms {
                     let plaintext: u64 = cipher.decrypt(client_key);
                     Plaintext::from_u64(plaintext)
                 }
+                FheType::Euint128 => {
+                    let cipher: FheUint128 = bincode::deserialize(high_level_ct)?;
+                    let plaintext: u128 = cipher.decrypt(client_key);
+                    Plaintext::from_u128(plaintext)
+                }
+                FheType::Euint160 => {
+                    let cipher: FheUint160 = bincode::deserialize(high_level_ct)?;
+                    let plaintext: U256 = cipher.decrypt(client_key);
+                    Plaintext::from_u160(plaintext)
+                }
             })
         };
         match panic::catch_unwind(f) {
@@ -404,8 +414,8 @@ impl Kms for SoftwareKms {
         let plaintext = Kms::decrypt(self, ct, fhe_type, key_handle)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<Residuepoly<Z128>> element
-        let raw_decryption =
-            RawDecryption::new(plaintext.as_u128().to_le_bytes().to_vec(), fhe_type);
+        let bytes: Vec<u8> = plaintext.into();
+        let raw_decryption = RawDecryption::new(bytes, fhe_type);
         let signcryption_msg = SigncryptionPayload {
             raw_decryption,
             req_digest: req_digest.to_vec(),

@@ -964,6 +964,12 @@ pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
         FheType::Euint64 => {
             64_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
         }
+        FheType::Euint128 => {
+            128_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
+        }
+        FheType::Euint160 => {
+            160_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
+        }
     }
 }
 
@@ -1624,17 +1630,21 @@ pub(crate) mod tests {
     #[test]
     fn num_blocks_sunshine() {
         let params: NoiseFloodParameters = read_as_json(TEST_PARAM_PATH.to_owned()).unwrap();
-        let cur_type = FheType::Bool;
         // 2 bits per block, using Euint8 as internal representation
-        assert_eq!(num_blocks(cur_type, params), 4);
-        let cur_type = FheType::Euint8;
+        assert_eq!(num_blocks(FheType::Bool, params), 4);
+        // 2 bits per block, using Euint8 as internal representation
+        assert_eq!(num_blocks(FheType::Euint4, params), 4);
         // 2 bits per block
-        assert_eq!(num_blocks(cur_type, params), 4);
-        let cur_type = FheType::Euint16;
+        assert_eq!(num_blocks(FheType::Euint8, params), 4);
         // 2 bits per block
-        assert_eq!(num_blocks(cur_type, params), 8);
-        let cur_type = FheType::Euint32;
+        assert_eq!(num_blocks(FheType::Euint16, params), 8);
         // 2 bits per block
-        assert_eq!(num_blocks(cur_type, params), 16);
+        assert_eq!(num_blocks(FheType::Euint32, params), 16);
+        // 2 bits per block
+        assert_eq!(num_blocks(FheType::Euint64, params), 32);
+        // 2 bits per block
+        assert_eq!(num_blocks(FheType::Euint128, params), 64);
+        // 2 bits per block
+        assert_eq!(num_blocks(FheType::Euint160, params), 80);
     }
 }

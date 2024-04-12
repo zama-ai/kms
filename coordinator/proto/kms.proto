@@ -29,6 +29,8 @@ enum FheType {
   Euint16 = 3;
   Euint32 = 4;
   Euint64 = 5;
+  Euint128 = 6;
+  Euint160 = 7;
 }
 
 // Request for generating new keys under a certain handle and return a URI where they can be accessed.
