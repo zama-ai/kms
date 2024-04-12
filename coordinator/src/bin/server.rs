@@ -12,18 +12,18 @@ use aws_sdk_s3::Client as S3Client;
 use clap::{Parser, ValueEnum};
 use cms::enveloped_data::{EnvelopedData, RecipientInfo as PKCS7RecipientInfo};
 use der::{Decode, DecodeValue, Header, SliceReader};
-use kms_lib::consts::{
-    CRS_PATH_PREFIX, DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CRS_HANDLE,
-    DEFAULT_SOFTWARE_CENTRAL_KEY_PATH, KEY_HANDLE,
-};
-use kms_lib::core::kms_core::{CrsHashMap, SoftwareKmsKeys};
-use kms_lib::file_handling::read_element;
+use kms_lib::cryptography::central_kms::{CrsHashMap, SoftwareKmsKeys};
+use kms_lib::util::file_handling::read_element;
+use kms_lib::write_default_keys;
 use kms_lib::{
-    core::der_types::{PrivateSigKey, PublicSigKey},
-    rpc::kms_proxy_rpc::server_handle as kms_proxy_server_handle,
-    rpc::kms_rpc::server_handle as kms_server_handle,
+    consts::{DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_KEYS_PATH, TEST_CRS_ID, TEST_KEY_ID},
+    write_default_crs_store,
 };
-use kms_lib::{write_default_crs_store, write_default_keys};
+use kms_lib::{
+    cryptography::der_types::{PrivateSigKey, PublicSigKey},
+    rpc::central_rpc::server_handle as kms_server_handle,
+    rpc::kms_proxy_rpc::server_handle as kms_proxy_server_handle,
+};
 use rand::rngs::OsRng;
 use rsa::{pkcs1::EncodeRsaPublicKey, sha2::Sha256, Oaep, RsaPrivateKey, RsaPublicKey};
 use serde::{de::DeserializeOwned, Serialize};
@@ -105,22 +105,22 @@ async fn main() -> Result<(), anyhow::Error> {
     let socket: SocketAddr = format!("{}:{}", host_str, port).parse()?;
     match args.mode {
         Mode::Dev => {
-            let keys: SoftwareKmsKeys = if Path::new(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH).exists() {
-                read_element(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH)?
+            let keys: SoftwareKmsKeys = if Path::new(DEFAULT_CENTRAL_KEYS_PATH).exists() {
+                read_element(DEFAULT_CENTRAL_KEYS_PATH)?
             } else {
                 tracing::info!(
-                    "Could not find default keys. Generating new keys with default parameters and handle \"{}\"...", KEY_HANDLE
+                    "Could not find default keys. Generating new keys with default parameters and ID \"{}\"...", TEST_KEY_ID
                 );
-                write_default_keys(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH)
+                write_default_keys(DEFAULT_CENTRAL_KEYS_PATH)
             };
 
             let crs_store: CrsHashMap = if Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
                 read_element(DEFAULT_CENTRAL_CRS_PATH)?
             } else {
                 tracing::info!(
-                      "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", DEFAULT_CRS_HANDLE
+                      "Could not find default CRS store. Generating new CRS store with default parameters and ID \"{}\"...", TEST_CRS_ID
                   );
-                write_default_crs_store(CRS_PATH_PREFIX)
+                write_default_crs_store()
             };
 
             kms_server_handle(socket, keys, Some(crs_store)).await
@@ -262,7 +262,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
             // start the KMS
             let keys = SoftwareKmsKeys {
-                client_keys: HashMap::from([(KEY_HANDLE.to_string(), fhe_sk)]),
+                key_info: HashMap::from([(TEST_KEY_ID.to_string(), fhe_sk)]),
                 sig_sk,
                 sig_pk,
             };
@@ -270,9 +270,9 @@ async fn main() -> Result<(), anyhow::Error> {
                 read_element(DEFAULT_CENTRAL_CRS_PATH)?
             } else {
                 tracing::info!(
-                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", DEFAULT_CRS_HANDLE
+                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", TEST_CRS_ID
                 );
-                write_default_crs_store(CRS_PATH_PREFIX)
+                write_default_crs_store()
             };
 
             kms_server_handle(socket, keys, Some(crs_store)).await

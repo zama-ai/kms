@@ -50,13 +50,13 @@ use tfhe::{
 use tracing::instrument;
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct PubKeySet {
+pub struct FhePubKeySet {
     pub public_key: tfhe::CompactPublicKey,
     pub server_key: tfhe::ServerKey,
     pub sns_key: Option<SwitchAndSquashKey>,
 }
 
-impl PubKeySet {
+impl FhePubKeySet {
     pub fn write_to_file(&self, path: String) -> anyhow::Result<()> {
         write_element(path, self)
     }
@@ -158,8 +158,8 @@ impl RawPubKeySet {
         to_tfhe_hl_api_compact_public_key(self.lwe_public_key.clone(), params)
     }
 
-    pub fn to_pubkeyset(&self, params: DKGParams) -> PubKeySet {
-        PubKeySet {
+    pub fn to_pubkeyset(&self, params: DKGParams) -> FhePubKeySet {
+        FhePubKeySet {
             public_key: self.compute_tfhe_hl_api_compact_public_key(params),
             server_key: self.compute_tfhe_hl_api_server_key(params),
             sns_key: self.compute_switch_and_squash_key(),
@@ -660,7 +660,7 @@ pub async fn distributed_keygen_z64<
     session: &mut S,
     preprocessing: &mut P,
     params: DKGParams,
-) -> anyhow::Result<(PubKeySet, PrivateKeySet)> {
+) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
     if let DKGParams::WithSnS(_) = params {
         return Err(anyhow_error_and_log(
             "Can not generate Switch and Squash key with ResiduePoly64".to_string(),
@@ -685,7 +685,7 @@ pub async fn distributed_keygen_z128<
     session: &mut S,
     preprocessing: &mut P,
     params: DKGParams,
-) -> anyhow::Result<(PubKeySet, PrivateKeySet)> {
+) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
     let (pub_key_set, priv_key_set) = distributed_keygen(session, preprocessing, params).await?;
     Ok((
         pub_key_set.to_pubkeyset(params),
@@ -792,7 +792,10 @@ pub mod tests {
         let threshold = 1;
         let prefix_path = params_basics_handles.get_prefix_path();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json")).exists() {
+        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
+            .try_exists()
+            .unwrap()
+        {
             _ = fs::create_dir(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
@@ -820,7 +823,10 @@ pub mod tests {
         let threshold = 1;
         let prefix_path = params_basics_handles.get_prefix_path();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json")).exists() {
+        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
+            .try_exists()
+            .unwrap()
+        {
             _ = fs::create_dir(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
@@ -849,7 +855,10 @@ pub mod tests {
         let threshold = 1;
         let prefix_path = params_basics_handles.get_prefix_path();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json")).exists() {
+        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
+            .try_exists()
+            .unwrap()
+        {
             _ = fs::create_dir(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
@@ -873,7 +882,10 @@ pub mod tests {
         let threshold = 1;
         let prefix_path = params_basics_handles.get_prefix_path() + "/integration";
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json")).exists() {
+        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
+            .try_exists()
+            .unwrap()
+        {
             _ = fs::create_dir_all(prefix_path.clone());
             run_real_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
@@ -896,7 +908,10 @@ pub mod tests {
         let threshold = 1;
         let prefix_path = params_basics_handles.get_prefix_path();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json")).exists() {
+        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
+            .try_exists()
+            .unwrap()
+        {
             _ = fs::create_dir(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
@@ -928,7 +943,10 @@ pub mod tests {
         let threshold = 1;
         let prefix_path = params_basics_handles.get_prefix_path();
 
-        if !std::path::Path::new(&(prefix_path.clone() + "/params.json")).exists() {
+        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
+            .try_exists()
+            .unwrap()
+        {
             _ = fs::create_dir(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
@@ -1381,7 +1399,10 @@ pub mod tests {
         let num_parties = 2;
         let threshold = 0;
 
-        if !std::path::Path::new(&params_basics_handles.get_prefix_path()).exists() {
+        if !std::path::Path::new(&params_basics_handles.get_prefix_path())
+            .try_exists()
+            .unwrap()
+        {
             _ = fs::create_dir(params_basics_handles.get_prefix_path());
             run_dkg_and_save(
                 params,
@@ -1399,7 +1420,7 @@ pub mod tests {
         // generate new bsk used for the hom-prf
         // this assumes the regular evaluation keys exist
         let homprf_bsk_path = format!("{}/homprf_bsk.der", params_basics_handles.get_prefix_path());
-        let homprf_bsk = if std::path::Path::new(&homprf_bsk_path).exists() {
+        let homprf_bsk = if std::path::Path::new(&homprf_bsk_path).try_exists().unwrap() {
             read_element(homprf_bsk_path).unwrap()
         } else {
             run_homprf_keygen_and_save(params, num_parties, threshold)

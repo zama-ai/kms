@@ -100,7 +100,7 @@ pub async fn read_element_async<T: DeserializeOwned + Serialize>(
 #[cfg(test)]
 mod tests {
     use super::read_as_json_async;
-    use crate::file_handling::{
+    use crate::util::file_handling::{
         read_as_json, read_element, read_element_async, write_as_json, write_as_json_async,
         write_element, write_element_async,
     };

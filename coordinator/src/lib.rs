@@ -1,17 +1,11 @@
-use aes_prng::AesRng;
 use anyhow::anyhow;
-use consts::{DEFAULT_CRS_HANDLE, DEFAULT_PARAM_PATH, KEY_HANDLE};
 #[cfg(feature = "non-wasm")]
-use core::kms_core::{gen_sig_keys, CrsHashMap, SoftwareKmsKeys};
-use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+use consts::{DEFAULT_PARAM_PATH, TEST_KEY_ID};
 #[cfg(feature = "non-wasm")]
-use distributed_decryption::execution::tfhe_internals::test_feature::gen_key_set;
-#[cfg(feature = "non-wasm")]
-use file_handling::{read_as_json, write_element};
-use rand::SeedableRng;
-#[cfg(feature = "non-wasm")]
-use std::collections::HashMap;
+use cryptography::central_kms::{CrsHashMap, SoftwareKmsKeys};
 use std::panic::Location;
+#[cfg(feature = "non-wasm")]
+use util::file_handling::write_element;
 
 // copied from tonic since we're cannot pull in tonic for wasm
 macro_rules! my_include_proto {
@@ -22,14 +16,25 @@ macro_rules! my_include_proto {
 pub mod kms {
     my_include_proto!("kms"); // The string specified here must match the proto package name
 }
+#[cfg(feature = "non-wasm")]
+pub mod connector {
+    my_include_proto!("connector");
+}
+#[cfg(feature = "non-wasm")]
+pub mod ddec_core {
+    my_include_proto!("ddec_core");
+}
 pub mod client;
 pub mod consts;
 #[cfg(feature = "non-wasm")]
-pub mod setup_rpc;
-pub mod core {
-    pub mod der_types;
+pub mod util {
+    pub mod file_handling;
+    pub mod key_setup;
+}
+pub mod cryptography {
     #[cfg(feature = "non-wasm")]
-    pub mod kms_core;
+    pub mod central_kms;
+    pub mod der_types;
     #[cfg(feature = "non-wasm")]
     pub mod request;
     pub mod signcryption;
@@ -39,12 +44,12 @@ pub mod threshold {
     pub mod threshold_kms;
 }
 #[cfg(feature = "non-wasm")]
-pub mod file_handling;
+pub mod storage;
 pub mod rpc {
     #[cfg(feature = "non-wasm")]
-    pub mod kms_proxy_rpc;
+    pub mod central_rpc;
     #[cfg(feature = "non-wasm")]
-    pub mod kms_rpc;
+    pub mod kms_proxy_rpc;
     pub mod rpc_types;
 }
 
@@ -64,89 +69,72 @@ pub fn anyhow_error_and_warn_log(msg: String) -> anyhow::Error {
 
 #[cfg(feature = "non-wasm")]
 pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
-    let mut rng = AesRng::from_entropy();
-    let params: NoiseFloodParameters = read_as_json(DEFAULT_PARAM_PATH.to_owned()).unwrap();
-    // Generate keys for SnS
-    let key_set = gen_key_set(params, &mut rng);
-    let (server_pk, server_sk) = gen_sig_keys(&mut rng);
-
-    // ensure that path ends with a '/' to avoid problems with file handling in the rest of this fn
-    let mut path_string = path.to_string();
-    if !path_string.ends_with('/') {
-        path_string.push('/');
-    }
-
-    write_element(
-        format!("{path_string}pks.bin"),
-        &key_set.public_keys.public_key,
-    )
-    .unwrap();
-    write_element(format!("{path_string}sks.bin"), &key_set.client_key).unwrap();
-    write_element(
-        format!("{path_string}cks.bin"),
-        &key_set.public_keys.server_key,
-    )
-    .unwrap();
-
-    let software_kms_keys = SoftwareKmsKeys {
-        client_keys: HashMap::from([(KEY_HANDLE.to_string(), key_set.client_key)]),
-        sig_sk: server_sk,
-        sig_pk: server_pk.clone(),
+    use crate::{
+        consts::TMP_PATH_PREFIX,
+        util::file_handling::read_element,
+        util::key_setup::{ensure_central_keys_exist, CentralizedTestingKeys},
     };
-    write_element(
-        format!("{path_string}default-software-keys.bin"),
-        &software_kms_keys,
-    )
-    .unwrap();
+    use std::path::Path;
 
-    software_kms_keys
+    ensure_central_keys_exist(DEFAULT_PARAM_PATH, path, Some(TEST_KEY_ID.to_string()));
+    let central_keys: CentralizedTestingKeys = read_element(path).unwrap();
+    let pks = central_keys.pub_fhe_keys.get(TEST_KEY_ID).unwrap();
+    // Write down the seperate keys needed to run the server
+    if !Path::new("{TMP_PATH_PREFIX}/pks.bin").try_exists().unwrap() {
+        write_element(format!("{TMP_PATH_PREFIX}/pks.bin"), &pks.public_key).unwrap();
+    }
+    if !Path::new("{TMP_PATH_PREFIX}/sks.bin").try_exists().unwrap() {
+        write_element(format!("{TMP_PATH_PREFIX}/sks.bin"), &pks.server_key).unwrap();
+    }
+    if !Path::new("{TMP_PATH_PREFIX}/cks.bin").try_exists().unwrap() {
+        write_element(
+            format!("{TMP_PATH_PREFIX}/cks.bin"),
+            &central_keys
+                .software_kms_keys
+                .key_info
+                .get(TEST_KEY_ID)
+                .unwrap()
+                .client_key,
+        )
+        .unwrap();
+    }
+    central_keys.software_kms_keys
 }
 
 #[cfg(feature = "non-wasm")]
-pub fn write_default_crs_store(path: &str) -> CrsHashMap {
-    let mut rng = AesRng::from_entropy();
-    let params: NoiseFloodParameters = read_as_json(DEFAULT_PARAM_PATH.to_owned()).unwrap();
+pub fn write_default_crs_store() -> CrsHashMap {
+    use crate::{
+        consts::{DEFAULT_CENTRAL_CRS_PATH, TEST_CRS_ID},
+        util::file_handling::read_element,
+    };
+    use util::key_setup::ensure_central_crs_store_exists;
 
-    // ensure that path ends with a '/' to avoid problems with file handling in the rest of this fn
-    let mut path_string = path.to_string();
-    if !path_string.ends_with('/') {
-        path_string.push('/');
-    }
-
-    let crs = crate::core::kms_core::gen_centralized_crs(&params, &mut rng);
-    let crs_store = CrsHashMap::from([(DEFAULT_CRS_HANDLE.to_string(), crs)]);
-
-    write_element(format!("{path_string}default-crs-store.bin"), &crs_store).unwrap();
-
-    crs_store
+    ensure_central_crs_store_exists(
+        DEFAULT_PARAM_PATH,
+        DEFAULT_CENTRAL_CRS_PATH,
+        Some(TEST_CRS_ID.to_string()),
+    );
+    let crs_map: CrsHashMap = read_element(DEFAULT_CENTRAL_CRS_PATH).unwrap();
+    crs_map
 }
 
+#[cfg(feature = "slow_tests")]
 #[cfg(test)]
 mod tests {
-    use crate::consts::{
-        CRS_PATH_PREFIX, DEFAULT_CENTRAL_CRS_PATH, DEFAULT_SOFTWARE_CENTRAL_KEY_PATH,
-        TMP_PATH_PREFIX,
-    };
-    use crate::setup_rpc::ensure_dir_exist;
-    use crate::write_default_crs_store;
-    use std::path::Path;
 
     #[cfg(test)]
     #[ctor::ctor]
     fn ensure_server_keys_exist() {
+        use crate::consts::DEFAULT_CENTRAL_KEYS_PATH;
         use crate::write_default_keys;
-        ensure_dir_exist();
 
-        if !Path::new(DEFAULT_SOFTWARE_CENTRAL_KEY_PATH).exists() {
-            let _ = write_default_keys(TMP_PATH_PREFIX);
-        }
+        let _ = write_default_keys(DEFAULT_CENTRAL_KEYS_PATH);
     }
+
     #[cfg(test)]
     #[ctor::ctor]
-    fn ensure_crs_store_exist() {
-        ensure_dir_exist();
-        if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
-            let _ = write_default_crs_store(CRS_PATH_PREFIX);
-        }
+    fn ensure_crs_exist() {
+        use crate::write_default_crs_store;
+        let _ = write_default_crs_store();
     }
 }

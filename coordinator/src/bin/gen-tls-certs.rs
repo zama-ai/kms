@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use clap::Parser;
-use kms_lib::file_handling::write_bytes;
+use kms_lib::util::file_handling::write_bytes;
 use rcgen::{
     BasicConstraints::Constrained, Certificate, CertificateParams, DistinguishedName, DnType,
     ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,

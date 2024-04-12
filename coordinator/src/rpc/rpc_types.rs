@@ -1,9 +1,10 @@
-use crate::anyhow_error_and_log;
-use crate::core::der_types::{PublicEncKey, PublicSigKey, Signature};
+use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
 use crate::kms::{
     DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType,
     ReencryptionRequestPayload, ReencryptionResponse,
 };
+use crate::{anyhow_error_and_log, cryptography::signcryption::serialize_hash_element};
+use crate::{consts::ID_LENGTH, kms::RequestId};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, Eip712Domain, SolStruct};
 use serde::de::Visitor;
@@ -13,6 +14,29 @@ use std::fmt;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 pub static CURRENT_FORMAT_VERSION: u32 = 1;
+pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
+pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
+
+/// Enum which represents the different kinds of public information that can be stored as part of key generation.
+/// In practice this means the CRS and different types of public keys.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PubDataType {
+    PublicKey,
+    ServerKey,
+    SnsKey,
+    CRS,
+}
+
+impl fmt::Display for PubDataType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PubDataType::PublicKey => write!(f, "PublicKey"),
+            PubDataType::ServerKey => write!(f, "ServerKey"),
+            PubDataType::SnsKey => write!(f, "SnsKey"),
+            PubDataType::CRS => write!(f, "CRS"),
+        }
+    }
+}
 
 pub(crate) fn protobuf_to_alloy_domain(
     pb_domain: &Eip712DomainMsg,
@@ -95,7 +119,7 @@ pub trait BaseKms {
 }
 /// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
 pub trait Kms: BaseKms {
-    fn decrypt(&self, ct: &[u8], fhe_type: FheType, key_handle: &str) -> anyhow::Result<Plaintext>;
+    fn decrypt(&self, ct: &[u8], fhe_type: FheType, key_id: &str) -> anyhow::Result<Plaintext>;
     fn reencrypt(
         &self,
         ct: &[u8],
@@ -103,26 +127,26 @@ pub trait Kms: BaseKms {
         digest_link: &[u8],
         enc_key: &PublicEncKey,
         pub_verf_key: &PublicSigKey,
-        key_handle: &str,
+        key_id: &str,
     ) -> anyhow::Result<Option<Vec<u8>>>;
 }
 
 /// Representation of the data stored in a signcryption, needed to facilitate FHE decryption and
 /// request linking
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
-pub struct SigncryptionPayload {
-    pub raw_decryption: RawDecryption,
-    pub req_digest: Vec<u8>,
+pub(crate) struct SigncryptionPayload {
+    pub(crate) raw_decryption: RawDecryption,
+    pub(crate) req_digest: Vec<u8>,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RawDecryption {
-    pub bytes: Vec<u8>,
-    pub fhe_type: FheType,
+pub(crate) struct RawDecryption {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) fhe_type: FheType,
 }
 
 impl RawDecryption {
-    pub fn new(bytes: Vec<u8>, fhe_type: FheType) -> Self {
+    pub(crate) fn new(bytes: Vec<u8>, fhe_type: FheType) -> Self {
         Self { bytes, fhe_type }
     }
 }
@@ -365,6 +389,7 @@ impl TryFrom<RawDecryption> for Plaintext {
     }
 }
 
+// TODO these serializable types can be removed by using the type_attribute additions on protobuf
 /// Observe that this seemingly redundant types are required since the Protobuf compiled types do
 /// not implement the serializable and deserializable traits. Hence [DecryptionRequestSerializable]
 /// implement data to be asn1 serialized and hashed.
@@ -374,7 +399,7 @@ pub struct DecryptionRequestSerializable {
     pub servers_needed: u32,
     pub fhe_type: FheType,
     pub randomness: Vec<u8>,
-    pub key_handle: String,
+    pub key_id: String,
     pub ciphertext: Vec<u8>,
 }
 impl From<DecryptionRequestSerializable> for DecryptionRequest {
@@ -384,7 +409,7 @@ impl From<DecryptionRequestSerializable> for DecryptionRequest {
             servers_needed: val.servers_needed,
             fhe_type: val.fhe_type.into(),
             randomness: val.randomness,
-            key_handle: val.key_handle,
+            key_id: val.key_id,
             ciphertext: val.ciphertext,
         }
     }
@@ -399,7 +424,7 @@ impl TryFrom<DecryptionRequest> for DecryptionRequestSerializable {
             fhe_type: val.fhe_type.try_into()?,
             randomness: val.randomness,
             ciphertext: val.ciphertext,
-            key_handle: val.key_handle,
+            key_id: val.key_id,
         })
     }
 }
@@ -451,7 +476,7 @@ sol! {
         uint8 fhe_type;
         uint8[] randomness;
         uint8[] ciphertext;
-        string key_handle;
+        string key_id;
     }
 }
 impl From<ReencryptionRequestSigPayload> for ReencryptionRequestPayload {
@@ -464,7 +489,7 @@ impl From<ReencryptionRequestSigPayload> for ReencryptionRequestPayload {
             fhe_type: val.fhe_type.into(),
             randomness: val.randomness,
             ciphertext: val.ciphertext,
-            key_handle: val.key_handle,
+            key_id: val.key_id,
         }
     }
 }
@@ -480,7 +505,7 @@ impl TryFrom<ReencryptionRequestPayload> for ReencryptionRequestSigPayload {
             fhe_type: val.fhe_type.try_into()?,
             randomness: val.randomness,
             ciphertext: val.ciphertext,
-            key_handle: val.key_handle,
+            key_id: val.key_id,
         })
     }
 }
@@ -569,6 +594,52 @@ impl MetaResponse for DecryptionResponsePayload {
 
     fn version(&self) -> u32 {
         self.version
+    }
+}
+
+impl fmt::Display for RequestId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.request_id)
+    }
+}
+
+impl RequestId {
+    pub fn new<S>(value: &S, name: String) -> anyhow::Result<Self>
+    where
+        S: Serialize + fmt::Debug,
+    {
+        let mut hashed_payload = serialize_hash_element(value)?;
+        let mut hashed_name = serialize_hash_element(&name)?;
+        hashed_payload.append(&mut hashed_name);
+        let mut res_hash = serialize_hash_element(&hashed_payload)?;
+        // Truncate and convert to hex
+        res_hash.truncate(ID_LENGTH);
+        let res_hash = hex::encode(res_hash);
+        Ok(RequestId {
+            request_id: res_hash,
+        })
+    }
+
+    /// Validates if a user-specified input is a request ID.
+    /// By valid we mean if it is a hex string of a static length. This is done to ensure it can be part of a valid
+    /// path, without risk of path-traversal attacks in case the key request call is publicly accessible.
+    pub fn is_valid(&self) -> bool {
+        let hex = match hex::decode(self.to_string()) {
+            Ok(hex) => hex,
+            Err(_e) => {
+                tracing::warn!("Input {} is not a hex string", &self.to_string());
+                return false;
+            }
+        };
+        if hex.len() != ID_LENGTH {
+            tracing::warn!(
+                "Hex value length is {}, but {} characters were expected",
+                hex.len(),
+                2 * ID_LENGTH
+            );
+            return false;
+        }
+        true
     }
 }
 

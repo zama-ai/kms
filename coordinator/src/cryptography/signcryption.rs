@@ -25,7 +25,6 @@ use rand::{CryptoRng, RngCore};
 use serde::Serialize;
 use serde_asn1_der::{from_bytes, to_vec};
 use sha3::{Digest, Sha3_256};
-use std::fmt;
 
 const DIGEST_BYTES: usize = 256 / 8; // SHA3-256 digest
 pub(crate) const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
@@ -314,23 +313,24 @@ where
     digest.to_vec()
 }
 
-pub(crate) fn safe_hash_element<T>(msg: &T) -> anyhow::Result<Vec<u8>>
+/// Serialize an element and hash it using a cryptographic hash function.
+pub(crate) fn serialize_hash_element<T>(msg: &T) -> anyhow::Result<Vec<u8>>
 where
-    T: fmt::Debug + Serialize,
+    T: Serialize,
 {
     let to_hash = match to_vec(msg) {
-        Ok(to_sign) => to_sign,
+        Ok(to_hash) => to_hash,
         Err(e) => {
             return Err(anyhow_error_and_warn_log(format!(
-                "Could not encode message {:?} with error: {:?}",
-                msg, e
+                "Could not encode message due to error: {:?}",
+                e
             )))
         }
     };
     Ok(hash_element(&to_hash))
 }
 
-pub fn decrypt_signcryption(
+pub(crate) fn decrypt_signcryption(
     cipher: &[u8],
     link: &[u8],
     client_keys: &SigncryptionPair,
@@ -356,9 +356,9 @@ pub fn decrypt_signcryption(
 #[cfg(test)]
 mod tests {
     use super::{PrivateSigKey, PublicSigKey, SigncryptionPair};
-    use crate::core::der_types::Signature;
-    use crate::core::request::{ephemeral_key_generation, ClientRequest};
-    use crate::core::signcryption::{
+    use crate::cryptography::der_types::Signature;
+    use crate::cryptography::request::{ephemeral_key_generation, ClientRequest};
+    use crate::cryptography::signcryption::{
         check_signature, encryption_key_generation, hash_element, parse_msg, sign, signcrypt,
         validate_and_decrypt, verify_sig, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
     };

@@ -18,7 +18,7 @@ use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed};
 use crate::choreography::NetworkingStrategy;
 use crate::execution::endpoints::decryption::decrypt_using_noiseflooding;
 use crate::execution::endpoints::decryption::{Large, Small};
-use crate::execution::endpoints::keygen::PubKeySet;
+use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::endpoints::keygen::{
     distributed_keygen_z128, distributed_keygen_z64, PrivateKeySet,
 };
@@ -776,7 +776,7 @@ impl Choreography for GrpcChoreography {
 async fn local_initialize_key_material(
     session: &mut BaseSession,
     params: NoiseFloodParameters,
-) -> anyhow::Result<(PubKeySet, PrivateKeySet)> {
+) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
     crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params).await
 }
 
@@ -784,6 +784,6 @@ async fn local_initialize_key_material(
 async fn local_initialize_key_material(
     _session: &mut BaseSession,
     _params: NoiseFloodParameters,
-) -> anyhow::Result<(PubKeySet, PrivateKeySet)> {
+) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
     todo!()
 }

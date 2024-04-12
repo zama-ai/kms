@@ -1,0 +1,12 @@
+// Protobuf file for the blockchain connector
+// Responsible for taking KMS results and writing them to the blockchain.
+syntax = "proto3";
+
+package connector;
+
+import "kms.proto";
+
+service ConnectorEndpoint {
+    rpc WriteKeyGenRes(kms.KeyGenResult) returns (kms.Empty);
+    rpc WriteCrsGenRes(kms.CrsGenResult) returns (kms.Empty);
+}

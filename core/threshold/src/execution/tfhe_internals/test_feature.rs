@@ -1,7 +1,6 @@
-use std::{num::Wrapping, sync::Arc};
-
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
+use std::{num::Wrapping, sync::Arc};
 use tfhe::{
     core_crypto::{
         algorithms::{
@@ -37,7 +36,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         constants::INPUT_PARTY_ID,
-        endpoints::keygen::{PrivateKeySet, PubKeySet},
+        endpoints::keygen::{FhePubKeySet, PrivateKeySet},
         random::{secret_rng_from_seed, seed_from_rng},
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::{input::robust_input, share::Share},
@@ -57,7 +56,7 @@ use super::{
 pub struct KeySet {
     pub client_key: tfhe::ClientKey,
     pub sns_secret_key: SnsClientKey,
-    pub public_keys: PubKeySet,
+    pub public_keys: FhePubKeySet,
 }
 impl KeySet {
     pub fn get_raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
@@ -103,7 +102,7 @@ pub fn gen_key_set<R: Rng + CryptoRng>(
     let (sns_secret_key, conversion_key) =
         generate_large_keys(threshold_lwe_parameters, client_key.clone(), rng);
 
-    let public_keys = PubKeySet {
+    let public_keys = FhePubKeySet {
         public_key,
         server_key,
         sns_key: Some(conversion_key),
@@ -129,7 +128,7 @@ pub fn to_hl_client_key(
 pub async fn initialize_key_material<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &mut S,
     params: NoiseFloodParameters,
-) -> anyhow::Result<(PubKeySet, PrivateKeySet)> {
+) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
     let own_role = session.my_role()?;
 
     let keyset = if own_role.one_based() == INPUT_PARTY_ID {
@@ -223,10 +222,10 @@ pub async fn initialize_key_material<R: Rng + CryptoRng, S: BaseSessionHandles<R
 
 pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &S,
-    pubkey: Option<PubKeySet>,
+    pubkey: Option<FhePubKeySet>,
     role: &Role,
     input_party_id: usize,
-) -> anyhow::Result<PubKeySet> {
+) -> anyhow::Result<FhePubKeySet> {
     session.network().increase_round_counter()?;
     if role.one_based() == input_party_id {
         let pubkey_raw =
@@ -485,7 +484,7 @@ pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
     Ok(shared_sks)
 }
 
-impl PartialEq for PubKeySet {
+impl PartialEq for FhePubKeySet {
     fn eq(&self, other: &Self) -> bool {
         let raw_parts_server_key = self.server_key.clone().into_raw_parts();
         let other_raw_parts_server_key = other.server_key.clone().into_raw_parts();
@@ -509,7 +508,7 @@ impl PartialEq for PubKeySet {
     }
 }
 
-impl std::fmt::Debug for PubKeySet {
+impl std::fmt::Debug for FhePubKeySet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PubKeySet")
             .field("public_key", &self.public_key)

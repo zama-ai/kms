@@ -1,16 +1,23 @@
 use super::der_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature};
 use super::signcryption::{
-    safe_hash_element, sign, sign_eip712, signcrypt, verify_sig, verify_sig_eip712, RND_SIZE,
+    serialize_hash_element, sign, sign_eip712, signcrypt, verify_sig, verify_sig_eip712, RND_SIZE,
 };
-use crate::anyhow_error_and_warn_log;
-use crate::consts::KEY_HANDLE;
-use crate::kms::FheType;
-use crate::rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, SigncryptionPayload};
-use crate::setup_rpc::{FhePrivateKey, FhePublicKey};
+use crate::consts::TEST_KEY_ID;
+#[cfg(feature = "non-wasm")]
+use crate::storage::PublicStorage;
+#[cfg(feature = "non-wasm")]
+use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
+use crate::{anyhow_error_and_warn_log, kms::FhePubKeyInfo};
+use crate::{
+    consts::ID_LENGTH,
+    rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, SigncryptionPayload},
+};
+use crate::{kms::FheType, rpc::rpc_types::PubDataType};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use der::zeroize::Zeroize;
-use distributed_decryption::execution::endpoints::keygen::PubKeySet;
+#[cfg(feature = "non-wasm")]
+use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use distributed_decryption::execution::zk::ceremony::{make_proof_deterministic, PublicParameter};
 use distributed_decryption::{
     error::error_handler::anyhow_error_and_log,
@@ -27,6 +34,9 @@ use tfhe::ClientKey;
 use tfhe::{integer::U256, shortint::ClassicPBSParameters};
 use tfhe::{prelude::FheDecrypt, FheUint128, FheUint160};
 use tfhe::{ConfigBuilder, FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
+#[cfg(feature = "non-wasm")]
+use tokio::task::JoinHandle;
+#[cfg(feature = "non-wasm")]
 use zk_poc::curve_api::bls12_446 as curve;
 
 fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> anyhow::Result<T> {
@@ -36,35 +46,47 @@ fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> anyhow::Resu
     })
 }
 
+#[cfg(feature = "non-wasm")]
 pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
     let sk = SigningKey::random(rng);
     let pk = SigningKey::verifying_key(&sk);
     (PublicSigKey { pk: *pk }, PrivateSigKey { sk })
 }
 
+#[cfg(feature = "non-wasm")]
 pub fn gen_default_kms_keys<R: CryptoRng + RngCore>(
     params: NoiseFloodParameters,
     rng: &mut R,
     key_handle: Option<String>,
-) -> (SoftwareKmsKeys, PubKeySet) {
+) -> (SoftwareKmsKeys, FhePubKeySet) {
     let (client_key, fhe_pub_keys) = generate_fhe_keys(params);
-    let (sig_pk, sig_sk) = gen_sig_keys(rng);
-    let handle = key_handle.unwrap_or(KEY_HANDLE.to_string());
+    let (server_pk, server_sk) = gen_sig_keys(rng);
+    let kms = BaseKmsStruct::new(server_sk.clone());
+    let key_info = KmsFheKeyHandles::new(&kms, client_key, &fhe_pub_keys).unwrap();
+    let handle = key_handle.unwrap_or(TEST_KEY_ID.to_string());
     (
         SoftwareKmsKeys {
-            client_keys: HashMap::from([(handle, client_key)]),
-            sig_sk,
-            sig_pk,
+            key_info: HashMap::from([(handle, key_info)]),
+            sig_sk: server_sk,
+            sig_pk: server_pk,
         },
         fhe_pub_keys,
     )
 }
 
-pub fn generate_fhe_keys(params: NoiseFloodParameters) -> (FhePrivateKey, PubKeySet) {
+#[cfg(feature = "non-wasm")]
+pub async fn async_generate_fhe_keys(
+    params: NoiseFloodParameters,
+) -> (FhePrivateKey, FhePubKeySet) {
+    generate_fhe_keys(params)
+}
+
+#[cfg(feature = "non-wasm")]
+pub fn generate_fhe_keys(params: NoiseFloodParameters) -> (FhePrivateKey, FhePubKeySet) {
     let client_key = generate_client_fhe_key(params);
     let server_key = client_key.generate_server_key();
     let public_key = FhePublicKey::new(&client_key);
-    let pks = PubKeySet {
+    let pks = FhePubKeySet {
         public_key,
         server_key,
         sns_key: None,
@@ -72,6 +94,7 @@ pub fn generate_fhe_keys(params: NoiseFloodParameters) -> (FhePrivateKey, PubKey
     (client_key, pks)
 }
 
+#[cfg(feature = "non-wasm")]
 pub fn generate_client_fhe_key(params: NoiseFloodParameters) -> ClientKey {
     let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
     let config = ConfigBuilder::with_custom_parameters(pbs_params, None);
@@ -80,6 +103,7 @@ pub fn generate_client_fhe_key(params: NoiseFloodParameters) -> ClientKey {
 
 /// Compute an estimate for the witness dim from given LWE params. This might come out of tfhe-rs in
 /// the future.
+#[cfg(feature = "non-wasm")]
 fn compute_witness_dimension(params: &NoiseFloodParameters) -> usize {
     let d = params.ciphertext_parameters.lwe_dimension.0;
     let k = 32_usize; // this is an upper estimate for a packed 64 bit message and in line with the example in https://eprint.iacr.org/2023/800.pdf p.68
@@ -94,6 +118,7 @@ fn compute_witness_dimension(params: &NoiseFloodParameters) -> usize {
 }
 
 /// compute the CRS in the centralized KMS.
+#[cfg(feature = "non-wasm")]
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     params: &NoiseFloodParameters,
     rng: &mut R,
@@ -175,6 +200,7 @@ impl BaseKms for BaseKmsStruct {
                 )));
             }
         };
+        // TODO signature should be validated to prevent fault attacks
         sign(&to_sign, &self.sig_key)
     }
 
@@ -188,7 +214,7 @@ impl BaseKms for BaseKmsStruct {
     where
         T: fmt::Debug + Serialize,
     {
-        safe_hash_element(msg)
+        serialize_hash_element(msg)
     }
 
     fn verify_sig_eip712<T: SolStruct>(
@@ -209,83 +235,65 @@ impl BaseKms for BaseKmsStruct {
     }
 }
 
+#[cfg(feature = "non-wasm")]
 #[derive(Serialize, Deserialize)]
 pub struct SoftwareKmsKeys {
-    pub client_keys: HashMap<String, FhePrivateKey>,
+    pub key_info: HashMap<String, KmsFheKeyHandles>,
     pub sig_sk: PrivateSigKey,
     pub sig_pk: PublicSigKey,
 }
 
 pub type CrsHashMap = HashMap<String, PublicParameter>;
 
+#[cfg(feature = "non-wasm")]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct KmsFheKeyHandles {
+    pub client_key: FhePrivateKey,
+    pub public_key_info: HashMap<PubDataType, FhePubKeyInfo>, // Mapping key type to information
+}
+
+#[cfg(feature = "non-wasm")]
+impl KmsFheKeyHandles {
+    pub fn new<K: BaseKms>(
+        kms: &K,
+        client_key: FhePrivateKey,
+        public_keys: &FhePubKeySet,
+    ) -> anyhow::Result<Self> {
+        let mut public_key_info = HashMap::new();
+        public_key_info.insert(
+            PubDataType::PublicKey,
+            compute_info(kms, &public_keys.public_key)?,
+        );
+        public_key_info.insert(
+            PubDataType::ServerKey,
+            compute_info(kms, &public_keys.server_key)?,
+        );
+        if let Some(sns) = &public_keys.sns_key {
+            public_key_info.insert(PubDataType::SnsKey, compute_info(kms, sns)?);
+        }
+        Ok(KmsFheKeyHandles {
+            client_key,
+            public_key_info,
+        })
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+type KeyGenHandle = JoinHandle<(ClientKey, FhePubKeySet)>;
+
 /// Software based KMS where keys are stored in a local file
-pub struct SoftwareKms {
+#[cfg(feature = "non-wasm")]
+pub struct SoftwareKms<S: PublicStorage> {
     base_kms: BaseKmsStruct,
-    pub client_keys: Arc<Mutex<HashMap<String, FhePrivateKey>>>,
+    pub(crate) storage: S,
+    pub key_handles: Arc<Mutex<HashMap<String, KmsFheKeyHandles>>>,
+    pub key_gen_map: Arc<Mutex<HashMap<String, KeyGenHandle>>>,
     pub crs_store: Arc<Mutex<CrsHashMap>>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct SignedCRS {
-    pub crs: PublicParameter,
-    pub signature: Signature,
-}
-
-impl SignedCRS {
-    pub fn new<K: BaseKms>(crs: &PublicParameter, base_kms: &K) -> anyhow::Result<Self> {
-        let serialized = bincode::serialize(crs)?;
-        let signature = base_kms.sign(&serialized)?;
-        Ok(SignedCRS {
-            crs: crs.clone(),
-            signature,
-        })
-    }
-
-    pub fn verify_signature(&self, verf_key: &PublicSigKey) -> bool {
-        let serialized = match bincode::serialize(&self.crs) {
-            Ok(serialized) => serialized,
-            Err(_) => {
-                tracing::warn!("Could not serialize CRS");
-                return false;
-            }
-        };
-        BaseKmsStruct::verify_sig(&serialized, &self.signature, verf_key)
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct SignedFhePublicKeySet {
-    pub public_key_set: PubKeySet,
-    pub signature: Signature,
-}
-
-impl SignedFhePublicKeySet {
-    pub fn new<K: BaseKms>(public_key_set: PubKeySet, base_kms: &K) -> anyhow::Result<Self> {
-        // TODO it should not be needed to "preserialize" here
-        // However, due to lack of support in serde_asn1, this currently does not work for tfhe-rs
-        // public keys Hence we need another approach to serialize these for now.
-        let serialized = bincode::serialize(&public_key_set)?;
-        let signature = base_kms.sign(&serialized)?;
-        Ok(SignedFhePublicKeySet {
-            public_key_set,
-            signature,
-        })
-    }
-
-    pub fn verify_signature(&self, verf_key: &PublicSigKey) -> bool {
-        let serialized = match bincode::serialize(&self.public_key_set) {
-            Ok(serialized) => serialized,
-            Err(_) => {
-                tracing::warn!("Could not serialize keyset");
-                return false;
-            }
-        };
-        BaseKmsStruct::verify_sig(&serialized, &self.signature, verf_key)
-    }
-}
-
 // impl fmt::Debug for SoftwareKms, we don't want to include the decryption key in the debug output
-impl fmt::Debug for SoftwareKms {
+#[cfg(feature = "non-wasm")]
+impl<S: PublicStorage> fmt::Debug for SoftwareKms<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SoftwareKms")
             .field("sig_key", &self.base_kms.sig_key)
@@ -293,7 +301,8 @@ impl fmt::Debug for SoftwareKms {
     }
 }
 
-impl BaseKms for SoftwareKms {
+#[cfg(feature = "non-wasm")]
+impl<S: PublicStorage> BaseKms for SoftwareKms<S> {
     fn verify_sig<T: Serialize>(
         payload: &T,
         signature: &super::der_types::Signature,
@@ -333,22 +342,24 @@ impl BaseKms for SoftwareKms {
     }
 }
 
-impl Kms for SoftwareKms {
+#[cfg(feature = "non-wasm")]
+impl<S: PublicStorage> Kms for SoftwareKms<S> {
     fn decrypt(
         &self,
         high_level_ct: &[u8],
         fhe_type: FheType,
-        key_handle: &str,
+        key_id: &str,
     ) -> anyhow::Result<Plaintext> {
-        let client_keys = handle_potential_err(
-            self.client_keys.lock(),
+        let key_info = handle_potential_err(
+            self.key_handles.lock(),
             "Could not get handle on client keys".to_string(),
         )?;
-        let client_key = match client_keys.get(key_handle) {
-            Some(client_key) => client_key,
+        let client_key = match key_info.get(key_id) {
+            Some(key_info) => &key_info.client_key,
             None => {
                 return Err(anyhow_error_and_log(format!(
-                    "The key handle {key_handle} does not exist"
+                    "The request ID {} does not exist",
+                    key_id
                 )))
             }
         };
@@ -409,9 +420,9 @@ impl Kms for SoftwareKms {
         req_digest: &[u8],
         client_enc_key: &PublicEncKey,
         client_verf_key: &PublicSigKey,
-        key_handle: &str,
+        request_id: &str,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        let plaintext = Kms::decrypt(self, ct, fhe_type, key_handle)?;
+        let plaintext = Kms::decrypt(self, ct, fhe_type, request_id)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<Residuepoly<Z128>> element
         let bytes: Vec<u8> = plaintext.into();
@@ -433,9 +444,11 @@ impl Kms for SoftwareKms {
     }
 }
 
-impl SoftwareKms {
+#[cfg(feature = "non-wasm")]
+impl<S: PublicStorage> SoftwareKms<S> {
     pub fn new(
-        client_keys: HashMap<String, FhePrivateKey>,
+        storage: S,
+        key_info: HashMap<String, KmsFheKeyHandles>,
         sig_key: PrivateSigKey,
         crs_store: Option<CrsHashMap>,
     ) -> Self {
@@ -447,37 +460,71 @@ impl SoftwareKms {
 
         SoftwareKms {
             base_kms: BaseKmsStruct::new(sig_key),
-            client_keys: Arc::new(Mutex::new(client_keys)),
+            storage,
+            key_handles: Arc::new(Mutex::new(key_info)),
+            key_gen_map: Arc::new(Mutex::new(HashMap::new())),
             crs_store: Arc::new(Mutex::new(cs)),
         }
     }
 }
 
+/// Computes the public into on a serializable `element`.
+/// More specifically, computes the unique handle of the `element` and signs this handle using the `kms`.
+pub fn compute_info<K: BaseKms, S: Serialize>(
+    kms: &K,
+    element: &S,
+) -> anyhow::Result<FhePubKeyInfo> {
+    // TODO hack serialize using serde because of issues with asn1 and public key serialization
+    let ser = bincode::serialize(element)?;
+    let handle = compute_handle(&ser)?;
+    let signature = kms.sign(&handle)?;
+    Ok(FhePubKeyInfo {
+        key_handle: handle,
+        signature: bincode::serialize(&signature)?,
+    })
+}
+
+/// Compute a handle of an element, based on its digest
+/// More specifically compute the hash digest, truncate it and convert it to a hex string
+pub fn compute_handle<S>(bytes: &S) -> anyhow::Result<String>
+where
+    S: Serialize,
+{
+    let mut digest = serialize_hash_element(bytes)?;
+    // Truncate and convert to hex
+    digest.truncate(ID_LENGTH);
+    Ok(hex::encode(digest))
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{KmsFheKeyHandles, PublicStorage};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH,
-        DEFAULT_CENTRAL_MULTI_CT_PATH, DEFAULT_CENTRAL_MULTI_KEYS_PATH, DEFAULT_CRS_HANDLE,
-        DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
+        DEFAULT_CENTRAL_MULTI_CT_PATH, DEFAULT_CENTRAL_MULTI_KEYS_PATH, DEFAULT_PARAM_PATH,
+        DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH, TEST_CRS_ID,
     };
     use crate::consts::{
-        KEY_HANDLE, OTHER_KEY_HANDLE, TEST_CENTRAL_CRS_PATH, TEST_CENTRAL_CT_PATH,
-        TEST_CENTRAL_KEYS_PATH, TEST_CENTRAL_MULTI_CT_PATH, TEST_CENTRAL_MULTI_KEYS_PATH,
-        TEST_CRS_HANDLE, TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH,
+        OTHER_KEY_HANDLE, TEST_CENTRAL_CRS_PATH, TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH,
+        TEST_CENTRAL_MULTI_CT_PATH, TEST_CENTRAL_MULTI_KEYS_PATH, TEST_KEY_ID, TEST_PARAM_PATH,
+        TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH,
     };
-    use crate::core::der_types::PrivateSigKey;
-    use crate::core::kms_core::{gen_sig_keys, SoftwareKms};
-    use crate::core::request::ephemeral_key_generation;
-    use crate::core::signcryption::decrypt_signcryption;
-    use crate::file_handling::read_element;
+    use crate::cryptography::request::ephemeral_key_generation;
+    use crate::cryptography::signcryption::decrypt_signcryption;
     use crate::kms::FheType;
-    use crate::rpc::rpc_types::{Kms, Plaintext};
-    use crate::setup_rpc::{
+    use crate::rpc::rpc_types::Plaintext;
+    use crate::util::file_handling::read_element;
+    use crate::util::key_setup::{
         ensure_central_crs_store_exists, ensure_central_key_ct_exist,
         ensure_central_multiple_keys_ct_exist, ensure_dir_exist, ensure_threshold_key_ct_exist,
         CentralizedTestingKeys,
     };
+    use crate::{
+        cryptography::central_kms::{gen_sig_keys, SoftwareKms},
+        rpc::rpc_types::Kms,
+    };
+    use crate::{cryptography::der_types::PrivateSigKey, storage::DevStorage};
     use aes_prng::AesRng;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use rand::{RngCore, SeedableRng};
@@ -496,7 +543,7 @@ mod tests {
 
     #[test]
     fn sunshine_test_decrypt() {
-        sunshine_decrypt(TEST_CENTRAL_KEYS_PATH, KEY_HANDLE, TEST_CENTRAL_CT_PATH);
+        sunshine_decrypt(TEST_CENTRAL_KEYS_PATH, TEST_KEY_ID, TEST_CENTRAL_CT_PATH);
     }
 
     #[test]
@@ -504,7 +551,7 @@ mod tests {
         simulate_decrypt(
             SimulationType::BadFheKey,
             TEST_CENTRAL_KEYS_PATH,
-            KEY_HANDLE,
+            TEST_KEY_ID,
             TEST_CENTRAL_CT_PATH,
         );
     }
@@ -514,7 +561,7 @@ mod tests {
     fn sunshine_default_decrypt() {
         sunshine_decrypt(
             DEFAULT_CENTRAL_KEYS_PATH,
-            KEY_HANDLE,
+            TEST_KEY_ID,
             DEFAULT_CENTRAL_CT_PATH,
         );
     }
@@ -541,12 +588,14 @@ mod tests {
     #[cfg(test)]
     #[ctor::ctor]
     fn ensure_testing_material_exists() {
+        use crate::consts::TEST_CRS_ID;
+
         ensure_dir_exist();
 
         ensure_central_crs_store_exists(
             TEST_PARAM_PATH,
             TEST_CENTRAL_CRS_PATH,
-            Some(TEST_CRS_HANDLE.to_string()),
+            Some(TEST_CRS_ID.to_string()),
         );
 
         ensure_central_key_ct_exist(
@@ -578,7 +627,7 @@ mod tests {
         ensure_central_crs_store_exists(
             DEFAULT_PARAM_PATH,
             DEFAULT_CENTRAL_CRS_PATH,
-            Some(DEFAULT_CRS_HANDLE.to_string()),
+            Some(TEST_CRS_ID.to_string()),
         );
 
         ensure_central_key_ct_exist(
@@ -607,59 +656,62 @@ mod tests {
             read_element(TEST_CENTRAL_MULTI_KEYS_PATH).unwrap();
 
         // try to get keys with the default handle
-        let default_key = central_keys.software_kms_keys.client_keys.get(KEY_HANDLE);
+        let default_key = central_keys.software_kms_keys.key_info.get(TEST_KEY_ID);
         assert!(default_key.is_some());
 
         // try to get keys with the some other handle
         let some_key = central_keys
             .software_kms_keys
-            .client_keys
+            .key_info
             .get(OTHER_KEY_HANDLE);
         assert!(some_key.is_some());
 
         // try to get keys with a non-existent handle
         let no_key = central_keys
             .software_kms_keys
-            .client_keys
+            .key_info
             .get("wrongKeyHandle");
         assert!(no_key.is_none());
     }
 
-    fn sunshine_decrypt(kms_key_path: &str, key_handle: &str, cipher_path: &str) {
-        simulate_decrypt(
-            SimulationType::NoError,
-            kms_key_path,
-            key_handle,
-            cipher_path,
-        )
+    fn sunshine_decrypt(kms_key_path: &str, key_id: &str, cipher_path: &str) {
+        simulate_decrypt(SimulationType::NoError, kms_key_path, key_id, cipher_path)
     }
 
     fn simulate_decrypt(
         sim_type: SimulationType,
         kms_key_path: &str,
-        key_handle: &str,
+        key_id: &str,
         cipher_path: &str,
     ) {
         let msg = 42_u8;
         let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
+        let storage = DevStorage {};
         let kms = {
             let inner = SoftwareKms::new(
-                keys.software_kms_keys.client_keys.clone(),
+                storage,
+                keys.software_kms_keys.key_info.clone(),
                 keys.software_kms_keys.sig_sk,
                 None,
             );
             if sim_type == SimulationType::BadFheKey {
-                set_wrong_client_key(&inner, key_handle, keys.params);
+                set_wrong_client_key(&inner, key_id, keys.params);
             }
             inner
         };
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
-        let plaintext: Plaintext = match kms.decrypt(&ct, fhe_type, key_handle) {
-            Ok(x) => x,
-            Err(e) => {
-                assert!(e.to_string().contains("decryption panicked"));
-                return;
+        let raw_plaintext = kms.decrypt(&ct, fhe_type, key_id);
+        // if bad FHE key is used, then it *might* panic
+        let plaintext = if sim_type == SimulationType::BadFheKey {
+            match raw_plaintext {
+                Ok(x) => x,
+                Err(e) => {
+                    assert!(e.to_string().contains("decryption panicked"));
+                    return;
+                }
             }
+        } else {
+            raw_plaintext.unwrap()
         };
         if sim_type == SimulationType::BadFheKey {
             assert_ne!(plaintext.as_u8(), msg);
@@ -670,7 +722,7 @@ mod tests {
 
     #[test]
     fn sunshine_test_reencrypt() {
-        sunshine_reencrypt(TEST_CENTRAL_KEYS_PATH, KEY_HANDLE, TEST_CENTRAL_CT_PATH);
+        sunshine_reencrypt(TEST_CENTRAL_KEYS_PATH, TEST_KEY_ID, TEST_CENTRAL_CT_PATH);
     }
 
     #[test]
@@ -678,7 +730,7 @@ mod tests {
         simulate_reencrypt(
             SimulationType::BadEphemeralKey,
             TEST_CENTRAL_KEYS_PATH,
-            KEY_HANDLE,
+            TEST_KEY_ID,
             TEST_CENTRAL_CT_PATH,
         )
     }
@@ -688,7 +740,7 @@ mod tests {
         simulate_reencrypt(
             SimulationType::BadSigKey,
             TEST_CENTRAL_KEYS_PATH,
-            KEY_HANDLE,
+            TEST_KEY_ID,
             TEST_CENTRAL_CT_PATH,
         )
     }
@@ -698,7 +750,7 @@ mod tests {
         simulate_reencrypt(
             SimulationType::BadFheKey,
             TEST_CENTRAL_KEYS_PATH,
-            KEY_HANDLE,
+            TEST_KEY_ID,
             TEST_CENTRAL_CT_PATH,
         )
     }
@@ -708,7 +760,7 @@ mod tests {
     fn sunshine_default_reencrypt() {
         sunshine_reencrypt(
             DEFAULT_CENTRAL_KEYS_PATH,
-            KEY_HANDLE,
+            TEST_KEY_ID,
             DEFAULT_CENTRAL_CT_PATH,
         );
     }
@@ -742,16 +794,24 @@ mod tests {
         )
     }
 
-    fn set_wrong_client_key(inner: &SoftwareKms, key_handle: &str, params: NoiseFloodParameters) {
+    fn set_wrong_client_key<S: PublicStorage>(
+        inner: &SoftwareKms<S>,
+        key_handle: &str,
+        params: NoiseFloodParameters,
+    ) {
         let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
         let config = ConfigBuilder::with_custom_parameters(pbs_params, None);
         let wrong_client_key = tfhe::ClientKey::generate(config);
-        let mut client_keys = inner.client_keys.lock().unwrap();
-        let x = client_keys.get_mut(key_handle).unwrap();
-        *x = wrong_client_key;
+        let mut key_info = inner.key_handles.lock().unwrap();
+        let x = key_info.get_mut(key_handle).unwrap();
+        let wrong_handles = KmsFheKeyHandles {
+            client_key: wrong_client_key,
+            public_key_info: x.public_key_info.clone(),
+        };
+        *x = wrong_handles;
     }
 
-    fn set_wrong_sig_key(inner: &mut SoftwareKms, rng: &mut AesRng) {
+    fn set_wrong_sig_key<S: PublicStorage>(inner: &mut SoftwareKms<S>, rng: &mut AesRng) {
         // move to the next state so ensure we're generating a different ecdsa key
         _ = rng.next_u64();
         let wrong_ecdsa_key = k256::ecdsa::SigningKey::random(rng);
@@ -770,15 +830,16 @@ mod tests {
         let msg = 42_u8;
         let mut rng = AesRng::seed_from_u64(1);
         let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
-        let params = keys.params;
+        let storage = DevStorage::default();
         let kms = {
             let mut inner = SoftwareKms::new(
-                keys.software_kms_keys.client_keys.clone(),
+                storage,
+                keys.software_kms_keys.key_info.clone(),
                 keys.software_kms_keys.sig_sk,
                 None,
             );
             if sim_type == SimulationType::BadFheKey {
-                set_wrong_client_key(&inner, key_handle, params);
+                set_wrong_client_key(&inner, key_handle, keys.params);
             }
             if sim_type == SimulationType::BadSigKey {
                 set_wrong_sig_key(&mut inner, &mut rng);

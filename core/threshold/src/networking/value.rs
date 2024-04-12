@@ -1,7 +1,7 @@
 use crate::algebra::structure_traits::{Ring, Zero};
 use crate::error::error_handler::anyhow_error_and_log;
 #[cfg(any(test, feature = "testing"))]
-use crate::execution::endpoints::keygen::PubKeySet;
+use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::large_execution::local_double_share::MapsDoubleSharesChallenges;
 use crate::execution::large_execution::local_single_share::MapsSharesChallenges;
 use crate::execution::large_execution::vss::{
@@ -54,7 +54,7 @@ pub enum AgreeRandomValue {
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
 pub enum NetworkValue<Z: Eq + Zero> {
     #[cfg(any(test, feature = "testing"))]
-    PubKeySet(Box<PubKeySet>),
+    PubKeySet(Box<FhePubKeySet>),
     RingValue(Z),
     VecRingValue(Vec<Z>),
     VecPairRingValue(Vec<(Z, Z)>),

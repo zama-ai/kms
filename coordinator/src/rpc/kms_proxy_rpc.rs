@@ -1,9 +1,11 @@
-use crate::kms::kms_endpoint_client::KmsEndpointClient;
-use crate::kms::kms_endpoint_server::{KmsEndpoint, KmsEndpointServer};
 use crate::kms::{
-    CrsCeremonyRequest, CrsHandle, CrsResponse, DecryptionRequest, DecryptionResponse,
-    GetAllKeysRequest, GetAllKeysResponse, GetKeyRequest, KeyGenRequest, KeyResponse,
-    ReencryptionRequest, ReencryptionResponse,
+    coordinator_endpoint_client::CoordinatorEndpointClient,
+    coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer},
+    KeyGenResult,
+};
+use crate::kms::{CrsGenRequest, CrsGenResult, Empty, RequestId};
+use crate::kms::{
+    DecryptionRequest, DecryptionResponse, KeyGenRequest, ReencryptionRequest, ReencryptionResponse,
 };
 use backoff::{future::retry, ExponentialBackoff};
 use std::net::SocketAddr;
@@ -13,7 +15,7 @@ use tonic::transport::{Channel, Server};
 use tonic::{Request, Response, Status};
 
 pub struct KmsProxy {
-    kms_client: Arc<Mutex<KmsEndpointClient<Channel>>>,
+    kms_client: Arc<Mutex<CoordinatorEndpointClient<Channel>>>,
 }
 
 pub async fn server_handle(server_socket: SocketAddr, client_uri: &str) -> anyhow::Result<()> {
@@ -24,21 +26,21 @@ pub async fn server_handle(server_socket: SocketAddr, client_uri: &str) -> anyho
     );
     let backoff = ExponentialBackoff::default();
     let kms_client = retry(backoff, || async {
-        Ok(KmsEndpointClient::connect(client_uri.to_owned()).await?)
+        Ok(CoordinatorEndpointClient::connect(client_uri.to_owned()).await?)
     })
     .await?;
     let kms_proxy = KmsProxy {
         kms_client: Arc::new(Mutex::new(kms_client)),
     };
     Server::builder()
-        .add_service(KmsEndpointServer::new(kms_proxy))
+        .add_service(CoordinatorEndpointServer::new(kms_proxy))
         .serve(server_socket)
         .await?;
     Ok(())
 }
 
 #[tonic::async_trait]
-impl KmsEndpoint for KmsProxy {
+impl CoordinatorEndpoint for KmsProxy {
     async fn reencrypt(
         &self,
         request: Request<ReencryptionRequest>,
@@ -57,48 +59,33 @@ impl KmsEndpoint for KmsProxy {
         Ok(response)
     }
 
-    async fn key_gen(
-        &self,
-        request: Request<KeyGenRequest>,
-    ) -> Result<Response<KeyResponse>, Status> {
+    async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         let mut kms_client = self.kms_client.lock().await;
         let response = kms_client.key_gen(request).await?;
         Ok(response)
     }
 
-    async fn get_key(
+    async fn get_key_gen_result(
         &self,
-        request: Request<GetKeyRequest>,
-    ) -> Result<Response<KeyResponse>, Status> {
+        request: Request<RequestId>,
+    ) -> Result<Response<KeyGenResult>, Status> {
         let mut kms_client = self.kms_client.lock().await;
-        let response = kms_client.get_key(request).await?;
+        let response = kms_client.get_key_gen_result(request).await?;
         Ok(response)
     }
 
-    async fn get_all_keys(
-        &self,
-        request: Request<GetAllKeysRequest>,
-    ) -> Result<Response<GetAllKeysResponse>, Status> {
+    async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         let mut kms_client = self.kms_client.lock().await;
-        let response = kms_client.get_all_keys(request).await?;
+        let response = kms_client.crs_gen(request).await?;
         Ok(response)
     }
 
-    async fn crs_ceremony(
+    async fn get_crs_gen_result(
         &self,
-        request: Request<CrsCeremonyRequest>,
-    ) -> Result<Response<CrsResponse>, Status> {
+        request: Request<RequestId>,
+    ) -> Result<Response<CrsGenResult>, Status> {
         let mut kms_client = self.kms_client.lock().await;
-        let response = kms_client.crs_ceremony(request).await?;
-        Ok(response)
-    }
-
-    async fn crs_request(
-        &self,
-        request: Request<CrsHandle>,
-    ) -> Result<Response<CrsResponse>, Status> {
-        let mut kms_client = self.kms_client.lock().await;
-        let response = kms_client.crs_request(request).await?;
+        let response = kms_client.get_crs_gen_result(request).await?;
         Ok(response)
     }
 }

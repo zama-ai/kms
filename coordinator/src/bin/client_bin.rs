@@ -1,10 +1,10 @@
-use kms_lib::kms::kms_endpoint_client::KmsEndpointClient;
+use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
 use kms_lib::kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType};
-use kms_lib::setup_rpc::CentralizedTestingKeys;
+use kms_lib::util::key_setup::CentralizedTestingKeys;
 use kms_lib::{
     client::Client,
     consts::{DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH},
-    file_handling::read_element,
+    util::file_handling::read_element,
 };
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -61,7 +61,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let url = &args[1];
 
-    let mut kms_client = retry!(KmsEndpointClient::connect(url.to_owned()).await, 5, 100)?;
+    let mut kms_client = retry!(
+        CoordinatorEndpointClient::connect(url.to_owned()).await,
+        5,
+        100
+    )?;
     let (ct, fhe_type): (Vec<u8>, FheType) = read_element(DEFAULT_CENTRAL_CT_PATH)?;
     let central_keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH)?;
     let mut internal_client = Client::new(

@@ -1,15 +1,13 @@
-use k256::ecdsa::SigningKey;
-use rand::{CryptoRng, RngCore};
-use serde::{Deserialize, Serialize};
-use signature::{Signer, Verifier};
-
-use crate::anyhow_error_and_log;
-
 use super::der_types::{
     PrivateSigKey, PublicSigKey, Signature, SigncryptionPair, SigncryptionPrivKey,
     SigncryptionPubKey,
 };
 use super::signcryption::{check_normalized, encryption_key_generation, hash_element, RND_SIZE};
+use crate::anyhow_error_and_log;
+use k256::ecdsa::SigningKey;
+use rand::{CryptoRng, RngCore};
+use serde::{Deserialize, Serialize};
+use signature::{Signer, Verifier};
 
 /// Struct reflecting the client's decryption request of FHE ciphertext.
 /// Concretely containing the client's public keys and a signature on the ephemeral encryption key
@@ -17,24 +15,25 @@ use super::signcryption::{check_normalized, encryption_key_generation, hash_elem
 /// for hybrid encryptoin). DER encoding of the request as a SEQUENCE of ClientPayload and signature
 /// ( r||s in big endian encoded using OCTET STRINGS)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
-pub struct ClientRequest {
-    pub payload: ClientPayload,
-    pub signature: Signature,
+pub(crate) struct ClientRequest {
+    pub(crate) payload: ClientPayload,
+    pub(crate) signature: Signature,
 }
 
 /// Structure for DER encoding as a SEQUENCE of client_signcryption_key and digest (as OCTET STRING)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
-pub struct ClientPayload {
-    pub client_signcryption_key: SigncryptionPubKey, /* The client's public keys needed for
-                                                      * signcryption */
-    pub digest: Vec<u8>, // Digest of the fhe_cipher the client wish to have decrypted
-    pub sig_randomization: Vec<u8>, /* Randomness to concatenate to the encrypted message to ensure EU-CMA security, see https://link.springer.com/content/pdf/10.1007/3-540-36492-7_1.pdf */
+pub(crate) struct ClientPayload {
+    pub(crate) client_signcryption_key: SigncryptionPubKey, /* The client's public keys needed for
+                                                             * signcryption */
+    pub(crate) digest: Vec<u8>, // Digest of the fhe_cipher the client wish to have decrypted
+    pub(crate) sig_randomization: Vec<u8>, /* Randomness to concatenate to the encrypted message to ensure EU-CMA security, see https://link.springer.com/content/pdf/10.1007/3-540-36492-7_1.pdf */
 }
 
+#[allow(dead_code)]
 impl ClientRequest {
     /// Constructs a new signcryption request for a message `msg` by sampling necesary ephemeral
     /// keys and returning the aggegrated signcryption keys
-    pub fn new<T: Serialize + AsRef<[u8]>>(
+    pub(crate) fn new<T: Serialize + AsRef<[u8]>>(
         fhe_cipher: &T,
         client_sig_sk: &PrivateSigKey,
         rng: &mut (impl CryptoRng + RngCore),
@@ -72,7 +71,10 @@ impl ClientRequest {
     ///
     /// WARNING: IT IS ASSUMED THAT THE CLIENT'S PUBLIC VERIFICATION KEY HAS BEEN CROSS-CHECKED TO
     /// BELONG TO A CLIENT THAT IS ALLOWED TO DECRYPT `fhe_cipher`
-    pub fn verify<T: Serialize + AsRef<[u8]>>(&self, fhe_cipher: &T) -> anyhow::Result<bool> {
+    pub(crate) fn verify<T: Serialize + AsRef<[u8]>>(
+        &self,
+        fhe_cipher: &T,
+    ) -> anyhow::Result<bool> {
         let digest = hash_element(fhe_cipher);
         if digest != self.payload.digest {
             return Ok(false);

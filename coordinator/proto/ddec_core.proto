@@ -1,0 +1,41 @@
+syntax = "proto3";
+package ddec_core;
+
+import "kms.proto";
+
+service CoreEndpoint {
+    // Generate new keys asynchronously
+    rpc KeyGen(KeyGenRequest) returns (kms.RequestId);
+    // Try to retrieve generated public keys
+    rpc GetKeyGenResult(kms.RequestId) returns (KeyGenResult);
+    // Generate a new CRS asynchronously
+    rpc CrsGen(CrsGenRequest) returns (kms.RequestId);
+    // Try to retrieve the generated CRS
+    rpc GetCrsGenResult(kms.RequestId) returns (CrsGenResult);
+}
+
+// Request for generating new keys under a certain handle and return a URI where they can be accessed.
+// TODO handle the potential need for randomness in the signed stored keys which may be needed to ensure provable EU-CMA security of ECDSA.
+message KeyGenRequest {
+    kms.Config config = 1;
+    kms.ParamChoice params = 2;
+    uint64 seq_no = 3;
+    kms.RequestId request_id = 4;
+}
+
+message KeyGenResult {
+    kms.RequestId request_id = 1;
+    // Map of KeyType strings to the serialization of the corresponding public key
+    map<string, bytes> key_results = 2;
+}
+
+message CrsGenRequest {
+    kms.Config config = 1;
+    kms.ParamChoice params = 2;
+    kms.RequestId request_id = 3;
+}
+
+message CrsGenResult {
+    kms.RequestId request_id = 1;
+    bytes crs_bytes = 2;
+}

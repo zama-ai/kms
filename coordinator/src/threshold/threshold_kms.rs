@@ -1,14 +1,9 @@
-use crate::anyhow_error_and_log;
-use crate::core::der_types::{self, PrivateSigKey, PublicEncKey, PublicSigKey};
-use crate::core::kms_core::BaseKmsStruct;
-use crate::core::signcryption::signcrypt;
-use crate::kms::kms_endpoint_server::{KmsEndpoint, KmsEndpointServer};
+use crate::kms::{coordinator_endpoint_server::CoordinatorEndpoint, RequestId};
 use crate::kms::{
-    CrsCeremonyRequest, CrsHandle, CrsResponse, DecryptionRequest, DecryptionResponse, FheType,
-    GetAllKeysRequest, GetAllKeysResponse, GetKeyRequest, KeyGenRequest, KeyResponse,
+    DecryptionRequest, DecryptionResponse, FheType, KeyGenRequest, KeyGenResult,
     ReencryptionRequest, ReencryptionResponse,
 };
-use crate::rpc::kms_rpc::{
+use crate::rpc::central_rpc::{
     process_response, tonic_handle_potential_err, tonic_some_or_err, validate_decrypt_req,
     validate_reencrypt_req,
 };
@@ -16,6 +11,16 @@ use crate::rpc::rpc_types::{
     BaseKms, DecryptionResponseSigPayload, Plaintext, RawDecryption, SigncryptionPayload,
     CURRENT_FORMAT_VERSION,
 };
+use crate::{anyhow_error_and_log, kms::CrsGenRequest};
+use crate::{
+    cryptography::central_kms::BaseKmsStruct,
+    kms::coordinator_endpoint_server::CoordinatorEndpointServer,
+};
+use crate::{
+    cryptography::der_types::{self, PrivateSigKey, PublicEncKey, PublicSigKey},
+    kms::CrsGenResult,
+};
+use crate::{cryptography::signcryption::signcrypt, kms::Empty};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use distributed_decryption::algebra::base_ring::Z64;
@@ -82,7 +87,7 @@ pub async fn threshold_server_start(
     let port = base_port + (my_id as u16);
     let socket: std::net::SocketAddr = format!("{}:{}", url, port).parse()?;
     Server::builder()
-        .add_service(KmsEndpointServer::new(kms_server))
+        .add_service(CoordinatorEndpointServer::new(kms_server))
         .serve(socket)
         .await?;
     tracing::info!("Started server {my_id}");
@@ -412,25 +417,15 @@ impl ThresholdKms {
 }
 
 #[tonic::async_trait]
-impl KmsEndpoint for ThresholdKms {
-    async fn key_gen(
-        &self,
-        _request: Request<KeyGenRequest>,
-    ) -> Result<Response<KeyResponse>, Status> {
+impl CoordinatorEndpoint for ThresholdKms {
+    async fn key_gen(&self, _request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         todo!()
     }
 
-    async fn get_all_keys(
+    async fn get_key_gen_result(
         &self,
-        _request: Request<GetAllKeysRequest>,
-    ) -> Result<Response<GetAllKeysResponse>, Status> {
-        todo!()
-    }
-
-    async fn get_key(
-        &self,
-        _request: Request<GetKeyRequest>,
-    ) -> Result<Response<KeyResponse>, Status> {
+        _request: Request<RequestId>,
+    ) -> Result<Response<KeyGenResult>, Status> {
         todo!()
     }
 
@@ -521,17 +516,14 @@ impl KmsEndpoint for ThresholdKms {
         }))
     }
 
-    async fn crs_ceremony(
-        &self,
-        _request: Request<CrsCeremonyRequest>,
-    ) -> Result<Response<CrsResponse>, Status> {
+    async fn crs_gen(&self, _request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         todo!();
     }
 
-    async fn crs_request(
+    async fn get_crs_gen_result(
         &self,
-        _request: Request<CrsHandle>,
-    ) -> Result<Response<CrsResponse>, Status> {
+        _request: Request<RequestId>,
+    ) -> Result<Response<CrsGenResult>, Status> {
         todo!();
     }
 }
