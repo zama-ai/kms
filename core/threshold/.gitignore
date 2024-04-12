@@ -27,3 +27,6 @@ coverage/*
 
 #bench
 flamegraph.svg
+
+#test certificates
+**/test_certs

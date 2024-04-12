@@ -5,21 +5,80 @@ use rcgen::{
     BasicConstraints::Constrained, Certificate, CertificateParams, DistinguishedName, DnType,
     ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
 };
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+};
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy)]
+enum CertFileType {
+    Der,
+    Pem,
+}
+
+#[derive(Debug, clap::Args)]
+#[group(required = true, multiple = false)]
+struct Group {
+    #[clap(short, long, value_parser, num_args = 1.., value_delimiter = ' ', help = "cannot be used with coordinator_prefix")]
+    coordinator_names: Vec<String>,
+
+    #[clap(
+        long,
+        default_value = "coordinator",
+        help = "cannot be used with coordinator_names"
+    )]
+    coordinator_prefix: String,
+}
 
 #[derive(Parser, Debug)]
 #[clap(name = "KMS TLS Certificate Generator")]
-#[clap(about = "A CLI tool for generating TLS certificates for the KMS coordinator and cores")]
+#[clap(
+    about = "A CLI tool for generating TLS certificates for the KMS coordinator and cores. \
+The user need to provide a set of coordinator names using either the \
+--coordinator_names option, or the --coordinator_prefix and the \
+--coordinator_count options. The tool also allows the user to set \
+the number of cores, output directory and file format. Example usage:
+kms-gen-tls-certs --help # for all available options
+kms-gen-tls-certs --coordinator-prefix c --coordinator-count 4 -n 1 -o certs
+kms-gen-tls-certs --coordinator-names alice bob charlie dave -n 1 -o certs 
+
+Under the hood, the tool generates self-signed CA certificates for \
+each coordinator and <num_cores> core certificates for each \
+coordinator. The core certificates are signed by its corresponding coordinator.\
+The private key associated to each certificate can also be found in the output.\
+Finally, the combined coordinator certificate (cert_combined.{pem,der}) \
+is also a part of the output."
+)]
 pub struct Cli {
-    #[clap(short, long)]
-    coordinator_name: String,
+    // this group is needed to ensure the user only suplies the exact names or a prefix
+    #[clap(flatten)]
+    group: Group,
 
-    // TODO: this should be a PathBuf once the file handling works on paths instead of strings
-    #[clap(short, long, default_value = "tls/")]
-    dir: String,
+    #[clap(
+        long,
+        default_value_t = 0,
+        help = "only valid when coordinator_prefix is set"
+    )]
+    coordinator_count: u8,
 
-    #[clap(short, long, default_value = "1")]
+    #[clap(
+        short,
+        long,
+        default_value = "certs/",
+        help = "the output directory for certificates and keys"
+    )]
+    output_dir: PathBuf,
+
+    #[clap(
+        short,
+        long,
+        default_value = "1",
+        help = "the number of cores certificates to generate for each coordinator"
+    )]
     num_cores: usize,
+
+    #[clap(long, value_enum, default_value_t = CertFileType::Pem, help = "the output file type, select between pem and der")]
+    output_file_type: CertFileType,
 }
 
 /// Validates if a user-specified coordinator name is valid.
@@ -43,7 +102,13 @@ fn create_coordinator_cert(coordinator_name: &str) -> anyhow::Result<(KeyPair, C
         ));
     }
     let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
-    let mut cp = CertificateParams::new(vec![coordinator_name.to_string()])?;
+    let mut cp = CertificateParams::new(vec![
+        coordinator_name.to_string(),
+        "localhost".to_string(),
+        "192.168.0.1".to_string(),
+        "127.0.0.1".to_string(),
+        "0:0:0:0:0:0:0:1".to_string(),
+    ])?;
 
     // set distinguished name of coordinator cert
     let mut distinguished_name = DistinguishedName::new();
@@ -80,11 +145,21 @@ fn create_core_certs(
     coordinator_keypair: &KeyPair,
     coordinator_cert: &Certificate,
 ) -> anyhow::Result<HashMap<usize, (KeyPair, Certificate)>> {
-    let core_cert_bundle: HashMap<usize, (KeyPair, Certificate)> = (0..num_cores)
+    let core_cert_bundle: HashMap<usize, (KeyPair, Certificate)> = (1..=num_cores)
         .map(|i: usize| {
-            let core_name = format!("core-{}.{}", i, coordinator_name);
+            let core_name = format!("core{}.{}", i, coordinator_name);
             let core_keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
-            let mut cp = CertificateParams::new(vec![core_name.clone()]).unwrap();
+            let mut cp = CertificateParams::new(vec![
+                core_name.clone(),
+                "localhost".to_string(),
+                "192.168.0.1".to_string(),
+                "127.0.0.1".to_string(),
+                "0:0:0:0:0:0:0:1".to_string(),
+            ])
+            .unwrap();
+
+            // set core cert CA flag to false
+            cp.is_ca = IsCa::ExplicitNoCa;
 
             // set distinguished name of core cert
             let mut distinguished_name = DistinguishedName::new();
@@ -116,10 +191,11 @@ fn create_core_certs(
 
 /// write the given certificate and keypair to the given path under the given name
 fn write_certs_and_keys(
-    path: &str,
+    root_dir: &std::path::Path,
     name: &str,
     cert: &Certificate,
     keypair: &KeyPair,
+    file_type: CertFileType,
 ) -> anyhow::Result<()> {
     tracing::info!(
         "Generating keys and cert for {:?}",
@@ -128,25 +204,22 @@ fn write_certs_and_keys(
     tracing::info!("{}", cert.pem());
     tracing::info!("{}", keypair.serialize_pem());
 
-    // ensure that path ends with a '/' to avoid problems with file handling in the rest of this fn
-    let mut path_string = path.to_string();
-    if !path_string.ends_with('/') {
-        path_string.push('/');
-    }
+    match file_type {
+        CertFileType::Der => {
+            let cert_dir = root_dir.join(format!("cert_{name}.der"));
+            write_bytes(&cert_dir, cert.der())?;
 
-    // write cert and key as both DER (binary) and PEM (text) file
-    write_bytes(format!("{path_string}cert_{name}.der"), cert.der())?;
-    write_bytes(format!("{path_string}cert_{name}.pem"), cert.pem())?;
+            let key_dir = root_dir.join(format!("key_{name}.der"));
+            write_bytes(&key_dir, keypair.serialized_der())?;
+        }
+        CertFileType::Pem => {
+            let cert_dir = root_dir.join(format!("cert_{name}.pem"));
+            write_bytes(&cert_dir, cert.pem())?;
 
-    write_bytes(
-        format!("{path_string}keys_{name}.der"),
-        keypair.serialized_der(),
-    )?;
-    write_bytes(
-        format!("{path_string}keys_{name}.pem"),
-        keypair.serialize_pem(),
-    )?;
-
+            let key_dir = root_dir.join(format!("key_{name}.pem"));
+            write_bytes(&key_dir, keypair.serialize_pem())?;
+        }
+    };
     Ok(())
 }
 
@@ -155,31 +228,66 @@ fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let args = Cli::parse();
-    let coordinator_name = args.coordinator_name.as_str();
-    let (coordinator_keypair, coordinator_cert) = create_coordinator_cert(coordinator_name)?;
 
-    write_certs_and_keys(
-        args.dir.as_str(),
-        coordinator_name,
-        &coordinator_cert,
-        &coordinator_keypair,
-    )?;
+    let coordinator_set: HashSet<String> = if args.group.coordinator_names.is_empty() {
+        HashSet::from_iter(
+            (1..=args.coordinator_count).map(|i| format!("{}{i}", args.group.coordinator_prefix)),
+        )
+    } else {
+        HashSet::from_iter(args.group.coordinator_names.iter().cloned())
+    };
 
-    let core_certs = create_core_certs(
-        coordinator_name,
-        args.num_cores,
-        &coordinator_keypair,
-        &coordinator_cert,
-    )?;
+    let mut all_certs = vec![];
+    for coordinator_name in coordinator_set {
+        let (coordinator_keypair, coordinator_cert) = create_coordinator_cert(&coordinator_name)?;
 
-    // write all core keypairs and certificates to disk
-    for (core_id, (core_keypair, core_cert)) in core_certs.iter() {
         write_certs_and_keys(
-            args.dir.as_str(),
-            format!("{}-core-{}", coordinator_name, core_id).as_str(),
-            core_cert,
-            core_keypair,
+            &args.output_dir,
+            &coordinator_name,
+            &coordinator_cert,
+            &coordinator_keypair,
+            args.output_file_type,
         )?;
+
+        let core_certs = create_core_certs(
+            &coordinator_name,
+            args.num_cores,
+            &coordinator_keypair,
+            &coordinator_cert,
+        )?;
+
+        // write all core keypairs and certificates to disk
+        for (core_id, (core_keypair, core_cert)) in core_certs.iter() {
+            write_certs_and_keys(
+                &args.output_dir,
+                format!("{}-core{}", coordinator_name, core_id).as_str(),
+                core_cert,
+                core_keypair,
+                args.output_file_type,
+            )?;
+        }
+
+        all_certs.push(coordinator_cert);
+    }
+
+    // write the combined coordinator certificate
+    match args.output_file_type {
+        CertFileType::Der => {
+            let cert_dir = args.output_dir.join("cert_combined.der");
+            let buf: Vec<u8> = all_certs
+                .into_iter()
+                .flat_map(|cert| cert.der().to_vec())
+                .collect();
+            write_bytes(&cert_dir, buf)?;
+        }
+        CertFileType::Pem => {
+            let cert_dir = args.output_dir.join("cert_combined.pem");
+            let buf: Vec<u8> = all_certs
+                .into_iter()
+                .flat_map(|cert| cert.pem().as_bytes().to_vec())
+                .collect();
+            write_bytes(&cert_dir, buf)?;
+        }
     }
 
     Ok(())

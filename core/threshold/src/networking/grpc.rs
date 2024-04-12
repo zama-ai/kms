@@ -10,6 +10,7 @@ use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
 use super::constants::{MESSAGE_LIMIT, NETWORK_TIMEOUT_LONG};
 use crate::computation::SessionId;
+use crate::conf::party::CertificatePaths;
 use crate::conf::telemetry::ContextPropagator;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::{Identity, RoleAssignment};
@@ -26,13 +27,14 @@ use std::time::Duration;
 use tokio::time::Instant;
 use tonic::codegen::http::Uri;
 use tonic::service::interceptor::InterceptedService;
-use tonic::transport::Channel;
+use tonic::transport::{Channel, ClientTlsConfig};
 
 #[derive(Debug, Clone)]
 pub struct GrpcNetworkingManager {
     channels: Arc<Channels>,
     message_queues: Arc<MessageQueueStores>,
     owner: Identity,
+    cert_bundle: Arc<Option<CertificatePaths>>,
 }
 
 pub type GrpcServer = GnetworkingServer<NetworkingImpl>;
@@ -46,15 +48,16 @@ impl GrpcNetworkingManager {
         .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
 
-    pub fn without_tls(owner: Identity) -> Self {
+    pub fn new(owner: Identity, cert_bundle: Option<CertificatePaths>) -> Self {
         GrpcNetworkingManager {
             channels: Default::default(),
             message_queues: Default::default(),
             owner,
+            cert_bundle: Arc::new(cert_bundle),
         }
     }
 
-    pub fn new_session(
+    pub fn make_session(
         &self,
         session_id: SessionId,
         roles: RoleAssignment,
@@ -73,6 +76,7 @@ impl GrpcNetworkingManager {
             network_round: Arc::new(Mutex::new(0)),
             owner: self.owner.clone(),
             init_time: OnceLock::new(),
+            cert_bundle: self.cert_bundle.clone(),
         })
     }
 }
@@ -84,6 +88,7 @@ pub struct GrpcNetworking {
     network_round: Arc<Mutex<usize>>,
     owner: Identity,
     init_time: OnceLock<Instant>,
+    cert_bundle: Arc<Option<CertificatePaths>>,
 }
 
 impl GrpcNetworking {
@@ -92,14 +97,39 @@ impl GrpcNetworking {
             .channels
             .entry(receiver.clone())
             .or_try_insert_with(|| {
-                tracing::debug!("Creating channel to '{}'", receiver);
-                let endpoint: Uri = format!("http://{}", receiver).parse().map_err(|_e| {
+                let proto = match *self.cert_bundle {
+                    Some(_) => "https",
+                    None => "http",
+                };
+                tracing::debug!("Creating {} channel to '{}'", proto, receiver);
+                let endpoint: Uri = format!("{}://{}", proto, receiver).parse().map_err(|_e| {
                     anyhow_error_and_log(format!(
                         "failed to parse identity as endpoint: {:?}",
                         receiver
                     ))
                 })?;
-                let channel = Channel::builder(endpoint).timeout(*NETWORK_TIMEOUT_LONG);
+                let channel = match *self.cert_bundle {
+                    Some(ref cert_bundle) => {
+                        let host_port: Vec<_> = receiver.0.split(':').collect();
+                        if host_port.len() != 2 {
+                            return Err(anyhow_error_and_log(format!(
+                                "wrong receiver format: {:?}",
+                                receiver
+                            )));
+                        }
+                        let tls_config = ClientTlsConfig::new()
+                            // TODO when we run our network in production the correct
+                            // domain_name needs to be selected somehow
+                            // .domain_name(host_port[0])
+                            .domain_name("localhost")
+                            .ca_certificate(cert_bundle.get_flattened_ca_list()?)
+                            .identity(cert_bundle.get_identity()?);
+                        Channel::builder(endpoint)
+                            .tls_config(tls_config)?
+                            .timeout(*NETWORK_TIMEOUT_LONG)
+                    }
+                    None => Channel::builder(endpoint).timeout(*NETWORK_TIMEOUT_LONG),
+                };
                 Ok::<Channel, anyhow::Error>(channel.connect_lazy())
             })?
             .clone(); // cloning channels is cheap per tonic documentation
@@ -138,10 +168,10 @@ impl Networking for GrpcNetworking {
                 round_counter: ctr,
             };
 
-            let bytes = bincode::serialize(&tagged_value)
+            let tag = bincode::serialize(&tagged_value)
                 .map_err(|e| anyhow_error_and_log(format!("networking error: {:?}", e)))?;
             let request = SendValueRequest {
-                tag: bytes,
+                tag,
                 value: value.clone(),
             };
             let mut client = self.new_client(receiver)?;
@@ -283,6 +313,7 @@ impl Gnetworking for NetworkingImpl {
         let tls_sender = extract_sender(&request)
             .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e))?
             .map(Identity::from);
+        tracing::info!("extract_sender returned {:?}", tls_sender);
 
         let request = request.into_inner();
         let tag = bincode::deserialize::<Tag>(&request.tag).map_err(|_e| {
@@ -290,7 +321,16 @@ impl Gnetworking for NetworkingImpl {
         })?;
 
         if let Some(sender) = tls_sender {
-            if tag.sender != sender {
+            // tag.sender may have the form hostname:port
+            // we remove the port component since the tls_sender does not have it
+            let host_port: Vec<_> = tag.sender.0.split(':').collect();
+            if host_port.len() != 2 {
+                return Err(tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("wrong sender tag: {:?}", tag.sender,),
+                ));
+            }
+            if host_port[0] != sender.0 {
                 return Err(tonic::Status::new(
                     tonic::Code::Unauthenticated,
                     format!(
@@ -350,16 +390,43 @@ fn extract_sender<T>(request: &tonic::Request<T>) -> Result<Option<String>, Stri
                     format!("failed to parse X509 certificate: {:?}", err.to_string())
                 })?;
 
-            let cns: Vec<_> = cert
+            // we find the common name of the issuer
+            // since we treat the certificate authority (issuer) as the identity
+            // at the moment it's written as p1:50000, but this is not a typical CN
+            let coordinator_cns: Vec<_> = cert
+                .issuer()
+                .iter_common_name()
+                .map(|attr| attr.as_str().map_err(|err| err.to_string()))
+                .collect::<Result<_, _>>()?;
+
+            // we also need to check the CN of the certificate itself and verify
+            // that is contains the right format. this is to prevent a malicious
+            // coordinator from signing a core that it down not own.
+            let core_cns: Vec<_> = cert
                 .subject()
                 .iter_common_name()
                 .map(|attr| attr.as_str().map_err(|err| err.to_string()))
                 .collect::<Result<_, _>>()?;
 
-            if let Some(cn) = cns.first() {
-                Ok(Some(cn.to_string()))
-            } else {
-                Err("certificate common name was empty".to_string())
+            match (coordinator_cns.first(), core_cns.first()) {
+                (Some(coordinator_cn), Some(core_cn)) => {
+                    let issuer_cn = coordinator_cn.to_string();
+                    // core_cn should have the format <core_name>.<coordinator_name>
+                    // and the <coordinator_name> component should match issuer_cn
+                    let subject_cn = core_cn.to_string();
+                    let v: Vec<_> = subject_cn.split('.').collect();
+                    if v.len() < 2 {
+                        return Err(format!("core CN has the wrong format: {:?}", v));
+                    }
+                    if v[1] != issuer_cn {
+                        return Err(format!(
+                            "core CN ({}) does not match subject CN ({})",
+                            v[1], issuer_cn
+                        ));
+                    }
+                    Ok(Some(issuer_cn))
+                }
+                _ => Err("certificate common name was empty".to_string()),
             }
         }
     }

@@ -32,6 +32,42 @@ pub struct PartyConf {
     protocol: Protocol,
     pub tracing: Option<Tracing>,
     pub redis: Option<RedisConf>,
+    pub certpaths: Option<CertificatePaths>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct CertificatePaths {
+    /// My certificate
+    pub cert: String,
+    /// My signing key
+    pub key: String,
+    /// A list of CA paths is a string delimited by commas,
+    /// like "path/to/ca1.pem,path/to/ca2.pem,path/to/ca3.pem,"
+    /// this is a consequence of using the config crate
+    /// when the [calist] is populated using an environment
+    /// variable
+    pub calist: String,
+}
+
+impl CertificatePaths {
+    pub fn get_identity(&self) -> anyhow::Result<tonic::transport::Identity> {
+        let cert = std::fs::read_to_string(&self.cert)?;
+        let key = std::fs::read_to_string(&self.key)?;
+        Ok(tonic::transport::Identity::from_pem(cert, key))
+    }
+
+    pub fn get_flattened_ca_list(&self) -> anyhow::Result<tonic::transport::Certificate> {
+        let client_ca_cert_buf = {
+            let list = self
+                .calist
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(std::fs::read_to_string)
+                .collect::<Result<Vec<_>, _>>()?;
+            list.join("")
+        };
+        Ok(tonic::transport::Certificate::from_pem(client_ca_cert_buf))
+    }
 }
 
 /// This is an example of the configuration file using `PartyConf` struct.
@@ -142,5 +178,21 @@ mod tests {
             .build()
             .init_conf::<PartyConf>();
         assert!(r.is_err());
+    }
+
+    #[test]
+    fn test_party_conf_with_env() {
+        use std::env;
+        env::set_var("DDEC_CERTPATHS_CERT", "/app/ddec/certs/core-1-1.pem");
+        env::set_var("DDEC_CERTPATHS_KEY", "/app/ddec/certs/core-1-1.key");
+        env::set_var("DDEC_CERTPATHS_CALIST", "app/ddec/certs/ca1.pem,/app/ddec/certs/ca2.pem,/app/ddec/certs/ca3.pem,/app/ddec/certs/ca4.pem");
+        let party_conf: PartyConf = Settings::builder()
+            .path("src/tests/config/ddec_test")
+            .build()
+            .init_conf()
+            .unwrap();
+
+        let bundle = party_conf.certpaths.unwrap();
+        assert_eq!(bundle.cert, "/app/ddec/certs/core-1-1.pem");
     }
 }

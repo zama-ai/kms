@@ -38,6 +38,10 @@ echo ""
 echo ""
 '''
 
+[tasks.gen-test-certs]
+command = "cargo"
+args = ["run", "--manifest-path=../../coordinator/Cargo.toml", "--release", "--bin", "kms-gen-tls-certs", "--", "--coordinator-prefix", "p", "--coordinator-count", "${NUM_PARTIES}", "-n", "1", "-o", "test_certs"]
+
 [tasks.choreo-with-dkg]
 condition = { env_set = ["DKG_PARAMS", "NUM_SESSIONS_PREPROC"] }
 command = "cargo"
@@ -77,7 +81,7 @@ run_task = { name = ["choreo"] }
 
 [tasks.gen-local-choreo]
 command = "cargo"
-args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-m", "${PROTOCOL}", "-o", "local-cluster", "-e", "${NUM_MESSAGES}", "experiment"]
+args = ["run", "--bin", "gen-experiment", "--release", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-m", "${PROTOCOL}", "-o", "local-cluster", "-e", "${NUM_MESSAGES}", "experiment"]
 
 [tasks.local-choreo-init]
 env = { "CHOREO_COMMAND" = "init", EXPERIMENT_NAME = "local-cluster" }
@@ -96,7 +100,7 @@ dependencies = ["gen-local-choreo"]
 
 [tasks.gen-local-choreo-dkg]
 command = "cargo"
-args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-m", "0", "-o", "local-cluster", "-e", "0", "experiment"]
+args = ["run", "--bin", "gen-experiment", "--release", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-m", "0", "-o", "local-cluster", "-e", "0", "experiment"]
 
 [tasks.local-choreo-preprocessing]
 env = { "CHOREO_COMMAND" = "preprocessing", "DKG_PARAMS" = "${DKG_PARAMS}", "NUM_SESSIONS_PREPROC" = "${NUM_SESSIONS_PREPROC}", EXPERIMENT_NAME = "local-cluster" }
@@ -116,7 +120,7 @@ args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}",
 
 [tasks.gen-local-cluster]
 command = "cargo"
-args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-o", "local-cluster", "-f", "temp", "cluster"]
+args = ["run", "--bin", "gen-experiment", "--release", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-o", "local-cluster", "-f", "temp", "cluster"]
 
 [tasks.run-local-cluster]
 command = "docker"

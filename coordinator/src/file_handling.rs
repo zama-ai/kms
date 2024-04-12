@@ -2,6 +2,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::path::Path;
 
+// TODO: consider using PathBuf for file_path for all the functions in this file
 // TODO remove this file and use ddec instead or vice versa
 pub fn write_as_json<T: serde::Serialize>(file_path: String, to_store: &T) -> anyhow::Result<()> {
     let json_data = serde_json::to_string(&to_store)?;
@@ -32,8 +33,11 @@ pub fn write_element<T: serde::Serialize>(file_path: String, element: &T) -> any
     Ok(())
 }
 
-pub fn write_bytes<B: AsRef<[u8]>>(file_path: String, bytes: B) -> anyhow::Result<()> {
-    let path = Path::new(&file_path);
+pub fn write_bytes<S: AsRef<std::ffi::OsStr> + ?Sized, B: AsRef<[u8]>>(
+    file_path: &S,
+    bytes: B,
+) -> anyhow::Result<()> {
+    let path = Path::new(file_path);
     // Create the parent directories of the file path if they don't exist
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?

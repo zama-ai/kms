@@ -5,7 +5,7 @@ use crate::execution::online::preprocessing::{create_memory_factory, create_redi
 use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::networking::constants::NETWORK_TIMEOUT_LONG;
 use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer};
-use tonic::transport::Server;
+use tonic::transport::{Server, ServerTlsConfig};
 use tower_http::trace::TraceLayer;
 
 pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>> {
@@ -23,7 +23,7 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
 
     let own_identity: Identity = settings.protocol().host().into();
 
-    let networking = GrpcNetworkingManager::without_tls(own_identity.clone());
+    let networking = GrpcNetworkingManager::new(own_identity.clone(), settings.certpaths.clone());
     let networking_server = networking.new_server();
 
     let factory = match &settings.redis {
@@ -33,12 +33,25 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
 
     let choreography = GrpcChoreography::new(
         own_identity,
-        Box::new(move |session_id, roles| networking.new_session(session_id, roles)),
+        Box::new(move |session_id, roles| networking.make_session(session_id, roles)),
         factory,
     )
     .into_server();
 
-    let server = Server::builder().timeout(*NETWORK_TIMEOUT_LONG);
+    let server = match &settings.certpaths {
+        Some(cert_bundle) => {
+            let identity = cert_bundle.get_identity()?;
+            let ca_cert = cert_bundle.get_flattened_ca_list()?;
+            let tls_config = ServerTlsConfig::new()
+                .identity(identity)
+                .client_ca_root(ca_cert);
+            Server::builder()
+                .tls_config(tls_config)?
+                .timeout(*NETWORK_TIMEOUT_LONG)
+        }
+        None => Server::builder().timeout(*NETWORK_TIMEOUT_LONG),
+    };
+
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter.set_serving::<GrpcServer>().await;
 

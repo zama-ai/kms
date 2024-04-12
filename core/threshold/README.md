@@ -35,7 +35,10 @@ In order to build docker image locally you should have `ssh-agent` running and w
 1. Run `ssh-agent`
 
 ```bash
+# if you're using C-shell commands
 > eval $(ssh-agent -c)
+# if you're using Bourne shell commands
+> eval $(ssh-agent -s)
 ```
 
 2. Add your key to the authentication agent. Lets supposed that your private key is under `~/.ssh/my_key`

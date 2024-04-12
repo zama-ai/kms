@@ -17,6 +17,7 @@ pub struct ChoreoParty {
     pub logical_port: u16,
     pub physical_port: u16,
     pub id: usize,
+    pub use_tls: bool,
 }
 
 impl From<&ChoreoParty> for Role {
@@ -34,9 +35,13 @@ impl From<&ChoreoParty> for Identity {
 impl TryFrom<&ChoreoParty> for Uri {
     type Error = anyhow::Error;
     fn try_from(party: &ChoreoParty) -> Result<Uri, Self::Error> {
-        let uri: Uri = format!("http://{}:{}", party.physical_address, party.physical_port)
-            .parse()
-            .map_err(|e| anyhow::anyhow!("Error on parsing uri {}", e))?;
+        let proto = if party.use_tls { "https" } else { "http" };
+        let uri: Uri = format!(
+            "{}://{}:{}",
+            proto, party.physical_address, party.physical_port
+        )
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Error on parsing uri {}", e))?;
         Ok(uri)
     }
 }
@@ -83,6 +88,10 @@ pub struct ChoreoConf {
     epoch_id: Option<usize>,
     pub witness_dim: Option<u32>,
     pub tracing: Option<Tracing>,
+
+    pub cert_file: Option<String>,
+    pub key_file: Option<String>,
+    pub ca_file: Option<String>,
 }
 
 impl ChoreoConf {

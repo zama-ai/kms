@@ -18,6 +18,7 @@ use rand::{distributions::Uniform, Rng};
 use std::sync::Arc;
 use tfhe::{prelude::FheEncrypt, FheUint8};
 use tokio::task::JoinSet;
+use tonic::transport::ClientTlsConfig;
 
 #[derive(Parser, Debug)]
 #[clap(name = "mobygo")]
@@ -301,11 +302,31 @@ async fn collect_results(
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
 
-    let tls_config = None;
     let conf: ChoreoConf = Settings::builder()
         .path(&args.conf_file)
         .build()
         .init_conf()?;
+
+    let tls_config = match (&conf.cert_file, &conf.key_file, &conf.ca_file) {
+        (Some(cert), Some(key), Some(ca)) => {
+            let client_cert = std::fs::read_to_string(cert)?;
+            let client_key = std::fs::read_to_string(key)?;
+            let client_identity = tonic::transport::Identity::from_pem(client_cert, client_key);
+
+            let server_root_ca_cert = std::fs::read_to_string(ca)?;
+            let server_root_ca_cert = tonic::transport::Certificate::from_pem(server_root_ca_cert);
+
+            // we use local host since the choreographer should always communicate
+            // to the ddec/core locally
+            Some(
+                ClientTlsConfig::new()
+                    .domain_name("localhost")
+                    .ca_certificate(server_root_ca_cert)
+                    .identity(client_identity),
+            )
+        }
+        _ => None,
+    };
 
     init_tracing(conf.tracing.clone())?;
 

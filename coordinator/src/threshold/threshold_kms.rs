@@ -177,7 +177,8 @@ impl ThresholdKms {
             "Could not find my own identity".to_string(),
         )?;
 
-        let networking_manager = GrpcNetworkingManager::without_tls(own_identity.to_owned());
+        // TODO setup TLS
+        let networking_manager = GrpcNetworkingManager::new(own_identity.to_owned(), None);
         let networking_server = networking_manager.new_server();
         let port = base_port + PORT_JUMP + (my_id as u16);
         let mut server = Server::builder();
@@ -194,7 +195,7 @@ impl ThresholdKms {
         });
 
         let networking_strategy: NetworkingStrategy =
-            Box::new(move |session_id, roles| networking_manager.new_session(session_id, roles));
+            Box::new(move |session_id, roles| networking_manager.make_session(session_id, roles));
         let base_kms = BaseKmsStruct::new(keys.sig_sk);
         Ok(ThresholdKms {
             fhe_keys: keys.fhe_keys,

@@ -34,12 +34,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let own_identity = Identity::from(opt.identity);
 
-    let networking = GrpcNetworkingManager::without_tls(own_identity.clone());
+    let networking = GrpcNetworkingManager::new(own_identity.clone(), None);
 
     let networking_server = networking.new_server();
     let choreography = GrpcChoreography::new(
         own_identity,
-        Box::new(move |session_id, roles| networking.new_session(session_id, roles)),
+        Box::new(move |session_id, roles| networking.make_session(session_id, roles)),
         create_memory_factory(),
     );
 

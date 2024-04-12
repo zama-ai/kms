@@ -5,11 +5,14 @@ decrypt_mode = "{{ decrypt_mode }}"
 number_messages = {{ number_messages }}
 witness_dim = {{ witness_dim }}
 epoch_id = {{ epoch_id }}
+cert_file = "test_certs/cert_p1-core1.pem"
+key_file = "test_certs/key_p1-core1.pem"
+ca_file = "test_certs/cert_combined.pem"
 
 [threshold_topology]
 threshold = {{ threshold }}
 peers = [
     {% for i in range(n_parties) %}
-    { physical_address = "localhost", physical_port = {{ 50000 + i + 1 }}, logical_address = "p{{ i+1 }}", logical_port = 50000 , id = {{ i+1 }} },
+    { physical_address = "localhost", physical_port = {{ 50000 + i + 1 }}, logical_address = "p{{ i+1 }}", logical_port = 50000, id = {{ i+1 }}, use_tls = true },
     {% endfor %}
 ]
