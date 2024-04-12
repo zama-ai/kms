@@ -35,6 +35,7 @@ use std::sync::RwLock;
 use super::crt::from_crt;
 use super::crt::to_crt;
 use super::crt::LevelKswCrtRepresentation;
+use super::gen_bits_odd::LargestPrimeFactor;
 
 /// Basic moduli trait for data mod Q, to avoid code duplication.
 pub trait CryptoModulus {
@@ -680,9 +681,17 @@ impl PRSSConversions for LevelKsw {
         }
     }
 
-    //No need to implement it, we never call PRSS-MASK for this ring
-    fn from_i128(_value: i128) -> Self {
-        unimplemented!()
+    fn from_i128(value: i128) -> Self {
+        let res = Self {
+            value: GenericModulus(
+                U1536::from_u128(value.unsigned_abs()).rem(Self::MODULUS.as_nz_ref()),
+            ),
+        };
+        if value < 0 {
+            res.neg()
+        } else {
+            res
+        }
     }
 }
 
@@ -695,6 +704,89 @@ impl Invert for LevelKsw {
             Ok(Self {
                 value: GenericModulus(inverse.unwrap()),
             })
+        }
+    }
+}
+
+impl LevelR {
+    fn pow(&self, exp: Self) -> Self {
+        let mut res = Self::ONE;
+        let mut x = *self;
+        let mut exp = exp;
+
+        while exp != Self::ZERO {
+            //If odd, multiply x to result
+            if exp.value.0.bit_vartime(0) {
+                res *= x;
+            }
+            exp.value.0 = exp.value.0.shr_vartime(1);
+            x *= x;
+        }
+        res
+    }
+}
+
+impl LargestPrimeFactor for LevelKsw {
+    fn mod_largest_prime(v: &Self) -> Self {
+        let modulus_r: U1536 = LevelR::MODULUS.as_ref().into();
+        Self {
+            value: GenericModulus(v.value.0.rem(&NonZero::new(modulus_r).unwrap())),
+        }
+    }
+
+    fn largest_prime_factor_non_zero(v: &Self) -> bool {
+        let v_mod_largest_prime = Self::mod_largest_prime(v);
+        v_mod_largest_prime != Self::ZERO
+    }
+
+    /// Projects a [`LevelKsw`] value onto the field defined by its largest prime factor [`LevelR::MODULUS`],
+    /// and computes its square root.
+    ///
+    ///
+    /// Uses the Tonelli-Shanks algorithm, which requires:
+    /// - factoring [`LevelR::MODULUS`] - 1 as 2^S * Q with Q odd
+    /// - finding a quadratic non-residue in the field defined by [`LevelR::MODULUS`]
+    ///
+    /// We can thus precomputes some values that are defined as constants:
+    /// - ODD_DIV: corresponds to the Q in the factorisation above
+    /// - ODD_DIV_PLUS_ONE_DIV_TWO: corresponds to (Q+1)/2
+    /// - POW_2: corresponds to the S in the factorisation above
+    /// - QUADRATIC_NON_RESIDUE_TO_ODD_DIV: corresponds to the quadratic non-residue above to the power Q
+    fn largest_prime_factor_sqrt(v: &Self) -> Self {
+        const ODD_DIV : LevelR = LevelR { value: GenericModulus(U768::from_be_hex("000000000400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000410041"))};
+        const ODD_DIV_PLUS_ONE_DIV_TWO : LevelR = LevelR {value: GenericModulus(U768::from_be_hex("000000000200020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000208021"))};
+        const POW_2: u128 = 20_u128;
+        const QUADRATIC_NON_RESIDUE_TO_ODD_DIV : LevelR = LevelR { value: GenericModulus(U768::from_be_hex("0000105c75debd864037c4f1ba8b2d2e21d7e3d8224ab7c071abadc877ad6bde72f1f8a2cd25977401003d79cfd90037baf12d66f3397bc561ff3b3adc0f7b28f0631da440e70c5388dae2f79f320cb0c86af07d2a80af6cc36c3d6fd9bea121"))};
+
+        let modulus_r: U1536 = LevelR::MODULUS.as_ref().into();
+        let value_level_r = LevelR {
+            value: GenericModulus((&v.value.0.rem(&NonZero::new(modulus_r).unwrap())).into()),
+        };
+
+        let mut m = POW_2;
+        let mut c = QUADRATIC_NON_RESIDUE_TO_ODD_DIV;
+        let mut t = value_level_r.pow(ODD_DIV);
+        let mut r = value_level_r.pow(ODD_DIV_PLUS_ONE_DIV_TWO);
+        while t != LevelR::ONE {
+            let i = {
+                let mut i = 1;
+                while t.pow(LevelR::from_u128(1 << i)) != LevelR::ONE {
+                    i += 1;
+                }
+                assert!(i < m);
+                i
+            };
+
+            let b = c.pow(LevelR::from_u128(1 << (m - i - 1)));
+            c = b * b;
+            t *= c;
+            r *= b;
+            m = i;
+            assert!(t != LevelR::ZERO);
+        }
+
+        Self {
+            value: GenericModulus((&r.value.0).into()),
         }
     }
 }
@@ -728,8 +820,15 @@ impl PRSSConversions for LevelOne {
     }
 
     fn from_i128(value: i128) -> Self {
-        Self {
-            value: GenericModulus(U128::from_u128(value as u128).rem(Self::MODULUS.as_nz_ref())),
+        let res = Self {
+            value: GenericModulus(
+                U128::from_u128(value.unsigned_abs()).rem(Self::MODULUS.as_nz_ref()),
+            ),
+        };
+        if value < 0 {
+            res.neg()
+        } else {
+            res
         }
     }
 }
@@ -1180,5 +1279,19 @@ mod tests {
             let r = ss_r.reconstruct(threshold as usize);
             assert!(r.is_ok());
         }
+    }
+
+    #[test]
+    fn test_pow_level_r() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let exp = 1238501;
+        let x = LevelR::sample(&mut rng);
+        let x_pow = x.pow(LevelR::from_u128(exp));
+
+        let mut res = LevelR::ONE;
+        for _ in 0..exp {
+            res *= x;
+        }
+        assert_eq!(res, x_pow);
     }
 }

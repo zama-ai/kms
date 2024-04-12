@@ -1,6 +1,7 @@
 use super::preprocessing::BitPreprocessing;
 use crate::{
     algebra::structure_traits::Ring,
+    error::error_handler::anyhow_error_and_log,
     execution::{sharing::share::Share, tfhe_internals::parameters::TUniformBound},
 };
 
@@ -13,6 +14,11 @@ pub trait SecretDistributions {
     where
         Z: Ring,
         P: BitPreprocessing<Z> + Send + ?Sized;
+
+    fn newhope<Z, P>(n: usize, bound: usize, preproc: &mut P) -> anyhow::Result<Vec<Share<Z>>>
+    where
+        Z: Ring,
+        P: BitPreprocessing<Z>;
 }
 
 /// Structures to execute the Secret Shared Distributions as described in Fig. 70 of NIST document.
@@ -46,6 +52,33 @@ impl SecretDistributions for RealSecretDistributions {
         }
         Ok(res)
     }
+
+    fn newhope<Z, P>(n: usize, bound: usize, preproc: &mut P) -> anyhow::Result<Vec<Share<Z>>>
+    where
+        Z: Ring,
+        P: BitPreprocessing<Z>,
+    {
+        let mut b = preproc.next_bit_vec(2 * n * bound)?;
+        let mut res = Vec::with_capacity(n);
+
+        for _ in 1..=n {
+            let mut e = b
+                .pop()
+                .ok_or_else(|| anyhow_error_and_log("not enough bits in newhope"))?
+                - b.pop()
+                    .ok_or_else(|| anyhow_error_and_log("not enough bits in newhope"))?;
+            for _ in 1..bound {
+                e += b
+                    .pop()
+                    .ok_or_else(|| anyhow_error_and_log("not enough bits in newhope"))?
+                    - b.pop()
+                        .ok_or_else(|| anyhow_error_and_log("not enough bits in newhope"))?;
+            }
+            res.push(e);
+        }
+
+        Ok(res)
+    }
 }
 
 #[cfg(test)]
@@ -55,12 +88,43 @@ mod tests {
         algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
         execution::{
             online::{preprocessing::dummy::DummyPreprocessing, triple::open_list},
-            runtime::session::{LargeSession, ParameterHandles},
+            runtime::session::{LargeSession, ParameterHandles, SmallSession},
         },
-        tests::helper::tests_and_benches::execute_protocol_large,
+        tests::helper::tests_and_benches::{execute_protocol_large, execute_protocol_small},
     };
 
     use super::{RealSecretDistributions, SecretDistributions, TUniformBound};
+
+    #[test]
+    fn test_newhope() {
+        let parties = 5;
+        let threshold = 1;
+        let bound = 10; //NewHope(B) gives range [-10,10] with mean 0 and std deviation sqrt(5)
+        let batch = 100;
+
+        let mut task = |session: SmallSession<ResiduePoly64>| async move {
+            let mut preproc = DummyPreprocessing::<ResiduePoly64, _, _>::new(0, session.clone());
+
+            let res_vec = RealSecretDistributions::newhope(batch, bound, &mut preproc).unwrap();
+
+            open_list(&res_vec, &session).await.unwrap()
+        };
+
+        let results = execute_protocol_small(parties, threshold, None, &mut task);
+
+        //Ensure all values fall within bound
+        let ref_res = results.first().unwrap();
+        for v in ref_res {
+            let r = v.to_scalar().unwrap();
+            let centered_r = if r + r > r {
+                r.0 as i64
+            } else {
+                let tmp = u64::MAX - r.0;
+                -(tmp as i64 + 1)
+            };
+            assert!(centered_r >= -(bound as i64) && centered_r <= bound as i64);
+        }
+    }
 
     // TODO these two test could be merged into a generic test and then just calles with Z64 and Z128 respectively.
     #[test]

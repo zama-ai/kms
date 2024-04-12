@@ -157,7 +157,7 @@ where
                     // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points
                     let f_a = set.f_a_points[party_id - 1];
 
-                    // we can treat the signed phi value as unsigned here. This conversion will handle negative values correctly and as expected.
+                    //Leave it to the Ring's implementation to deal with negative values
                     res += f_a * Z::from_i128(phi);
                 } else {
                     return Err(anyhow_error_and_log(
