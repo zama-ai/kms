@@ -9,3 +9,6 @@
 *.eif
 .crates.toml
 .crates2.json
+*terraform.lock.hcl
+*terraform.tfstate
+*tool-versions

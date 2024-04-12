@@ -8,7 +8,7 @@ on:
         default: './'
       image_name:
         type: string
-        required: true
+        required: false
       image_eif:
         type: string
         required: false
@@ -17,12 +17,15 @@ on:
         type: string
         required: false
         default: ''
+      namespace:
+        type: string
+        required: false
+        default: ''
     secrets:
       AWS_ACCESS_KEY_ID_TERRAFORM:
         required: true
       AWS_SECRET_ACCESS_KEY_TERRAFORM:
         required: true
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -42,12 +45,18 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_TERRAFORM }}
           aws-region: eu-west-3
 
+      - name: Check namespace if set
+        if: inputs.namespace != ''
+        run: |
+          echo "NAMESPACE=${{ inputs.namespace }}" >> $GITHUB_ENV
+
       - name: Current branch sha
-        if: github.event_name != 'release'
+        if: inputs.namespace == '' && github.event_name != 'release'
         run: |
           echo "NAMESPACE=dev" >> $GITHUB_ENV
+      
       - name: Current Tag
-        if: github.event_name == 'release'
+        if: inputs.namespace == '' && github.event_name == 'release'
         run: |
           echo "NAMESPACE=prod" >> $GITHUB_ENV
 
