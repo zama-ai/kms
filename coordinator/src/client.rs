@@ -110,6 +110,70 @@ pub struct TestingReencryptionTranscript {
     agg_resp: HashMap<u32, ReencryptionResponse>,
 }
 
+/// This module is dedicated to making an re-encryption request
+/// and reconstruction of the re-encryption results on a web client
+/// in JavaScript.
+///
+/// We do not provide a specific method to create the re-encryption
+/// request, it needs to be created manually by filling the fields
+/// in [[ReencryptionRequest]].
+/// This is because this request needs to be signed by the client's
+/// signing key which is not available in the web client.
+/// But it is typically stored in a wallet
+/// (web extension or hardware wallet).
+///
+/// Development notes:
+/// The JavaScript API is created from compiling
+/// a part of the client code (along with other dependencies)
+/// into wasm and then using wasm-pack to generate the JS bindings.
+/// Care must be taken when new code is introduced to the coordinator
+/// or core/threshold since wasm does not support every feature
+/// that Rust supports. Specifically, for our use-case, we will not
+/// try to compile async, multi-threaded or IO code.
+///
+/// If there is no need for a block to be used in wasm,
+/// then we suggest to tag it with the "non-wasm" feature.
+/// If a dependency does not need to be compiled to wasm,
+/// then mark it as optional and place it under the list
+/// of dependencies for feature "non-wasm".
+///
+/// Generating the JavaScript binding introduces another layer
+/// of limitations on the Rust side. For example, HashMap,
+/// HashSet, Option on custom types, tuple,
+/// u128, anyhow::Result, and so on.
+///
+/// Testing:
+/// Due to the way re-encryption is designed,
+/// we cannot test everything directly in JS.
+/// The strategy we use is to run Rust tests to
+/// generate a transcript, and then load it into
+/// the JS test (tests/js/test.js) to run the
+/// actual tests.
+/// The steps below must be followed for the JS tests to work.
+///
+/// 1. Install wasm-pack and node (version 20)
+/// the preferred way is to use nvm (which is on homebrew)
+/// and the node version must be 20
+/// ```
+/// cargo install wasm-pack
+/// nvm install 20
+/// ```
+///
+/// 2. Build with wasm_tests feature
+/// ```
+/// wasm-pack build --target nodejs . --no-default-features -F wasm_tests
+/// ```
+///
+/// 3. Generate the transcript
+/// ```
+/// cargo test test_reencryption_threshold_and_write_transcript -F wasm_tests --release
+/// cargo test test_reencryption_centralized_and_write_transcript -F wasm_tests --release
+/// ```
+///
+/// 4. Run the JS test
+/// ```
+/// node --test tests/js
+/// ```
 #[cfg(not(feature = "non-wasm"))]
 pub mod js_api {
     use crypto_box::{
