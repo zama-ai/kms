@@ -1436,7 +1436,8 @@ dependencies = [
 [[package]]
 name = "concrete-csprng"
 version = "0.4.0"
-source = "git+ssh://git@github.com/zama-ai/tfhe-rs.git?rev=55f666d#55f666d3233f13bc7cab42c5093d0c724acb4758"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c7080e711c39c3dda834604f7c31f4634a38b8dddeb9f24db5d7801751415ad"
 dependencies = [
  "aes",
  "libc",
@@ -2231,6 +2232,7 @@ dependencies = [
  "strum_macros",
  "test-log",
  "tfhe",
+ "tfhe-zk-pok",
  "tokio",
  "toml 0.8.12",
  "tonic 0.10.2",
@@ -2245,7 +2247,6 @@ dependencies = [
  "typed-builder",
  "x509-parser",
  "zeroize",
- "zk-poc",
 ]
 
 [[package]]
@@ -3442,6 +3443,7 @@ dependencies = [
  "sha3",
  "signature 2.2.0",
  "tfhe",
+ "tfhe-zk-pok",
  "tokio",
  "tonic 0.10.2",
  "tonic-build",
@@ -3451,7 +3453,6 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "webpki",
- "zk-poc",
 ]
 
 [[package]]
@@ -6286,8 +6287,9 @@ dependencies = [
 
 [[package]]
 name = "tfhe"
-version = "0.6.0"
-source = "git+ssh://git@github.com/zama-ai/tfhe-rs.git?rev=55f666d#55f666d3233f13bc7cab42c5093d0c724acb4758"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7310535fac4a4e670f21255ffbc1b908f4ef0e4950a35ca5023975ba0071b9c5"
 dependencies = [
  "aligned-vec",
  "bincode",
@@ -6298,8 +6300,27 @@ dependencies = [
  "itertools 0.11.0",
  "paste",
  "pulp",
+ "rand_core 0.6.4",
  "rayon",
  "serde",
+]
+
+[[package]]
+name = "tfhe-zk-pok"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "295b61b0aa9740749c657ef4244e15d4dbca114cd61d835bc4ff540b2464b8c9"
+dependencies = [
+ "ark-bls12-381",
+ "ark-ec",
+ "ark-ff 0.4.2",
+ "ark-poly",
+ "ark-serialize 0.4.2",
+ "rand",
+ "rayon",
+ "serde",
+ "sha3",
+ "zeroize",
 ]
 
 [[package]]
@@ -7411,21 +7432,4 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.58",
-]
-
-[[package]]
-name = "zk-poc"
-version = "0.1.0"
-source = "git+ssh://git@github.com/zama-ai/zk-poc.git?rev=730a9dcfe90aea9af7665f13c4bcb13cd381fddc#730a9dcfe90aea9af7665f13c4bcb13cd381fddc"
-dependencies = [
- "ark-bls12-381",
- "ark-ec",
- "ark-ff 0.4.2",
- "ark-poly",
- "ark-serialize 0.4.2",
- "rand",
- "rayon",
- "serde",
- "sha3",
- "zeroize",
 ]

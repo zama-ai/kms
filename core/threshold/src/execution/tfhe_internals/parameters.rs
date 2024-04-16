@@ -11,7 +11,8 @@ use tfhe::{
             DecompositionBaseLog, DecompositionLevelCount, GlweDimension, LweDimension,
             PolynomialSize,
         },
-        CarryModulus, ClassicPBSParameters, EncryptionKeyChoice, MessageModulus, PBSOrder,
+        CarryModulus, ClassicPBSParameters, EncryptionKeyChoice, MaxNoiseLevel, MessageModulus,
+        PBSOrder,
     },
 };
 
@@ -507,8 +508,9 @@ impl DkgParamsAvailable {
     }
 }
 
-///Small-ish parameter set with 2 bit plaintext modulus
-///and 2 bit carry modulus and no Switch and Squash
+/// Small-ish parameter set with 2 bit plaintext modulus
+/// and 2 bit carry modulus and no Switch and Squash
+/// TODO update this parameter when we update our parameters to use the new set of keys involving FGLWE
 pub const PARAMS_P32_SMALL_NO_SNS: DKGParams = DKGParams::WithoutSnS(DKGParamsRegular {
     sec: 128,
     ciphertext_parameters: ClassicPBSParameters {
@@ -523,14 +525,17 @@ pub const PARAMS_P32_SMALL_NO_SNS: DKGParams = DKGParams::WithoutSnS(DKGParamsRe
         ks_level: DecompositionLevelCount(3),
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
+        max_noise_level: MaxNoiseLevel::from_msg_carry_modulus(MessageModulus(4), CarryModulus(4)),
+        log2_p_fail: -80.,
         ciphertext_modulus: CiphertextModulus::new_native(),
         encryption_key_choice: EncryptionKeyChoice::Small,
     },
     flag: true,
 });
 
-//Small-ish parameter set with 1 bit plaintext modulus
-//and 1 bit carry modulus and no Switch and Squash
+/// Small-ish parameter set with 1 bit plaintext modulus
+/// and 1 bit carry modulus and no Switch and Squash
+/// TODO update this parameter when we update our parameters to use the new set of keys involving FGLWE
 pub const PARAMS_P8_SMALL_NO_SNS: DKGParams = DKGParams::WithoutSnS(DKGParamsRegular {
     sec: 128,
     ciphertext_parameters: ClassicPBSParameters {
@@ -545,14 +550,16 @@ pub const PARAMS_P8_SMALL_NO_SNS: DKGParams = DKGParams::WithoutSnS(DKGParamsReg
         ks_level: DecompositionLevelCount(1),
         message_modulus: MessageModulus(2),
         carry_modulus: CarryModulus(2),
+        max_noise_level: MaxNoiseLevel::from_msg_carry_modulus(MessageModulus(2), CarryModulus(2)),
+        log2_p_fail: -80.,
         ciphertext_modulus: CiphertextModulus::new_native(),
         encryption_key_choice: EncryptionKeyChoice::Small,
     },
     flag: true,
 });
 
-///This parameter set somewhat match the ones in [`distributed_decryption::tests::test_data_setup::TEST_PARAMETERS`]
-///Used for testing BK_SNS generation and Switch and Squash
+/// This parameter set somewhat match the ones in [`distributed_decryption::tests::test_data_setup::TEST_PARAMETERS`]
+/// Used for testing BK_SNS generation and Switch and Squash
 pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: DKGParamsRegular {
         sec: 128,
@@ -568,6 +575,11 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
             ks_level: DecompositionLevelCount(4),
             message_modulus: MessageModulus(4),
             carry_modulus: CarryModulus(2),
+            max_noise_level: MaxNoiseLevel::from_msg_carry_modulus(
+                MessageModulus(4),
+                CarryModulus(2),
+            ),
+            log2_p_fail: -80., // dummy parameter
             ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Small,
         },
@@ -583,7 +595,8 @@ pub const PARAMS_TEST_BK_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     },
 });
 
-///This parameter set corresponds to P8 in NIST
+/// This parameter set corresponds to P8 in NIST
+/// TODO update this parameter when we update our parameters to use the new set of keys involving FGLWE
 pub const PARAMS_P8_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: DKGParamsRegular {
         sec: 128,
@@ -599,6 +612,11 @@ pub const PARAMS_P8_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
             ks_level: DecompositionLevelCount(2),
             message_modulus: MessageModulus(2),
             carry_modulus: CarryModulus(2),
+            max_noise_level: MaxNoiseLevel::from_msg_carry_modulus(
+                MessageModulus(2),
+                CarryModulus(2),
+            ),
+            log2_p_fail: -80.,
             ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Small,
         },
@@ -614,7 +632,8 @@ pub const PARAMS_P8_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     },
 });
 
-///This parameter set corresponds to P32 in NIST
+/// This parameter set corresponds to P32 in NIST
+/// TODO update this parameter when we update our parameters to use the new set of keys involving FGLWE
 pub const PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS {
     regular_params: DKGParamsRegular {
         sec: 128,
@@ -628,9 +647,14 @@ pub const PARAMS_P32_REAL_WITH_SNS: DKGParams = DKGParams::WithSnS(DKGParamsSnS 
             pbs_level: DecompositionLevelCount(1),
             ks_base_log: DecompositionBaseLog(6),
             ks_level: DecompositionLevelCount(3),
-            ciphertext_modulus: CiphertextModulus::new_native(),
             message_modulus: MessageModulus(4),
             carry_modulus: CarryModulus(4),
+            max_noise_level: MaxNoiseLevel::from_msg_carry_modulus(
+                MessageModulus(4),
+                CarryModulus(4),
+            ),
+            log2_p_fail: -80.,
+            ciphertext_modulus: CiphertextModulus::new_native(),
             encryption_key_choice: EncryptionKeyChoice::Small,
         },
         flag: true,

@@ -65,18 +65,13 @@ sha3 = "~0.10.8"
 signature = "~2.2"
 tonic = { version = "0.10", optional = true }
 tokio = { version = "1.35", features = ["macros", "rt-multi-thread"], optional = true }
-# TODO should be a stable version once we get things synced in DDec with a stable tfhe-rs version
-tfhe = { git = "ssh://git@github.com/zama-ai/tfhe-rs.git", features = [
-    "boolean",
-    "shortint",
-    "integer",
-], rev = "55f666d" }
+tfhe = { version = "0.6.1", features = ["boolean", "shortint", "integer"] }
 tracing = { version = "~0.1", features = ["log"] }
 tracing-test = "0.2.4"
 tracing-subscriber = "0.3.18"
 url = "2.5.0"
 webpki = { version = "0.22", features = ["std"], optional = true }
-zk-poc = { git = "ssh://git@github.com/zama-ai/zk-poc.git", rev = "730a9dcfe90aea9af7665f13c4bcb13cd381fddc", optional = true } # must match ddec
+tfhe-zk-pok = { version = "0.1.0", optional = true }
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { version = "0.2.86", features = ["serde-serialize"] }
@@ -84,9 +79,7 @@ console_error_panic_hook = { version = "0.1.7" }
 serde-wasm-bindgen = { version = "0.6.0" }
 
 [target.'cfg(unix)'.dependencies]
-tfhe = { git = "ssh://git@github.com/zama-ai/tfhe-rs.git", features = [
-    "seeder_unix",
-], rev = "55f666d" }
+tfhe = { version = "0.6.1", features = ["seeder_unix"] }
 
 [dev-dependencies]
 ctor = "~0.2"
@@ -110,7 +103,7 @@ non-wasm = [
     "dep:rustls",
     "dep:tonic",
     "dep:webpki",
-    "dep:zk-poc",
+    "dep:tfhe-zk-pok",
 ]
 slow_tests = []
 wasm_tests = []

@@ -14,7 +14,6 @@ pub mod tests {
     use std::fs;
     use tfhe::core_crypto::commons::math::random::TUniform;
     use tfhe::integer::parameters::DynamicDistribution;
-    use tfhe::shortint::ClassicPBSParameters;
     use tfhe::shortint::{
         prelude::{
             DecompositionBaseLog, DecompositionLevelCount, GlweDimension, LweDimension,
@@ -22,6 +21,7 @@ pub mod tests {
         },
         CarryModulus, MessageModulus,
     };
+    use tfhe::shortint::{ClassicPBSParameters, MaxNoiseLevel};
     use tfhe::{
         core_crypto::commons::ciphertext_modulus::CiphertextModulus, shortint::EncryptionKeyChoice,
     };
@@ -45,9 +45,11 @@ pub mod tests {
         pbs_level: DecompositionLevelCount(1),
         ks_base_log: DecompositionBaseLog(8),
         ks_level: DecompositionLevelCount(4),
-        ciphertext_modulus: CiphertextModulus::<u64>::new_native(),
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
+        max_noise_level: MaxNoiseLevel::from_msg_carry_modulus(MessageModulus(4), CarryModulus(4)),
+        log2_p_fail: -80.,
+        ciphertext_modulus: CiphertextModulus::<u64>::new_native(),
         encryption_key_choice: EncryptionKeyChoice::Small,
     };
 
@@ -72,13 +74,15 @@ pub mod tests {
         pbs_level: DecompositionLevelCount(1),
         ks_base_log: DecompositionBaseLog(6),
         ks_level: DecompositionLevelCount(3),
-        ciphertext_modulus: CiphertextModulus::new_native(),
         message_modulus: MessageModulus(4),
         carry_modulus: CarryModulus(4),
+        max_noise_level: MaxNoiseLevel::from_msg_carry_modulus(MessageModulus(4), CarryModulus(4)),
+        log2_p_fail: -80.,
+        ciphertext_modulus: CiphertextModulus::new_native(),
         encryption_key_choice: EncryptionKeyChoice::Small,
     };
 
-    //TAKING NIST P=32 AS REFERENCE (March 7th 2024)
+    // TAKING NIST P=32 AS REFERENCE (March 7th 2024)
     // DEFAULT OUTPUT decryption
     const PARAM_4_BITS_CGGI_COMPACT_PKE_PBS_KS_SNS: SwitchAndSquashParameters =
         SwitchAndSquashParameters {
@@ -90,7 +94,7 @@ pub mod tests {
             ciphertext_modulus: CiphertextModulus::<u128>::new_native(),
         };
 
-    //TAKING NIST P=32 AS REFERENCE (March 7th 2024)
+    // TAKING NIST P=32 AS REFERENCE (March 7th 2024)
     // TODO MULTIPLE PEOPLE SHOULD VALIDATE THAT THESE ARE INDEED THE PARAMETERS WE SHOULD RUN WITH!!!
     const REAL_PARAMETERS: NoiseFloodParameters = NoiseFloodParameters {
         ciphertext_parameters: PARAM_CGGI_4_BITS_COMPACT_PKE_PBS_KS_INPUT,

@@ -33,9 +33,9 @@ use tfhe::{integer::U256, shortint::ClassicPBSParameters};
 use tfhe::{prelude::FheDecrypt, FheUint128, FheUint160};
 use tfhe::{ConfigBuilder, FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
 #[cfg(feature = "non-wasm")]
-use tokio::task::JoinHandle;
+use tfhe_zk_pok::curve_api::bls12_446 as curve;
 #[cfg(feature = "non-wasm")]
-use zk_poc::curve_api::bls12_446 as curve;
+use tokio::task::JoinHandle;
 
 fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> anyhow::Result<T> {
     resp.map_err(|_| {

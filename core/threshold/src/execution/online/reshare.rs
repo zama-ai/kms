@@ -527,6 +527,7 @@ mod tests {
             .0
             .into_raw_parts()
             .into_raw_parts();
+
         //We update the parameters to match with our truncated keys.
         //In particular we truncate the lwe_key by picking a new lwe_dimension
         //and the glwe_key by picking a new GlweDimension and PolynomialSize
@@ -542,6 +543,9 @@ mod tests {
             ks_level: params.ks_level(),
             message_modulus: params.message_modulus(),
             carry_modulus: params.carry_modulus(),
+            max_noise_level: params.max_noise_level(),
+            // currently there's no getter for log2_p_fail, so we set it manually
+            log2_p_fail: -80.,
             ciphertext_modulus: params.ciphertext_modulus(),
             encryption_key_choice: params.encryption_key_choice(),
         };

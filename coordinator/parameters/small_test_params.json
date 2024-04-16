@@ -21,6 +21,8 @@
         "ks_level": 4,
         "message_modulus": 4,
         "carry_modulus": 4,
+        "max_noise_level": 5,
+        "log2_p_fail": -80.0,
         "ciphertext_modulus": {
             "modulus": 0,
             "scalar_bits": 64

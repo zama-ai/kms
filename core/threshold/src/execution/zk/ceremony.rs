@@ -12,8 +12,8 @@ use rand::{CryptoRng, Rng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg};
+use tfhe_zk_pok::curve_api::bls12_446 as curve;
 use zeroize::Zeroize;
-use zk_poc::curve_api::bls12_446 as curve;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct PartialProof {
@@ -336,8 +336,8 @@ impl Ceremony for RealCeremony {
                 // like creating the CRS. This is recommended over tokio::task::spawn_blocking
                 // since the tokio threadpool has a very high default upper limit.
                 // More info: https://ryhl.io/blog/async-what-is-blocking/
-                let mut tau = curve::Zp::rand(session.rng());
-                let mut r = curve::Zp::rand(session.rng());
+                let mut tau = curve::Zp::rand(&mut session.rng());
+                let mut r = curve::Zp::rand(&mut session.rng());
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn(move || {
                     let partial_proof = make_proof_deterministic(&pp, tau, round + 1, r);
@@ -429,8 +429,8 @@ mod tests {
     use rand::SeedableRng;
     use rstest::rstest;
     use std::collections::HashMap;
+    use tfhe_zk_pok::{curve_api::Bls12_446, proofs};
     use tokio::task::JoinSet;
-    use zk_poc::{curve_api::Bls12_446, proofs};
 
     #[test]
     fn test_honest_crs_ceremony() {
@@ -531,8 +531,8 @@ mod tests {
 
             for (round, role) in all_roles_sorted.iter().enumerate() {
                 if role == &my_role {
-                    let tau = curve::Zp::rand(session.rng());
-                    let r = curve::Zp::rand(session.rng());
+                    let tau = curve::Zp::rand(&mut session.rng());
+                    let r = curve::Zp::rand(&mut session.rng());
                     // make a bad proof
                     let mut proof: PartialProof = make_proof_deterministic(&pp, tau, round + 1, r);
                     proof.h_pok += curve::Zp::ONE;
@@ -580,8 +580,8 @@ mod tests {
             };
 
             for (round, role) in all_roles_sorted.iter().enumerate() {
-                let tau = curve::Zp::rand(session.rng());
-                let r = curve::Zp::rand(session.rng());
+                let tau = curve::Zp::rand(&mut session.rng());
+                let r = curve::Zp::rand(&mut session.rng());
                 let proof: PartialProof = make_proof_deterministic(&pp, tau, round + 1, r);
                 let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
                 if role == &my_role {
