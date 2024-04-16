@@ -1,3 +1,5 @@
+use crate::anyhow_error_and_log;
+use crate::kms::CrsGenRequest;
 use crate::kms::{coordinator_endpoint_server::CoordinatorEndpoint, RequestId};
 use crate::kms::{
     DecryptionRequest, DecryptionResponse, FheType, KeyGenRequest, KeyGenResult,
@@ -11,7 +13,6 @@ use crate::rpc::rpc_types::{
     BaseKms, DecryptionResponseSigPayload, Plaintext, RawDecryption, SigncryptionPayload,
     CURRENT_FORMAT_VERSION,
 };
-use crate::{anyhow_error_and_log, kms::CrsGenRequest};
 use crate::{
     cryptography::central_kms::BaseKmsStruct,
     kms::coordinator_endpoint_server::CoordinatorEndpointServer,
@@ -132,7 +133,7 @@ impl FheType {
             }
             &FheType::Euint128 | &FheType::Euint160 => {
                 return Err(anyhow_error_and_log(
-                    "Euint128 or Euint160 are not supported yet!".to_string(),
+                    "Euint128 or Euint160 are not supported yet!",
                 ));
             }
         };
@@ -312,7 +313,7 @@ impl ThresholdKms {
             Some(keys) => keys,
             None => {
                 return Err(anyhow_error_and_log(
-                    "Key handle {key_handle} does not exist".to_string(),
+                    "Key handle {key_handle} does not exist",
                 ))
             }
         };
@@ -350,7 +351,7 @@ impl ThresholdKms {
             Some(keys) => keys,
             None => {
                 return Err(anyhow_error_and_log(
-                    "Key handle {key_handle} does not exist".to_string(),
+                    "Key handle {key_handle} does not exist",
                 ))
             }
         };

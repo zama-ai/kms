@@ -1,10 +1,10 @@
 //! CLI tool for interacting with a group of mobys
+use anyhow::anyhow;
 use clap::{Parser, Subcommand};
 use distributed_decryption::{
     choreography::choreographer::ChoreoRuntime,
     computation::SessionId,
     conf::{choreo::ChoreoConf, telemetry::init_tracing, Settings},
-    error::error_handler::anyhow_error_and_log,
     execution::{
         runtime::party::RoleAssignment, tfhe_internals::parameters::DkgParamsAvailable,
         tfhe_internals::parameters::NoiseFloodParameters,
@@ -15,7 +15,7 @@ use ndarray::Array1;
 use ndarray_stats::QuantileExt;
 use prettytable::{Attr, Cell, Row, Table};
 use rand::{distributions::Uniform, Rng};
-use std::sync::Arc;
+use std::{panic::Location, sync::Arc};
 use tfhe::{prelude::FheEncrypt, FheUint8};
 use tokio::task::JoinSet;
 use tonic::transport::ClientTlsConfig;
@@ -60,10 +60,12 @@ async fn start_crs_ceremony_command(
     let wd = match init_opts.witness_dim {
         Some(wd) => wd,
         None => {
-            return Err(anyhow_error_and_log(
-                "Witness Dimension required in CRS ceremony, but not set.".to_string(),
-            )
-            .into());
+            let msg = format!(
+                "Witness Dimension required in CRS ceremony, but it's not set at {}",
+                Location::caller(),
+            );
+            tracing::error!(msg);
+            return Err(anyhow!(msg).into());
         }
     };
 
@@ -208,11 +210,12 @@ async fn decrypt_command(
     }
 
     if vec.len() != number_messages {
-        anyhow_error_and_log(format!(
+        let msg = format!(
             "Number of results ({}) does not match number of messages ({})",
             vec.len(),
             number_messages
-        ));
+        );
+        tracing::error!(msg);
     }
 
     Ok(vec)

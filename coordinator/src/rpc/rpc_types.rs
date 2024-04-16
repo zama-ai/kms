@@ -1,9 +1,10 @@
+use crate::anyhow_error_and_log;
 use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
+use crate::cryptography::signcryption::serialize_hash_element;
 use crate::kms::{
     DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType,
     ReencryptionRequestPayload, ReencryptionResponse,
 };
-use crate::{anyhow_error_and_log, cryptography::signcryption::serialize_hash_element};
 use crate::{consts::ID_LENGTH, kms::RequestId};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, Eip712Domain, SolStruct};
@@ -51,7 +52,7 @@ pub(crate) fn protobuf_to_alloy_domain(
         Some(pb_domain.version.clone().into()),
         Some(
             U256::try_from_le_slice(&pb_domain.chain_id)
-                .ok_or(anyhow_error_and_log("invalid chain ID".to_string()))?,
+                .ok_or(anyhow_error_and_log("invalid chain ID"))?,
         ),
         Some(Address::parse_checksummed(
             pb_domain.verifying_contract.clone(),
@@ -66,21 +67,21 @@ pub(crate) fn allow_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<
     let name = domain
         .name
         .as_ref()
-        .ok_or(anyhow_error_and_log("missing domain name".to_string()))?
+        .ok_or(anyhow_error_and_log("missing domain name"))?
         .to_string();
     let version = domain
         .version
         .as_ref()
-        .ok_or(anyhow_error_and_log("missing domain version".to_string()))?
+        .ok_or(anyhow_error_and_log("missing domain version"))?
         .to_string();
     let chain_id = domain
         .chain_id
-        .ok_or(anyhow_error_and_log("missing domain chain_id".to_string()))?
+        .ok_or(anyhow_error_and_log("missing domain chain_id"))?
         .to_le_bytes_vec();
     let verifying_contract = domain
         .verifying_contract
         .as_ref()
-        .ok_or(anyhow_error_and_log("missing domain chain_id".to_string()))?
+        .ok_or(anyhow_error_and_log("missing domain chain_id"))?
         .to_string();
     let salt = match domain.salt {
         Some(x) => x.to_vec(),

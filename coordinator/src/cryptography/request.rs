@@ -1,9 +1,10 @@
+use crate::anyhow_error_and_log;
+
 use super::der_types::{
     PrivateSigKey, PublicSigKey, Signature, SigncryptionPair, SigncryptionPrivKey,
     SigncryptionPubKey,
 };
 use super::signcryption::{check_normalized, encryption_key_generation, hash_element, RND_SIZE};
-use crate::anyhow_error_and_log;
 use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -52,7 +53,7 @@ impl ClientRequest {
         // Sign the public key and digest of the message
         let signature: k256::ecdsa::Signature = match &keys.sk.signing_key {
             Some(sk) => sk.sk.sign(&to_sign[..]),
-            None => return Err(anyhow_error_and_log("signing key is None".to_string())),
+            None => return Err(anyhow_error_and_log("signing key is None")),
         };
         Ok((
             ClientRequest {

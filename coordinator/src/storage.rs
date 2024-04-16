@@ -49,19 +49,11 @@ pub fn store_public_keys<S: PublicStorage>(
     let urls = compute_all_urls(storage, request_id, public_key_info)?;
     let pk_url = match urls.get(&PubDataType::PublicKey) {
         Some(pk_url) => pk_url.to_owned(),
-        None => {
-            return Err(anyhow_error_and_log(
-                "Public key is not produced".to_string(),
-            ))
-        }
+        None => return Err(anyhow_error_and_log("Public key is not produced")),
     };
     let sk_url = match urls.get(&PubDataType::ServerKey) {
         Some(sk_url) => sk_url.to_owned(),
-        None => {
-            return Err(anyhow_error_and_log(
-                "Server key is not produced".to_string(),
-            ))
-        }
+        None => return Err(anyhow_error_and_log("Server key is not produced")),
     };
     if !storage.store_data(&pub_keys.public_key, pk_url) {
         return Err(anyhow::anyhow!("Could not store public key!"));

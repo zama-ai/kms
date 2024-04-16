@@ -3,6 +3,7 @@ use anyhow::anyhow;
 use consts::{DEFAULT_PARAM_PATH, TEST_KEY_ID};
 #[cfg(feature = "non-wasm")]
 use cryptography::central_kms::{CrsHashMap, SoftwareKmsKeys};
+use std::fmt;
 use std::panic::Location;
 #[cfg(feature = "non-wasm")]
 use util::file_handling::write_element;
@@ -53,16 +54,17 @@ pub mod rpc {
     pub mod rpc_types;
 }
 
-// TOOD the same function is in ddec
+// NOTE: the below is copied from core/threshold
+// since the calling tracing from another crate
+// does not generate correct logs in tracing_test::traced_test
 #[track_caller]
-pub fn anyhow_error_and_log(msg: String) -> anyhow::Error {
+pub(crate) fn anyhow_error_and_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
     tracing::error!("Error in {}: {}", Location::caller(), msg);
     anyhow!("Error in {}: {}", Location::caller(), msg)
 }
 
-// TOOD the same function is in ddec
 #[track_caller]
-pub fn anyhow_error_and_warn_log(msg: String) -> anyhow::Error {
+pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) -> anyhow::Error {
     tracing::warn!("Warning in {}: {}", Location::caller(), msg);
     anyhow!("Warning in {}: {}", Location::caller(), msg)
 }

@@ -163,9 +163,7 @@ where
     let ciphertext = match enc_box.encrypt(&nonce, &to_encrypt[..]) {
         Ok(ciphertext) => ciphertext,
         Err(_) => {
-            return Err(anyhow_error_and_log(
-                "Could not encrypt message".to_string(),
-            ));
+            return Err(anyhow_error_and_log("Could not encrypt message"));
         }
     };
 

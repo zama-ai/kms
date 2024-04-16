@@ -1,3 +1,4 @@
+use crate::anyhow_error_and_log;
 use crate::consts::TEST_KEY_ID;
 use crate::cryptography::der_types::{
     PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair,
@@ -38,6 +39,7 @@ use crate::{storage::PublicStorageReader, util::key_setup::FhePublicKey};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use distributed_decryption::execution::endpoints::reconstruct::combine128;
+use distributed_decryption::execution::sharing::shamir::reconstruct_w_errors_sync;
 use distributed_decryption::execution::sharing::shamir::{fill_indexed_shares, ShamirSharings};
 use distributed_decryption::execution::{
     endpoints::reconstruct::reconstruct_message, runtime::party::Role,
@@ -48,10 +50,6 @@ use distributed_decryption::{
 use distributed_decryption::{
     algebra::residue_poly::ResiduePoly,
     execution::tfhe_internals::parameters::AugmentedCiphertextParameters,
-};
-use distributed_decryption::{
-    error::error_handler::anyhow_error_and_log,
-    execution::sharing::shamir::reconstruct_w_errors_sync,
 };
 use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
@@ -543,9 +541,7 @@ impl Client {
         let server_key: ServerKey = match self.retrieve_key(&resp, PubDataType::ServerKey)? {
             Some(server_key) => server_key,
             None => {
-                return Err(anyhow_error_and_log(
-                    "Could not validate server key".to_string(),
-                ));
+                return Err(anyhow_error_and_log("Could not validate server key"));
             }
         };
         Ok((pk, server_key))
@@ -921,9 +917,7 @@ impl Client {
             ) {
                 decrypted_blocks.push(r);
             } else {
-                return Err(anyhow_error_and_log(
-                    "Could not reconstruct all blocks".to_owned(),
-                ));
+                return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
             }
         }
         let recon_blocks =
