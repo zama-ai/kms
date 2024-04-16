@@ -4,8 +4,10 @@ resolver = "2"
 members = [
     "coordinator",
     "core/threshold",
-    "blockchain/protocol",
+    "blockchain/events",
+    "blockchain/events-handler",
     "blockchain/proofs",
+    "blockchain/protocol",
     "blockchain/smart-contracts/counter-test",
     "blockchain/smart-contracts/configuration",
 ]
