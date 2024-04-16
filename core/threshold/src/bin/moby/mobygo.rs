@@ -22,7 +22,11 @@ use tonic::transport::ClientTlsConfig;
 
 #[derive(Parser, Debug)]
 #[clap(name = "mobygo")]
-#[clap(about = "A simple CLI tool for interacting with a Moby cluster")]
+#[clap(about = "A simple CLI tool for interacting with a Moby cluster. \
+The config file contains the topology of the network as well as an optional \
+TLS configuration. If the certificates and keys exist, then TLS will \
+be used to communicate with the core (from mobygo). \
+Otherwise TCP is used.")]
 pub struct Cli {
     #[clap(subcommand)]
     command: Commands,
@@ -337,7 +341,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let docker_role_assignments: RoleAssignment = topology.into();
 
-    let host_channels = topology.try_into()?;
+    // we need to set the protocol in URI correctly
+    // depending on whether the certificates are present
+    let host_channels =
+        topology.choreo_physical_topology_into_network_topology(tls_config.is_some())?;
 
     let runtime =
         ChoreoRuntime::new_with_net_topology(docker_role_assignments, tls_config, host_channels)?;

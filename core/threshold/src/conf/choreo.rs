@@ -10,12 +10,14 @@ use crate::execution::runtime::session::DecryptionMode;
 
 use super::Tracing;
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChoreoParty {
     pub logical_address: String,
     pub physical_address: String,
     pub logical_port: u16,
     pub physical_port: u16,
+    pub choreo_logical_port: u16,
+    pub choreo_physical_port: u16,
     pub id: usize,
     pub use_tls: bool,
 }
@@ -32,13 +34,23 @@ impl From<&ChoreoParty> for Identity {
     }
 }
 
-impl TryFrom<&ChoreoParty> for Uri {
-    type Error = anyhow::Error;
-    fn try_from(party: &ChoreoParty) -> Result<Uri, Self::Error> {
-        let proto = if party.use_tls { "https" } else { "http" };
+impl ChoreoParty {
+    pub fn physical_addr_into_uri(&self) -> anyhow::Result<Uri> {
+        let proto = if self.use_tls { "https" } else { "http" };
         let uri: Uri = format!(
             "{}://{}:{}",
-            proto, party.physical_address, party.physical_port
+            proto, self.physical_address, self.physical_port
+        )
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Error on parsing uri {}", e))?;
+        Ok(uri)
+    }
+
+    pub fn choreo_physical_addr_into_uri(&self, use_tls: bool) -> anyhow::Result<Uri> {
+        let proto = if use_tls { "https" } else { "http" };
+        let uri: Uri = format!(
+            "{}://{}:{}",
+            proto, self.physical_address, self.choreo_physical_port
         )
         .parse()
         .map_err(|e| anyhow::anyhow!("Error on parsing uri {}", e))?;
@@ -46,7 +58,7 @@ impl TryFrom<&ChoreoParty> for Uri {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ThresholdTopology {
     pub peers: Vec<ChoreoParty>,
     pub threshold: u32,
@@ -62,14 +74,25 @@ impl From<&ThresholdTopology> for RoleAssignment {
     }
 }
 
-impl TryFrom<&ThresholdTopology> for NetworkTopology {
-    type Error = anyhow::Error;
-    fn try_from(topology: &ThresholdTopology) -> Result<NetworkTopology, Self::Error> {
-        topology
-            .peers
+impl ThresholdTopology {
+    pub fn physical_topology_into_network_topology(&self) -> anyhow::Result<NetworkTopology> {
+        self.peers
             .iter()
             .map(|party| {
-                let uri: Uri = party.try_into()?;
+                let uri: Uri = party.physical_addr_into_uri()?;
+                Ok((party.into(), uri))
+            })
+            .collect()
+    }
+
+    pub fn choreo_physical_topology_into_network_topology(
+        &self,
+        use_tls: bool,
+    ) -> anyhow::Result<NetworkTopology> {
+        self.peers
+            .iter()
+            .map(|party| {
+                let uri: Uri = party.choreo_physical_addr_into_uri(use_tls)?;
                 Ok((party.into(), uri))
             })
             .collect()

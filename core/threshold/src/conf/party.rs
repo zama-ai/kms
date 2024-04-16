@@ -32,7 +32,13 @@ pub struct PartyConf {
     protocol: Protocol,
     pub tracing: Option<Tracing>,
     pub redis: Option<RedisConf>,
+    /// If [certpaths] is Some(_), then TLS will be enabled
+    /// for the core-to-core communication
     pub certpaths: Option<CertificatePaths>,
+    /// If [certpaths] is Some(_) and choreousetls is true,
+    /// TLS will be enabled for the choreographer-to-core
+    /// communication.
+    pub choreo_use_tls: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -73,31 +79,54 @@ impl CertificatePaths {
 /// This is an example of the configuration file using `PartyConf` struct.
 ///
 /// ```toml
+/// choreo_use_tls = false
+///
 /// [protocol.host]
 /// address = "p1"
 /// port = 50000
 /// id = 1
+/// choreoport = 60000
+///
+/// [tracing]
+/// service_name = "moby"
+/// endpoint = "http://localhost:4317"
+///
+/// [redis]
+/// host = "redis://127.0.0.1"
+///
+/// [certpaths]
+/// cert = "/path/to/cert"
+/// key = "/path/to/key"
+/// calist = "/path/one,/path/two"
 ///
 /// [[protocol.peers]]
 /// address = "p2"
 /// port = 50000
 /// id = 2
+/// choreoport = 60000
 ///
 /// [[protocol.peers]]
 /// address = "p3"
 /// port = 50000
 /// id = 3
+/// choreoport = 60000
 ///
 /// [[protocol.peers]]
 /// address = "p4"
 /// port = 50000
 /// id = 4
+/// choreoport = 60000
 /// ```
+///
 /// The `peers` field is optional.
 /// If it is not present, the `peers` field will be `None`. At the moment of writing this we are
 /// not using the `peers` field, but it is there for future use.
 /// If it is present, the `peers` field will be `Some(Vec<Party>)`.
 /// The `peers` field is a list of `Party` struct.
+/// The tracing, redis and certpaths fields are also optional.
+/// Core-to-core TLS will be enabled if certpaths is not empty.
+/// Choreographer-to-core TLS will be enabled if `choreo_use_tls`
+/// is also enabled.
 impl PartyConf {
     /// Returns the protocol configuration.
     pub fn protocol(&self) -> &Protocol {
@@ -118,16 +147,23 @@ mod tests {
             .build()
             .init_conf()
             .unwrap();
+        assert!(party_conf.choreo_use_tls);
         let protocol = party_conf.protocol();
         let host = protocol.host();
         let peers = protocol.peers();
+
+        let certpaths = party_conf.certpaths.clone().unwrap();
+        assert_eq!(certpaths.cert, "/path/to/cert");
+        assert_eq!(certpaths.key, "/path/to/key");
+        assert_eq!(certpaths.calist, "/path/one,/path/two");
 
         assert_eq!(
             host,
             &Party {
                 address: "p1".to_string(),
                 port: 50000,
-                id: 1
+                id: 1,
+                choreoport: 60000,
             }
         );
         assert!(peers.is_some());
@@ -139,12 +175,14 @@ mod tests {
                 Party {
                     address: "p2".to_string(),
                     port: 50001,
-                    id: 2
+                    id: 2,
+                    choreoport: 60001,
                 },
                 Party {
                     address: "p3".to_string(),
                     port: 50002,
-                    id: 3
+                    id: 3,
+                    choreoport: 60002,
                 }
             ]
         );
@@ -165,7 +203,8 @@ mod tests {
             &Party {
                 address: "p1".to_string(),
                 port: 50000,
-                id: 1
+                id: 1,
+                choreoport: 60000,
             }
         );
         assert!(peers.is_none());
@@ -183,9 +222,10 @@ mod tests {
     #[test]
     fn test_party_conf_with_env() {
         use std::env;
-        env::set_var("DDEC_CERTPATHS_CERT", "/app/ddec/certs/core-1-1.pem");
-        env::set_var("DDEC_CERTPATHS_KEY", "/app/ddec/certs/core-1-1.key");
-        env::set_var("DDEC_CERTPATHS_CALIST", "app/ddec/certs/ca1.pem,/app/ddec/certs/ca2.pem,/app/ddec/certs/ca3.pem,/app/ddec/certs/ca4.pem");
+        env::set_var("DDEC_CERTPATHS_CERT", "/path/to/cert");
+        env::set_var("DDEC_CERTPATHS_KEY", "/path/to/key");
+        env::set_var("DDEC_CERTPATHS_CALIST", "/path/one,/path/two");
+        env::set_var("DDEC_CHOREO_USE_TLS", "true");
         let party_conf: PartyConf = Settings::builder()
             .path("src/tests/config/ddec_test")
             .build()
@@ -193,6 +233,9 @@ mod tests {
             .unwrap();
 
         let bundle = party_conf.certpaths.unwrap();
-        assert_eq!(bundle.cert, "/app/ddec/certs/core-1-1.pem");
+        assert_eq!(bundle.cert, "/path/to/cert");
+        assert_eq!(bundle.key, "/path/to/key");
+        assert_eq!(bundle.calist, "/path/one,/path/two");
+        assert!(party_conf.choreo_use_tls);
     }
 }

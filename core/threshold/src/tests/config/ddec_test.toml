@@ -1,14 +1,24 @@
+choreo_use_tls = true
+
 [protocol.host]
 address = "p1"
 port = 50000
 id = 1
+choreoport = 60000
+
+[certpaths]
+cert = "/path/to/cert"
+key = "/path/to/key"
+calist = "/path/one,/path/two"
 
 [[protocol.peers]]
 address = "p2"
 port = 50001
 id = 2
+choreoport = 60001
 
 [[protocol.peers]]
 address = "p3"
 port = 50002
 id = 3
+choreoport = 60002

@@ -29,6 +29,8 @@ use tonic::codegen::http::Uri;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, ClientTlsConfig};
 
+/// GrpcNetworkingManager is responsible for managing
+/// channels and message queues between MPC parties.
 #[derive(Debug, Clone)]
 pub struct GrpcNetworkingManager {
     channels: Arc<Channels>,
@@ -40,6 +42,8 @@ pub struct GrpcNetworkingManager {
 pub type GrpcServer = GnetworkingServer<NetworkingImpl>;
 
 impl GrpcNetworkingManager {
+    /// Create a new server from the networking manager.
+    /// The server can be used as a tower Service.
     pub fn new_server(&self) -> GnetworkingServer<impl Gnetworking> {
         GnetworkingServer::new(NetworkingImpl {
             message_queues: Arc::clone(&self.message_queues),
@@ -57,6 +61,11 @@ impl GrpcNetworkingManager {
         }
     }
 
+    /// Create a new session from the network manager.
+    ///
+    /// All the communication are performed using sessions.
+    /// There may be multiple session in parallel,
+    /// identified by different session IDs.
     pub fn make_session(
         &self,
         session_id: SessionId,

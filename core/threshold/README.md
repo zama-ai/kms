@@ -207,3 +207,40 @@ Change directory to the desired setting, e.g.: `cd distributed-decryption/experi
 10. Assume you have collected benchmark results in a file called `results.txt`, you can copy it from docker to the AWS machine using:
 `sudo docker cp f2667e5f5665:usr/src/ddec/results.txt .`
 Otherwise the results will be gone when you stop the containers.
+
+## Setup TLS for local testing
+The commands below assume that [`cargo make`](https://github.com/sagiegurari/cargo-make)
+and docker is installed, and the working directory is `core/threshold`.
+
+1. Generate your certificates, e.g., with 4 parties
+```
+cargo make --env NUM_PARTIES=4 gen-test-certs
+```
+
+2. Generate the cluster configuration, this command will output `temp/local-cluster.yml`, please check the certificate paths are configured correctly.
+```
+cargo make --env NUM_PARTIES=4 gen-local-cluster
+```
+
+3. Generate the experiment configuration (output `temp/local-cluster.toml`). The core-to-mobygo communication does not use TLS by default.
+```
+cargo make --env NUM_PARTIES=4 --env THRESHOLD=1 --env PROTOCOL=1 --env NUM_MESSAGES=10 gen-local-choreo
+```
+
+3. Build and start the cluster
+```
+cargo make docker-image
+cargo make --env NUM_PARTIES=4 run-local-cluster
+```
+
+4. Run some commands to test
+```
+cargo make --env EXPERIMENT_NAME=local-cluster choreo-start-crs
+# wait some time
+cargo make --env EXPERIMENT_NAME=local-cluster choreo-retrieve-crs
+```
+
+5. Stop the parties
+```
+cargo make --env EXPERIMENT_NAME=local-cluster stop-parties
+```

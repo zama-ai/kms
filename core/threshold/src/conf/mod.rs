@@ -17,6 +17,7 @@ pub struct Party {
     address: String,
     port: u16,
     id: usize,
+    choreoport: u16,
 }
 
 impl Party {
@@ -33,6 +34,11 @@ impl Party {
     /// Returns the id.
     pub fn id(&self) -> usize {
         self.id
+    }
+
+    /// Returns the choreographer port.
+    pub fn choreoport(&self) -> u16 {
+        self.choreoport
     }
 }
 

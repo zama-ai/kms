@@ -23,6 +23,7 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
 
     let own_identity: Identity = settings.protocol().host().into();
 
+    // the networking manager is shared between the two services
     let networking = GrpcNetworkingManager::new(own_identity.clone(), settings.certpaths.clone());
     let networking_server = networking.new_server();
 
@@ -38,43 +39,91 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
     )
     .into_server();
 
-    let server = match &settings.certpaths {
-        Some(cert_bundle) => {
-            let identity = cert_bundle.get_identity()?;
-            let ca_cert = cert_bundle.get_flattened_ca_list()?;
-            let tls_config = ServerTlsConfig::new()
-                .identity(identity)
-                .client_ca_root(ca_cert);
-            Server::builder()
-                .tls_config(tls_config)?
-                .timeout(*NETWORK_TIMEOUT_LONG)
-        }
-        None => Server::builder().timeout(*NETWORK_TIMEOUT_LONG),
+    // create a server that uses TLS
+    // if [try_use_tls] is true and settings.certpaths is not None
+    let make_server = move |try_use_tls: bool| -> anyhow::Result<Server> {
+        let server = match (try_use_tls, &settings.certpaths) {
+            (true, Some(cert_bundle)) => {
+                let identity = cert_bundle.get_identity()?;
+                let ca_cert = cert_bundle.get_flattened_ca_list()?;
+                let tls_config = ServerTlsConfig::new()
+                    .identity(identity)
+                    .client_ca_root(ca_cert);
+                Server::builder()
+                    .tls_config(tls_config)?
+                    .timeout(*NETWORK_TIMEOUT_LONG)
+            }
+            (_, _) => Server::builder().timeout(*NETWORK_TIMEOUT_LONG),
+        };
+        Ok(server)
     };
 
-    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
-    health_reporter.set_serving::<GrpcServer>().await;
+    // CHOREO
+    // create a future for the choreography server
+    let (mut choreo_health_reporter, choreo_health_service) =
+        tonic_health::server::health_reporter();
+    choreo_health_reporter.set_serving::<GrpcServer>().await;
 
-    let grpc_layer = tower::ServiceBuilder::new()
+    let choreo_grpc_layer = tower::ServiceBuilder::new()
         .timeout(*NETWORK_TIMEOUT_LONG)
         .layer(TraceLayer::new_for_grpc().make_span_with(make_span))
         .map_request(accept_trace);
 
-    let router = server
-        .layer(grpc_layer)
-        .add_service(health_service)
-        .add_service(networking_server)
+    let choreo_router = make_server(settings.choreo_use_tls)?
+        .layer(choreo_grpc_layer)
+        .add_service(choreo_health_service)
         .add_service(choreography);
 
     tracing::info!(
-        "Sucessfully created moby server with party id {:?}.",
-        settings.protocol().host()
+        "Sucessfully created choreo server with party id {:?} on port {:?}.",
+        settings.protocol().host(),
+        settings.protocol().host().choreoport()
     );
 
-    let addr = format!("0.0.0.0:{}", settings.protocol().host().port()).parse()?;
-    let res = router.serve(addr).await;
-    if let Err(e) = res {
-        tracing::error!("gRPC error: {}", e);
+    let choreo_future = choreo_router
+        .serve(format!("0.0.0.0:{}", settings.protocol().host().choreoport()).parse()?);
+
+    // CORE
+    // create a future for the core-to-core MPC server
+    // Unfortunately, due to lifetime constraints of GrpcNetworkingManager
+    // in async code, we need to keep [networking] in the same scope,
+    // so the section below is similar to the "CHOREO" section.
+    let (mut core_health_reporter, core_health_service) = tonic_health::server::health_reporter();
+    core_health_reporter.set_serving::<GrpcServer>().await;
+
+    let core_grpc_layer = tower::ServiceBuilder::new()
+        .timeout(*NETWORK_TIMEOUT_LONG)
+        .layer(TraceLayer::new_for_grpc().make_span_with(make_span))
+        .map_request(accept_trace);
+
+    let core_router = make_server(true)?
+        .layer(core_grpc_layer)
+        .add_service(core_health_service)
+        .add_service(networking_server);
+
+    let core_future =
+        core_router.serve(format!("0.0.0.0:{}", settings.protocol().host().port()).parse()?);
+
+    tracing::info!(
+        "Sucessfully created core server with party id {:?} on port {:?}.",
+        settings.protocol().host(),
+        settings.protocol().host().port()
+    );
+
+    let res = futures::join!(choreo_future, core_future);
+    match res {
+        (Ok(_), Err(e)) => {
+            tracing::error!("gRPC error: {}", e);
+            Err(Box::new(e))
+        }
+        (Err(e), Ok(_)) => {
+            tracing::error!("gRPC error: {}", e);
+            Err(Box::new(e))
+        }
+        (Err(e1), Err(e2)) => {
+            tracing::error!("gRPC errors: {}, {}", e1, e2);
+            Err(Box::new(e1))
+        }
+        _ => Ok(()),
     }
-    Ok(())
 }

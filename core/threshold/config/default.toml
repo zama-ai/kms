@@ -1,7 +1,10 @@
+choreo_use_tls = false
+
 [protocol.host]
 address = "localhost"
 port = 50000
 id = 1
+choreoport = 60000
 
 [tracing]
 service_name = "moby"
@@ -9,5 +12,3 @@ endpoint = "http://localhost:4317"
 
 [redis]
 host = "redis://127.0.0.1"
-
-
