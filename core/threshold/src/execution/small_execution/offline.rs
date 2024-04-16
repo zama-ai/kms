@@ -81,7 +81,7 @@ where
         for _ in 0..self.batch_sizes.randoms {
             res.push(Share::new(
                 my_role,
-                session.prss_as_mut().prss_next(my_role.one_based())?,
+                session.prss_as_mut().prss_next(my_role)?,
             ));
         }
         self.elements.append_randoms(res);
@@ -296,7 +296,7 @@ where
         session: &mut Ses,
         amount: usize,
     ) -> anyhow::Result<Vec<Z>> {
-        let my_id = session.my_role()?.one_based();
+        let my_id = session.my_role()?;
         let mut vec_prss = Vec::with_capacity(amount);
         for _i in 0..amount {
             vec_prss.push(session.prss_as_mut().prss_next(my_id)?);
@@ -308,7 +308,7 @@ where
         session: &mut Ses,
         amount: usize,
     ) -> anyhow::Result<Vec<Z>> {
-        let my_id = session.my_role()?.one_based();
+        let my_id = session.my_role()?;
         let threshold = session.threshold();
         let mut vec_przs = Vec::with_capacity(amount);
         for _i in 0..amount {

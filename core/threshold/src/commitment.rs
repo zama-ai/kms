@@ -1,5 +1,10 @@
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
+use sha3::{
+    digest::ExtendableOutput,
+    digest::{Update, XofReader},
+    Shake256,
+};
 
 /// Byte size of a typical key or opening value (currently 16 byte = 128 bit)
 pub(crate) const KEY_BYTE_LEN: usize = 16;
@@ -16,11 +21,11 @@ pub struct Opening(pub [u8; KEY_BYTE_LEN]);
 /// hash the given message and opening to compute the 256-bit commitment in the ROM
 fn commitment_inner_hash(msg: &[u8], o: &Opening) -> Commitment {
     let mut com = [0u8; COMMITMENT_BYTE_LEN];
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = Shake256::default();
     hasher.update(&o.0);
     hasher.update(msg);
     let mut or = hasher.finalize_xof();
-    or.fill(&mut com);
+    or.read(&mut com);
     Commitment(com)
 }
 

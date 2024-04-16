@@ -13,7 +13,6 @@ use std::num::Wrapping;
 #[cfg(feature = "testing")]
 use distributed_decryption::{
     algebra::residue_poly::ResiduePoly64,
-    computation::SessionId,
     execution::{
         endpoints::keygen::distributed_keygen_z64,
         online::preprocessing::orchestrator::PreprocessingOrchestrator,
@@ -23,6 +22,7 @@ use distributed_decryption::{
         },
         tfhe_internals::parameters::DKGParams,
     },
+    session_id::SessionId,
 };
 
 #[cfg(feature = "testing")]

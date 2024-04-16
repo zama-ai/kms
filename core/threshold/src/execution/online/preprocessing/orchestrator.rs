@@ -17,7 +17,6 @@ use crate::{
         residue_poly::{ResiduePoly128, ResiduePoly64},
         structure_traits::{Derive, ErrorCorrect, Invert, RingEmbed, Solve},
     },
-    computation::SessionId,
     error::error_handler::anyhow_error_and_log,
     execution::{
         config::BatchParams,
@@ -38,6 +37,7 @@ use crate::{
         },
         tfhe_internals::parameters::DKGParams,
     },
+    session_id::SessionId,
 };
 
 #[derive(Clone)]
@@ -756,7 +756,6 @@ mod tests {
             residue_poly::ResiduePoly64,
             structure_traits::{One, Zero},
         },
-        computation::SessionId,
         execution::{
             online::preprocessing::{create_memory_factory, BasePreprocessing, BitPreprocessing},
             runtime::{
@@ -766,6 +765,7 @@ mod tests {
             sharing::shamir::{RevealOp, ShamirSharings},
             tfhe_internals::parameters::PARAMS_P8_SMALL_NO_SNS,
         },
+        session_id::SessionId,
     };
 
     use super::{PreprocessingOrchestrator, TypeOrchestration};

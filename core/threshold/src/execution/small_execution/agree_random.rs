@@ -1,3 +1,7 @@
+use super::{
+    prf::{xor_u8_arr_in_place, PrfKey},
+    prss::create_sets,
+};
 use crate::{
     algebra::structure_traits::Ring,
     commitment::{commit, verify, Commitment, Opening, KEY_BYTE_LEN},
@@ -12,12 +16,12 @@ use anyhow::Context;
 use async_trait::async_trait;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
-use std::collections::HashMap;
-
-use super::{
-    prf::{xor_u8_arr_in_place, PrfKey},
-    prss::create_sets,
+use sha3::{
+    digest::ExtendableOutput,
+    digest::{Update, XofReader},
+    Shake256,
 };
+use std::collections::HashMap;
 
 #[async_trait]
 pub trait AgreeRandom {
@@ -395,10 +399,10 @@ impl AgreeRandom for DummyAgreeRandom {
                     bytes.extend_from_slice(&p.to_le_bytes());
                 }
 
-                let mut hasher = blake3::Hasher::new();
+                let mut hasher = Shake256::default();
                 hasher.update(&bytes);
                 let mut or = hasher.finalize_xof();
-                or.fill(&mut r_a);
+                or.read(&mut r_a);
                 PrfKey(r_a)
             })
             .collect();
@@ -425,7 +429,6 @@ mod tests {
     use crate::{
         algebra::residue_poly::ResiduePoly128,
         commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN},
-        computation::SessionId,
         execution::{
             runtime::{
                 party::Role,
@@ -442,11 +445,17 @@ mod tests {
             },
         },
         networking::value::{AgreeRandomValue, NetworkValue},
+        session_id::SessionId,
         tests::helper::tests::get_networkless_base_session_for_parties,
         tests::helper::tests_and_benches::execute_protocol_small,
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;
+    use sha3::{
+        digest::ExtendableOutput,
+        digest::{Update, XofReader},
+        Shake256,
+    };
     use std::collections::{HashMap, VecDeque};
     use tokio::task::JoinSet;
 
@@ -849,11 +858,11 @@ mod tests {
 
         // compute commitment for received key
         let mut com_buf = [0u8; COMMITMENT_BYTE_LEN];
-        let mut hasher = blake3::Hasher::new();
+        let mut hasher = Shake256::default();
         hasher.update(&opening1.0);
         hasher.update(&key1.0);
         let mut or = hasher.finalize_xof();
-        or.fill(&mut com_buf);
+        or.read(&mut com_buf);
         let commitment1 = Commitment(com_buf);
         let mut rcv_coms = vec![vec![commitment1], Vec::<Commitment>::new()];
 

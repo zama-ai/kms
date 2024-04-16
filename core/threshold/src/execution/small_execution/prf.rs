@@ -1,8 +1,8 @@
 use crate::algebra::structure_traits::Ring;
 use crate::commitment::KEY_BYTE_LEN;
-use crate::computation::SessionId;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::constants::{CHI_XOR_CONSTANT, PHI_XOR_CONSTANT};
+use crate::session_id::SessionId;
 use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
@@ -14,7 +14,7 @@ pub trait PRSSConversions {
     fn from_i128(value: i128) -> Self;
 }
 
-/// key for blake3
+/// key for the PRF
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
 pub struct PrfKey(pub [u8; 16]);
 

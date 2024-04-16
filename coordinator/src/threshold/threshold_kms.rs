@@ -26,7 +26,6 @@ use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use distributed_decryption::algebra::base_ring::Z64;
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
-use distributed_decryption::computation::SessionId;
 use distributed_decryption::execution::endpoints::decryption::{
     decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, Small,
 };
@@ -42,6 +41,7 @@ use distributed_decryption::execution::{
     tfhe_internals::switch_and_squash::SwitchAndSquashKey,
 };
 use distributed_decryption::networking::grpc::GrpcNetworkingManager;
+use distributed_decryption::session_id::SessionId;
 use distributed_decryption::{
     choreography::NetworkingStrategy, execution::tfhe_internals::parameters::Ciphertext64,
 };

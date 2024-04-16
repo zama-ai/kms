@@ -37,7 +37,7 @@ use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::{
     choreography::grpc::gen::DecryptionRequest, execution::runtime::session::SmallSession,
 };
-use crate::{computation::SessionId, execution::small_execution::prss::PRSSSetup};
+use crate::{execution::small_execution::prss::PRSSSetup, session_id::SessionId};
 use aes_prng::AesRng;
 use async_cell::sync::AsyncCell;
 use async_trait::async_trait;

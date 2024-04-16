@@ -170,7 +170,6 @@ where
         preprocessing_bits: &mut dyn BitPreprocessing<Z>,
     ) -> anyhow::Result<()> {
         let my_role = session.my_role()?;
-        let my_role_one_based = my_role.one_based();
         let prss_state = session.prss_as_mut();
 
         let mut fill_noise = |prss_state: &mut PRSSState<Z>, num: usize, bound: NoiseBounds| {
@@ -179,7 +178,7 @@ where
                     .map(|_| {
                         Ok::<_, anyhow::Error>(Share::new(
                             my_role,
-                            prss_state.mask_next(my_role_one_based, 1 << bound.get_bound().0)?,
+                            prss_state.mask_next(my_role, 1 << bound.get_bound().0)?,
                         ))
                     })
                     .collect::<Result<Vec<_>, _>>()?,

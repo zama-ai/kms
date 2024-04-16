@@ -4,13 +4,13 @@ use super::{
 };
 use crate::{
     algebra::structure_traits::{Invert, Ring, RingEmbed},
-    computation::SessionId,
     execution::{
         endpoints::keygen::PrivateKeySet,
         small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
         tfhe_internals::switch_and_squash::SwitchAndSquashKey,
     },
     networking::local::{LocalNetworking, LocalNetworkingProducer},
+    session_id::SessionId,
 };
 use aes_prng::AesRng;
 use rand::SeedableRng;
@@ -77,15 +77,16 @@ impl<Z: Ring> DistributedTestRuntime<Z> {
         self.conversion_keys = Some(cks);
     }
 
-    // store keyshares if you want to test sth related to them
+    /// store keyshares if you want to test sth related to them
     pub fn setup_sks(&mut self, keyshares: Vec<PrivateKeySet>) {
         self.keyshares = Some(keyshares);
     }
 
-    // store prss setups if you want to test sth related to them
+    /// store prss setups if you want to test sth related to them
     pub fn setup_prss(&mut self, setups: Option<HashMap<usize, PRSSSetup<Z>>>) {
         self.prss_setups = setups;
     }
+
     pub fn large_session_for_party(&self, session_id: SessionId, player_id: usize) -> LargeSession {
         LargeSession::new(self.base_session_for_party(session_id, player_id, None))
     }

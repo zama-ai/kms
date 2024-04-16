@@ -1,9 +1,9 @@
 //! CLI tool for interacting with a group of flamins
 use clap::Parser;
-use distributed_decryption::computation::SessionId;
 use distributed_decryption::execution::constants::REAL_PARAM_PATH;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use distributed_decryption::file_handling::read_as_json;
+use distributed_decryption::session_id::SessionId;
 use distributed_decryption::{
     choreography::{choreographer::ChoreoRuntime, parse_session_config_file_with_computation},
     execution::runtime::session::DecryptionMode,

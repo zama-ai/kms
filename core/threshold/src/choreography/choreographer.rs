@@ -6,7 +6,6 @@ use crate::{
         choreography_client::ChoreographyClient, CrsCeremonyRequest, DecryptionRequest,
         KeygenRequest, PreprocRequest, PubkeyRequest, RetrieveResultsRequest,
     },
-    computation::SessionId,
     execution::{
         constants::INPUT_PARTY_ID,
         runtime::party::{Identity, Role},
@@ -14,6 +13,7 @@ use crate::{
         zk::ceremony::PublicParameter,
     },
     networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG},
+    session_id::SessionId,
 };
 use crate::{choreography::grpc::ComputationOutputs, execution::runtime::session::DecryptionMode};
 use std::{collections::HashMap, time::Duration};

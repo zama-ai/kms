@@ -682,7 +682,7 @@ mod tests {
         let sig = Signature {
             sig: server_sig_key.sk.sign(msg),
         };
-        // Fails as the correct key digets are not included in the message whose signature gets checked
+        // Fails as the correct key digests are not included in the message whose signature gets checked
         let res = check_signature(
             msg.to_vec(),
             &sig,

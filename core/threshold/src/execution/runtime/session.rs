@@ -1,13 +1,13 @@
 use super::party::{Identity, Role};
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
-    computation::SessionId,
     error::error_handler::anyhow_error_and_log,
     execution::{
         large_execution::vss::RealVss,
         small_execution::prss::{PRSSSetup, PRSSState},
     },
     networking::Networking,
+    session_id::SessionId,
 };
 use aes_prng::AesRng;
 use async_trait::async_trait;
@@ -23,9 +23,13 @@ pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
 
 #[derive(Clone, Serialize, Deserialize, Display, Debug)]
 pub enum DecryptionMode {
+    /// nSmall Noise Flooding
     PRSSDecrypt,
+    /// nLarge Noise Flooding
     LargeDecrypt,
+    /// nSmall Bit Decomposition
     BitDecSmallDecrypt,
+    /// nLarge Bit Decomposition
     BitDecLargeDecrypt,
 }
 

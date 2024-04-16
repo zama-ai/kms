@@ -1,6 +1,6 @@
-use crate::computation::SessionId;
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
 use crate::execution::runtime::session::NetworkingImpl;
+use crate::session_id::SessionId;
 use serde::Deserialize;
 use std::path::Path;
 use std::str::FromStr;

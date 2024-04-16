@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
     algebra::residue_poly::ResiduePoly64,
-    computation::SessionId,
     execution::{
         runtime::{
             session::ParameterHandles,
@@ -11,6 +10,7 @@ use distributed_decryption::{
         },
         zk::ceremony::{Ceremony, RealCeremony},
     },
+    session_id::SessionId,
 };
 use itertools::Itertools;
 use tokio::task::JoinSet;

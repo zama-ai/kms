@@ -68,7 +68,7 @@ impl NoiseFloodPreprocessing for RedisPreprocessing<ResiduePoly128> {
         let own_role = session.my_role()?;
 
         let masks = (0..amount)
-            .map(|_| session.prss_state.mask_next(own_role.one_based(), BD1))
+            .map(|_| session.prss_state.mask_next(own_role, BD1))
             .try_collect()?;
 
         self.append_masks(masks);

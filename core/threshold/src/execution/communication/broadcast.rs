@@ -605,11 +605,11 @@ async fn broadcast_w_corruption_helper<Z: Ring, R: Rng + CryptoRng, Ses: BaseSes
 mod tests {
     use super::*;
     use crate::algebra::residue_poly::ResiduePoly128;
-    use crate::computation::SessionId;
     use crate::execution::runtime::session::ParameterHandles;
     use crate::execution::runtime::test_runtime::{
         generate_fixed_identities, DistributedTestRuntime,
     };
+    use crate::session_id::SessionId;
     use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;

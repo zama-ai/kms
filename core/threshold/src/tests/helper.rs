@@ -11,12 +11,12 @@ pub mod tests_and_benches {
     use tokio::task::JoinSet;
 
     use crate::{
-        computation::SessionId,
         execution::runtime::{
             session::{LargeSession, SmallSession},
             test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         },
         networking::Networking,
+        session_id::SessionId,
     };
 
     /// Helper method for executing networked tests with multiple parties for small session.
@@ -138,7 +138,6 @@ pub mod tests {
 
     use crate::{
         algebra::structure_traits::Ring,
-        computation::SessionId,
         execution::{
             constants::SMALL_TEST_KEY_PATH,
             runtime::{
@@ -155,6 +154,7 @@ pub mod tests {
         },
         file_handling::read_element,
         networking::{local::LocalNetworkingProducer, Networking},
+        session_id::SessionId,
         tests::test_data_setup::tests::DEFAULT_SEED,
     };
 

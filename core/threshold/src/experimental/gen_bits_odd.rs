@@ -98,7 +98,7 @@ impl BitGenOdd for RealBitGenOdd {
             let prss_state = session.prss_as_mut();
 
             (0..amount)
-                .map(|_| prss_state.mask_next(own_role.one_based(), STATSEC as u128))
+                .map(|_| prss_state.mask_next(own_role, STATSEC as u128))
                 .try_collect::<_, Vec<Z>, _>()?
                 .into_iter()
                 .map(|x| x + dist_shift)

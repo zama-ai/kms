@@ -25,6 +25,11 @@ use crate::{
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
+use sha3::{
+    digest::ExtendableOutput,
+    digest::{Update, XofReader},
+    Shake256,
+};
 use std::{
     collections::HashMap,
     fmt::Display,
@@ -929,7 +934,7 @@ impl Derive for ResiduePoly128 {
         l: usize,
         roles: &[Role],
     ) -> HashMap<Role, Vec<Self>> {
-        let mut hasher = blake3::Hasher::new();
+        let mut hasher = Shake256::default();
         //Update hasher with x
         for x_coef in x.coefs {
             hasher.update(&x_coef.0.to_le_bytes());
@@ -945,7 +950,7 @@ impl Derive for ResiduePoly128 {
                 let mut challenges = vec![Self::ZERO; l];
                 for challenge in challenges.iter_mut() {
                     let mut bytes_res_poly = [0u8; Self::BIT_LENGTH >> 3];
-                    output_reader.fill(&mut bytes_res_poly);
+                    output_reader.read(&mut bytes_res_poly);
                     *challenge = Self::from_bytes(&bytes_res_poly);
                 }
                 (*role, challenges)
@@ -1001,7 +1006,7 @@ impl Derive for ResiduePoly64 {
         l: usize,
         roles: &[Role],
     ) -> std::collections::HashMap<Role, Vec<Self>> {
-        let mut hasher = blake3::Hasher::new();
+        let mut hasher = Shake256::default();
         //Update hasher with x
         for x_coef in x.coefs {
             hasher.update(&x_coef.0.to_le_bytes());
@@ -1017,7 +1022,7 @@ impl Derive for ResiduePoly64 {
                 let mut challenges = vec![Self::ZERO; l];
                 for challenge in challenges.iter_mut() {
                     let mut bytes_res_poly = [0u8; Self::BIT_LENGTH >> 3];
-                    output_reader.fill(&mut bytes_res_poly);
+                    output_reader.read(&mut bytes_res_poly);
                     *challenge = Self::from_bytes(&bytes_res_poly);
                 }
                 (*role, challenges)

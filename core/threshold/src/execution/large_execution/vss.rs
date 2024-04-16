@@ -879,7 +879,6 @@ pub(crate) mod tests {
     use crate::algebra::residue_poly::ResiduePoly;
     use crate::algebra::residue_poly::{ResiduePoly128, ResiduePoly64};
     use crate::algebra::structure_traits::{ErrorCorrect, Invert};
-    use crate::computation::SessionId;
     use crate::execution::runtime::session::SmallSession;
     use crate::execution::sharing::shamir::{RevealOp, ShamirSharings};
     use crate::execution::sharing::share::Share;
@@ -890,6 +889,7 @@ pub(crate) mod tests {
         runtime::party::Role,
         runtime::session::{BaseSessionHandles, LargeSession, ParameterHandles},
     };
+    use crate::session_id::SessionId;
     #[cfg(feature = "slow_tests")]
     use crate::tests::helper::tests::roles_from_idxs;
     use crate::tests::helper::tests::{

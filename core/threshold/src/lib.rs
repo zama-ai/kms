@@ -1,11 +1,11 @@
 #[cfg(feature = "non-wasm")]
 pub mod choreography;
 pub mod commitment;
-pub mod computation;
 pub mod execution;
 pub mod file_handling;
 #[cfg(feature = "non-wasm")]
 pub mod networking;
+pub mod session_id;
 #[cfg(any(test, feature = "testing"))]
 pub mod tests;
 #[cfg(feature = "non-wasm")]

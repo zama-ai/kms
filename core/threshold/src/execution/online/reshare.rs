@@ -269,7 +269,6 @@ mod tests {
             residue_poly::ResiduePoly128,
             structure_traits::{Sample, Zero},
         },
-        computation::SessionId,
         error::error_handler::anyhow_error_and_log,
         execution::tfhe_internals::test_feature::keygen_all_party_shares,
         execution::{
@@ -282,6 +281,7 @@ mod tests {
             sharing::shamir::InputOp,
         },
         file_handling::read_element,
+        session_id::SessionId,
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;

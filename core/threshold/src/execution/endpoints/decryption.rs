@@ -2,8 +2,6 @@
 use crate::algebra::structure_traits::Ring;
 #[cfg(any(test, feature = "testing"))]
 use crate::algebra::structure_traits::{Invert, RingEmbed};
-#[cfg(any(test, feature = "testing"))]
-use crate::computation::SessionId;
 use crate::execution::config::BatchParams;
 use crate::execution::large_execution::offline::LargePreprocessing;
 use crate::execution::online::preprocessing::create_memory_factory;
@@ -32,6 +30,8 @@ use crate::execution::{
     runtime::{session::SessionParameters, test_runtime::DistributedTestRuntime},
     small_execution::prss::PRSSSetup,
 };
+#[cfg(any(test, feature = "testing"))]
+use crate::session_id::SessionId;
 use crate::{
     algebra::{
         base_ring::{Z128, Z64},
@@ -160,7 +160,7 @@ impl ProtocolDecryption for Large {
 /// # Arguments
 /// * `session` - The session object that contains the networking and the role of the party_keyshare
 /// * `protocol` - The protocol object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
-/// * `ck` - The conversion key
+/// * `ck` - The conversion key, used for switch&squash
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
 /// * `_mode` - The decryption mode. This is used only for tracing purposes
@@ -220,7 +220,7 @@ where
 /// # Arguments
 /// * `session` - The session object that contains the networking and the role of the party_keyshare
 /// * `protocol` - The protocol object that contains the decryption `ProtocolType`. `ProtocolType` is the preparation of the noise flooding which holds the `Session` type
-/// * `ck` - The conversion key
+/// * `ck` - The conversion key, used for switch&squash
 /// * `ct` - The ciphertext to be decrypted
 /// * `secret_key_share` - The secret key share of the party_keyshare
 /// * `_mode` - The decryption mode. This is used only for tracing purposes
@@ -381,21 +381,21 @@ pub async fn init_prep_bitdec_large(
     bitdec_preprocessing
 }
 
-/// test the threshold decryption
+/// test the threshold decryption for a given 64-bit TFHE-rs ciphertext
 #[cfg(any(test, feature = "testing"))]
 pub fn threshold_decrypt64<Z: Ring>(
     runtime: &DistributedTestRuntime<Z>,
     ct: &Ciphertext64,
     mode: DecryptionMode,
 ) -> anyhow::Result<HashMap<Identity, Z64>> {
-    let session_id = SessionId(1);
+    let session_id = SessionId::new(ct)?;
 
     let rt = tokio::runtime::Runtime::new()?;
     let _guard = rt.enter();
 
     let mut set = JoinSet::new();
 
-    // Do the Switch&Squash only once instead of having all test parties run it.
+    // Do the Switch&Squash for testing only once instead of having all test parties run it.
     let large_ct = match mode {
         DecryptionMode::PRSSDecrypt | DecryptionMode::LargeDecrypt => {
             tracing::info!("Switch&Squash started...");
@@ -738,14 +738,13 @@ mod tests {
         let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
-        let mut runtime = DistributedTestRuntime::new(identities, threshold as u8);
+        let mut runtime =
+            DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold as u8);
 
         runtime.setup_conversion_key(Arc::new(keyset.public_keys.sns_key.clone().unwrap()));
         runtime.setup_sks(key_shares);
 
-        let results_dec =
-            threshold_decrypt64::<ResiduePoly128>(&runtime, &ct, DecryptionMode::LargeDecrypt)
-                .unwrap();
+        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::LargeDecrypt).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         let ref_res = std::num::Wrapping(msg as u64);
@@ -779,14 +778,13 @@ mod tests {
         let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
-        let mut runtime = DistributedTestRuntime::new(identities, threshold as u8);
+        let mut runtime =
+            DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold as u8);
 
         runtime.setup_conversion_key(Arc::new(keyset.public_keys.sns_key.clone().unwrap()));
         runtime.setup_sks(key_shares);
 
-        let results_dec =
-            threshold_decrypt64::<ResiduePoly128>(&runtime, &ct, DecryptionMode::PRSSDecrypt)
-                .unwrap();
+        let results_dec = threshold_decrypt64(&runtime, &ct, DecryptionMode::PRSSDecrypt).unwrap();
         let out_dec = &results_dec[&Identity("localhost:5000".to_string())];
 
         let ref_res = std::num::Wrapping(msg as u64);

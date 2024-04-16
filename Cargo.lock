@@ -2219,7 +2219,6 @@ dependencies = [
  "async_cell",
  "backoff",
  "bincode",
- "blake3",
  "clap 4.5.4",
  "concrete-csprng",
  "config",

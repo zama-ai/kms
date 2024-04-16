@@ -1,7 +1,6 @@
-use serde::{Deserialize, Serialize};
-use std::hash::Hash;
-
 use crate::execution::tfhe_internals::parameters::Ciphertext64;
+use serde::{Deserialize, Serialize};
+use sha3::{digest::ExtendableOutput, Shake128};
 
 pub const TAG_BYTES: usize = 128 / 8;
 
@@ -10,22 +9,12 @@ pub struct SessionId(pub u128);
 
 impl SessionId {
     pub fn new(ciphertext: &Ciphertext64) -> anyhow::Result<SessionId> {
-        let mut serialized_data = Vec::new();
-        bincode::serialize_into(&mut serialized_data, &ciphertext)?;
-        let digest = Self::hash_array(serialized_data);
-        Ok(Self::digest_to_id(digest))
-    }
+        let serialized_ct = bincode::serialize(ciphertext)?;
 
-    fn hash_array(to_hash: Vec<u8>) -> blake3::Hash {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(to_hash.as_slice());
-        hasher.finalize()
-    }
-
-    fn digest_to_id(digest: blake3::Hash) -> SessionId {
-        let mut array: [u8; TAG_BYTES] = [0; TAG_BYTES];
-        array[..TAG_BYTES].copy_from_slice(&digest.as_bytes()[..TAG_BYTES]);
-        SessionId(u128::from_le_bytes(array))
+        // hash the serialized ct data into a 128-bit (TAG_BYTES) digest and convert to u128
+        let mut hash = [0_u8; TAG_BYTES];
+        Shake128::digest_xof(serialized_ct, &mut hash);
+        Ok(SessionId(u128::from_le_bytes(hash)))
     }
 }
 
@@ -45,8 +34,9 @@ impl From<u128> for SessionId {
 #[cfg(test)]
 mod tests {
     use crate::{
-        computation::SessionId, execution::constants::SMALL_TEST_KEY_PATH,
-        execution::tfhe_internals::parameters::Ciphertext64, tests::helper::tests::generate_cipher,
+        execution::constants::SMALL_TEST_KEY_PATH,
+        execution::tfhe_internals::parameters::Ciphertext64, session_id::SessionId,
+        tests::helper::tests::generate_cipher,
     };
 
     #[test]

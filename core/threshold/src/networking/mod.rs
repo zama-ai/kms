@@ -1,7 +1,7 @@
 //! Networking traits and implementations.
 
-use crate::computation::SessionId;
 use crate::execution::runtime::party::Identity;
+use crate::session_id::SessionId;
 use async_trait::async_trait;
 use tokio::time::Instant;
 

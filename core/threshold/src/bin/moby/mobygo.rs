@@ -3,13 +3,13 @@ use anyhow::anyhow;
 use clap::{Parser, Subcommand};
 use distributed_decryption::{
     choreography::choreographer::ChoreoRuntime,
-    computation::SessionId,
     conf::{choreo::ChoreoConf, telemetry::init_tracing, Settings},
     execution::{
         runtime::party::RoleAssignment, tfhe_internals::parameters::DkgParamsAvailable,
         tfhe_internals::parameters::NoiseFloodParameters,
     },
     file_handling::{self, read_as_json},
+    session_id::SessionId,
 };
 use ndarray::Array1;
 use ndarray_stats::QuantileExt;

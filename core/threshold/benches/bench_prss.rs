@@ -4,7 +4,6 @@ use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::{
     algebra::residue_poly::ResiduePoly128,
-    computation::SessionId,
     execution::{
         runtime::{
             party::{Identity, Role},
@@ -13,6 +12,7 @@ use distributed_decryption::{
         small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
     },
     networking::local::LocalNetworkingProducer,
+    session_id::SessionId,
 };
 use rand::SeedableRng;
 
@@ -42,7 +42,7 @@ fn bench_prss(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("prss_mask_next", size), |b| {
             b.iter(|| {
                 for _ in 0..*size {
-                    let _e_shares = state.mask_next(1, 1_u128 << 114);
+                    let _e_shares = state.mask_next(Role::indexed_by_one(1), 1_u128 << 114);
                 }
             });
         });

@@ -416,11 +416,11 @@ mod tests {
     use super::*;
     use crate::{
         algebra::residue_poly::ResiduePoly64,
-        computation::SessionId,
         execution::runtime::{
             session::{LargeSession, ParameterHandles},
             test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         },
+        session_id::SessionId,
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, TestingParameters,
         },

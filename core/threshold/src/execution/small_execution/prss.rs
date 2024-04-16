@@ -9,7 +9,6 @@ use crate::{
         structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
     },
     commitment::KEY_BYTE_LEN,
-    computation::SessionId,
     error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
         communication::broadcast::broadcast_from_all_w_corruption,
@@ -23,11 +22,17 @@ use crate::{
         small_execution::prf::{chi, phi, psi, PhiAes},
     },
     networking::value::BroadcastValue,
+    session_id::SessionId,
 };
 use anyhow::Context;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
+use sha3::{
+    digest::ExtendableOutput,
+    digest::{Update, XofReader},
+    Shake256,
+};
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
 
@@ -140,22 +145,18 @@ where
     Z: PRSSConversions,
 {
     /// PRSS-Mask.Next() for a single party
-    /// TODO: possibly change to Role as parameter instead of party_id
-    pub fn mask_next(&mut self, party_id: usize, bd1: u128) -> anyhow::Result<Z> {
-        // party IDs start from 1
-        debug_assert!(party_id > 0);
-
+    pub fn mask_next(&mut self, party_id: Role, bd1: u128) -> anyhow::Result<Z> {
         let mut res = Z::ZERO;
 
         for set in self.prss_setup.sets.iter_mut() {
-            if set.parties.contains(&party_id) {
+            if set.parties.contains(&party_id.one_based()) {
                 if let Some(aes_prf) = &set.prfs {
                     let phi0 = phi(&aes_prf.phi_aes, self.mask_ctr, bd1)?;
                     let phi1 = phi(&aes_prf.phi_aes, self.mask_ctr + 1, bd1)?;
                     let phi = phi0 + phi1;
 
-                    // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points
-                    let f_a = set.f_a_points[party_id - 1];
+                    // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
+                    let f_a = set.f_a_points[party_id.zero_based()];
 
                     //Leave it to the Ring's implementation to deal with negative values
                     res += f_a * Z::from_i128(phi);
@@ -176,19 +177,16 @@ where
     }
 
     /// PRSS.Next() for a single party
-    pub fn prss_next(&mut self, party_id: usize) -> anyhow::Result<Z> {
-        // party IDs start from 1
-        debug_assert!(party_id > 0);
-
+    pub fn prss_next(&mut self, party_id: Role) -> anyhow::Result<Z> {
         let mut res = Z::ZERO;
 
         for set in self.prss_setup.sets.iter_mut() {
-            if set.parties.contains(&party_id) {
+            if set.parties.contains(&party_id.one_based()) {
                 if let Some(aes_prf) = &set.prfs {
                     let psi = psi(&aes_prf.psi_aes, self.prss_ctr)?;
 
-                    // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points
-                    let f_a = set.f_a_points[party_id - 1];
+                    // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
+                    let f_a = set.f_a_points[party_id.zero_based()];
 
                     res += f_a * psi;
                 } else {
@@ -209,21 +207,19 @@ where
     /// PRZS.Next() for a single party
     /// `party_id`: The 1-index party ID.
     /// `t`: The threshold parameter for the session
-    pub fn przs_next(&mut self, party_id: usize, threshold: u8) -> anyhow::Result<Z> {
-        // party IDs start from 1
-        debug_assert!(party_id > 0);
-
+    pub fn przs_next(&mut self, party_id: Role, threshold: u8) -> anyhow::Result<Z> {
         let mut res = Z::ZERO;
 
         for set in self.prss_setup.sets.iter_mut() {
-            if set.parties.contains(&party_id) {
+            if set.parties.contains(&party_id.one_based()) {
                 if let Some(aes_prf) = &set.prfs {
                     for j in 1..=threshold {
                         let chi = chi(&aes_prf.chi_aes, self.przs_ctr, j)?;
-                        // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points
-                        let f_a = set.f_a_points[party_id - 1];
+                        // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
+                        let f_a = set.f_a_points[party_id.zero_based()];
                         // power of alpha_i^j
-                        let alpha_j = self.prss_setup.alpha_powers[party_id - 1][j as usize];
+                        let alpha_j =
+                            self.prss_setup.alpha_powers[party_id.zero_based()][j as usize];
                         res += f_a * alpha_j * chi;
                     }
                 } else {
@@ -652,16 +648,14 @@ async fn agree_random_robust<
     let r_vec = robust_opens_to_all(session, &converted_shares, session.threshold() as usize)
         .await?
         .with_context(|| log_error_wrapper("No valid result from open"))?;
-    // TODO should be updated to SHA3, see https://github.com/zama-ai/distributed-decryption/issues/196
-    let mut hasher = blake3::Hasher::new();
     let s_vec = r_vec
         .iter()
         .map(|cur_r| {
             let mut digest = [0u8; KEY_BYTE_LEN];
-            hasher.reset();
+            let mut hasher = Shake256::default();
             hasher.update(&cur_r.to_byte_vec());
             let mut or = hasher.finalize_xof();
-            or.fill(&mut digest);
+            or.read(&mut digest);
             PrfKey(digest)
         })
         .collect_vec();
@@ -826,7 +820,7 @@ mod tests {
 
                 assert_eq!(state.mask_ctr, 0);
 
-                let nextval = state.mask_next(p, BD1).unwrap();
+                let nextval = state.mask_next(Role::indexed_by_one(p), BD1).unwrap();
 
                 // prss state counter must have increased after call to next
                 assert_eq!(state.mask_ctr, 2);
@@ -964,7 +958,7 @@ mod tests {
 
         let mut prev = ResiduePoly128::ZERO;
         for _ in 0..rounds {
-            let cur = state.mask_next(1, BD1).unwrap();
+            let cur = state.mask_next(Role::indexed_by_one(1), BD1).unwrap();
             // check that values change on each call.
             assert_ne!(prev, cur);
             prev = cur;
@@ -1054,7 +1048,9 @@ mod tests {
 
                 assert_eq!(state.przs_ctr, 0);
 
-                let nextval = state.przs_next(p, threshold as u8).unwrap();
+                let nextval = state
+                    .przs_next(Role::indexed_by_one(p), threshold as u8)
+                    .unwrap();
 
                 // przs state counter must have increased after call to next
                 assert_eq!(state.przs_ctr, 1);
@@ -1088,7 +1084,7 @@ mod tests {
                 // check that counters are initialized with sid
                 assert_eq!(state.prss_ctr, 0);
 
-                let nextval = state.prss_next(p).unwrap();
+                let nextval = state.prss_next(Role::indexed_by_one(p)).unwrap();
 
                 // przs state counter must have increased after call to next
                 assert_eq!(state.prss_ctr, 1);
@@ -1119,10 +1115,10 @@ mod tests {
                     bytes.extend_from_slice(&p.to_le_bytes());
                 }
 
-                let mut hasher = blake3::Hasher::new();
+                let mut hasher = Shake256::default();
                 hasher.update(&bytes);
                 let mut or = hasher.finalize_xof();
-                or.fill(&mut r_a);
+                or.read(&mut r_a);
                 PrfKey(r_a)
             })
             .collect();
@@ -1159,7 +1155,12 @@ mod tests {
             let mut session = runtime.small_session_for_party(session_id, party_id - 1, Some(rng));
             let state = session.prss();
             // Compute reference value based on check (we clone to ensure that they are evaluated for the same counter)
-            reference_values.push(state.clone().prss_next(party_id).unwrap());
+            reference_values.push(
+                state
+                    .clone()
+                    .prss_next(Role::indexed_by_one(party_id))
+                    .unwrap(),
+            );
             // Do the actual computation
             set.spawn(async move {
                 let res = state
@@ -1226,7 +1227,7 @@ mod tests {
             reference_values.push(
                 state
                     .clone()
-                    .przs_next(party_id, session.threshold())
+                    .przs_next(Role::indexed_by_one(party_id), session.threshold())
                     .unwrap(),
             );
             // Do the actual computation
@@ -1458,7 +1459,7 @@ mod tests {
 
         for set in state.prss_setup.sets {
             // Compute the reference value and use clone to ensure that the same counter is used for all parties
-            let psi_next = cloned_state.prss_next(role.one_based()).unwrap();
+            let psi_next = cloned_state.prss_next(role).unwrap();
 
             let local_psi = psi(&set.prfs.unwrap().psi_aes, state.prss_ctr).unwrap();
             let local_psi_value = vec![local_psi];
@@ -1503,7 +1504,7 @@ mod tests {
                 .unwrap();
             let mut state = prss_setup.new_prss_session_state(session.session_id());
             let role = session.my_role().unwrap();
-            Share::new(role, state.prss_next(role.one_based()).unwrap())
+            Share::new(role, state.prss_next(role).unwrap())
         };
 
         // init with Dummy AR does not send anything = 0 expected rounds
@@ -1547,7 +1548,7 @@ mod tests {
                 .unwrap();
             let mut state = prss_setup.new_prss_session_state(session.session_id());
             let role = session.my_role().unwrap();
-            Share::new(role, state.prss_next(role.one_based()).unwrap())
+            Share::new(role, state.prss_next(role).unwrap())
         }
 
         // BEFORE:
@@ -1590,7 +1591,7 @@ mod tests {
                     .unwrap();
                 let mut state = prss_setup.new_prss_session_state(session.session_id());
                 let role = session.my_role().unwrap();
-                Share::new(role, state.prss_next(role.one_based()).unwrap())
+                Share::new(role, state.prss_next(role).unwrap())
             } else {
                 Share::new(Role::indexed_by_one(bad_party), ResiduePoly::ZERO)
             }
