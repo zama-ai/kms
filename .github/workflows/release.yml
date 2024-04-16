@@ -38,6 +38,7 @@ jobs:
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
       SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
+      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
 
   docker-enclave-coordinator:
     uses: ./.github/workflows/common-docker-enclave.yml
@@ -98,6 +99,7 @@ jobs:
       - build-threshold
     secrets:
       CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
+      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
 
   deploy-threshold:
     uses: ./.github/workflows/common-deploy.yml

@@ -35,6 +35,7 @@ jobs:
       image-name: 'kms-coordinator'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
 
   docker-enclave:
     uses: ./.github/workflows/common-docker-enclave.yml
