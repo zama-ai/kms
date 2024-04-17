@@ -7,7 +7,6 @@ members = [
     "blockchain/events",
     "blockchain/events-handler",
     "blockchain/proofs",
-    "blockchain/protocol",
     "blockchain/smart-contracts/counter-test",
     "blockchain/smart-contracts/configuration",
 ]
