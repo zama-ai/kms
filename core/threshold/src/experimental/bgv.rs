@@ -16,10 +16,8 @@ use std::ops::{Add, Div, Mul, Sub};
 pub struct PublicKey<QMod, QRMod, N> {
     pub a: RqElement<QMod, N>,
     pub b: RqElement<QMod, N>,
-    #[allow(dead_code)]
-    a_prime: RqElement<QRMod, N>,
-    #[allow(dead_code)]
-    b_prime: RqElement<QRMod, N>,
+    pub a_prime: RqElement<QRMod, N>,
+    pub b_prime: RqElement<QRMod, N>,
 }
 
 #[derive(Debug, Clone)]

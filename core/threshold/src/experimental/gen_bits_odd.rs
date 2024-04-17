@@ -32,7 +32,7 @@ pub trait BitGenOdd {
         Z: Ring + RingEmbed + Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
         Rnd: Rng + CryptoRng,
         Ses: SmallSessionHandles<Z, Rnd>,
-        P: BasePreprocessing<Z> + Send,
+        P: BasePreprocessing<Z> + Send + ?Sized,
     >(
         amount: usize,
         preproc: &mut P,
@@ -48,7 +48,7 @@ impl BitGenOdd for RealBitGenOdd {
         Z: Ring + RingEmbed + Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
         Rnd: Rng + CryptoRng,
         Ses: SmallSessionHandles<Z, Rnd>,
-        P: BasePreprocessing<Z> + Send,
+        P: BasePreprocessing<Z> + Send + ?Sized,
     >(
         amount: usize,
         preproc: &mut P,

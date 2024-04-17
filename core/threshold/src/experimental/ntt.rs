@@ -2,6 +2,7 @@ use crate::algebra::structure_traits::One;
 use std::ops::{Add, Mul, Sub};
 
 use crypto_bigint::{U128, U1536, U768};
+use itertools::Itertools;
 
 use super::bgv_algebra::GenericModulus;
 use super::bgv_algebra::LevelEll;
@@ -187,6 +188,13 @@ where
     }
 }
 
+pub fn hadamard_product<L, R, O>(lhs: &[L], rhs: Vec<R>) -> Vec<O>
+where
+    R: for<'a> Mul<&'a L, Output = O>,
+{
+    lhs.iter().zip(rhs).map(|(x, y)| y * x).collect_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::algebra::structure_traits::Sample;
@@ -235,7 +243,7 @@ mod tests {
         let c = naive_mul(&a, &b, N65536::VALUE);
         ntt_iter2(&mut a, N65536::VALUE, N65536::THETA);
         ntt_iter2(&mut b, N65536::VALUE, N65536::THETA);
-        let mut c_fft: Vec<LevelOne> = a.iter().zip(b).map(|(x, y)| *x * y).collect();
+        let mut c_fft: Vec<LevelOne> = hadamard_product(&a, b); //a.iter().zip(b).map(|(x, y)| *x * y).collect();
 
         ntt_inv::<LevelOne, N65536>(&mut c_fft, N65536::VALUE);
         assert_eq!(c, c_fft);

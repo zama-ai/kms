@@ -1,5 +1,6 @@
 pub mod bgv;
 pub mod bgv_algebra;
+pub mod bgv_dkg;
 pub mod crt;
 pub mod cyclotomic;
 pub mod gen_bits_odd;

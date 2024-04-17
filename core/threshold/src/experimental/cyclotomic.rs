@@ -1,4 +1,5 @@
 use super::integers::{IntQ, ModReduction, ZeroCenteredRem};
+use super::ntt::hadamard_product;
 use super::random::approximate_gaussian;
 use crate::algebra::structure_traits::{One, ZConsts};
 use crate::algebra::structure_traits::{Sample, Zero};
@@ -171,7 +172,7 @@ where
         ntt_iter2(&mut a, N::VALUE, N::THETA);
         ntt_iter2(&mut b, N::VALUE, N::THETA);
 
-        let mut c_fft: Vec<T> = a.iter().zip(b).map(|(x, y)| *x * y).collect();
+        let mut c_fft: Vec<T> = hadamard_product(&a, b);
         ntt_inv::<T, N>(&mut c_fft, N::VALUE);
 
         RqElement {
@@ -199,7 +200,7 @@ where
         ntt_iter2(&mut a, N::VALUE, N::THETA);
         ntt_iter2(&mut b, N::VALUE, N::THETA);
 
-        let mut c_fft: Vec<T> = a.iter().zip(b).map(|(x, y)| y * x).collect();
+        let mut c_fft: Vec<T> = hadamard_product(&a, b);
         ntt_inv::<T, N>(&mut c_fft, N::VALUE);
 
         RqElement {
@@ -227,7 +228,7 @@ where
         ntt_iter2(&mut a, N::VALUE, N::THETA);
         ntt_iter2(&mut b, N::VALUE, N::THETA);
 
-        let mut c_fft: Vec<T> = a.iter().zip(b).map(|(x, y)| y * x).collect();
+        let mut c_fft: Vec<T> = hadamard_product(&a, b);
         ntt_inv::<T, N>(&mut c_fft, N::VALUE);
 
         RqElement {
@@ -255,7 +256,7 @@ where
         ntt_iter2(&mut a, N::VALUE, N::THETA);
         ntt_iter2(&mut b, N::VALUE, N::THETA);
 
-        let mut c_fft: Vec<T> = a.iter().zip(b).map(|(x, y)| y * x).collect();
+        let mut c_fft: Vec<T> = hadamard_product(&a, b);
         ntt_inv::<T, N>(&mut c_fft, N::VALUE);
 
         RqElement {
