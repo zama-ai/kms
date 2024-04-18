@@ -1,8 +1,9 @@
 use std::time::Instant;
 
-use events::EventType;
 use serde::Serialize;
 use typed_builder::TypedBuilder;
+
+use crate::kms::EventAttribute;
 
 #[derive(Serialize)]
 pub(crate) struct Subscription<'a> {
@@ -20,8 +21,7 @@ pub(crate) struct Query {
 #[derive(TypedBuilder, Debug, Clone)]
 pub struct SubQuery<'a> {
     contract_address: &'a str,
-    event_type: EventType,
-    attributes: Vec<events::EventAttribute>,
+    attributes: Vec<EventAttribute>,
 }
 
 impl SubQuery<'_> {
@@ -29,24 +29,21 @@ impl SubQuery<'_> {
         self.contract_address
     }
 
-    pub fn event_type(&self) -> EventType {
-        self.event_type
-    }
-
-    pub fn attributes(&self) -> &Vec<events::EventAttribute> {
+    pub fn attributes(&self) -> &Vec<EventAttribute> {
         &self.attributes
     }
 
     /// Converts the subscription query to a JSON-RPC message
     pub fn to_subscription_msg(&self) -> impl Serialize {
         let mut query = format!(
-            "tm.event='Tx' AND wasm._contract_address='{}' AND execute._contract_address='{}' AND wasm-{} EXISTS",
-            self.contract_address,
-            self.contract_address,
-            self.event_type
+            "tm.event='Tx' AND execute._contract_address='{}'",
+            self.contract_address
         );
         self.attributes.iter().for_each(|attribute| {
-            query.push_str(&format!(" AND {}='{}'", attribute.key, attribute.value));
+            query.push_str(&format!(
+                " AND execute.{} EXISTS AND execute.{}='{}'",
+                attribute.key, attribute.key, attribute.value
+            ));
         });
         Subscription {
             jsonrpc: "2.0",

@@ -4,9 +4,29 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+anyhow = "~1.0"
+async-trait = {version = "~0.1", optional = true}
 cosmwasm-std = { version = "2.0.1" }
+fast_websocket_client = { version = "0.2.0", optional = true }
 serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0"
+simd-json = { version = "0.13.9", optional = true }
 strum = "0.26"
 strum_macros = "0.26"
+tokio = { version = "1.36", features = ["full"], optional = true }
+tracing = { version = "~0.1", features = ["log"] }
 typed-builder = "0.18.1"
+
+[dev-dependencies]
+mockall = "0.12.1"
+test-context = "0.3.0"
+tracing-subscriber = { version = "~0.3.16", features = ["env-filter", "fmt"] }
+ws-mock = "0.0.1"
+
+[features]
+default = []
+subscription = ["dep:async-trait", "dep:fast_websocket_client", "dep:simd-json", "dep:tokio"]
+
+
+
 
