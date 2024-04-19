@@ -62,7 +62,8 @@ services:
 
   kms-smart-contract-deploy:
     build:
-      context: blockchain/smart-contracts
+      context: blockchain
+      dockerfile: smart-contract/Dockerfile
     entrypoint: "/bin/sh"
     command: >
       -c "

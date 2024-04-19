@@ -7,6 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
+events = { path = "../../events" }
 cosmwasm-std = { version = "2.0.1", features = ["staking"] }
 sylvia = "1.0.0"
 schemars = "0.8.16"

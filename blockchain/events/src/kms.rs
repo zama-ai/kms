@@ -1,9 +1,33 @@
+use cosmwasm_schema::cw_serde;
 use cosmwasm_std::Attribute;
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumString};
 use typed_builder::TypedBuilder;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumString, Display)]
+#[cw_serde]
+#[derive(Default, EnumString, Eq, Display)]
+pub enum FheType {
+    #[default]
+    #[strum(serialize = "ebool")]
+    Ebool,
+    #[strum(serialize = "euint4")]
+    Euint4,
+    #[strum(serialize = "euint8")]
+    Euint8,
+    #[strum(serialize = "euint16")]
+    Euint16,
+    #[strum(serialize = "euint32")]
+    Euint32,
+    #[strum(serialize = "euint64")]
+    Euint64,
+    #[strum(serialize = "euint128")]
+    Euint128,
+    #[strum(serialize = "euint160")]
+    Euint160,
+}
+
+#[cw_serde]
+#[derive(Copy, Eq, EnumString, Display)]
 pub enum KmsEventAttributeKey {
     #[strum(serialize = "kmsoperation")]
     OperationType,
@@ -15,15 +39,24 @@ pub enum KmsEventAttributeKey {
 pub enum KmsOperationAttributeValue {
     #[strum(serialize = "decrypt")]
     Decrypt,
+    #[strum(serialize = "decrypt-response")]
+    DecryptResponse,
     #[strum(serialize = "reencrypt")]
     Reencrypt,
+    #[strum(serialize = "reencrypt-response")]
+    ReencryptResponse,
     #[strum(serialize = "key-gen")]
     KeyGen,
+    #[strum(serialize = "key-gen-response")]
+    KeyGenResponse,
     #[strum(serialize = "csr-gen")]
     CsrGen,
+    #[strum(serialize = "csr-gen-response")]
+    CsrGenResponse,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TypedBuilder)]
+#[cw_serde]
+#[derive(Eq, TypedBuilder)]
 pub struct EventAttribute {
     pub key: KmsEventAttributeKey,
     pub value: String,
@@ -35,12 +68,13 @@ impl From<EventAttribute> for Attribute {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TypedBuilder)]
+#[cw_serde]
+#[derive(Eq, TypedBuilder)]
 pub struct KmsOperationAttribute {
     #[builder(setter(transform = |x: KmsOperationAttributeValue| EventAttribute { key: KmsEventAttributeKey::OperationType, value: x.to_string() }))]
-    operation: EventAttribute,
+    pub operation: EventAttribute,
     #[builder(setter(transform = |x: u64| EventAttribute { key: KmsEventAttributeKey::Sequence, value: x.to_string() }))]
-    seq_no: EventAttribute,
+    pub seq_no: EventAttribute,
 }
 
 impl From<KmsOperationAttribute> for Vec<Attribute> {

@@ -5,3 +5,6 @@ members = [
     "counter-test",
     "configuration",
 ]
+
+[workspace.dependencies]
+events = { path = "../events" }
