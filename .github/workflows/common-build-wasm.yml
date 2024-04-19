@@ -1,0 +1,55 @@
+name: Test Wasm Optimization
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        type: string
+        required: true
+        default: './'
+      runs-on:
+        type: string
+        required: false
+        default: 'ubuntu-latest'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN:
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+  WASM_FILES: ${{ inputs.wasm-files }}
+
+jobs:
+  optimize-wasm-files:
+    runs-on: ${{ inputs.runs-on }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@v4
+
+      - name: Setup Home
+        if: ${{ inputs.runs-on != 'ubuntu-latest' }}
+        run: echo "HOME=/home/ubuntu" >> ${GITHUB_ENV}
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+          rustflags: '-C link-arg=-s'
+
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Wasm files
+        run: |
+          cargo build --target wasm32-unknown-unknown --release --lib
+
+      - name: Optimize Wasm files
+        uses: NiklasEi/wasm-opt-action@v2
+        with:
+          file: ${{ inputs.working-directory }}/target/wasm32-unknown-unknown/release/*.wasm
+          optimize_all: true

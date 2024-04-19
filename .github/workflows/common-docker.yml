@@ -107,10 +107,10 @@ jobs:
       - name: Docker Build and Push
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${{ inputs.working-directory }}
           build-args: |
             BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          file: ${{ inputs.working-directory}}/operations/docker/ci.dockerfile
+          file: ${{ inputs.working-directory }}/operations/docker/ci.dockerfile
           push: ${{ inputs.push_image }}
           pull: false
           tags: ghcr.io/zama-ai/${{ inputs.image-name }}:${{env.DOCKER_TAG_IMAGE}}
@@ -135,11 +135,11 @@ jobs:
         if: ${{ github.event_name == 'release' && inputs.generate-dev-image }}
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${{ inputs.working-directory }}
           platforms: linux/amd64,linux/arm64
           build-args: |
             BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          file: ${{ inputs.working-directory}}/operations/docker/dev.dockerfile
+          file: ${{ inputs.working-directory }}/operations/docker/dev.dockerfile
           push: ${{ inputs.push_image }}
           pull: false
           tags: ghcr.io/zama-ai//${{ inputs.image-dev }}-dev:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-dev }}-dev:latest
@@ -147,6 +147,7 @@ jobs:
           cache-to: type=gha,mode=max
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
+
       - name: Export image name
         id: export-image
         run: echo "image=ghcr.io/zama-ai/${{inputs.image-name}}:${{env.DOCKER_TAG_IMAGE}}" >> "${GITHUB_OUTPUT}"

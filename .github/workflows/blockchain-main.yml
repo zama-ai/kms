@@ -1,0 +1,58 @@
+name: '[Blockchain-Merge Main] Pipeline Run'
+
+on:
+  push:   
+    branches: ['main']
+    paths:
+      - 'blockchain/**'
+      - '.github/workflows/blockchain-main.yml'
+
+jobs:
+  build-smart-contracts:
+    uses: ./.github/workflows/common-build.yml
+    with:
+      working-directory: './blockchain/smart-contracts'
+      args-tests-fhe: ''
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
+  optimize-smart-contracts:
+    uses: ./.github/workflows/common-build-wasm.yml
+    with:
+      working-directory: './blockchain/smart-contracts'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
+  docker-smart-contracts:
+    uses: ./.github/workflows/common-docker.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
+    with:
+      working-directory: './blockchain/smart-contracts'
+      push_image: true
+      image-name: 'kms-smart-contract-deploy'
+    needs:
+        - build-smart-contracts
+        - optimize-smart-contracts
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
+
+  done:
+    runs-on: ubuntu-latest
+    name: Pipeline Done
+    steps:
+      - name: Success
+        run: echo Pipeline Done
+    needs:
+      - build-smart-contracts
+      - optimize-smart-contracts
+      - docker-smart-contracts

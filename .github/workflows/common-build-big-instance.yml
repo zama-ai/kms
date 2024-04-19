@@ -4,8 +4,12 @@ on:
     inputs:
       args-tests:
         type: string
-        required: true
+        required: false
         default: ''
+      args-tests-fhe:
+          type: string
+          required: false
+          default: '-F tfhe/seeder_unix -F tfhe/x86_64'
       working-directory:
         type: string
         required: true
@@ -65,6 +69,7 @@ jobs:
       build-publish-docs: ${{ inputs.build-publish-docs }}
       working-directory: ${{ inputs.working-directory }}
       args-tests: ${{ inputs.args-tests }}
+      args-tests-fhe: ${{ inputs.args-tests-fhe }}
       run-redis: ${{ inputs.run-redis }}
       run-wasm: ${{ inputs.run-wasm }}
 
