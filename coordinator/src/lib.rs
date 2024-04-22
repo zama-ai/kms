@@ -1,8 +1,6 @@
 use anyhow::anyhow;
 #[cfg(feature = "non-wasm")]
 use consts::{DEFAULT_PARAM_PATH, TEST_KEY_ID};
-#[cfg(feature = "non-wasm")]
-use cryptography::central_kms::{CrsHashMap, SoftwareKmsKeys};
 use std::fmt;
 use std::panic::Location;
 #[cfg(feature = "non-wasm")]
@@ -70,7 +68,7 @@ pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) ->
 }
 
 #[cfg(feature = "non-wasm")]
-pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
+pub fn write_default_keys(path: &str) {
     use crate::{
         consts::TMP_PATH_PREFIX,
         util::file_handling::read_element,
@@ -78,17 +76,43 @@ pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
     };
     use std::path::Path;
 
+    // Check if all keys have already been written and return if so.
+    if Path::new(&format!("{TMP_PATH_PREFIX}/pks.bin"))
+        .try_exists()
+        .unwrap()
+        && Path::new(&format!("{TMP_PATH_PREFIX}/sks.bin"))
+            .try_exists()
+            .unwrap()
+        && Path::new(&format!("{TMP_PATH_PREFIX}/cks.bin"))
+            .try_exists()
+            .unwrap()
+    {
+        println!("Keys already exist. Done executing write_default_keys without the need for writing anything.");
+        return;
+    }
     ensure_central_keys_exist(DEFAULT_PARAM_PATH, path, Some(TEST_KEY_ID.to_string()));
     let central_keys: CentralizedTestingKeys = read_element(path).unwrap();
     let pks = central_keys.pub_fhe_keys.get(TEST_KEY_ID).unwrap();
     // Write down the seperate keys needed to run the server
-    if !Path::new("{TMP_PATH_PREFIX}/pks.bin").try_exists().unwrap() {
+    if !Path::new(&format!("{TMP_PATH_PREFIX}/pks.bin"))
+        .try_exists()
+        .unwrap()
+    {
+        println!("Writing default pks");
         write_element(format!("{TMP_PATH_PREFIX}/pks.bin"), &pks.public_key).unwrap();
     }
-    if !Path::new("{TMP_PATH_PREFIX}/sks.bin").try_exists().unwrap() {
+    if !Path::new(&format!("{TMP_PATH_PREFIX}/sks.bin"))
+        .try_exists()
+        .unwrap()
+    {
+        println!("Writing default sks");
         write_element(format!("{TMP_PATH_PREFIX}/sks.bin"), &pks.server_key).unwrap();
     }
-    if !Path::new("{TMP_PATH_PREFIX}/cks.bin").try_exists().unwrap() {
+    if !Path::new(&format!("{TMP_PATH_PREFIX}/cks.bin"))
+        .try_exists()
+        .unwrap()
+    {
+        println!("Writing default cks");
         write_element(
             format!("{TMP_PATH_PREFIX}/cks.bin"),
             &central_keys
@@ -100,15 +124,12 @@ pub fn write_default_keys(path: &str) -> SoftwareKmsKeys {
         )
         .unwrap();
     }
-    central_keys.software_kms_keys
+    println!("Keys have been written. Done executing write_default_keys");
 }
 
 #[cfg(feature = "non-wasm")]
-pub fn write_default_crs_store() -> CrsHashMap {
-    use crate::{
-        consts::{DEFAULT_CENTRAL_CRS_PATH, TEST_CRS_ID},
-        util::file_handling::read_element,
-    };
+pub fn write_default_crs_store() {
+    use crate::consts::{DEFAULT_CENTRAL_CRS_PATH, TEST_CRS_ID};
     use util::key_setup::ensure_central_crs_store_exists;
 
     ensure_central_crs_store_exists(
@@ -116,27 +137,27 @@ pub fn write_default_crs_store() -> CrsHashMap {
         DEFAULT_CENTRAL_CRS_PATH,
         Some(TEST_CRS_ID.to_string()),
     );
-    let crs_map: CrsHashMap = read_element(DEFAULT_CENTRAL_CRS_PATH).unwrap();
-    crs_map
 }
 
 #[cfg(feature = "slow_tests")]
 #[cfg(test)]
 mod tests {
-
     #[cfg(test)]
     #[ctor::ctor]
     fn ensure_server_keys_exist() {
         use crate::consts::DEFAULT_CENTRAL_KEYS_PATH;
         use crate::write_default_keys;
 
-        let _ = write_default_keys(DEFAULT_CENTRAL_KEYS_PATH);
+        println!("Write default keys started...");
+        write_default_keys(DEFAULT_CENTRAL_KEYS_PATH);
     }
 
     #[cfg(test)]
     #[ctor::ctor]
     fn ensure_crs_exist() {
         use crate::write_default_crs_store;
-        let _ = write_default_crs_store();
+
+        println!("Write default CRS store started...");
+        write_default_crs_store();
     }
 }

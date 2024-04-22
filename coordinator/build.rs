@@ -1,6 +1,7 @@
 const DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize)]";
 const EXTENDED_DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize, Hash, Eq)]";
 
+// Adding doc
 #[cfg(not(feature = "non-wasm"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::configure()

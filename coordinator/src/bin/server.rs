@@ -105,23 +105,23 @@ async fn main() -> Result<(), anyhow::Error> {
     let socket: SocketAddr = format!("{}:{}", host_str, port).parse()?;
     match args.mode {
         Mode::Dev => {
-            let keys: SoftwareKmsKeys = if Path::new(DEFAULT_CENTRAL_KEYS_PATH).exists() {
-                read_element(DEFAULT_CENTRAL_KEYS_PATH)?
-            } else {
+            if !Path::new(DEFAULT_CENTRAL_KEYS_PATH).exists() {
                 tracing::info!(
                     "Could not find default keys. Generating new keys with default parameters and ID \"{}\"...", TEST_KEY_ID
                 );
-                write_default_keys(DEFAULT_CENTRAL_KEYS_PATH)
+                write_default_keys(DEFAULT_CENTRAL_KEYS_PATH);
             };
+            tracing::info!("Reading keys");
+            let keys: SoftwareKmsKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH)?;
 
-            let crs_store: CrsHashMap = if Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
-                read_element(DEFAULT_CENTRAL_CRS_PATH)?
-            } else {
+            if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
                 tracing::info!(
-                      "Could not find default CRS store. Generating new CRS store with default parameters and ID \"{}\"...", TEST_CRS_ID
-                  );
-                write_default_crs_store()
+                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", TEST_CRS_ID
+                );
+                write_default_crs_store();
             };
+            tracing::info!("Reading crs");
+            let crs_store: CrsHashMap = read_element(DEFAULT_CENTRAL_CRS_PATH)?;
 
             kms_server_handle(socket, keys, Some(crs_store)).await
         }
@@ -266,15 +266,13 @@ async fn main() -> Result<(), anyhow::Error> {
                 sig_sk,
                 sig_pk,
             };
-            let crs_store: CrsHashMap = if Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
-                read_element(DEFAULT_CENTRAL_CRS_PATH)?
-            } else {
+            if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
                 tracing::info!(
                     "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", TEST_CRS_ID
                 );
-                write_default_crs_store()
+                write_default_crs_store();
             };
-
+            let crs_store: CrsHashMap = read_element(DEFAULT_CENTRAL_CRS_PATH)?;
             kms_server_handle(socket, keys, Some(crs_store)).await
         }
     }?;

@@ -72,7 +72,7 @@ fn ensure_threshold_keys_exist(
     key_handle: Option<String>,
 ) {
     if !Path::new(&threshold_key_path).try_exists().unwrap() {
-        tracing::info!("Generating new threshold keys");
+        println!("Generating new threshold keys");
         let mut rng = AesRng::seed_from_u64(1);
         let noise_params: NoiseFloodParameters = read_as_json(param_path.to_owned()).unwrap();
         let params = DKGParamsSnS {
@@ -104,7 +104,7 @@ fn ensure_threshold_keys_exist(
         }
         let sns_key = key_set.public_keys.sns_key.unwrap();
         for i in 1..=AMOUNT_PARTIES {
-            tracing::info!("Generating key for party {i}");
+            println!("Generating key for party {i}");
             let threshold_fhe_keys = ThresholdFheKeys {
                 private_keys: key_shares[i - 1].to_owned(),
                 sns_key: sns_key.clone(),
@@ -137,7 +137,7 @@ pub fn ensure_central_keys_exist(
     key_handle: Option<String>,
 ) {
     if !Path::new(central_key_path).try_exists().unwrap() {
-        tracing::info!("Generating new centralized keys");
+        println!("Generating new centralized keys");
         let params: NoiseFloodParameters = read_as_json(param_path.to_owned()).unwrap();
         let mut rng = AesRng::seed_from_u64(1);
         let (software_kms_keys, pub_fhe_keys) =
@@ -165,7 +165,7 @@ pub fn ensure_central_crs_store_exists(
     crs_handle: Option<String>,
 ) {
     if !Path::new(central_crs_path).try_exists().unwrap() {
-        tracing::info!("Generating new centralized CRS store");
+        println!("Generating new centralized CRS store");
         let params: NoiseFloodParameters = read_as_json(param_path.to_owned()).unwrap();
         let mut rng = AesRng::seed_from_u64(42);
         let crs = gen_centralized_crs(&params, &mut rng);
@@ -182,7 +182,7 @@ pub fn ensure_central_multiple_keys_ct_exist(
     ciphertext_path: &str,
 ) {
     if !Path::new(central_keys_path).try_exists().unwrap() {
-        tracing::info!("Generating new centralized multiple keys");
+        println!("Generating new centralized multiple keys");
         let params: NoiseFloodParameters = read_as_json(param_path.to_owned()).unwrap();
         let mut rng = AesRng::seed_from_u64(1);
         // Generate keys with default handle
@@ -225,7 +225,7 @@ pub fn ensure_central_multiple_keys_ct_exist(
 
 pub fn ensure_ciphertext_exist(ciphertext_path: &str, fhe_pk: &FhePublicKey) {
     if !Path::new(ciphertext_path).try_exists().unwrap() {
-        tracing::info!("Generating a new ciphertext");
+        println!("Generating a new ciphertext");
         let ct = FheUint8::encrypt(TEST_MSG, fhe_pk);
         let mut serialized_ct = Vec::new();
         bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
