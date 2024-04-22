@@ -190,10 +190,12 @@ mod tests {
 
         // make sure we can put it in storage1
         assert!(storage1.store_data(data, url));
-        assert!(storage1.data_exits(&reqid, PubDataType::CRS).unwrap());
-        assert!(!storage1.data_exits(&reqid, PubDataType::PublicKey).unwrap());
+        assert!(storage1.data_exists(&reqid, PubDataType::CRS).unwrap());
+        assert!(!storage1
+            .data_exists(&reqid, PubDataType::PublicKey)
+            .unwrap());
 
         // check that we're not storing to storage2
-        assert!(!storage2.data_exits(&reqid, PubDataType::CRS).unwrap());
+        assert!(!storage2.data_exists(&reqid, PubDataType::CRS).unwrap());
     }
 }

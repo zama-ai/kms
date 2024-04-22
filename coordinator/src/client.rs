@@ -1502,7 +1502,8 @@ pub(crate) mod tests {
         let (kms_server, mut kms_client, internal_client) =
             centralized_handles(centralized_key_path, Some(centralized_crs_path)).await;
 
-        let _ = fs::remove_dir_all(DevStorage::root_dir());
+        let storage = DevStorage::default();
+        let _ = fs::remove_dir_all(storage.root_dir());
         let gen_req = internal_client.crs_gen_request(crs_handle, params).unwrap();
 
         let req_id = gen_req.request_id.clone().unwrap();

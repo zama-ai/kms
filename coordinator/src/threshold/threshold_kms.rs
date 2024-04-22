@@ -510,7 +510,7 @@ impl CoordinatorEndpoint for ThresholdKms {
 
         let sig_payload_vec = tonic_handle_potential_err(
             to_vec(&sig_payload),
-            format!("Could not convert payload to sign vec {:?}", sig_payload),
+            format!("Could not convert payload to bytes {:?}", sig_payload),
         )?;
 
         let sig = tonic_handle_potential_err(
