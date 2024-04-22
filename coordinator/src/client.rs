@@ -31,8 +31,6 @@ use crate::rpc::rpc_types::{
     DecryptionRequestSerializable, DecryptionResponseSigPayload, PubDataType, KEY_GEN_REQUEST_NAME,
 };
 #[cfg(feature = "non-wasm")]
-use crate::storage::DevStorage;
-#[cfg(feature = "non-wasm")]
 use crate::{cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms};
 #[cfg(feature = "non-wasm")]
 use crate::{storage::PublicStorageReader, util::key_setup::FhePublicKey};
@@ -545,20 +543,22 @@ impl Client {
 
     // TODO do we need to linking to request?
     #[cfg(feature = "non-wasm")]
-    pub fn process_get_key_gen_resp(
+    pub fn process_get_key_gen_resp<R: PublicStorageReader>(
         &self,
         resp: KeyGenResult,
+        storage: &R,
     ) -> anyhow::Result<(FhePublicKey, ServerKey)> {
         let pk: FhePublicKey = some_or_err(
-            self.retrieve_key(&resp, PubDataType::PublicKey)?,
+            self.retrieve_key(&resp, PubDataType::PublicKey, storage)?,
             "Could not validate public key".to_string(),
         )?;
-        let server_key: ServerKey = match self.retrieve_key(&resp, PubDataType::ServerKey)? {
-            Some(server_key) => server_key,
-            None => {
-                return Err(anyhow_error_and_log("Could not validate server key"));
-            }
-        };
+        let server_key: ServerKey =
+            match self.retrieve_key(&resp, PubDataType::ServerKey, storage)? {
+                Some(server_key) => server_key,
+                None => {
+                    return Err(anyhow_error_and_log("Could not validate server key"));
+                }
+            };
         Ok((pk, server_key))
     }
 
@@ -566,10 +566,11 @@ impl Client {
     /// The method will return the key if retrieval and validation is successful,
     /// but will return None in case the signature is invalid or does not match the actual key handle.
     #[cfg(feature = "non-wasm")]
-    pub fn retrieve_key<S: serde::Serialize + DeserializeOwned>(
+    pub fn retrieve_key<S: serde::Serialize + DeserializeOwned, R: PublicStorageReader>(
         &self,
         key_gen_result: &KeyGenResult,
         key_type: PubDataType,
+        storage: &R,
     ) -> anyhow::Result<Option<S>> {
         let pki = some_or_err(
             key_gen_result.key_results.get(&key_type.to_string()),
@@ -579,7 +580,6 @@ impl Client {
             key_gen_result.request_id.clone(),
             "No request id".to_string(),
         )?;
-        let storage = DevStorage::default();
         let url = storage.compute_url(request_id, pki, key_type)?;
         let key: S = storage.read_data(url)?;
         let serialized_key = bincode::serialize(&key)?;
@@ -1347,7 +1347,8 @@ pub(crate) mod tests {
         let (kms_server, mut kms_client, mut internal_client) =
             centralized_handles(centralized_key_path, None).await;
         // Remove exisiting keys to make the test idempotent
-        let _ = fs::remove_dir_all(DevStorage::root_dir());
+        let storage = DevStorage::default();
+        let _ = fs::remove_dir_all(storage.root_dir());
 
         let gen_req = internal_client.key_gen_request(key_handle, params).unwrap();
         let req_id = gen_req.request_id.clone().unwrap();
@@ -1370,11 +1371,11 @@ pub(crate) mod tests {
         }
         let inner_resp = response.unwrap().into_inner();
         let pk: Option<FhePublicKey> = internal_client
-            .retrieve_key(&inner_resp, PubDataType::PublicKey)
+            .retrieve_key(&inner_resp, PubDataType::PublicKey, &storage)
             .unwrap();
         assert!(pk.is_some());
         let server_key: Option<tfhe::ServerKey> = internal_client
-            .retrieve_key(&inner_resp, PubDataType::ServerKey)
+            .retrieve_key(&inner_resp, PubDataType::ServerKey, &storage)
             .unwrap();
         assert!(server_key.is_some());
         kms_server.abort();

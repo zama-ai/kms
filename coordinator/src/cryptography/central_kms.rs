@@ -681,7 +681,7 @@ mod tests {
     ) {
         let msg = 42_u8;
         let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
-        let storage = DevStorage {};
+        let storage = DevStorage::default();
         let kms = {
             let inner = SoftwareKms::new(
                 storage,

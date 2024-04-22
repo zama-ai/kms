@@ -9,7 +9,11 @@ use distributed_decryption::execution::{
     endpoints::keygen::FhePubKeySet, zk::ceremony::PublicParameter,
 };
 use serde::de::DeserializeOwned;
-use std::{collections::HashMap, env, fs, path::Path};
+use std::{
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
 use url::Url;
 
 /// Trait for public KMS storage reading
@@ -80,11 +84,19 @@ pub fn store_crs<S: PublicStorage>(
 }
 
 #[derive(Default)]
-pub struct DevStorage {}
+pub struct DevStorage {
+    extra_prefix: String,
+}
 
 impl DevStorage {
-    pub fn root_dir() -> String {
-        format!("{}/dev", KEY_PATH_PREFIX)
+    pub fn root_dir(&self) -> PathBuf {
+        PathBuf::from(format!("{}/{}/dev", KEY_PATH_PREFIX, self.extra_prefix))
+    }
+
+    pub fn new(extra_prefix: &str) -> Self {
+        Self {
+            extra_prefix: extra_prefix.to_owned(),
+        }
     }
 }
 
@@ -101,8 +113,8 @@ impl PublicStorageReader for DevStorage {
             "Could not get current directory".to_string(),
         )?;
         let public_key_path = format!(
-            "{}/{}/dev/{}-{}.key",
-            cur_dir, KEY_PATH_PREFIX, request_id, key_type
+            "{}/{}/{}/dev/{}-{}.key",
+            cur_dir, KEY_PATH_PREFIX, self.extra_prefix, request_id, key_type
         );
         let url = Url::from_file_path(public_key_path)
             .map_err(|_e| anyhow_error_and_log("Could not turn path into URL"))?;
@@ -116,8 +128,8 @@ impl PublicStorageReader for DevStorage {
             "Could not get current directory".to_string(),
         )?;
         let path = format!(
-            "{}/{}/dev/{}-{}.key",
-            cur_dir, KEY_PATH_PREFIX, request_id, key_type
+            "{}/{}/{}/dev/{}-{}.key",
+            cur_dir, KEY_PATH_PREFIX, self.extra_prefix, request_id, key_type
         );
         Path::new(&path)
             .try_exists()
@@ -132,7 +144,7 @@ impl PublicStorageReader for DevStorage {
 
 impl PublicStorage for DevStorage {
     fn store_data<T: serde::Serialize>(&self, data: T, url: Url) -> bool {
-        match fs::create_dir_all(format!("{}/dev", KEY_PATH_PREFIX)) {
+        match fs::create_dir_all(format!("{}/{}/dev", KEY_PATH_PREFIX, self.extra_prefix)) {
             Ok(_) => match write_element(url.path().to_string(), &data) {
                 Ok(_) => true,
                 Err(_) => {
@@ -145,5 +157,43 @@ impl PublicStorage for DevStorage {
                 false
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn threshold_dev_storage() {
+        let prefix1 = "p1";
+        let prefix2 = "p2";
+        let storage1 = DevStorage::new(prefix1);
+        let storage2 = DevStorage::new(prefix2);
+
+        // clear out storage
+        let _ = fs::remove_dir_all(storage1.root_dir());
+        let _ = fs::remove_dir_all(storage2.root_dir());
+
+        let reqid = RequestId {
+            request_id: "hello".to_string(),
+        };
+        let data = "data".to_string();
+        // NOTE: info is not used for dev storage
+        let info = FhePubKeyInfo {
+            key_handle: "".to_string(),
+            signature: vec![],
+        };
+        let url = storage1
+            .compute_url(reqid.clone(), &info, PubDataType::CRS)
+            .unwrap();
+
+        // make sure we can put it in storage1
+        assert!(storage1.store_data(data, url));
+        assert!(storage1.data_exits(&reqid, PubDataType::CRS).unwrap());
+        assert!(!storage1.data_exits(&reqid, PubDataType::PublicKey).unwrap());
+
+        // check that we're not storing to storage2
+        assert!(!storage2.data_exits(&reqid, PubDataType::CRS).unwrap());
     }
 }
