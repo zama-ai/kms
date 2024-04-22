@@ -1,14 +1,15 @@
 use super::der_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature};
 use super::signcryption::{
-    serialize_hash_element, sign, sign_eip712, signcrypt, verify_sig, verify_sig_eip712, RND_SIZE,
+    internal_verify_sig, internal_verify_sig_eip712, serialize_hash_element, sign, sign_eip712,
+    signcrypt, RND_SIZE,
 };
+use crate::anyhow_error_and_log;
 use crate::consts::TEST_KEY_ID;
 use crate::kms::FhePubKeyInfo;
 #[cfg(feature = "non-wasm")]
 use crate::storage::PublicStorage;
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
-use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use crate::{
     consts::ID_LENGTH,
     rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, SigncryptionPayload},
@@ -80,6 +81,11 @@ pub async fn async_generate_fhe_keys(
 }
 
 #[cfg(feature = "non-wasm")]
+pub async fn async_generate_crs(rng: AesRng, params: NoiseFloodParameters) -> PublicParameter {
+    gen_centralized_crs(&params, rng)
+}
+
+#[cfg(feature = "non-wasm")]
 pub fn generate_fhe_keys(params: NoiseFloodParameters) -> (FhePrivateKey, FhePubKeySet) {
     let client_key = generate_client_fhe_key(params);
     let server_key = client_key.generate_server_key();
@@ -119,14 +125,14 @@ fn compute_witness_dimension(params: &NoiseFloodParameters) -> usize {
 #[cfg(feature = "non-wasm")]
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     params: &NoiseFloodParameters,
-    rng: &mut R,
+    mut rng: R,
 ) -> PublicParameter {
     let witness_dim = compute_witness_dimension(params);
     tracing::info!("Generating CRS with witness dimension {}.", witness_dim);
     let pparam = PublicParameter::new(witness_dim);
 
-    let mut tau = curve::Zp::rand(rng);
-    let mut r = curve::Zp::rand(rng);
+    let mut tau = curve::Zp::rand(&mut rng);
+    let mut r = curve::Zp::rand(&mut rng);
     let pproof = make_proof_deterministic(&pparam, tau, 1, r);
     tau.zeroize();
     r.zeroize();
@@ -167,19 +173,9 @@ impl BaseKms for BaseKmsStruct {
         key: &PublicSigKey,
     ) -> bool
     where
-        T: Serialize,
+        T: Serialize + AsRef<[u8]>,
     {
-        let msg = match to_vec(payload) {
-            Ok(msg) => msg,
-            Err(e) => {
-                tracing::warn!(
-                    "Could not encode payload for signature verification: {:?}",
-                    e,
-                );
-                return false;
-            }
-        };
-        if !verify_sig(&msg, signature, key) {
+        if !internal_verify_sig(&payload, signature, key) {
             return false;
         }
         true
@@ -187,19 +183,10 @@ impl BaseKms for BaseKmsStruct {
 
     fn sign<T>(&self, msg: &T) -> anyhow::Result<super::der_types::Signature>
     where
-        T: Serialize,
+        T: Serialize + AsRef<[u8]>,
     {
-        let to_sign = match to_vec(msg) {
-            Ok(to_sign) => to_sign,
-            Err(e) => {
-                return Err(anyhow_error_and_warn_log(format!(
-                    "Could not encode message for signing: {:?}",
-                    e
-                )));
-            }
-        };
         // TODO signature should be validated to prevent fault attacks
-        sign(&to_sign, &self.sig_key)
+        sign(&msg, &self.sig_key)
     }
 
     fn get_verf_key(&self) -> PublicSigKey {
@@ -221,7 +208,7 @@ impl BaseKms for BaseKmsStruct {
         signature: &Signature,
         verification_key: &PublicSigKey,
     ) -> bool {
-        verify_sig_eip712(payload, domain, signature, verification_key)
+        internal_verify_sig_eip712(payload, domain, signature, verification_key)
     }
 
     fn sign_eip712<T: SolStruct>(
@@ -241,7 +228,8 @@ pub struct SoftwareKmsKeys {
     pub sig_pk: PublicSigKey,
 }
 
-pub type CrsHashMap = HashMap<String, PublicParameter>;
+// TODO rename to CrcInfoHashMap (later, to avoid conflicts with other PRs)
+pub type CrsHashMap = HashMap<String, FhePubKeyInfo>;
 
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize)]
@@ -278,15 +266,17 @@ impl KmsFheKeyHandles {
 
 #[cfg(feature = "non-wasm")]
 type KeyGenHandle = JoinHandle<(ClientKey, FhePubKeySet)>;
+type CrsGenHandle = JoinHandle<PublicParameter>;
 
 /// Software based KMS where keys are stored in a local file
 #[cfg(feature = "non-wasm")]
 pub struct SoftwareKms<S: PublicStorage> {
-    base_kms: BaseKmsStruct,
+    pub(crate) base_kms: BaseKmsStruct,
     pub(crate) storage: S,
     pub key_handles: Arc<Mutex<HashMap<String, KmsFheKeyHandles>>>,
     pub key_gen_map: Arc<Mutex<HashMap<String, KeyGenHandle>>>,
-    pub crs_store: Arc<Mutex<CrsHashMap>>,
+    pub crs_handles: Arc<Mutex<CrsHashMap>>,
+    pub crs_gen_map: Arc<Mutex<HashMap<String, CrsGenHandle>>>,
 }
 
 // impl fmt::Debug for SoftwareKms, we don't want to include the decryption key in the debug output
@@ -301,7 +291,7 @@ impl<S: PublicStorage> fmt::Debug for SoftwareKms<S> {
 
 #[cfg(feature = "non-wasm")]
 impl<S: PublicStorage> BaseKms for SoftwareKms<S> {
-    fn verify_sig<T: Serialize>(
+    fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
         signature: &super::der_types::Signature,
         verification_key: &PublicSigKey,
@@ -309,7 +299,10 @@ impl<S: PublicStorage> BaseKms for SoftwareKms<S> {
         BaseKmsStruct::verify_sig(payload, signature, verification_key)
     }
 
-    fn sign<T: Serialize>(&self, msg: &T) -> anyhow::Result<super::der_types::Signature> {
+    fn sign<T: Serialize + AsRef<[u8]>>(
+        &self,
+        msg: &T,
+    ) -> anyhow::Result<super::der_types::Signature> {
         self.base_kms.sign(msg)
     }
 
@@ -450,7 +443,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
         sig_key: PrivateSigKey,
         crs_store: Option<CrsHashMap>,
     ) -> Self {
-        // Use crs_store passed in if it exists, otherwise create a new one
+        // Use the crs_store passed in if it exists, otherwise create a new one
         let cs = match crs_store {
             Some(crs_store) => crs_store,
             None => CrsHashMap::new(),
@@ -461,7 +454,8 @@ impl<S: PublicStorage> SoftwareKms<S> {
             storage,
             key_handles: Arc::new(Mutex::new(key_info)),
             key_gen_map: Arc::new(Mutex::new(HashMap::new())),
-            crs_store: Arc::new(Mutex::new(cs)),
+            crs_handles: Arc::new(Mutex::new(cs)),
+            crs_gen_map: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -476,6 +470,7 @@ pub fn compute_info<K: BaseKms, S: Serialize>(
     let ser = bincode::serialize(element)?;
     let handle = compute_handle(&ser)?;
     let signature = kms.sign(&handle)?;
+
     Ok(FhePubKeyInfo {
         key_handle: handle,
         signature: bincode::serialize(&signature)?,
@@ -590,16 +585,17 @@ mod tests {
 
         ensure_dir_exist();
 
-        ensure_central_crs_store_exists(
-            TEST_PARAM_PATH,
-            TEST_CENTRAL_CRS_PATH,
-            Some(TEST_CRS_ID.to_string()),
-        );
-
         ensure_central_key_ct_exist(
             TEST_PARAM_PATH,
             TEST_CENTRAL_KEYS_PATH,
             TEST_CENTRAL_CT_PATH,
+        );
+
+        ensure_central_crs_store_exists(
+            TEST_PARAM_PATH,
+            TEST_CENTRAL_CRS_PATH,
+            TEST_CENTRAL_KEYS_PATH,
+            Some(TEST_CRS_ID.to_string()),
         );
 
         ensure_threshold_key_ct_exist(
@@ -622,16 +618,17 @@ mod tests {
     fn ensure_default_material_exists() {
         ensure_dir_exist();
 
-        ensure_central_crs_store_exists(
-            DEFAULT_PARAM_PATH,
-            DEFAULT_CENTRAL_CRS_PATH,
-            Some(TEST_CRS_ID.to_string()),
-        );
-
         ensure_central_key_ct_exist(
             DEFAULT_PARAM_PATH,
             DEFAULT_CENTRAL_KEYS_PATH,
             DEFAULT_CENTRAL_CT_PATH,
+        );
+
+        ensure_central_crs_store_exists(
+            DEFAULT_PARAM_PATH,
+            DEFAULT_CENTRAL_CRS_PATH,
+            DEFAULT_CENTRAL_KEYS_PATH,
+            Some(TEST_CRS_ID.to_string()),
         );
 
         ensure_threshold_key_ct_exist(

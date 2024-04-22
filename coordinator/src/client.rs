@@ -4,17 +4,17 @@ use crate::cryptography::der_types::{
     PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair,
     SigncryptionPrivKey, SigncryptionPubKey,
 };
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::signcryption::serialize_hash_element;
 use crate::cryptography::signcryption::{
     decrypt_signcryption, encryption_key_generation, sign_eip712, RND_SIZE,
 };
 #[cfg(feature = "non-wasm")]
-use crate::cryptography::signcryption::{serialize_hash_element, verify_sig};
-#[cfg(feature = "non-wasm")]
 use crate::cryptography::{central_kms::compute_handle, der_types::Signature};
 #[cfg(feature = "non-wasm")]
 use crate::kms::{
-    AggregatedDecryptionResponse, CrsGenRequest, DecryptionRequest, DecryptionResponsePayload,
-    KeyGenRequest, KeyGenResult,
+    AggregatedDecryptionResponse, CrsGenRequest, CrsGenResult, DecryptionRequest,
+    DecryptionResponsePayload, KeyGenRequest, KeyGenResult,
 };
 use crate::kms::{
     AggregatedReencryptionResponse, FheType, ReencryptionRequest, ReencryptionRequestPayload,
@@ -41,6 +41,8 @@ use alloy_sol_types::{Eip712Domain, SolStruct};
 use distributed_decryption::execution::endpoints::reconstruct::combine128;
 use distributed_decryption::execution::sharing::shamir::reconstruct_w_errors_sync;
 use distributed_decryption::execution::sharing::shamir::{fill_indexed_shares, ShamirSharings};
+#[cfg(feature = "non-wasm")]
+use distributed_decryption::execution::zk::ceremony::PublicParameter;
 use distributed_decryption::execution::{
     endpoints::reconstruct::reconstruct_message, runtime::party::Role,
 };
@@ -401,7 +403,11 @@ impl Client {
 
     /// Verify the signature received from the server on keys or other data objects.
     #[cfg(feature = "non-wasm")]
-    pub fn verify_server_signature<T: serde::Serialize>(&self, data: &T, signature: &[u8]) -> bool {
+    pub fn verify_server_signature<T: serde::Serialize + AsRef<[u8]>>(
+        &self,
+        data: &T,
+        signature: &[u8],
+    ) -> bool {
         let signature_struct: Signature = match bincode::deserialize(signature) {
             Ok(signature_struct) => signature_struct,
             Err(_) => {
@@ -442,14 +448,23 @@ impl Client {
     #[cfg(feature = "non-wasm")]
     pub fn crs_gen_request(
         &self,
-        _crs_handle: &str,
+        crs_handle: &str,
         param: Option<ParamChoice>,
     ) -> anyhow::Result<CrsGenRequest> {
-        let _parsed_param: i32 = match param {
+        use crate::rpc::rpc_types::CRS_GEN_REQUEST_NAME;
+
+        let parsed_param: i32 = match param {
             Some(parsed_param) => parsed_param.into(),
             None => ParamChoice::Default.into(),
         };
-        todo!() // TODO
+        Ok(CrsGenRequest {
+            params: parsed_param,
+            config: None,
+            request_id: Some(RequestId::new(
+                &crs_handle.to_string(),
+                CRS_GEN_REQUEST_NAME.to_string(),
+            )?),
+        })
     }
 
     #[cfg(feature = "non-wasm")]
@@ -587,6 +602,59 @@ impl Client {
         Ok(Some(key))
     }
 
+    // TODO do we need to linking to request?
+    #[cfg(feature = "non-wasm")]
+    pub fn process_get_crs_resp<R: PublicStorageReader>(
+        &self,
+        resp: CrsGenResult,
+        storage: &R,
+    ) -> anyhow::Result<PublicParameter> {
+        let crs: PublicParameter = some_or_err(
+            self.retrieve_crs(&resp, storage)?,
+            "Could not validate CRS".to_string(),
+        )?;
+        Ok(crs)
+    }
+
+    /// Retrieve and validate a public key based on the result from a server.
+    /// The method will return the key if retrieval and validation is successful,
+    /// but will return None in case the signature is invalid or does not match the actual key handle.
+    #[cfg(feature = "non-wasm")]
+    pub fn retrieve_crs<R: PublicStorageReader>(
+        &self,
+        crs_gen_result: &CrsGenResult,
+        storage: &R,
+    ) -> anyhow::Result<Option<PublicParameter>> {
+        let crs_info = some_or_err(
+            crs_gen_result.crs_results.clone(),
+            "Could not find CRS info".to_string(),
+        )?;
+        let request_id = some_or_err(
+            crs_gen_result.request_id.clone(),
+            "No request id".to_string(),
+        )?;
+        let url = storage.compute_url(request_id, &crs_info, PubDataType::CRS)?;
+        let crs: PublicParameter = storage.read_data(url)?;
+        let serialized_crs = bincode::serialize(&crs)?;
+        let crs_handle = compute_handle(&serialized_crs)?;
+        if crs_handle != crs_info.key_handle {
+            tracing::warn!(
+                "Computed crs handle {} of retrieved crs does not match expected crs handle {}",
+                crs_handle,
+                crs_info.key_handle,
+            );
+            return Ok(None);
+        }
+        if !self.verify_server_signature(&crs_handle, &crs_info.signature) {
+            tracing::warn!(
+                "Could not verify server signature for crs handle {}",
+                crs_handle,
+            );
+            return Ok(None);
+        }
+        Ok(Some(crs))
+    }
+
     /// Validates the aggregated decryption response `agg_resp` against the
     /// original `DecryptionRequest` `request`, and returns the decrypted
     /// plaintext if valid. Returns `None` if validation fails.
@@ -632,7 +700,7 @@ impl Client {
             // Observe that it has already been verified in [validate_meta_data] that server
             // verification key is in the set of permissble keys
             let cur_verf_key: PublicSigKey = from_bytes(&sig_payload.verification_key)?;
-            if !verify_sig(&to_vec(&sig_payload)?, &sig, &cur_verf_key) {
+            if !BaseKmsStruct::verify_sig(&to_vec(&sig_payload)?, &sig, &cur_verf_key) {
                 tracing::warn!("Signature on received response is not valid!");
                 return Ok(None);
             }
@@ -758,7 +826,7 @@ impl Client {
             // Observe that it has already been verified in [validate_meta_data] that server
             // verification key is in the set of permissble keys
             let cur_verf_key: PublicSigKey = from_bytes(&sig_payload.verification_key)?;
-            if !verify_sig(&to_vec(&sig_payload)?, &sig, &cur_verf_key) {
+            if !BaseKmsStruct::verify_sig(&to_vec(&sig_payload)?, &sig, &cur_verf_key) {
                 tracing::warn!("Signature on received response is not valid!");
                 continue;
             }
@@ -1077,9 +1145,9 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
     use crate::consts::{
-        AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, TEST_CENTRAL_CRS_PATH,
-        TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_FHE_TYPE, TEST_MSG, TEST_PARAM_PATH,
-        TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
+        AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, KEY_PATH_PREFIX,
+        TEST_CENTRAL_CRS_PATH, TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_FHE_TYPE,
+        TEST_MSG, TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
     };
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
@@ -1088,28 +1156,34 @@ pub(crate) mod tests {
     };
     #[cfg(feature = "wasm_tests")]
     use crate::consts::{TEST_CENTRAL_WASM_TRANSCRIPT_PATH, TEST_THRESHOLD_WASM_TRANSCRIPT_PATH};
-    use crate::cryptography::central_kms::{CrsHashMap, SoftwareKmsKeys};
+    use crate::cryptography::central_kms::{
+        compute_handle, BaseKmsStruct, CrsHashMap, SoftwareKmsKeys,
+    };
+    use crate::cryptography::der_types::Signature;
+    use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
     use crate::kms::RequestId;
     use crate::kms::{
         AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType, ParamChoice,
     };
     use crate::rpc::central_rpc::server_handle;
+    use crate::rpc::rpc_types::BaseKms;
+    use crate::storage::PublicStorageReader;
     use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
     use crate::util::file_handling::{read_as_json, read_element, read_element_async};
-    use crate::util::key_setup::FhePublicKey;
     use crate::util::key_setup::{CentralizedTestingKeys, ThresholdTestingKeys};
+    use crate::util::key_setup::{CrsHandleStore, FhePublicKey};
     use crate::{client::num_blocks, rpc::rpc_types::PubDataType};
-    use crate::{consts::TEST_CRS_ID, kms::coordinator_endpoint_client::CoordinatorEndpointClient};
     use crate::{kms::Empty, storage::DevStorage};
     use alloy_sol_types::Eip712Domain;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+    use distributed_decryption::execution::zk::ceremony::PublicParameter;
     use serial_test::serial;
     use std::collections::{HashMap, HashSet};
-    use std::fs;
     use std::net::SocketAddr;
     use std::str::FromStr;
+    use std::{env, fs};
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::{Channel, Uri};
 
@@ -1141,10 +1215,11 @@ pub(crate) mod tests {
         let keys: CentralizedTestingKeys = read_element(centralized_key_path).unwrap();
 
         // set crs_store if path is provided, else set it to None
-        let crs_store =
-            centralized_crs_path.map(|crs_path| read_element::<CrsHashMap>(crs_path).unwrap());
+        let crs_info = centralized_crs_path
+            .map(|crs_path| read_element::<CrsHandleStore>(crs_path).unwrap())
+            .map(|ccc| ccc.crs_info);
 
-        let (kms_server, kms_client) = setup(keys.software_kms_keys, crs_store).await;
+        let (kms_server, kms_client) = setup(keys.software_kms_keys, crs_info).await;
         let internal_client = Client::new(
             HashSet::from_iter(keys.server_keys.iter().cloned()),
             keys.client_pk,
@@ -1164,7 +1239,7 @@ pub(crate) mod tests {
         HashMap<u32, CoordinatorEndpointClient<Channel>>,
     ) {
         let mut handles = Vec::new();
-        tracing::info!("Spawning servers..");
+        tracing::info!("Spawning servers...");
         for i in 1..=amount {
             let key_path = format!("{threshold_key_path_prefix}-{i}.bin");
             handles.push(tokio::spawn(async move {
@@ -1306,75 +1381,152 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    // #[tokio::test] TODO
+    #[tokio::test]
     #[serial]
     async fn default_crs_gen_centralized() {
-        _crs_gen_centralized(
-            DEFAULT_CENTRAL_KEYS_PATH,
+        crs_gen_centralized_client(
             DEFAULT_CENTRAL_CRS_PATH,
-            TEST_CRS_ID,
+            DEFAULT_CENTRAL_KEYS_PATH,
+            "default_crs_test_handle",
             Some(ParamChoice::Default),
         )
         .await;
     }
 
-    // #[tokio::test] TODO
+    #[tokio::test]
     #[serial]
     async fn test_crs_gen_centralized() {
-        _crs_gen_centralized(
-            TEST_CENTRAL_KEYS_PATH,
+        crs_gen_centralized_manual(
             TEST_CENTRAL_CRS_PATH,
-            TEST_CRS_ID,
+            TEST_CENTRAL_KEYS_PATH,
+            "small_crs_test_handle_manual",
+            Some(ParamChoice::Test),
+        )
+        .await;
+
+        crs_gen_centralized_client(
+            TEST_CENTRAL_CRS_PATH,
+            TEST_CENTRAL_KEYS_PATH,
+            "small_crs_test_handle",
             Some(ParamChoice::Test),
         )
         .await;
     }
 
-    /// test centralized crs generation
-    async fn _crs_gen_centralized(
-        centralized_key_path: &str,
+    /// test centralized crs generation and do all the reading, processing and verification manually
+    async fn crs_gen_centralized_manual(
         centralized_crs_path: &str,
+        centralized_key_path: &str,
         crs_handle: &str,
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
             centralized_handles(centralized_key_path, Some(centralized_crs_path)).await;
-        // let ref_uri = (crs_handle);
-        // // Remove the keys to ensure that the test is idempotent
-        // let _ = fs::remove_file(ref_uri.clone());
 
         let ceremony_req = internal_client.crs_gen_request(crs_handle, params).unwrap();
 
+        // remove existing CRS under that request id to ensure that the test is idempotent
+        let client_request_id = ceremony_req.request_id.clone().unwrap();
+        let raw_dir = env::current_dir().unwrap();
+        let cur_dir = raw_dir.to_str().unwrap();
+        let path = format!(
+            "{}/{}/dev/{}-{}.key",
+            cur_dir,
+            KEY_PATH_PREFIX,
+            client_request_id,
+            PubDataType::CRS
+        );
+        let _ = fs::remove_file(path);
+
+        // response is currently empty
         let gen_response = kms_client
             .crs_gen(tonic::Request::new(ceremony_req.clone()))
             .await
             .unwrap();
-        let _res_uri = gen_response.into_inner();
-        // assert_eq!(res_uri, ref_uri); TODO
+        assert_eq!(gen_response.into_inner(), Empty {});
 
-        // Check that we can retrieve the CRS under that handle
+        // Check that we can retrieve the CRS under that request id
         let get_req = RequestId {
-            request_id: crs_handle.to_string(),
+            request_id: client_request_id.to_string(),
         };
         let get_response = kms_client
             .get_crs_gen_result(tonic::Request::new(get_req.clone()))
             .await
             .unwrap();
-        let _res_uri = get_response.into_inner().crs_uri;
-        // assert_eq!(res_uri, ref_uri);
+
+        let resp = get_response.into_inner();
+        let rvcd_req_id = resp.request_id.unwrap();
+
+        // // check that the received request id matches the one we sent in the request
+        assert_eq!(rvcd_req_id, client_request_id);
+
+        let crs_info = resp.crs_results.unwrap();
+
+        let storage = DevStorage::default();
+        let mut crs_path = storage
+            .compute_url(client_request_id, &crs_info, PubDataType::CRS)
+            .unwrap()
+            .to_string();
+
+        assert!(crs_path.starts_with("file://"));
+        crs_path.replace_range(0..7, ""); // remove leading "file:/" from URI, so we can read the file
 
         // check that CRS signature is verified correctly
-        // let signed_crs: SignedCRS = read_element(&res_uri).unwrap();
-        // let mut verified = false;
+        let crs_raw = read_element::<PublicParameter>(&crs_path).unwrap();
+        let crs_serialized = bincode::serialize(&crs_raw).unwrap();
+        let client_handle = compute_handle(&crs_serialized).unwrap();
+        assert_eq!(&client_handle, &crs_info.key_handle);
 
-        // // try verification with each of the server keys
-        // for vk in internal_client.server_pks {
-        //     let v = signed_crs.verify_signature(&vk);
-        //     verified = verified || v;
-        // }
+        // try verification with each of the server keys; at least one must pass
+        let crs_sig: Signature = bincode::deserialize(&crs_info.signature).unwrap();
+        let mut verified = false;
+        for vk in internal_client.server_pks {
+            let v = BaseKmsStruct::verify_sig(&client_handle, &crs_sig, &vk);
+            verified = verified || v;
+        }
 
-        // // check that verification (with at least 1 server key) worked
-        // assert!(verified);
+        // check that verification (with at least 1 server key) worked
+        assert!(verified);
+
+        kms_server.abort();
+    }
+
+    /// test centralized crs generation via client interface
+    async fn crs_gen_centralized_client(
+        centralized_crs_path: &str,
+        centralized_key_path: &str,
+        crs_handle: &str,
+        params: Option<ParamChoice>,
+    ) {
+        let (kms_server, mut kms_client, internal_client) =
+            centralized_handles(centralized_key_path, Some(centralized_crs_path)).await;
+
+        let _ = fs::remove_dir_all(DevStorage::root_dir());
+        let gen_req = internal_client.crs_gen_request(crs_handle, params).unwrap();
+
+        let req_id = gen_req.request_id.clone().unwrap();
+
+        // response is currently empty
+        let gen_response = kms_client
+            .crs_gen(tonic::Request::new(gen_req.clone()))
+            .await
+            .unwrap();
+        assert_eq!(gen_response.into_inner(), Empty {});
+
+        let mut response = kms_client
+            .get_crs_gen_result(tonic::Request::new(req_id.clone()))
+            .await;
+        while response.is_err() {
+            // Sleep to give the server some time to complete CRS generation
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            response = kms_client
+                .get_crs_gen_result(tonic::Request::new(req_id.clone()))
+                .await;
+        }
+        let inner_resp = response.unwrap().into_inner();
+        let storage = DevStorage::default();
+        let crs = internal_client.retrieve_crs(&inner_resp, &storage).unwrap();
+        assert!(crs.is_some());
 
         kms_server.abort();
     }

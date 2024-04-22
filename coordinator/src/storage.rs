@@ -5,14 +5,16 @@ use crate::{
     rpc::{central_rpc::tonic_some_or_err, rpc_types::PubDataType},
     util::file_handling::{read_element, write_element},
 };
-use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
+use distributed_decryption::execution::{
+    endpoints::keygen::FhePubKeySet, zk::ceremony::PublicParameter,
+};
 use serde::de::DeserializeOwned;
 use std::{collections::HashMap, env, fs, path::Path};
 use url::Url;
 
 /// Trait for public KMS storage reading
 pub trait PublicStorageReader {
-    fn data_exits(&self, request_id: &RequestId, key_type: PubDataType) -> anyhow::Result<bool>;
+    fn data_exists(&self, request_id: &RequestId, key_type: PubDataType) -> anyhow::Result<bool>;
     fn read_data<T: DeserializeOwned + serde::Serialize>(&self, url: Url) -> anyhow::Result<T>;
     fn compute_url(
         &self,
@@ -56,10 +58,23 @@ pub fn store_public_keys<S: PublicStorage>(
         None => return Err(anyhow_error_and_log("Server key is not produced")),
     };
     if !storage.store_data(&pub_keys.public_key, pk_url) {
-        return Err(anyhow::anyhow!("Could not store public key!"));
+        return Err(anyhow_error_and_log("Could not store public key!"));
     }
     if !storage.store_data(&pub_keys.server_key, sk_url) {
-        return Err(anyhow::anyhow!("Could not store server key!"));
+        return Err(anyhow_error_and_log("Could not store server key!"));
+    }
+    Ok(())
+}
+
+pub fn store_crs<S: PublicStorage>(
+    storage: &S,
+    request_id: RequestId,
+    crs_info: &FhePubKeyInfo, // TODO: rename this type to PublicInfo or PubDataSigHandle, but do it later to not conflict with other PRs now
+    crs: &PublicParameter,
+) -> anyhow::Result<()> {
+    let crs_url = storage.compute_url(request_id.clone(), crs_info, PubDataType::CRS)?;
+    if !storage.store_data(crs, crs_url) {
+        return Err(anyhow_error_and_log("Could not store CRS!"));
     }
     Ok(())
 }
@@ -90,11 +105,11 @@ impl PublicStorageReader for DevStorage {
             cur_dir, KEY_PATH_PREFIX, request_id, key_type
         );
         let url = Url::from_file_path(public_key_path)
-            .map_err(|_e| anyhow::anyhow!("Could not turn path into URL"))?;
+            .map_err(|_e| anyhow_error_and_log("Could not turn path into URL"))?;
         Ok(url)
     }
 
-    fn data_exits(&self, request_id: &RequestId, key_type: PubDataType) -> anyhow::Result<bool> {
+    fn data_exists(&self, request_id: &RequestId, key_type: PubDataType) -> anyhow::Result<bool> {
         let raw_dir = env::current_dir()?;
         let cur_dir = tonic_some_or_err(
             raw_dir.to_str(),

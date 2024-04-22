@@ -129,12 +129,13 @@ pub fn write_default_keys(path: &str) {
 
 #[cfg(feature = "non-wasm")]
 pub fn write_default_crs_store() {
-    use crate::consts::{DEFAULT_CENTRAL_CRS_PATH, TEST_CRS_ID};
+    use crate::consts::{DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_KEYS_PATH, TEST_CRS_ID};
     use util::key_setup::ensure_central_crs_store_exists;
 
     ensure_central_crs_store_exists(
         DEFAULT_PARAM_PATH,
         DEFAULT_CENTRAL_CRS_PATH,
+        DEFAULT_CENTRAL_KEYS_PATH,
         Some(TEST_CRS_ID.to_string()),
     );
 }

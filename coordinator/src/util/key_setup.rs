@@ -1,3 +1,4 @@
+use crate::cryptography::central_kms::compute_info;
 use crate::kms::FheType;
 use crate::threshold::threshold_kms::ThresholdKmsKeys;
 use crate::{
@@ -20,6 +21,7 @@ use crate::{
     threshold::threshold_kms::ThresholdFheKeys,
 };
 use aes_prng::AesRng;
+use distributed_decryption::execution::zk::ceremony::PublicParameter;
 use distributed_decryption::execution::{
     endpoints::keygen::FhePubKeySet,
     tfhe_internals::{
@@ -58,6 +60,13 @@ pub struct CentralizedTestingKeys {
     pub client_pk: PublicSigKey,
     pub client_sk: PrivateSigKey,
     pub server_keys: Vec<PublicSigKey>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CrsHandleStore {
+    pub params: NoiseFloodParameters,
+    pub crs: HashMap<String, PublicParameter>,
+    pub crs_info: CrsHashMap,
 }
 
 pub fn ensure_dir_exist() {
@@ -162,16 +171,32 @@ pub fn ensure_central_keys_exist(
 pub fn ensure_central_crs_store_exists(
     param_path: &str,
     central_crs_path: &str,
+    central_key_path: &str,
     crs_handle: Option<String>,
 ) {
+    if !Path::new(central_key_path).try_exists().unwrap() {
+        ensure_central_keys_exist(param_path, central_key_path, Some(TEST_KEY_ID.to_string()));
+    }
+
     if !Path::new(central_crs_path).try_exists().unwrap() {
+        let central_keys: CentralizedTestingKeys = read_element(central_key_path).unwrap();
+
         println!("Generating new centralized CRS store");
         let params: NoiseFloodParameters = read_as_json(param_path.to_owned()).unwrap();
         let mut rng = AesRng::seed_from_u64(42);
         let crs = gen_centralized_crs(&params, &mut rng);
         let handle = crs_handle.unwrap_or(TEST_CRS_ID.to_string());
-        let crs_store = CrsHashMap::from([(handle, crs)]);
-        assert!(write_element(central_crs_path.to_string(), &crs_store,).is_ok());
+
+        let kms = BaseKmsStruct::new(central_keys.software_kms_keys.sig_sk.clone());
+        let crs_info = compute_info(&kms, &crs).unwrap();
+
+        let ccs = CrsHandleStore {
+            params,
+            crs: HashMap::from([(handle.clone(), crs)]),
+            crs_info: HashMap::from([(handle.clone(), crs_info)]),
+        };
+
+        assert!(write_element(central_crs_path.to_string(), &ccs,).is_ok());
     }
 }
 

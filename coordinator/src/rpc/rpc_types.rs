@@ -98,7 +98,7 @@ pub(crate) fn allow_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<
 }
 
 pub trait BaseKms {
-    fn verify_sig<T: Serialize>(
+    fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
         signature: &Signature,
         verification_key: &PublicSigKey,
@@ -109,7 +109,7 @@ pub trait BaseKms {
         signature: &Signature,
         verification_key: &PublicSigKey,
     ) -> bool;
-    fn sign<T: Serialize>(&self, msg: &T) -> anyhow::Result<Signature>;
+    fn sign<T: Serialize + AsRef<[u8]>>(&self, msg: &T) -> anyhow::Result<Signature>;
     fn sign_eip712<T: SolStruct>(
         &self,
         msg: &T,

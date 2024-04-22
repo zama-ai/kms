@@ -69,7 +69,11 @@ pub fn sign_eip712<T: SolStruct>(
 /// Verify a plain signature.
 ///
 /// Returns true if the signature is ok and false otherwise.
-pub fn verify_sig<T>(msg: &T, sig: &Signature, server_verf_key: &PublicSigKey) -> bool
+pub(crate) fn internal_verify_sig<T>(
+    payload: &T,
+    sig: &Signature,
+    server_verf_key: &PublicSigKey,
+) -> bool
 where
     T: Serialize + AsRef<[u8]>,
 {
@@ -79,7 +83,11 @@ where
     }
 
     // Verify signature
-    if server_verf_key.pk.verify(msg.as_ref(), &sig.sig).is_err() {
+    if server_verf_key
+        .pk
+        .verify(payload.as_ref(), &sig.sig)
+        .is_err()
+    {
         tracing::warn!("Signature {:X?} is not valid", sig.sig);
         return false;
     }
@@ -87,7 +95,7 @@ where
     true
 }
 
-pub fn verify_sig_eip712<T: SolStruct>(
+pub(crate) fn internal_verify_sig_eip712<T: SolStruct>(
     msg: &T,
     domain: &Eip712Domain,
     sig: &Signature,
@@ -357,8 +365,8 @@ mod tests {
     use crate::cryptography::der_types::Signature;
     use crate::cryptography::request::{ephemeral_key_generation, ClientRequest};
     use crate::cryptography::signcryption::{
-        check_signature, encryption_key_generation, hash_element, parse_msg, sign, signcrypt,
-        validate_and_decrypt, verify_sig, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
+        check_signature, encryption_key_generation, hash_element, internal_verify_sig, parse_msg,
+        sign, signcrypt, validate_and_decrypt, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
     };
     use aes_prng::AesRng;
     use k256::ecdsa::SigningKey;
@@ -447,7 +455,7 @@ mod tests {
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
         let sig = sign(&msg, &server_sig_key).unwrap();
-        assert!(verify_sig(&msg.to_vec(), &sig, &server_verf_key));
+        assert!(internal_verify_sig(&msg.to_vec(), &sig, &server_verf_key));
     }
 
     #[test]

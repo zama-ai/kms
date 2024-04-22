@@ -80,12 +80,8 @@ message CrsGenRequest {
 message CrsGenResult {
   // The ID of the crs generation request
   RequestId request_id = 1;
-  // The URI of the CRS
-  string crs_uri = 2;
-  // The handle of the CRS (hash digest)
-  string crs_handle = 3;
-  // Signature on the handle
-  bytes signature = 4;
+  // The struct holding the signature and the handle of the CRS
+  FhePubKeyInfo crs_results = 2;
 }
 
 message DecryptionRequest {

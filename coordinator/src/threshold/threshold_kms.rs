@@ -262,7 +262,7 @@ impl ThresholdKms {
 }
 
 impl BaseKms for ThresholdKms {
-    fn verify_sig<T: Serialize>(
+    fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
         signature: &der_types::Signature,
         verification_key: &PublicSigKey,
@@ -270,7 +270,7 @@ impl BaseKms for ThresholdKms {
         BaseKmsStruct::verify_sig(payload, signature, verification_key)
     }
 
-    fn sign<T: Serialize>(&self, msg: &T) -> anyhow::Result<der_types::Signature> {
+    fn sign<T: Serialize + AsRef<[u8]>>(&self, msg: &T) -> anyhow::Result<der_types::Signature> {
         self.base_kms.sign(msg)
     }
 
@@ -507,8 +507,14 @@ impl CoordinatorEndpoint for ThresholdKms {
             verification_key: server_verf_key,
             digest: req_digest,
         };
+
+        let sig_payload_vec = tonic_handle_potential_err(
+            to_vec(&sig_payload),
+            format!("Could not convert payload to sign vec {:?}", sig_payload),
+        )?;
+
         let sig = tonic_handle_potential_err(
-            self.sign(&sig_payload),
+            self.sign(&sig_payload_vec),
             format!("Could not sign payload {:?}", sig_payload),
         )?;
         Ok(Response::new(DecryptionResponse {

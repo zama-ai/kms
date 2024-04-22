@@ -2,7 +2,8 @@ use super::rpc_types::{
     protobuf_to_alloy_domain, BaseKms, DecryptionRequestSerializable,
     ReencryptionRequestSigPayload, CURRENT_FORMAT_VERSION,
 };
-use crate::storage::{DevStorage, PublicStorage};
+use crate::cryptography::central_kms::{async_generate_crs, compute_info};
+use crate::storage::{store_crs, DevStorage, PublicStorage};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use crate::{
     consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH},
@@ -17,8 +18,7 @@ use crate::{
 };
 use crate::{
     cryptography::central_kms::{
-        async_generate_fhe_keys, gen_centralized_crs, BaseKmsStruct, CrsHashMap, SoftwareKms,
-        SoftwareKmsKeys,
+        async_generate_fhe_keys, BaseKmsStruct, CrsHashMap, SoftwareKms, SoftwareKmsKeys,
     },
     kms::FhePubKeyInfo,
 };
@@ -34,10 +34,8 @@ use crate::{
     rpc::rpc_types::{DecryptionResponseSigPayload, Kms},
     storage::store_public_keys,
 };
-use aes_prng::AesRng;
 use alloy_sol_types::SolStruct;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
-use rand::SeedableRng;
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
 use std::fmt;
@@ -65,6 +63,7 @@ pub async fn server_handle(
 impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> CoordinatorEndpoint
     for SoftwareKms<S>
 {
+    /// starts the centralized KMS key generation
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(
@@ -73,13 +72,15 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         )?;
         // TODO validate that the request ID is valid
         if tonic_handle_potential_err(
-            self.storage.data_exits(&request_id, PubDataType::PublicKey),
+            self.storage
+                .data_exists(&request_id, PubDataType::PublicKey),
             "Could not validate if the public key exist".to_string(),
         )? || tonic_handle_potential_err(
-            self.storage.data_exits(&request_id, PubDataType::ServerKey),
+            self.storage
+                .data_exists(&request_id, PubDataType::ServerKey),
             "Could not validate if the server key exist".to_string(),
         )? || tonic_handle_potential_err(
-            self.storage.data_exits(&request_id, PubDataType::SnsKey),
+            self.storage.data_exists(&request_id, PubDataType::SnsKey),
             "Could not validate if the SnS key exist".to_string(),
         )? {
             tracing::warn!(
@@ -88,7 +89,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
             );
             return Err(tonic::Status::new(
                 tonic::Code::AlreadyExists,
-                format!("Keys withrequest ID {} already exist!", request_id),
+                format!("Keys with request ID {} already exist!", request_id),
             ));
         }
         let params = tonic_handle_potential_err(
@@ -105,6 +106,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         Ok(Response::new(Empty {}))
     }
 
+    /// tries to retrieve the result of a previously started key generation
     async fn get_key_gen_result(
         &self,
         request: Request<RequestId>,
@@ -120,7 +122,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
                 format!("The value {} is not a valid request ID!", request_id),
             ));
         }
-        let pub_key_handles = match self.process_key_generation(request_id.clone()).await {
+        let pub_key_handles = match self.check_key_generation_process(request_id.clone()).await {
             Ok(result) => match result {
                 Some(handles) => handles,
                 None => {
@@ -222,8 +224,14 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
             verification_key: server_verf_key,
             digest: req_digest,
         };
+
+        let sig_payload_vec = tonic_handle_potential_err(
+            to_vec(&sig_payload),
+            format!("Could not convert payload to bytes {:?}", sig_payload),
+        )?;
+
         let sig = tonic_handle_potential_err(
-            self.sign(&sig_payload),
+            self.sign(&sig_payload_vec),
             format!("Could not sign payload {:?}", sig_payload),
         )?;
         Ok(Response::new(DecryptionResponse {
@@ -232,8 +240,8 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         }))
     }
 
+    /// starts the centralized CRS generation
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
-        // TODO update in same manner as key generation
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(
             inner.request_id.clone(),
@@ -250,7 +258,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
 
         // ensure that the CRS under that handle does not exist yet
         if tonic_handle_potential_err(
-            self.storage.data_exits(&request_id, PubDataType::CRS),
+            self.storage.data_exists(&request_id, PubDataType::CRS),
             "Could not validate the existance of the CRS".to_string(),
         )? {
             tracing::warn!(
@@ -271,70 +279,145 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
             "Parameter choice is not recognized".to_string(),
         )?;
 
-        // generate the CRS
-        let mut rng = AesRng::from_entropy();
-        let crs = gen_centralized_crs(&params, &mut rng);
-
-        // let _crs_uri = tonic_handle_potential_err(
-        //     store_crs(self, &crs, &request_id),
-        //     format!("Failed to store CRS from request {:?}", inner),
-        // )?;
-
-        let mut crs_store = tonic_handle_potential_err(
-            self.crs_store.lock(),
-            "Could not get handle for storing CRS".to_string(),
+        let rng = tonic_handle_potential_err(
+            self.base_kms.new_rng(),
+            "Could not generate RNG for CRS generation".to_string(),
         )?;
-        crs_store.insert(request_id.to_string(), crs);
+
+        let future_crs = tokio::spawn(async_generate_crs(rng, params));
+        let mut crs_gen_map = tonic_handle_potential_err(
+            self.crs_gen_map.lock(),
+            "Could not get handle on crs generation map".to_string(),
+        )?;
+        crs_gen_map.insert(request_id.to_string(), future_crs);
 
         Ok(Response::new(Empty {}))
     }
 
+    /// tries to retrieve a previously generated CRS
     async fn get_crs_gen_result(
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         let request_id = request.into_inner();
-        // TODO update in same manner as key generation
         if !request_id.is_valid() {
-            tracing::warn!("Request ID {} is not allowed!", request_id.to_string());
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("Request ID {} is not allowed!", request_id),
-            ));
-        }
-        if !tonic_handle_potential_err(
-            self.storage.data_exits(&request_id, PubDataType::CRS),
-            "Could not check if CRS exists".to_string(),
-        )? {
             tracing::warn!(
-                "CRS with request ID {} does not exist!",
+                "The value {} is not a valid request ID!",
                 request_id.to_string()
             );
             return Err(tonic::Status::new(
-                tonic::Code::NotFound,
-                format!("CRS with request ID {} does not exist!", request_id),
+                tonic::Code::InvalidArgument,
+                format!("The value {} is not a valid request ID!", request_id),
             ));
         }
-        todo!()
-        // Ok(Response::new(CrsGenResult {
-        //     request_id: todo!(),
-        //     crs_uri: todo!(),
-        //     crs_handle: todo!(),
-        //     signature: todo!(),
-        // }))
+
+        let crs_info = match self.check_crs_generation_process(request_id.clone()).await {
+            Ok(result) => match result {
+                Some(handles) => handles,
+                None => {
+                    return Err(tonic::Status::new(
+                        tonic::Code::Unavailable,
+                        format!(
+                            "The CRS with request ID {} has not been generated yet, but is in progress!",
+                            request_id
+                        ),
+                    ));
+                }
+            },
+            Err(_) => {
+                return Err(tonic::Status::new(
+                    tonic::Code::NotFound,
+                    format!("Could not generate CRS with request ID {}!", request_id),
+                ));
+            }
+        };
+
+        Ok(Response::new(CrsGenResult {
+            request_id: Some(request_id),
+            crs_results: Some(crs_info),
+        }))
     }
 }
 
 impl<S: PublicStorage> SoftwareKms<S> {
-    async fn process_key_generation(
+    /// check if CRS for a given request ID have been generated
+    ///
+    /// TODO: this could be merged to some degree with [check_key_generation_process]
+    async fn check_crs_generation_process(
+        &self,
+        request_id: RequestId,
+    ) -> anyhow::Result<Option<FhePubKeyInfo>> {
+        let crs_gen_handle = {
+            let mut crs_gen_map = self.crs_gen_map.lock().map_err(|e| {
+                anyhow_error_and_log(format!("Could not get CRS generation map: {}", e))
+            })?;
+            crs_gen_map.remove(&request_id.to_string())
+        };
+        // Handle the four different cases:
+        // 1. Request ID exists and is being generated but is not finished yet
+        // 2. Request ID exists and generation has finished, but not been processed yet
+        // 3. Request ID exists, generation has finished and the generated keys have allready been processed
+        // 4. Request ID does not exist
+        // TODO add tests for each fo these cases
+        match crs_gen_handle {
+            Some(crs_gen_handle) => {
+                if !crs_gen_handle.is_finished() {
+                    // Case 1: The request ID is currently generating but not finished yet
+                    {
+                        // Reinsert the handle
+                        let mut crs_gen_map = self.crs_gen_map.lock().map_err(|e| {
+                            anyhow_error_and_log(format!("Could not get key generation map: {}", e))
+                        })?;
+                        crs_gen_map.insert(request_id.to_string(), crs_gen_handle);
+                    }
+                    return Ok(None);
+                }
+                // Case 2: The key generation is finished, so we can now generate the key information
+                let pp = crs_gen_handle.await?;
+                let crs_info = compute_info(self, &pp)?;
+                // Insert the key information into the map of keys
+                {
+                    let mut crs_handles = self.crs_handles.lock().map_err(|e| {
+                        anyhow_error_and_log(format!("Could not get client map: {}", e))
+                    })?;
+                    crs_handles.insert(request_id.to_string(), crs_info.clone());
+                }
+                store_crs(&self.storage, request_id, &crs_info, &pp)?;
+                Ok(Some(crs_info))
+            }
+            None => {
+                let crs_handles = self.crs_handles.lock().map_err(|e| {
+                    anyhow_error_and_log(format!("Could not get client map: {}", e))
+                })?;
+                match crs_handles.get(&request_id.to_string()) {
+                    Some(handles) => {
+                        // Case 3: Request is not in crs generation map, so check if it is already done
+
+                        Ok(Some(handles.clone()))
+                    }
+                    None => {
+                        // Case 4: The request ID is completely unknown!
+                        Err(anyhow_error_and_log(format!(
+                            "The keys with request ID {} were not found!",
+                            request_id
+                        )))
+                    }
+                }
+            }
+        }
+    }
+
+    /// check if the key for a given request ID have been generated
+    ///
+    /// TODO: this could be merged to some degree with [check_crs_generation_process]
+    async fn check_key_generation_process(
         &self,
         request_id: RequestId,
     ) -> anyhow::Result<Option<HashMap<PubDataType, FhePubKeyInfo>>> {
         let key_gen_handle = {
-            let mut key_gen_map = self
-                .key_gen_map
-                .lock()
-                .map_err(|e| anyhow::anyhow!(format!("Could not get key generation map: {}", e)))?;
+            let mut key_gen_map = self.key_gen_map.lock().map_err(|e| {
+                anyhow_error_and_log(format!("Could not get key generation map: {}", e))
+            })?;
             key_gen_map.remove(&request_id.to_string())
         };
         // Handle the four different cases:
@@ -350,7 +433,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
                     {
                         // Reinsert the handle
                         let mut key_gen_map = self.key_gen_map.lock().map_err(|e| {
-                            anyhow::anyhow!(format!("Could not get key generation map: {}", e))
+                            anyhow_error_and_log(format!("Could not get key generation map: {}", e))
                         })?;
                         key_gen_map.insert(request_id.to_string(), key_gen_handle);
                     }
@@ -361,10 +444,9 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 let new_key_info = KmsFheKeyHandles::new(self, client_key, &pub_keys)?;
                 // Insert the key information into the map of keys
                 {
-                    let mut key_handles = self
-                        .key_handles
-                        .lock()
-                        .map_err(|e| anyhow::anyhow!(format!("Could not get client map: {}", e)))?;
+                    let mut key_handles = self.key_handles.lock().map_err(|e| {
+                        anyhow_error_and_log(format!("Could not get client map: {}", e))
+                    })?;
                     key_handles.insert(request_id.to_string(), new_key_info.clone());
                 }
                 store_public_keys(
@@ -376,10 +458,9 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 Ok(Some(new_key_info.public_key_info))
             }
             None => {
-                let key_handles = self
-                    .key_handles
-                    .lock()
-                    .map_err(|e| anyhow::anyhow!(format!("Could not get client map: {}", e)))?;
+                let key_handles = self.key_handles.lock().map_err(|e| {
+                    anyhow_error_and_log(format!("Could not get client map: {}", e))
+                })?;
                 match key_handles.get(&request_id.to_string()) {
                     Some(handles) => {
                         // Case 3: Request is not in key generation map, so check if it is already done
