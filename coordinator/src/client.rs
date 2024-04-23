@@ -14,7 +14,7 @@ use crate::cryptography::{central_kms::compute_handle, der_types::Signature};
 #[cfg(feature = "non-wasm")]
 use crate::kms::{
     AggregatedDecryptionResponse, CrsGenRequest, CrsGenResult, DecryptionRequest,
-    DecryptionResponsePayload, KeyGenRequest, KeyGenResult,
+    DecryptionResponsePayload, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
 };
 use crate::kms::{
     AggregatedReencryptionResponse, FheType, ReencryptionRequest, ReencryptionRequestPayload,
@@ -462,6 +462,33 @@ impl Client {
                 &crs_handle.to_string(),
                 CRS_GEN_REQUEST_NAME.to_string(),
             )?),
+        })
+    }
+
+    #[cfg(feature = "non-wasm")]
+    pub fn preproc_request(
+        &self,
+        request_id: &str,
+        param: Option<ParamChoice>,
+    ) -> anyhow::Result<KeyGenPreprocRequest> {
+        let parsed_param: i32 = match param {
+            Some(parsed_param) => parsed_param.into(),
+            None => ParamChoice::Default.into(),
+        };
+
+        let request_id = RequestId {
+            request_id: request_id.to_owned(),
+        };
+        if !request_id.is_valid() {
+            return Err(anyhow_error_and_log(
+                "The request id format is not valid {request_id}",
+            ));
+        }
+
+        Ok(KeyGenPreprocRequest {
+            config: None,
+            params: parsed_param,
+            request_id: Some(request_id),
         })
     }
 
@@ -1186,6 +1213,8 @@ pub(crate) mod tests {
     use std::{env, fs};
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::{Channel, Uri};
+    #[cfg(feature = "slow_tests")]
+    use tracing_test::traced_test;
 
     async fn setup(
         kms_keys: SoftwareKmsKeys,
@@ -1254,6 +1283,8 @@ pub(crate) mod tests {
                     threshold,
                     i,
                     keys.kms_keys,
+                    None,
+                    None,
                 )
                 .await;
                 (i, server)
@@ -1842,5 +1873,127 @@ pub(crate) mod tests {
         assert_eq!(num_blocks(FheType::Euint128, params), 64);
         // 2 bits per block
         assert_eq!(num_blocks(FheType::Euint160, params), 80);
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    #[serial]
+    async fn test_preproc() {
+        use crate::kms::{KeyGenPreprocRequest, KeyGenPreprocStatusEnum};
+
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(TEST_THRESHOLD_KEYS_PATH).await;
+
+        let request_id = "0000000000000000000000000000000000000001";
+        let request_id_nok = "0000000000000000000000000000000000000002";
+        let req_gen = internal_client
+            .preproc_request(request_id, Some(ParamChoice::Test))
+            .unwrap();
+
+        let mut tasks_gen = JoinSet::new();
+        for i in 1..=AMOUNT_PARTIES as u32 {
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            let req_clone = req_gen.clone();
+            tasks_gen.spawn(async move {
+                cur_client
+                    .key_gen_preproc(tonic::Request::new(req_clone))
+                    .await
+            });
+        }
+
+        let mut responses_gen = Vec::new();
+        while let Some(Ok(Ok(resp))) = tasks_gen.join_next().await {
+            responses_gen.push(resp.into_inner());
+        }
+        assert_eq!(responses_gen.len(), AMOUNT_PARTIES);
+
+        //Check status of preproc request
+        async fn test_preproc_status(
+            request: KeyGenPreprocRequest,
+            expected_res: KeyGenPreprocStatusEnum,
+            kms_clients: &HashMap<u32, CoordinatorEndpointClient<Channel>>,
+        ) {
+            let mut tasks = JoinSet::new();
+            for i in 1..=AMOUNT_PARTIES as u32 {
+                let req_clone = request.clone();
+                let mut cur_client = kms_clients.get(&i).unwrap().clone();
+                tasks.spawn(async move {
+                    cur_client
+                        .get_preproc_status(tonic::Request::new(req_clone))
+                        .await
+                });
+            }
+            let mut responses = Vec::new();
+            while let Some(Ok(Ok(resp))) = tasks.join_next().await {
+                responses.push(resp.into_inner());
+            }
+
+            for resp in responses {
+                let expected: i32 = expected_res.into();
+                assert_eq!(resp.result, expected);
+            }
+        }
+
+        //This request should give us the correct status
+        let req_status_ok = internal_client
+            .preproc_request(request_id, Some(ParamChoice::Test))
+            .unwrap();
+        test_preproc_status(
+            req_status_ok.clone(),
+            KeyGenPreprocStatusEnum::InProgress,
+            &kms_clients,
+        )
+        .await;
+        //This request is not ok because the ParamChoice is not the same as the initial preproc request
+        let req_status_nok_params = internal_client
+            .preproc_request(request_id, Some(ParamChoice::Default))
+            .unwrap();
+        test_preproc_status(
+            req_status_nok_params,
+            KeyGenPreprocStatusEnum::WrongRequest,
+            &kms_clients,
+        )
+        .await;
+        //This request is not ok because no preproc was ever started for this session id
+        let req_status_nok_sid = internal_client
+            .preproc_request(request_id_nok, Some(ParamChoice::Test))
+            .unwrap();
+        test_preproc_status(
+            req_status_nok_sid,
+            KeyGenPreprocStatusEnum::Missing,
+            &kms_clients,
+        )
+        .await;
+
+        //Wait for 5 min max (should be plenty of time for the test params)
+        let mut logs_ok = false;
+        for _ in 0..20 {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+            for kms_client in kms_clients.iter() {
+                let expected_log = format!("Preproc Finished P[{}]", kms_client.0);
+                //Check tracing contains expected output
+                if !logs_contain(&expected_log) {
+                    break;
+                }
+                logs_ok = true;
+            }
+            if logs_ok {
+                break;
+            }
+        }
+
+        //Make sure the get_status returns OK now
+        test_preproc_status(
+            req_status_ok.clone(),
+            KeyGenPreprocStatusEnum::Finished,
+            &kms_clients,
+        )
+        .await;
+
+        for kms_server in kms_servers {
+            kms_server.1.abort();
+        }
+        assert!(logs_ok);
     }
 }

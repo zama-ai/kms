@@ -122,7 +122,6 @@ where
     ///Start the orchestration of the preprocessing, returning a filled [`DKGPreprocessing`].
     ///
     ///Expects a vector of [`SmallSession`] __(at least 2!)__, using each of them in parallel for the preprocessing.
-    ///The [`PRSSSetup`] is done by the orchestrator.
     ///
     ///__NOTE__ For now we fix the batch_size to 1000 and dedicate 1 in 20 sessions
     /// to raw triple and randomness generation and the rest to bit generation

@@ -644,8 +644,19 @@ impl RequestId {
     }
 }
 
+impl From<RequestId> for u128 {
+    //Should not panic if RequestId passed is_valid()
+    fn from(value: RequestId) -> Self {
+        let hex = hex::decode(value.to_string()).unwrap();
+        let hex_truncated: [u8; 16] = hex[4..20].try_into().unwrap();
+        u128::from_be_bytes(hex_truncated)
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::kms::RequestId;
+
     use super::{Plaintext, RawDecryption};
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
@@ -752,5 +763,15 @@ pub(crate) mod tests {
         let u160_plaintext: Plaintext = u160_raw.try_into().unwrap();
         let u160_vec: Vec<u8> = u160_plaintext.into();
         assert_eq!(u160_vec, bytes);
+    }
+
+    #[test]
+    fn test_request_id_convert() {
+        let request_id = RequestId {
+            request_id: "0000000000000000000000000000000000000001".to_owned(),
+        };
+        assert!(request_id.is_valid());
+        let x: u128 = request_id.into();
+        assert_eq!(x, 1);
     }
 }

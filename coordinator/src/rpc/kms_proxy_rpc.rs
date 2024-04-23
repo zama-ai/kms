@@ -1,7 +1,7 @@
 use crate::kms::{
     coordinator_endpoint_client::CoordinatorEndpointClient,
     coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer},
-    KeyGenResult,
+    KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenResult,
 };
 use crate::kms::{CrsGenRequest, CrsGenResult, Empty, RequestId};
 use crate::kms::{
@@ -41,6 +41,24 @@ pub async fn server_handle(server_socket: SocketAddr, client_uri: &str) -> anyho
 
 #[tonic::async_trait]
 impl CoordinatorEndpoint for KmsProxy {
+    async fn key_gen_preproc(
+        &self,
+        request: Request<KeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let mut kms_client = self.kms_client.lock().await;
+        let response = kms_client.key_gen_preproc(request).await?;
+        Ok(response)
+    }
+
+    async fn get_preproc_status(
+        &self,
+        request: Request<KeyGenPreprocRequest>,
+    ) -> Result<Response<KeyGenPreprocStatus>, Status> {
+        let mut kms_client = self.kms_client.lock().await;
+        let response = kms_client.get_preproc_status(request).await?;
+        Ok(response)
+    }
+
     async fn reencrypt(
         &self,
         request: Request<ReencryptionRequest>,

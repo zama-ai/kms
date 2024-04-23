@@ -29,6 +29,8 @@ pub const THRESHOLD: usize = 1;
 pub const SEC_PAR: u64 = 128;
 pub const COMPRESSED: bool = true;
 
+pub const MINIMUM_SESSIONS_PREPROC: u128 = 2;
+
 pub const TEST_KEY_ID: &str = "keytest"; // TODO should be a valid request id
 pub const TEST_CRS_ID: &str = "crstest";
 pub const TEST_PARAM_PATH: &str = "parameters/small_test_params.json";

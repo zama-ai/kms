@@ -87,7 +87,7 @@ pub struct NoiseFloodParameters {
     pub sns_parameters: SwitchAndSquashParameters,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq)]
 pub enum DKGParams {
     WithoutSnS(DKGParamsRegular),
     WithSnS(DKGParamsSnS),
@@ -116,7 +116,7 @@ impl DKGParams {
     }
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq)]
 #[allow(non_snake_case)]
 pub struct DKGParamsRegular {
     ///Security parameter (related to the size of the XOF seed)
@@ -126,7 +126,7 @@ pub struct DKGParamsRegular {
     pub flag: bool,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq)]
 #[allow(non_snake_case)]
 pub struct DKGParamsSnS {
     pub regular_params: DKGParamsRegular,

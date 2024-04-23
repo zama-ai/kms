@@ -1,13 +1,16 @@
 use crate::anyhow_error_and_log;
-use crate::kms::CrsGenRequest;
+use crate::consts::{MINIMUM_SESSIONS_PREPROC, SEC_PAR};
 use crate::kms::{coordinator_endpoint_server::CoordinatorEndpoint, RequestId};
+use crate::kms::{
+    CrsGenRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
+};
 use crate::kms::{
     DecryptionRequest, DecryptionResponse, FheType, KeyGenRequest, KeyGenResult,
     ReencryptionRequest, ReencryptionResponse,
 };
 use crate::rpc::central_rpc::{
-    process_response, tonic_handle_potential_err, tonic_some_or_err, validate_decrypt_req,
-    validate_reencrypt_req,
+    process_response, retrieve_paramters, tonic_handle_potential_err, tonic_some_or_err,
+    validate_decrypt_req, validate_reencrypt_req,
 };
 use crate::rpc::rpc_types::{
     BaseKms, DecryptionResponseSigPayload, Plaintext, RawDecryption, SigncryptionPayload,
@@ -29,10 +32,18 @@ use distributed_decryption::algebra::residue_poly::ResiduePoly128;
 use distributed_decryption::execution::endpoints::decryption::{
     decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, Small,
 };
+use distributed_decryption::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
+use distributed_decryption::execution::online::preprocessing::redis::RedisConf;
+use distributed_decryption::execution::online::preprocessing::{
+    create_memory_factory, create_redis_factory, DKGPreprocessing, PreprocessorFactory,
+};
 use distributed_decryption::execution::runtime::session::{
     BaseSessionStruct, DecryptionMode, ParameterHandles, SessionParameters, SmallSession,
 };
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
+use distributed_decryption::execution::tfhe_internals::parameters::{
+    DKGParams, DKGParamsRegular, DKGParamsSnS,
+};
 use distributed_decryption::execution::{
     endpoints::keygen::PrivateKeySet, small_execution::agree_random::RealAgreeRandomWithAbort,
 };
@@ -45,15 +56,20 @@ use distributed_decryption::session_id::SessionId;
 use distributed_decryption::{
     choreography::NetworkingStrategy, execution::tfhe_internals::parameters::Ciphertext64,
 };
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::to_vec;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use tfhe::{FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
+use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
+use tracing::span;
 
 // Jump between the webserver being externally visible and the webserver used to execute DDec
 // TODO this should eventually be specified a bit better
@@ -62,6 +78,7 @@ pub const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 
 /// Initialize a threshold KMS server using the DDec initialization protocol.
 /// This MUST be done before the server is started.
+#[allow(clippy::too_many_arguments)]
 pub async fn threshold_server_init(
     url: String,
     base_port: u16,
@@ -69,8 +86,34 @@ pub async fn threshold_server_init(
     threshold: u8,
     my_id: usize,
     keys: ThresholdKmsKeys,
+    preproc_redis_conf: Option<RedisConf>,
+    num_sessions_preproc: Option<u128>,
 ) -> anyhow::Result<ThresholdKms> {
-    let mut kms = ThresholdKms::new(keys, parties, threshold, &url, base_port, my_id)?;
+    //If no RedisConf is provided, we just use in-memory storage for the preprocessing buckets.
+    //NOTE: This should probably only be allowed for testing
+    let factory = match preproc_redis_conf {
+        None => create_memory_factory(),
+        Some(conf) => create_redis_factory(format!("PARTY_{my_id}"), &conf),
+    };
+    let num_sessions_preproc = if let Some(x) = num_sessions_preproc {
+        if x < MINIMUM_SESSIONS_PREPROC {
+            MINIMUM_SESSIONS_PREPROC
+        } else {
+            x
+        }
+    } else {
+        MINIMUM_SESSIONS_PREPROC
+    };
+    let mut kms = ThresholdKms::new(
+        keys,
+        parties,
+        threshold,
+        &url,
+        base_port,
+        my_id,
+        factory,
+        num_sessions_preproc,
+    )?;
     tracing::info!("Initializing threshold KMS server for {my_id}...");
     kms.init().await?;
     tracing::info!("Initialization done! Starting threshold KMS server for {my_id} ...");
@@ -154,6 +197,13 @@ pub struct ThresholdKmsKeys {
     pub sig_pk: PublicSigKey,
 }
 
+type RequestIDBucketMap = HashMap<
+    RequestId,
+    (
+        DKGParams,
+        Option<Result<Box<dyn DKGPreprocessing<ResiduePoly128>>, anyhow::Error>>,
+    ),
+>;
 pub struct ThresholdKms {
     fhe_keys: HashMap<String, ThresholdFheKeys>,
     base_kms: BaseKmsStruct,
@@ -164,8 +214,12 @@ pub struct ThresholdKms {
     abort_handle: AbortHandle,
     // TODO eventually add mode to allow for nlarge as well.
     prss_setup: Option<PRSSSetup<ResiduePoly128>>,
+    preproc_buckets: Arc<Mutex<RequestIDBucketMap>>,
+    preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
+    num_sessions_preproc: u128,
 }
 impl ThresholdKms {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         keys: ThresholdKmsKeys,
         parties: usize,
@@ -173,6 +227,8 @@ impl ThresholdKms {
         url: &str,
         base_port: u16,
         my_id: usize,
+        preproc_factory: Box<dyn PreprocessorFactory>,
+        num_sessions_preproc: u128,
     ) -> anyhow::Result<Self> {
         let role_assignment: RoleAssignment = (1..=parties)
             .map(|party_id| {
@@ -217,6 +273,9 @@ impl ThresholdKms {
             networking_strategy,
             abort_handle: ddec_handle.abort_handle(),
             prss_setup: None,
+            preproc_buckets: Arc::new(Mutex::new(HashMap::default())),
+            preproc_factory: Arc::new(Mutex::new(preproc_factory)),
+            num_sessions_preproc,
         })
     }
 
@@ -415,10 +474,217 @@ impl ThresholdKms {
         };
         Ok((session, low_level_ct))
     }
+
+    fn launch_dkg_preproc(
+        &self,
+        dkg_params: DKGParams,
+        request_id: RequestId,
+    ) -> anyhow::Result<()> {
+        fn create_sessions(
+            base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
+            prss_setup: PRSSSetup<ResiduePoly128>,
+        ) -> Vec<SmallSession<ResiduePoly128>> {
+            base_sessions
+                .into_iter()
+                .map(|base_session| {
+                    let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
+                    SmallSession::new_from_prss_state(base_session, prss_state).unwrap()
+                })
+                .collect_vec()
+        }
+
+        //Derive a sequence of sessionId from request_id
+        let session_id: u128 = request_id.clone().into();
+        let own_identity = self.own_identity()?;
+        let my_id = self.my_id;
+        let base_sessions: Vec<_> = (session_id..session_id + self.num_sessions_preproc)
+            .map(|sid| {
+                let session_id = SessionId(sid);
+                let params = SessionParameters::new(
+                    self.threshold,
+                    session_id,
+                    own_identity.clone(),
+                    self.role_assignments.clone(),
+                )?;
+                let networking =
+                    (self.networking_strategy)(session_id, self.role_assignments.clone());
+
+                BaseSessionStruct::new(params, networking, self.base_kms.new_rng()?)
+            })
+            .try_collect()?;
+
+        let factory = self.preproc_factory.clone();
+        let bucket_store = self.preproc_buckets.clone();
+
+        let prss_setup =
+            tonic_some_or_err(self.prss_setup.clone(), "No PRSS setup exists".to_string())?;
+        //NOTE: For now we just discard the handle, we can check status with get_preproc_status endpoint
+        let _handle = tokio::spawn(async move {
+            let sessions = create_sessions(base_sessions, prss_setup);
+            let orchestrator = {
+                let mut factory_guard = factory.lock().await;
+                let factory = factory_guard.as_mut();
+                PreprocessingOrchestrator::<ResiduePoly128>::new(factory, dkg_params).unwrap()
+            };
+            tracing::info!("Starting Preproc Orchestration on P[{my_id}]");
+            let preproc_result = orchestrator.orchestrate_small_session_dkg_processing(sessions);
+
+            let preproc_handle_result = match preproc_result {
+                Ok((_, preproc_handle)) => Ok(preproc_handle),
+                Err(e) => Err(e),
+            };
+            //write the preproc handle to the bucket store
+            let mut bucket_store = bucket_store.lock().await;
+            bucket_store.insert(
+                request_id.clone(),
+                (dkg_params, Some(preproc_handle_result)),
+            );
+
+            //NOTE: THIS IS A HACKY WAY TO REENTER THE SPAN CREATED BY THE TRACED_TEST
+            //CRATE, TO BE ABLE TO USE LOG_CONTAINS IN test_preproc
+            let span = span!(tracing::Level::INFO, "test_preproc");
+            let _enter = span.enter();
+            tracing::info!("Preproc Finished P[{my_id}]");
+        });
+        Ok(())
+    }
 }
 
 #[tonic::async_trait]
 impl CoordinatorEndpoint for ThresholdKms {
+    async fn key_gen_preproc(
+        &self,
+        request: Request<KeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let inner = request.into_inner();
+        let request_id = tonic_some_or_err(
+            inner.request_id.clone(),
+            "Request ID is not set".to_string(),
+        )?;
+
+        // ensure the request ID is valid
+        if !request_id.is_valid() {
+            tracing::warn!("Request ID {} is not valid!", request_id.to_string());
+            return Err(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("Request ID {} is not valid!", request_id),
+            ));
+        }
+
+        //Retrieve the DKG parameters
+        let params = tonic_handle_potential_err(
+            retrieve_paramters(inner.params),
+            "Parameter choice is not recognized".to_string(),
+        )?;
+
+        let dkg_params = DKGParams::WithSnS(DKGParamsSnS {
+            regular_params: DKGParamsRegular {
+                sec: SEC_PAR,
+                ciphertext_parameters: params.ciphertext_parameters,
+                flag: true,
+            },
+            sns_params: params.sns_parameters,
+        });
+
+        //Ensure there's no entry in preproc buckets for that request_id
+        //If there is, put a None ther to signal this entry is being produced
+        let entry_exists = {
+            let mut map = self.preproc_buckets.lock().await;
+            match map.entry(request_id.clone()) {
+                Entry::Vacant(entry) => {
+                    entry.insert((dkg_params, None));
+                    false
+                }
+                Entry::Occupied(_) => true,
+            }
+        };
+
+        //If the entry did not exist before, start the preproc
+        if !entry_exists {
+            tracing::info!("Starting preproc generation for Request ID {}", request_id);
+            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, request_id.clone()), format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params))?;
+        } else {
+            tracing::warn!(
+                "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",
+                request_id
+            );
+        }
+
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_preproc_status(
+        &self,
+        request: Request<KeyGenPreprocRequest>,
+    ) -> Result<Response<KeyGenPreprocStatus>, Status> {
+        let inner = request.into_inner();
+        let request_id = tonic_some_or_err(
+            inner.request_id.clone(),
+            "Request ID is not set".to_string(),
+        )?;
+
+        //Retrieve the DKG parameters
+        let params = tonic_handle_potential_err(
+            retrieve_paramters(inner.params),
+            "Parameter choice is not recognized".to_string(),
+        )?;
+
+        let dkg_params = DKGParams::WithSnS(DKGParamsSnS {
+            regular_params: DKGParamsRegular {
+                sec: SEC_PAR,
+                ciphertext_parameters: params.ciphertext_parameters,
+                flag: true,
+            },
+            sns_params: params.sns_parameters,
+        });
+
+        let response = {
+            let map = self.preproc_buckets.lock().await;
+            let entry = map.get(&request_id);
+
+            match entry {
+                None => {
+                    tracing::warn!(
+                        "Requesting status for request id that does not exist {request_id}"
+                    );
+                    KeyGenPreprocStatusEnum::Missing
+                }
+                Some((_, Some(Err(e)))) => {
+                    tracing::warn!(
+                        "Error while generating keygen preproc for request id {request_id} : {e}"
+                    );
+                    KeyGenPreprocStatusEnum::Error
+                }
+                Some((params, None)) => {
+                    if dkg_params == *params {
+                        tracing::info!("Preproc for request id {request_id} is in progress.");
+                        KeyGenPreprocStatusEnum::InProgress
+                    } else {
+                        tracing::warn!(
+                            "Wrong parameters for get_preproc_status of request {request_id}"
+                        );
+                        KeyGenPreprocStatusEnum::WrongRequest
+                    }
+                }
+                Some((params, Some(Ok(_)))) => {
+                    if dkg_params == *params {
+                        tracing::info!("Preproc for request id {request_id} is finished.");
+                        KeyGenPreprocStatusEnum::Finished
+                    } else {
+                        tracing::warn!(
+                            "Wrong parameters for get_preproc_status of request {request_id}"
+                        );
+                        KeyGenPreprocStatusEnum::WrongRequest
+                    }
+                }
+            }
+        };
+
+        Ok(Response::new(KeyGenPreprocStatus {
+            result: response.into(),
+        }))
+    }
+
     async fn key_gen(&self, _request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         todo!()
     }

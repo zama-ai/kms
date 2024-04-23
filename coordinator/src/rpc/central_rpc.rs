@@ -3,6 +3,7 @@ use super::rpc_types::{
     ReencryptionRequestSigPayload, CURRENT_FORMAT_VERSION,
 };
 use crate::cryptography::central_kms::{async_generate_crs, compute_info};
+use crate::kms::{KeyGenPreprocRequest, KeyGenPreprocStatus};
 use crate::storage::{store_crs, DevStorage, PublicStorage};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use crate::{
@@ -63,6 +64,26 @@ pub async fn server_handle(
 impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> CoordinatorEndpoint
     for SoftwareKms<S>
 {
+    async fn key_gen_preproc(
+        &self,
+        _request: Request<KeyGenPreprocRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        tonic_some_or_err(
+            None,
+            "Requesting preproc on centralized kms is not suported".to_string(),
+        )
+    }
+
+    async fn get_preproc_status(
+        &self,
+        _request: Request<KeyGenPreprocRequest>,
+    ) -> Result<Response<KeyGenPreprocStatus>, Status> {
+        tonic_some_or_err(
+            None,
+            "Requesting preproc status on centralized kms is not suported".to_string(),
+        )
+    }
+
     /// starts the centralized KMS key generation
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
@@ -494,7 +515,8 @@ pub fn convert_key_response(
         .collect()
 }
 
-fn retrieve_paramters(param_choice: i32) -> anyhow::Result<NoiseFloodParameters> {
+//TODO(renaming): there is a typo here paramters -> parameters
+pub(crate) fn retrieve_paramters(param_choice: i32) -> anyhow::Result<NoiseFloodParameters> {
     let param_choice = ParamChoice::try_from(param_choice)?;
     let param_path = match param_choice {
         ParamChoice::Test => TEST_PARAM_PATH,

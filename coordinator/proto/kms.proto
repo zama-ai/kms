@@ -3,6 +3,8 @@ package kms;
 
 // TODO seperate into threshold and central calls
 service CoordinatorEndpoint {
+  rpc KeyGenPreproc(KeyGenPreprocRequest) returns (Empty);
+  rpc GetPreprocStatus(KeyGenPreprocRequest) returns (KeyGenPreprocStatus);
   // Generate new keys asynchronously
   rpc KeyGen(KeyGenRequest) returns (Empty);
   // return a URI where they can be accessed.
@@ -27,6 +29,15 @@ message RequestId {
   string request_id = 1;
 }
 
+//Status for Keygen Preproc
+enum KeyGenPreprocStatusEnum {
+  Missing = 0;
+  InProgress = 1;
+  Finished = 2;
+  Error = 3;
+  WrongRequest = 4;
+}
+
 // The plaintext types that can be encrypted in a fhevm ciphertext.
 enum FheType {
   Bool = 0;
@@ -39,11 +50,23 @@ enum FheType {
   Euint160 = 7;
 }
 
+message KeyGenPreprocRequest {
+  Config config = 1;
+  ParamChoice params = 2;
+  RequestId request_id = 3;
+}
+
+message KeyGenPreprocStatus {
+  KeyGenPreprocStatusEnum result = 1;
+}
+
 // Request for generating new keys under a certain handle and return a URI where they can be accessed.
 // TODO handle the potential need for randomness in the signed stored keys which may be needed to ensure provable EU-CMA security of ECDSA.
 message KeyGenRequest {
   Config config = 1;
   ParamChoice params = 2;
+  //TODO(renaming): seq_no is preproc_id in tech-spec, and should be a RequestId 
+  //(or refactored, see issue#427)
   uint64 seq_no = 3;
   RequestId request_id = 4;
 }
