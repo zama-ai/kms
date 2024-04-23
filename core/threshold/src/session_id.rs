@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use crate::execution::tfhe_internals::parameters::Ciphertext64;
 use serde::{Deserialize, Serialize};
 use sha3::{digest::ExtendableOutput, Shake128};
@@ -14,6 +16,16 @@ impl SessionId {
         // hash the serialized ct data into a 128-bit (TAG_BYTES) digest and convert to u128
         let mut hash = [0_u8; TAG_BYTES];
         Shake128::digest_xof(serialized_ct, &mut hash);
+        Ok(SessionId(u128::from_le_bytes(hash)))
+    }
+}
+
+impl FromStr for SessionId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut hash = [0_u8; TAG_BYTES];
+        Shake128::digest_xof(s, &mut hash);
         Ok(SessionId(u128::from_le_bytes(hash)))
     }
 }

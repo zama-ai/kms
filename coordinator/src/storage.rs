@@ -22,7 +22,7 @@ pub trait PublicStorageReader {
     fn read_data<T: DeserializeOwned + serde::Serialize>(&self, url: Url) -> anyhow::Result<T>;
     fn compute_url(
         &self,
-        request: RequestId,
+        request: &RequestId,
         info: &FhePubKeyInfo,
         key_type: PubDataType,
     ) -> anyhow::Result<Url>;
@@ -35,12 +35,12 @@ pub trait PublicStorage: PublicStorageReader {
 
 pub fn compute_all_urls<S: PublicStorageReader>(
     storage: &S,
-    request_id: RequestId,
+    request_id: &RequestId,
     public_info: &HashMap<PubDataType, FhePubKeyInfo>,
 ) -> anyhow::Result<HashMap<PubDataType, Url>> {
     let mut urls = HashMap::new();
     for (key_type, info) in public_info {
-        let url = storage.compute_url(request_id.clone(), info, key_type.to_owned())?;
+        let url = storage.compute_url(request_id, info, key_type.to_owned())?;
         urls.insert(key_type.to_owned(), url);
     }
     Ok(urls)
@@ -48,7 +48,7 @@ pub fn compute_all_urls<S: PublicStorageReader>(
 
 pub fn store_public_keys<S: PublicStorage>(
     storage: &S,
-    request_id: RequestId,
+    request_id: &RequestId,
     public_key_info: &HashMap<PubDataType, FhePubKeyInfo>,
     pub_keys: &FhePubKeySet,
 ) -> anyhow::Result<()> {
@@ -72,11 +72,11 @@ pub fn store_public_keys<S: PublicStorage>(
 
 pub fn store_crs<S: PublicStorage>(
     storage: &S,
-    request_id: RequestId,
+    request_id: &RequestId,
     crs_info: &FhePubKeyInfo, // TODO: rename this type to PublicInfo or PubDataSigHandle, but do it later to not conflict with other PRs now
     crs: &PublicParameter,
 ) -> anyhow::Result<()> {
-    let crs_url = storage.compute_url(request_id.clone(), crs_info, PubDataType::CRS)?;
+    let crs_url = storage.compute_url(request_id, crs_info, PubDataType::CRS)?;
     if !storage.store_data(crs, crs_url) {
         return Err(anyhow_error_and_log("Could not store CRS!"));
     }
@@ -103,7 +103,7 @@ impl DevStorage {
 impl PublicStorageReader for DevStorage {
     fn compute_url(
         &self,
-        request_id: RequestId,
+        request_id: &RequestId,
         _info: &FhePubKeyInfo,
         key_type: PubDataType,
     ) -> anyhow::Result<Url> {
@@ -147,13 +147,17 @@ impl PublicStorage for DevStorage {
         match fs::create_dir_all(format!("{}/{}/dev", KEY_PATH_PREFIX, self.extra_prefix)) {
             Ok(_) => match write_element(url.path().to_string(), &data) {
                 Ok(_) => true,
-                Err(_) => {
-                    tracing::warn!("Could not write to URL {}", url.to_string());
+                Err(e) => {
+                    tracing::warn!("Could not write to URL {}, error {}", url, e);
                     false
                 }
             },
-            Err(_) => {
-                tracing::warn!("Could not create directory {}", KEY_PATH_PREFIX);
+            Err(e) => {
+                tracing::warn!(
+                    "Could not create directory {}, error {}",
+                    KEY_PATH_PREFIX,
+                    e
+                );
                 false
             }
         }
@@ -185,7 +189,7 @@ mod tests {
             signature: vec![],
         };
         let url = storage1
-            .compute_url(reqid.clone(), &info, PubDataType::CRS)
+            .compute_url(&reqid, &info, PubDataType::CRS)
             .unwrap();
 
         // make sure we can put it in storage1

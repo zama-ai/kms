@@ -400,24 +400,39 @@ impl Client {
     }
 
     /// Verify the signature received from the server on keys or other data objects.
+    /// This verification will pass if one of the public keys can verify the signature.
     #[cfg(feature = "non-wasm")]
     pub fn verify_server_signature<T: serde::Serialize + AsRef<[u8]>>(
         &self,
         data: &T,
         signature: &[u8],
     ) -> bool {
+        self.find_verifying_public_key(data, signature).is_some()
+    }
+
+    /// Verify the signature received from the server on keys or other data objects
+    /// and returns the public key that verified the signature.
+    #[cfg(feature = "non-wasm")]
+    pub fn find_verifying_public_key<T: serde::Serialize + AsRef<[u8]>>(
+        &self,
+        data: &T,
+        signature: &[u8],
+    ) -> Option<PublicSigKey> {
         let signature_struct: Signature = match bincode::deserialize(signature) {
             Ok(signature_struct) => signature_struct,
             Err(_) => {
                 tracing::warn!("Could not deserialize signature");
-                return false;
+                return None;
             }
         };
-        let mut res = false;
+
         for verf_key in self.server_pks.iter() {
-            res = res || BaseKmsStruct::verify_sig(&data, &signature_struct, verf_key);
+            let ok = BaseKmsStruct::verify_sig(&data, &signature_struct, verf_key);
+            if ok {
+                return Some(verf_key.clone());
+            }
         }
-        res
+        None
     }
 
     #[cfg(feature = "non-wasm")]
@@ -492,11 +507,109 @@ impl Client {
         })
     }
 
+    /// Process a set of CRS generation results.
+    /// We need a vector of storage readers also, one for each
+    /// party that contributed to the result.
+    ///
+    /// In the ideal scenario, the generated CRS should be the same
+    /// for all parties. But if there are adversaries, this might not
+    /// be the case. In addition to checking the digests and signatures,
+    /// This function takes care of finding the CRS that is returned by
+    /// the majority. The majority value must be greater or equal to
+    /// the number of honest parties, that is n - t, where n is the number
+    /// of parties and t is the threshold.
     #[cfg(feature = "non-wasm")]
-    pub fn get_crs_request(&self, request_id: &str) -> anyhow::Result<RequestId> {
-        Ok(RequestId {
-            request_id: request_id.to_string(),
-        })
+    pub fn process_distributed_crs_result<S: PublicStorageReader>(
+        &self,
+        request_id: &RequestId,
+        results: Vec<CrsGenResult>,
+        storage_readers: &[S],
+    ) -> anyhow::Result<PublicParameter> {
+        let mut verifying_pks = HashSet::new();
+        // counter of digest (digest -> usize)
+        let mut hash_counter_map = HashMap::new();
+        // map of digest -> public parameter
+        let mut pp_map = HashMap::new();
+
+        for (result, storage) in results.into_iter().zip(storage_readers) {
+            let (pp, info) = if let Some(info) = result.crs_results {
+                let url = storage.compute_url(request_id, &info, PubDataType::CRS)?;
+                let pp: PublicParameter = storage.read_data(url)?;
+                (pp, info)
+            } else {
+                tracing::warn!("empty FhePubKeyInfo");
+                continue;
+            };
+
+            // check the result matches our request ID
+            if request_id.request_id
+                != result
+                    .request_id
+                    .ok_or(anyhow_error_and_log("request ID missing"))?
+                    .request_id
+            {
+                tracing::warn!("request ID mismatch; discarding the CRS");
+                continue;
+            }
+
+            // check the digest
+            let ser = bincode::serialize(&pp)?;
+            let hex_digest = compute_handle(&ser)?;
+            if info.key_handle != hex_digest {
+                tracing::warn!("crs_handle does not match the computed digest; discarding the CRS");
+                continue;
+            }
+
+            // check the signature
+            match self.find_verifying_public_key(&hex_digest, &info.signature) {
+                Some(pk) => {
+                    verifying_pks.insert(pk);
+                }
+                None => {
+                    // do not insert
+                }
+            }
+
+            // put the result in a hash map so that we can check for majority
+            match hash_counter_map.get_mut(&hex_digest) {
+                Some(v) => {
+                    *v += 1;
+                }
+                None => {
+                    hash_counter_map.insert(hex_digest.clone(), 1usize);
+                }
+            }
+            pp_map.insert(hex_digest, pp);
+        }
+
+        // find the digest that has the most votes
+        let (h, c) = hash_counter_map
+            .into_iter()
+            .max_by(|a, b| a.1.cmp(&b.1))
+            .ok_or(anyhow_error_and_log(
+                "logic error: hash_counter_map is empty",
+            ))?;
+
+        // shares_needed gives us t+1, enough to reconstruct
+        // this means there are n - t honest parties, which should return the same result
+        let honest_parties_count = self.server_pks.len() - self.shares_needed as usize + 1;
+        if c < honest_parties_count {
+            return Err(anyhow_error_and_log(format!(
+                "No consensus on CRS digest! {} >= {}",
+                c, honest_parties_count
+            )));
+        }
+
+        if verifying_pks.len() < honest_parties_count {
+            Err(anyhow_error_and_log(format!(
+                "Not enough signatures on CRS results! {} >= {}",
+                verifying_pks.len(),
+                honest_parties_count
+            )))
+        } else {
+            // pp_map must contain h so we unwrap here
+            Ok(pp_map.remove(&h).unwrap())
+        }
     }
 
     /// Creates a decryption request to send to the KMS servers.
@@ -607,7 +720,7 @@ impl Client {
             key_gen_result.request_id.clone(),
             "No request id".to_string(),
         )?;
-        let url = storage.compute_url(request_id, pki, key_type)?;
+        let url = storage.compute_url(&request_id, pki, key_type)?;
         let key: S = storage.read_data(url)?;
         let serialized_key = bincode::serialize(&key)?;
         let key_handle = compute_handle(&serialized_key)?;
@@ -660,7 +773,7 @@ impl Client {
             crs_gen_result.request_id.clone(),
             "No request id".to_string(),
         )?;
-        let url = storage.compute_url(request_id, &crs_info, PubDataType::CRS)?;
+        let url = storage.compute_url(&request_id, &crs_info, PubDataType::CRS)?;
         let crs: PublicParameter = storage.read_data(url)?;
         let serialized_crs = bincode::serialize(&crs)?;
         let crs_handle = compute_handle(&serialized_crs)?;
@@ -1188,6 +1301,8 @@ pub(crate) mod tests {
     };
     use crate::cryptography::der_types::Signature;
     use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
+    #[cfg(feature = "slow_tests")]
+    use crate::kms::CrsGenResult;
     use crate::kms::RequestId;
     use crate::kms::{
         AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType, ParamChoice,
@@ -1270,6 +1385,8 @@ pub(crate) mod tests {
         let mut handles = Vec::new();
         tracing::info!("Spawning servers...");
         for i in 1..=amount {
+            let prefix = format!("p{}", i);
+            let storage = DevStorage::new(&prefix);
             let key_path = format!("{threshold_key_path_prefix}-{i}.bin");
             handles.push(tokio::spawn(async move {
                 tracing::info!("Server {i} reading keys..");
@@ -1285,6 +1402,7 @@ pub(crate) mod tests {
                     keys.kms_keys,
                     None,
                     None,
+                    storage,
                 )
                 .await;
                 (i, server)
@@ -1496,7 +1614,7 @@ pub(crate) mod tests {
 
         let storage = DevStorage::default();
         let mut crs_path = storage
-            .compute_url(client_request_id, &crs_info, PubDataType::CRS)
+            .compute_url(&client_request_id, &crs_info, PubDataType::CRS)
             .unwrap()
             .to_string();
 
@@ -1562,6 +1680,215 @@ pub(crate) mod tests {
         assert!(crs.is_some());
 
         kms_server.abort();
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test]
+    #[serial]
+    async fn test_crs_gen_threshold() {
+        // this test generates a small CRS
+        crs_gen_threshold(TEST_THRESHOLD_KEYS_PATH).await
+    }
+
+    #[cfg(feature = "slow_tests")]
+    fn set_signatures(crs_gen_results: &mut [CrsGenResult], count: usize, sig: &[u8]) {
+        for crs_gen_result in crs_gen_results.iter_mut().take(count) {
+            match &mut crs_gen_result.crs_results {
+                Some(info) => {
+                    info.signature = sig.to_vec();
+                }
+                None => panic!("missing FhePubKeyInfo"),
+            };
+        }
+    }
+
+    #[cfg(feature = "slow_tests")]
+    fn set_digests(crs_gen_results: &mut [CrsGenResult], count: usize, digest: &str) {
+        for crs_gen_result in crs_gen_results.iter_mut().take(count) {
+            match &mut crs_gen_result.crs_results {
+                Some(info) => {
+                    // each hex-digit is 4 bits, 160 bits is 40 characters
+                    assert_eq!(40, info.key_handle.len());
+                    // it's unlikely that we generate the same signature more than once
+                    info.key_handle = digest.to_string();
+                }
+                None => panic!("missing FhePubKeyInfo"),
+            }
+        }
+    }
+
+    #[cfg(feature = "slow_tests")]
+    async fn crs_gen_threshold(threshold_key_path: &str) {
+        use crate::rpc::rpc_types::CRS_GEN_REQUEST_NAME;
+
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(threshold_key_path).await;
+        let req_id_string = "two legs better!";
+        let req_gen = internal_client
+            .crs_gen_request(req_id_string, Some(ParamChoice::Test))
+            .unwrap();
+        let req_id =
+            RequestId::new(&req_id_string.to_string(), CRS_GEN_REQUEST_NAME.to_string()).unwrap();
+
+        let mut tasks_gen = JoinSet::new();
+        for i in 1..=AMOUNT_PARTIES as u32 {
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            let req_clone = req_gen.clone();
+            tasks_gen
+                .spawn(async move { cur_client.crs_gen(tonic::Request::new(req_clone)).await });
+        }
+        let mut responses_gen = Vec::new();
+        while let Some(Ok(Ok(resp))) = tasks_gen.join_next().await {
+            responses_gen.push(resp.into_inner());
+        }
+        assert_eq!(responses_gen.len(), AMOUNT_PARTIES);
+
+        // wait a bit for the crs generation to finish
+        const TRIES: usize = 20;
+        let mut joined_responses = vec![];
+        for i in 0..TRIES {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+            let mut tasks_get = JoinSet::new();
+            for j in 1..=AMOUNT_PARTIES as u32 {
+                let mut cur_client = kms_clients.get(&j).unwrap().clone();
+                let req_id_cloned = req_id.clone();
+                tasks_get.spawn(async move {
+                    (
+                        j,
+                        cur_client
+                            .get_crs_gen_result(tonic::Request::new(req_id_cloned))
+                            .await,
+                    )
+                });
+            }
+            let mut responses_get = Vec::new();
+            while let Some(Ok((j, Ok(resp)))) = tasks_get.join_next().await {
+                responses_get.push((j, resp.into_inner()));
+            }
+
+            // fail if we can't find a response
+            if i == TRIES - 1 {
+                panic!("could not get crs after {} tries", i);
+            }
+            if !responses_get.is_empty() {
+                // i.e., not empty
+                joined_responses = responses_get;
+                break;
+            }
+            // if there are no reponses then we try again
+        }
+        kms_servers
+            .into_iter()
+            .for_each(|(_id, handle)| handle.abort());
+
+        // first check the happy path
+        // the public parameter is checked in ddec tests, so we don't specifically check _pp
+        assert_eq!(joined_responses.len(), AMOUNT_PARTIES);
+
+        // we need to setup the storage devices in the right order
+        // so that the client can read the CRS
+        let (storage_readers, final_responses): (Vec<_>, Vec<_>) = joined_responses
+            .into_iter()
+            .map(|(j, res)| {
+                (
+                    {
+                        // note that j is 1-based
+                        let prefix = format!("p{}", j);
+                        DevStorage::new(&prefix)
+                    },
+                    res,
+                )
+            })
+            .unzip();
+
+        let _pp = internal_client
+            .process_distributed_crs_result(&req_id, final_responses.clone(), &storage_readers)
+            .unwrap();
+
+        // if there's [THRESHOLD] result missing, we can still recover the result
+        let _pp = internal_client
+            .process_distributed_crs_result(
+                &req_id,
+                final_responses[0..final_responses.len() - THRESHOLD].to_vec(),
+                &storage_readers,
+            )
+            .unwrap();
+
+        // if there are [THRESHOLD+1] results missing, then we do not have consensus
+        assert!(internal_client
+            .process_distributed_crs_result(
+                &req_id,
+                final_responses[0..final_responses.len() - (THRESHOLD + 1)].to_vec(),
+                &storage_readers
+            )
+            .is_err());
+
+        // if the request_id is wrong, we get nothing
+        let bad_request_id = RequestId::new(
+            &"four legs good".to_string(),
+            CRS_GEN_REQUEST_NAME.to_string(),
+        )
+        .unwrap();
+        assert!(internal_client
+            .process_distributed_crs_result(
+                &bad_request_id,
+                final_responses.clone(),
+                &storage_readers
+            )
+            .is_err());
+
+        // test that having [THRESHOLD] wrong signatures still works
+        let mut final_responses_with_bad_sig = final_responses.clone();
+        let client_sk = internal_client.client_sk.clone().unwrap();
+        let bad_sig = bincode::serialize(
+            &crate::cryptography::signcryption::sign(&"wrong msg".to_string(), &client_sk).unwrap(),
+        )
+        .unwrap();
+        set_signatures(&mut final_responses_with_bad_sig, THRESHOLD, &bad_sig);
+
+        let _pp = internal_client
+            .process_distributed_crs_result(
+                &req_id,
+                final_responses_with_bad_sig.clone(),
+                &storage_readers,
+            )
+            .unwrap();
+
+        // having [THRESHOLD+1] wrong signatures won't work
+        set_signatures(&mut final_responses_with_bad_sig, THRESHOLD + 1, &bad_sig);
+        assert!(internal_client
+            .process_distributed_crs_result(&req_id, final_responses_with_bad_sig, &storage_readers)
+            .is_err());
+
+        // having [THRESHOLD] wrong digest still works
+        let mut final_responses_with_bad_digest = final_responses.clone();
+        set_digests(
+            &mut final_responses_with_bad_digest,
+            THRESHOLD,
+            "9fdca770403e2eed9dacb4cdd405a14fc6df7226",
+        );
+        let _pp = internal_client
+            .process_distributed_crs_result(
+                &req_id,
+                final_responses_with_bad_digest.clone(),
+                &storage_readers,
+            )
+            .unwrap();
+
+        // having [THRESHOLD+1] wrong digests will fail
+        set_digests(
+            &mut final_responses_with_bad_digest,
+            THRESHOLD + 1,
+            "9fdca770403e2eed9dacb4cdd405a14fc6df7226",
+        );
+        assert!(internal_client
+            .process_distributed_crs_result(
+                &req_id,
+                final_responses_with_bad_digest,
+                &storage_readers
+            )
+            .is_err());
     }
 
     #[tokio::test]

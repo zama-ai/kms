@@ -185,8 +185,7 @@ impl BaseKms for BaseKmsStruct {
     where
         T: Serialize + AsRef<[u8]>,
     {
-        // TODO signature should be validated to prevent fault attacks
-        sign(&msg, &self.sig_key)
+        sign(msg, &self.sig_key)
     }
 
     fn get_verf_key(&self) -> PublicSigKey {
@@ -471,6 +470,19 @@ pub fn compute_info<K: BaseKms, S: Serialize>(
     let handle = compute_handle(&ser)?;
     let signature = kms.sign(&handle)?;
 
+    Ok(FhePubKeyInfo {
+        key_handle: handle,
+        signature: bincode::serialize(&signature)?,
+    })
+}
+
+pub(crate) fn compute_info_from_key<S: Serialize>(
+    sk: &PrivateSigKey,
+    element: &S,
+) -> anyhow::Result<FhePubKeyInfo> {
+    let ser = bincode::serialize(element)?;
+    let handle = compute_handle(&ser)?;
+    let signature = sign(&handle, sk)?;
     Ok(FhePubKeyInfo {
         key_handle: handle,
         signature: bincode::serialize(&signature)?,
@@ -900,5 +912,28 @@ mod tests {
             assert_eq!(plaintext.as_u8(), msg);
         }
         assert_eq!(plaintext.fhe_type(), FheType::Euint8);
+    }
+
+    #[test]
+    fn ensure_compute_info_consistency() {
+        // we need compute info to work without calling the sign function from KMS,
+        // i.e., only using a signing key
+        // this test makes sure the output is consistent
+        let kms_key_path = TEST_CENTRAL_KEYS_PATH;
+        let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
+        let storage = DevStorage::default();
+        let kms = {
+            SoftwareKms::new(
+                storage,
+                keys.software_kms_keys.key_info.clone(),
+                keys.software_kms_keys.sig_sk,
+                None,
+            )
+        };
+
+        let value = "bonjour".to_string();
+        let expected = super::compute_info(&kms.base_kms, &value).unwrap();
+        let actual = super::compute_info_from_key(&kms.base_kms.sig_key, &value).unwrap();
+        assert_eq!(expected, actual);
     }
 }

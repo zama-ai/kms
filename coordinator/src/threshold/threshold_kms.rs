@@ -1,5 +1,6 @@
 use crate::anyhow_error_and_log;
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, SEC_PAR};
+use crate::cryptography::central_kms::compute_info_from_key;
 use crate::kms::{coordinator_endpoint_server::CoordinatorEndpoint, RequestId};
 use crate::kms::{
     CrsGenRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
@@ -8,6 +9,7 @@ use crate::kms::{
     DecryptionRequest, DecryptionResponse, FheType, KeyGenRequest, KeyGenResult,
     ReencryptionRequest, ReencryptionResponse,
 };
+use crate::kms::{FhePubKeyInfo, ParamChoice};
 use crate::rpc::central_rpc::{
     process_response, retrieve_paramters, tonic_handle_potential_err, tonic_some_or_err,
     validate_decrypt_req, validate_reencrypt_req,
@@ -16,6 +18,7 @@ use crate::rpc::rpc_types::{
     BaseKms, DecryptionResponseSigPayload, Plaintext, RawDecryption, SigncryptionPayload,
     CURRENT_FORMAT_VERSION,
 };
+use crate::storage::PublicStorage;
 use crate::{
     cryptography::central_kms::BaseKmsStruct,
     kms::coordinator_endpoint_server::CoordinatorEndpointServer,
@@ -27,6 +30,7 @@ use crate::{
 use crate::{cryptography::signcryption::signcrypt, kms::Empty};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
+use anyhow::anyhow;
 use distributed_decryption::algebra::base_ring::Z64;
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
 use distributed_decryption::execution::endpoints::decryption::{
@@ -44,6 +48,7 @@ use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::execution::tfhe_internals::parameters::{
     DKGParams, DKGParamsRegular, DKGParamsSnS,
 };
+use distributed_decryption::execution::zk::ceremony::{Ceremony, RealCeremony};
 use distributed_decryption::execution::{
     endpoints::keygen::PrivateKeySet, small_execution::agree_random::RealAgreeRandomWithAbort,
 };
@@ -58,15 +63,16 @@ use distributed_decryption::{
 };
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use serde_asn1_der::to_vec;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
 use tfhe::{FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
 use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
+use tokio::time::Instant;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 use tracing::span;
@@ -76,10 +82,17 @@ use tracing::span;
 pub const PORT_JUMP: u16 = 100;
 pub const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 
+#[derive(Clone)]
+struct CrsMetaStore {
+    // digest is the 160-bit hex-encoded value, computed using compute_info/handle
+    digest: String,
+    signature: Vec<u8>,
+}
+
 /// Initialize a threshold KMS server using the DDec initialization protocol.
 /// This MUST be done before the server is started.
 #[allow(clippy::too_many_arguments)]
-pub async fn threshold_server_init(
+pub async fn threshold_server_init<S: PublicStorage + Sync + Send>(
     url: String,
     base_port: u16,
     parties: usize,
@@ -88,7 +101,8 @@ pub async fn threshold_server_init(
     keys: ThresholdKmsKeys,
     preproc_redis_conf: Option<RedisConf>,
     num_sessions_preproc: Option<u128>,
-) -> anyhow::Result<ThresholdKms> {
+    public_storage: S,
+) -> anyhow::Result<ThresholdKms<S>> {
     //If no RedisConf is provided, we just use in-memory storage for the preprocessing buckets.
     //NOTE: This should probably only be allowed for testing
     let factory = match preproc_redis_conf {
@@ -113,6 +127,7 @@ pub async fn threshold_server_init(
         my_id,
         factory,
         num_sessions_preproc,
+        public_storage,
     )?;
     tracing::info!("Initializing threshold KMS server for {my_id}...");
     kms.init().await?;
@@ -122,11 +137,11 @@ pub async fn threshold_server_init(
 
 /// Starts threshold KMS server. Its port will be `base_port`+`my_id``.
 /// This MUST be done after the server has been initialized.
-pub async fn threshold_server_start(
+pub async fn threshold_server_start<S: PublicStorage + Sync + Send>(
     url: String,
     base_port: u16,
     my_id: usize,
-    kms_server: ThresholdKms,
+    kms_server: ThresholdKms<S>,
 ) -> anyhow::Result<()> {
     let port = base_port + (my_id as u16);
     let socket: std::net::SocketAddr = format!("{}:{}", url, port).parse()?;
@@ -204,7 +219,14 @@ type RequestIDBucketMap = HashMap<
         Option<Result<Box<dyn DKGPreprocessing<ResiduePoly128>>, anyhow::Error>>,
     ),
 >;
-pub struct ThresholdKms {
+
+enum CrsHandlerStatus {
+    Started,
+    Error(anyhow::Error),
+    Done(CrsMetaStore),
+}
+
+pub struct ThresholdKms<S: PublicStorage + Sync + Send + 'static> {
     fhe_keys: HashMap<String, ThresholdFheKeys>,
     base_kms: BaseKmsStruct,
     threshold: u8,
@@ -217,8 +239,11 @@ pub struct ThresholdKms {
     preproc_buckets: Arc<Mutex<RequestIDBucketMap>>,
     preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
     num_sessions_preproc: u128,
+    public_storage: Arc<Mutex<S>>,
+    crs_meta_store: Arc<Mutex<HashMap<RequestId, CrsHandlerStatus>>>,
 }
-impl ThresholdKms {
+
+impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         keys: ThresholdKmsKeys,
@@ -229,6 +254,7 @@ impl ThresholdKms {
         my_id: usize,
         preproc_factory: Box<dyn PreprocessorFactory>,
         num_sessions_preproc: u128,
+        public_storage: S,
     ) -> anyhow::Result<Self> {
         let role_assignment: RoleAssignment = (1..=parties)
             .map(|party_id| {
@@ -276,6 +302,8 @@ impl ThresholdKms {
             preproc_buckets: Arc::new(Mutex::new(HashMap::default())),
             preproc_factory: Arc::new(Mutex::new(preproc_factory)),
             num_sessions_preproc,
+            public_storage: Arc::new(Mutex::new(public_storage)),
+            crs_meta_store: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -320,7 +348,7 @@ impl ThresholdKms {
     }
 }
 
-impl BaseKms for ThresholdKms {
+impl<S: PublicStorage + Sync + Send + 'static> BaseKms for ThresholdKms<S> {
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
         signature: &der_types::Signature,
@@ -358,14 +386,14 @@ impl BaseKms for ThresholdKms {
         self.base_kms.sign_eip712(msg, domain)
     }
 }
-impl ThresholdKms {
+impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
     async fn inner_decrypt(
         &self,
         fhe_type: FheType,
         ct: &[u8],
         key_handle: &str,
     ) -> anyhow::Result<Z64> {
-        let (mut session, low_level_ct) = self.prepare_ddec_data(ct, fhe_type)?;
+        let (mut session, low_level_ct) = self.prepare_ddec_data_from_ct(ct, fhe_type)?;
         let mut protocol = Small::new(session.clone());
         let id = session.own_identity();
         let keys = match self.fhe_keys.get(key_handle) {
@@ -404,7 +432,7 @@ impl ThresholdKms {
         client_verf_key: &PublicSigKey,
         key_handle: &str,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        let (mut session, low_level_ct) = self.prepare_ddec_data(ct, fhe_type)?;
+        let (mut session, low_level_ct) = self.prepare_ddec_data_from_ct(ct, fhe_type)?;
         let mut protocol = Small::new(session.clone());
         let keys = match self.fhe_keys.get(key_handle) {
             Some(keys) => keys,
@@ -441,22 +469,143 @@ impl ThresholdKms {
             client_verf_key,
             &self.base_kms.sig_key,
         )?;
-        let res = to_vec(&enc_res)?;
+        let res = serde_asn1_der::to_vec(&enc_res)?;
         // TODO make logs everywhere. In particular make sure to log errors before throwing the
         // error back up
         tracing::info!("Completed reencyption of ciphertext");
         Ok(Some(res))
     }
 
-    /// helper function to prepare the data for ddec by deserializing the ciphertext and creating a
+    async fn inner_crs_gen(&self, req_id: &RequestId, witness_dim: usize) -> anyhow::Result<()> {
+        {
+            // do not generate a new CRS if it already exists or it's already in progress
+            // also do not generate a new one if an error has occured
+            let mut guarded_meta_store = self.crs_meta_store.lock().await;
+            match guarded_meta_store.get_mut(req_id) {
+                Some(CrsHandlerStatus::Done(_)) => Err(anyhow_error_and_log(format!(
+                    "CRS already exists with request ID {}",
+                    req_id
+                ))),
+                Some(CrsHandlerStatus::Started) => Err(anyhow_error_and_log(format!(
+                    "CRS already started with request ID {}",
+                    req_id
+                ))),
+                Some(CrsHandlerStatus::Error(e)) => Err(anyhow_error_and_log(format!(
+                    "CRS request ID {} ended with error {}",
+                    req_id, e
+                ))),
+                None => {
+                    guarded_meta_store.insert(req_id.clone(), CrsHandlerStatus::Started);
+                    Ok(())
+                }
+            }?
+        }
+
+        let mut session = self.prepare_ddec_data_from_str(&req_id.request_id)?;
+        let meta_store = self.crs_meta_store.clone();
+        let storage = self.public_storage.clone();
+        let copied_req_id = req_id.clone();
+
+        // we need to clone the signature key because it needs to be given
+        // the thread that spawns the CRS ceremony
+        let sig_key = self.base_kms.sig_key.clone();
+
+        // we do not need to hold the handle,
+        // the result of the computation is tracked the crs_meta_store
+        let _handle = tokio::spawn(async move {
+            let crs_start_timer = Instant::now();
+            let real_ceremony = RealCeremony::default();
+            let res_pp = real_ceremony
+                .execute::<Z64, _, _>(&mut session, witness_dim)
+                .await;
+
+            let res_info_pp =
+                res_pp.and_then(|pp| compute_info_from_key(&sig_key, &pp).map(|info| (info, pp)));
+            let f = || async {
+                // we take these two locks at the same time in case there are races
+                // on return, the two locks should be dropped in the correct order also
+                let guarded_storage = storage.lock().await;
+                let mut guarded_meta_store = meta_store.lock().await;
+
+                let (info, pp) = match res_info_pp {
+                    Ok(info_pp) => info_pp,
+                    Err(e) => {
+                        guarded_meta_store.insert(copied_req_id, CrsHandlerStatus::Error(e));
+                        return;
+                    }
+                };
+
+                match guarded_storage.compute_url(
+                    &copied_req_id,
+                    &info,
+                    crate::rpc::rpc_types::PubDataType::CRS,
+                ) {
+                    Ok(url) => {
+                        if guarded_storage.store_data(pp, url.clone()) {
+                            let meta_store = CrsMetaStore {
+                                digest: info.key_handle,
+                                signature: info.signature,
+                            };
+                            guarded_meta_store
+                                .insert(copied_req_id, CrsHandlerStatus::Done(meta_store));
+                        } else {
+                            let err_msg =
+                                format!("failed to store data to public storage at {}", url);
+                            guarded_meta_store.insert(
+                                copied_req_id,
+                                CrsHandlerStatus::Error(anyhow!(err_msg.clone())),
+                            );
+                            tracing::error!(err_msg);
+                        }
+                    }
+                    Err(e) => {
+                        let err_msg = format!(
+                            "failed to compute url for request ID: {}, error: {}",
+                            copied_req_id, e
+                        );
+                        guarded_meta_store.insert(
+                            copied_req_id,
+                            CrsHandlerStatus::Error(anyhow!(err_msg.clone())),
+                        );
+                        tracing::error!(err_msg);
+                    }
+                }
+            };
+            let _ = f().await;
+
+            let crs_stop_timer = Instant::now();
+            let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
+            tracing::info!(
+                "CRS stored. CRS ceremony time was {:?} ms",
+                (elapsed_time).as_millis()
+            );
+        });
+        Ok(())
+    }
+
+    /// Helper function to prepare the data for ddec by deserializing the ciphertext and creating a
     /// session
-    fn prepare_ddec_data(
+    fn prepare_ddec_data_from_ct(
         &self,
         ct: &[u8],
         fhe_type: FheType,
     ) -> anyhow::Result<(SmallSession<ResiduePoly128>, Ciphertext64)> {
         let low_level_ct = fhe_type.deserialize_to_low_level(ct)?;
         let session_id = SessionId::new(&low_level_ct)?;
+        let session = self.prepare_ddec_data_from_sessionid(session_id)?;
+        Ok((session, low_level_ct))
+    }
+
+    fn prepare_ddec_data_from_str(&self, s: &str) -> anyhow::Result<SmallSession<ResiduePoly128>> {
+        let session_id = SessionId::from_str(s)?;
+        let session = self.prepare_ddec_data_from_sessionid(session_id)?;
+        Ok(session)
+    }
+
+    fn prepare_ddec_data_from_sessionid(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<SmallSession<ResiduePoly128>> {
         let networking = (self.networking_strategy)(session_id, self.role_assignments.clone());
         let own_identity = self.own_identity()?;
         let parameters = SessionParameters::new(
@@ -472,7 +621,7 @@ impl ThresholdKms {
             base_session: BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng()?)?,
             prss_state,
         };
-        Ok((session, low_level_ct))
+        Ok(session)
     }
 
     fn launch_dkg_preproc(
@@ -551,7 +700,7 @@ impl ThresholdKms {
 }
 
 #[tonic::async_trait]
-impl CoordinatorEndpoint for ThresholdKms {
+impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for ThresholdKms<S> {
     async fn key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
@@ -733,7 +882,7 @@ impl CoordinatorEndpoint for ThresholdKms {
             fhe_type: fhe_type.into(),
             digest: req_digest,
             verification_key: tonic_handle_potential_err(
-                to_vec(&self.get_verf_key()),
+                serde_asn1_der::to_vec(&self.get_verf_key()),
                 "Could not serialize server verification key".to_string(),
             )?,
         }))
@@ -756,14 +905,14 @@ impl CoordinatorEndpoint for ThresholdKms {
         )?;
         let plaintext = Plaintext::new(raw_decryption.0 as u128, fhe_type);
         let decrypted_bytes = tonic_handle_potential_err(
-            to_vec(&plaintext),
+            serde_asn1_der::to_vec(&plaintext),
             format!(
                 "Could not convert plaintext to bytes in request {:?}",
                 inner
             ),
         )?;
         let server_verf_key = tonic_handle_potential_err(
-            to_vec(&self.get_verf_key()),
+            serde_asn1_der::to_vec(&self.get_verf_key()),
             "Could not serialize server verification key".to_string(),
         )?;
         let sig_payload = DecryptionResponseSigPayload {
@@ -775,7 +924,7 @@ impl CoordinatorEndpoint for ThresholdKms {
         };
 
         let sig_payload_vec = tonic_handle_potential_err(
-            to_vec(&sig_payload),
+            serde_asn1_der::to_vec(&sig_payload),
             format!("Could not convert payload to bytes {:?}", sig_payload),
         )?;
 
@@ -789,14 +938,62 @@ impl CoordinatorEndpoint for ThresholdKms {
         }))
     }
 
-    async fn crs_gen(&self, _request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
-        todo!();
+    async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
+        let req_inner = request.into_inner();
+        let param = ParamChoice::try_from(req_inner.params)
+            .map_err(|e| tonic::Status::new(tonic::Code::InvalidArgument, e.to_string()))?;
+        let witness_dim = match param {
+            ParamChoice::Test => 10usize,
+            // TODO the correct witness dimension needs to be computed using
+            // the algorithm in CompactPkeCrs https://github.com/zama-ai/tfhe-rs/blob/main/tfhe/src/zk.rs
+            // from the LWE parameters. But currently there's no
+            // way to use this function without doing a trusted CRS generation
+            // we need to ask tfhe-rs to split this functionality so that we
+            // determine the correct witness dimension and use our own CRS generated
+            // from the ceremony.
+            // See https://github.com/zama-ai/kms-core/issues/431
+            ParamChoice::Default => 10000usize,
+        };
+
+        let req_id = req_inner.request_id.ok_or(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            "missing request ID in CRS generation",
+        ))?;
+        self.inner_crs_gen(&req_id, witness_dim)
+            .await
+            .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))?;
+        Ok(Response::new(Empty {}))
     }
 
     async fn get_crs_gen_result(
         &self,
-        _request: Request<RequestId>,
+        request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
-        todo!();
+        let req_inner = request.into_inner();
+        let guarded_meta_store = self.crs_meta_store.lock().await;
+        match guarded_meta_store.get(&req_inner) {
+            None => Err(tonic::Status::new(
+                tonic::Code::Unavailable,
+                format!("CRS with request ID {} does not exist", req_inner),
+            )),
+            Some(CrsHandlerStatus::Started) => Err(tonic::Status::new(
+                tonic::Code::Unavailable,
+                format!("CRS with request ID {} is not completed yet", req_inner),
+            )),
+            Some(CrsHandlerStatus::Error(e)) => Err(tonic::Status::new(
+                tonic::Code::Unavailable,
+                format!(
+                    "CRS with request ID {} finished with an error: {}",
+                    req_inner, e
+                ),
+            )),
+            Some(CrsHandlerStatus::Done(store)) => Ok(Response::new(CrsGenResult {
+                request_id: Some(req_inner),
+                crs_results: Some(FhePubKeyInfo {
+                    key_handle: store.digest.clone(),
+                    signature: store.signature.clone(),
+                }),
+            })),
+        }
     }
 }

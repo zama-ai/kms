@@ -403,7 +403,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
                     })?;
                     crs_handles.insert(request_id.to_string(), crs_info.clone());
                 }
-                store_crs(&self.storage, request_id, &crs_info, &pp)?;
+                store_crs(&self.storage, &request_id, &crs_info, &pp)?;
                 Ok(Some(crs_info))
             }
             None => {
@@ -472,7 +472,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 }
                 store_public_keys(
                     &self.storage,
-                    request_id,
+                    &request_id,
                     &new_key_info.public_key_info,
                     &pub_keys,
                 )?;
