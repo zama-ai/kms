@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 async-trait = "~0.1"
-cosmwasm-std = { version = "2.0.1" }
+cosmwasm-std = { version = "2.0.0" }
 events = { path = "../events", features = ["subscription"] }
 serde = { version = "1.0.197", features = ["derive"] }
 tokio = { version = "1.36", features = ["full"] }

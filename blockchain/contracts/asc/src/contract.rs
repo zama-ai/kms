@@ -1,23 +1,21 @@
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Attribute, VerificationError};
 use cosmwasm_std::{Response, StdResult};
-use cw_storage_plus::Item;
 use cw_storage_plus::Map;
 use events::kms::KmsOperationAttributeValue;
 use events::kms::{FheType, KmsOperationAttribute};
+use sha2::Digest;
 use sylvia::types::{ExecCtx, InstantiateCtx, QueryCtx};
 use sylvia::{contract, entry_points};
 
 pub struct KmsContract {
-    pub(crate) sequence: Item<u64>,
     pub(crate) config: Map<String, String>,
-    pub(crate) transactions: Map<u64, TransactionPayload>,
+    pub(crate) transactions: Map<Vec<u8>, TransactionPayload>,
 }
 
 impl Default for KmsContract {
     fn default() -> Self {
         Self {
-            sequence: Item::new("sequence"),
             config: Map::new("config"),
             transactions: Map::new("transactions"),
         }
@@ -59,7 +57,6 @@ impl KmsContract {
         value: String,
     ) -> StdResult<Response> {
         self.config.save(ctx.deps.storage, key, &value)?;
-        self.sequence.save(ctx.deps.storage, &0)?;
         Ok(Response::default())
     }
 
@@ -67,12 +64,6 @@ impl KmsContract {
     pub fn get(&self, ctx: QueryCtx, key: String) -> StdResult<ConfigurationResponse> {
         let value = self.config.load(ctx.deps.storage, key)?;
         Ok(ConfigurationResponse { value })
-    }
-
-    #[sv::msg(query)]
-    pub fn sequence(&self, ctx: QueryCtx) -> StdResult<SequenceResponse> {
-        let sequence = self.sequence.load(ctx.deps.storage)?;
-        Ok(SequenceResponse { sequence })
     }
 
     #[sv::msg(exec)]
@@ -84,8 +75,21 @@ impl KmsContract {
         Ok(Response::default())
     }
 
+    fn derive_transaction_id(&self, ctx: &ExecCtx) -> Vec<u8> {
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(ctx.env.block.height.to_string());
+        hasher.update(ctx.env.transaction.clone().unwrap().index.to_string());
+        let result = hasher.finalize();
+        // truncate the result to 20 bytes
+        result[..20].to_vec()
+    }
+
     #[sv::msg(query)]
-    pub fn get_transaction(&self, ctx: QueryCtx, seq_no: u64) -> StdResult<TransactionResponse> {
+    pub fn get_transaction(
+        &self,
+        ctx: QueryCtx,
+        seq_no: Vec<u8>,
+    ) -> StdResult<TransactionResponse> {
         Ok(TransactionResponse {
             value: self.transactions.load(ctx.deps.storage, seq_no)?,
         })
@@ -98,10 +102,10 @@ impl KmsContract {
         ciphertext: Vec<u8>,
         fhe_type: FheType,
     ) -> StdResult<Response> {
-        let current_sequence = self.sequence.load(ctx.deps.storage)?;
+        let txn_id = self.derive_transaction_id(&ctx);
         let operation = KmsOperationAttribute::builder()
             .operation(KmsOperationAttributeValue::Decrypt)
-            .seq_no(current_sequence)
+            .txn_id(txn_id.clone())
             .build();
         let attributes: Vec<Attribute> = operation.clone().into();
         let response = Response::new().add_attributes(attributes.clone());
@@ -115,12 +119,7 @@ impl KmsContract {
             .attributes
             .push(Attribute::new("fhetype", fhe_type.to_string()));
         self.transactions
-            .save(ctx.deps.storage, current_sequence, &transaction_payload)?;
-
-        self.sequence
-            .update(ctx.deps.storage, |sequence| -> StdResult<u64> {
-                Ok(sequence + 1)
-            })?;
+            .save(ctx.deps.storage, txn_id, &transaction_payload)?;
         Ok(response)
     }
 
@@ -128,63 +127,63 @@ impl KmsContract {
     pub fn decrypt_response(
         &self,
         ctx: ExecCtx,
-        seq_no: u64,
+        txn_id: Vec<u8>,
         plaintext: Vec<u8>,
     ) -> StdResult<Response> {
-        if !self.transactions.has(ctx.deps.storage, seq_no) {
+        if !self.transactions.has(ctx.deps.storage, txn_id.clone()) {
             return Err(cosmwasm_std::StdError::verification_err(
                 VerificationError::GenericErr,
             ));
         }
         let operation = KmsOperationAttribute::builder()
             .operation(KmsOperationAttributeValue::DecryptResponse)
-            .seq_no(seq_no)
+            .txn_id(txn_id.clone())
             .build();
         let attributes: Vec<Attribute> = operation.clone().into();
         let response = Response::new()
             .add_attributes(attributes)
             .add_attribute("plaintext", hex::encode(plaintext));
-        self.transactions.remove(ctx.deps.storage, seq_no);
+        self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
 
     #[sv::msg(exec)]
     pub fn keygen(&self, ctx: ExecCtx) -> StdResult<Response> {
-        let current_sequence = self.sequence.load(ctx.deps.storage)?;
+        let txn_id = self.derive_transaction_id(&ctx);
         let operation = KmsOperationAttribute::builder()
             .operation(KmsOperationAttributeValue::KeyGen)
-            .seq_no(current_sequence)
+            .txn_id(txn_id.clone())
             .build();
         let attributes: Vec<Attribute> = operation.clone().into();
         let response = Response::new().add_attributes(attributes.clone());
         // transaction payload
         let transaction_payload = TransactionPayload { attributes };
         self.transactions
-            .save(ctx.deps.storage, current_sequence, &transaction_payload)?;
-
-        self.sequence
-            .update(ctx.deps.storage, |sequence| -> StdResult<u64> {
-                Ok(sequence + 1)
-            })?;
+            .save(ctx.deps.storage, txn_id, &transaction_payload)?;
         Ok(response)
     }
 
     #[sv::msg(exec)]
-    pub fn keygen_response(&self, ctx: ExecCtx, seq_no: u64, key: Vec<u8>) -> StdResult<Response> {
-        if !self.transactions.has(ctx.deps.storage, seq_no) {
+    pub fn keygen_response(
+        &self,
+        ctx: ExecCtx,
+        txn_id: Vec<u8>,
+        key: Vec<u8>,
+    ) -> StdResult<Response> {
+        if !self.transactions.has(ctx.deps.storage, txn_id.clone()) {
             return Err(cosmwasm_std::StdError::verification_err(
                 VerificationError::GenericErr,
             ));
         }
         let operation = KmsOperationAttribute::builder()
             .operation(KmsOperationAttributeValue::KeyGenResponse)
-            .seq_no(seq_no)
+            .txn_id(txn_id.clone())
             .build();
         let attributes: Vec<Attribute> = operation.clone().into();
         let response = Response::new()
             .add_attributes(attributes)
             .add_attribute("key", hex::encode(key));
-        self.transactions.remove(ctx.deps.storage, seq_no);
+        self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
 
@@ -195,10 +194,10 @@ impl KmsContract {
         ciphertext: Vec<u8>,
         fhe_type: FheType,
     ) -> StdResult<Response> {
-        let current_sequence = self.sequence.load(ctx.deps.storage)?;
+        let txn_id = self.derive_transaction_id(&ctx);
         let operation = KmsOperationAttribute::builder()
             .operation(KmsOperationAttributeValue::Reencrypt)
-            .seq_no(current_sequence)
+            .txn_id(txn_id.clone())
             .build();
         let attributes: Vec<Attribute> = operation.clone().into();
         let response = Response::new().add_attributes(attributes.clone());
@@ -211,11 +210,7 @@ impl KmsContract {
             .attributes
             .push(Attribute::new("fhetype", fhe_type.to_string()));
         self.transactions
-            .save(ctx.deps.storage, current_sequence, &transaction_payload)?;
-        self.sequence
-            .update(ctx.deps.storage, |sequence| -> StdResult<u64> {
-                Ok(sequence + 1)
-            })?;
+            .save(ctx.deps.storage, txn_id, &transaction_payload)?;
         Ok(response)
     }
 
@@ -223,73 +218,83 @@ impl KmsContract {
     pub fn reencrypt_response(
         &self,
         ctx: ExecCtx,
-        seq_no: u64,
+        txn_id: Vec<u8>,
         ciphertext: Vec<u8>,
     ) -> StdResult<Response> {
-        if !self.transactions.has(ctx.deps.storage, seq_no) {
+        if !self.transactions.has(ctx.deps.storage, txn_id.clone()) {
             return Err(cosmwasm_std::StdError::verification_err(
                 VerificationError::GenericErr,
             ));
         }
         let operation = KmsOperationAttribute::builder()
             .operation(KmsOperationAttributeValue::ReencryptResponse)
-            .seq_no(seq_no)
+            .txn_id(txn_id.clone())
             .build();
         let attributes: Vec<Attribute> = operation.clone().into();
         let response = Response::new()
             .add_attributes(attributes)
             .add_attribute("ciphertext", hex::encode(ciphertext));
-        self.transactions.remove(ctx.deps.storage, seq_no);
+        self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
 
     #[sv::msg(exec)]
     pub fn csr_gen(&self, ctx: ExecCtx) -> StdResult<Response> {
-        let current_sequence = self.sequence.load(ctx.deps.storage)?;
+        let txn_id = self.derive_transaction_id(&ctx);
         let operation = KmsOperationAttribute::builder()
             .operation(KmsOperationAttributeValue::CsrGen)
-            .seq_no(current_sequence)
+            .txn_id(txn_id.clone())
             .build();
         let attributes: Vec<Attribute> = operation.clone().into();
         let response = Response::new().add_attributes(attributes.clone());
         // transaction payload
         let transaction_payload = TransactionPayload { attributes };
         self.transactions
-            .save(ctx.deps.storage, current_sequence, &transaction_payload)?;
-        self.sequence
-            .update(ctx.deps.storage, |sequence| -> StdResult<u64> {
-                Ok(sequence + 1)
-            })?;
+            .save(ctx.deps.storage, txn_id, &transaction_payload)?;
         Ok(response)
     }
 
     #[sv::msg(exec)]
-    pub fn csr_gen_response(&self, ctx: ExecCtx, seq_no: u64, csr: Vec<u8>) -> StdResult<Response> {
-        if !self.transactions.has(ctx.deps.storage, seq_no) {
+    pub fn csr_gen_response(
+        &self,
+        ctx: ExecCtx,
+        txn_id: Vec<u8>,
+        csr: Vec<u8>,
+    ) -> StdResult<Response> {
+        if !self.transactions.has(ctx.deps.storage, txn_id.clone()) {
             return Err(cosmwasm_std::StdError::verification_err(
                 VerificationError::GenericErr,
             ));
         }
         let operation = KmsOperationAttribute::builder()
             .operation(KmsOperationAttributeValue::CsrGenResponse)
-            .seq_no(seq_no)
+            .txn_id(txn_id.clone())
             .build();
         let attributes: Vec<Attribute> = operation.clone().into();
         let response = Response::new()
             .add_attributes(attributes)
             .add_attribute("csr", hex::encode(csr));
-        self.transactions.remove(ctx.deps.storage, seq_no);
+        self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::configuration::sv::mt::{CodeId, KmsContractProxy as _};
+    use crate::contract::sv::mt::{CodeId, KmsContractProxy as _};
     use events::kms::FheType;
     use events::kms::KmsEventAttributeKey;
+    use sha2::Digest;
     use sylvia::cw_multi_test::IntoAddr as _;
     use sylvia::multitest::App;
+
+    fn expected_transaction_id(height: u64, txn_idx: u32) -> Vec<u8> {
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(height.to_string());
+        hasher.update(txn_idx.to_string());
+        let result = hasher.finalize();
+        result[..20].to_vec()
+    }
 
     #[test]
     fn test_instantiate() {
@@ -380,6 +385,9 @@ mod tests {
             .call(&owner)
             .unwrap();
         println!("response: {:#?}", response);
+
+        let txn_id = expected_transaction_id(12345, 0);
+        let txn_str = txn_id.iter().map(|b| b.to_string()).collect::<String>();
         assert_eq!(response.events.len(), 2);
         assert_eq!(
             response.events[1].attributes[1].key,
@@ -388,12 +396,12 @@ mod tests {
         assert_eq!(response.events[1].attributes[1].value, "decrypt");
         assert_eq!(
             response.events[1].attributes[2].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
-        assert_eq!(response.events[1].attributes[2].value, "0");
+        assert_eq!(response.events[1].attributes[2].value, txn_str);
 
         // query the transaction
-        let transaction = contract.get_transaction(0).unwrap().value;
+        let transaction = contract.get_transaction(txn_id.clone()).unwrap().value;
         println!("transaction: {:#?}", transaction);
         assert_eq!(
             transaction.attributes[0].key,
@@ -402,19 +410,15 @@ mod tests {
         assert_eq!(transaction.attributes[0].value, "decrypt");
         assert_eq!(
             transaction.attributes[1].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
-        assert_eq!(transaction.attributes[1].value, "0");
+        assert_eq!(transaction.attributes[1].value, txn_str);
         assert_eq!(transaction.attributes[2].key, "ciphertext".to_string());
         assert_eq!(transaction.attributes[2].value, "010203");
         assert_eq!(transaction.attributes[3].key, "fhetype".to_string());
         assert_eq!(transaction.attributes[3].value, "euint8");
-
-        let sequence = contract.sequence().unwrap().sequence;
-        assert_eq!(sequence, 1);
-
         let response = contract
-            .decrypt_response(0, vec![4, 5, 6])
+            .decrypt_response(txn_id.clone(), vec![4, 5, 6])
             .call(&owner)
             .unwrap();
         println!("response: {:#?}", response);
@@ -427,20 +431,17 @@ mod tests {
         assert_eq!(response.events[1].attributes[1].value, "decrypt-response");
         assert_eq!(
             response.events[1].attributes[2].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
-        assert_eq!(response.events[1].attributes[2].value, "0");
+        assert_eq!(response.events[1].attributes[2].value, txn_str);
         assert_eq!(
             response.events[1].attributes[3].key,
             "plaintext".to_string()
         );
         assert_eq!(response.events[1].attributes[3].value, "040506");
 
-        let transaction = contract.get_transaction(0);
+        let transaction = contract.get_transaction(txn_id);
         assert!(transaction.is_err());
-
-        let sequence = contract.sequence().unwrap().sequence;
-        assert_eq!(sequence, 1);
     }
 
     #[test]
@@ -457,6 +458,9 @@ mod tests {
 
         let response = contract.keygen().call(&owner).unwrap();
         println!("response: {:#?}", response);
+
+        let txn_id = expected_transaction_id(12345, 0);
+        let txn_str = txn_id.iter().map(|b| b.to_string()).collect::<String>();
         assert_eq!(response.events.len(), 2);
         assert_eq!(
             response.events[1].attributes[1].key,
@@ -465,11 +469,11 @@ mod tests {
         assert_eq!(response.events[1].attributes[1].value, "key-gen");
         assert_eq!(
             response.events[1].attributes[2].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
-        assert_eq!(response.events[1].attributes[2].value, "0");
+        assert_eq!(response.events[1].attributes[2].value, txn_str);
 
-        let transaction = contract.get_transaction(0).unwrap().value;
+        let transaction = contract.get_transaction(txn_id.clone()).unwrap().value;
         assert_eq!(
             transaction.attributes[0].key,
             KmsEventAttributeKey::OperationType.to_string()
@@ -477,15 +481,12 @@ mod tests {
         assert_eq!(transaction.attributes[0].value, "key-gen");
         assert_eq!(
             transaction.attributes[1].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
-        assert_eq!(transaction.attributes[1].value, "0");
-
-        let sequence = contract.sequence().unwrap().sequence;
-        assert_eq!(sequence, 1);
+        assert_eq!(transaction.attributes[1].value, txn_str);
 
         let response = contract
-            .keygen_response(0, vec![4, 5, 6])
+            .keygen_response(txn_id, vec![4, 5, 6])
             .call(&owner)
             .unwrap();
         println!("response: {:#?}", response);
@@ -501,10 +502,10 @@ mod tests {
 
         assert_eq!(
             response.events[1].attributes[2].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
 
-        assert_eq!(response.events[1].attributes[2].value, "0");
+        assert_eq!(response.events[1].attributes[2].value, txn_str);
 
         assert_eq!(response.events[1].attributes[3].key, "key".to_string());
     }
@@ -526,6 +527,9 @@ mod tests {
             .call(&owner)
             .unwrap();
         println!("response: {:#?}", response);
+
+        let txn_id = expected_transaction_id(12345, 0);
+        let txn_str = txn_id.iter().map(|b| b.to_string()).collect::<String>();
         assert_eq!(response.events.len(), 2);
         assert_eq!(
             response.events[1].attributes[1].key,
@@ -534,11 +538,11 @@ mod tests {
         assert_eq!(response.events[1].attributes[1].value, "reencrypt");
         assert_eq!(
             response.events[1].attributes[2].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
-        assert_eq!(response.events[1].attributes[2].value, "0");
+        assert_eq!(response.events[1].attributes[2].value, txn_str);
 
-        let transaction = contract.get_transaction(0).unwrap().value;
+        let transaction = contract.get_transaction(txn_id.clone()).unwrap().value;
         assert_eq!(
             transaction.attributes[0].key,
             KmsEventAttributeKey::OperationType.to_string()
@@ -546,19 +550,16 @@ mod tests {
         assert_eq!(transaction.attributes[0].value, "reencrypt");
         assert_eq!(
             transaction.attributes[1].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
-        assert_eq!(transaction.attributes[1].value, "0");
+        assert_eq!(transaction.attributes[1].value, txn_str);
         assert_eq!(transaction.attributes[2].key, "ciphertext".to_string());
         assert_eq!(transaction.attributes[2].value, "010203");
         assert_eq!(transaction.attributes[3].key, "fhetype".to_string());
         assert_eq!(transaction.attributes[3].value, "euint8");
 
-        let sequence = contract.sequence().unwrap().sequence;
-        assert_eq!(sequence, 1);
-
         let response = contract
-            .reencrypt_response(0, vec![4, 5, 6])
+            .reencrypt_response(txn_id.clone(), vec![4, 5, 6])
             .call(&owner)
             .unwrap();
         println!("response: {:#?}", response);
@@ -571,20 +572,17 @@ mod tests {
         assert_eq!(response.events[1].attributes[1].value, "reencrypt-response");
         assert_eq!(
             response.events[1].attributes[2].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
-        assert_eq!(response.events[1].attributes[2].value, "0");
+        assert_eq!(response.events[1].attributes[2].value, txn_str);
         assert_eq!(
             response.events[1].attributes[3].key,
             "ciphertext".to_string()
         );
         assert_eq!(response.events[1].attributes[3].value, "040506");
 
-        let transaction = contract.get_transaction(0);
+        let transaction = contract.get_transaction(txn_id);
         assert!(transaction.is_err());
-
-        let sequence = contract.sequence().unwrap().sequence;
-        assert_eq!(sequence, 1);
     }
 
     #[test]
@@ -601,6 +599,9 @@ mod tests {
 
         let response = contract.csr_gen().call(&owner).unwrap();
         println!("response: {:#?}", response);
+
+        let txn_id = expected_transaction_id(12345, 0);
+        let txn_str = txn_id.iter().map(|b| b.to_string()).collect::<String>();
         assert_eq!(response.events.len(), 2);
         assert_eq!(
             response.events[1].attributes[1].key,
@@ -609,11 +610,11 @@ mod tests {
         assert_eq!(response.events[1].attributes[1].value, "csr-gen");
         assert_eq!(
             response.events[1].attributes[2].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
-        assert_eq!(response.events[1].attributes[2].value, "0");
+        assert_eq!(response.events[1].attributes[2].value, txn_str);
 
-        let transaction = contract.get_transaction(0).unwrap().value;
+        let transaction = contract.get_transaction(txn_id.clone()).unwrap().value;
         assert_eq!(
             transaction.attributes[0].key,
             KmsEventAttributeKey::OperationType.to_string()
@@ -621,15 +622,12 @@ mod tests {
         assert_eq!(transaction.attributes[0].value, "csr-gen");
         assert_eq!(
             transaction.attributes[1].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
-        assert_eq!(transaction.attributes[1].value, "0");
-
-        let sequence = contract.sequence().unwrap().sequence;
-        assert_eq!(sequence, 1);
+        assert_eq!(transaction.attributes[1].value, txn_str);
 
         let response = contract
-            .csr_gen_response(0, vec![4, 5, 6])
+            .csr_gen_response(txn_id.clone(), vec![4, 5, 6])
             .call(&owner)
             .unwrap();
         println!("response: {:#?}", response);
@@ -645,55 +643,17 @@ mod tests {
 
         assert_eq!(
             response.events[1].attributes[2].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
 
-        assert_eq!(response.events[1].attributes[2].value, "0");
+        assert_eq!(response.events[1].attributes[2].value, txn_str);
 
         assert_eq!(response.events[1].attributes[3].key, "csr".to_string());
 
         assert_eq!(response.events[1].attributes[3].value, "040506");
 
-        let transaction = contract.get_transaction(0);
+        let transaction = contract.get_transaction(txn_id);
 
         assert!(transaction.is_err());
-
-        let sequence = contract.sequence().unwrap().sequence;
-
-        assert_eq!(sequence, 1);
-
-        let response = contract.csr_gen().call(&owner).unwrap();
-        println!("response: {:#?}", response);
-        assert_eq!(response.events.len(), 2);
-        assert_eq!(
-            response.events[1].attributes[1].key,
-            KmsEventAttributeKey::OperationType.to_string()
-        );
-        assert_eq!(response.events[1].attributes[1].value, "csr-gen");
-        assert_eq!(
-            response.events[1].attributes[2].key,
-            KmsEventAttributeKey::Sequence.to_string()
-        );
-        assert_eq!(response.events[1].attributes[2].value, "1");
-
-        let transaction = contract.get_transaction(1).unwrap().value;
-        assert_eq!(
-            transaction.attributes[0].key,
-            KmsEventAttributeKey::OperationType.to_string()
-        );
-        assert_eq!(transaction.attributes[0].value, "csr-gen");
-        assert_eq!(
-            transaction.attributes[1].key,
-            KmsEventAttributeKey::Sequence.to_string()
-        );
-
-        let sequence = contract.sequence().unwrap().sequence;
-        assert_eq!(sequence, 2);
-
-        let response = contract
-            .csr_gen_response(1, vec![7, 8, 9])
-            .call(&owner)
-            .unwrap();
-        println!("response: {:#?}", response);
     }
 }

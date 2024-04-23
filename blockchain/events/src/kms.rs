@@ -31,8 +31,8 @@ pub enum FheType {
 pub enum KmsEventAttributeKey {
     #[strum(serialize = "kmsoperation")]
     OperationType,
-    #[strum(serialize = "seqno")]
-    Sequence,
+    #[strum(serialize = "txnid")]
+    TransactionId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumString, Display)]
@@ -73,13 +73,13 @@ impl From<EventAttribute> for Attribute {
 pub struct KmsOperationAttribute {
     #[builder(setter(transform = |x: KmsOperationAttributeValue| EventAttribute { key: KmsEventAttributeKey::OperationType, value: x.to_string() }))]
     pub operation: EventAttribute,
-    #[builder(setter(transform = |x: u64| EventAttribute { key: KmsEventAttributeKey::Sequence, value: x.to_string() }))]
-    pub seq_no: EventAttribute,
+    #[builder(setter(transform = |x: Vec<u8>| EventAttribute { key: KmsEventAttributeKey::TransactionId, value: x.iter().map(|b| b.to_string()).collect::<String>()}))]
+    pub txn_id: EventAttribute,
 }
 
 impl From<KmsOperationAttribute> for Vec<Attribute> {
     fn from(value: KmsOperationAttribute) -> Self {
-        vec![value.operation.into(), value.seq_no.into()]
+        vec![value.operation.into(), value.txn_id.into()]
     }
 }
 
@@ -91,7 +91,7 @@ mod tests {
     fn test_create_kms_operation_event() {
         let operation = KmsOperationAttribute::builder()
             .operation(KmsOperationAttributeValue::Decrypt)
-            .seq_no(1)
+            .txn_id(vec![1])
             .build();
 
         let attributes = <KmsOperationAttribute as Into<Vec<Attribute>>>::into(operation);
@@ -107,7 +107,7 @@ mod tests {
         );
         assert_eq!(
             attributes[1].key,
-            KmsEventAttributeKey::Sequence.to_string()
+            KmsEventAttributeKey::TransactionId.to_string()
         );
         assert_eq!(attributes[1].value, "1");
     }

@@ -7,6 +7,14 @@ on:
         type: string
         required: true
         default: './'
+      cargo-manifest-path:
+        type: string
+        required: false
+        default: './'
+      target-path:
+        type: string
+        required: false
+        default: ''
       runs-on:
         type: string
         required: false
@@ -46,10 +54,10 @@ jobs:
 
       - name: Build Wasm files
         run: |
-          cargo build --target wasm32-unknown-unknown --release --lib
+          cargo build --target wasm32-unknown-unknown --release --lib --manifest-path ${{ inputs.cargo-manifest-path }}Cargo.toml
 
       - name: Optimize Wasm files
         uses: NiklasEi/wasm-opt-action@v2
         with:
-          file: ${{ inputs.working-directory }}/target/wasm32-unknown-unknown/release/*.wasm
+          file: ${{ inputs.working-directory }}${{ inputs.target-path }}target/wasm32-unknown-unknown/release/*.wasm
           optimize_all: true

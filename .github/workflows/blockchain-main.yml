@@ -11,7 +11,7 @@ jobs:
   build-smart-contracts:
     uses: ./.github/workflows/common-build.yml
     with:
-      working-directory: './blockchain/smart-contracts'
+      working-directory: './blockchain/contracts'
       args-tests-fhe: ''
     permissions:
       contents: 'read'
@@ -22,7 +22,10 @@ jobs:
   optimize-smart-contracts:
     uses: ./.github/workflows/common-build-wasm.yml
     with:
-      working-directory: './blockchain/smart-contracts'
+      working-directory: './blockchain/'
+      # relative to working-directory
+      cargo-manifest-path: './contracts/'
+      target-path: 'contracts/'
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -36,7 +39,8 @@ jobs:
       id-token: 'write'
       packages: 'write'
     with:
-      working-directory: './blockchain/smart-contracts'
+      working-directory: './blockchain/contracts'
+      docker-context: './blockchain'
       push_image: true
       image-name: 'kms-smart-contract-deploy'
     needs:

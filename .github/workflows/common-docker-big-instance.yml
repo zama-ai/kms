@@ -6,6 +6,10 @@ on:
         type: string
         required: true
         default: './'
+      docker-context:
+          type: string
+          required: false
+          default: '.'
       push_image:
         type: boolean
         required: false
@@ -71,6 +75,7 @@ jobs:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
     with:
+      context: ${{ inputs.docker-context }}
       working-directory: ${{ inputs.working-directory }}
       push_image: ${{ inputs.push_image }}
       runs_on: ${{ needs.start-runner.outputs.label }}

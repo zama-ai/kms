@@ -1,19 +1,26 @@
 [package]
-name = "counter-test"
+name = "asc"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+schema = []
 
 [dependencies]
 events = { path = "../../events" }
 cosmwasm-std = { version = "2.0.1", features = ["staking"] }
-sylvia = "1.0.0"
+sylvia = "=1.0.0"
+sylvia-derive = "=1.0.0"
 schemars = "0.8.16"
 cosmwasm-schema = "2.0.1"
 serde = "1.0.197"
 cw-storage-plus = "2.0.0"
+hex = "0.4.3"
+sha2 = "0.10.8"
 
 [dev-dependencies]
-sylvia = { version = "1.0.0", features = ["mt"] }
+cw-multi-test = "=2.0.0"
+sylvia = { version = "=1.0.0", features = ["mt"] }
