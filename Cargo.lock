@@ -443,18 +443,17 @@ checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
 name = "asc"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "cosmwasm-schema",
  "cosmwasm-std",
  "cw-multi-test",
  "cw-storage-plus",
- "cw-utils",
- "cw2",
  "events",
  "hex",
  "schemars",
  "serde",
+ "sha2 0.10.8",
  "sylvia",
+ "sylvia-derive",
 ]
 
 [[package]]
@@ -1967,21 +1966,6 @@ dependencies = [
  "cosmwasm-schema",
  "cosmwasm-std",
  "schemars",
- "serde",
- "thiserror",
-]
-
-[[package]]
-name = "cw2"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b04852cd38f044c0751259d5f78255d07590d136b8a86d4e09efdd7666bd6d27"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
- "schemars",
- "semver 1.0.22",
  "serde",
  "thiserror",
 ]
@@ -6005,9 +5989,9 @@ checksum = "734676eb262c623cec13c3155096e08d1f8f29adce39ba17948b18dad1e54142"
 
 [[package]]
 name = "sylvia"
-version = "1.0.1"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82120494e4e47c10b68b7bcb101674fa6612191a70872d2a690a1d68aad65e84"
+checksum = "3feef1ea84068a18e230e6af2f54cfe3aa146d3c90b682152eb79d10b246261c"
 dependencies = [
  "anyhow",
  "cosmwasm-schema",
@@ -6024,9 +6008,9 @@ dependencies = [
 
 [[package]]
 name = "sylvia-derive"
-version = "1.0.1"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7ada8b48127f8958e9f8f2d4afd3093bbf69d0a8296fd3005a27749bbfeae4c"
+checksum = "2be97a6b0aeb389f3cc5aaadfabbd96bb0b267ae11f0c81fa98ac01eb6e97064"
 dependencies = [
  "convert_case 0.6.0",
  "itertools 0.12.1",
