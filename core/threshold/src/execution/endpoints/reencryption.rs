@@ -101,10 +101,7 @@ impl Serialize for PublicSigKey {
     }
 }
 impl<'de> Deserialize<'de> for PublicSigKey {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_bytes(PublicSigKeyVisitor)
     }
 }

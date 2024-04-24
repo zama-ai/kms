@@ -1,4 +1,3 @@
-use crate::anyhow_error_and_log;
 use crate::consts::TEST_KEY_ID;
 use crate::cryptography::der_types::{
     PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair,
@@ -20,7 +19,6 @@ use crate::kms::{
     AggregatedReencryptionResponse, FheType, ReencryptionRequest, ReencryptionRequestPayload,
     ReencryptionResponse,
 };
-#[cfg(feature = "non-wasm")]
 use crate::kms::{ParamChoice, RequestId};
 use crate::rpc::rpc_types::{
     allow_to_protobuf_domain, protobuf_to_alloy_domain, MetaResponse, Plaintext,
@@ -30,8 +28,12 @@ use crate::rpc::rpc_types::{
 use crate::rpc::rpc_types::{
     DecryptionRequestSerializable, DecryptionResponseSigPayload, PubDataType, KEY_GEN_REQUEST_NAME,
 };
+use crate::{anyhow_error_and_log, rpc::rpc_types::REENC_REQUEST_NAME};
 #[cfg(feature = "non-wasm")]
-use crate::{cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms};
+use crate::{
+    cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms,
+    rpc::rpc_types::DEC_REQUEST_NAME,
+};
 #[cfg(feature = "non-wasm")]
 use crate::{storage::PublicStorageReader, util::key_setup::FhePublicKey};
 use aes_prng::AesRng;
@@ -633,7 +635,9 @@ impl Client {
             fhe_type,
             ciphertext: ct,
             randomness,
-            key_id,
+            key_id: key_id.clone(),
+            // TODO update deriviation of RequestID to be based on all the parameters in the request
+            request_id: RequestId::new(&key_id, DEC_REQUEST_NAME.to_string())?,
         };
         Ok(serialized_req.into())
     }
@@ -663,7 +667,9 @@ impl Client {
             fhe_type: fhe_type as u8,
             ciphertext: ct,
             randomness,
-            key_id,
+            key_id: key_id.clone(),
+            // TODO update deriviation of RequestID to be based on all the parameters in the request
+            request_id: RequestId::new(&key_id, REENC_REQUEST_NAME.to_string())?.to_string(),
         };
         let sig = match &self.client_sk {
             Some(sk) => sign_eip712(&sig_payload, domain, sk)?,
@@ -1511,7 +1517,8 @@ pub(crate) mod tests {
         let mut response = kms_client
             .get_key_gen_result(tonic::Request::new(req_id.clone()))
             .await;
-        while response.is_err() {
+        while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+        {
             // Sleep to give the server some time to complete key generation
             std::thread::sleep(std::time::Duration::from_millis(100));
             response = kms_client
@@ -1904,7 +1911,6 @@ pub(crate) mod tests {
         decryption_centralized(DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_CT_PATH).await;
     }
 
-    // TODO speed up
     async fn decryption_centralized(centralized_key_path: &str, cipher_path: &str) {
         // TODO refactor with setup and teardown setting up servers that can be used to run tests in
         // parallel
@@ -1919,9 +1925,21 @@ pub(crate) mod tests {
             .decrypt(tonic::Request::new(req.clone()))
             .await
             .unwrap();
+        assert_eq!(response.into_inner(), Empty {});
 
+        let mut response = kms_client
+            .get_decrypt_result(req.request_id.clone().unwrap())
+            .await;
+        while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+        {
+            // Sleep to give the server some time to complete decryption
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            response = kms_client
+                .get_decrypt_result(req.request_id.clone().unwrap())
+                .await;
+        }
         let responses = AggregatedDecryptionResponse {
-            responses: vec![response.into_inner()],
+            responses: vec![response.unwrap().into_inner()],
         };
         let plaintext = internal_client
             .process_decryption_resp(Some(req), responses)
@@ -1979,7 +1997,24 @@ pub(crate) mod tests {
             .reencrypt(tonic::Request::new(req.clone()))
             .await
             .unwrap();
-        let response = response.into_inner();
+        assert_eq!(response.into_inner(), Empty {});
+
+        let mut response = kms_client
+            .get_reencrypt_result(req.clone().payload.unwrap().request_id.clone().unwrap())
+            .await;
+        while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+        {
+            // Sleep to give the server some time to complete reencryption
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            response = kms_client
+                .get_reencrypt_result(req.clone().payload.unwrap().request_id.clone().unwrap())
+                .await;
+        }
+
+        let inner_response = response.unwrap().into_inner();
+        let responses = AggregatedReencryptionResponse {
+            responses: HashMap::from([(1, inner_response.clone())]),
+        };
 
         #[cfg(feature = "wasm_tests")]
         {
@@ -1993,15 +2028,12 @@ pub(crate) mod tests {
                     eph_sk: enc_sk.clone(),
                     eph_pk: enc_pk.clone(),
                     seq_no: internal_client.seq_no,
-                    agg_resp: HashMap::from([(1, response.clone())]),
+                    agg_resp: HashMap::from([(1, inner_response.clone())]),
                 };
                 write_element(TEST_CENTRAL_WASM_TRANSCRIPT_PATH.to_string(), &transcript).unwrap();
             }
         }
 
-        let responses = AggregatedReencryptionResponse {
-            responses: HashMap::from([(1, response)]),
-        };
         let plaintext = internal_client
             .process_reencryption_resp(Some(req), responses, &enc_pk, &enc_sk)
             .unwrap()
@@ -2034,18 +2066,35 @@ pub(crate) mod tests {
         let req = internal_client
             .decryption_request(ct, fhe_type, None)
             .unwrap();
-        let mut tasks = JoinSet::new();
+        let mut req_tasks = JoinSet::new();
         for i in 1..=AMOUNT_PARTIES as u32 {
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             let req_clone = req.clone();
-            tasks.spawn(async move { cur_client.decrypt(tonic::Request::new(req_clone)).await });
+            req_tasks
+                .spawn(async move { cur_client.decrypt(tonic::Request::new(req_clone)).await });
         }
-        let mut response_vec = Vec::new();
-        while let Some(Ok(Ok(resp))) = tasks.join_next().await {
-            response_vec.push(resp.into_inner());
+        let mut req_response_vec = Vec::new();
+        while let Some(Ok(Ok(resp))) = req_tasks.join_next().await {
+            req_response_vec.push(resp.into_inner());
+        }
+        assert_eq!(req_response_vec.len(), AMOUNT_PARTIES);
+
+        let mut resp_tasks = JoinSet::new();
+        for i in 1..=AMOUNT_PARTIES as u32 {
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            let req_clone = req.clone();
+            resp_tasks.spawn(async move {
+                cur_client
+                    .get_decrypt_result(tonic::Request::new(req_clone.request_id.unwrap()))
+                    .await
+            });
+        }
+        let mut resp_response_vec = Vec::new();
+        while let Some(Ok(Ok(resp))) = resp_tasks.join_next().await {
+            resp_response_vec.push(resp.into_inner());
         }
         let agg = AggregatedDecryptionResponse {
-            responses: response_vec,
+            responses: resp_response_vec,
         };
         let plaintext = internal_client
             .process_decryption_resp(Some(req), agg)
@@ -2098,21 +2147,37 @@ pub(crate) mod tests {
         let (req, enc_pk, enc_sk) = internal_client
             .reencyption_request(ct, &dummy_domain(), fhe_type, None)
             .unwrap();
-        let mut tasks = JoinSet::new();
+        let mut req_tasks = JoinSet::new();
         tracing::info!("Client did reencryption request");
         for i in 1..=AMOUNT_PARTIES as u32 {
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             let req_clone = req.clone();
-            tasks.spawn(async move {
+            req_tasks
+                .spawn(async move { cur_client.reencrypt(tonic::Request::new(req_clone)).await });
+        }
+        let mut req_response_vec = Vec::new();
+        while let Some(Ok(Ok(resp))) = req_tasks.join_next().await {
+            req_response_vec.push(resp.into_inner());
+        }
+        assert_eq!(req_response_vec.len(), AMOUNT_PARTIES);
+
+        let mut resp_tasks = JoinSet::new();
+        for i in 1..=AMOUNT_PARTIES as u32 {
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            let req_clone = req.clone();
+            resp_tasks.spawn(async move {
                 (
                     i,
-                    cur_client.reencrypt(tonic::Request::new(req_clone)).await,
+                    cur_client
+                        .get_reencrypt_result(tonic::Request::new(
+                            req_clone.clone().payload.unwrap().request_id.unwrap(),
+                        ))
+                        .await,
                 )
             });
         }
-        tracing::info!("Client issued reencrypt queries");
         let mut response_map = HashMap::new();
-        while let Some(Ok(res)) = tasks.join_next().await {
+        while let Some(Ok(res)) = resp_tasks.join_next().await {
             tracing::info!("Client got a response from {}", res.0);
             let (i, resp) = res;
             response_map.insert(i, resp.unwrap().into_inner());
@@ -2171,13 +2236,30 @@ pub(crate) mod tests {
         let (req, _enc_pk, _enc_sk) = internal_client
             .reencyption_request(ct, &dummy_domain(), fhe_type, None)
             .unwrap();
-        let response = kms_client.reencrypt(tonic::Request::new(req.clone())).await;
-        assert!(response.is_err());
+        let response = kms_client
+            .reencrypt(tonic::Request::new(req.clone()))
+            .await
+            .unwrap();
+        assert_eq!(response.into_inner(), Empty {});
+
+        let mut response = kms_client
+            .get_reencrypt_result(req.clone().payload.unwrap().request_id.clone().unwrap())
+            .await;
+        while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+        {
+            // Sleep to give the server some time to complete reencryption
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            response = kms_client
+                .get_reencrypt_result(req.clone().payload.unwrap().request_id.clone().unwrap())
+                .await;
+        }
+        // Check that we get a server error instead of a server crash
+        assert_eq!(response.as_ref().unwrap_err().code(), tonic::Code::Internal);
         assert!(response
             .err()
             .unwrap()
             .message()
-            .contains("Internal server error"));
+            .contains("Could not decrypt ciphertext!"));
         kms_server.abort();
     }
 

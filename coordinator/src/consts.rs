@@ -33,6 +33,7 @@ pub const MINIMUM_SESSIONS_PREPROC: u128 = 2;
 
 pub const TEST_KEY_ID: &str = "keytest"; // TODO should be a valid request id
 pub const TEST_CRS_ID: &str = "crstest";
+pub const TEST_DEC_ID: &str = "dectest";
 pub const TEST_PARAM_PATH: &str = "parameters/small_test_params.json";
 pub const TEST_THRESHOLD_KEYS_PATH: &str = "temp/test-threshold-keys";
 pub const TEST_THRESHOLD_CT_PATH: &str = "temp/test-threshold-ciphertext.bin";

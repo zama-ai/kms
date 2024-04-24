@@ -80,8 +80,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let req = internal_client.decryption_request(ct.clone(), fhe_type, None)?;
     let response = kms_client.decrypt(tonic::Request::new(req.clone())).await?;
     tracing::debug!("DECRYPT RESPONSE={:?}", response);
+    // Wait for the servers to complete the decryption
+    let mut response = kms_client
+        .get_decrypt_result(tonic::Request::new(req.request_id.clone().unwrap()))
+        .await;
+    while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+        // Sleep to give the server some time to complete reencryption
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        response = kms_client
+            .get_decrypt_result(tonic::Request::new(req.request_id.clone().unwrap()))
+            .await;
+    }
+    tracing::debug!("GET DECRYPT RESPONSE={:?}", response);
     let responses = AggregatedDecryptionResponse {
-        responses: vec![response.into_inner()],
+        responses: vec![response?.into_inner()],
     };
     match internal_client.process_decryption_resp(Some(req), responses) {
         Ok(Some(plaintext)) => {
@@ -101,8 +113,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .reencrypt(tonic::Request::new(req.clone()))
         .await?;
     tracing::debug!("REENCRYPT RESPONSE={:?}", response);
+    // Wait for the servers to complete the reencryption
+    let mut response = kms_client
+        .get_reencrypt_result(tonic::Request::new(
+            req.clone().payload.unwrap().request_id.unwrap(),
+        ))
+        .await;
+    while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
+        // Sleep to give the server some time to complete reencryption
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        response = kms_client
+            .get_reencrypt_result(tonic::Request::new(
+                req.clone().payload.unwrap().request_id.unwrap(),
+            ))
+            .await;
+    }
+    tracing::debug!("GET REENCRYPT RESPONSE={:?}", response);
     let responses = AggregatedReencryptionResponse {
-        responses: HashMap::from([(1, response.into_inner())]),
+        responses: HashMap::from([(1, response?.into_inner())]),
     };
     match internal_client.process_reencryption_resp(Some(req), responses, &enc_pk, &enc_sk) {
         Ok(Some(plaintext)) => {

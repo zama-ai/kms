@@ -2,6 +2,7 @@ use super::rpc_types::{
     protobuf_to_alloy_domain, BaseKms, DecryptionRequestSerializable,
     ReencryptionRequestSigPayload, CURRENT_FORMAT_VERSION,
 };
+use crate::cryptography::central_kms::{async_decrypt, async_reencrypt, CompMap};
 use crate::cryptography::central_kms::{async_generate_crs, compute_info};
 use crate::kms::{KeyGenPreprocRequest, KeyGenPreprocStatus};
 use crate::storage::{store_crs, DevStorage, PublicStorage};
@@ -31,10 +32,7 @@ use crate::{kms::coordinator_endpoint_server::CoordinatorEndpoint, rpc::rpc_type
 use crate::{
     kms::coordinator_endpoint_server::CoordinatorEndpointServer, util::file_handling::read_as_json,
 };
-use crate::{
-    rpc::rpc_types::{DecryptionResponseSigPayload, Kms},
-    storage::store_public_keys,
-};
+use crate::{rpc::rpc_types::DecryptionResponseSigPayload, storage::store_public_keys};
 use alloy_sol_types::SolStruct;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use serde_asn1_der::{from_bytes, to_vec};
@@ -86,12 +84,22 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
 
     /// starts the centralized KMS key generation
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
+        let mut key_gen_map = self.key_gen_map.lock().await;
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(
-            inner.request_id.clone(),
-            "Request ID is not set".to_string(),
+            inner.request_id,
+            "No request ID present in request".to_string(),
         )?;
-        // TODO validate that the request ID is valid
+        validate_request_id(&request_id)?;
+        if key_gen_map.get(&request_id.to_string()).is_some() {
+            return Err(tonic::Status::new(
+                tonic::Code::AlreadyExists,
+                format!(
+                    "A key generation request with request ID {} is already being processed!",
+                    request_id
+                ),
+            ));
+        }
         if tonic_handle_potential_err(
             self.storage
                 .data_exists(&request_id, PubDataType::PublicKey),
@@ -118,10 +126,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
             "Parameter choice is not recognized".to_string(),
         )?;
         let future_keys = tokio::spawn(async_generate_fhe_keys(params));
-        let mut key_gen_map = tonic_handle_potential_err(
-            self.key_gen_map.lock(),
-            "Could not get handle on key generation map".to_string(),
-        )?;
+
         key_gen_map.insert(request_id.to_string(), future_keys);
 
         Ok(Response::new(Empty {}))
@@ -133,16 +138,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
         let request_id = request.into_inner();
-        if !request_id.is_valid() {
-            tracing::warn!(
-                "The value {} is not a valid request ID!",
-                request_id.to_string()
-            );
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("The value {} is not a valid request ID!", request_id),
-            ));
-        }
+        validate_request_id(&request_id)?;
         let pub_key_handles = match self.check_key_generation_process(request_id.clone()).await {
             Ok(result) => match result {
                 Some(handles) => handles,
@@ -169,11 +165,10 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         }))
     }
 
-    // TODO also make async
     async fn reencrypt(
         &self,
         request: Request<ReencryptionRequest>,
-    ) -> Result<Response<ReencryptionResponse>, Status> {
+    ) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
         let (
             ciphertext,
@@ -183,65 +178,136 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
             client_verf_key,
             servers_needed,
             key_id,
+            request_id,
         ) = tonic_handle_potential_err(
             validate_reencrypt_req(&inner).await,
             format!("Invalid key in request {:?}", inner),
         )?;
-        let return_cipher = process_response(Kms::reencrypt(
-            self,
-            &ciphertext,
-            fhe_type,
-            &req_digest,
-            &client_enc_key,
-            &client_verf_key,
-            &key_id,
-        ))?;
-        // Observe that shares_needed should be part of the signcrypted response or request to
-        // ensure a single server cannot default to a single share
+        let mut reenc_map = self.reenc_map.lock().await;
+        if reenc_map.get(&request_id.to_string()).is_some() {
+            return Err(tonic::Status::new(
+                tonic::Code::AlreadyExists,
+                format!(
+                    "A reencryption request with request ID {} is already being processed!",
+                    request_id
+                ),
+            ));
+        }
+        let key_info = self.key_handles.lock().await;
+        let client_key = tonic_some_or_err(
+            key_info.get(&key_id),
+            format!("The request ID {} does not exist", key_id),
+        )?
+        .client_key
+        .clone();
+        let mut rng = tonic_handle_potential_err(
+            self.base_kms.new_rng(),
+            "Could not get handle on RNG".to_string(),
+        )?;
+        let sig_key = self.base_kms.sig_key.clone();
+        let future_reenc = tokio::spawn(async move {
+            (
+                (servers_needed, fhe_type, req_digest.clone()),
+                async_reencrypt::<S>(
+                    &client_key,
+                    &sig_key,
+                    &mut rng,
+                    &ciphertext,
+                    fhe_type,
+                    &req_digest,
+                    &client_enc_key,
+                    &client_verf_key,
+                )
+                .await,
+            )
+        });
+        reenc_map.insert(request_id.to_string(), future_reenc);
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_reencrypt_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<ReencryptionResponse>, Status> {
+        let request_id = request.into_inner();
+        validate_request_id(&request_id)?;
+
+        let ((servers_needed, fhe_type, req_digest), partial_dec) =
+            SoftwareKms::<DevStorage>::process_decryption(&self.reenc_map, request_id.clone())
+                .await?;
+
+        let server_verf_key = tonic_handle_potential_err(
+            to_vec(&self.get_verf_key()),
+            "Could not serialize server verification key".to_string(),
+        )?;
+
         Ok(Response::new(ReencryptionResponse {
             version: CURRENT_FORMAT_VERSION,
             servers_needed,
-            signcrypted_ciphertext: return_cipher,
+            signcrypted_ciphertext: partial_dec,
             fhe_type: fhe_type.into(),
             digest: req_digest,
-            verification_key: tonic_handle_potential_err(
-                to_vec(&self.get_verf_key()),
-                "Could not serialize server verification key".to_string(),
-            )?,
+            verification_key: server_verf_key,
         }))
     }
 
-    // TODO also make async
     async fn decrypt(
         &self,
         request: Request<DecryptionRequest>,
-    ) -> Result<Response<DecryptionResponse>, Status> {
+    ) -> Result<Response<Empty>, Status> {
         tracing::info!("Received a new request!");
         let inner = request.into_inner();
-        let (ciphertext, fhe_type, req_digest, servers_needed, key_handle) =
+        let (ciphertext, fhe_type, req_digest, _servers_needed, key_id, request_id) =
             tonic_handle_potential_err(
                 validate_decrypt_req(&inner).await,
                 format!("Invalid key in request {:?}", inner),
             )?;
-        let plaintext = tonic_handle_potential_err(
-            Kms::decrypt(self, &ciphertext, fhe_type, &key_handle),
-            format!("Decryption failed for request {:?}", inner),
-        )?;
-        let plaintext_bytes = tonic_handle_potential_err(
-            to_vec(&plaintext),
-            format!(
-                "Could not convert plaintext to bytes in request {:?}",
-                inner
-            ),
-        )?;
+        let mut decrypt_map = self.decrypt_map.lock().await;
+        if decrypt_map.get(&request_id.to_string()).is_some() {
+            return Err(tonic::Status::new(
+                tonic::Code::AlreadyExists,
+                format!(
+                    "A decryption request with request ID {} is already being processed!",
+                    request_id
+                ),
+            ));
+        }
+        let key_info = self.key_handles.lock().await;
+        let client_key = tonic_some_or_err(
+            key_info.get(&key_id),
+            format!("The request ID {} does not exist", key_id),
+        )?
+        .client_key
+        .clone();
+        let future_plaintext = tokio::spawn(async move {
+            (
+                req_digest,
+                async_decrypt::<S>(&client_key, &ciphertext, fhe_type).await,
+            )
+        });
+
+        decrypt_map.insert(request_id.to_string(), future_plaintext);
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_decrypt_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<DecryptionResponse>, Status> {
+        let request_id = request.into_inner();
+        validate_request_id(&request_id)?;
+        let (req_digest, plaintext) =
+            SoftwareKms::<DevStorage>::process_decryption(&self.decrypt_map, request_id.clone())
+                .await?;
+
         let server_verf_key = tonic_handle_potential_err(
             to_vec(&self.get_verf_key()),
             "Could not serialize server verification key".to_string(),
         )?;
         let sig_payload = DecryptionResponseSigPayload {
             version: CURRENT_FORMAT_VERSION,
-            servers_needed,
-            plaintext: plaintext_bytes,
+            servers_needed: 1,
+            plaintext,
             verification_key: server_verf_key,
             digest: req_digest,
         };
@@ -264,8 +330,8 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
     /// starts the centralized CRS generation
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
-        let request_id = tonic_some_or_err(
-            inner.request_id.clone(),
+        let request_id = tonic_some_ref_or_err(
+            inner.request_id.as_ref(),
             "Request ID is not set".to_string(),
         )?;
         // ensure the request ID is valid
@@ -276,10 +342,19 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
                 format!("Request ID {} is not valid!", request_id),
             ));
         }
-
+        let mut crs_gen_map = self.crs_gen_map.lock().await;
+        if crs_gen_map.get(&request_id.to_string()).is_some() {
+            return Err(tonic::Status::new(
+                tonic::Code::AlreadyExists,
+                format!(
+                    "A CRS generation request with request ID {} is already being processed!",
+                    request_id
+                ),
+            ));
+        }
         // ensure that the CRS under that handle does not exist yet
         if tonic_handle_potential_err(
-            self.storage.data_exists(&request_id, PubDataType::CRS),
+            self.storage.data_exists(request_id, PubDataType::CRS),
             "Could not validate the existance of the CRS".to_string(),
         )? {
             tracing::warn!(
@@ -306,10 +381,6 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         )?;
 
         let future_crs = tokio::spawn(async_generate_crs(rng, params));
-        let mut crs_gen_map = tonic_handle_potential_err(
-            self.crs_gen_map.lock(),
-            "Could not get handle on crs generation map".to_string(),
-        )?;
         crs_gen_map.insert(request_id.to_string(), future_crs);
 
         Ok(Response::new(Empty {}))
@@ -369,9 +440,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
         request_id: RequestId,
     ) -> anyhow::Result<Option<FhePubKeyInfo>> {
         let crs_gen_handle = {
-            let mut crs_gen_map = self.crs_gen_map.lock().map_err(|e| {
-                anyhow_error_and_log(format!("Could not get CRS generation map: {}", e))
-            })?;
+            let mut crs_gen_map = self.crs_gen_map.lock().await;
             crs_gen_map.remove(&request_id.to_string())
         };
         // Handle the four different cases:
@@ -386,9 +455,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
                     // Case 1: The request ID is currently generating but not finished yet
                     {
                         // Reinsert the handle
-                        let mut crs_gen_map = self.crs_gen_map.lock().map_err(|e| {
-                            anyhow_error_and_log(format!("Could not get key generation map: {}", e))
-                        })?;
+                        let mut crs_gen_map = self.crs_gen_map.lock().await;
                         crs_gen_map.insert(request_id.to_string(), crs_gen_handle);
                     }
                     return Ok(None);
@@ -398,18 +465,14 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 let crs_info = compute_info(self, &pp)?;
                 // Insert the key information into the map of keys
                 {
-                    let mut crs_handles = self.crs_handles.lock().map_err(|e| {
-                        anyhow_error_and_log(format!("Could not get client map: {}", e))
-                    })?;
+                    let mut crs_handles = self.crs_handles.lock().await;
                     crs_handles.insert(request_id.to_string(), crs_info.clone());
                 }
                 store_crs(&self.storage, &request_id, &crs_info, &pp)?;
                 Ok(Some(crs_info))
             }
             None => {
-                let crs_handles = self.crs_handles.lock().map_err(|e| {
-                    anyhow_error_and_log(format!("Could not get client map: {}", e))
-                })?;
+                let crs_handles = self.crs_handles.lock().await;
                 match crs_handles.get(&request_id.to_string()) {
                     Some(handles) => {
                         // Case 3: Request is not in crs generation map, so check if it is already done
@@ -436,9 +499,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
         request_id: RequestId,
     ) -> anyhow::Result<Option<HashMap<PubDataType, FhePubKeyInfo>>> {
         let key_gen_handle = {
-            let mut key_gen_map = self.key_gen_map.lock().map_err(|e| {
-                anyhow_error_and_log(format!("Could not get key generation map: {}", e))
-            })?;
+            let mut key_gen_map = self.key_gen_map.lock().await;
             key_gen_map.remove(&request_id.to_string())
         };
         // Handle the four different cases:
@@ -453,9 +514,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
                     // Case 1: The request ID is currently generating but not finished yet
                     {
                         // Reinsert the handle
-                        let mut key_gen_map = self.key_gen_map.lock().map_err(|e| {
-                            anyhow_error_and_log(format!("Could not get key generation map: {}", e))
-                        })?;
+                        let mut key_gen_map = self.key_gen_map.lock().await;
                         key_gen_map.insert(request_id.to_string(), key_gen_handle);
                     }
                     return Ok(None);
@@ -465,9 +524,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 let new_key_info = KmsFheKeyHandles::new(self, client_key, &pub_keys)?;
                 // Insert the key information into the map of keys
                 {
-                    let mut key_handles = self.key_handles.lock().map_err(|e| {
-                        anyhow_error_and_log(format!("Could not get client map: {}", e))
-                    })?;
+                    let mut key_handles = self.key_handles.lock().await;
                     key_handles.insert(request_id.to_string(), new_key_info.clone());
                 }
                 store_public_keys(
@@ -479,9 +536,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 Ok(Some(new_key_info.public_key_info))
             }
             None => {
-                let key_handles = self.key_handles.lock().map_err(|e| {
-                    anyhow_error_and_log(format!("Could not get client map: {}", e))
-                })?;
+                let key_handles = self.key_handles.lock().await;
                 match key_handles.get(&request_id.to_string()) {
                     Some(handles) => {
                         // Case 3: Request is not in key generation map, so check if it is already done
@@ -498,6 +553,84 @@ impl<S: PublicStorage> SoftwareKms<S> {
             }
         }
     }
+
+    /// Process a request for getting the decryption or reencryption.
+    /// Takes as input a map of decryption or reencryption processes and checks whether they are done.
+    /// If they are done, it returns the result and removes them from the map, otherwise it returns an informative tonic error.
+    async fn process_decryption<Aux>(
+        handle_map: &CompMap<(Aux, anyhow::Result<Vec<u8>>)>,
+        request_id: RequestId,
+    ) -> Result<(Aux, Vec<u8>), Status> {
+        // We remove the handle and thus must remember to reinsert it again if it is not fully processed
+        let handle = {
+            let mut unwrapped_handle_map = handle_map.lock().await;
+            unwrapped_handle_map.remove(&request_id.clone().to_string())
+        };
+
+        // Handle decryption based on the 3 possible cases:
+        // Case 1: The request ID is currently being processed but not finished yet
+        // Case 2: The request ID is finished and the result is available
+        // Case 3: The request ID does not exist (either it is already completed or never existed)
+        let (aux, decryption) = match handle {
+            Some(inner_handle) => {
+                if !inner_handle.is_finished() {
+                    // Case 1: The request ID is currently being processed but not finished yet
+                    {
+                        // Reinsert the handle
+                        let mut unwrapped_handle_map = handle_map.lock().await;
+                        unwrapped_handle_map.insert(request_id.to_string(), inner_handle);
+                    }
+                    return Err(tonic::Status::new(
+                        tonic::Code::Unavailable,
+                        format!(
+                            "The decryption of request with ID {} has not been generated yet, but is in progress!",
+                            request_id
+                        ),
+                    ));
+                }
+                // Case 2: The request is finished
+                match inner_handle.await {
+                    // Everything is OK so we return the result
+                    // TODO related to issue https://github.com/zama-ai/kms-core/issues/462 : we need at some point to consider caching
+                    Ok((aux, Ok(result))) => (aux, result),
+                    // Something went wrong with the decryption so we return an error
+                    _ => {
+                        tracing::error!("Could not decrypt ciphertext for request {request_id}!");
+                        return Err(tonic::Status::new(
+                            tonic::Code::Internal,
+                            "Could not decrypt ciphertext!",
+                        ));
+                    }
+                }
+            }
+            // Case 3: The request ID is not in the map. Either it has never been started or already returned.
+            None => {
+                return Err(tonic::Status::new(
+                    tonic::Code::NotFound,
+                    format!(
+                        "Decryption request with ID {} either never existed or no longer exists!",
+                        request_id
+                    ),
+                ));
+            }
+        };
+        Ok((aux, decryption))
+    }
+}
+
+/// Validates a request ID and returns an appropriate tonic error if it is invalid.
+fn validate_request_id(request_id: &RequestId) -> Result<(), Status> {
+    if !request_id.is_valid() {
+        tracing::warn!(
+            "The value {} is not a valid request ID!",
+            request_id.to_string()
+        );
+        return Err(tonic::Status::new(
+            tonic::Code::InvalidArgument,
+            format!("The value {} is not a valid request ID!", request_id),
+        ));
+    }
+    Ok(())
 }
 
 /// Helper method which takes a [HashMap<PubDataType, FhePubKeyInfo>] and returns
@@ -526,8 +659,8 @@ pub(crate) fn retrieve_paramters(param_choice: i32) -> anyhow::Result<NoiseFlood
     Ok(params)
 }
 
-/// Returns ciphertext, FheType, digest, client encryption key, client verification key,
-/// servers_needed key_handle.
+/// Validates a reencryption request and returns ciphertext, FheType, request digest, client encryption key, client verification key,
+/// servers_needed key_id and request_id if valid.
 /// Observe that the key handle is NOT checked for existence here.
 /// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
 /// is needed.
@@ -541,11 +674,22 @@ pub async fn validate_reencrypt_req(
     PublicSigKey,
     u32,
     String,
+    RequestId,
 )> {
-    let payload = tonic_some_or_err(
-        req.payload.clone(),
+    let payload = tonic_some_ref_or_err(
+        req.payload.as_ref(),
         format!("The request {:?} does not have a payload", req),
     )?;
+    let request_id = tonic_some_or_err(
+        payload.request_id.clone(),
+        "Request ID is not set".to_string(),
+    )?;
+    if !request_id.is_valid() {
+        return Err(anyhow_error_and_warn_log(format!(
+            "The value {} is not a valid request ID!",
+            request_id
+        )));
+    }
     if payload.version != CURRENT_FORMAT_VERSION {
         return Err(anyhow_error_and_warn_log(format!(
             "Version number was {:?}, whereas current is {:?}",
@@ -554,8 +698,8 @@ pub async fn validate_reencrypt_req(
     }
     let sig_payload: ReencryptionRequestSigPayload = payload.clone().try_into()?;
     let sig_payload_serialized = to_vec(&sig_payload)?;
-    let domain = protobuf_to_alloy_domain(&tonic_some_or_err(
-        req.domain.clone(),
+    let domain = protobuf_to_alloy_domain(tonic_some_ref_or_err(
+        req.domain.as_ref(),
         "domain not found".to_string(),
     )?)?;
     let req_digest = sig_payload.eip712_signing_hash(&domain).to_vec();
@@ -581,23 +725,25 @@ pub async fn validate_reencrypt_req(
         )));
     }
     Ok((
-        payload.ciphertext,
+        payload.ciphertext.clone(),
         fhe_type,
         req_digest,
         client_enc_key,
         client_verf_key,
         payload.servers_needed,
-        payload.key_id,
+        payload.key_id.clone(),
+        request_id,
     ))
 }
 
-/// Returns ciphertext, FheType, digest, servers_needed, key_id.
+/// Validates a decryption request and unpacks and returns
+/// the ciphertext, FheType, digest, servers_needed, key_id and request_id if it is valid.
 /// Observe that the key handle is NOT checked for existence here.
 /// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
 /// is needed.
 pub async fn validate_decrypt_req(
     req: &DecryptionRequest,
-) -> anyhow::Result<(Vec<u8>, FheType, Vec<u8>, u32, String)> {
+) -> anyhow::Result<(Vec<u8>, FheType, Vec<u8>, u32, String, RequestId)> {
     let key_id = req.key_id.clone();
     let ciphertext = req.ciphertext.clone();
     if req.version != CURRENT_FORMAT_VERSION {
@@ -622,7 +768,22 @@ pub async fn validate_decrypt_req(
         BaseKmsStruct::digest(&serialized_req),
         format!("Could not hash payload {:?}", req),
     )?;
-    Ok((ciphertext, fhetype, req_digest, req.servers_needed, key_id))
+    let request_id =
+        tonic_some_or_err(req.request_id.clone(), "Request ID is not set".to_string())?;
+    if !request_id.is_valid() {
+        return Err(anyhow_error_and_warn_log(format!(
+            "The value {} is not a valid request ID!",
+            request_id
+        )));
+    }
+    Ok((
+        ciphertext,
+        fhetype,
+        req_digest,
+        req.servers_needed,
+        key_id,
+        request_id,
+    ))
 }
 
 pub fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Result<T, Status> {
@@ -645,10 +806,14 @@ pub fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Resul
     }
 }
 
-pub fn tonic_some_or_err<T: fmt::Debug>(
-    input: Option<T>,
-    error: String,
-) -> Result<T, tonic::Status> {
+pub fn tonic_some_or_err<T>(input: Option<T>, error: String) -> Result<T, tonic::Status> {
+    input.ok_or_else(|| {
+        tracing::warn!(error);
+        tonic::Status::new(tonic::Code::Aborted, "Invalid request".to_string())
+    })
+}
+
+pub fn tonic_some_ref_or_err<T>(input: Option<&T>, error: String) -> Result<&T, tonic::Status> {
     input.ok_or_else(|| {
         tracing::warn!(error);
         tonic::Status::new(tonic::Code::Aborted, "Invalid request".to_string())

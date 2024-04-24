@@ -62,18 +62,36 @@ impl CoordinatorEndpoint for KmsProxy {
     async fn reencrypt(
         &self,
         request: Request<ReencryptionRequest>,
-    ) -> Result<Response<ReencryptionResponse>, Status> {
+    ) -> Result<Response<Empty>, Status> {
         let mut kms_client = self.kms_client.lock().await;
         let response = kms_client.reencrypt(request).await?;
+        Ok(response)
+    }
+
+    async fn get_reencrypt_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<ReencryptionResponse>, Status> {
+        let mut kms_client = self.kms_client.lock().await;
+        let response = kms_client.get_reencrypt_result(request).await?;
         Ok(response)
     }
 
     async fn decrypt(
         &self,
         request: Request<DecryptionRequest>,
-    ) -> Result<Response<DecryptionResponse>, Status> {
+    ) -> Result<Response<Empty>, Status> {
         let mut kms_client = self.kms_client.lock().await;
         let response = kms_client.decrypt(request).await?;
+        Ok(response)
+    }
+
+    async fn get_decrypt_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<DecryptionResponse>, Status> {
+        let mut kms_client = self.kms_client.lock().await;
+        let response = kms_client.get_decrypt_result(request).await?;
         Ok(response)
     }
 

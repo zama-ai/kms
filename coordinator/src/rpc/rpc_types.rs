@@ -1,13 +1,16 @@
-use crate::anyhow_error_and_log;
 use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::serialize_hash_element;
 use crate::kms::{
     DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType,
     ReencryptionRequestPayload, ReencryptionResponse,
 };
+#[cfg(feature = "non-wasm")]
+use crate::util::key_setup::FhePrivateKey;
+use crate::{anyhow_error_and_log, cryptography::der_types::PrivateSigKey};
 use crate::{consts::ID_LENGTH, kms::RequestId};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{sol, Eip712Domain, SolStruct};
+use rand::{CryptoRng, RngCore};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_asn1_der::from_bytes;
@@ -17,6 +20,8 @@ use wasm_bindgen::prelude::wasm_bindgen;
 pub static CURRENT_FORMAT_VERSION: u32 = 1;
 pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
 pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
+pub static DEC_REQUEST_NAME: &str = "dec_request";
+pub static REENC_REQUEST_NAME: &str = "reenc_request";
 
 /// Enum which represents the different kinds of public information that can be stored as part of key generation.
 /// In practice this means the CRS and different types of public keys.
@@ -97,6 +102,7 @@ pub(crate) fn allow_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<
     Ok(domain_msg)
 }
 
+#[cfg(feature = "non-wasm")]
 pub trait BaseKms {
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
@@ -119,17 +125,24 @@ pub trait BaseKms {
     fn digest<T: fmt::Debug + Serialize>(msg: &T) -> anyhow::Result<Vec<u8>>;
 }
 /// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
+#[cfg(feature = "non-wasm")]
 pub trait Kms: BaseKms {
-    fn decrypt(&self, ct: &[u8], fhe_type: FheType, key_id: &str) -> anyhow::Result<Plaintext>;
+    fn decrypt(
+        client_key: &FhePrivateKey,
+        ct: &[u8],
+        fhe_type: FheType,
+    ) -> anyhow::Result<Plaintext>;
+    #[allow(clippy::too_many_arguments)]
     fn reencrypt(
-        &self,
+        client_key: &FhePrivateKey,
+        sig_key: &PrivateSigKey,
+        rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         ct_type: FheType,
         digest_link: &[u8],
         enc_key: &PublicEncKey,
         pub_verf_key: &PublicSigKey,
-        key_id: &str,
-    ) -> anyhow::Result<Option<Vec<u8>>>;
+    ) -> anyhow::Result<Vec<u8>>;
 }
 
 /// Representation of the data stored in a signcryption, needed to facilitate FHE decryption and
@@ -402,6 +415,7 @@ pub struct DecryptionRequestSerializable {
     pub randomness: Vec<u8>,
     pub key_id: String,
     pub ciphertext: Vec<u8>,
+    pub request_id: RequestId,
 }
 impl From<DecryptionRequestSerializable> for DecryptionRequest {
     fn from(val: DecryptionRequestSerializable) -> DecryptionRequest {
@@ -412,6 +426,7 @@ impl From<DecryptionRequestSerializable> for DecryptionRequest {
             randomness: val.randomness,
             key_id: val.key_id,
             ciphertext: val.ciphertext,
+            request_id: Some(val.request_id),
         }
     }
 }
@@ -419,6 +434,10 @@ impl TryFrom<DecryptionRequest> for DecryptionRequestSerializable {
     type Error = anyhow::Error;
 
     fn try_from(val: DecryptionRequest) -> Result<Self, Self::Error> {
+        let req_id = match val.request_id {
+            Some(req_id) => req_id,
+            None => return Err(anyhow::anyhow!("No request_id found")),
+        };
         Ok(DecryptionRequestSerializable {
             version: val.version,
             servers_needed: val.servers_needed,
@@ -426,6 +445,7 @@ impl TryFrom<DecryptionRequest> for DecryptionRequestSerializable {
             randomness: val.randomness,
             ciphertext: val.ciphertext,
             key_id: val.key_id,
+            request_id: req_id,
         })
     }
 }
@@ -478,6 +498,7 @@ sol! {
         uint8[] randomness;
         uint8[] ciphertext;
         string key_id;
+        string request_id;
     }
 }
 impl From<ReencryptionRequestSigPayload> for ReencryptionRequestPayload {
@@ -491,6 +512,9 @@ impl From<ReencryptionRequestSigPayload> for ReencryptionRequestPayload {
             randomness: val.randomness,
             ciphertext: val.ciphertext,
             key_id: val.key_id,
+            request_id: Some(RequestId {
+                request_id: val.request_id,
+            }),
         }
     }
 }
@@ -498,6 +522,10 @@ impl TryFrom<ReencryptionRequestPayload> for ReencryptionRequestSigPayload {
     type Error = anyhow::Error;
 
     fn try_from(val: ReencryptionRequestPayload) -> Result<Self, Self::Error> {
+        let req_id = match val.request_id {
+            Some(req_id) => req_id,
+            None => return Err(anyhow::anyhow!("No request_id found")),
+        };
         Ok(ReencryptionRequestSigPayload {
             version: val.version,
             servers_needed: val.servers_needed,
@@ -507,6 +535,7 @@ impl TryFrom<ReencryptionRequestPayload> for ReencryptionRequestSigPayload {
             randomness: val.randomness,
             ciphertext: val.ciphertext,
             key_id: val.key_id,
+            request_id: req_id.to_string(),
         })
     }
 }

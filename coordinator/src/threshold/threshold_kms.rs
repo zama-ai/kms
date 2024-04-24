@@ -212,6 +212,9 @@ pub struct ThresholdKmsKeys {
     pub sig_pk: PublicSigKey,
 }
 
+type ThresholdDecHandle = (u32, Vec<u8>, Plaintext);
+type ThresholdReencHandle = (u32, Vec<u8>, FheType, Vec<u8>);
+
 type RequestIDBucketMap = HashMap<
     RequestId,
     (
@@ -228,6 +231,8 @@ enum CrsHandlerStatus {
 
 pub struct ThresholdKms<S: PublicStorage + Sync + Send + 'static> {
     fhe_keys: HashMap<String, ThresholdFheKeys>,
+    decrypt_map: Arc<Mutex<HashMap<String, ThresholdDecHandle>>>,
+    reencrypt_map: Arc<Mutex<HashMap<String, ThresholdReencHandle>>>,
     base_kms: BaseKmsStruct,
     threshold: u8,
     my_id: usize,
@@ -292,6 +297,8 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
         let base_kms = BaseKmsStruct::new(keys.sig_sk);
         Ok(ThresholdKms {
             fhe_keys: keys.fhe_keys,
+            decrypt_map: Arc::new(Mutex::new(HashMap::new())),
+            reencrypt_map: Arc::new(Mutex::new(HashMap::new())),
             base_kms,
             threshold,
             my_id,
@@ -396,6 +403,7 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
         let (mut session, low_level_ct) = self.prepare_ddec_data_from_ct(ct, fhe_type)?;
         let mut protocol = Small::new(session.clone());
         let id = session.own_identity();
+        // TODO this will need to change with the merge of issue 414
         let keys = match self.fhe_keys.get(key_handle) {
             Some(keys) => keys,
             None => {
@@ -848,7 +856,7 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
     async fn reencrypt(
         &self,
         request: Request<ReencryptionRequest>,
-    ) -> Result<Response<ReencryptionResponse>, Status> {
+    ) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
         let (
             ciphertext,
@@ -858,11 +866,12 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
             client_verf_key,
             servers_needed,
             key_handle,
+            request_id,
         ) = tonic_handle_potential_err(
             validate_reencrypt_req(&inner).await,
             format!("Invalid key in request {:?}", inner),
         )?;
-        tracing::info!("Server {} validated reencryption request", self.my_id);
+        // TODO this will be replaced with an async method once issue 414 is implemented
         let return_cipher = process_response(
             self.inner_reencrypt(
                 &ciphertext,
@@ -875,40 +884,102 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
             .await,
         )?;
         tracing::info!("Server {} did reencryption ", self.my_id);
+
+        let mut reencrypt_map = self.reencrypt_map.lock().await;
+        reencrypt_map.insert(
+            request_id.to_string(),
+            (servers_needed, req_digest.clone(), fhe_type, return_cipher),
+        );
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_reencrypt_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<ReencryptionResponse>, Status> {
+        let request_id = request.into_inner();
+        if !request_id.is_valid() {
+            tracing::warn!(
+                "The value {} is not a valid request ID!",
+                request_id.to_string()
+            );
+            return Err(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("The value {} is not a valid request ID!", request_id),
+            ));
+        }
+
+        let (servers_needed, req_digest, fhe_type, signcrypted_ciphertext) = {
+            let mut reencrypt_map = self.reencrypt_map.lock().await;
+            reencrypt_map.remove(&request_id.to_string()).unwrap()
+        };
+
+        let server_verf_key = tonic_handle_potential_err(
+            serde_asn1_der::to_vec(&self.get_verf_key()),
+            "Could not serialize server verification key".to_string(),
+        )?;
         Ok(Response::new(ReencryptionResponse {
             version: CURRENT_FORMAT_VERSION,
             servers_needed,
-            signcrypted_ciphertext: return_cipher,
+            signcrypted_ciphertext,
             fhe_type: fhe_type.into(),
             digest: req_digest,
-            verification_key: tonic_handle_potential_err(
-                serde_asn1_der::to_vec(&self.get_verf_key()),
-                "Could not serialize server verification key".to_string(),
-            )?,
+            verification_key: server_verf_key,
         }))
     }
 
     async fn decrypt(
         &self,
         request: Request<DecryptionRequest>,
-    ) -> Result<Response<DecryptionResponse>, Status> {
+    ) -> Result<Response<Empty>, Status> {
         tracing::info!("Received a new request!");
         let inner = request.into_inner();
-        let (ciphertext, fhe_type, req_digest, servers_needed, key_handle) =
+        let (ciphertext, fhe_type, req_digest, servers_needed, key_id, request_id) =
             tonic_handle_potential_err(
                 validate_decrypt_req(&inner).await,
                 format!("Invalid key in request {:?}", inner),
             )?;
+        // TODO this will be replaced with an async method once issue 414 is implemented
         let raw_decryption = tonic_handle_potential_err(
-            self.inner_decrypt(fhe_type, &ciphertext, &key_handle).await,
+            self.inner_decrypt(fhe_type, &ciphertext, &key_id).await,
             format!("Decryption failed for request {:?}", inner),
         )?;
         let plaintext = Plaintext::new(raw_decryption.0 as u128, fhe_type);
+
+        let mut decrypt_map = self.decrypt_map.lock().await;
+        decrypt_map.insert(
+            request_id.to_string(),
+            (servers_needed, req_digest.clone(), plaintext.clone()),
+        );
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_decrypt_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<DecryptionResponse>, Status> {
+        let request_id = request.into_inner();
+        if !request_id.is_valid() {
+            tracing::warn!(
+                "The value {} is not a valid request ID!",
+                request_id.to_string()
+            );
+            return Err(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("The value {} is not a valid request ID!", request_id),
+            ));
+        }
+
+        let (servers_needed, req_digest, plaintext) = {
+            let mut decrypt_map = self.decrypt_map.lock().await;
+            decrypt_map.remove(&request_id.to_string()).unwrap()
+        };
+
         let decrypted_bytes = tonic_handle_potential_err(
             serde_asn1_der::to_vec(&plaintext),
             format!(
-                "Could not convert plaintext to bytes in request {:?}",
-                inner
+                "Could not convert plaintext to bytes in request with ID {:?}",
+                request_id
             ),
         )?;
         let server_verf_key = tonic_handle_potential_err(

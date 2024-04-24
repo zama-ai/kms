@@ -26,8 +26,7 @@ use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::to_vec;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::{collections::HashMap, sync::Arc};
 use std::{fmt, panic};
 use tfhe::ClientKey;
 use tfhe::{integer::U256, shortint::ClassicPBSParameters};
@@ -35,6 +34,7 @@ use tfhe::{prelude::FheDecrypt, FheUint128, FheUint160};
 use tfhe::{ConfigBuilder, FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
 #[cfg(feature = "non-wasm")]
 use tfhe_zk_pok::curve_api::bls12_446 as curve;
+use tokio::sync::Mutex;
 #[cfg(feature = "non-wasm")]
 use tokio::task::JoinHandle;
 
@@ -142,24 +142,24 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
 
 #[derive(Clone)]
 pub struct BaseKmsStruct {
-    pub(crate) sig_key: PrivateSigKey,
+    pub(crate) sig_key: Arc<PrivateSigKey>,
     pub(crate) rng: Arc<Mutex<AesRng>>,
 }
 
 impl BaseKmsStruct {
     pub fn new(sig_sk: PrivateSigKey) -> Self {
         BaseKmsStruct {
-            sig_key: sig_sk,
+            sig_key: Arc::new(sig_sk),
             rng: Arc::new(Mutex::new(AesRng::from_entropy())),
         }
     }
 
-    pub(crate) fn new_rng(&self) -> anyhow::Result<AesRng> {
+    pub fn new_rng(&self) -> anyhow::Result<AesRng> {
         let mut seed = [0u8; RND_SIZE];
         // Make a seperate scope for the rng so that it is dropped before the lock is released
         {
             let mut base_rng =
-                handle_potential_err(self.rng.lock(), "Could not lock rng".to_owned())?;
+                handle_potential_err(self.rng.try_lock(), "Could not get lock on rng".to_string())?;
             base_rng.try_fill_bytes(seed.as_mut())?;
         }
         Ok(AesRng::from_seed(seed))
@@ -263,19 +263,82 @@ impl KmsFheKeyHandles {
     }
 }
 
+// Values that needs to be stored temporarely as part of an async key generation call.
 #[cfg(feature = "non-wasm")]
-type KeyGenHandle = JoinHandle<(ClientKey, FhePubKeySet)>;
-type CrsGenHandle = JoinHandle<PublicParameter>;
+type KeyGenCallValues = (ClientKey, FhePubKeySet);
+#[cfg(feature = "non-wasm")]
+type CrsGenValues = PublicParameter;
 
+// Values that needs to be stored temporarely as part of an async decryption call.
+// Represents the digest of the request and the result of the decryption.
+#[cfg(feature = "non-wasm")]
+pub type DecCallValues = (Vec<u8>, anyhow::Result<Vec<u8>>);
+
+// Values that needs to be stored temporarely as part of an async reencryption call.
+// Represents the server_needed, FHE type, the digest of the request and the result of the reencryption.
+#[cfg(feature = "non-wasm")]
+pub type ReencCallValues = ((u32, FheType, Vec<u8>), anyhow::Result<Vec<u8>>);
+
+pub type CompMap<A> = Arc<Mutex<HashMap<String, JoinHandle<A>>>>;
 /// Software based KMS where keys are stored in a local file
 #[cfg(feature = "non-wasm")]
 pub struct SoftwareKms<S: PublicStorage> {
     pub(crate) base_kms: BaseKmsStruct,
     pub(crate) storage: S,
+    // Map storing the already generated FHE keys.
     pub key_handles: Arc<Mutex<HashMap<String, KmsFheKeyHandles>>>,
-    pub key_gen_map: Arc<Mutex<HashMap<String, KeyGenHandle>>>,
+    // Map storing ongoing key generation requests.
+    pub key_gen_map: CompMap<KeyGenCallValues>,
+    // Map storing ongoing decryption requests.
+    pub decrypt_map: CompMap<DecCallValues>,
+    // Map storing ongoing reencryption requests.
+    pub reenc_map: CompMap<ReencCallValues>,
+    // Map storing the already generated CRS keys.
     pub crs_handles: Arc<Mutex<CrsHashMap>>,
-    pub crs_gen_map: Arc<Mutex<HashMap<String, CrsGenHandle>>>,
+    // Map storing ongoing CRS generation requests.
+    pub crs_gen_map: CompMap<CrsGenValues>,
+}
+
+/// Perform asynchronous decryption and serialize the result using asn1
+#[cfg(feature = "non-wasm")]
+pub async fn async_decrypt<S: PublicStorage>(
+    client_key: &FhePrivateKey,
+    high_level_ct: &[u8],
+    fhe_type: FheType,
+) -> anyhow::Result<Vec<u8>> {
+    handle_potential_err(
+        to_vec(&SoftwareKms::<S>::decrypt(
+            client_key,
+            high_level_ct,
+            fhe_type,
+        )?),
+        "Could not serialize the decrypted ciphertext".to_string(),
+    )
+}
+
+/// Perform asynchronous reencryption and serialize the result using asn1
+#[cfg(feature = "non-wasm")]
+#[allow(clippy::too_many_arguments)]
+pub async fn async_reencrypt<S: PublicStorage>(
+    client_key: &FhePrivateKey,
+    sig_key: &PrivateSigKey,
+    rng: &mut (impl CryptoRng + RngCore),
+    high_level_ct: &[u8],
+    fhe_type: FheType,
+    req_digest: &[u8],
+    client_enc_key: &PublicEncKey,
+    client_verf_key: &PublicSigKey,
+) -> anyhow::Result<Vec<u8>> {
+    SoftwareKms::<S>::reencrypt(
+        client_key,
+        sig_key,
+        rng,
+        high_level_ct,
+        fhe_type,
+        req_digest,
+        client_enc_key,
+        client_verf_key,
+    )
 }
 
 // impl fmt::Debug for SoftwareKms, we don't want to include the decryption key in the debug output
@@ -335,24 +398,10 @@ impl<S: PublicStorage> BaseKms for SoftwareKms<S> {
 #[cfg(feature = "non-wasm")]
 impl<S: PublicStorage> Kms for SoftwareKms<S> {
     fn decrypt(
-        &self,
+        client_key: &FhePrivateKey,
         high_level_ct: &[u8],
         fhe_type: FheType,
-        key_id: &str,
     ) -> anyhow::Result<Plaintext> {
-        let key_info = handle_potential_err(
-            self.key_handles.lock(),
-            "Could not get handle on client keys".to_string(),
-        )?;
-        let client_key = match key_info.get(key_id) {
-            Some(key_info) => &key_info.client_key,
-            None => {
-                return Err(anyhow_error_and_log(format!(
-                    "The request ID {} does not exist",
-                    key_id
-                )))
-            }
-        };
         let f = || -> anyhow::Result<Plaintext> {
             Ok(match fhe_type {
                 FheType::Bool => {
@@ -404,15 +453,16 @@ impl<S: PublicStorage> Kms for SoftwareKms<S> {
     }
 
     fn reencrypt(
-        &self,
+        client_key: &FhePrivateKey,
+        sig_key: &PrivateSigKey,
+        rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         fhe_type: FheType,
         req_digest: &[u8],
         client_enc_key: &PublicEncKey,
         client_verf_key: &PublicSigKey,
-        request_id: &str,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
-        let plaintext = Kms::decrypt(self, ct, fhe_type, request_id)?;
+    ) -> anyhow::Result<Vec<u8>> {
+        let plaintext = Self::decrypt(client_key, ct, fhe_type)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<Residuepoly<Z128>> element
         let bytes: Vec<u8> = plaintext.into();
@@ -422,15 +472,15 @@ impl<S: PublicStorage> Kms for SoftwareKms<S> {
             req_digest: req_digest.to_vec(),
         };
         let enc_res = signcrypt(
-            &mut self.base_kms.new_rng()?,
+            rng,
             &serde_asn1_der::to_vec(&signcryption_msg)?,
             client_enc_key,
             client_verf_key,
-            &self.base_kms.sig_key,
+            sig_key,
         )?;
         let res = to_vec(&enc_res)?;
         tracing::info!("Completed reencyption of ciphertext");
-        Ok(Some(res))
+        Ok(res)
     }
 }
 
@@ -453,6 +503,8 @@ impl<S: PublicStorage> SoftwareKms<S> {
             storage,
             key_handles: Arc::new(Mutex::new(key_info)),
             key_gen_map: Arc::new(Mutex::new(HashMap::new())),
+            decrypt_map: Arc::new(Mutex::new(HashMap::new())),
+            reenc_map: Arc::new(Mutex::new(HashMap::new())),
             crs_handles: Arc::new(Mutex::new(cs)),
             crs_gen_map: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -534,6 +586,7 @@ mod tests {
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use rand::{RngCore, SeedableRng};
     use serial_test::serial;
+    use std::sync::Arc;
     use tfhe::shortint::ClassicPBSParameters;
     use tfhe::ConfigBuilder;
 
@@ -707,7 +760,16 @@ mod tests {
             inner
         };
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
-        let raw_plaintext = kms.decrypt(&ct, fhe_type, key_id);
+        let raw_plaintext = SoftwareKms::<DevStorage>::decrypt(
+            &kms.key_handles
+                .try_lock()
+                .unwrap()
+                .get(key_id)
+                .unwrap()
+                .client_key,
+            &ct,
+            fhe_type,
+        );
         // if bad FHE key is used, then it *might* panic
         let plaintext = if sim_type == SimulationType::BadFheKey {
             match raw_plaintext {
@@ -809,7 +871,7 @@ mod tests {
         let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
         let config = ConfigBuilder::with_custom_parameters(pbs_params, None);
         let wrong_client_key = tfhe::ClientKey::generate(config);
-        let mut key_info = inner.key_handles.lock().unwrap();
+        let mut key_info = inner.key_handles.try_lock().unwrap();
         let x = key_info.get_mut(key_handle).unwrap();
         let wrong_handles = KmsFheKeyHandles {
             client_key: wrong_client_key,
@@ -823,9 +885,9 @@ mod tests {
         _ = rng.next_u64();
         let wrong_ecdsa_key = k256::ecdsa::SigningKey::random(rng);
         assert_ne!(wrong_ecdsa_key, inner.base_kms.sig_key.sk);
-        inner.base_kms.sig_key = PrivateSigKey {
+        inner.base_kms.sig_key = Arc::new(PrivateSigKey {
             sk: wrong_ecdsa_key,
-        };
+        });
     }
 
     fn simulate_reencrypt(
@@ -864,13 +926,21 @@ mod tests {
             }
             keys
         };
-        let raw_cipher = kms.reencrypt(
+        let mut rng = kms.base_kms.new_rng().unwrap();
+        let raw_cipher = SoftwareKms::<DevStorage>::reencrypt(
+            &kms.key_handles
+                .try_lock()
+                .unwrap()
+                .get(key_handle)
+                .unwrap()
+                .client_key,
+            &kms.base_kms.sig_key,
+            &mut rng,
             &ct,
             fhe_type,
             &link,
             &client_keys.pk.enc_key,
             &client_keys.pk.verification_key,
-            key_handle,
         );
         // if bad FHE key is used, then it *might* panic
         let raw_cipher = if sim_type == SimulationType::BadFheKey {
@@ -883,8 +953,7 @@ mod tests {
             }
         } else {
             raw_cipher.unwrap()
-        }
-        .unwrap();
+        };
         let decrypted = decrypt_signcryption(
             &raw_cipher,
             &link,

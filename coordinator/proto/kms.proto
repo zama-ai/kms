@@ -12,9 +12,11 @@ service CoordinatorEndpoint {
   // NOTE: Unprivileged and insecure call
   rpc GetKeyGenResult(RequestId) returns (KeyGenResult);
   // Decrypt a ciphertext and return the signed plaintext.
-  rpc Decrypt(DecryptionRequest) returns (DecryptionResponse);
+  rpc Decrypt(DecryptionRequest) returns (Empty);
+  rpc GetDecryptResult(RequestId) returns (DecryptionResponse);
   // Reencrypt a ciphertext under a user-specified key and return a signcrypted share of the dercrypted plaintext.
-  rpc Reencrypt(ReencryptionRequest) returns (ReencryptionResponse);
+  rpc Reencrypt(ReencryptionRequest) returns (Empty);
+  rpc GetReencryptResult(RequestId) returns (ReencryptionResponse);
   rpc CrsGen(CrsGenRequest) returns (Empty);
   rpc GetCrsGenResult(RequestId) returns (CrsGenResult);
 }
@@ -124,6 +126,8 @@ message DecryptionRequest {
   string key_id = 5;
   // The actual ciphertext to decrypt, taken directly from the fhevm.
   bytes ciphertext = 6;
+  // The ID of the decryption request. Will be the hash digest the other fields of this message object.
+  RequestId request_id = 7;
 }
 
 message DecryptionResponsePayload {
@@ -142,6 +146,7 @@ message DecryptionResponsePayload {
   // Encoded using SEC1.
   // Needed to validate the response, but MUST also be linked to a list of
   // trusted keys.
+  // TODO should be renamed to make it clear it is the server's key
   bytes verification_key = 3;
   // Digest of the request validated.
   // Needed to ensure that the response is for the expected request.
@@ -189,6 +194,8 @@ message ReencryptionRequestPayload {
   string key_id = 7;
   // The actual ciphertext to decrypt, taken directly from the fhevm.
   bytes ciphertext = 8;
+  // The ID of the reencryption request. Will be the hash digest the other fields of this message object.
+  RequestId request_id = 9;
 }
 
 // https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator

@@ -21,6 +21,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("CrsGenResult", DERIVES)
         .type_attribute("FheType", "#[wasm_bindgen::prelude::wasm_bindgen]")
         .type_attribute(
+            "RequestId",
+            "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
+        )
+        .type_attribute(
             "ReencryptionRequest",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
