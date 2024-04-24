@@ -1,39 +1,39 @@
 use aes_prng::AesRng;
+use criterion::BenchmarkId;
 use criterion::{criterion_group, criterion_main, Criterion};
 use crypto_bigint::modular::ConstMontyParams;
-use crypto_bigint::Limb;
-use crypto_bigint::NonZero;
-use distributed_decryption::experimental::bgv::bgv_dec;
-use distributed_decryption::experimental::bgv::bgv_enc;
-use distributed_decryption::experimental::bgv::keygen;
-use distributed_decryption::experimental::bgv::modulus_switch;
-use distributed_decryption::experimental::bgv_algebra::GenericModulus;
-use distributed_decryption::experimental::bgv_algebra::LevelEll;
-use distributed_decryption::experimental::bgv_algebra::LevelKsw;
-use distributed_decryption::experimental::bgv_algebra::LevelOne;
-use distributed_decryption::experimental::bgv_algebra::Q;
-use distributed_decryption::experimental::bgv_algebra::Q1;
-use distributed_decryption::experimental::cyclotomic::RingElement;
-use distributed_decryption::experimental::ntt::Const;
-use distributed_decryption::experimental::ntt::N65536;
+use distributed_decryption::execution::runtime::test_runtime::generate_fixed_identities;
+use distributed_decryption::experimental::algebra::cyclotomic::RingElement;
+use distributed_decryption::experimental::algebra::levels::*;
+use distributed_decryption::experimental::algebra::ntt::N65536;
+use distributed_decryption::experimental::algebra::ntt::{Const, NTTConstants};
+use distributed_decryption::experimental::bgv::basics::bgv_dec;
+use distributed_decryption::experimental::bgv::basics::bgv_enc;
+use distributed_decryption::experimental::bgv::basics::keygen;
+use distributed_decryption::experimental::bgv::basics::modulus_switch;
+use distributed_decryption::experimental::bgv::ddec::keygen_shares;
+use distributed_decryption::experimental::bgv::endpoints::threshold_decrypt;
+use distributed_decryption::experimental::bgv::runtime::BGVTestRuntime;
+use distributed_decryption::experimental::constants::PLAINTEXT_MODULUS;
 use pprof::criterion::Output;
 use pprof::criterion::PProfProfiler;
 use rand::RngCore;
 use rand::SeedableRng;
 
 fn bench_modswitch(c: &mut Criterion) {
-    let plaintext_mod = 65537;
-    let pmod = NonZero::new(Limb(plaintext_mod)).unwrap();
     let mut rng = AesRng::seed_from_u64(0);
     let new_hope_bound = 1;
-    let (pk, sk) =
-        keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, new_hope_bound, plaintext_mod);
+    let (pk, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
+        &mut rng,
+        new_hope_bound,
+        PLAINTEXT_MODULUS.get().0,
+    );
 
     let m: Vec<u16> = (0..N65536::VALUE)
-        .map(|_| (rng.next_u64() % plaintext_mod) as u16)
+        .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u16)
         .collect();
     let mr = RingElement::<u16>::from(m);
-    let ct = bgv_enc(&mut rng, &mr, pk.a, pk.b, 1, plaintext_mod);
+    let ct = bgv_enc(&mut rng, &mr, pk.a, pk.b, 1, PLAINTEXT_MODULUS.get().0);
 
     let mut group = c.benchmark_group("modswitch");
     group.sample_size(10);
@@ -45,16 +45,85 @@ fn bench_modswitch(c: &mut Criterion) {
             value: GenericModulus(*Q::MODULUS.as_ref()),
         };
         b.iter(|| {
-            let ct_prime = modulus_switch::<LevelOne, LevelEll, N65536>(ct.clone(), q, big_q, pmod);
-            let plaintext = bgv_dec(&ct_prime, sk.clone(), pmod);
+            let ct_prime =
+                modulus_switch::<LevelOne, LevelEll, N65536>(&ct, q, big_q, *PLAINTEXT_MODULUS);
+            let plaintext = bgv_dec(&ct_prime, sk.clone(), &PLAINTEXT_MODULUS);
             assert_eq!(plaintext, mr);
         });
     });
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ThresholdConfig {
+    n: usize,
+    t: u8,
+}
+
+impl ThresholdConfig {
+    pub fn new(n: usize, t: u8) -> Self {
+        ThresholdConfig { n, t }
+    }
+}
+
+impl std::fmt::Display for ThresholdConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "n={}_t={}", self.n, self.t)?;
+        Ok(())
+    }
+}
+
+fn bench_bgv_ddec(c: &mut Criterion) {
+    let mut rng = AesRng::seed_from_u64(0);
+
+    let new_hope_bound = 1;
+    let (pk, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
+        &mut rng,
+        new_hope_bound,
+        PLAINTEXT_MODULUS.get().0,
+    );
+
+    let m: Vec<u16> = (0..N65536::VALUE)
+        .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u16)
+        .collect();
+    let plaintext_as_ring = RingElement::<u16>::from(m);
+    let params = vec![ThresholdConfig::new(5, 1)];
+    let mut group = c.benchmark_group("bgv_ddec");
+
+    group.sample_size(10);
+    group.sampling_mode(criterion::SamplingMode::Flat);
+    let mut rng = AesRng::from_entropy();
+    for config in params {
+        let ct = bgv_enc(
+            &mut rng,
+            &plaintext_as_ring,
+            pk.a.clone(),
+            pk.b.clone(),
+            new_hope_bound,
+            PLAINTEXT_MODULUS.get().0,
+        );
+        let keyshares = keygen_shares(&mut rng, &sk, config.n, config.t);
+        let ntt_keyshares: Vec<_> = keyshares
+            .iter()
+            .map(|k| k.as_ntt_repr(N65536::VALUE, N65536::THETA))
+            .collect();
+        let identities = generate_fixed_identities(config.n);
+
+        let runtime = BGVTestRuntime::new(identities, config.t);
+        group.bench_with_input(
+            BenchmarkId::from_parameter(config),
+            &(config, ct.clone(), ntt_keyshares, runtime),
+            |b, (_config, ct, ks, runtime)| {
+                b.iter(|| {
+                    let _ = threshold_decrypt(runtime, ks, ct);
+                });
+            },
+        );
+    }
+}
+
 criterion_group! {
     name = bgv;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = bench_modswitch,
+    targets = bench_modswitch, bench_bgv_ddec
 }
 criterion_main!(bgv);

@@ -135,11 +135,11 @@ mod tests {
             runtime::session::SmallSession,
             sharing::shamir::{RevealOp, ShamirSharings},
         },
-        experimental::bgv_algebra::LevelKsw,
+        experimental::algebra::levels::LevelKsw,
         tests::helper::tests_and_benches::execute_protocol_small,
     };
 
-    use super::{BitGenOdd, RealBitGenOdd};
+    use super::*;
 
     #[test]
     fn test_bitgen() {

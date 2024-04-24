@@ -1480,14 +1480,14 @@ mod tests {
     #[cfg(feature = "experimental")]
     #[test]
     fn sunnshine_init_with_abort_levelone() {
-        use crate::experimental::bgv_algebra::LevelOne;
+        use crate::experimental::algebra::levels::LevelOne;
         sunshine_init_with_abort::<LevelOne>();
     }
 
     #[cfg(feature = "experimental")]
     #[test]
     fn sunnshine_init_with_abort_levelksw() {
-        use crate::experimental::bgv_algebra::LevelKsw;
+        use crate::experimental::algebra::levels::LevelKsw;
         sunshine_init_with_abort::<LevelKsw>();
     }
 

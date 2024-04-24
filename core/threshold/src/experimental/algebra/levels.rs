@@ -32,10 +32,10 @@ use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use std::sync::RwLock;
 
-use super::crt::from_crt;
-use super::crt::to_crt;
-use super::crt::LevelKswCrtRepresentation;
-use super::gen_bits_odd::LargestPrimeFactor;
+use crate::experimental::algebra::crt::from_crt;
+use crate::experimental::algebra::crt::to_crt;
+use crate::experimental::algebra::crt::LevelKswCrtRepresentation;
+use crate::experimental::gen_bits_odd::LargestPrimeFactor;
 
 /// Basic moduli trait for data mod Q, to avoid code duplication.
 pub trait CryptoModulus {

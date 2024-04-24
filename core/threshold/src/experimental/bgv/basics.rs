@@ -1,18 +1,20 @@
-use super::bgv_algebra::ScalingFactor;
-use super::cyclotomic::TernaryElement;
-use super::integers::PositiveConv;
 use crate::algebra::structure_traits::{Ring, ZConsts};
-use crate::experimental::cyclotomic::NewHopeSampler;
-use crate::experimental::cyclotomic::RingElement;
-use crate::experimental::cyclotomic::RqElement;
-use crate::experimental::integers::IntQ;
-use crate::experimental::integers::ModReduction;
-use crate::experimental::integers::ZeroCenteredRem;
-use crate::experimental::ntt::Const;
-use crate::experimental::ntt::NTTConstants;
+use crate::experimental::algebra::cyclotomic::NewHopeSampler;
+use crate::experimental::algebra::cyclotomic::RingElement;
+use crate::experimental::algebra::cyclotomic::RqElement;
+use crate::experimental::algebra::cyclotomic::TernaryElement;
+use crate::experimental::algebra::integers::IntQ;
+use crate::experimental::algebra::integers::ModReduction;
+use crate::experimental::algebra::integers::PositiveConv;
+use crate::experimental::algebra::integers::ZeroCenteredRem;
+use crate::experimental::algebra::levels::ScalingFactor;
+use crate::experimental::algebra::ntt::Const;
+use crate::experimental::algebra::ntt::NTTConstants;
 use crypto_bigint::{Limb, NonZero};
 use rand::{CryptoRng, Rng};
+use serde::{Deserialize, Serialize};
 use std::ops::{Add, Div, Mul, Sub};
+
 pub struct PublicKey<QMod, QRMod, N> {
     pub a: RqElement<QMod, N>,
     pub b: RqElement<QMod, N>,
@@ -80,7 +82,7 @@ where
     )
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct BGVCiphertext<T, N> {
     pub c0: RqElement<T, N>,
     pub c1: RqElement<T, N>,
@@ -140,7 +142,7 @@ where
 pub fn bgv_dec<ModQ, N>(
     ct: &BGVCiphertext<ModQ, N>,
     sk: SecretKey,
-    p_mod: NonZero<Limb>,
+    p_mod: &NonZero<Limb>,
 ) -> RingElement<u16>
 where
     N: Const,
@@ -156,7 +158,7 @@ where
     let sk_mod_q = RqElement::<ModQ, N>::from(sk.sk);
     let p = ct.get_c0() - &(ct.get_c1() * sk_mod_q);
     // reinterpret this as integer over (-p/2, p/2] and do the final plaintext reduction p_mod.
-    let p_red = RingElement::<IntQ>::from(p).zero_centered_rem(p_mod);
+    let p_red = RingElement::<IntQ>::from(p).zero_centered_rem(*p_mod);
     let supported_ptxt: Vec<u16> = p_red
         .data
         .iter()
@@ -171,7 +173,7 @@ where
 }
 
 pub fn modulus_switch<NewQ, ModQ, N>(
-    ct: BGVCiphertext<ModQ, N>,
+    ct: &BGVCiphertext<ModQ, N>,
     q: NewQ,
     big_q: ModQ,
     plaintext_mod: NonZero<Limb>,
@@ -181,7 +183,7 @@ where
     IntQ: PositiveConv<ModQ>,
     IntQ: PositiveConv<NewQ>,
 
-    RingElement<IntQ>: From<RqElement<ModQ, N>>,
+    for<'a> RingElement<IntQ>: From<&'a RqElement<ModQ, N>>,
     RingElement<IntQ>: ModReduction<NewQ, Output = RingElement<NewQ>>,
     RingElement<IntQ>: Mul<IntQ, Output = RingElement<IntQ>>,
     RingElement<IntQ>: Sub<RingElement<IntQ>, Output = RingElement<IntQ>>,
@@ -190,7 +192,7 @@ where
     RqElement<NewQ, N>: From<RingElement<NewQ>>,
     RqElement<NewQ, N>: Clone,
 {
-    let (a, b) = (ct.c1, ct.c0);
+    let (a, b) = (ct.get_c1(), ct.get_c0());
     let a_int = RingElement::<IntQ>::from(a);
     let b_int = RingElement::<IntQ>::from(b);
 
@@ -225,66 +227,76 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::experimental::bgv_algebra::{GenericModulus, LevelEll, LevelKsw, LevelOne, Q, Q1};
-    use crate::experimental::ntt::N65536;
+    use crate::experimental::algebra::levels::{
+        GenericModulus, LevelEll, LevelKsw, LevelOne, Q, Q1,
+    };
+    use crate::experimental::algebra::ntt::N65536;
+    use crate::experimental::constants::PLAINTEXT_MODULUS;
     use aes_prng::AesRng;
     use crypto_bigint::modular::ConstMontyParams;
     use rand::{RngCore, SeedableRng};
 
     #[test]
     fn test_bgv_keygen() {
-        let plaintext_mod = 65537;
-        let pmod = NonZero::new(Limb(plaintext_mod)).unwrap();
-
         let mut rng = AesRng::seed_from_u64(0);
         let new_hope_bound = 1;
-        let (pk, sk) =
-            keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, new_hope_bound, plaintext_mod);
+        let (pk, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
+            &mut rng,
+            new_hope_bound,
+            PLAINTEXT_MODULUS.get().0,
+        );
 
         let m: Vec<u16> = (0..N65536::VALUE)
-            .map(|_| (rng.next_u64() % plaintext_mod) as u16)
+            .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u16)
             .collect();
         let mr = RingElement::<u16>::from(m);
-        let ct = bgv_enc(&mut rng, &mr, pk.a, pk.b, 1, plaintext_mod);
-        let plaintext = bgv_dec(&ct, sk, pmod);
+        let ct = bgv_enc(&mut rng, &mr, pk.a, pk.b, 1, PLAINTEXT_MODULUS.get().0);
+        let plaintext = bgv_dec(&ct, sk, &PLAINTEXT_MODULUS);
         assert_eq!(plaintext, mr);
     }
 
     #[test]
     fn test_bgv_keygen_q1() {
-        let plaintext_mod = 65537;
-        let pmod = NonZero::new(Limb(plaintext_mod)).unwrap();
-
         let mut rng = AesRng::seed_from_u64(0);
         let new_hope_bound = 1;
-        let (pk, sk) =
-            keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, new_hope_bound, plaintext_mod);
+        let (pk, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
+            &mut rng,
+            new_hope_bound,
+            PLAINTEXT_MODULUS.get().0,
+        );
 
         let m: Vec<u16> = (0..N65536::VALUE)
-            .map(|_| (rng.next_u64() % plaintext_mod) as u16)
+            .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u16)
             .collect();
         let mr = RingElement::<u16>::from(m);
-        let ct = bgv_enc(&mut rng, &mr, pk.a, pk.b, 1, plaintext_mod);
-        let plaintext = bgv_dec(&ct, sk, pmod);
+        let ct = bgv_enc(&mut rng, &mr, pk.a, pk.b, 1, PLAINTEXT_MODULUS.get().0);
+        let plaintext = bgv_dec(&ct, sk, &PLAINTEXT_MODULUS);
         assert_eq!(plaintext, mr);
     }
 
     #[test]
     fn test_big_mod_switch() {
-        let plaintext_mod = 65537;
-        let pmod = NonZero::new(Limb(plaintext_mod)).unwrap();
-
         let mut rng = AesRng::seed_from_u64(0);
         let new_hope_bound = 1;
-        let (pk, sk) =
-            keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, new_hope_bound, plaintext_mod);
+        let (pk, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
+            &mut rng,
+            new_hope_bound,
+            PLAINTEXT_MODULUS.get().0,
+        );
 
         let m: Vec<u16> = (0..N65536::VALUE)
-            .map(|_| (rng.next_u64() % plaintext_mod) as u16)
+            .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u16)
             .collect();
         let mr = RingElement::<u16>::from(m);
-        let ct = bgv_enc(&mut rng, &mr, pk.a, pk.b, new_hope_bound, plaintext_mod);
-        let plaintext = bgv_dec(&ct, sk.clone(), pmod);
+        let ct = bgv_enc(
+            &mut rng,
+            &mr,
+            pk.a,
+            pk.b,
+            new_hope_bound,
+            PLAINTEXT_MODULUS.get().0,
+        );
+        let plaintext = bgv_dec(&ct, sk.clone(), &PLAINTEXT_MODULUS);
         assert_eq!(plaintext, mr);
 
         let q = LevelOne {
@@ -293,10 +305,10 @@ mod tests {
         let big_q = LevelEll {
             value: GenericModulus(*Q::MODULUS.as_ref()),
         };
-        let nz_pmod = NonZero::new(Limb(plaintext_mod)).unwrap();
 
-        let ct_prime = modulus_switch::<LevelOne, LevelEll, N65536>(ct, q, big_q, nz_pmod);
-        let plaintext = bgv_dec::<LevelOne, N65536>(&ct_prime, sk, pmod);
+        let ct_prime =
+            modulus_switch::<LevelOne, LevelEll, N65536>(&ct, q, big_q, *PLAINTEXT_MODULUS);
+        let plaintext = bgv_dec::<LevelOne, N65536>(&ct_prime, sk, &PLAINTEXT_MODULUS);
 
         assert_eq!(plaintext, mr);
     }

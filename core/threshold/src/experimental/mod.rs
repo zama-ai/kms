@@ -1,9 +1,17 @@
-pub mod bgv;
-pub mod bgv_algebra;
-pub mod bgv_dkg;
-pub mod crt;
-pub mod cyclotomic;
+pub mod algebra {
+    pub mod crt;
+    pub mod cyclotomic;
+    pub mod integers;
+    pub mod levels;
+    pub mod ntt;
+}
+pub mod bgv {
+    pub mod basics;
+    pub mod ddec;
+    pub mod dkg;
+    pub mod endpoints;
+    pub mod runtime;
+}
+pub mod constants;
 pub mod gen_bits_odd;
-pub mod integers;
-pub mod ntt;
 pub mod random;

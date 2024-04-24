@@ -18,21 +18,40 @@ use crate::{
             secret_distributions::{RealSecretDistributions, SecretDistributions},
             triple::{mult_list, open_list, Triple},
         },
-        runtime::session::{BaseSessionHandles, SmallSession},
+        runtime::{
+            party::Role,
+            session::{BaseSessionHandles, SmallSession},
+        },
         sharing::share::Share,
     },
 };
 
-use super::{
-    bgv::PublicKey,
-    bgv_algebra::{CryptoModulus, GenericModulus, LevelEll, LevelKsw, LevelOne, ScalingFactor},
-    cyclotomic::RqElement,
+use crate::experimental::{
+    algebra::cyclotomic::RqElement,
+    algebra::levels::{CryptoModulus, GenericModulus, LevelEll, LevelKsw, LevelOne, ScalingFactor},
+    algebra::ntt::{hadamard_product, ntt_inv, ntt_iter2, Const, NTTConstants},
+    bgv::basics::PublicKey,
     gen_bits_odd::{BitGenOdd, RealBitGenOdd},
-    ntt::{hadamard_product, ntt_inv, ntt_iter2, Const, NTTConstants},
 };
 
+#[derive(Clone)]
 pub struct BGVShareSecretKey {
     pub sk: Vec<Share<LevelOne>>,
+}
+
+pub type NttForm<T> = Vec<T>;
+
+pub struct OwnedNttForm<T> {
+    pub owner: Role,
+    pub data: NttForm<T>,
+}
+
+impl BGVShareSecretKey {
+    pub fn as_ntt_repr(&self, n: usize, theta: LevelOne) -> NttForm<LevelOne> {
+        let mut sk_ntt = self.sk.iter().map(|x| x.value()).collect_vec();
+        ntt_iter2(&mut sk_ntt, n, theta);
+        sk_ntt
+    }
 }
 
 #[async_trait]
@@ -303,7 +322,6 @@ where
 #[cfg(test)]
 mod tests {
     use aes_prng::AesRng;
-    use crypto_bigint::{Limb, NonZero};
     use rand::{RngCore, SeedableRng};
     use tonic::async_trait;
 
@@ -319,11 +337,16 @@ mod tests {
             sharing::share::Share,
         },
         experimental::{
-            bgv::{bgv_dec, bgv_enc, PublicKey, SecretKey},
-            bgv_algebra::{LevelEll, LevelKsw, LevelOne},
-            bgv_dkg::InMemoryBGVDkgPreprocessing,
-            cyclotomic::{RingElement, TernaryElement, TernaryEntry},
-            ntt::{Const, N65536},
+            algebra::{
+                cyclotomic::{RingElement, TernaryElement, TernaryEntry},
+                levels::{LevelEll, LevelKsw, LevelOne},
+                ntt::{Const, N65536},
+            },
+            bgv::{
+                basics::{bgv_dec, bgv_enc, PublicKey, SecretKey},
+                dkg::InMemoryBGVDkgPreprocessing,
+            },
+            constants::PLAINTEXT_MODULUS,
         },
         tests::helper::tests_and_benches::execute_protocol_small,
     };
@@ -361,7 +384,6 @@ mod tests {
         plaintext_mod: u64,
         new_hope_bound: usize,
     ) {
-        let pmod = NonZero::new(Limb(plaintext_mod)).unwrap();
         //Turn sk into proper type
         let (pk, sk) = results.pop().unwrap();
 
@@ -390,7 +412,7 @@ mod tests {
             .collect();
         let mr = RingElement::<u16>::from(m);
         let ct = bgv_enc(&mut rng, &mr, pk.a, pk.b, new_hope_bound, plaintext_mod);
-        let plaintext = bgv_dec(&ct, sk_correct_type, pmod);
+        let plaintext = bgv_dec(&ct, sk_correct_type, &PLAINTEXT_MODULUS);
         assert_eq!(plaintext, mr);
     }
 
@@ -399,7 +421,6 @@ mod tests {
         let parties = 5;
         let threshold = 1;
         let new_hope_bound = 1;
-        let plaintext_mod = 65537;
 
         let mut task = |mut session: SmallSession<LevelKsw>| async move {
             let mut prep = DummyPreprocessing::<LevelKsw, AesRng, SmallSession<LevelKsw>>::new(
@@ -411,7 +432,7 @@ mod tests {
                 &mut session,
                 &mut prep,
                 new_hope_bound,
-                plaintext_mod,
+                PLAINTEXT_MODULUS.get().0,
             )
             .await
             .unwrap();
@@ -422,7 +443,7 @@ mod tests {
         };
 
         let mut results = execute_protocol_small(parties, threshold, None, &mut task);
-        test_dkg(&mut results, plaintext_mod, new_hope_bound);
+        test_dkg(&mut results, PLAINTEXT_MODULUS.get().0, new_hope_bound);
     }
 
     #[test]
@@ -430,7 +451,6 @@ mod tests {
         let parties = 5;
         let threshold = 1;
         let new_hope_bound = 1;
-        let plaintext_mod = 65537;
 
         let mut task = |mut session: SmallSession<LevelKsw>| async move {
             let mut dummy_preproc =
@@ -454,7 +474,7 @@ mod tests {
                 &mut session,
                 &mut bgv_preproc,
                 new_hope_bound,
-                plaintext_mod,
+                PLAINTEXT_MODULUS.get().0,
             )
             .await
             .unwrap();
@@ -466,6 +486,6 @@ mod tests {
 
         let mut results = execute_protocol_small(parties, threshold, None, &mut task);
 
-        test_dkg(&mut results, plaintext_mod, new_hope_bound);
+        test_dkg(&mut results, PLAINTEXT_MODULUS.get().0, new_hope_bound);
     }
 }

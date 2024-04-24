@@ -1,6 +1,6 @@
-use super::bgv_algebra::CryptoModulus;
-use super::bgv_algebra::GenericModulus;
-use super::bgv_algebra::LevelOne;
+use crate::experimental::algebra::levels::CryptoModulus;
+use crate::experimental::algebra::levels::GenericModulus;
+use crate::experimental::algebra::levels::LevelOne;
 use crypto_bigint::Limb;
 use crypto_bigint::NonZero;
 use crypto_bigint::Odd;
@@ -289,9 +289,9 @@ pub trait ModReduction<T> {
 mod tests {
     use super::*;
     use crate::algebra::structure_traits::Sample;
-    use crate::experimental::bgv_algebra::LevelEll;
-    use crate::experimental::cyclotomic::{RingElement, RqElement};
-    use crate::experimental::ntt::{Const, N65536};
+    use crate::experimental::algebra::cyclotomic::{RingElement, RqElement};
+    use crate::experimental::algebra::ntt::{Const, N65536};
+    use crate::experimental::constants::PLAINTEXT_MODULUS;
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
@@ -302,19 +302,30 @@ mod tests {
         let mut a = Vec::with_capacity(N65536::VALUE);
         let mut b = Vec::with_capacity(N65536::VALUE);
         for _ in 0..N65536::VALUE {
-            let val = LevelEll::sample(&mut rng);
+            let val = LevelOne::sample(&mut rng);
             a.push(val);
             let words = val.value.0.as_words();
-            b.push(words[0] as u128 + ((words[0] as u128) << 64));
+            b.push(words[0] as u128 + ((words[1] as u128) << 64));
         }
+        let level_one_mod: u128 = LevelOne::MODULUS.get().into();
 
-        let pt_limb = NonZero::new(Limb(65537_u64)).unwrap();
-        let a_modq = RqElement::<_, N65536>::from(a);
+        let a_modq = RqElement::<_, N65536>::from(a.clone());
         let a_int = RingElement::<IntQ>::from(a_modq);
-        let rem = a_int.clone().zero_centered_rem(pt_limb);
+        let rem = a_int.clone().zero_centered_rem(*PLAINTEXT_MODULUS);
 
         for (i, item) in rem.data.iter().enumerate() {
-            assert_eq!(*item, Limb((b[i] % 65537) as u64));
+            let signed_lhs = {
+                if b[i] > (level_one_mod >> 1) {
+                    b[i] as i128 - level_one_mod as i128
+                } else {
+                    b[i] as i128
+                }
+            };
+
+            assert_eq!(
+                *item,
+                Limb(signed_lhs.rem_euclid(PLAINTEXT_MODULUS.get().0 as i128) as u64)
+            );
         }
     }
 }

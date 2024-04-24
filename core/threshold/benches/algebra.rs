@@ -13,7 +13,7 @@ use rand::SeedableRng;
 fn bench_lagrange_poly(c: &mut Criterion) {
     // params are (num_parties, threshold, max_errors)
 
-    use distributed_decryption::experimental::bgv_algebra::LevelOne;
+    use distributed_decryption::experimental::algebra::levels::LevelOne;
     let params = vec![(4, 1, 0), (10, 3, 0), (10, 3, 2), (40, 13, 0)];
     let mut group = c.benchmark_group("lagrange_interpolation");
 

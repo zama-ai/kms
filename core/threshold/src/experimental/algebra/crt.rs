@@ -1,6 +1,6 @@
 use crypto_bigint::{NonZero, U1536};
 
-use super::bgv_algebra::{
+use crate::experimental::algebra::levels::{
     CryptoModulus, GenericModulus, LevelEight, LevelEleven, LevelFifteen, LevelFive, LevelFour,
     LevelFourteen, LevelKsw, LevelNine, LevelOne, LevelR, LevelSeven, LevelSix, LevelTen,
     LevelThirteen, LevelThree, LevelTwelve, LevelTwo,
@@ -316,13 +316,8 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
 
-    use crate::{
-        algebra::structure_traits::Sample,
-        experimental::{
-            bgv_algebra::LevelKsw,
-            crt::{from_crt, to_crt},
-        },
-    };
+    use super::*;
+    use crate::{algebra::structure_traits::Sample, experimental::algebra::levels::LevelKsw};
 
     #[test]
     fn test_crt_dec_rec() {

@@ -3,7 +3,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use distributed_decryption::algebra::structure_traits::FromU128;
 use distributed_decryption::execution::sharing::shamir::ShamirSharing;
 use distributed_decryption::execution::sharing::shamir::{InputOp, RevealOp, ShamirFieldPoly};
-use distributed_decryption::experimental::bgv_algebra::LevelOne;
+use distributed_decryption::experimental::algebra::levels::LevelOne;
 use distributed_decryption::{
     algebra::{
         gf256::{error_correction, GF256},

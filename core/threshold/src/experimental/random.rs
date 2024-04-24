@@ -1,7 +1,7 @@
 use rand::CryptoRng;
 use rand::Rng;
 
-use super::cyclotomic::TernaryEntry;
+use crate::experimental::algebra::cyclotomic::TernaryEntry;
 
 /// This defines how Gaussians are generated for the BGV/BFV schemes. We use
 /// the NewHope approximation of sum(b_i - b'_i) where b_i and b'_i {0, 1}

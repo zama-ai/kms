@@ -135,7 +135,7 @@ required-features = ["experimental"]
 [[bench]]
 name = "bgv"
 harness = false
-required-features = ["experimental"]
+required-features = ["experimental", "testing"]
 
 [[bench]]
 name = "bench_switch_and_squash"

@@ -1,13 +1,14 @@
-use super::integers::{IntQ, ModReduction, ZeroCenteredRem};
-use super::ntt::hadamard_product;
-use super::random::approximate_gaussian;
 use crate::algebra::structure_traits::{One, ZConsts};
 use crate::algebra::structure_traits::{Sample, Zero};
-use crate::experimental::ntt::Const;
-use crate::experimental::ntt::NTTConstants;
-use crate::experimental::ntt::{ntt_inv, ntt_iter2};
+use crate::experimental::algebra::integers::{IntQ, ModReduction, ZeroCenteredRem};
+use crate::experimental::algebra::ntt::hadamard_product;
+use crate::experimental::algebra::ntt::Const;
+use crate::experimental::algebra::ntt::NTTConstants;
+use crate::experimental::algebra::ntt::{ntt_inv, ntt_iter2};
+use crate::experimental::random::approximate_gaussian;
 use crypto_bigint::Limb;
 use rand::{CryptoRng, Rng};
+use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use std::ops::Add;
 use std::ops::Sub;
@@ -27,7 +28,7 @@ pub struct TernaryElement {
 
 /// Cyclotomic polynomial mod Q, degree N
 /// Supports mul via FFT.
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RqElement<T, N> {
     pub data: Vec<T>,
     _degree: PhantomData<N>,
@@ -103,6 +104,17 @@ where
     T: Clone,
 {
     fn from(value: RqElement<T, N>) -> Self {
+        let data: Vec<_> = value.data.iter().map(|v| IntQ::from(v.clone())).collect();
+        RingElement { data }
+    }
+}
+
+impl<T, N> From<&RqElement<T, N>> for RingElement<IntQ>
+where
+    IntQ: From<T>,
+    T: Clone,
+{
+    fn from(value: &RqElement<T, N>) -> Self {
         let data: Vec<_> = value.data.iter().map(|v| IntQ::from(v.clone())).collect();
         RingElement { data }
     }
@@ -335,6 +347,7 @@ where
     }
 }
 
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl Div<&IntQ> for &RingElement<IntQ> {
     type Output = RingElement<IntQ>;
     fn div(self, rhs: &IntQ) -> Self::Output {
@@ -453,7 +466,7 @@ impl Add<RingElement<IntQ>> for RingElement<IntQ> {
 mod tests {
     use super::*;
     use crate::algebra::structure_traits::FromU128;
-    use crate::experimental::bgv_algebra::LevelOne;
+    use crate::experimental::algebra::levels::LevelOne;
     use crypto_bigint::NonZero;
 
     fn level_one_mapping(x: &i128) -> LevelOne {

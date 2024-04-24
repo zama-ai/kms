@@ -4,12 +4,13 @@ use std::ops::{Add, Mul, Sub};
 use crypto_bigint::{U128, U1536, U768};
 use itertools::Itertools;
 
-use super::bgv_algebra::GenericModulus;
-use super::bgv_algebra::LevelEll;
-use super::bgv_algebra::LevelKsw;
-use super::bgv_algebra::LevelOne;
+use crate::experimental::algebra::levels::GenericModulus;
+use crate::experimental::algebra::levels::LevelEll;
+use crate::experimental::algebra::levels::LevelKsw;
+use crate::experimental::algebra::levels::LevelOne;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct N65536;
 
 pub trait Const {
@@ -192,9 +193,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::algebra::structure_traits::Sample;
-
     use super::*;
+    use crate::algebra::structure_traits::Sample;
 
     use crate::algebra::structure_traits::Zero;
     use aes_prng::AesRng;
