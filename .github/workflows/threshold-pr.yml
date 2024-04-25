@@ -9,6 +9,7 @@ on:
 
 jobs:
   build:
+    if: ${{ ! startsWith(github.head_ref, 'dependabot/') }}
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
       working-directory: './core/threshold'
@@ -22,7 +23,20 @@ jobs:
       SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
 
+  build-dependabot:
+    if: ${{ startsWith(github.head_ref, 'dependabot/') }}
+    uses: ./.github/workflows/common-build.yml
+    with:
+      working-directory: './core/threshold'
+      args-tests: '--lib'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
   docker:
+    if: ${{ ! startsWith(github.head_ref, 'dependabot/') }}
     uses: ./.github/workflows/common-docker.yml
     permissions:
       contents: 'read'
@@ -37,6 +51,7 @@ jobs:
       GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
 
   done:
+    if: ${{ ! startsWith(github.head_ref, 'dependabot/') }}
     runs-on: ubuntu-latest
     name: Pipeline Done
     steps:

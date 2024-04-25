@@ -10,7 +10,7 @@ aes = "0.8.2"
 aes-prng = "0.2.1"
 aligned-vec = "~0.5"
 anyhow = "~1.0"
-async-channel = "~2.1"
+async-channel = "~2.2"
 async-trait = "~0.1"
 async_cell = "~0.2"
 backoff = { version = "~0.4", features = ["tokio"], optional = true }
