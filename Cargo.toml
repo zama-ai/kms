@@ -4,6 +4,7 @@ resolver = "2"
 members = [
     "coordinator",
     "core/threshold",
+    "blockchain/client",
     "blockchain/connector",
     "blockchain/events",
     "blockchain/proofs",
