@@ -1685,15 +1685,44 @@ pub(crate) mod tests {
         let storage = DevStorage::default();
         let crs = internal_client.retrieve_crs(&inner_resp, &storage).unwrap();
         assert!(crs.is_some());
-
         kms_server.abort();
+
+        // try to make a proof and check that it works
+        let fhe_params = crate::rpc::central_rpc::retrieve_parameters(params.unwrap().into())
+            .unwrap()
+            .ciphertext_parameters;
+        let pp = crs.unwrap().try_into_tfhe_zk_pok_pp(&fhe_params).unwrap();
+        let cks = tfhe::shortint::ClientKey::new(fhe_params);
+        let pk = tfhe::shortint::CompactPublicKey::new(&cks);
+
+        let max_msg_len = if params.unwrap() == ParamChoice::Test {
+            1
+        } else {
+            4 * 64
+        };
+        let msgs = (0..max_msg_len)
+            .map(|i| i % fhe_params.message_modulus.0 as u64)
+            .collect::<Vec<_>>();
+
+        let proven_ct = pk
+            .encrypt_and_prove_slice(&msgs, &pp, tfhe::zk::ZkComputeLoad::Proof)
+            .unwrap();
+        assert!(proven_ct.verify(&pp, &pk).is_valid());
+
+        let expanded = proven_ct.verify_and_expand(&pp, &pk).unwrap();
+        let decrypted = expanded
+            .iter()
+            .map(|ciphertext| cks.decrypt(ciphertext))
+            .collect::<Vec<_>>();
+        assert_eq!(msgs, decrypted);
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[serial]
     async fn test_crs_gen_threshold() {
-        // this test generates a small CRS
+        // NOTE: the test parameter has 300 witness size
+        // so we set this as a slow test
         crs_gen_threshold(TEST_THRESHOLD_KEYS_PATH).await
     }
 
@@ -1754,7 +1783,7 @@ pub(crate) mod tests {
         const TRIES: usize = 20;
         let mut joined_responses = vec![];
         for i in 0..TRIES {
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
             let mut tasks_get = JoinSet::new();
             for j in 1..=AMOUNT_PARTIES as u32 {

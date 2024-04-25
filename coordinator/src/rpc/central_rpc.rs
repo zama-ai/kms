@@ -122,7 +122,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
             ));
         }
         let params = tonic_handle_potential_err(
-            retrieve_paramters(inner.params),
+            retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
         let future_keys = tokio::spawn(async_generate_fhe_keys(params));
@@ -371,7 +371,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         }
 
         let params = tonic_handle_potential_err(
-            retrieve_paramters(inner.params),
+            retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
 
@@ -461,7 +461,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
                     return Ok(None);
                 }
                 // Case 2: The key generation is finished, so we can now generate the key information
-                let pp = crs_gen_handle.await?;
+                let pp = crs_gen_handle.await??;
                 let crs_info = compute_info(self, &pp)?;
                 // Insert the key information into the map of keys
                 {
@@ -648,8 +648,7 @@ pub fn convert_key_response(
         .collect()
 }
 
-//TODO(renaming): there is a typo here paramters -> parameters
-pub(crate) fn retrieve_paramters(param_choice: i32) -> anyhow::Result<NoiseFloodParameters> {
+pub(crate) fn retrieve_parameters(param_choice: i32) -> anyhow::Result<NoiseFloodParameters> {
     let param_choice = ParamChoice::try_from(param_choice)?;
     let param_path = match param_choice {
         ParamChoice::Test => TEST_PARAM_PATH,

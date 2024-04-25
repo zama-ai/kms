@@ -65,13 +65,13 @@ sha3 = "~0.10.8"
 signature = "~2.2"
 tonic = { version = "0.10", optional = true }
 tokio = { version = "1.35", features = ["macros", "rt-multi-thread"], optional = true }
-tfhe = { version = "0.6.1", features = ["boolean", "shortint", "integer"] }
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "083c06814464cf8f517af2c2aade1d8133ffe29b", features = ["boolean", "shortint", "integer", "zk-pok-experimental"] }
 tracing = { version = "~0.1", features = ["log"] }
 tracing-test = "0.2.4"
 tracing-subscriber = "0.3.18"
 url = "2.5.0"
 webpki = { version = "0.22", features = ["std"], optional = true }
-tfhe-zk-pok = { version = "0.1.0", optional = true }
+tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "083c06814464cf8f517af2c2aade1d8133ffe29b",  optional = true }
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { version = "0.2.86", features = ["serde-serialize"] }
@@ -79,7 +79,7 @@ console_error_panic_hook = { version = "0.1.7" }
 serde-wasm-bindgen = { version = "0.6.0" }
 
 [target.'cfg(unix)'.dependencies]
-tfhe = { version = "0.6.1", features = ["seeder_unix"] }
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "083c06814464cf8f517af2c2aade1d8133ffe29b", features = ["seeder_unix"] }
 
 [dev-dependencies]
 ctor = "~0.2"

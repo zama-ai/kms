@@ -1514,8 +1514,7 @@ dependencies = [
 [[package]]
 name = "concrete-csprng"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c7080e711c39c3dda834604f7c31f4634a38b8dddeb9f24db5d7801751415ad"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=083c06814464cf8f517af2c2aade1d8133ffe29b#083c06814464cf8f517af2c2aade1d8133ffe29b"
 dependencies = [
  "aes",
  "libc",
@@ -6745,9 +6744,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7310535fac4a4e670f21255ffbc1b908f4ef0e4950a35ca5023975ba0071b9c5"
+version = "0.6.0"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=083c06814464cf8f517af2c2aade1d8133ffe29b#083c06814464cf8f517af2c2aade1d8133ffe29b"
 dependencies = [
  "aligned-vec",
  "bincode",
@@ -6761,13 +6759,13 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "tfhe-zk-pok",
 ]
 
 [[package]]
 name = "tfhe-zk-pok"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "295b61b0aa9740749c657ef4244e15d4dbca114cd61d835bc4ff540b2464b8c9"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=083c06814464cf8f517af2c2aade1d8133ffe29b#083c06814464cf8f517af2c2aade1d8133ffe29b"
 dependencies = [
  "ark-bls12-381",
  "ark-ec",

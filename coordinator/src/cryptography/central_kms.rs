@@ -81,7 +81,10 @@ pub async fn async_generate_fhe_keys(
 }
 
 #[cfg(feature = "non-wasm")]
-pub async fn async_generate_crs(rng: AesRng, params: NoiseFloodParameters) -> PublicParameter {
+pub async fn async_generate_crs(
+    rng: AesRng,
+    params: NoiseFloodParameters,
+) -> anyhow::Result<PublicParameter> {
     gen_centralized_crs(&params, rng)
 }
 
@@ -105,29 +108,14 @@ pub fn generate_client_fhe_key(params: NoiseFloodParameters) -> ClientKey {
     ClientKey::generate(config)
 }
 
-/// Compute an estimate for the witness dim from given LWE params. This might come out of tfhe-rs in
-/// the future.
-#[cfg(feature = "non-wasm")]
-fn compute_witness_dimension(params: &NoiseFloodParameters) -> usize {
-    let d = params.ciphertext_parameters.lwe_dimension.0;
-    let k = 32_usize; // this is an upper estimate for a packed 64 bit message and in line with the example in https://eprint.iacr.org/2023/800.pdf p.68
-    let t = params.ciphertext_parameters.message_modulus.0;
-    let b = 1_u64 << 42; // this is an estimate from https://eprint.iacr.org/2023/800.pdf p.68 and will come from the parameters in the future
-
-    // dimension computation taken from https://eprint.iacr.org/2023/800.pdf p.68. Will come from the parameters in the future.
-    let big_d =
-        d + k * t.ilog2() as usize + (d + k) * (1 + b.ilog2() as usize + d.ilog2() as usize);
-
-    big_d + 1
-}
-
 /// compute the CRS in the centralized KMS.
 #[cfg(feature = "non-wasm")]
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     params: &NoiseFloodParameters,
     mut rng: R,
-) -> PublicParameter {
-    let witness_dim = compute_witness_dimension(params);
+) -> anyhow::Result<PublicParameter> {
+    use distributed_decryption::execution::zk::ceremony::compute_witness_dim;
+    let witness_dim = compute_witness_dim(&params.ciphertext_parameters)?;
     tracing::info!("Generating CRS with witness dimension {}.", witness_dim);
     let pparam = PublicParameter::new(witness_dim);
 
@@ -137,7 +125,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     tau.zeroize();
     r.zeroize();
 
-    pproof.new_pp
+    Ok(pproof.new_pp)
 }
 
 #[derive(Clone)]
@@ -267,7 +255,7 @@ impl KmsFheKeyHandles {
 #[cfg(feature = "non-wasm")]
 type KeyGenCallValues = (ClientKey, FhePubKeySet);
 #[cfg(feature = "non-wasm")]
-type CrsGenValues = PublicParameter;
+type CrsGenValues = anyhow::Result<PublicParameter>;
 
 // Values that needs to be stored temporarely as part of an async decryption call.
 // Represents the digest of the request and the result of the decryption.

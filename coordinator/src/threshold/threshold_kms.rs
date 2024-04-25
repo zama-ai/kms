@@ -1,6 +1,7 @@
 use crate::anyhow_error_and_log;
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, SEC_PAR};
 use crate::cryptography::central_kms::compute_info_from_key;
+use crate::kms::FhePubKeyInfo;
 use crate::kms::{coordinator_endpoint_server::CoordinatorEndpoint, RequestId};
 use crate::kms::{
     CrsGenRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
@@ -9,9 +10,8 @@ use crate::kms::{
     DecryptionRequest, DecryptionResponse, FheType, KeyGenRequest, KeyGenResult,
     ReencryptionRequest, ReencryptionResponse,
 };
-use crate::kms::{FhePubKeyInfo, ParamChoice};
 use crate::rpc::central_rpc::{
-    process_response, retrieve_paramters, tonic_handle_potential_err, tonic_some_or_err,
+    process_response, retrieve_parameters, tonic_handle_potential_err, tonic_some_or_err,
     validate_decrypt_req, validate_reencrypt_req,
 };
 use crate::rpc::rpc_types::{
@@ -48,7 +48,9 @@ use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::execution::tfhe_internals::parameters::{
     DKGParams, DKGParamsRegular, DKGParamsSnS,
 };
-use distributed_decryption::execution::zk::ceremony::{Ceremony, RealCeremony};
+use distributed_decryption::execution::zk::ceremony::{
+    compute_witness_dim, Ceremony, RealCeremony,
+};
 use distributed_decryption::execution::{
     endpoints::keygen::PrivateKeySet, small_execution::agree_random::RealAgreeRandomWithAbort,
 };
@@ -488,6 +490,10 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
         {
             // do not generate a new CRS if it already exists or it's already in progress
             // also do not generate a new one if an error has occured
+            //
+            // TODO this part needs to be updated to use persistent storage
+            // since [crs_meta_store] will be emptied after a restart and we
+            // lose the CRS generation status
             let mut guarded_meta_store = self.crs_meta_store.lock().await;
             match guarded_meta_store.get_mut(req_id) {
                 Some(CrsHandlerStatus::Done(_)) => Err(anyhow_error_and_log(format!(
@@ -730,7 +736,7 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
 
         //Retrieve the DKG parameters
         let params = tonic_handle_potential_err(
-            retrieve_paramters(inner.params),
+            retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
 
@@ -782,7 +788,7 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
 
         //Retrieve the DKG parameters
         let params = tonic_handle_potential_err(
-            retrieve_paramters(inner.params),
+            retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
         )?;
 
@@ -1011,20 +1017,14 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
 
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         let req_inner = request.into_inner();
-        let param = ParamChoice::try_from(req_inner.params)
-            .map_err(|e| tonic::Status::new(tonic::Code::InvalidArgument, e.to_string()))?;
-        let witness_dim = match param {
-            ParamChoice::Test => 10usize,
-            // TODO the correct witness dimension needs to be computed using
-            // the algorithm in CompactPkeCrs https://github.com/zama-ai/tfhe-rs/blob/main/tfhe/src/zk.rs
-            // from the LWE parameters. But currently there's no
-            // way to use this function without doing a trusted CRS generation
-            // we need to ask tfhe-rs to split this functionality so that we
-            // determine the correct witness dimension and use our own CRS generated
-            // from the ceremony.
-            // See https://github.com/zama-ai/kms-core/issues/431
-            ParamChoice::Default => 10000usize,
-        };
+
+        let fhe_params = crate::rpc::central_rpc::retrieve_parameters(req_inner.params)
+            .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?
+            .ciphertext_parameters;
+        let witness_dim = tonic_handle_potential_err(
+            compute_witness_dim(&fhe_params),
+            "witness dimension computation failed".to_string(),
+        )?;
 
         let req_id = req_inner.request_id.ok_or(tonic::Status::new(
             tonic::Code::InvalidArgument,

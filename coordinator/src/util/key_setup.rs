@@ -184,7 +184,7 @@ pub fn ensure_central_crs_store_exists(
         println!("Generating new centralized CRS store");
         let params: NoiseFloodParameters = read_as_json(param_path.to_owned()).unwrap();
         let mut rng = AesRng::seed_from_u64(42);
-        let crs = gen_centralized_crs(&params, &mut rng);
+        let crs = gen_centralized_crs(&params, &mut rng).unwrap();
         let handle = crs_handle.unwrap_or(TEST_CRS_ID.to_string());
 
         let kms = BaseKmsStruct::new(central_keys.software_kms_keys.sig_sk.clone());
