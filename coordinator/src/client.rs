@@ -26,7 +26,7 @@ use crate::rpc::rpc_types::{
 };
 #[cfg(feature = "non-wasm")]
 use crate::rpc::rpc_types::{
-    DecryptionRequestSerializable, DecryptionResponseSigPayload, PubDataType, KEY_GEN_REQUEST_NAME,
+    DecryptionRequestSerializable, DecryptionResponseSigPayload, PubDataType,
 };
 use crate::{anyhow_error_and_log, rpc::rpc_types::REENC_REQUEST_NAME};
 #[cfg(feature = "non-wasm")]
@@ -108,7 +108,6 @@ pub struct Client {
     client_sk: Option<PrivateSigKey>,
     shares_needed: u32,
     params: NoiseFloodParameters,
-    seq_no: u64, // Note that in production this number will come from the blockchain
 }
 
 // This testing struct needs to be outside of js_api module
@@ -122,7 +121,6 @@ pub struct TestingReencryptionTranscript {
     client_pk: PublicSigKey,
     shares_needed: u32,
     params: NoiseFloodParameters,
-    seq_no: u64, // Note that in production this number will come from the blockchain
     // request
     request: Option<ReencryptionRequest>,
     eph_sk: PrivateEncKey,
@@ -209,7 +207,6 @@ pub mod js_api {
         server_pks: Vec<PublicSigKey>,
         client_pk: PublicSigKey,
         shares_needed: u32,
-        seq_no: u64,
         params_json: &str,
     ) -> Client {
         console_error_panic_hook::set_once();
@@ -227,7 +224,6 @@ pub mod js_api {
             client_sk: None,
             shares_needed,
             params,
-            seq_no,
         }
     }
 
@@ -300,7 +296,6 @@ pub mod js_api {
             client_sk: None,
             shares_needed: transcript.shares_needed,
             params: transcript.params,
-            seq_no: transcript.seq_no,
         }
     }
 
@@ -397,7 +392,6 @@ impl Client {
             client_sk,
             shares_needed,
             params,
-            seq_no: 0,
         }
     }
 
@@ -437,26 +431,34 @@ impl Client {
         None
     }
 
+    /// Generates a key gen request.
+    /// The key generated will then be stored under the request_id handle.
+    /// In the threshold case, we also need to reference the preprocessing we want to consume via its [`RequestId`]
+    /// it can be set to None in the centralised case
     #[cfg(feature = "non-wasm")]
     pub fn key_gen_request(
-        &mut self,
-        key_handle: &str,
+        &self,
+        request_id: &str,
+        preproc_id: Option<RequestId>,
         param: Option<ParamChoice>,
     ) -> anyhow::Result<KeyGenRequest> {
         let parsed_param: i32 = match param {
             Some(parsed_param) => parsed_param.into(),
             None => ParamChoice::Default.into(),
         };
-        // TODO generate handle from request data
-        self.seq_no += 1;
+        let request_id = RequestId {
+            request_id: request_id.to_owned(),
+        };
+        if !request_id.is_valid() {
+            return Err(anyhow_error_and_log(format!(
+                "The request id format is not valid {request_id}"
+            )));
+        }
         Ok(KeyGenRequest {
             params: parsed_param,
             config: None,
-            seq_no: self.seq_no,
-            request_id: Some(RequestId::new(
-                &key_handle.to_string(),
-                KEY_GEN_REQUEST_NAME.to_string(),
-            )?),
+            preproc_id,
+            request_id: Some(request_id),
         })
     }
 
@@ -620,14 +622,14 @@ impl Client {
         &mut self,
         ct: Vec<u8>,
         fhe_type: FheType,
-        key_id: Option<String>,
+        key_id: Option<RequestId>,
     ) -> anyhow::Result<DecryptionRequest> {
         // Observe that this randomness can be reused across the servers since each server will have
         // a unique PK that is included in their response, hence it will still be validated
         // that each request contains a unique message to be signed hence ensuring CCA
         // security. TODO this argument should be validated
         let mut randomness: Vec<u8> = Vec::with_capacity(RND_SIZE);
-        let key_id = key_id.unwrap_or(TEST_KEY_ID.to_string());
+        let key_id = key_id.unwrap_or(((*TEST_KEY_ID).clone()).clone());
         self.rng.fill_bytes(&mut randomness);
         let serialized_req = DecryptionRequestSerializable {
             version: CURRENT_FORMAT_VERSION,
@@ -1334,8 +1336,6 @@ pub(crate) mod tests {
     use std::{env, fs};
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::{Channel, Uri};
-    #[cfg(feature = "slow_tests")]
-    use tracing_test::traced_test;
 
     async fn setup(
         kms_keys: SoftwareKmsKeys,
@@ -1481,7 +1481,7 @@ pub(crate) mod tests {
     async fn test_key_gen_centralized() {
         key_gen_centralized(
             TEST_CENTRAL_KEYS_PATH,
-            "someHandle",
+            "1234567890123456789012345678901234567890",
             Some(ParamChoice::Test),
         )
         .await;
@@ -1491,7 +1491,12 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn default_key_gen_centralized() {
-        key_gen_centralized(DEFAULT_CENTRAL_KEYS_PATH, "someHandle", None).await;
+        key_gen_centralized(
+            DEFAULT_CENTRAL_KEYS_PATH,
+            "1234567890123456789012345678901234567890",
+            None,
+        )
+        .await;
     }
 
     async fn key_gen_centralized(
@@ -1499,13 +1504,15 @@ pub(crate) mod tests {
         key_handle: &str,
         params: Option<ParamChoice>,
     ) {
-        let (kms_server, mut kms_client, mut internal_client) =
+        let (kms_server, mut kms_client, internal_client) =
             centralized_handles(centralized_key_path, None).await;
         // Remove exisiting keys to make the test idempotent
         let storage = DevStorage::default();
         let _ = fs::remove_dir_all(storage.root_dir());
 
-        let gen_req = internal_client.key_gen_request(key_handle, params).unwrap();
+        let gen_req = internal_client
+            .key_gen_request(key_handle, None, params)
+            .unwrap();
         let req_id = gen_req.request_id.clone().unwrap();
         let gen_response = kms_client
             .key_gen(tonic::Request::new(gen_req.clone()))
@@ -2056,7 +2063,6 @@ pub(crate) mod tests {
                     request: None,
                     eph_sk: enc_sk.clone(),
                     eph_pk: enc_pk.clone(),
-                    seq_no: internal_client.seq_no,
                     agg_resp: HashMap::from([(1, inner_response.clone())]),
                 };
                 write_element(TEST_CENTRAL_WASM_TRANSCRIPT_PATH.to_string(), &transcript).unwrap();
@@ -2223,7 +2229,6 @@ pub(crate) mod tests {
                     request: Some(req.clone()),
                     eph_sk: enc_sk.clone(),
                     eph_pk: enc_pk.clone(),
-                    seq_no: internal_client.seq_no,
                     agg_resp: response_map.clone(),
                 };
                 write_element(TEST_THRESHOLD_WASM_TRANSCRIPT_PATH.to_string(), &transcript)
@@ -2313,9 +2318,32 @@ pub(crate) mod tests {
         assert_eq!(num_blocks(FheType::Euint160, params), 80);
     }
 
+    //Check status of preproc request
+    #[cfg(feature = "slow_tests")]
+    async fn get_preproc_status(
+        request: crate::kms::KeyGenPreprocRequest,
+        kms_clients: &HashMap<u32, CoordinatorEndpointClient<Channel>>,
+    ) -> Vec<crate::kms::KeyGenPreprocStatus> {
+        let mut tasks = JoinSet::new();
+        for i in 1..=AMOUNT_PARTIES as u32 {
+            let req_clone = request.clone();
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            tasks.spawn(async move {
+                cur_client
+                    .get_preproc_status(tonic::Request::new(req_clone))
+                    .await
+            });
+        }
+        let mut responses = Vec::new();
+        while let Some(Ok(Ok(resp))) = tasks.join_next().await {
+            responses.push(resp.into_inner());
+        }
+
+        responses
+    }
+
     #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread")]
-    #[traced_test]
     #[serial]
     async fn test_preproc() {
         use crate::kms::{KeyGenPreprocRequest, KeyGenPreprocStatusEnum};
@@ -2352,20 +2380,7 @@ pub(crate) mod tests {
             expected_res: KeyGenPreprocStatusEnum,
             kms_clients: &HashMap<u32, CoordinatorEndpointClient<Channel>>,
         ) {
-            let mut tasks = JoinSet::new();
-            for i in 1..=AMOUNT_PARTIES as u32 {
-                let req_clone = request.clone();
-                let mut cur_client = kms_clients.get(&i).unwrap().clone();
-                tasks.spawn(async move {
-                    cur_client
-                        .get_preproc_status(tonic::Request::new(req_clone))
-                        .await
-                });
-            }
-            let mut responses = Vec::new();
-            while let Some(Ok(Ok(resp))) = tasks.join_next().await {
-                responses.push(resp.into_inner());
-            }
+            let responses = get_preproc_status(request, kms_clients).await;
 
             for resp in responses {
                 let expected: i32 = expected_res.into();
@@ -2405,33 +2420,205 @@ pub(crate) mod tests {
         .await;
 
         //Wait for 5 min max (should be plenty of time for the test params)
-        let mut logs_ok = false;
+        let mut finished: Vec<_> = Vec::new();
+        let finished_enum: i32 = KeyGenPreprocStatusEnum::Finished.into();
         for _ in 0..20 {
             tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-            for kms_client in kms_clients.iter() {
-                let expected_log = format!("Preproc Finished P[{}]", kms_client.0);
-                //Check tracing contains expected output
-                if !logs_contain(&expected_log) {
-                    break;
-                }
-                logs_ok = true;
-            }
-            if logs_ok {
+            let preproc_status = get_preproc_status(req_status_ok.clone(), &kms_clients).await;
+            finished = preproc_status
+                .into_iter()
+                .filter(|x| x.result == finished_enum)
+                .collect();
+
+            if finished.len() == AMOUNT_PARTIES {
                 break;
             }
         }
 
-        //Make sure the get_status returns OK now
-        test_preproc_status(
-            req_status_ok.clone(),
-            KeyGenPreprocStatusEnum::Finished,
-            &kms_clients,
-        )
-        .await;
+        //Make sure we did break because preproc is finished and not because of timeout
+        assert_eq!(finished.len(), AMOUNT_PARTIES);
 
         for kms_server in kms_servers {
             kms_server.1.abort();
         }
-        assert!(logs_ok);
+    }
+
+    //Helper function to launch dkg
+    #[cfg(feature = "slow_tests")]
+    async fn launch_dkg(
+        request_id_keygen: &str,
+        req_keygen: crate::kms::KeyGenRequest,
+        kms_clients: &HashMap<u32, CoordinatorEndpointClient<Channel>>,
+    ) -> Vec<Result<tonic::Response<Empty>, tonic::Status>> {
+        let mut tasks_gen = JoinSet::new();
+        for i in 1..=AMOUNT_PARTIES as u32 {
+            //clean up storage
+            let root_dir = DevStorage::new(&format!("p{i}")).root_dir();
+            let mut pk_file = root_dir.clone();
+            pk_file.push(format!("{request_id_keygen}-PublicKey.key"));
+            let _ = fs::remove_file(pk_file);
+            let mut serverk_file = root_dir.clone();
+            serverk_file.push(format!("{request_id_keygen}-ServerKey.key"));
+            let _ = fs::remove_file(serverk_file);
+
+            //Send kg request
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            let req_clone = req_keygen.clone();
+            tasks_gen
+                .spawn(async move { cur_client.key_gen(tonic::Request::new(req_clone)).await });
+        }
+
+        let mut responses_gen = Vec::new();
+        while let Some(Ok(resp)) = tasks_gen.join_next().await {
+            responses_gen.push(resp);
+        }
+        responses_gen
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn test_dkg() {
+        use crate::kms::KeyGenPreprocStatusEnum;
+        use itertools::Itertools;
+
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(TEST_THRESHOLD_KEYS_PATH).await;
+
+        let request_id_preproc = "0000000000000000000000000000000000000011";
+        let req_preproc = internal_client
+            .preproc_request(request_id_preproc, Some(ParamChoice::Test))
+            .unwrap();
+
+        let mut tasks_gen = JoinSet::new();
+        for i in 1..=AMOUNT_PARTIES as u32 {
+            let mut cur_client = kms_clients.get(&i).unwrap().clone();
+            let req_clone = req_preproc.clone();
+            tasks_gen.spawn(async move {
+                cur_client
+                    .key_gen_preproc(tonic::Request::new(req_clone))
+                    .await
+            });
+        }
+
+        let mut responses_gen = Vec::new();
+        while let Some(Ok(Ok(resp))) = tasks_gen.join_next().await {
+            responses_gen.push(resp.into_inner());
+        }
+        assert_eq!(responses_gen.len(), AMOUNT_PARTIES);
+
+        //Wait for 5 min max (should be plenty of time for the test params)
+        let finished_enum: i32 = KeyGenPreprocStatusEnum::Finished.into();
+        let mut finished = Vec::new();
+        for _ in 0..20 {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+
+            let status = get_preproc_status(req_preproc.clone(), &kms_clients).await;
+            finished = status
+                .into_iter()
+                .filter(|x| x.result == finished_enum)
+                .collect_vec();
+            if finished.len() == AMOUNT_PARTIES {
+                break;
+            }
+        }
+
+        //Make sure we broke for loop because we indeed have finished preproc
+        assert_eq!(finished.len(), AMOUNT_PARTIES);
+
+        //Preproc is now ready, start legitimate dkg
+        let preproc_id = req_preproc.request_id.clone();
+        let request_id_keygen = "0000000000000000000000000000000000000022";
+        let req_keygen = internal_client
+            .key_gen_request(request_id_keygen, preproc_id, Some(ParamChoice::Test))
+            .unwrap();
+        let responses = launch_dkg(request_id_keygen, req_keygen.clone(), &kms_clients).await;
+        for response in responses {
+            assert!(response.is_ok());
+        }
+
+        //Wait 5 min max (should be enough here too)
+        let req_get_keygen = req_keygen.request_id.clone().unwrap();
+        let mut finished = Vec::new();
+        for _ in 0..20 {
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+
+            let mut tasks = JoinSet::new();
+            for i in 1..=AMOUNT_PARTIES as u32 {
+                let req_clone = req_get_keygen.clone();
+                let mut cur_client = kms_clients.get(&i).unwrap().clone();
+                tasks.spawn(async move {
+                    (
+                        i,
+                        cur_client
+                            .get_key_gen_result(tonic::Request::new(req_clone))
+                            .await,
+                    )
+                });
+            }
+            let mut responses = Vec::new();
+            while let Some(Ok(resp)) = tasks.join_next().await {
+                responses.push(resp);
+            }
+
+            finished = responses.into_iter().filter(|x| x.1.is_ok()).collect_vec();
+            if finished.len() == AMOUNT_PARTIES {
+                break;
+            }
+        }
+
+        let finished = finished
+            .into_iter()
+            .map(|x| {
+                (
+                    DevStorage::new(&format!("p{}", x.0)),
+                    x.1.unwrap().into_inner(),
+                )
+            })
+            .collect_vec();
+
+        let mut serialized_ref_pk = Vec::new();
+        let mut serialized_ref_server_key = Vec::new();
+        for (idx, (storage, kg_res)) in finished.into_iter().enumerate() {
+            let pk: Option<FhePublicKey> = internal_client
+                .retrieve_key(&kg_res, PubDataType::PublicKey, &storage)
+                .unwrap();
+            assert!(pk.is_some());
+            if idx == 0 {
+                serialized_ref_pk = bincode::serialize(&(pk.unwrap())).unwrap();
+            } else {
+                assert_eq!(
+                    serialized_ref_pk,
+                    bincode::serialize(&(pk.unwrap())).unwrap()
+                )
+            }
+            let server_key: Option<tfhe::ServerKey> = internal_client
+                .retrieve_key(&kg_res, PubDataType::ServerKey, &storage)
+                .unwrap();
+            assert!(server_key.is_some());
+            if idx == 0 {
+                serialized_ref_server_key = bincode::serialize(&(server_key.unwrap())).unwrap();
+            } else {
+                assert_eq!(
+                    serialized_ref_server_key,
+                    bincode::serialize(&(server_key.unwrap())).unwrap()
+                )
+            }
+        }
+
+        //Try to request another kg with the same preproc
+        let preproc_id = req_preproc.request_id;
+        let request_id_keygen = "0000000000000000000000000000000000000222";
+        let req_keygen = internal_client
+            .key_gen_request(request_id_keygen, preproc_id, Some(ParamChoice::Test))
+            .unwrap();
+        let responses = launch_dkg(request_id_keygen, req_keygen.clone(), &kms_clients).await;
+        for response in responses {
+            assert!(response.unwrap_err().code() == tonic::Code::NotFound);
+        }
+
+        for kms_server in kms_servers {
+            kms_server.1.abort();
+        }
     }
 }

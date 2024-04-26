@@ -107,7 +107,7 @@ async fn main() -> Result<(), anyhow::Error> {
         Mode::Dev => {
             if !Path::new(DEFAULT_CENTRAL_KEYS_PATH).exists() {
                 tracing::info!(
-                    "Could not find default keys. Generating new keys with default parameters and ID \"{}\"...", TEST_KEY_ID
+                    "Could not find default keys. Generating new keys with default parameters and ID \"{}\"...", (*TEST_KEY_ID).clone()
                 );
                 write_default_keys(DEFAULT_CENTRAL_KEYS_PATH);
             };
@@ -116,7 +116,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
             if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
                 tracing::info!(
-                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", TEST_CRS_ID
+                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", (*TEST_CRS_ID).clone()
                 );
                 write_default_crs_store();
             };
@@ -262,13 +262,13 @@ async fn main() -> Result<(), anyhow::Error> {
 
             // start the KMS
             let keys = SoftwareKmsKeys {
-                key_info: HashMap::from([(TEST_KEY_ID.to_string(), fhe_sk)]),
+                key_info: HashMap::from([((*TEST_KEY_ID).clone(), fhe_sk)]),
                 sig_sk,
                 sig_pk,
             };
             if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
                 tracing::info!(
-                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", TEST_CRS_ID
+                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", (*TEST_CRS_ID).clone()
                 );
                 write_default_crs_store();
             };

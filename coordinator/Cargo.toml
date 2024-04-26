@@ -45,6 +45,7 @@ distributed-decryption = { path = "../core/threshold/", default-features = false
 hex = "0.4.3"
 itertools = "0.12"
 k256 = "0.13.3"
+lazy_static = "~1.4"
 nom = "7.1.3"
 prost = "0.12.3"
 rand = { version = "~0.8", features = ["std", "std_rng"] }

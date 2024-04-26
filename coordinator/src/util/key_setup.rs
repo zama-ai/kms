@@ -1,5 +1,5 @@
 use crate::cryptography::central_kms::compute_info;
-use crate::kms::FheType;
+use crate::kms::{FheType, RequestId};
 use crate::threshold::threshold_kms::ThresholdKmsKeys;
 use crate::{
     consts::{
@@ -56,7 +56,7 @@ pub struct ThresholdTestingKeys {
 pub struct CentralizedTestingKeys {
     pub params: NoiseFloodParameters,
     pub software_kms_keys: SoftwareKmsKeys,
-    pub pub_fhe_keys: HashMap<String, FhePubKeySet>,
+    pub pub_fhe_keys: HashMap<RequestId, FhePubKeySet>,
     pub client_pk: PublicSigKey,
     pub client_sk: PrivateSigKey,
     pub server_keys: Vec<PublicSigKey>,
@@ -65,7 +65,7 @@ pub struct CentralizedTestingKeys {
 #[derive(Serialize, Deserialize)]
 pub struct CrsHandleStore {
     pub params: NoiseFloodParameters,
-    pub crs: HashMap<String, PublicParameter>,
+    pub crs: HashMap<RequestId, PublicParameter>,
     pub crs_info: CrsHashMap,
 }
 
@@ -78,7 +78,7 @@ pub fn ensure_dir_exist() {
 fn ensure_threshold_keys_exist(
     param_path: &str,
     threshold_key_path: &str,
-    key_handle: Option<String>,
+    key_handle: Option<RequestId>,
 ) {
     if !Path::new(&threshold_key_path).try_exists().unwrap() {
         println!("Generating new threshold keys");
@@ -120,7 +120,7 @@ fn ensure_threshold_keys_exist(
             };
             let kms_keys = ThresholdKmsKeys {
                 fhe_keys: HashMap::from([(
-                    key_handle.clone().unwrap_or(TEST_KEY_ID.to_string()),
+                    key_handle.clone().unwrap_or((*TEST_KEY_ID).clone()),
                     threshold_fhe_keys,
                 )]),
                 sig_sk: sks[i - 1].clone(),
@@ -143,7 +143,7 @@ fn ensure_threshold_keys_exist(
 pub fn ensure_central_keys_exist(
     param_path: &str,
     central_key_path: &str,
-    key_handle: Option<String>,
+    key_handle: Option<RequestId>,
 ) {
     if !Path::new(central_key_path).try_exists().unwrap() {
         println!("Generating new centralized keys");
@@ -160,7 +160,7 @@ pub fn ensure_central_keys_exist(
             client_sk,
             server_keys,
             pub_fhe_keys: HashMap::from([(
-                key_handle.unwrap_or(TEST_KEY_ID.to_string()),
+                key_handle.unwrap_or((*TEST_KEY_ID).clone()),
                 pub_fhe_keys,
             )]),
         };
@@ -172,10 +172,10 @@ pub fn ensure_central_crs_store_exists(
     param_path: &str,
     central_crs_path: &str,
     central_key_path: &str,
-    crs_handle: Option<String>,
+    crs_handle: Option<RequestId>,
 ) {
     if !Path::new(central_key_path).try_exists().unwrap() {
-        ensure_central_keys_exist(param_path, central_key_path, Some(TEST_KEY_ID.to_string()));
+        ensure_central_keys_exist(param_path, central_key_path, Some((*TEST_KEY_ID).clone()));
     }
 
     if !Path::new(central_crs_path).try_exists().unwrap() {
@@ -185,7 +185,7 @@ pub fn ensure_central_crs_store_exists(
         let params: NoiseFloodParameters = read_as_json(param_path.to_owned()).unwrap();
         let mut rng = AesRng::seed_from_u64(42);
         let crs = gen_centralized_crs(&params, &mut rng).unwrap();
-        let handle = crs_handle.unwrap_or(TEST_CRS_ID.to_string());
+        let handle = crs_handle.unwrap_or((*TEST_CRS_ID).clone());
 
         let kms = BaseKmsStruct::new(central_keys.software_kms_keys.sig_sk.clone());
         let crs_info = compute_info(&kms, &crs).unwrap();
@@ -203,7 +203,7 @@ pub fn ensure_central_crs_store_exists(
 pub fn ensure_central_multiple_keys_ct_exist(
     param_path: &str,
     central_keys_path: &str,
-    other_key_handle: &str,
+    other_key_handle: RequestId,
     ciphertext_path: &str,
 ) {
     if !Path::new(central_keys_path).try_exists().unwrap() {
@@ -212,7 +212,7 @@ pub fn ensure_central_multiple_keys_ct_exist(
         let mut rng = AesRng::seed_from_u64(1);
         // Generate keys with default handle
         let (mut software_kms_keys, pub_fhe_keys) =
-            gen_default_kms_keys(params, &mut rng, Some(TEST_KEY_ID.to_string()));
+            gen_default_kms_keys(params, &mut rng, Some((*TEST_KEY_ID).clone()));
         let (other_client_key, other_pub_keys) = generate_fhe_keys(params);
         let kms = BaseKmsStruct::new(software_kms_keys.sig_sk.clone());
         let other_key_info =
@@ -220,10 +220,10 @@ pub fn ensure_central_multiple_keys_ct_exist(
         // Insert a key with another handle to setup a KMS with multiple keys
         software_kms_keys
             .key_info
-            .insert(other_key_handle.to_string(), other_key_info);
+            .insert(other_key_handle.clone(), other_key_info);
         let pub_fhe_map = HashMap::from([
-            (TEST_KEY_ID.to_string(), pub_fhe_keys),
-            (other_key_handle.to_string(), other_pub_keys),
+            ((*TEST_KEY_ID).clone(), pub_fhe_keys),
+            (other_key_handle.clone(), other_pub_keys),
         ]);
         let server_keys = vec![software_kms_keys.sig_pk.clone()];
         let (client_pk, client_sk) = gen_sig_keys(&mut rng);
@@ -241,7 +241,7 @@ pub fn ensure_central_multiple_keys_ct_exist(
         let central_keys: CentralizedTestingKeys = read_element(central_keys_path).unwrap();
         let fhe_pk = &central_keys
             .pub_fhe_keys
-            .get(other_key_handle)
+            .get(&other_key_handle)
             .unwrap()
             .public_key;
         ensure_ciphertext_exist(ciphertext_path, fhe_pk);
@@ -268,13 +268,13 @@ pub fn ensure_central_key_ct_exist(
     ciphertext_path: &str,
 ) {
     if !Path::new(central_key_path).try_exists().unwrap() {
-        ensure_central_keys_exist(param_path, central_key_path, Some(TEST_KEY_ID.to_string()));
+        ensure_central_keys_exist(param_path, central_key_path, Some((*TEST_KEY_ID).clone()));
     }
     if !Path::new(ciphertext_path).try_exists().unwrap() {
         let central_keys: CentralizedTestingKeys = read_element(central_key_path).unwrap();
         let fhe_pk = &central_keys
             .pub_fhe_keys
-            .get(TEST_KEY_ID)
+            .get(&TEST_KEY_ID)
             .unwrap()
             .public_key;
         ensure_ciphertext_exist(ciphertext_path, fhe_pk);
@@ -294,7 +294,7 @@ pub fn ensure_threshold_key_ct_exist(
         ensure_threshold_keys_exist(
             param_path,
             threshold_key_path,
-            Some(TEST_KEY_ID.to_string()),
+            Some(((*TEST_KEY_ID).clone()).clone()),
         );
     }
     if !Path::new(ciphertext_path).try_exists().unwrap() {

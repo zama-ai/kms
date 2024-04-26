@@ -3636,6 +3636,7 @@ dependencies = [
  "hex",
  "itertools 0.12.1",
  "k256",
+ "lazy_static",
  "nom",
  "prost 0.12.4",
  "rand",

@@ -91,7 +91,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
             "No request ID present in request".to_string(),
         )?;
         validate_request_id(&request_id)?;
-        if key_gen_map.get(&request_id.to_string()).is_some() {
+        if key_gen_map.get(&request_id).is_some() {
             return Err(tonic::Status::new(
                 tonic::Code::AlreadyExists,
                 format!(
@@ -127,7 +127,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         )?;
         let future_keys = tokio::spawn(async_generate_fhe_keys(params));
 
-        key_gen_map.insert(request_id.to_string(), future_keys);
+        key_gen_map.insert(request_id, future_keys);
 
         Ok(Response::new(Empty {}))
     }
@@ -184,7 +184,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
             format!("Invalid key in request {:?}", inner),
         )?;
         let mut reenc_map = self.reenc_map.lock().await;
-        if reenc_map.get(&request_id.to_string()).is_some() {
+        if reenc_map.get(&request_id).is_some() {
             return Err(tonic::Status::new(
                 tonic::Code::AlreadyExists,
                 format!(
@@ -221,7 +221,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
                 .await,
             )
         });
-        reenc_map.insert(request_id.to_string(), future_reenc);
+        reenc_map.insert(request_id, future_reenc);
         Ok(Response::new(Empty {}))
     }
 
@@ -263,7 +263,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
                 format!("Invalid key in request {:?}", inner),
             )?;
         let mut decrypt_map = self.decrypt_map.lock().await;
-        if decrypt_map.get(&request_id.to_string()).is_some() {
+        if decrypt_map.get(&request_id).is_some() {
             return Err(tonic::Status::new(
                 tonic::Code::AlreadyExists,
                 format!(
@@ -286,7 +286,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
             )
         });
 
-        decrypt_map.insert(request_id.to_string(), future_plaintext);
+        decrypt_map.insert(request_id, future_plaintext);
         Ok(Response::new(Empty {}))
     }
 
@@ -343,7 +343,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
             ));
         }
         let mut crs_gen_map = self.crs_gen_map.lock().await;
-        if crs_gen_map.get(&request_id.to_string()).is_some() {
+        if crs_gen_map.get(request_id).is_some() {
             return Err(tonic::Status::new(
                 tonic::Code::AlreadyExists,
                 format!(
@@ -381,7 +381,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         )?;
 
         let future_crs = tokio::spawn(async_generate_crs(rng, params));
-        crs_gen_map.insert(request_id.to_string(), future_crs);
+        crs_gen_map.insert(request_id.clone(), future_crs);
 
         Ok(Response::new(Empty {}))
     }
@@ -444,7 +444,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
         // same request_ID to occur. Thus leading to unexpected and incorrect behaviour.
         let mut crs_handles = self.crs_handles.lock().await;
         let mut crs_gen_map = self.crs_gen_map.lock().await;
-        let crs_gen_handle = crs_gen_map.remove(&request_id.to_string());
+        let crs_gen_handle = crs_gen_map.remove(&request_id);
         // Handle the four different cases:
         // 1. Request ID exists and is being generated but is not finished yet
         // 2. Request ID exists and generation has finished, but not been processed yet
@@ -456,7 +456,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 if !crs_gen_handle.is_finished() {
                     // Case 1: The request ID is currently generating but not finished yet
                     // Reinsert the handle into the genration map
-                    crs_gen_map.insert(request_id.to_string(), crs_gen_handle);
+                    crs_gen_map.insert(request_id, crs_gen_handle);
                     return Ok(None);
                 }
 
@@ -464,12 +464,12 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 let pp = crs_gen_handle.await??;
                 let crs_info = compute_info(self, &pp)?;
                 // Insert the key information into the map of keys
-                crs_handles.insert(request_id.to_string(), crs_info.clone());
+                crs_handles.insert(request_id.clone(), crs_info.clone());
                 store_crs(&self.storage, &request_id, &crs_info, &pp)?;
                 Ok(Some(crs_info))
             }
             None => {
-                match crs_handles.get(&request_id.to_string()) {
+                match crs_handles.get(&request_id) {
                     Some(handles) => {
                         // Case 3: Request is not in crs generation map, so check if it is already done
                         Ok(Some(handles.clone()))
@@ -498,7 +498,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
         // same request_ID to occur. Thus leading to unexpected and incorrect behaviour.
         let mut key_handles = self.key_handles.lock().await;
         let mut key_gen_map = self.key_gen_map.lock().await;
-        let key_gen_handle = key_gen_map.remove(&request_id.to_string());
+        let key_gen_handle = key_gen_map.remove(&request_id);
         // Handle the four different cases:
         // 1. Request ID exists and is being generated but is not finished yet
         // 2. Request ID exists and generation has finished, but not been processed yet
@@ -509,14 +509,14 @@ impl<S: PublicStorage> SoftwareKms<S> {
             Some(key_gen_handle) => {
                 if !key_gen_handle.is_finished() {
                     // Case 1: The request ID is currently generating but not finished yet
-                    key_gen_map.insert(request_id.to_string(), key_gen_handle);
+                    key_gen_map.insert(request_id, key_gen_handle);
                     return Ok(None);
                 }
                 // Case 2: The key generation is finished, so we can now generate the key information
                 let (client_key, pub_keys) = key_gen_handle.await?;
                 let new_key_info = KmsFheKeyHandles::new(self, client_key, &pub_keys)?;
                 // Insert the key information into the map of keys
-                key_handles.insert(request_id.to_string(), new_key_info.clone());
+                key_handles.insert(request_id.clone(), new_key_info.clone());
                 store_public_keys(
                     &self.storage,
                     &request_id,
@@ -526,7 +526,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 Ok(Some(new_key_info.public_key_info))
             }
             None => {
-                match key_handles.get(&request_id.to_string()) {
+                match key_handles.get(&request_id) {
                     Some(handles) => {
                         // Case 3: Request is not in key generation map, so check if it is already done
                         Ok(Some(handles.public_key_info.clone()))
@@ -552,7 +552,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
     ) -> Result<(Aux, Vec<u8>), Status> {
         // We remove the handle and thus must remember to reinsert it again if it is not fully processed
         let mut unwrapped_handle_map = handle_map.lock().await;
-        let handle = unwrapped_handle_map.remove(&request_id.clone().to_string());
+        let handle = unwrapped_handle_map.remove(&request_id);
 
         // Handle decryption based on the 3 possible cases:
         // Case 1: The request ID is currently being processed but not finished yet
@@ -563,7 +563,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 if !inner_handle.is_finished() {
                     // Case 1: The request ID is currently being processed but not finished yet
                     // Reinsert the handle
-                    unwrapped_handle_map.insert(request_id.to_string(), inner_handle);
+                    unwrapped_handle_map.insert(request_id.clone(), inner_handle);
                     return Err(tonic::Status::new(
                         tonic::Code::Unavailable,
                         format!(
@@ -603,7 +603,7 @@ impl<S: PublicStorage> SoftwareKms<S> {
 }
 
 /// Validates a request ID and returns an appropriate tonic error if it is invalid.
-fn validate_request_id(request_id: &RequestId) -> Result<(), Status> {
+pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), Status> {
     if !request_id.is_valid() {
         tracing::warn!(
             "The value {} is not a valid request ID!",
@@ -656,7 +656,7 @@ pub async fn validate_reencrypt_req(
     PublicEncKey,
     PublicSigKey,
     u32,
-    String,
+    RequestId,
     RequestId,
 )> {
     let payload = tonic_some_ref_or_err(
@@ -679,6 +679,10 @@ pub async fn validate_reencrypt_req(
             payload.version, CURRENT_FORMAT_VERSION
         )));
     }
+    let key_id = tonic_some_or_err(
+        payload.key_id.clone(),
+        format!("The request {:?} does not have a key_id", req),
+    )?;
     let sig_payload: ReencryptionRequestSigPayload = payload.clone().try_into()?;
     let sig_payload_serialized = to_vec(&sig_payload)?;
     let domain = protobuf_to_alloy_domain(tonic_some_ref_or_err(
@@ -714,7 +718,7 @@ pub async fn validate_reencrypt_req(
         client_enc_key,
         client_verf_key,
         payload.servers_needed,
-        payload.key_id.clone(),
+        key_id,
         request_id,
     ))
 }
@@ -726,8 +730,11 @@ pub async fn validate_reencrypt_req(
 /// is needed.
 pub async fn validate_decrypt_req(
     req: &DecryptionRequest,
-) -> anyhow::Result<(Vec<u8>, FheType, Vec<u8>, u32, String, RequestId)> {
-    let key_id = req.key_id.clone();
+) -> anyhow::Result<(Vec<u8>, FheType, Vec<u8>, u32, RequestId, RequestId)> {
+    let key_id = tonic_some_or_err(
+        req.key_id.clone(),
+        format!("The request {:?} does not have a key_id", req),
+    )?;
     let ciphertext = req.ciphertext.clone();
     if req.version != CURRENT_FORMAT_VERSION {
         return Err(anyhow_error_and_warn_log(format!(

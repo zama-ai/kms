@@ -386,10 +386,11 @@ where
         runtime_handle: Handle,
     ) -> anyhow::Result<()> {
         let party_id = sessions[0].own_identity();
+        let own_role = sessions[0].my_role()?;
         for session in sessions.iter() {
             assert_eq!(party_id, session.own_identity());
         }
-        println!("Entering orchestrator for  {}", party_id);
+        tracing::info!("Entering orchestrator for  P[{own_role}]");
 
         let task_basic_gen = |mut session: SmallSession<R>, span: tracing::Span| async move {
             let batch_size = match type_orchestration {
@@ -441,10 +442,11 @@ where
         runtime_handle: Handle,
     ) -> anyhow::Result<()> {
         let party_id = sessions[0].own_identity();
+        let own_role = sessions[0].my_role()?;
         for session in sessions.iter() {
             assert_eq!(party_id, session.own_identity());
         }
-        println!("Entering orchestrator for  {}", party_id);
+        tracing::info!("Entering orchestrator for  P[{own_role}]");
 
         let task_basic_gen = |mut session: LargeSession, span: tracing::Span| async move {
             let batch_size = match type_orchestration {

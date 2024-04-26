@@ -1,4 +1,5 @@
-use crate::kms::FheType;
+use crate::kms::{FheType, RequestId};
+use lazy_static::lazy_static;
 
 // The amount of bytes in an ID (key handle, request ID etc.)
 pub const ID_LENGTH: usize = 20;
@@ -31,9 +32,21 @@ pub const COMPRESSED: bool = true;
 
 pub const MINIMUM_SESSIONS_PREPROC: u128 = 2;
 
-pub const TEST_KEY_ID: &str = "keytest"; // TODO should be a valid request id
-pub const TEST_CRS_ID: &str = "crstest";
-pub const TEST_DEC_ID: &str = "dectest";
+lazy_static! {
+    pub static ref TEST_KEY_ID: RequestId = RequestId {
+        request_id: String::from("0000000000000000000000000000000000000000")
+    };
+    pub static ref TEST_CRS_ID: RequestId = RequestId {
+        request_id: String::from("0000000000000000000000000000000000000001")
+    };
+    pub static ref TEST_DEC_ID: RequestId = RequestId {
+        request_id: String::from("0000000000000000000000000000000000000002")
+    };
+    pub static ref OTHER_KEY_HANDLE: RequestId = RequestId {
+        request_id: String::from("1111111111111111111111111111111111111111")
+    };
+}
+
 pub const TEST_PARAM_PATH: &str = "parameters/small_test_params.json";
 pub const TEST_THRESHOLD_KEYS_PATH: &str = "temp/test-threshold-keys";
 pub const TEST_THRESHOLD_CT_PATH: &str = "temp/test-threshold-ciphertext.bin";
@@ -44,6 +57,5 @@ pub const TEST_CENTRAL_CT_PATH: &str = "temp/test-central-ciphertext.bin";
 pub const TEST_CENTRAL_MULTI_CT_PATH: &str = "temp/test-central-multi-keys-ciphertext.bin";
 pub const TEST_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/test-central-wasm-transcript.bin";
 pub const TEST_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/test-threshold-wasm-transcript.bin";
-pub const OTHER_KEY_HANDLE: &str = "otherKeyHandle";
 
 pub const TEST_SEC_PAR: u64 = 40;

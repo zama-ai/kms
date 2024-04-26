@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 #[cfg(feature = "non-wasm")]
-use consts::{DEFAULT_PARAM_PATH, TEST_KEY_ID};
+use consts::DEFAULT_PARAM_PATH;
 use std::fmt;
 use std::panic::Location;
 #[cfg(feature = "non-wasm")]
@@ -70,9 +70,11 @@ pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) ->
 #[cfg(feature = "non-wasm")]
 pub fn write_default_keys(path: &str) {
     use crate::{
-        consts::TMP_PATH_PREFIX,
-        util::file_handling::read_element,
-        util::key_setup::{ensure_central_keys_exist, CentralizedTestingKeys},
+        consts::{TEST_KEY_ID, TMP_PATH_PREFIX},
+        util::{
+            file_handling::read_element,
+            key_setup::{ensure_central_keys_exist, CentralizedTestingKeys},
+        },
     };
     use std::path::Path;
 
@@ -90,9 +92,13 @@ pub fn write_default_keys(path: &str) {
         println!("Keys already exist. Done executing write_default_keys without the need for writing anything.");
         return;
     }
-    ensure_central_keys_exist(DEFAULT_PARAM_PATH, path, Some(TEST_KEY_ID.to_string()));
+    ensure_central_keys_exist(
+        DEFAULT_PARAM_PATH,
+        path,
+        Some(((*TEST_KEY_ID).clone()).clone()),
+    );
     let central_keys: CentralizedTestingKeys = read_element(path).unwrap();
-    let pks = central_keys.pub_fhe_keys.get(TEST_KEY_ID).unwrap();
+    let pks = central_keys.pub_fhe_keys.get(&TEST_KEY_ID).unwrap();
     // Write down the seperate keys needed to run the server
     if !Path::new(&format!("{TMP_PATH_PREFIX}/pks.bin"))
         .try_exists()
@@ -118,7 +124,7 @@ pub fn write_default_keys(path: &str) {
             &central_keys
                 .software_kms_keys
                 .key_info
-                .get(TEST_KEY_ID)
+                .get(&TEST_KEY_ID)
                 .unwrap()
                 .client_key,
         )
@@ -136,7 +142,7 @@ pub fn write_default_crs_store() {
         DEFAULT_PARAM_PATH,
         DEFAULT_CENTRAL_CRS_PATH,
         DEFAULT_CENTRAL_KEYS_PATH,
-        Some(TEST_CRS_ID.to_string()),
+        Some((*TEST_CRS_ID).clone()),
     );
 }
 

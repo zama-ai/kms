@@ -7,6 +7,8 @@ use crate::anyhow_error_and_log;
 use crate::consts::TEST_KEY_ID;
 use crate::kms::FhePubKeyInfo;
 #[cfg(feature = "non-wasm")]
+use crate::kms::RequestId;
+#[cfg(feature = "non-wasm")]
 use crate::storage::PublicStorage;
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
@@ -56,13 +58,13 @@ pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSi
 pub fn gen_default_kms_keys<R: CryptoRng + RngCore>(
     params: NoiseFloodParameters,
     rng: &mut R,
-    key_handle: Option<String>,
+    key_handle: Option<RequestId>,
 ) -> (SoftwareKmsKeys, FhePubKeySet) {
     let (client_key, fhe_pub_keys) = generate_fhe_keys(params);
     let (server_pk, server_sk) = gen_sig_keys(rng);
     let kms = BaseKmsStruct::new(server_sk.clone());
     let key_info = KmsFheKeyHandles::new(&kms, client_key, &fhe_pub_keys).unwrap();
-    let handle = key_handle.unwrap_or(TEST_KEY_ID.to_string());
+    let handle = key_handle.unwrap_or((*TEST_KEY_ID).clone());
     (
         SoftwareKmsKeys {
             key_info: HashMap::from([(handle, key_info)]),
@@ -210,13 +212,13 @@ impl BaseKms for BaseKmsStruct {
 #[cfg(feature = "non-wasm")]
 #[derive(Serialize, Deserialize)]
 pub struct SoftwareKmsKeys {
-    pub key_info: HashMap<String, KmsFheKeyHandles>,
+    pub key_info: HashMap<RequestId, KmsFheKeyHandles>,
     pub sig_sk: PrivateSigKey,
     pub sig_pk: PublicSigKey,
 }
 
 // TODO rename to CrcInfoHashMap (later, to avoid conflicts with other PRs)
-pub type CrsHashMap = HashMap<String, FhePubKeyInfo>;
+pub type CrsHashMap = HashMap<RequestId, FhePubKeyInfo>;
 
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize)]
@@ -267,14 +269,14 @@ pub type DecCallValues = (Vec<u8>, anyhow::Result<Vec<u8>>);
 #[cfg(feature = "non-wasm")]
 pub type ReencCallValues = ((u32, FheType, Vec<u8>), anyhow::Result<Vec<u8>>);
 
-pub type CompMap<A> = Arc<Mutex<HashMap<String, JoinHandle<A>>>>;
+pub type CompMap<A> = Arc<Mutex<HashMap<RequestId, JoinHandle<A>>>>;
 /// Software based KMS where keys are stored in a local file
 #[cfg(feature = "non-wasm")]
 pub struct SoftwareKms<S: PublicStorage> {
     pub(crate) base_kms: BaseKmsStruct,
     pub(crate) storage: S,
     // Map storing the already generated FHE keys.
-    pub key_handles: Arc<Mutex<HashMap<String, KmsFheKeyHandles>>>,
+    pub key_handles: Arc<Mutex<HashMap<RequestId, KmsFheKeyHandles>>>,
     // Map storing ongoing key generation requests.
     pub key_gen_map: CompMap<KeyGenCallValues>,
     // Map storing ongoing decryption requests.
@@ -476,7 +478,7 @@ impl<S: PublicStorage> Kms for SoftwareKms<S> {
 impl<S: PublicStorage> SoftwareKms<S> {
     pub fn new(
         storage: S,
-        key_info: HashMap<String, KmsFheKeyHandles>,
+        key_info: HashMap<RequestId, KmsFheKeyHandles>,
         sig_key: PrivateSigKey,
         crs_store: Option<CrsHashMap>,
     ) -> Self {
@@ -557,7 +559,7 @@ mod tests {
     };
     use crate::cryptography::request::ephemeral_key_generation;
     use crate::cryptography::signcryption::decrypt_signcryption;
-    use crate::kms::FheType;
+    use crate::kms::{FheType, RequestId};
     use crate::rpc::rpc_types::Plaintext;
     use crate::util::file_handling::read_element;
     use crate::util::key_setup::{
@@ -589,7 +591,11 @@ mod tests {
 
     #[test]
     fn sunshine_test_decrypt() {
-        sunshine_decrypt(TEST_CENTRAL_KEYS_PATH, TEST_KEY_ID, TEST_CENTRAL_CT_PATH);
+        sunshine_decrypt(
+            TEST_CENTRAL_KEYS_PATH,
+            (*TEST_KEY_ID).clone(),
+            TEST_CENTRAL_CT_PATH,
+        );
     }
 
     #[test]
@@ -597,7 +603,7 @@ mod tests {
         simulate_decrypt(
             SimulationType::BadFheKey,
             TEST_CENTRAL_KEYS_PATH,
-            TEST_KEY_ID,
+            (*TEST_KEY_ID).clone(),
             TEST_CENTRAL_CT_PATH,
         );
     }
@@ -607,7 +613,7 @@ mod tests {
     fn sunshine_default_decrypt() {
         sunshine_decrypt(
             DEFAULT_CENTRAL_KEYS_PATH,
-            TEST_KEY_ID,
+            (*TEST_KEY_ID).clone(),
             DEFAULT_CENTRAL_CT_PATH,
         );
     }
@@ -617,7 +623,7 @@ mod tests {
     fn multiple_test_keys_decrypt() {
         sunshine_decrypt(
             TEST_CENTRAL_MULTI_KEYS_PATH,
-            OTHER_KEY_HANDLE,
+            (*OTHER_KEY_HANDLE).clone(),
             TEST_CENTRAL_MULTI_CT_PATH,
         );
     }
@@ -627,7 +633,7 @@ mod tests {
     fn multiple_default_keys_decrypt() {
         sunshine_decrypt(
             DEFAULT_CENTRAL_MULTI_KEYS_PATH,
-            OTHER_KEY_HANDLE,
+            (*OTHER_KEY_HANDLE).clone(),
             DEFAULT_CENTRAL_MULTI_CT_PATH,
         );
     }
@@ -648,7 +654,7 @@ mod tests {
             TEST_PARAM_PATH,
             TEST_CENTRAL_CRS_PATH,
             TEST_CENTRAL_KEYS_PATH,
-            Some(TEST_CRS_ID.to_string()),
+            Some((*TEST_CRS_ID).clone()),
         );
 
         ensure_threshold_key_ct_exist(
@@ -660,7 +666,7 @@ mod tests {
         ensure_central_multiple_keys_ct_exist(
             TEST_PARAM_PATH,
             TEST_CENTRAL_MULTI_KEYS_PATH,
-            OTHER_KEY_HANDLE,
+            (*OTHER_KEY_HANDLE).clone(),
             TEST_CENTRAL_MULTI_CT_PATH,
         );
     }
@@ -681,7 +687,7 @@ mod tests {
             DEFAULT_PARAM_PATH,
             DEFAULT_CENTRAL_CRS_PATH,
             DEFAULT_CENTRAL_KEYS_PATH,
-            Some(TEST_CRS_ID.to_string()),
+            Some((*TEST_CRS_ID).clone()),
         );
 
         ensure_threshold_key_ct_exist(
@@ -693,7 +699,7 @@ mod tests {
         ensure_central_multiple_keys_ct_exist(
             DEFAULT_PARAM_PATH,
             DEFAULT_CENTRAL_MULTI_KEYS_PATH,
-            OTHER_KEY_HANDLE,
+            (*OTHER_KEY_HANDLE).clone(),
             DEFAULT_CENTRAL_MULTI_CT_PATH,
         );
     }
@@ -704,32 +710,35 @@ mod tests {
             read_element(TEST_CENTRAL_MULTI_KEYS_PATH).unwrap();
 
         // try to get keys with the default handle
-        let default_key = central_keys.software_kms_keys.key_info.get(TEST_KEY_ID);
+        let default_key = central_keys.software_kms_keys.key_info.get(&TEST_KEY_ID);
         assert!(default_key.is_some());
 
         // try to get keys with the some other handle
         let some_key = central_keys
             .software_kms_keys
             .key_info
-            .get(OTHER_KEY_HANDLE);
+            .get(&OTHER_KEY_HANDLE);
         assert!(some_key.is_some());
 
         // try to get keys with a non-existent handle
+        let wrong_key_handle = RequestId {
+            request_id: "wrongKeyHandle".to_owned(),
+        };
         let no_key = central_keys
             .software_kms_keys
             .key_info
-            .get("wrongKeyHandle");
+            .get(&wrong_key_handle);
         assert!(no_key.is_none());
     }
 
-    fn sunshine_decrypt(kms_key_path: &str, key_id: &str, cipher_path: &str) {
+    fn sunshine_decrypt(kms_key_path: &str, key_id: RequestId, cipher_path: &str) {
         simulate_decrypt(SimulationType::NoError, kms_key_path, key_id, cipher_path)
     }
 
     fn simulate_decrypt(
         sim_type: SimulationType,
         kms_key_path: &str,
-        key_id: &str,
+        key_id: RequestId,
         cipher_path: &str,
     ) {
         let msg = 42_u8;
@@ -743,7 +752,7 @@ mod tests {
                 None,
             );
             if sim_type == SimulationType::BadFheKey {
-                set_wrong_client_key(&inner, key_id, keys.params);
+                set_wrong_client_key(&inner, &key_id, keys.params);
             }
             inner
         };
@@ -752,7 +761,7 @@ mod tests {
             &kms.key_handles
                 .try_lock()
                 .unwrap()
-                .get(key_id)
+                .get(&key_id)
                 .unwrap()
                 .client_key,
             &ct,
@@ -779,7 +788,7 @@ mod tests {
 
     #[test]
     fn sunshine_test_reencrypt() {
-        sunshine_reencrypt(TEST_CENTRAL_KEYS_PATH, TEST_KEY_ID, TEST_CENTRAL_CT_PATH);
+        sunshine_reencrypt(TEST_CENTRAL_KEYS_PATH, &TEST_KEY_ID, TEST_CENTRAL_CT_PATH);
     }
 
     #[test]
@@ -787,7 +796,7 @@ mod tests {
         simulate_reencrypt(
             SimulationType::BadEphemeralKey,
             TEST_CENTRAL_KEYS_PATH,
-            TEST_KEY_ID,
+            &TEST_KEY_ID,
             TEST_CENTRAL_CT_PATH,
         )
     }
@@ -797,7 +806,7 @@ mod tests {
         simulate_reencrypt(
             SimulationType::BadSigKey,
             TEST_CENTRAL_KEYS_PATH,
-            TEST_KEY_ID,
+            &TEST_KEY_ID,
             TEST_CENTRAL_CT_PATH,
         )
     }
@@ -807,7 +816,7 @@ mod tests {
         simulate_reencrypt(
             SimulationType::BadFheKey,
             TEST_CENTRAL_KEYS_PATH,
-            TEST_KEY_ID,
+            &TEST_KEY_ID,
             TEST_CENTRAL_CT_PATH,
         )
     }
@@ -817,7 +826,7 @@ mod tests {
     fn sunshine_default_reencrypt() {
         sunshine_reencrypt(
             DEFAULT_CENTRAL_KEYS_PATH,
-            TEST_KEY_ID,
+            &TEST_KEY_ID,
             DEFAULT_CENTRAL_CT_PATH,
         );
     }
@@ -827,7 +836,7 @@ mod tests {
     fn multiple_test_keys_reencrypt() {
         sunshine_reencrypt(
             TEST_CENTRAL_MULTI_KEYS_PATH,
-            OTHER_KEY_HANDLE,
+            &OTHER_KEY_HANDLE,
             TEST_CENTRAL_MULTI_CT_PATH,
         );
     }
@@ -837,12 +846,12 @@ mod tests {
     fn multiple_default_keys_reencrypt() {
         sunshine_reencrypt(
             DEFAULT_CENTRAL_MULTI_KEYS_PATH,
-            OTHER_KEY_HANDLE,
+            &OTHER_KEY_HANDLE,
             DEFAULT_CENTRAL_MULTI_CT_PATH,
         );
     }
 
-    fn sunshine_reencrypt(kms_key_path: &str, key_handle: &str, cipher_path: &str) {
+    fn sunshine_reencrypt(kms_key_path: &str, key_handle: &RequestId, cipher_path: &str) {
         simulate_reencrypt(
             SimulationType::NoError,
             kms_key_path,
@@ -853,7 +862,7 @@ mod tests {
 
     fn set_wrong_client_key<S: PublicStorage>(
         inner: &SoftwareKms<S>,
-        key_handle: &str,
+        key_handle: &RequestId,
         params: NoiseFloodParameters,
     ) {
         let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
@@ -881,7 +890,7 @@ mod tests {
     fn simulate_reencrypt(
         sim_type: SimulationType,
         kms_key_path: &str,
-        key_handle: &str,
+        key_handle: &RequestId,
         cipher_path: &str,
     ) {
         let msg = 42_u8;

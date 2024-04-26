@@ -413,7 +413,7 @@ pub struct DecryptionRequestSerializable {
     pub servers_needed: u32,
     pub fhe_type: FheType,
     pub randomness: Vec<u8>,
-    pub key_id: String,
+    pub key_id: RequestId,
     pub ciphertext: Vec<u8>,
     pub request_id: RequestId,
 }
@@ -424,7 +424,7 @@ impl From<DecryptionRequestSerializable> for DecryptionRequest {
             servers_needed: val.servers_needed,
             fhe_type: val.fhe_type.into(),
             randomness: val.randomness,
-            key_id: val.key_id,
+            key_id: Some(val.key_id),
             ciphertext: val.ciphertext,
             request_id: Some(val.request_id),
         }
@@ -434,9 +434,9 @@ impl TryFrom<DecryptionRequest> for DecryptionRequestSerializable {
     type Error = anyhow::Error;
 
     fn try_from(val: DecryptionRequest) -> Result<Self, Self::Error> {
-        let req_id = match val.request_id {
-            Some(req_id) => req_id,
-            None => return Err(anyhow::anyhow!("No request_id found")),
+        let (key_id, req_id) = match (val.key_id, val.request_id) {
+            (Some(key_id), Some(req_id)) => (key_id, req_id),
+            _ => return Err(anyhow::anyhow!("No request_id found")),
         };
         Ok(DecryptionRequestSerializable {
             version: val.version,
@@ -444,7 +444,7 @@ impl TryFrom<DecryptionRequest> for DecryptionRequestSerializable {
             fhe_type: val.fhe_type.try_into()?,
             randomness: val.randomness,
             ciphertext: val.ciphertext,
-            key_id: val.key_id,
+            key_id,
             request_id: req_id,
         })
     }
@@ -511,7 +511,9 @@ impl From<ReencryptionRequestSigPayload> for ReencryptionRequestPayload {
             fhe_type: val.fhe_type.into(),
             randomness: val.randomness,
             ciphertext: val.ciphertext,
-            key_id: val.key_id,
+            key_id: Some(RequestId {
+                request_id: val.key_id,
+            }),
             request_id: Some(RequestId {
                 request_id: val.request_id,
             }),
@@ -522,10 +524,6 @@ impl TryFrom<ReencryptionRequestPayload> for ReencryptionRequestSigPayload {
     type Error = anyhow::Error;
 
     fn try_from(val: ReencryptionRequestPayload) -> Result<Self, Self::Error> {
-        let req_id = match val.request_id {
-            Some(req_id) => req_id,
-            None => return Err(anyhow::anyhow!("No request_id found")),
-        };
         Ok(ReencryptionRequestSigPayload {
             version: val.version,
             servers_needed: val.servers_needed,
@@ -534,8 +532,14 @@ impl TryFrom<ReencryptionRequestPayload> for ReencryptionRequestSigPayload {
             fhe_type: val.fhe_type.try_into()?,
             randomness: val.randomness,
             ciphertext: val.ciphertext,
-            key_id: val.key_id,
-            request_id: req_id.to_string(),
+            key_id: val
+                .key_id
+                .ok_or_else(|| anyhow_error_and_log("Key id missing in".to_string()))?
+                .request_id,
+            request_id: val
+                .request_id
+                .ok_or_else(|| anyhow_error_and_log("Request id is missing".to_string()))?
+                .request_id,
         })
     }
 }
