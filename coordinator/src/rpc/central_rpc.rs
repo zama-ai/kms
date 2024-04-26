@@ -439,10 +439,12 @@ impl<S: PublicStorage> SoftwareKms<S> {
         &self,
         request_id: RequestId,
     ) -> anyhow::Result<Option<FhePubKeyInfo>> {
-        let crs_gen_handle = {
-            let mut crs_gen_map = self.crs_gen_map.lock().await;
-            crs_gen_map.remove(&request_id.to_string())
-        };
+        // Lock both maps since otherwise we might end up in a race condition where the handle is removed from crs_gen_map but
+        // the result of the task is not stored, hence a malicious repeated call for generation could cause two processes with the
+        // same request_ID to occur. Thus leading to unexpected and incorrect behaviour.
+        let mut crs_handles = self.crs_handles.lock().await;
+        let mut crs_gen_map = self.crs_gen_map.lock().await;
+        let crs_gen_handle = crs_gen_map.remove(&request_id.to_string());
         // Handle the four different cases:
         // 1. Request ID exists and is being generated but is not finished yet
         // 2. Request ID exists and generation has finished, but not been processed yet
@@ -453,30 +455,23 @@ impl<S: PublicStorage> SoftwareKms<S> {
             Some(crs_gen_handle) => {
                 if !crs_gen_handle.is_finished() {
                     // Case 1: The request ID is currently generating but not finished yet
-                    {
-                        // Reinsert the handle
-                        let mut crs_gen_map = self.crs_gen_map.lock().await;
-                        crs_gen_map.insert(request_id.to_string(), crs_gen_handle);
-                    }
+                    // Reinsert the handle into the genration map
+                    crs_gen_map.insert(request_id.to_string(), crs_gen_handle);
                     return Ok(None);
                 }
+
                 // Case 2: The key generation is finished, so we can now generate the key information
                 let pp = crs_gen_handle.await??;
                 let crs_info = compute_info(self, &pp)?;
                 // Insert the key information into the map of keys
-                {
-                    let mut crs_handles = self.crs_handles.lock().await;
-                    crs_handles.insert(request_id.to_string(), crs_info.clone());
-                }
+                crs_handles.insert(request_id.to_string(), crs_info.clone());
                 store_crs(&self.storage, &request_id, &crs_info, &pp)?;
                 Ok(Some(crs_info))
             }
             None => {
-                let crs_handles = self.crs_handles.lock().await;
                 match crs_handles.get(&request_id.to_string()) {
                     Some(handles) => {
                         // Case 3: Request is not in crs generation map, so check if it is already done
-
                         Ok(Some(handles.clone()))
                     }
                     None => {
@@ -498,10 +493,12 @@ impl<S: PublicStorage> SoftwareKms<S> {
         &self,
         request_id: RequestId,
     ) -> anyhow::Result<Option<HashMap<PubDataType, FhePubKeyInfo>>> {
-        let key_gen_handle = {
-            let mut key_gen_map = self.key_gen_map.lock().await;
-            key_gen_map.remove(&request_id.to_string())
-        };
+        // Lock both maps since otherwise we might end up in a race condition where the handle is removed from key_gen_map but
+        // the result of the task is not stored, hence a malicious repeated call for generation could cause two processes with the
+        // same request_ID to occur. Thus leading to unexpected and incorrect behaviour.
+        let mut key_handles = self.key_handles.lock().await;
+        let mut key_gen_map = self.key_gen_map.lock().await;
+        let key_gen_handle = key_gen_map.remove(&request_id.to_string());
         // Handle the four different cases:
         // 1. Request ID exists and is being generated but is not finished yet
         // 2. Request ID exists and generation has finished, but not been processed yet
@@ -512,21 +509,14 @@ impl<S: PublicStorage> SoftwareKms<S> {
             Some(key_gen_handle) => {
                 if !key_gen_handle.is_finished() {
                     // Case 1: The request ID is currently generating but not finished yet
-                    {
-                        // Reinsert the handle
-                        let mut key_gen_map = self.key_gen_map.lock().await;
-                        key_gen_map.insert(request_id.to_string(), key_gen_handle);
-                    }
+                    key_gen_map.insert(request_id.to_string(), key_gen_handle);
                     return Ok(None);
                 }
                 // Case 2: The key generation is finished, so we can now generate the key information
                 let (client_key, pub_keys) = key_gen_handle.await?;
                 let new_key_info = KmsFheKeyHandles::new(self, client_key, &pub_keys)?;
                 // Insert the key information into the map of keys
-                {
-                    let mut key_handles = self.key_handles.lock().await;
-                    key_handles.insert(request_id.to_string(), new_key_info.clone());
-                }
+                key_handles.insert(request_id.to_string(), new_key_info.clone());
                 store_public_keys(
                     &self.storage,
                     &request_id,
@@ -536,7 +526,6 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 Ok(Some(new_key_info.public_key_info))
             }
             None => {
-                let key_handles = self.key_handles.lock().await;
                 match key_handles.get(&request_id.to_string()) {
                     Some(handles) => {
                         // Case 3: Request is not in key generation map, so check if it is already done
@@ -562,10 +551,8 @@ impl<S: PublicStorage> SoftwareKms<S> {
         request_id: RequestId,
     ) -> Result<(Aux, Vec<u8>), Status> {
         // We remove the handle and thus must remember to reinsert it again if it is not fully processed
-        let handle = {
-            let mut unwrapped_handle_map = handle_map.lock().await;
-            unwrapped_handle_map.remove(&request_id.clone().to_string())
-        };
+        let mut unwrapped_handle_map = handle_map.lock().await;
+        let handle = unwrapped_handle_map.remove(&request_id.clone().to_string());
 
         // Handle decryption based on the 3 possible cases:
         // Case 1: The request ID is currently being processed but not finished yet
@@ -575,11 +562,8 @@ impl<S: PublicStorage> SoftwareKms<S> {
             Some(inner_handle) => {
                 if !inner_handle.is_finished() {
                     // Case 1: The request ID is currently being processed but not finished yet
-                    {
-                        // Reinsert the handle
-                        let mut unwrapped_handle_map = handle_map.lock().await;
-                        unwrapped_handle_map.insert(request_id.to_string(), inner_handle);
-                    }
+                    // Reinsert the handle
+                    unwrapped_handle_map.insert(request_id.to_string(), inner_handle);
                     return Err(tonic::Status::new(
                         tonic::Code::Unavailable,
                         format!(
