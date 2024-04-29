@@ -70,7 +70,6 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::str::FromStr;
 use std::sync::Arc;
 use tfhe::{FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
 use tokio::sync::{Mutex, RwLock};
@@ -409,8 +408,10 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
         fhe_type: FheType,
         ct: &[u8],
         key_handle: &RequestId,
+        request_id: &RequestId,
     ) -> anyhow::Result<Z64> {
-        let (mut session, low_level_ct) = self.prepare_ddec_data_from_ct(ct, fhe_type)?;
+        let low_level_ct = fhe_type.deserialize_to_low_level(ct)?;
+        let mut session = self.prepare_ddec_data_from_requestid(request_id)?;
         let mut protocol = Small::new(session.clone());
         let id = session.own_identity();
         let fhe_keys_rlock = self.fhe_keys.read().await;
@@ -442,6 +443,7 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
         Ok(*res)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn inner_reencrypt(
         &self,
         ct: &[u8],
@@ -449,12 +451,14 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
         digest: Vec<u8>,
         client_enc_key: &PublicEncKey,
         client_verf_key: &PublicSigKey,
-        key_handle: &RequestId,
+        key_id: &RequestId,
+        request_id: &RequestId,
     ) -> anyhow::Result<Option<Vec<u8>>> {
-        let (mut session, low_level_ct) = self.prepare_ddec_data_from_ct(ct, fhe_type)?;
+        let low_level_ct = fhe_type.deserialize_to_low_level(ct)?;
+        let mut session = self.prepare_ddec_data_from_requestid(request_id)?;
         let mut protocol = Small::new(session.clone());
         let fhe_keys_rlock = self.fhe_keys.read().await;
-        let keys = match fhe_keys_rlock.get(key_handle) {
+        let keys = match fhe_keys_rlock.get(key_id) {
             Some(keys) => keys,
             None => {
                 return Err(anyhow_error_and_log(
@@ -525,7 +529,8 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
             }?
         }
 
-        let mut session = self.prepare_ddec_data_from_str(&req_id.request_id)?;
+        let session_id = SessionId(req_id.clone().into());
+        let mut session = self.prepare_ddec_data_from_sessionid(session_id)?;
         let meta_store = self.crs_meta_store.clone();
         let storage = self.public_storage.clone();
         let copied_req_id = req_id.clone();
@@ -607,23 +612,11 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
         Ok(())
     }
 
-    /// Helper function to prepare the data for ddec by deserializing the ciphertext and creating a
-    /// session
-    fn prepare_ddec_data_from_ct(
+    fn prepare_ddec_data_from_requestid(
         &self,
-        ct: &[u8],
-        fhe_type: FheType,
-    ) -> anyhow::Result<(SmallSession<ResiduePoly128>, Ciphertext64)> {
-        let low_level_ct = fhe_type.deserialize_to_low_level(ct)?;
-        let session_id = SessionId::new(&low_level_ct)?;
-        let session = self.prepare_ddec_data_from_sessionid(session_id)?;
-        Ok((session, low_level_ct))
-    }
-
-    fn prepare_ddec_data_from_str(&self, s: &str) -> anyhow::Result<SmallSession<ResiduePoly128>> {
-        let session_id = SessionId::from_str(s)?;
-        let session = self.prepare_ddec_data_from_sessionid(session_id)?;
-        Ok(session)
+        request_id: &RequestId,
+    ) -> anyhow::Result<SmallSession<ResiduePoly128>> {
+        self.prepare_ddec_data_from_sessionid(SessionId(request_id.clone().into()))
     }
 
     fn prepare_ddec_data_from_sessionid(
@@ -1144,7 +1137,7 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
             client_enc_key,
             client_verf_key,
             servers_needed,
-            key_handle,
+            key_id,
             request_id,
         ) = tonic_handle_potential_err(
             validate_reencrypt_req(&inner).await,
@@ -1158,7 +1151,8 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
                 req_digest.clone(),
                 &client_enc_key,
                 &client_verf_key,
-                &key_handle,
+                &key_id,
+                &request_id,
             )
             .await,
         )?;
@@ -1215,12 +1209,13 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
         let inner = request.into_inner();
         let (ciphertext, fhe_type, req_digest, servers_needed, key_id, request_id) =
             tonic_handle_potential_err(
-                validate_decrypt_req(&inner).await,
+                validate_decrypt_req(&inner),
                 format!("Invalid key in request {:?}", inner),
             )?;
         // TODO this will be replaced with an async method once issue 414 is implemented
         let raw_decryption = tonic_handle_potential_err(
-            self.inner_decrypt(fhe_type, &ciphertext, &key_id).await,
+            self.inner_decrypt(fhe_type, &ciphertext, &key_id, &request_id)
+                .await,
             format!("Decryption failed for request {:?}", inner),
         )?;
         let plaintext = Plaintext::new(raw_decryption.0 as u128, fhe_type);

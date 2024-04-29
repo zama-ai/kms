@@ -50,6 +50,10 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 #[cfg(feature = "non-wasm")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use aes_prng::AesRng;
+    use kms_lib::{consts::ID_LENGTH, kms::RequestId};
+    use rand::{RngCore, SeedableRng};
+
     let stdout_log = tracing_subscriber::fmt::layer().pretty();
     tracing_subscriber::registry()
         .with(stdout_log.with_filter(filter::LevelFilter::WARN))
@@ -77,7 +81,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // DECRYPTION REQUEST
-    let req = internal_client.decryption_request(ct.clone(), fhe_type, None)?;
+    // Generate a random request ID, just for testing
+    let mut rng = AesRng::from_entropy();
+    let dec_req_id = {
+        let mut buf = [0u8; ID_LENGTH];
+        rng.fill_bytes(&mut buf);
+        RequestId {
+            request_id: hex::encode(buf),
+        }
+    };
+    let req = internal_client.decryption_request(ct.clone(), fhe_type, &dec_req_id, None)?;
     let response = kms_client.decrypt(tonic::Request::new(req.clone())).await?;
     tracing::debug!("DECRYPT RESPONSE={:?}", response);
     // Wait for the servers to complete the decryption
@@ -95,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let responses = AggregatedDecryptionResponse {
         responses: vec![response?.into_inner()],
     };
-    match internal_client.process_decryption_resp(Some(req), responses) {
+    match internal_client.process_decryption_resp(Some(req), &responses) {
         Ok(Some(plaintext)) => {
             tracing::info!(
                 "Decryption response is ok: {:?} of type {:?}",
@@ -107,8 +120,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // REENCRYPTION REQUEST
+    let reenc_req_id = {
+        let mut buf = [0u8; ID_LENGTH];
+        rng.fill_bytes(&mut buf);
+        RequestId {
+            request_id: hex::encode(buf),
+        }
+    };
     let (req, enc_pk, enc_sk) =
-        internal_client.reencyption_request(ct, &dummy_domain(), fhe_type, None)?;
+        internal_client.reencyption_request(ct, &dummy_domain(), fhe_type, &reenc_req_id, None)?;
     let response = kms_client
         .reencrypt(tonic::Request::new(req.clone()))
         .await?;
@@ -132,7 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let responses = AggregatedReencryptionResponse {
         responses: HashMap::from([(1, response?.into_inner())]),
     };
-    match internal_client.process_reencryption_resp(Some(req), responses, &enc_pk, &enc_sk) {
+    match internal_client.process_reencryption_resp(Some(req), &responses, &enc_pk, &enc_sk) {
         Ok(Some(plaintext)) => {
             tracing::info!(
                 "Reencryption response is ok: {:?} of type {:?}",

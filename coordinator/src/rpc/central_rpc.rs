@@ -259,7 +259,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         let inner = request.into_inner();
         let (ciphertext, fhe_type, req_digest, _servers_needed, key_id, request_id) =
             tonic_handle_potential_err(
-                validate_decrypt_req(&inner).await,
+                validate_decrypt_req(&inner),
                 format!("Invalid key in request {:?}", inner),
             )?;
         let mut decrypt_map = self.decrypt_map.lock().await;
@@ -728,7 +728,8 @@ pub async fn validate_reencrypt_req(
 /// Observe that the key handle is NOT checked for existence here.
 /// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
 /// is needed.
-pub async fn validate_decrypt_req(
+#[allow(clippy::type_complexity)]
+pub(crate) fn validate_decrypt_req(
     req: &DecryptionRequest,
 ) -> anyhow::Result<(Vec<u8>, FheType, Vec<u8>, u32, RequestId, RequestId)> {
     let key_id = tonic_some_or_err(
@@ -796,17 +797,24 @@ pub fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Resul
     }
 }
 
+/// Take the max(20, s.len()) characters of s.
+fn top_n_chars(mut s: String) -> String {
+    let n = std::cmp::max(s.len(), 20);
+    _ = s.split_off(n);
+    s
+}
+
 pub fn tonic_some_or_err<T>(input: Option<T>, error: String) -> Result<T, tonic::Status> {
     input.ok_or_else(|| {
         tracing::warn!(error);
-        tonic::Status::new(tonic::Code::Aborted, "Invalid request".to_string())
+        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
     })
 }
 
 pub fn tonic_some_ref_or_err<T>(input: Option<&T>, error: String) -> Result<&T, tonic::Status> {
     input.ok_or_else(|| {
         tracing::warn!(error);
-        tonic::Status::new(tonic::Code::Aborted, "Invalid request".to_string())
+        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
     })
 }
 
@@ -816,6 +824,6 @@ pub fn tonic_handle_potential_err<T, E>(
 ) -> Result<T, tonic::Status> {
     resp.map_err(|_| {
         tracing::warn!(error);
-        tonic::Status::new(tonic::Code::Aborted, "Invalid request".to_string())
+        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
     })
 }

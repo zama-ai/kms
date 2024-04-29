@@ -1,3 +1,4 @@
+use crate::anyhow_error_and_log;
 use crate::consts::TEST_KEY_ID;
 use crate::cryptography::der_types::{
     PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair,
@@ -28,12 +29,8 @@ use crate::rpc::rpc_types::{
 use crate::rpc::rpc_types::{
     DecryptionRequestSerializable, DecryptionResponseSigPayload, PubDataType,
 };
-use crate::{anyhow_error_and_log, rpc::rpc_types::REENC_REQUEST_NAME};
 #[cfg(feature = "non-wasm")]
-use crate::{
-    cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms,
-    rpc::rpc_types::DEC_REQUEST_NAME,
-};
+use crate::{cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms};
 #[cfg(feature = "non-wasm")]
 use crate::{storage::PublicStorageReader, util::key_setup::FhePublicKey};
 use aes_prng::AesRng;
@@ -367,7 +364,7 @@ pub mod js_api {
         for (k, v) in agg_resp_ids.into_iter().zip(agg_resp) {
             hm.responses.insert(k, v);
         }
-        match client.process_reencryption_resp(request, hm, enc_pk, enc_sk) {
+        match client.process_reencryption_resp(request, &hm, enc_pk, enc_sk) {
             Ok(resp) => match resp {
                 Some(out) => Ok(out.as_u8()),
                 None => Err(JsError::new("no response")),
@@ -409,7 +406,7 @@ impl Client {
     /// Verify the signature received from the server on keys or other data objects
     /// and returns the public key that verified the signature.
     #[cfg(feature = "non-wasm")]
-    pub fn find_verifying_public_key<T: serde::Serialize + AsRef<[u8]>>(
+    fn find_verifying_public_key<T: serde::Serialize + AsRef<[u8]>>(
         &self,
         data: &T,
         signature: &[u8],
@@ -432,22 +429,20 @@ impl Client {
     }
 
     /// Generates a key gen request.
+    ///
     /// The key generated will then be stored under the request_id handle.
     /// In the threshold case, we also need to reference the preprocessing we want to consume via its [`RequestId`]
     /// it can be set to None in the centralised case
     #[cfg(feature = "non-wasm")]
     pub fn key_gen_request(
         &self,
-        request_id: &str,
+        request_id: &RequestId,
         preproc_id: Option<RequestId>,
         param: Option<ParamChoice>,
     ) -> anyhow::Result<KeyGenRequest> {
         let parsed_param: i32 = match param {
             Some(parsed_param) => parsed_param.into(),
             None => ParamChoice::Default.into(),
-        };
-        let request_id = RequestId {
-            request_id: request_id.to_owned(),
         };
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
@@ -458,36 +453,36 @@ impl Client {
             params: parsed_param,
             config: None,
             preproc_id,
-            request_id: Some(request_id),
+            request_id: Some(request_id.clone()),
         })
     }
 
     #[cfg(feature = "non-wasm")]
     pub fn crs_gen_request(
         &self,
-        crs_handle: &str,
+        request_id: &RequestId,
         param: Option<ParamChoice>,
     ) -> anyhow::Result<CrsGenRequest> {
-        use crate::rpc::rpc_types::CRS_GEN_REQUEST_NAME;
-
         let parsed_param: i32 = match param {
             Some(parsed_param) => parsed_param.into(),
             None => ParamChoice::Default.into(),
         };
+        if !request_id.is_valid() {
+            return Err(anyhow_error_and_log(
+                "The request id format is not valid {request_id}",
+            ));
+        }
         Ok(CrsGenRequest {
             params: parsed_param,
             config: None,
-            request_id: Some(RequestId::new(
-                &crs_handle.to_string(),
-                CRS_GEN_REQUEST_NAME.to_string(),
-            )?),
+            request_id: Some(request_id.clone()),
         })
     }
 
     #[cfg(feature = "non-wasm")]
     pub fn preproc_request(
         &self,
-        request_id: &str,
+        request_id: &RequestId,
         param: Option<ParamChoice>,
     ) -> anyhow::Result<KeyGenPreprocRequest> {
         let parsed_param: i32 = match param {
@@ -495,9 +490,6 @@ impl Client {
             None => ParamChoice::Default.into(),
         };
 
-        let request_id = RequestId {
-            request_id: request_id.to_owned(),
-        };
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(
                 "The request id format is not valid {request_id}",
@@ -507,7 +499,7 @@ impl Client {
         Ok(KeyGenPreprocRequest {
             config: None,
             params: parsed_param,
-            request_id: Some(request_id),
+            request_id: Some(request_id.clone()),
         })
     }
 
@@ -534,6 +526,12 @@ impl Client {
         let mut hash_counter_map = HashMap::new();
         // map of digest -> public parameter
         let mut pp_map = HashMap::new();
+
+        if !request_id.is_valid() {
+            return Err(anyhow_error_and_log(
+                "The request id format is not valid {request_id}",
+            ));
+        }
 
         for (result, storage) in results.into_iter().zip(storage_readers) {
             let (pp, info) = if let Some(info) = result.crs_results {
@@ -617,13 +615,23 @@ impl Client {
     }
 
     /// Creates a decryption request to send to the KMS servers.
+    ///
+    /// The key_id should be the request ID of the key generation
+    /// request that generated the key which should be used for decryption
     #[cfg(feature = "non-wasm")]
     pub fn decryption_request(
         &mut self,
         ct: Vec<u8>,
         fhe_type: FheType,
+        request_id: &RequestId,
         key_id: Option<RequestId>,
     ) -> anyhow::Result<DecryptionRequest> {
+        if !request_id.is_valid() {
+            return Err(anyhow_error_and_log(
+                "The request id format is not valid {request_id}",
+            ));
+        }
+
         // Observe that this randomness can be reused across the servers since each server will have
         // a unique PK that is included in their response, hence it will still be validated
         // that each request contains a unique message to be signed hence ensuring CCA
@@ -638,8 +646,7 @@ impl Client {
             ciphertext: ct,
             randomness,
             key_id: key_id.clone(),
-            // TODO update deriviation of RequestID to be based on all the parameters in the request
-            request_id: RequestId::new(&key_id, DEC_REQUEST_NAME.to_string())?,
+            request_id: request_id.clone(),
         };
         Ok(serialized_req.into())
     }
@@ -655,8 +662,15 @@ impl Client {
         ct: Vec<u8>,
         domain: &Eip712Domain,
         fhe_type: FheType,
+        request_id: &RequestId,
         key_id: Option<String>,
     ) -> anyhow::Result<(ReencryptionRequest, PublicEncKey, PrivateEncKey)> {
+        if !request_id.is_valid() {
+            return Err(anyhow_error_and_log(
+                "The request id format is not valid {request_id}",
+            ));
+        }
+
         let (enc_pk, enc_sk) = encryption_key_generation(&mut self.rng);
         let mut randomness = Vec::with_capacity(RND_SIZE);
         let key_id = key_id.unwrap_or(TEST_KEY_ID.to_string());
@@ -670,8 +684,7 @@ impl Client {
             ciphertext: ct,
             randomness,
             key_id: key_id.clone(),
-            // TODO update deriviation of RequestID to be based on all the parameters in the request
-            request_id: RequestId::new(&key_id, REENC_REQUEST_NAME.to_string())?.to_string(),
+            request_id: request_id.to_string(),
         };
         let sig = match &self.client_sk {
             Some(sk) => sign_eip712(&sig_payload, domain, sk)?,
@@ -693,15 +706,15 @@ impl Client {
     #[cfg(feature = "non-wasm")]
     pub fn process_get_key_gen_resp<R: PublicStorageReader>(
         &self,
-        resp: KeyGenResult,
+        resp: &KeyGenResult,
         storage: &R,
     ) -> anyhow::Result<(FhePublicKey, ServerKey)> {
         let pk: FhePublicKey = some_or_err(
-            self.retrieve_key(&resp, PubDataType::PublicKey, storage)?,
+            self.retrieve_key(resp, PubDataType::PublicKey, storage)?,
             "Could not validate public key".to_string(),
         )?;
         let server_key: ServerKey =
-            match self.retrieve_key(&resp, PubDataType::ServerKey, storage)? {
+            match self.retrieve_key(resp, PubDataType::ServerKey, storage)? {
                 Some(server_key) => server_key,
                 None => {
                     return Err(anyhow_error_and_log("Could not validate server key"));
@@ -754,11 +767,11 @@ impl Client {
     #[cfg(feature = "non-wasm")]
     pub fn process_get_crs_resp<R: PublicStorageReader>(
         &self,
-        resp: CrsGenResult,
+        resp: &CrsGenResult,
         storage: &R,
     ) -> anyhow::Result<PublicParameter> {
         let crs: PublicParameter = some_or_err(
-            self.retrieve_crs(&resp, storage)?,
+            self.retrieve_crs(resp, storage)?,
             "Could not validate CRS".to_string(),
         )?;
         Ok(crs)
@@ -810,9 +823,9 @@ impl Client {
     pub fn process_decryption_resp(
         &self,
         request: Option<DecryptionRequest>,
-        agg_resp: AggregatedDecryptionResponse,
+        agg_resp: &AggregatedDecryptionResponse,
     ) -> anyhow::Result<Option<Plaintext>> {
-        if !self.validate_decryption_resp(request, &agg_resp)? {
+        if !self.validate_decryption_resp(request, agg_resp)? {
             return Ok(None);
         }
         // TODO pivot should actually be picked as the most common response instead of just an
@@ -869,7 +882,7 @@ impl Client {
     pub fn process_reencryption_resp(
         &self,
         request: Option<ReencryptionRequest>,
-        agg_resp: AggregatedReencryptionResponse,
+        agg_resp: &AggregatedReencryptionResponse,
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
     ) -> anyhow::Result<Option<Plaintext>> {
@@ -889,9 +902,9 @@ impl Client {
         // object whereas for the distributed we encode the plain text as a
         // Vec<ResiduePoly<Z128>>
         if agg_resp.responses.len() <= 1 {
-            self.centralized_reencryption_resp(&agg_resp, &client_keys)
+            self.centralized_reencryption_resp(agg_resp, &client_keys)
         } else {
-            self.distributed_reencryption_resp(request, &agg_resp, &client_keys)
+            self.distributed_reencryption_resp(request, agg_resp, &client_keys)
         }
     }
 
@@ -1294,8 +1307,9 @@ pub(crate) mod tests {
     use crate::client::TestingReencryptionTranscript;
     use crate::consts::{
         AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, KEY_PATH_PREFIX,
-        TEST_CENTRAL_CRS_PATH, TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_FHE_TYPE,
-        TEST_MSG, TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
+        TEST_CENTRAL_CRS_PATH, TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_CRS_ID,
+        TEST_DEC_ID, TEST_FHE_TYPE, TEST_MSG, TEST_PARAM_PATH, TEST_REENC_ID,
+        TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
     };
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
@@ -1481,7 +1495,7 @@ pub(crate) mod tests {
     async fn test_key_gen_centralized() {
         key_gen_centralized(
             TEST_CENTRAL_KEYS_PATH,
-            "1234567890123456789012345678901234567890",
+            &crate::consts::TEST_KEY_ID,
             Some(ParamChoice::Test),
         )
         .await;
@@ -1491,17 +1505,12 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn default_key_gen_centralized() {
-        key_gen_centralized(
-            DEFAULT_CENTRAL_KEYS_PATH,
-            "1234567890123456789012345678901234567890",
-            None,
-        )
-        .await;
+        key_gen_centralized(DEFAULT_CENTRAL_KEYS_PATH, &crate::consts::TEST_KEY_ID, None).await;
     }
 
     async fn key_gen_centralized(
         centralized_key_path: &str,
-        key_handle: &str,
+        request_id: &RequestId,
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
@@ -1511,7 +1520,7 @@ pub(crate) mod tests {
         let _ = fs::remove_dir_all(storage.root_dir());
 
         let gen_req = internal_client
-            .key_gen_request(key_handle, None, params)
+            .key_gen_request(request_id, None, params)
             .unwrap();
         let req_id = gen_req.request_id.clone().unwrap();
         let gen_response = kms_client
@@ -1527,7 +1536,7 @@ pub(crate) mod tests {
         while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
         {
             // Sleep to give the server some time to complete key generation
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             response = kms_client
                 .get_key_gen_result(tonic::Request::new(req_id.clone()))
                 .await;
@@ -1551,7 +1560,7 @@ pub(crate) mod tests {
         crs_gen_centralized_client(
             DEFAULT_CENTRAL_CRS_PATH,
             DEFAULT_CENTRAL_KEYS_PATH,
-            "default_crs_test_handle",
+            &TEST_CRS_ID,
             Some(ParamChoice::Default),
         )
         .await;
@@ -1563,7 +1572,7 @@ pub(crate) mod tests {
         crs_gen_centralized_manual(
             TEST_CENTRAL_CRS_PATH,
             TEST_CENTRAL_KEYS_PATH,
-            "small_crs_test_handle_manual",
+            &TEST_CRS_ID,
             Some(ParamChoice::Test),
         )
         .await;
@@ -1571,7 +1580,7 @@ pub(crate) mod tests {
         crs_gen_centralized_client(
             TEST_CENTRAL_CRS_PATH,
             TEST_CENTRAL_KEYS_PATH,
-            "small_crs_test_handle",
+            &TEST_CRS_ID,
             Some(ParamChoice::Test),
         )
         .await;
@@ -1581,13 +1590,13 @@ pub(crate) mod tests {
     async fn crs_gen_centralized_manual(
         centralized_crs_path: &str,
         centralized_key_path: &str,
-        crs_handle: &str,
+        request_id: &RequestId,
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
             centralized_handles(centralized_key_path, Some(centralized_crs_path)).await;
 
-        let ceremony_req = internal_client.crs_gen_request(crs_handle, params).unwrap();
+        let ceremony_req = internal_client.crs_gen_request(request_id, params).unwrap();
 
         // remove existing CRS under that request id to ensure that the test is idempotent
         let client_request_id = ceremony_req.request_id.clone().unwrap();
@@ -1659,7 +1668,7 @@ pub(crate) mod tests {
     async fn crs_gen_centralized_client(
         centralized_crs_path: &str,
         centralized_key_path: &str,
-        crs_handle: &str,
+        request_id: &RequestId,
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
@@ -1667,9 +1676,7 @@ pub(crate) mod tests {
 
         let storage = DevStorage::default();
         let _ = fs::remove_dir_all(storage.root_dir());
-        let gen_req = internal_client.crs_gen_request(crs_handle, params).unwrap();
-
-        let req_id = gen_req.request_id.clone().unwrap();
+        let gen_req = internal_client.crs_gen_request(request_id, params).unwrap();
 
         // response is currently empty
         let gen_response = kms_client
@@ -1678,14 +1685,12 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(gen_response.into_inner(), Empty {});
 
-        let mut response = kms_client
-            .get_crs_gen_result(tonic::Request::new(req_id.clone()))
-            .await;
+        let mut response = kms_client.get_crs_gen_result(request_id.clone()).await;
         while response.is_err() {
             // Sleep to give the server some time to complete CRS generation
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             response = kms_client
-                .get_crs_gen_result(tonic::Request::new(req_id.clone()))
+                .get_crs_gen_result(tonic::Request::new(request_id.clone()))
                 .await;
         }
         let inner_resp = response.unwrap().into_inner();
@@ -1762,16 +1767,14 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     async fn crs_gen_threshold(threshold_key_path: &str) {
-        use crate::rpc::rpc_types::CRS_GEN_REQUEST_NAME;
+        use crate::consts::OTHER_KEY_HANDLE;
 
         let (kms_servers, kms_clients, internal_client) =
             threshold_handles(threshold_key_path).await;
-        let req_id_string = "two legs better!";
+        let request_id = TEST_CRS_ID.clone();
         let req_gen = internal_client
-            .crs_gen_request(req_id_string, Some(ParamChoice::Test))
+            .crs_gen_request(&request_id, Some(ParamChoice::Test))
             .unwrap();
-        let req_id =
-            RequestId::new(&req_id_string.to_string(), CRS_GEN_REQUEST_NAME.to_string()).unwrap();
 
         let mut tasks_gen = JoinSet::new();
         for i in 1..=AMOUNT_PARTIES as u32 {
@@ -1795,7 +1798,7 @@ pub(crate) mod tests {
             let mut tasks_get = JoinSet::new();
             for j in 1..=AMOUNT_PARTIES as u32 {
                 let mut cur_client = kms_clients.get(&j).unwrap().clone();
-                let req_id_cloned = req_id.clone();
+                let req_id_cloned = request_id.clone();
                 tasks_get.spawn(async move {
                     (
                         j,
@@ -1846,13 +1849,13 @@ pub(crate) mod tests {
             .unzip();
 
         let _pp = internal_client
-            .process_distributed_crs_result(&req_id, final_responses.clone(), &storage_readers)
+            .process_distributed_crs_result(&request_id, final_responses.clone(), &storage_readers)
             .unwrap();
 
         // if there's [THRESHOLD] result missing, we can still recover the result
         let _pp = internal_client
             .process_distributed_crs_result(
-                &req_id,
+                &request_id,
                 final_responses[0..final_responses.len() - THRESHOLD].to_vec(),
                 &storage_readers,
             )
@@ -1861,21 +1864,17 @@ pub(crate) mod tests {
         // if there are [THRESHOLD+1] results missing, then we do not have consensus
         assert!(internal_client
             .process_distributed_crs_result(
-                &req_id,
+                &request_id,
                 final_responses[0..final_responses.len() - (THRESHOLD + 1)].to_vec(),
                 &storage_readers
             )
             .is_err());
 
         // if the request_id is wrong, we get nothing
-        let bad_request_id = RequestId::new(
-            &"four legs good".to_string(),
-            CRS_GEN_REQUEST_NAME.to_string(),
-        )
-        .unwrap();
+        let bad_request_id = &OTHER_KEY_HANDLE;
         assert!(internal_client
             .process_distributed_crs_result(
-                &bad_request_id,
+                bad_request_id,
                 final_responses.clone(),
                 &storage_readers
             )
@@ -1892,7 +1891,7 @@ pub(crate) mod tests {
 
         let _pp = internal_client
             .process_distributed_crs_result(
-                &req_id,
+                &request_id,
                 final_responses_with_bad_sig.clone(),
                 &storage_readers,
             )
@@ -1901,7 +1900,11 @@ pub(crate) mod tests {
         // having [THRESHOLD+1] wrong signatures won't work
         set_signatures(&mut final_responses_with_bad_sig, THRESHOLD + 1, &bad_sig);
         assert!(internal_client
-            .process_distributed_crs_result(&req_id, final_responses_with_bad_sig, &storage_readers)
+            .process_distributed_crs_result(
+                &request_id,
+                final_responses_with_bad_sig,
+                &storage_readers
+            )
             .is_err());
 
         // having [THRESHOLD] wrong digest still works
@@ -1913,7 +1916,7 @@ pub(crate) mod tests {
         );
         let _pp = internal_client
             .process_distributed_crs_result(
-                &req_id,
+                &request_id,
                 final_responses_with_bad_digest.clone(),
                 &storage_readers,
             )
@@ -1927,7 +1930,7 @@ pub(crate) mod tests {
         );
         assert!(internal_client
             .process_distributed_crs_result(
-                &req_id,
+                &request_id,
                 final_responses_with_bad_digest,
                 &storage_readers
             )
@@ -1955,7 +1958,7 @@ pub(crate) mod tests {
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
 
         let req = internal_client
-            .decryption_request(ct.clone(), fhe_type, None)
+            .decryption_request(ct.clone(), fhe_type, &TEST_DEC_ID, None)
             .unwrap();
         let response = kms_client
             .decrypt(tonic::Request::new(req.clone()))
@@ -1969,7 +1972,7 @@ pub(crate) mod tests {
         while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
         {
             // Sleep to give the server some time to complete decryption
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             response = kms_client
                 .get_decrypt_result(req.request_id.clone().unwrap())
                 .await;
@@ -1978,7 +1981,7 @@ pub(crate) mod tests {
             responses: vec![response.unwrap().into_inner()],
         };
         let plaintext = internal_client
-            .process_decryption_resp(Some(req), responses)
+            .process_decryption_resp(Some(req), &responses)
             .unwrap()
             .unwrap();
         assert_eq!(TEST_FHE_TYPE, plaintext.fhe_type());
@@ -2026,8 +2029,9 @@ pub(crate) mod tests {
         let (kms_server, mut kms_client, mut internal_client) =
             centralized_handles(centralized_key_path, None).await;
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
+        let request_id = &TEST_REENC_ID;
         let (req, enc_pk, enc_sk) = internal_client
-            .reencyption_request(ct, &dummy_domain(), fhe_type, None)
+            .reencyption_request(ct, &dummy_domain(), fhe_type, request_id, None)
             .unwrap();
         let response = kms_client
             .reencrypt(tonic::Request::new(req.clone()))
@@ -2041,7 +2045,7 @@ pub(crate) mod tests {
         while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
         {
             // Sleep to give the server some time to complete reencryption
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             response = kms_client
                 .get_reencrypt_result(req.clone().payload.unwrap().request_id.clone().unwrap())
                 .await;
@@ -2070,7 +2074,7 @@ pub(crate) mod tests {
         }
 
         let plaintext = internal_client
-            .process_reencryption_resp(Some(req), responses, &enc_pk, &enc_sk)
+            .process_reencryption_resp(Some(req), &responses, &enc_pk, &enc_sk)
             .unwrap()
             .unwrap();
         assert_eq!(TEST_FHE_TYPE, plaintext.fhe_type());
@@ -2098,8 +2102,9 @@ pub(crate) mod tests {
         let (ct, fhe_type): (Vec<u8>, FheType) =
             read_element_async(cipher_path.to_string()).await.unwrap();
 
+        let request_id = &TEST_DEC_ID;
         let req = internal_client
-            .decryption_request(ct, fhe_type, None)
+            .decryption_request(ct, fhe_type, request_id, None)
             .unwrap();
         let mut req_tasks = JoinSet::new();
         for i in 1..=AMOUNT_PARTIES as u32 {
@@ -2132,7 +2137,7 @@ pub(crate) mod tests {
             responses: resp_response_vec,
         };
         let plaintext = internal_client
-            .process_decryption_resp(Some(req), agg)
+            .process_decryption_resp(Some(req), &agg)
             .unwrap()
             .unwrap();
         assert_eq!(TEST_FHE_TYPE, plaintext.fhe_type());
@@ -2179,8 +2184,9 @@ pub(crate) mod tests {
         let (ct, fhe_type): (Vec<u8>, FheType) =
             read_element_async(cipher_path.to_string()).await.unwrap();
 
+        let request_id = &TEST_REENC_ID;
         let (req, enc_pk, enc_sk) = internal_client
-            .reencyption_request(ct, &dummy_domain(), fhe_type, None)
+            .reencyption_request(ct, &dummy_domain(), fhe_type, request_id, None)
             .unwrap();
         let mut req_tasks = JoinSet::new();
         tracing::info!("Client did reencryption request");
@@ -2240,7 +2246,7 @@ pub(crate) mod tests {
             responses: response_map,
         };
         let plaintext = internal_client
-            .process_reencryption_resp(Some(req), agg, &enc_pk, &enc_sk)
+            .process_reencryption_resp(Some(req), &agg, &enc_pk, &enc_sk)
             .unwrap()
             .unwrap();
         assert_eq!(TEST_FHE_TYPE, plaintext.fhe_type());
@@ -2267,8 +2273,9 @@ pub(crate) mod tests {
             keys.params,
         );
 
+        let request_id = &TEST_REENC_ID;
         let (req, _enc_pk, _enc_sk) = internal_client
-            .reencyption_request(ct, &dummy_domain(), fhe_type, None)
+            .reencyption_request(ct, &dummy_domain(), fhe_type, request_id, None)
             .unwrap();
         let response = kms_client
             .reencrypt(tonic::Request::new(req.clone()))
@@ -2282,7 +2289,7 @@ pub(crate) mod tests {
         while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
         {
             // Sleep to give the server some time to complete reencryption
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             response = kms_client
                 .get_reencrypt_result(req.clone().payload.unwrap().request_id.clone().unwrap())
                 .await;
@@ -2351,10 +2358,14 @@ pub(crate) mod tests {
         let (kms_servers, kms_clients, internal_client) =
             threshold_handles(TEST_THRESHOLD_KEYS_PATH).await;
 
-        let request_id = "0000000000000000000000000000000000000001";
-        let request_id_nok = "0000000000000000000000000000000000000002";
+        let request_id = RequestId {
+            request_id: "0000000000000000000000000000000000000001".to_string(),
+        };
+        let request_id_nok = RequestId {
+            request_id: "0000000000000000000000000000000000000002".to_string(),
+        };
         let req_gen = internal_client
-            .preproc_request(request_id, Some(ParamChoice::Test))
+            .preproc_request(&request_id, Some(ParamChoice::Test))
             .unwrap();
 
         let mut tasks_gen = JoinSet::new();
@@ -2390,7 +2401,7 @@ pub(crate) mod tests {
 
         //This request should give us the correct status
         let req_status_ok = internal_client
-            .preproc_request(request_id, Some(ParamChoice::Test))
+            .preproc_request(&request_id, Some(ParamChoice::Test))
             .unwrap();
         test_preproc_status(
             req_status_ok.clone(),
@@ -2400,7 +2411,7 @@ pub(crate) mod tests {
         .await;
         //This request is not ok because the ParamChoice is not the same as the initial preproc request
         let req_status_nok_params = internal_client
-            .preproc_request(request_id, Some(ParamChoice::Default))
+            .preproc_request(&request_id, Some(ParamChoice::Default))
             .unwrap();
         test_preproc_status(
             req_status_nok_params,
@@ -2408,9 +2419,10 @@ pub(crate) mod tests {
             &kms_clients,
         )
         .await;
+
         //This request is not ok because no preproc was ever started for this session id
         let req_status_nok_sid = internal_client
-            .preproc_request(request_id_nok, Some(ParamChoice::Test))
+            .preproc_request(&request_id_nok, Some(ParamChoice::Test))
             .unwrap();
         test_preproc_status(
             req_status_nok_sid,
@@ -2446,7 +2458,7 @@ pub(crate) mod tests {
     //Helper function to launch dkg
     #[cfg(feature = "slow_tests")]
     async fn launch_dkg(
-        request_id_keygen: &str,
+        request_id_keygen: &RequestId,
         req_keygen: crate::kms::KeyGenRequest,
         kms_clients: &HashMap<u32, CoordinatorEndpointClient<Channel>>,
     ) -> Vec<Result<tonic::Response<Empty>, tonic::Status>> {
@@ -2485,9 +2497,11 @@ pub(crate) mod tests {
         let (kms_servers, kms_clients, internal_client) =
             threshold_handles(TEST_THRESHOLD_KEYS_PATH).await;
 
-        let request_id_preproc = "0000000000000000000000000000000000000011";
+        let request_id_preproc = RequestId {
+            request_id: "0000000000000000000000000000000000000011".to_string(),
+        };
         let req_preproc = internal_client
-            .preproc_request(request_id_preproc, Some(ParamChoice::Test))
+            .preproc_request(&request_id_preproc, Some(ParamChoice::Test))
             .unwrap();
 
         let mut tasks_gen = JoinSet::new();
@@ -2528,11 +2542,13 @@ pub(crate) mod tests {
 
         //Preproc is now ready, start legitimate dkg
         let preproc_id = req_preproc.request_id.clone();
-        let request_id_keygen = "0000000000000000000000000000000000000022";
+        let request_id_keygen = RequestId {
+            request_id: "0000000000000000000000000000000000000022".to_string(),
+        };
         let req_keygen = internal_client
-            .key_gen_request(request_id_keygen, preproc_id, Some(ParamChoice::Test))
+            .key_gen_request(&request_id_keygen, preproc_id, Some(ParamChoice::Test))
             .unwrap();
-        let responses = launch_dkg(request_id_keygen, req_keygen.clone(), &kms_clients).await;
+        let responses = launch_dkg(&request_id_keygen, req_keygen.clone(), &kms_clients).await;
         for response in responses {
             assert!(response.is_ok());
         }
@@ -2608,11 +2624,13 @@ pub(crate) mod tests {
 
         //Try to request another kg with the same preproc
         let preproc_id = req_preproc.request_id;
-        let request_id_keygen = "0000000000000000000000000000000000000222";
+        let request_id_keygen = RequestId {
+            request_id: "0000000000000000000000000000000000000222".to_string(),
+        };
         let req_keygen = internal_client
-            .key_gen_request(request_id_keygen, preproc_id, Some(ParamChoice::Test))
+            .key_gen_request(&request_id_keygen, preproc_id, Some(ParamChoice::Test))
             .unwrap();
-        let responses = launch_dkg(request_id_keygen, req_keygen.clone(), &kms_clients).await;
+        let responses = launch_dkg(&request_id_keygen, req_keygen.clone(), &kms_clients).await;
         for response in responses {
             assert!(response.unwrap_err().code() == tonic::Code::NotFound);
         }

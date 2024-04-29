@@ -1,5 +1,4 @@
 use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
-use crate::cryptography::signcryption::serialize_hash_element;
 use crate::kms::{
     DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType,
     ReencryptionRequestPayload, ReencryptionResponse,
@@ -18,10 +17,6 @@ use std::fmt;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 pub static CURRENT_FORMAT_VERSION: u32 = 1;
-pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
-pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
-pub static DEC_REQUEST_NAME: &str = "dec_request";
-pub static REENC_REQUEST_NAME: &str = "reenc_request";
 
 /// Enum which represents the different kinds of public information that can be stored as part of key generation.
 /// In practice this means the CRS and different types of public keys.
@@ -638,24 +633,9 @@ impl fmt::Display for RequestId {
 }
 
 impl RequestId {
-    pub fn new<S>(value: &S, name: String) -> anyhow::Result<Self>
-    where
-        S: Serialize + fmt::Debug,
-    {
-        let mut hashed_payload = serialize_hash_element(value)?;
-        let mut hashed_name = serialize_hash_element(&name)?;
-        hashed_payload.append(&mut hashed_name);
-        let mut res_hash = serialize_hash_element(&hashed_payload)?;
-        // Truncate and convert to hex
-        res_hash.truncate(ID_LENGTH);
-        let res_hash = hex::encode(res_hash);
-        Ok(RequestId {
-            request_id: res_hash,
-        })
-    }
-
     /// Validates if a user-specified input is a request ID.
-    /// By valid we mean if it is a hex string of a static length. This is done to ensure it can be part of a valid
+    ///
+    /// By valid we mean it is a hex string of a static length. This is done to ensure it can be part of a valid
     /// path, without risk of path-traversal attacks in case the key request call is publicly accessible.
     pub fn is_valid(&self) -> bool {
         let hex = match hex::decode(self.to_string()) {
@@ -678,10 +658,11 @@ impl RequestId {
 }
 
 impl From<RequestId> for u128 {
-    //Should not panic if RequestId passed is_valid()
+    // Should not panic if RequestId passed is_valid()
     fn from(value: RequestId) -> Self {
         let hex = hex::decode(value.to_string()).unwrap();
-        let hex_truncated: [u8; 16] = hex[4..20].try_into().unwrap();
+        // hex.len() should equal to ID_LENGTH, and ID_LENGTH >= 16
+        let hex_truncated: [u8; 16] = hex[ID_LENGTH - 16..ID_LENGTH].try_into().unwrap();
         u128::from_be_bytes(hex_truncated)
     }
 }

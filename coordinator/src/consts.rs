@@ -42,6 +42,9 @@ lazy_static! {
     pub static ref TEST_DEC_ID: RequestId = RequestId {
         request_id: String::from("0000000000000000000000000000000000000002")
     };
+    pub static ref TEST_REENC_ID: RequestId = RequestId {
+        request_id: String::from("0000000000000000000000000000000000000003")
+    };
     pub static ref OTHER_KEY_HANDLE: RequestId = RequestId {
         request_id: String::from("1111111111111111111111111111111111111111")
     };
