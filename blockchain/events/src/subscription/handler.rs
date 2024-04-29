@@ -1,205 +1,229 @@
-use super::query::SubQuery;
+use super::metrics::{Metrics, OpenTelemetryMetrics};
+use super::{BlockchainService, GrpcBlockchainService, StorageService, TomlStorageServiceImpl};
+use crate::kms::{KmsEvent, KmsOperationAttribute};
 use async_trait::async_trait;
-use core::slice;
+use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
+use cosmos_proto::messages::tendermint::abci::Event as AbciEvent;
 use cosmwasm_std::Event;
-use fast_websocket_client::{client, connect, OpCode};
+use koit_toml::KoitError;
 #[cfg(test)]
 use mockall::{automock, mock, predicate::*};
-use serde::Deserialize;
-use simd_json::serde as sim_serde;
+use retrying::retry;
+use std::path::PathBuf;
 use std::time::Duration;
-use tokio::task;
+use strum::IntoEnumIterator;
+use thiserror::Error;
+use tokio::time::sleep;
 use typed_builder::TypedBuilder;
+
+#[derive(Debug, Error)]
+pub enum SubscriptionError {
+    #[error("Error connecting to Event Server Subscription - {0}")]
+    ConnectionError(String),
+    #[error("Error calling GetTxsEvent message to Event Server - {0}")]
+    ResponseTxsEventError(#[from] tonic::Status),
+    #[error("Error receiving message from Event Server Subscription - {0}")]
+    UnknownError(#[from] anyhow::Error),
+    #[error("Error deserializing message from Event Server Subscription - {0}")]
+    DeserializationError(String),
+    #[error("Error loading storage with sync point - {0}")]
+    StorageError(#[from] KoitError),
+}
 
 /// Subscription entry point for building a Subscription Service
 /// The builder pattern is used to create a Subscription Service
 #[derive(TypedBuilder)]
-pub struct SubscriptionWebSocketBuilder<'a> {
-    ws_address: &'a str,
-
-    query: &'a SubQuery<'a>,
-
-    // Default waiting time for reconnection is 10 seconds
-    #[builder(default = Duration::from_secs(10))]
-    recon_waiting_time: Duration,
+pub struct SubscriptionEventBuilder<'a> {
+    grpc_addresses: &'a [&'a str],
+    #[builder(setter(transform = |x: &str| PathBuf::from(x)))]
+    storage_path: PathBuf,
+    #[builder(setter(into), default)]
+    height: Option<u64>,
+    contract_address: &'a str,
+    #[builder(default = 5)]
+    tick_time_in_sec: u64,
 }
 
-#[derive(Debug, Deserialize)]
-struct SubscriptionResponse {
-    result: Option<serde_json::Value>,
-    error: Option<serde_json::Value>,
+pub struct SubscriptionEventChannel<B, S, M> {
+    blockchain: B,
+    storage: S,
+    metrics: M,
+    tick_time_in_sec: u64,
+}
+
+impl<'a, 'b> SubscriptionEventBuilder<'a>
+where
+    'a: 'b,
+{
+    pub async fn subscription(
+        self,
+    ) -> Result<
+        SubscriptionEventChannel<
+            GrpcBlockchainService<'b>,
+            TomlStorageServiceImpl,
+            OpenTelemetryMetrics,
+        >,
+        SubscriptionError,
+    > {
+        let blockchain = GrpcBlockchainService::new(self.grpc_addresses, self.contract_address)?;
+        let storage = TomlStorageServiceImpl::new(&self.storage_path, self.height).await?;
+        let metrics = OpenTelemetryMetrics::new();
+        Ok(SubscriptionEventChannel {
+            tick_time_in_sec: self.tick_time_in_sec,
+            blockchain,
+            storage,
+            metrics,
+        })
+    }
 }
 
 /// Subscription Handler Trait
 /// This trait is used to define the behavior of the Subscription handler
-/// The handler will be called when a message is received from the WebSocket Server
+/// The handler will be called when a message is received from the Event Server
 #[cfg_attr(test, automock)]
 #[async_trait]
 pub trait SubscriptionHandler {
     async fn on_message(
         &self,
-        message: Event,
+        message: KmsEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
 }
 
-impl<'a> SubscriptionWebSocketBuilder<'a> {
-    /// Subscribe to the WebSocket server
-    /// The handler will be called when a message is received from the WebSocket server
+impl<B, S, M> SubscriptionEventChannel<B, S, M>
+where
+    B: BlockchainService,
+    S: StorageService,
+    M: Metrics,
+{
+    /// Subscribe to the Event server
+    /// The handler will be called when a message is received from the Event server
     ///
     /// # Arguments
-    /// * `handler` - The handler that will be called when a message is received from the WebSocket Server
-    /// * `D` - The type of the message that will be received from the WebSocket server
-    /// * `U` - The handler that will be called when a message is received from the WebSocket server
+    /// * `handler` - The handler that will be called when a message is received from the Event Server
+    /// * `U` - The handler that will be called when a message is received from the Event server
     ///
-    pub async fn subscribe<U>(self, handler: &U)
+    /// # Returns
+    /// * `Result<(), SubscriptionError>` - The result of the Subscription
+    /// * `SubscriptionError` - The error that occurred during the Subscription
+    ///
+    ///
+    ///
+    pub async fn subscribe<U>(self, handler: U) -> Result<(), SubscriptionError>
     where
         U: SubscriptionHandler + Clone + Send + Sync + 'static,
     {
-        'reconnect_loop: loop {
-            let mut client: client::Online = match connect(self.ws_address).await {
-                Ok(mut client) => {
-                    tracing::info!(
-                        "Connected to WebSocket Server Subscription at {}",
-                        self.ws_address
-                    );
-                    client.set_auto_pong(true);
-                    client.set_auto_close(true);
-                    client
-                }
-                Err(e) => {
-                    tracing::error!("Error connecting to WebSocket Server Subscription at {} - Error: {e:?}. Wating 10 seconds before reconnecting again.", self.ws_address);
-                    tokio::time::sleep(self.recon_waiting_time).await;
-                    continue;
-                }
-            };
-
-            // add one more example subscription here after connect
-            if let Err(e) = Self::send_subscribe_message(&mut client, self.query).await {
-                tracing::error!("Error subscribing to WebSocket Server Subscription at {} with message {:?} - Error: {e:?}. Wating 10 seconds before reconnecting again.", self.ws_address, self.query);
-                let _ = client.send_close(&[]).await;
-                tokio::time::sleep(self.recon_waiting_time).await;
-                continue;
-            };
-
-            // message processing loop
-            loop {
-                if let Ok(result) =
-                    tokio::time::timeout(Duration::from_millis(100), client.receive_frame()).await
-                {
-                    match result {
-                        Ok(mut message) => match message.opcode {
-                            OpCode::Text => {
-                                let slice = message.payload.to_mut();
-                                let ptr = slice.as_mut_ptr();
-                                let slice_mut =
-                                    unsafe { slice::from_raw_parts_mut(ptr, slice.len()) };
-                                let payload = match self.parse_message(slice_mut).await {
-                                    Ok(payload) => {
-                                        if let Some(payload_event) = payload {
-                                            payload_event
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("{e:?}");
-                                        let _ = client.send_close(&[]).await;
-                                        break;
-                                    }
-                                };
-                                let handler = handler.clone();
-                                task::spawn(async move {
-                                    let enter = tracing::span!(tracing::Level::INFO, "on_message", payload = ?payload);
-                                    let _guard = enter.enter();
-                                    let p = format!("{:?}", payload);
-                                    handler.on_message(payload).await.unwrap_or_else(|e| {
-                                            tracing::error!("Error processing message from WebSocket Server - Message: {p} - Error: {e:?}");
-                                        });
-                                    drop(_guard);
-                                });
-                            }
-                            OpCode::Close => {
-                                tracing::error!("Error Received Close message from WebSocket Server Subscription at {} - Error: {}", self.ws_address, String::from_utf8_lossy(message.payload.as_ref()));
-                                break 'reconnect_loop;
-                            }
-                            _ => {}
-                        },
-                        Err(e) => {
-                            tracing::error!("Error receiving message from WebSocket Server Subscription at {} - Error: {e:?}", self.ws_address);
-                            let _ = client.send_close(&[]).await;
-                            break; // break the message loop then reconnect
-                        }
-                    }
-                } else {
-                    tracing::warn!(
-                        "Timeout receiving message from WebSocket Server Subscription at {}",
-                        self.ws_address
-                    );
-                    continue;
-                };
-            }
+        loop {
+            tracing::info!(
+                "Waiting {} secs for next tick before getting events",
+                self.tick_time_in_sec
+            );
+            sleep(Duration::from_secs(self.tick_time_in_sec)).await;
+            self.handle_events(handler.clone())
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::error!("Error handling events: {:?}", e);
+                });
         }
     }
 
-    async fn send_subscribe_message(
-        client: &mut client::Online,
-        handler: &SubQuery<'_>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        tokio::time::timeout(
-            Duration::from_millis(0),
-            client.send_json(handler.to_subscription_msg()),
-        )
-        .await??;
-        Ok(())
-    }
-
-    async fn parse_message(&self, message: &mut [u8]) -> anyhow::Result<Option<Event>> {
-        let payload: SubscriptionResponse = sim_serde::from_slice(
-            message,
-        ).map_err(|e| {
-          let v = std::str::from_utf8(message).unwrap_or("Cannot deserialize message");
-          anyhow::anyhow!("Error deserializing message {v:?} from WebSocket Server Subscription at {} - Error: {e:?}", self.ws_address)
+    /// Handle one round of events received from the Event Server
+    pub async fn handle_events<U>(&self, handler: U) -> Result<(), SubscriptionError>
+    where
+        U: SubscriptionHandler + Clone + Send + Sync + 'static,
+    {
+        let enter = tracing::span!(
+            tracing::Level::INFO,
+            "subscribe",
+            "Loop Getting Event from Blockchain"
+        );
+        let _guard = enter.enter();
+        let height = self.storage.get_last_height().await?;
+        tracing::info!("Getting events from Blockchain from height {:?}", height);
+        let results = self.get_txs_events(height).await.map_err(|e| {
+            self.metrics
+                .increment_connection_errors(1, &[("error", &e.to_string())]);
+            e
         })?;
-
-        match payload.result {
-            Some(ref p) => {
-                if p.is_object() && p.as_object().unwrap().is_empty() {
-                    Ok(None)
-                } else {
-                    serde_json::from_value(p.to_owned()).map(Some).map_err(|e|
-                        anyhow::anyhow!("Error deserializing message {p:?} from WebSocket Server Subscription at {} - Error: {e:?}", self.ws_address))
-                }
-            }
-            None => Err(anyhow::anyhow!(
-                "Error Received message from WebSocket Server Subscription at {} - Error: {:?}",
-                self.ws_address,
-                payload.error
-            )),
+        tracing::info!("Received events from Blockchain {:?}", results.len());
+        if results.is_empty() {
+            tracing::info!("No events received from Blockchain. Update to last height");
+            let latest_height = self.blockchain.get_last_height().await?;
+            let new_height = 0.max(latest_height as i64 - 10) as u64;
+            self.storage.save_last_height(new_height).await?;
+            return Ok(());
         }
+        let last_height = results.iter().map(|tx| tx.height).max().unwrap_or(0) as u64;
+        let events = results
+            .iter()
+            .map(|tx| {
+                tx.events
+                    .iter()
+                    .filter(|x| {
+                        KmsOperationAttribute::iter()
+                            .any(|attr| x.r#type == format!("wasm-{}", attr))
+                    })
+                    .map(|x| Self::to_event(x))
+                    .map(<Event as TryInto<KmsEvent>>::try_into)
+                    .collect::<Result<Vec<KmsEvent>, _>>()
+                    .map_err(|e| SubscriptionError::DeserializationError(e.to_string()))
+            })
+            .collect::<Result<Vec<Vec<KmsEvent>>, _>>()?;
+        let events = events.into_iter().flatten().collect::<Vec<KmsEvent>>();
+        let results_size = events.len();
+        tracing::info!("Sending events to be processed to handler {}", results_size);
+        for result in events {
+            let handler = handler.clone();
+            let handle = async move {
+                let enter = tracing::span!(
+                    tracing::Level::INFO,
+                    "on_message",
+                    payload = ?result,
+                    "Received message from Event Server"
+                );
+                let _guard = enter.enter();
+                let result = handler.on_message(result).await;
+                drop(_guard);
+                result
+            };
+            tokio::spawn(handle);
+        }
+
+        self.metrics
+            .increment_tx_processed(results_size as u64, &[]);
+        self.update_last_seen_height(last_height).await
+    }
+
+    #[retry(stop=(attempts(4)|duration(5)),wait=fixed(10))]
+    async fn get_txs_events(&self, height: u64) -> Result<Vec<TxResponse>, SubscriptionError> {
+        self.blockchain.get_events(height).await
+    }
+
+    async fn update_last_seen_height(&self, last_height: u64) -> Result<(), SubscriptionError> {
+        self.storage.save_last_height(last_height).await
+    }
+
+    fn to_event(event: &AbciEvent) -> Event {
+        let mut result = Event::new(event.r#type.clone());
+        for attribute in event.attributes.iter() {
+            let key = attribute.key.clone();
+            let value = attribute.value.clone();
+            result = result.add_attribute(key, value);
+        }
+        result
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kms::{DecryptValues, KmsOperationAttribute};
+    use crate::subscription::blockchain::*;
+    use crate::subscription::storage::MockStorageService;
+    use cosmwasm_std::Attribute;
     use std::error::Error;
     use std::sync::Arc;
-    use std::time::Duration;
-
-    use cosmwasm_std::Event;
-    use serde_json::{json, Value};
-    use tokio::sync::mpsc;
-    use tokio::sync::oneshot;
-    use tokio::time::interval;
-    use ws_mock::matchers::JsonExact;
-    use ws_mock::ws_mock_server::{WsMock, WsMockServer};
-
-    use crate::kms::EventAttribute;
-    use crate::kms::KmsEventAttributeKey;
-    use crate::subscription::handler::SubscriptionWebSocketBuilder;
-    use crate::subscription::query::SubQuery;
-
     use test_context::{test_context, AsyncTestContext};
+    use tokio::sync::oneshot;
 
     mock! {
         NeverCalledSubscriptionHandler {}
@@ -209,13 +233,8 @@ mod tests {
 
         #[async_trait::async_trait]
         impl SubscriptionHandler for NeverCalledSubscriptionHandler {
-            async fn on_message(&self, _message: Event) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
+            async fn on_message(&self, _message: KmsEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
         }
-    }
-
-    struct WebSocketTestAsyncContext<'a> {
-        ws_server: WsMockServer,
-        query: SubQuery<'a>,
     }
 
     fn init_tracing() -> Result<(), Box<dyn Error + Sync + Send>> {
@@ -227,188 +246,189 @@ mod tests {
             .try_init()
     }
 
-    impl AsyncTestContext for WebSocketTestAsyncContext<'static> {
-        async fn setup() -> WebSocketTestAsyncContext<'static> {
-            init_tracing().unwrap_or(());
-            let handler = SubQuery::builder()
-                .contract_address("0x0d6ae2a429df13e44a07cd2969e085e4833f64a0")
-                .attributes(vec![EventAttribute::builder()
-                    .key(KmsEventAttributeKey::OperationType)
-                    .value("my-type".to_string())
-                    .build()])
-                .build();
-            WebSocketTestAsyncContext {
-                ws_server: WsMockServer::start().await,
-                query: handler,
+    mock! {
+        MetricService {}
+        impl Metrics for MetricService {
+            fn increment_tx_processed<'a>(&self, amount: u64, tags: &[(&'a str, &'a str)]);
+            fn increment_tx_error<'a>(&self, amount: u64, tags: &[(&'a str, &'a str)]);
+            fn increment_connection_errors<'a>(&self, amount: u64, tags: &[(&'a str, &'a str)]);
+        }
+    }
+
+    struct SubscriptionContext {
+        subscription:
+            SubscriptionEventChannel<MockBlockchainService, MockStorageService, MockMetricService>,
+    }
+
+    impl AsyncTestContext for SubscriptionContext {
+        async fn setup() -> SubscriptionContext {
+            async {
+                init_tracing().unwrap_or(());
+                let blockchain = MockBlockchainService::new();
+                let storage = MockStorageService::new();
+                SubscriptionContext {
+                    subscription: SubscriptionEventChannel {
+                        blockchain,
+                        storage,
+                        metrics: MockMetricService::new(),
+                        tick_time_in_sec: 1,
+                    },
+                }
             }
+            .await
         }
 
-        async fn teardown(self) {
-            self.ws_server.verify().await;
-            drop(self.ws_server);
-        }
+        async fn teardown(self) {}
     }
 
     #[derive(Clone)]
     struct TestHandler {
-        tx: Arc<mpsc::Sender<()>>,
+        sender: tokio::sync::mpsc::Sender<()>,
     }
 
     #[async_trait::async_trait]
     impl crate::subscription::handler::SubscriptionHandler for TestHandler {
         async fn on_message(
             &self,
-            message: Event,
+            message: KmsEvent,
         ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
             tracing::info!("Received message: {:?}", message);
-            assert_eq!(message.ty, "test");
-            self.tx.send(()).await?;
+            self.sender.send(()).await?;
             Ok(())
         }
     }
 
-    #[test_context(WebSocketTestAsyncContext)]
+    #[test_context(SubscriptionContext)]
     #[tokio::test]
     async fn test_successfull_subscription_with_one_message(
-        server: &mut WebSocketTestAsyncContext<'static>,
+        server: &mut SubscriptionContext,
     ) -> Result<(), Box<dyn std::error::Error>> {
         test_subscription_messages_common(server, 1).await
     }
 
-    #[test_context(WebSocketTestAsyncContext)]
+    #[test_context(SubscriptionContext)]
     #[tokio::test]
     async fn test_successfull_subscription_with_multiple_messages(
-        server: &mut WebSocketTestAsyncContext<'static>,
+        server: &mut SubscriptionContext,
     ) -> Result<(), Box<dyn std::error::Error>> {
         test_subscription_messages_common(server, 10).await
     }
 
-    #[test_context(WebSocketTestAsyncContext)]
+    #[test_context(SubscriptionContext)]
     #[tokio::test]
-    async fn test_reconnection_on_error_message(
-        server: &mut WebSocketTestAsyncContext<'static>,
+    async fn test_on_error_message(
+        server: &mut SubscriptionContext,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let json_sub_msg_str = serde_json::to_string(&server.query.to_subscription_msg())
-            .expect("Failed to serialize message");
-        let json_sub_msg = serde_json::from_str::<Value>(&json_sub_msg_str)?;
+        server
+            .subscription
+            .blockchain
+            .expect_get_events()
+            .withf(|_| true)
+            .times(1)
+            .returning(move |_| Ok(vec![]));
 
-        let (mpsc_send, mpsc_recv) = mpsc::channel::<String>(32);
+        server
+            .subscription
+            .storage
+            .expect_get_last_height()
+            .times(1)
+            .returning(|| Ok(0));
 
-        WsMock::new()
-            .matcher(JsonExact::new(json_sub_msg))
-            .forward_from_channel(mpsc_recv)
-            .mount(&server.ws_server)
-            .await;
+        server
+            .subscription
+            .storage
+            .expect_save_last_height()
+            .withf(|_| true)
+            .times(1)
+            .returning(|_| Ok(()));
 
-        let uri = server.ws_server.uri().await;
+        server
+            .subscription
+            .blockchain
+            .expect_get_last_height()
+            .times(1)
+            .returning(|| Ok(0));
 
         let mut on_message_mock = MockNeverCalledSubscriptionHandler::new();
         on_message_mock.expect_on_message().never();
 
-        let query = server.query.clone();
-
-        let handle = tokio::spawn(async move {
-            let subscription = SubscriptionWebSocketBuilder::builder()
-                .ws_address(&uri)
-                .query(&query)
-                .recon_waiting_time(Duration::from_secs(10))
-                .build();
-
-            subscription.subscribe(&on_message_mock).await
-        });
-
-        let expected_json = json!({
-          "result": {}
-        });
-
-        let expected_json_str = serde_json::to_string(&expected_json)?;
-
-        mpsc_send.send(expected_json_str.clone()).await?;
-
-        let mut interval = interval(Duration::from_secs(1));
-
-        let (timeout_tx, timeout_rx) = oneshot::channel();
-        let timeout_task = async {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            timeout_tx.send(()).unwrap();
-        };
-
-        tokio::spawn(timeout_task);
-        tokio::select! {
-            _ = timeout_rx => {
-                handle.abort();
-            }
-            _ = interval.tick() => {}
-        }
-
+        server.subscription.handle_events(on_message_mock).await?;
         Ok(())
     }
 
     async fn test_subscription_messages_common(
-        server: &mut WebSocketTestAsyncContext<'static>,
+        server: &mut SubscriptionContext,
         amount: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let json_sub_msg_str = serde_json::to_string(&server.query.to_subscription_msg())
-            .expect("Failed to serialize message");
-        let json_sub_msg = serde_json::from_str::<Value>(&json_sub_msg_str)?;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(amount as usize);
+        let on_message = TestHandler { sender: tx };
 
-        let (mpsc_send, mpsc_recv) = mpsc::channel::<String>(32);
-
-        WsMock::new()
-            .matcher(JsonExact::new(json_sub_msg))
-            .forward_from_channel(mpsc_recv)
-            .mount(&server.ws_server)
-            .await;
-
-        let uri = server.ws_server.uri().await;
-
-        let (tx, mut rx) = mpsc::channel(32);
-
-        let on_message = TestHandler { tx: Arc::new(tx) };
-
-        let query = server.query.clone();
-
-        let handle = tokio::spawn(async move {
-            let subscription = SubscriptionWebSocketBuilder::builder()
-                .ws_address(&uri)
-                .query(&query)
-                .recon_waiting_time(Duration::from_secs(10))
-                .build();
-
-            subscription.subscribe(&on_message).await
+        let mut tx_response = TxResponse::default();
+        let event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::Decrypt(DecryptValues::default()))
+            .txn_id(vec![1])
+            .build();
+        let attrs: Vec<Attribute> = <KmsEvent as Into<Event>>::into(event).attributes;
+        tx_response.events.push(AbciEvent {
+            r#type: format!(
+                "wasm-{}",
+                KmsOperationAttribute::Decrypt(DecryptValues::default())
+            ),
+            attributes: attrs
+                .iter()
+                .map(
+                    |x| cosmos_proto::messages::tendermint::abci::EventAttribute {
+                        key: x.key.to_string(),
+                        value: x.value.to_string(),
+                        index: true,
+                    },
+                )
+                .collect(),
         });
+        server
+            .subscription
+            .blockchain
+            .expect_get_events()
+            .withf(|_| true)
+            .times(1)
+            .returning(move |_| Ok(vec![tx_response.clone(); amount as usize]));
 
-        for i in 0..amount {
-            let expected_json = json!({
-              "result": {
-                "type": "test",
-                "attributes": [
-                  {
-                    "key": "number",
-                    "value": i.to_string()
-                  }
-                ]
-              }
-            });
+        server
+            .subscription
+            .storage
+            .expect_get_last_height()
+            .times(1)
+            .returning(|| Ok(0));
 
-            let expected_json_str = serde_json::to_string(&expected_json)?;
+        server
+            .subscription
+            .storage
+            .expect_save_last_height()
+            .withf(|_| true)
+            .times(1)
+            .returning(|_| Ok(()));
 
-            mpsc_send.send(expected_json_str.clone()).await?;
-        }
+        server
+            .subscription
+            .metrics
+            .expect_increment_tx_processed()
+            .times(1)
+            .withf(|_, _| true)
+            .returning(|_, _| ());
 
-        let mut interval = interval(Duration::from_secs(1));
+        let result = server.subscription.handle_events(on_message.clone()).await;
+        assert!(result.is_ok());
 
         let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
         let (timeout_tx, timeout_rx) = oneshot::channel();
         let timeout_task = async {
             tokio::time::sleep(Duration::from_secs(5)).await;
             timeout_tx.send(()).unwrap();
         };
-
         tokio::spawn(timeout_task);
         tokio::select! {
             _ = timeout_rx => {
-                handle.abort();
                 panic!("Timeout");
             }
             _ = async {
@@ -417,19 +437,18 @@ mod tests {
                         _ = interval.tick() => {
                         }
                         _ = rx.recv() => {
-                            let count = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            let count = counter.fetch_add(1, std::sync::atomic::Ordering::Release);
                             if count == amount as usize - 1 {
-                                handle.abort();
                                 break;
                             }
                         }
                     }
                 }
-            } => {}
+            } => { }
         }
 
         assert_eq!(
-            counter.load(std::sync::atomic::Ordering::SeqCst),
+            counter.load(std::sync::atomic::Ordering::Acquire),
             amount as usize
         );
         Ok(())

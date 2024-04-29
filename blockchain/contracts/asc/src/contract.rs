@@ -1,8 +1,12 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Attribute, Event, VerificationError};
+use cosmwasm_std::{Attribute, VerificationError};
 use cosmwasm_std::{Response, StdResult};
 use cw_storage_plus::Map;
-use events::kms::FheType;
+use events::kms::KmsEvent;
+use events::kms::{
+    CsrGenResponseValues, DecryptResponseValues, DecryptValues, FheType, KeyGenResponseValues,
+    KmsOperationAttribute, ReencryptResponseValues, ReencryptValues,
+};
 use sha2::Digest;
 use sylvia::types::{ExecCtx, InstantiateCtx, QueryCtx};
 use sylvia::{contract, entry_points};
@@ -91,12 +95,16 @@ impl KmsContract {
         fhe_type: FheType,
     ) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx);
-        let event = Event::new("decrypt").add_attributes(vec![
-            ("txnid", hex::encode(txn_id.clone())),
-            ("ciphertext", hex::encode(ciphertext.clone())),
-            ("fhetype", fhe_type.to_string()),
-        ]);
-        let response = Response::new().add_event(event);
+        let event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::Decrypt(
+                DecryptValues::builder()
+                    .ciphertext(ciphertext)
+                    .fhe_type(fhe_type)
+                    .build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+        let response = Response::new().add_event(event.into());
         self.transactions
             .save(ctx.deps.storage, txn_id.clone(), &txn_id)?;
         Ok(response)
@@ -114,11 +122,16 @@ impl KmsContract {
                 VerificationError::GenericErr,
             ));
         }
-        let event = Event::new("decrypt_response").add_attributes(vec![
-            ("txnid", hex::encode(txn_id.clone())),
-            ("plaintext", hex::encode(plaintext.clone())),
-        ]);
-        let response = Response::new().add_event(event);
+        let event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::DecryptResponse(
+                DecryptResponseValues::builder()
+                    .plaintext(plaintext)
+                    .build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+        let response = Response::new().add_event(event.into());
+
         self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
@@ -126,9 +139,11 @@ impl KmsContract {
     #[sv::msg(exec)]
     pub fn keygen(&self, ctx: ExecCtx) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx);
-        let event =
-            Event::new("keygen").add_attributes(vec![("txnid", hex::encode(txn_id.clone()))]);
-        let response = Response::new().add_event(event);
+        let event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::KeyGen)
+            .txn_id(txn_id.clone())
+            .build();
+        let response = Response::new().add_event(event.into());
         self.transactions
             .save(ctx.deps.storage, txn_id.clone(), &txn_id)?;
         Ok(response)
@@ -146,11 +161,13 @@ impl KmsContract {
                 VerificationError::GenericErr,
             ));
         }
-        let event = Event::new("keygen_response").add_attributes(vec![
-            ("txnid", hex::encode(txn_id.clone())),
-            ("key", hex::encode(key.clone())),
-        ]);
-        let response = Response::new().add_event(event);
+        let event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::KeyGenResponse(
+                KeyGenResponseValues::builder().key(key).build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+        let response = Response::new().add_event(event.into());
         self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
@@ -163,12 +180,16 @@ impl KmsContract {
         fhe_type: FheType,
     ) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx);
-        let event = Event::new("reencrypt").add_attributes(vec![
-            ("txnid", hex::encode(txn_id.clone())),
-            ("ciphertext", hex::encode(ciphertext.clone())),
-            ("fhetype", fhe_type.to_string()),
-        ]);
-        let response = Response::new().add_event(event);
+        let event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::Reencrypt(
+                ReencryptValues::builder()
+                    .ciphertext(ciphertext)
+                    .fhe_type(fhe_type)
+                    .build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+        let response = Response::new().add_event(event.into());
         self.transactions
             .save(ctx.deps.storage, txn_id.clone(), &txn_id)?;
         Ok(response)
@@ -186,11 +207,15 @@ impl KmsContract {
                 VerificationError::GenericErr,
             ));
         }
-        let event = Event::new("reencrypt_response").add_attributes(vec![
-            ("txnid", hex::encode(txn_id.clone())),
-            ("ciphertext", hex::encode(ciphertext.clone())),
-        ]);
-        let response = Response::new().add_event(event);
+        let event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::ReencryptResponse(
+                ReencryptResponseValues::builder()
+                    .cyphertext(ciphertext)
+                    .build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+        let response = Response::new().add_event(event.into());
         self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
@@ -198,9 +223,11 @@ impl KmsContract {
     #[sv::msg(exec)]
     pub fn csr_gen(&self, ctx: ExecCtx) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx);
-        let event =
-            Event::new("csr_gen").add_attributes(vec![("txnid", hex::encode(txn_id.clone()))]);
-        let response = Response::new().add_event(event);
+        let event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::CsrGen)
+            .txn_id(txn_id.clone())
+            .build();
+        let response = Response::new().add_event(event.into());
         self.transactions
             .save(ctx.deps.storage, txn_id.clone(), &txn_id)?;
         Ok(response)
@@ -218,11 +245,13 @@ impl KmsContract {
                 VerificationError::GenericErr,
             ));
         }
-        let event = Event::new("csr_gen_response").add_attributes(vec![
-            ("txnid", hex::encode(txn_id.clone())),
-            ("csr", hex::encode(csr.clone())),
-        ]);
-        let response = Response::new().add_event(event);
+        let event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::CsrGenResponse(
+                CsrGenResponseValues::builder().csr(csr).build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+        let response = Response::new().add_event(event.into());
         self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
@@ -231,7 +260,16 @@ impl KmsContract {
 #[cfg(test)]
 mod tests {
     use crate::contract::sv::mt::{CodeId, KmsContractProxy as _};
+    use cosmwasm_std::Event;
+    use events::kms::CsrGenResponseValues;
+    use events::kms::DecryptResponseValues;
+    use events::kms::DecryptValues;
     use events::kms::FheType;
+    use events::kms::KeyGenResponseValues;
+    use events::kms::KmsEvent;
+    use events::kms::KmsOperationAttribute;
+    use events::kms::ReencryptResponseValues;
+    use events::kms::ReencryptValues;
     use sha2::Digest;
     use sylvia::cw_multi_test::IntoAddr as _;
     use sylvia::multitest::App;
@@ -334,27 +372,37 @@ mod tests {
             .unwrap();
         println!("response: {:#?}", response);
         let txn_id = expected_transaction_id(12345, 0);
-        let txn_str = hex::encode(txn_id.clone());
         assert_eq!(response.events.len(), 2);
-        assert_eq!(response.events[1].ty, "wasm-decrypt");
-        assert_eq!(response.events[1].attributes[1].key, "txnid");
-        assert_eq!(response.events[1].attributes[1].value, txn_str);
-        assert_eq!(response.events[1].attributes[2].key, "ciphertext");
-        assert_eq!(response.events[1].attributes[2].value, "010203");
-        assert_eq!(response.events[1].attributes[3].key, "fhetype");
-        assert_eq!(response.events[1].attributes[3].value, "euint8");
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::Decrypt(
+                DecryptValues::builder()
+                    .ciphertext(vec![1, 2, 3])
+                    .fhe_type(FheType::Euint8)
+                    .build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
 
         let response = contract
             .decrypt_response(txn_id.clone(), vec![4, 5, 6])
             .call(&owner)
             .unwrap();
-        println!("response: {:#?}", response);
+
         assert_eq!(response.events.len(), 2);
-        assert_eq!(response.events[1].ty, "wasm-decrypt_response");
-        assert_eq!(response.events[1].attributes[1].key, "txnid");
-        assert_eq!(response.events[1].attributes[1].value, txn_str);
-        assert_eq!(response.events[1].attributes[2].key, "plaintext");
-        assert_eq!(response.events[1].attributes[2].value, "040506");
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::DecryptResponse(
+                DecryptResponseValues::builder()
+                    .plaintext(vec![4, 5, 6])
+                    .build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
     }
 
     #[test]
@@ -372,23 +420,29 @@ mod tests {
         let response = contract.keygen().call(&owner).unwrap();
         println!("response: {:#?}", response);
         let txn_id = expected_transaction_id(12345, 0);
-        let txn_str = hex::encode(txn_id.clone());
         assert_eq!(response.events.len(), 2);
-        assert_eq!(response.events[1].ty, "wasm-keygen");
-        assert_eq!(response.events[1].attributes[1].key, "txnid");
-        assert_eq!(response.events[1].attributes[1].value, txn_str);
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::KeyGen)
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
 
         let response = contract
-            .keygen_response(txn_id, vec![4, 5, 6])
+            .keygen_response(txn_id.clone(), vec![4, 5, 6])
             .call(&owner)
             .unwrap();
-        println!("response: {:#?}", response);
         assert_eq!(response.events.len(), 2);
-        assert_eq!(response.events[1].ty, "wasm-keygen_response");
-        assert_eq!(response.events[1].attributes[1].key, "txnid");
-        assert_eq!(response.events[1].attributes[1].value, txn_str);
-        assert_eq!(response.events[1].attributes[2].key, "key");
-        assert_eq!(response.events[1].attributes[2].value, "040506");
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::KeyGenResponse(
+                KeyGenResponseValues::builder().key(vec![4, 5, 6]).build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
     }
 
     #[test]
@@ -407,29 +461,38 @@ mod tests {
             .reencrypt(vec![1, 2, 3], FheType::Euint8)
             .call(&owner)
             .unwrap();
-        println!("response: {:#?}", response);
+
         let txn_id = expected_transaction_id(12345, 0);
-        let txn_str = hex::encode(txn_id.clone());
         assert_eq!(response.events.len(), 2);
-        assert_eq!(response.events[1].ty, "wasm-reencrypt");
-        assert_eq!(response.events[1].attributes[1].key, "txnid");
-        assert_eq!(response.events[1].attributes[1].value, txn_str);
-        assert_eq!(response.events[1].attributes[2].key, "ciphertext");
-        assert_eq!(response.events[1].attributes[2].value, "010203");
-        assert_eq!(response.events[1].attributes[3].key, "fhetype");
-        assert_eq!(response.events[1].attributes[3].value, "euint8");
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::Reencrypt(
+                ReencryptValues::builder()
+                    .ciphertext(vec![1, 2, 3])
+                    .fhe_type(FheType::Euint8)
+                    .build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
 
         let response = contract
             .reencrypt_response(txn_id.clone(), vec![4, 5, 6])
             .call(&owner)
             .unwrap();
-        println!("response: {:#?}", response);
         assert_eq!(response.events.len(), 2);
-        assert_eq!(response.events[1].ty, "wasm-reencrypt_response");
-        assert_eq!(response.events[1].attributes[1].key, "txnid");
-        assert_eq!(response.events[1].attributes[1].value, txn_str);
-        assert_eq!(response.events[1].attributes[2].key, "ciphertext");
-        assert_eq!(response.events[1].attributes[2].value, "040506");
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::ReencryptResponse(
+                ReencryptResponseValues::builder()
+                    .cyphertext(vec![4, 5, 6])
+                    .build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
     }
 
     #[test]
@@ -445,24 +508,47 @@ mod tests {
             .unwrap();
 
         let response = contract.csr_gen().call(&owner).unwrap();
-        println!("response: {:#?}", response);
+
         let txn_id = expected_transaction_id(12345, 0);
-        let txn_str = hex::encode(txn_id.clone());
         assert_eq!(response.events.len(), 2);
-        assert_eq!(response.events[1].ty, "wasm-csr_gen");
-        assert_eq!(response.events[1].attributes[1].key, "txnid");
-        assert_eq!(response.events[1].attributes[1].value, txn_str);
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::CsrGen)
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
 
         let response = contract
             .csr_gen_response(txn_id.clone(), vec![4, 5, 6])
             .call(&owner)
             .unwrap();
-        println!("response: {:#?}", response);
+
         assert_eq!(response.events.len(), 2);
-        assert_eq!(response.events[1].ty, "wasm-csr_gen_response");
-        assert_eq!(response.events[1].attributes[1].key, "txnid");
-        assert_eq!(response.events[1].attributes[1].value, txn_str);
-        assert_eq!(response.events[1].attributes[2].key, "csr");
-        assert_eq!(response.events[1].attributes[2].value, "040506");
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::CsrGenResponse(
+                CsrGenResponseValues::builder().csr(vec![4, 5, 6]).build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
+    }
+
+    fn assert_event(events: &[Event], kms_event: &KmsEvent) {
+        let mut kms_event: Event = kms_event.clone().into();
+        kms_event.ty = format!("wasm-{}", kms_event.ty);
+        let event = events.iter().find(|e| e.ty == kms_event.ty);
+        assert!(event.is_some());
+        let mut event = event.unwrap().clone();
+        let position = event
+            .attributes
+            .iter()
+            .position(|x| x.key == "_contract_address");
+        if let Some(idx) = position {
+            event.attributes.remove(idx);
+        }
+        assert_eq!(event, kms_event);
     }
 }

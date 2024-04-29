@@ -1,39 +1,26 @@
-use cosmwasm_std::Event;
-use events::subscription::handler::{SubscriptionHandler, SubscriptionWebSocketBuilder};
-use events::subscription::query::SubQuery;
+use clap::Parser;
+use connector::application::sync_handler::SyncHandler;
+use connector::conf::telemetry::init_tracing;
+use connector::conf::{ConnectorConfig, Settings};
 
-#[derive(Clone)]
-struct TestHandler {}
-
-#[async_trait::async_trait]
-impl SubscriptionHandler for TestHandler {
-    async fn on_message(
-        &self,
-        message: Event,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-        tracing::info!("Received message: {:?}", message);
-        Ok(())
-    }
+#[derive(Parser, Debug)]
+#[clap(name = "kms-asc-connector")]
+pub struct Cli {
+    #[clap(short, long, default_value = "config/default.toml")]
+    conf_file: Option<String>,
 }
 
 #[tokio::main]
-async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_line_number(true)
-        .with_file(true)
-        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-        .init();
+async fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+    let settings = Settings::builder().path(cli.conf_file.as_deref()).build();
+    let config: ConnectorConfig = settings
+        .init_conf()
+        .map_err(|e| anyhow::anyhow!("Error on inititalizing config {:?}", e))?;
+    init_tracing(config.tracing.clone())
+        .map_err(|e| anyhow::anyhow!("Error initializing tracing and metrics {:?}", e))?;
 
-    let handler = TestHandler {};
-    let query = SubQuery::builder()
-        .contract_address("wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d")
-        .attributes(vec![])
-        .build();
+    let handler = SyncHandler::new_with_config(config).await?;
 
-    let subscription = SubscriptionWebSocketBuilder::builder()
-        .ws_address("ws://localhost:36657/websocket")
-        .query(&query)
-        .build();
-    subscription.subscribe(&handler).await;
+    handler.listen_for_events().await
 }

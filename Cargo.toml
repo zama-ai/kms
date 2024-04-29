@@ -6,6 +6,7 @@ members = [
     "core/threshold",
     "blockchain/client",
     "blockchain/connector",
+    "blockchain/cosmos-proto",
     "blockchain/events",
     "blockchain/proofs",
     "blockchain/contracts/asc",
