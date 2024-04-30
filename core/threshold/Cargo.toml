@@ -58,8 +58,8 @@ strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
 tokio = { version = "~1.36", features = ["full", "sync"], optional = true }
 toml = "~0.8"
-tonic = { version = "~0.10", features = ["tls"], optional = true }
-tonic-health = { version = "~0.10", optional = true }
+tonic = { version = "0.11", features = ["tls"], optional = true }
+tonic-health = { version = "0.11", optional = true }
 tower = { version = "0.4", features = ["retry", "timeout"], optional = true }
 tower-http = { version = "0.4", features = ["trace"], optional = true }
 tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "083c06814464cf8f517af2c2aade1d8133ffe29b", features = ["boolean", "shortint", "integer", "zk-pok-experimental"] }

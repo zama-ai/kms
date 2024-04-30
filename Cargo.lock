@@ -2601,7 +2601,7 @@ dependencies = [
  "tfhe-zk-pok",
  "tokio",
  "toml 0.8.12",
- "tonic 0.10.2",
+ "tonic 0.11.0",
  "tonic-build",
  "tonic-health",
  "tower",
@@ -3859,7 +3859,7 @@ dependencies = [
  "tfhe",
  "tfhe-zk-pok",
  "tokio",
- "tonic 0.10.2",
+ "tonic 0.11.0",
  "tonic-build",
  "tracing",
  "tracing-subscriber",
@@ -7415,15 +7415,15 @@ dependencies = [
 
 [[package]]
 name = "tonic-health"
-version = "0.10.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f80db390246dfb46553481f6024f0082ba00178ea495dbb99e70ba9a4fafb5e1"
+checksum = "2cef6e24bc96871001a7e48e820ab240b3de2201e59b517cf52835df2f1d2350"
 dependencies = [
  "async-stream",
  "prost 0.12.4",
  "tokio",
  "tokio-stream",
- "tonic 0.10.2",
+ "tonic 0.11.0",
 ]
 
 [[package]]
