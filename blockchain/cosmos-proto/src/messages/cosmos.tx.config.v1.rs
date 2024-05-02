@@ -12,3 +12,13 @@ pub struct Config {
     #[prost(bool, tag = "2")]
     pub skip_post_handler: bool,
 }
+impl ::prost::Name for Config {
+    const NAME: &'static str = "Config";
+    const PACKAGE: &'static str = "cosmos.tx.config.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.tx.config.v1.Config".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.tx.config.v1.Config".into()
+    }
+}

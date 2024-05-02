@@ -38,7 +38,7 @@ impl<'a> GrpcBlockchainService<'a> {
             .into_iter()
             .map(|e| e.timeout(Duration::from_secs(60)).clone());
         let channel = Channel::balance_list(endpoints);
-        tracing::debug!("Connecting to gRPC server {:?}", addresses);
+        tracing::info!("Connecting to gRPC server {:?}", addresses);
 
         Ok(GrpcBlockchainService {
             channel,

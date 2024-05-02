@@ -2,11 +2,11 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Attribute, VerificationError};
 use cosmwasm_std::{Response, StdResult};
 use cw_storage_plus::Map;
-use events::kms::KmsEvent;
 use events::kms::{
     CsrGenResponseValues, DecryptResponseValues, DecryptValues, FheType, KeyGenResponseValues,
-    KmsOperationAttribute, ReencryptResponseValues, ReencryptValues,
+    KeyGenValues, KmsOperationAttribute, ReencryptResponseValues, ReencryptValues,
 };
+use events::kms::{CsrGenValues, KmsEvent};
 use sha2::Digest;
 use sylvia::types::{ExecCtx, InstantiateCtx, QueryCtx};
 use sylvia::{contract, entry_points};
@@ -140,7 +140,7 @@ impl KmsContract {
     pub fn keygen(&self, ctx: ExecCtx) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx);
         let event = KmsEvent::builder()
-            .operation(KmsOperationAttribute::KeyGen)
+            .operation(KmsOperationAttribute::KeyGen(KeyGenValues::default()))
             .txn_id(txn_id.clone())
             .build();
         let response = Response::new().add_event(event.into());
@@ -224,7 +224,7 @@ impl KmsContract {
     pub fn csr_gen(&self, ctx: ExecCtx) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx);
         let event = KmsEvent::builder()
-            .operation(KmsOperationAttribute::CsrGen)
+            .operation(KmsOperationAttribute::CsrGen(CsrGenValues::default()))
             .txn_id(txn_id.clone())
             .build();
         let response = Response::new().add_event(event.into());
@@ -262,10 +262,12 @@ mod tests {
     use crate::contract::sv::mt::{CodeId, KmsContractProxy as _};
     use cosmwasm_std::Event;
     use events::kms::CsrGenResponseValues;
+    use events::kms::CsrGenValues;
     use events::kms::DecryptResponseValues;
     use events::kms::DecryptValues;
     use events::kms::FheType;
     use events::kms::KeyGenResponseValues;
+    use events::kms::KeyGenValues;
     use events::kms::KmsEvent;
     use events::kms::KmsOperationAttribute;
     use events::kms::ReencryptResponseValues;
@@ -423,7 +425,7 @@ mod tests {
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
-            .operation(KmsOperationAttribute::KeyGen)
+            .operation(KmsOperationAttribute::KeyGen(KeyGenValues::default()))
             .txn_id(txn_id.clone())
             .build();
 
@@ -513,7 +515,7 @@ mod tests {
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
-            .operation(KmsOperationAttribute::CsrGen)
+            .operation(KmsOperationAttribute::CsrGen(CsrGenValues::default()))
             .txn_id(txn_id.clone())
             .build();
 

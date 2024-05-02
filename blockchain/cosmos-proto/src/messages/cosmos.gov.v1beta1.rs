@@ -12,6 +12,16 @@ pub struct WeightedVoteOption {
     #[prost(string, tag = "2")]
     pub weight: ::prost::alloc::string::String,
 }
+impl ::prost::Name for WeightedVoteOption {
+    const NAME: &'static str = "WeightedVoteOption";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.WeightedVoteOption".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.WeightedVoteOption".into()
+    }
+}
 /// TextProposal defines a standard text proposal whose changes need to be
 /// manually updated in case of approval.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -23,6 +33,16 @@ pub struct TextProposal {
     /// description associated with the proposal.
     #[prost(string, tag = "2")]
     pub description: ::prost::alloc::string::String,
+}
+impl ::prost::Name for TextProposal {
+    const NAME: &'static str = "TextProposal";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.TextProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.TextProposal".into()
+    }
 }
 /// Deposit defines an amount deposited by an account address to an active
 /// proposal.
@@ -38,6 +58,16 @@ pub struct Deposit {
     /// amount to be deposited by depositor.
     #[prost(message, repeated, tag = "3")]
     pub amount: ::prost::alloc::vec::Vec<super::super::base::v1beta1::Coin>,
+}
+impl ::prost::Name for Deposit {
+    const NAME: &'static str = "Deposit";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.Deposit".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.Deposit".into()
+    }
 }
 /// Proposal defines the core field members of a governance proposal.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -73,6 +103,16 @@ pub struct Proposal {
     #[prost(message, optional, tag = "9")]
     pub voting_end_time: ::core::option::Option<::prost_types::Timestamp>,
 }
+impl ::prost::Name for Proposal {
+    const NAME: &'static str = "Proposal";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.Proposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.Proposal".into()
+    }
+}
 /// TallyResult defines a standard tally for a governance proposal.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -89,6 +129,16 @@ pub struct TallyResult {
     /// no_with_veto is the number of no with veto votes on a proposal.
     #[prost(string, tag = "4")]
     pub no_with_veto: ::prost::alloc::string::String,
+}
+impl ::prost::Name for TallyResult {
+    const NAME: &'static str = "TallyResult";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.TallyResult".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.TallyResult".into()
+    }
 }
 /// Vote defines a vote on a governance proposal.
 /// A Vote consists of a proposal ID, the voter, and the vote option.
@@ -113,6 +163,16 @@ pub struct Vote {
     #[prost(message, repeated, tag = "4")]
     pub options: ::prost::alloc::vec::Vec<WeightedVoteOption>,
 }
+impl ::prost::Name for Vote {
+    const NAME: &'static str = "Vote";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.Vote".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.Vote".into()
+    }
+}
 /// DepositParams defines the params for deposits on governance proposals.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -125,6 +185,16 @@ pub struct DepositParams {
     #[prost(message, optional, tag = "2")]
     pub max_deposit_period: ::core::option::Option<::prost_types::Duration>,
 }
+impl ::prost::Name for DepositParams {
+    const NAME: &'static str = "DepositParams";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.DepositParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.DepositParams".into()
+    }
+}
 /// VotingParams defines the params for voting on governance proposals.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -132,6 +202,16 @@ pub struct VotingParams {
     /// Duration of the voting period.
     #[prost(message, optional, tag = "1")]
     pub voting_period: ::core::option::Option<::prost_types::Duration>,
+}
+impl ::prost::Name for VotingParams {
+    const NAME: &'static str = "VotingParams";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.VotingParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.VotingParams".into()
+    }
 }
 /// TallyParams defines the params for tallying votes on governance proposals.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -148,6 +228,16 @@ pub struct TallyParams {
     /// vetoed. Default value: 1/3.
     #[prost(bytes = "vec", tag = "3")]
     pub veto_threshold: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for TallyParams {
+    const NAME: &'static str = "TallyParams";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.TallyParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.TallyParams".into()
+    }
 }
 /// VoteOption enumerates the valid vote options for a given governance proposal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -266,6 +356,16 @@ pub struct GenesisState {
     #[prost(message, optional, tag = "7")]
     pub tally_params: ::core::option::Option<TallyParams>,
 }
+impl ::prost::Name for GenesisState {
+    const NAME: &'static str = "GenesisState";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.GenesisState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.GenesisState".into()
+    }
+}
 /// QueryProposalRequest is the request type for the Query/Proposal RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -274,12 +374,32 @@ pub struct QueryProposalRequest {
     #[prost(uint64, tag = "1")]
     pub proposal_id: u64,
 }
+impl ::prost::Name for QueryProposalRequest {
+    const NAME: &'static str = "QueryProposalRequest";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryProposalRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryProposalRequest".into()
+    }
+}
 /// QueryProposalResponse is the response type for the Query/Proposal RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryProposalResponse {
     #[prost(message, optional, tag = "1")]
     pub proposal: ::core::option::Option<Proposal>,
+}
+impl ::prost::Name for QueryProposalResponse {
+    const NAME: &'static str = "QueryProposalResponse";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryProposalResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryProposalResponse".into()
+    }
 }
 /// QueryProposalsRequest is the request type for the Query/Proposals RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -300,6 +420,16 @@ pub struct QueryProposalsRequest {
         super::super::base::query::v1beta1::PageRequest,
     >,
 }
+impl ::prost::Name for QueryProposalsRequest {
+    const NAME: &'static str = "QueryProposalsRequest";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryProposalsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryProposalsRequest".into()
+    }
+}
 /// QueryProposalsResponse is the response type for the Query/Proposals RPC
 /// method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -314,6 +444,16 @@ pub struct QueryProposalsResponse {
         super::super::base::query::v1beta1::PageResponse,
     >,
 }
+impl ::prost::Name for QueryProposalsResponse {
+    const NAME: &'static str = "QueryProposalsResponse";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryProposalsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryProposalsResponse".into()
+    }
+}
 /// QueryVoteRequest is the request type for the Query/Vote RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -325,6 +465,16 @@ pub struct QueryVoteRequest {
     #[prost(string, tag = "2")]
     pub voter: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QueryVoteRequest {
+    const NAME: &'static str = "QueryVoteRequest";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryVoteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryVoteRequest".into()
+    }
+}
 /// QueryVoteResponse is the response type for the Query/Vote RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -332,6 +482,16 @@ pub struct QueryVoteResponse {
     /// vote defines the queried vote.
     #[prost(message, optional, tag = "1")]
     pub vote: ::core::option::Option<Vote>,
+}
+impl ::prost::Name for QueryVoteResponse {
+    const NAME: &'static str = "QueryVoteResponse";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryVoteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryVoteResponse".into()
+    }
 }
 /// QueryVotesRequest is the request type for the Query/Votes RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -346,6 +506,16 @@ pub struct QueryVotesRequest {
         super::super::base::query::v1beta1::PageRequest,
     >,
 }
+impl ::prost::Name for QueryVotesRequest {
+    const NAME: &'static str = "QueryVotesRequest";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryVotesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryVotesRequest".into()
+    }
+}
 /// QueryVotesResponse is the response type for the Query/Votes RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -359,6 +529,16 @@ pub struct QueryVotesResponse {
         super::super::base::query::v1beta1::PageResponse,
     >,
 }
+impl ::prost::Name for QueryVotesResponse {
+    const NAME: &'static str = "QueryVotesResponse";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryVotesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryVotesResponse".into()
+    }
+}
 /// QueryParamsRequest is the request type for the Query/Params RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -367,6 +547,16 @@ pub struct QueryParamsRequest {
     /// "tallying" or "deposit".
     #[prost(string, tag = "1")]
     pub params_type: ::prost::alloc::string::String,
+}
+impl ::prost::Name for QueryParamsRequest {
+    const NAME: &'static str = "QueryParamsRequest";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryParamsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryParamsRequest".into()
+    }
 }
 /// QueryParamsResponse is the response type for the Query/Params RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -382,6 +572,16 @@ pub struct QueryParamsResponse {
     #[prost(message, optional, tag = "3")]
     pub tally_params: ::core::option::Option<TallyParams>,
 }
+impl ::prost::Name for QueryParamsResponse {
+    const NAME: &'static str = "QueryParamsResponse";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryParamsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryParamsResponse".into()
+    }
+}
 /// QueryDepositRequest is the request type for the Query/Deposit RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -393,6 +593,16 @@ pub struct QueryDepositRequest {
     #[prost(string, tag = "2")]
     pub depositor: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QueryDepositRequest {
+    const NAME: &'static str = "QueryDepositRequest";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryDepositRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryDepositRequest".into()
+    }
+}
 /// QueryDepositResponse is the response type for the Query/Deposit RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -400,6 +610,16 @@ pub struct QueryDepositResponse {
     /// deposit defines the requested deposit.
     #[prost(message, optional, tag = "1")]
     pub deposit: ::core::option::Option<Deposit>,
+}
+impl ::prost::Name for QueryDepositResponse {
+    const NAME: &'static str = "QueryDepositResponse";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryDepositResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryDepositResponse".into()
+    }
 }
 /// QueryDepositsRequest is the request type for the Query/Deposits RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -414,6 +634,16 @@ pub struct QueryDepositsRequest {
         super::super::base::query::v1beta1::PageRequest,
     >,
 }
+impl ::prost::Name for QueryDepositsRequest {
+    const NAME: &'static str = "QueryDepositsRequest";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryDepositsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryDepositsRequest".into()
+    }
+}
 /// QueryDepositsResponse is the response type for the Query/Deposits RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -427,6 +657,16 @@ pub struct QueryDepositsResponse {
         super::super::base::query::v1beta1::PageResponse,
     >,
 }
+impl ::prost::Name for QueryDepositsResponse {
+    const NAME: &'static str = "QueryDepositsResponse";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryDepositsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryDepositsResponse".into()
+    }
+}
 /// QueryTallyResultRequest is the request type for the Query/Tally RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -435,6 +675,16 @@ pub struct QueryTallyResultRequest {
     #[prost(uint64, tag = "1")]
     pub proposal_id: u64,
 }
+impl ::prost::Name for QueryTallyResultRequest {
+    const NAME: &'static str = "QueryTallyResultRequest";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryTallyResultRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryTallyResultRequest".into()
+    }
+}
 /// QueryTallyResultResponse is the response type for the Query/Tally RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -442,6 +692,16 @@ pub struct QueryTallyResultResponse {
     /// tally defines the requested tally.
     #[prost(message, optional, tag = "1")]
     pub tally: ::core::option::Option<TallyResult>,
+}
+impl ::prost::Name for QueryTallyResultResponse {
+    const NAME: &'static str = "QueryTallyResultResponse";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.QueryTallyResultResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.QueryTallyResultResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod query_client {
@@ -754,6 +1014,16 @@ pub struct MsgSubmitProposal {
     #[prost(string, tag = "3")]
     pub proposer: ::prost::alloc::string::String,
 }
+impl ::prost::Name for MsgSubmitProposal {
+    const NAME: &'static str = "MsgSubmitProposal";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.MsgSubmitProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.MsgSubmitProposal".into()
+    }
+}
 /// MsgSubmitProposalResponse defines the Msg/SubmitProposal response type.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -761,6 +1031,16 @@ pub struct MsgSubmitProposalResponse {
     /// proposal_id defines the unique id of the proposal.
     #[prost(uint64, tag = "1")]
     pub proposal_id: u64,
+}
+impl ::prost::Name for MsgSubmitProposalResponse {
+    const NAME: &'static str = "MsgSubmitProposalResponse";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.MsgSubmitProposalResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.MsgSubmitProposalResponse".into()
+    }
 }
 /// MsgVote defines a message to cast a vote.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -776,10 +1056,30 @@ pub struct MsgVote {
     #[prost(enumeration = "VoteOption", tag = "3")]
     pub option: i32,
 }
+impl ::prost::Name for MsgVote {
+    const NAME: &'static str = "MsgVote";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.MsgVote".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.MsgVote".into()
+    }
+}
 /// MsgVoteResponse defines the Msg/Vote response type.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgVoteResponse {}
+impl ::prost::Name for MsgVoteResponse {
+    const NAME: &'static str = "MsgVoteResponse";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.MsgVoteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.MsgVoteResponse".into()
+    }
+}
 /// MsgVoteWeighted defines a message to cast a vote.
 ///
 /// Since: cosmos-sdk 0.43
@@ -796,12 +1096,32 @@ pub struct MsgVoteWeighted {
     #[prost(message, repeated, tag = "3")]
     pub options: ::prost::alloc::vec::Vec<WeightedVoteOption>,
 }
+impl ::prost::Name for MsgVoteWeighted {
+    const NAME: &'static str = "MsgVoteWeighted";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.MsgVoteWeighted".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.MsgVoteWeighted".into()
+    }
+}
 /// MsgVoteWeightedResponse defines the Msg/VoteWeighted response type.
 ///
 /// Since: cosmos-sdk 0.43
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgVoteWeightedResponse {}
+impl ::prost::Name for MsgVoteWeightedResponse {
+    const NAME: &'static str = "MsgVoteWeightedResponse";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.MsgVoteWeightedResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.MsgVoteWeightedResponse".into()
+    }
+}
 /// MsgDeposit defines a message to submit a deposit to an existing proposal.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -816,10 +1136,30 @@ pub struct MsgDeposit {
     #[prost(message, repeated, tag = "3")]
     pub amount: ::prost::alloc::vec::Vec<super::super::base::v1beta1::Coin>,
 }
+impl ::prost::Name for MsgDeposit {
+    const NAME: &'static str = "MsgDeposit";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.MsgDeposit".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.MsgDeposit".into()
+    }
+}
 /// MsgDepositResponse defines the Msg/Deposit response type.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgDepositResponse {}
+impl ::prost::Name for MsgDepositResponse {
+    const NAME: &'static str = "MsgDepositResponse";
+    const PACKAGE: &'static str = "cosmos.gov.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.gov.v1beta1.MsgDepositResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.gov.v1beta1.MsgDepositResponse".into()
+    }
+}
 /// Generated client implementations.
 pub mod msg_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]

@@ -18,6 +18,16 @@ pub struct Params {
     #[prost(bool, tag = "4")]
     pub withdraw_addr_enabled: bool,
 }
+impl ::prost::Name for Params {
+    const NAME: &'static str = "Params";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.Params".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.Params".into()
+    }
+}
 /// ValidatorHistoricalRewards represents historical rewards for a validator.
 /// Height is implicit within the store key.
 /// Cumulative reward ratio is the sum from the zeroeth period
@@ -40,6 +50,16 @@ pub struct ValidatorHistoricalRewards {
     #[prost(uint32, tag = "2")]
     pub reference_count: u32,
 }
+impl ::prost::Name for ValidatorHistoricalRewards {
+    const NAME: &'static str = "ValidatorHistoricalRewards";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.ValidatorHistoricalRewards".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.ValidatorHistoricalRewards".into()
+    }
+}
 /// ValidatorCurrentRewards represents current rewards and current
 /// period for a validator kept as a running counter and incremented
 /// each block as long as the validator's tokens remain constant.
@@ -51,6 +71,16 @@ pub struct ValidatorCurrentRewards {
     #[prost(uint64, tag = "2")]
     pub period: u64,
 }
+impl ::prost::Name for ValidatorCurrentRewards {
+    const NAME: &'static str = "ValidatorCurrentRewards";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.ValidatorCurrentRewards".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.ValidatorCurrentRewards".into()
+    }
+}
 /// ValidatorAccumulatedCommission represents accumulated commission
 /// for a validator kept as a running counter, can be withdrawn at any time.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -59,6 +89,16 @@ pub struct ValidatorAccumulatedCommission {
     #[prost(message, repeated, tag = "1")]
     pub commission: ::prost::alloc::vec::Vec<super::super::base::v1beta1::DecCoin>,
 }
+impl ::prost::Name for ValidatorAccumulatedCommission {
+    const NAME: &'static str = "ValidatorAccumulatedCommission";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.ValidatorAccumulatedCommission".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.ValidatorAccumulatedCommission".into()
+    }
+}
 /// ValidatorOutstandingRewards represents outstanding (un-withdrawn) rewards
 /// for a validator inexpensive to track, allows simple sanity checks.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -66,6 +106,16 @@ pub struct ValidatorAccumulatedCommission {
 pub struct ValidatorOutstandingRewards {
     #[prost(message, repeated, tag = "1")]
     pub rewards: ::prost::alloc::vec::Vec<super::super::base::v1beta1::DecCoin>,
+}
+impl ::prost::Name for ValidatorOutstandingRewards {
+    const NAME: &'static str = "ValidatorOutstandingRewards";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.ValidatorOutstandingRewards".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.ValidatorOutstandingRewards".into()
+    }
 }
 /// ValidatorSlashEvent represents a validator slash event.
 /// Height is implicit within the store key.
@@ -79,6 +129,16 @@ pub struct ValidatorSlashEvent {
     #[prost(string, tag = "2")]
     pub fraction: ::prost::alloc::string::String,
 }
+impl ::prost::Name for ValidatorSlashEvent {
+    const NAME: &'static str = "ValidatorSlashEvent";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.ValidatorSlashEvent".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.ValidatorSlashEvent".into()
+    }
+}
 /// ValidatorSlashEvents is a collection of ValidatorSlashEvent messages.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -86,12 +146,32 @@ pub struct ValidatorSlashEvents {
     #[prost(message, repeated, tag = "1")]
     pub validator_slash_events: ::prost::alloc::vec::Vec<ValidatorSlashEvent>,
 }
+impl ::prost::Name for ValidatorSlashEvents {
+    const NAME: &'static str = "ValidatorSlashEvents";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.ValidatorSlashEvents".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.ValidatorSlashEvents".into()
+    }
+}
 /// FeePool is the global fee pool for distribution.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FeePool {
     #[prost(message, repeated, tag = "1")]
     pub community_pool: ::prost::alloc::vec::Vec<super::super::base::v1beta1::DecCoin>,
+}
+impl ::prost::Name for FeePool {
+    const NAME: &'static str = "FeePool";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.FeePool".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.FeePool".into()
+    }
 }
 /// CommunityPoolSpendProposal details a proposal for use of community funds,
 /// together with how many coins are proposed to be spent, and to which
@@ -113,6 +193,16 @@ pub struct CommunityPoolSpendProposal {
     #[prost(message, repeated, tag = "4")]
     pub amount: ::prost::alloc::vec::Vec<super::super::base::v1beta1::Coin>,
 }
+impl ::prost::Name for CommunityPoolSpendProposal {
+    const NAME: &'static str = "CommunityPoolSpendProposal";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.CommunityPoolSpendProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.CommunityPoolSpendProposal".into()
+    }
+}
 /// DelegatorStartingInfo represents the starting info for a delegator reward
 /// period. It tracks the previous validator period, the delegation's amount of
 /// staking token, and the creation height (to check later on if any slashes have
@@ -129,6 +219,16 @@ pub struct DelegatorStartingInfo {
     #[prost(uint64, tag = "3")]
     pub height: u64,
 }
+impl ::prost::Name for DelegatorStartingInfo {
+    const NAME: &'static str = "DelegatorStartingInfo";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.DelegatorStartingInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.DelegatorStartingInfo".into()
+    }
+}
 /// DelegationDelegatorReward represents the properties
 /// of a delegator's delegation reward.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -138,6 +238,16 @@ pub struct DelegationDelegatorReward {
     pub validator_address: ::prost::alloc::string::String,
     #[prost(message, repeated, tag = "2")]
     pub reward: ::prost::alloc::vec::Vec<super::super::base::v1beta1::DecCoin>,
+}
+impl ::prost::Name for DelegationDelegatorReward {
+    const NAME: &'static str = "DelegationDelegatorReward";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.DelegationDelegatorReward".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.DelegationDelegatorReward".into()
+    }
 }
 /// CommunityPoolSpendProposalWithDeposit defines a CommunityPoolSpendProposal
 /// with a deposit
@@ -155,6 +265,16 @@ pub struct CommunityPoolSpendProposalWithDeposit {
     #[prost(string, tag = "5")]
     pub deposit: ::prost::alloc::string::String,
 }
+impl ::prost::Name for CommunityPoolSpendProposalWithDeposit {
+    const NAME: &'static str = "CommunityPoolSpendProposalWithDeposit";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.CommunityPoolSpendProposalWithDeposit".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.CommunityPoolSpendProposalWithDeposit".into()
+    }
+}
 /// DelegatorWithdrawInfo is the address for where distributions rewards are
 /// withdrawn to by default this struct is only used at genesis to feed in
 /// default withdraw addresses.
@@ -167,6 +287,16 @@ pub struct DelegatorWithdrawInfo {
     /// withdraw_address is the address to withdraw the delegation rewards to.
     #[prost(string, tag = "2")]
     pub withdraw_address: ::prost::alloc::string::String,
+}
+impl ::prost::Name for DelegatorWithdrawInfo {
+    const NAME: &'static str = "DelegatorWithdrawInfo";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.DelegatorWithdrawInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.DelegatorWithdrawInfo".into()
+    }
 }
 /// ValidatorOutstandingRewardsRecord is used for import/export via genesis json.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -181,6 +311,16 @@ pub struct ValidatorOutstandingRewardsRecord {
         super::super::base::v1beta1::DecCoin,
     >,
 }
+impl ::prost::Name for ValidatorOutstandingRewardsRecord {
+    const NAME: &'static str = "ValidatorOutstandingRewardsRecord";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.ValidatorOutstandingRewardsRecord".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.ValidatorOutstandingRewardsRecord".into()
+    }
+}
 /// ValidatorAccumulatedCommissionRecord is used for import / export via genesis
 /// json.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -192,6 +332,16 @@ pub struct ValidatorAccumulatedCommissionRecord {
     /// accumulated is the accumulated commission of a validator.
     #[prost(message, optional, tag = "2")]
     pub accumulated: ::core::option::Option<ValidatorAccumulatedCommission>,
+}
+impl ::prost::Name for ValidatorAccumulatedCommissionRecord {
+    const NAME: &'static str = "ValidatorAccumulatedCommissionRecord";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.ValidatorAccumulatedCommissionRecord".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.ValidatorAccumulatedCommissionRecord".into()
+    }
 }
 /// ValidatorHistoricalRewardsRecord is used for import / export via genesis
 /// json.
@@ -208,6 +358,16 @@ pub struct ValidatorHistoricalRewardsRecord {
     #[prost(message, optional, tag = "3")]
     pub rewards: ::core::option::Option<ValidatorHistoricalRewards>,
 }
+impl ::prost::Name for ValidatorHistoricalRewardsRecord {
+    const NAME: &'static str = "ValidatorHistoricalRewardsRecord";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.ValidatorHistoricalRewardsRecord".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.ValidatorHistoricalRewardsRecord".into()
+    }
+}
 /// ValidatorCurrentRewardsRecord is used for import / export via genesis json.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -218,6 +378,16 @@ pub struct ValidatorCurrentRewardsRecord {
     /// rewards defines the current rewards of a validator.
     #[prost(message, optional, tag = "2")]
     pub rewards: ::core::option::Option<ValidatorCurrentRewards>,
+}
+impl ::prost::Name for ValidatorCurrentRewardsRecord {
+    const NAME: &'static str = "ValidatorCurrentRewardsRecord";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.ValidatorCurrentRewardsRecord".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.ValidatorCurrentRewardsRecord".into()
+    }
 }
 /// DelegatorStartingInfoRecord used for import / export via genesis json.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -232,6 +402,16 @@ pub struct DelegatorStartingInfoRecord {
     /// starting_info defines the starting info of a delegator.
     #[prost(message, optional, tag = "3")]
     pub starting_info: ::core::option::Option<DelegatorStartingInfo>,
+}
+impl ::prost::Name for DelegatorStartingInfoRecord {
+    const NAME: &'static str = "DelegatorStartingInfoRecord";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.DelegatorStartingInfoRecord".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.DelegatorStartingInfoRecord".into()
+    }
 }
 /// ValidatorSlashEventRecord is used for import / export via genesis json.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -249,6 +429,16 @@ pub struct ValidatorSlashEventRecord {
     /// validator_slash_event describes the slash event.
     #[prost(message, optional, tag = "4")]
     pub validator_slash_event: ::core::option::Option<ValidatorSlashEvent>,
+}
+impl ::prost::Name for ValidatorSlashEventRecord {
+    const NAME: &'static str = "ValidatorSlashEventRecord";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.ValidatorSlashEventRecord".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.ValidatorSlashEventRecord".into()
+    }
 }
 /// GenesisState defines the distribution module's genesis state.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -291,10 +481,30 @@ pub struct GenesisState {
     #[prost(message, repeated, tag = "10")]
     pub validator_slash_events: ::prost::alloc::vec::Vec<ValidatorSlashEventRecord>,
 }
+impl ::prost::Name for GenesisState {
+    const NAME: &'static str = "GenesisState";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.GenesisState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.GenesisState".into()
+    }
+}
 /// QueryParamsRequest is the request type for the Query/Params RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryParamsRequest {}
+impl ::prost::Name for QueryParamsRequest {
+    const NAME: &'static str = "QueryParamsRequest";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryParamsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryParamsRequest".into()
+    }
+}
 /// QueryParamsResponse is the response type for the Query/Params RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -303,6 +513,16 @@ pub struct QueryParamsResponse {
     #[prost(message, optional, tag = "1")]
     pub params: ::core::option::Option<Params>,
 }
+impl ::prost::Name for QueryParamsResponse {
+    const NAME: &'static str = "QueryParamsResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryParamsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryParamsResponse".into()
+    }
+}
 /// QueryValidatorDistributionInfoRequest is the request type for the Query/ValidatorDistributionInfo RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -310,6 +530,16 @@ pub struct QueryValidatorDistributionInfoRequest {
     /// validator_address defines the validator address to query for.
     #[prost(string, tag = "1")]
     pub validator_address: ::prost::alloc::string::String,
+}
+impl ::prost::Name for QueryValidatorDistributionInfoRequest {
+    const NAME: &'static str = "QueryValidatorDistributionInfoRequest";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryValidatorDistributionInfoRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryValidatorDistributionInfoRequest".into()
+    }
 }
 /// QueryValidatorDistributionInfoResponse is the response type for the Query/ValidatorDistributionInfo RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -327,6 +557,16 @@ pub struct QueryValidatorDistributionInfoResponse {
     #[prost(message, repeated, tag = "3")]
     pub commission: ::prost::alloc::vec::Vec<super::super::base::v1beta1::DecCoin>,
 }
+impl ::prost::Name for QueryValidatorDistributionInfoResponse {
+    const NAME: &'static str = "QueryValidatorDistributionInfoResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryValidatorDistributionInfoResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryValidatorDistributionInfoResponse".into()
+    }
+}
 /// QueryValidatorOutstandingRewardsRequest is the request type for the
 /// Query/ValidatorOutstandingRewards RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -336,6 +576,16 @@ pub struct QueryValidatorOutstandingRewardsRequest {
     #[prost(string, tag = "1")]
     pub validator_address: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QueryValidatorOutstandingRewardsRequest {
+    const NAME: &'static str = "QueryValidatorOutstandingRewardsRequest";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryValidatorOutstandingRewardsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryValidatorOutstandingRewardsRequest".into()
+    }
+}
 /// QueryValidatorOutstandingRewardsResponse is the response type for the
 /// Query/ValidatorOutstandingRewards RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -343,6 +593,16 @@ pub struct QueryValidatorOutstandingRewardsRequest {
 pub struct QueryValidatorOutstandingRewardsResponse {
     #[prost(message, optional, tag = "1")]
     pub rewards: ::core::option::Option<ValidatorOutstandingRewards>,
+}
+impl ::prost::Name for QueryValidatorOutstandingRewardsResponse {
+    const NAME: &'static str = "QueryValidatorOutstandingRewardsResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryValidatorOutstandingRewardsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryValidatorOutstandingRewardsResponse".into()
+    }
 }
 /// QueryValidatorCommissionRequest is the request type for the
 /// Query/ValidatorCommission RPC method
@@ -353,6 +613,16 @@ pub struct QueryValidatorCommissionRequest {
     #[prost(string, tag = "1")]
     pub validator_address: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QueryValidatorCommissionRequest {
+    const NAME: &'static str = "QueryValidatorCommissionRequest";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryValidatorCommissionRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryValidatorCommissionRequest".into()
+    }
+}
 /// QueryValidatorCommissionResponse is the response type for the
 /// Query/ValidatorCommission RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -361,6 +631,16 @@ pub struct QueryValidatorCommissionResponse {
     /// commission defines the commission the validator received.
     #[prost(message, optional, tag = "1")]
     pub commission: ::core::option::Option<ValidatorAccumulatedCommission>,
+}
+impl ::prost::Name for QueryValidatorCommissionResponse {
+    const NAME: &'static str = "QueryValidatorCommissionResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryValidatorCommissionResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryValidatorCommissionResponse".into()
+    }
 }
 /// QueryValidatorSlashesRequest is the request type for the
 /// Query/ValidatorSlashes RPC method
@@ -382,6 +662,16 @@ pub struct QueryValidatorSlashesRequest {
         super::super::base::query::v1beta1::PageRequest,
     >,
 }
+impl ::prost::Name for QueryValidatorSlashesRequest {
+    const NAME: &'static str = "QueryValidatorSlashesRequest";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryValidatorSlashesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryValidatorSlashesRequest".into()
+    }
+}
 /// QueryValidatorSlashesResponse is the response type for the
 /// Query/ValidatorSlashes RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -396,6 +686,16 @@ pub struct QueryValidatorSlashesResponse {
         super::super::base::query::v1beta1::PageResponse,
     >,
 }
+impl ::prost::Name for QueryValidatorSlashesResponse {
+    const NAME: &'static str = "QueryValidatorSlashesResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryValidatorSlashesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryValidatorSlashesResponse".into()
+    }
+}
 /// QueryDelegationRewardsRequest is the request type for the
 /// Query/DelegationRewards RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -408,6 +708,16 @@ pub struct QueryDelegationRewardsRequest {
     #[prost(string, tag = "2")]
     pub validator_address: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QueryDelegationRewardsRequest {
+    const NAME: &'static str = "QueryDelegationRewardsRequest";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryDelegationRewardsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryDelegationRewardsRequest".into()
+    }
+}
 /// QueryDelegationRewardsResponse is the response type for the
 /// Query/DelegationRewards RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -417,6 +727,16 @@ pub struct QueryDelegationRewardsResponse {
     #[prost(message, repeated, tag = "1")]
     pub rewards: ::prost::alloc::vec::Vec<super::super::base::v1beta1::DecCoin>,
 }
+impl ::prost::Name for QueryDelegationRewardsResponse {
+    const NAME: &'static str = "QueryDelegationRewardsResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryDelegationRewardsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryDelegationRewardsResponse".into()
+    }
+}
 /// QueryDelegationTotalRewardsRequest is the request type for the
 /// Query/DelegationTotalRewards RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -425,6 +745,16 @@ pub struct QueryDelegationTotalRewardsRequest {
     /// delegator_address defines the delegator address to query for.
     #[prost(string, tag = "1")]
     pub delegator_address: ::prost::alloc::string::String,
+}
+impl ::prost::Name for QueryDelegationTotalRewardsRequest {
+    const NAME: &'static str = "QueryDelegationTotalRewardsRequest";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryDelegationTotalRewardsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryDelegationTotalRewardsRequest".into()
+    }
 }
 /// QueryDelegationTotalRewardsResponse is the response type for the
 /// Query/DelegationTotalRewards RPC method.
@@ -438,6 +768,16 @@ pub struct QueryDelegationTotalRewardsResponse {
     #[prost(message, repeated, tag = "2")]
     pub total: ::prost::alloc::vec::Vec<super::super::base::v1beta1::DecCoin>,
 }
+impl ::prost::Name for QueryDelegationTotalRewardsResponse {
+    const NAME: &'static str = "QueryDelegationTotalRewardsResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryDelegationTotalRewardsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryDelegationTotalRewardsResponse".into()
+    }
+}
 /// QueryDelegatorValidatorsRequest is the request type for the
 /// Query/DelegatorValidators RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -446,6 +786,16 @@ pub struct QueryDelegatorValidatorsRequest {
     /// delegator_address defines the delegator address to query for.
     #[prost(string, tag = "1")]
     pub delegator_address: ::prost::alloc::string::String,
+}
+impl ::prost::Name for QueryDelegatorValidatorsRequest {
+    const NAME: &'static str = "QueryDelegatorValidatorsRequest";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryDelegatorValidatorsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryDelegatorValidatorsRequest".into()
+    }
 }
 /// QueryDelegatorValidatorsResponse is the response type for the
 /// Query/DelegatorValidators RPC method.
@@ -456,6 +806,16 @@ pub struct QueryDelegatorValidatorsResponse {
     #[prost(string, repeated, tag = "1")]
     pub validators: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for QueryDelegatorValidatorsResponse {
+    const NAME: &'static str = "QueryDelegatorValidatorsResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryDelegatorValidatorsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryDelegatorValidatorsResponse".into()
+    }
+}
 /// QueryDelegatorWithdrawAddressRequest is the request type for the
 /// Query/DelegatorWithdrawAddress RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -464,6 +824,16 @@ pub struct QueryDelegatorWithdrawAddressRequest {
     /// delegator_address defines the delegator address to query for.
     #[prost(string, tag = "1")]
     pub delegator_address: ::prost::alloc::string::String,
+}
+impl ::prost::Name for QueryDelegatorWithdrawAddressRequest {
+    const NAME: &'static str = "QueryDelegatorWithdrawAddressRequest";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryDelegatorWithdrawAddressRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryDelegatorWithdrawAddressRequest".into()
+    }
 }
 /// QueryDelegatorWithdrawAddressResponse is the response type for the
 /// Query/DelegatorWithdrawAddress RPC method.
@@ -474,11 +844,31 @@ pub struct QueryDelegatorWithdrawAddressResponse {
     #[prost(string, tag = "1")]
     pub withdraw_address: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QueryDelegatorWithdrawAddressResponse {
+    const NAME: &'static str = "QueryDelegatorWithdrawAddressResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryDelegatorWithdrawAddressResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryDelegatorWithdrawAddressResponse".into()
+    }
+}
 /// QueryCommunityPoolRequest is the request type for the Query/CommunityPool RPC
 /// method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryCommunityPoolRequest {}
+impl ::prost::Name for QueryCommunityPoolRequest {
+    const NAME: &'static str = "QueryCommunityPoolRequest";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryCommunityPoolRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryCommunityPoolRequest".into()
+    }
+}
 /// QueryCommunityPoolResponse is the response type for the Query/CommunityPool
 /// RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -487,6 +877,16 @@ pub struct QueryCommunityPoolResponse {
     /// pool defines community pool's coins.
     #[prost(message, repeated, tag = "1")]
     pub pool: ::prost::alloc::vec::Vec<super::super::base::v1beta1::DecCoin>,
+}
+impl ::prost::Name for QueryCommunityPoolResponse {
+    const NAME: &'static str = "QueryCommunityPoolResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.QueryCommunityPoolResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.QueryCommunityPoolResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod query_client {
@@ -893,11 +1293,31 @@ pub struct MsgSetWithdrawAddress {
     #[prost(string, tag = "2")]
     pub withdraw_address: ::prost::alloc::string::String,
 }
+impl ::prost::Name for MsgSetWithdrawAddress {
+    const NAME: &'static str = "MsgSetWithdrawAddress";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgSetWithdrawAddress".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgSetWithdrawAddress".into()
+    }
+}
 /// MsgSetWithdrawAddressResponse defines the Msg/SetWithdrawAddress response
 /// type.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgSetWithdrawAddressResponse {}
+impl ::prost::Name for MsgSetWithdrawAddressResponse {
+    const NAME: &'static str = "MsgSetWithdrawAddressResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgSetWithdrawAddressResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgSetWithdrawAddressResponse".into()
+    }
+}
 /// MsgWithdrawDelegatorReward represents delegation withdrawal to a delegator
 /// from a single validator.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -908,6 +1328,16 @@ pub struct MsgWithdrawDelegatorReward {
     #[prost(string, tag = "2")]
     pub validator_address: ::prost::alloc::string::String,
 }
+impl ::prost::Name for MsgWithdrawDelegatorReward {
+    const NAME: &'static str = "MsgWithdrawDelegatorReward";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorReward".into()
+    }
+}
 /// MsgWithdrawDelegatorRewardResponse defines the Msg/WithdrawDelegatorReward
 /// response type.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -917,6 +1347,16 @@ pub struct MsgWithdrawDelegatorRewardResponse {
     #[prost(message, repeated, tag = "1")]
     pub amount: ::prost::alloc::vec::Vec<super::super::base::v1beta1::Coin>,
 }
+impl ::prost::Name for MsgWithdrawDelegatorRewardResponse {
+    const NAME: &'static str = "MsgWithdrawDelegatorRewardResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgWithdrawDelegatorRewardResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgWithdrawDelegatorRewardResponse".into()
+    }
+}
 /// MsgWithdrawValidatorCommission withdraws the full commission to the validator
 /// address.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -924,6 +1364,16 @@ pub struct MsgWithdrawDelegatorRewardResponse {
 pub struct MsgWithdrawValidatorCommission {
     #[prost(string, tag = "1")]
     pub validator_address: ::prost::alloc::string::String,
+}
+impl ::prost::Name for MsgWithdrawValidatorCommission {
+    const NAME: &'static str = "MsgWithdrawValidatorCommission";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgWithdrawValidatorCommission".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgWithdrawValidatorCommission".into()
+    }
 }
 /// MsgWithdrawValidatorCommissionResponse defines the
 /// Msg/WithdrawValidatorCommission response type.
@@ -933,6 +1383,16 @@ pub struct MsgWithdrawValidatorCommissionResponse {
     /// Since: cosmos-sdk 0.46
     #[prost(message, repeated, tag = "1")]
     pub amount: ::prost::alloc::vec::Vec<super::super::base::v1beta1::Coin>,
+}
+impl ::prost::Name for MsgWithdrawValidatorCommissionResponse {
+    const NAME: &'static str = "MsgWithdrawValidatorCommissionResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgWithdrawValidatorCommissionResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgWithdrawValidatorCommissionResponse".into()
+    }
 }
 /// MsgFundCommunityPool allows an account to directly
 /// fund the community pool.
@@ -944,10 +1404,30 @@ pub struct MsgFundCommunityPool {
     #[prost(string, tag = "2")]
     pub depositor: ::prost::alloc::string::String,
 }
+impl ::prost::Name for MsgFundCommunityPool {
+    const NAME: &'static str = "MsgFundCommunityPool";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgFundCommunityPool".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgFundCommunityPool".into()
+    }
+}
 /// MsgFundCommunityPoolResponse defines the Msg/FundCommunityPool response type.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgFundCommunityPoolResponse {}
+impl ::prost::Name for MsgFundCommunityPoolResponse {
+    const NAME: &'static str = "MsgFundCommunityPoolResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgFundCommunityPoolResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgFundCommunityPoolResponse".into()
+    }
+}
 /// MsgUpdateParams is the Msg/UpdateParams request type.
 ///
 /// Since: cosmos-sdk 0.47
@@ -963,6 +1443,16 @@ pub struct MsgUpdateParams {
     #[prost(message, optional, tag = "2")]
     pub params: ::core::option::Option<Params>,
 }
+impl ::prost::Name for MsgUpdateParams {
+    const NAME: &'static str = "MsgUpdateParams";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgUpdateParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgUpdateParams".into()
+    }
+}
 /// MsgUpdateParamsResponse defines the response structure for executing a
 /// MsgUpdateParams message.
 ///
@@ -970,6 +1460,16 @@ pub struct MsgUpdateParams {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUpdateParamsResponse {}
+impl ::prost::Name for MsgUpdateParamsResponse {
+    const NAME: &'static str = "MsgUpdateParamsResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgUpdateParamsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgUpdateParamsResponse".into()
+    }
+}
 /// MsgCommunityPoolSpend defines a message for sending tokens from the community
 /// pool to another account. This message is typically executed via a governance
 /// proposal with the governance module being the executing authority.
@@ -986,6 +1486,16 @@ pub struct MsgCommunityPoolSpend {
     #[prost(message, repeated, tag = "3")]
     pub amount: ::prost::alloc::vec::Vec<super::super::base::v1beta1::Coin>,
 }
+impl ::prost::Name for MsgCommunityPoolSpend {
+    const NAME: &'static str = "MsgCommunityPoolSpend";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgCommunityPoolSpend".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgCommunityPoolSpend".into()
+    }
+}
 /// MsgCommunityPoolSpendResponse defines the response to executing a
 /// MsgCommunityPoolSpend message.
 ///
@@ -993,6 +1503,16 @@ pub struct MsgCommunityPoolSpend {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgCommunityPoolSpendResponse {}
+impl ::prost::Name for MsgCommunityPoolSpendResponse {
+    const NAME: &'static str = "MsgCommunityPoolSpendResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgCommunityPoolSpendResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgCommunityPoolSpendResponse".into()
+    }
+}
 /// DepositValidatorRewardsPool defines the request structure to provide
 /// additional rewards to delegators from a specific validator.
 ///
@@ -1007,6 +1527,16 @@ pub struct MsgDepositValidatorRewardsPool {
     #[prost(message, repeated, tag = "3")]
     pub amount: ::prost::alloc::vec::Vec<super::super::base::v1beta1::Coin>,
 }
+impl ::prost::Name for MsgDepositValidatorRewardsPool {
+    const NAME: &'static str = "MsgDepositValidatorRewardsPool";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgDepositValidatorRewardsPool".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgDepositValidatorRewardsPool".into()
+    }
+}
 /// MsgDepositValidatorRewardsPoolResponse defines the response to executing a
 /// MsgDepositValidatorRewardsPool message.
 ///
@@ -1014,6 +1544,16 @@ pub struct MsgDepositValidatorRewardsPool {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgDepositValidatorRewardsPoolResponse {}
+impl ::prost::Name for MsgDepositValidatorRewardsPoolResponse {
+    const NAME: &'static str = "MsgDepositValidatorRewardsPoolResponse";
+    const PACKAGE: &'static str = "cosmos.distribution.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.distribution.v1beta1.MsgDepositValidatorRewardsPoolResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.distribution.v1beta1.MsgDepositValidatorRewardsPoolResponse".into()
+    }
+}
 /// Generated client implementations.
 pub mod msg_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]

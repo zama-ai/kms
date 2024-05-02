@@ -1,13 +1,13 @@
 use crate::infrastructure::coordinator::KmsCoordinator;
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
-use events::kms::{DecryptValues, KmsEvent, KmsOperationAttribute, ReencryptValues};
+use events::kms::{DecryptValues, KmsEvent, KmsOperationAttribute, ReencryptValues, TransactionId};
 
 use super::blockchain::KmsOperationResponse;
 
 pub struct KmsOperationVal {
     pub kms_client: KmsCoordinator,
-    pub tx_id: String,
+    pub tx_id: TransactionId,
 }
 
 pub struct DecryptVal {
@@ -55,8 +55,12 @@ pub fn create_kms_operation(
             decrypt,
             operation_val,
         }),
-        KmsOperationAttribute::KeyGen => KmsOperationRequest::KeyGen(KeyGenVal { operation_val }),
-        KmsOperationAttribute::CsrGen => KmsOperationRequest::CsrGen(CsrGenVal { operation_val }),
+        KmsOperationAttribute::KeyGen(_) => {
+            KmsOperationRequest::KeyGen(KeyGenVal { operation_val })
+        }
+        KmsOperationAttribute::CsrGen(_) => {
+            KmsOperationRequest::CsrGen(CsrGenVal { operation_val })
+        }
         _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
     };
     Ok(request)

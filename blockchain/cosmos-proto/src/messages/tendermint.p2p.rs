@@ -9,6 +9,16 @@ pub struct NetAddress {
     #[prost(uint32, tag = "3")]
     pub port: u32,
 }
+impl ::prost::Name for NetAddress {
+    const NAME: &'static str = "NetAddress";
+    const PACKAGE: &'static str = "tendermint.p2p";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.p2p.NetAddress".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.p2p.NetAddress".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProtocolVersion {
@@ -18,6 +28,16 @@ pub struct ProtocolVersion {
     pub block: u64,
     #[prost(uint64, tag = "3")]
     pub app: u64,
+}
+impl ::prost::Name for ProtocolVersion {
+    const NAME: &'static str = "ProtocolVersion";
+    const PACKAGE: &'static str = "tendermint.p2p";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.p2p.ProtocolVersion".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.p2p.ProtocolVersion".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -39,6 +59,16 @@ pub struct DefaultNodeInfo {
     #[prost(message, optional, tag = "8")]
     pub other: ::core::option::Option<DefaultNodeInfoOther>,
 }
+impl ::prost::Name for DefaultNodeInfo {
+    const NAME: &'static str = "DefaultNodeInfo";
+    const PACKAGE: &'static str = "tendermint.p2p";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.p2p.DefaultNodeInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.p2p.DefaultNodeInfo".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DefaultNodeInfoOther {
@@ -46,4 +76,14 @@ pub struct DefaultNodeInfoOther {
     pub tx_index: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub rpc_address: ::prost::alloc::string::String,
+}
+impl ::prost::Name for DefaultNodeInfoOther {
+    const NAME: &'static str = "DefaultNodeInfoOther";
+    const PACKAGE: &'static str = "tendermint.p2p";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.p2p.DefaultNodeInfoOther".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.p2p.DefaultNodeInfoOther".into()
+    }
 }

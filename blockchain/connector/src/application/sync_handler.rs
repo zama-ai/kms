@@ -62,7 +62,7 @@ where
         let grpc_addresses = self.config.grpc_addresses();
 
         let subscription = SubscriptionEventBuilder::builder()
-            .contract_address(&self.config.contract_addresses)
+            .contract_address(&self.config.contract_address)
             .tick_time_in_sec(self.config.tick_interval_secs)
             .grpc_addresses(&grpc_addresses)
             .storage_path(&self.config.storage_path)

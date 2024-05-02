@@ -23,6 +23,16 @@ pub mod record {
         #[prost(message, optional, tag = "1")]
         pub priv_key: ::core::option::Option<::prost_types::Any>,
     }
+    impl ::prost::Name for Local {
+        const NAME: &'static str = "Local";
+        const PACKAGE: &'static str = "cosmos.crypto.keyring.v1";
+        fn full_name() -> ::prost::alloc::string::String {
+            "cosmos.crypto.keyring.v1.Record.Local".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/cosmos.crypto.keyring.v1.Record.Local".into()
+        }
+    }
     /// Ledger item
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
@@ -30,14 +40,44 @@ pub mod record {
         #[prost(message, optional, tag = "1")]
         pub path: ::core::option::Option<super::super::super::hd::v1::Bip44Params>,
     }
+    impl ::prost::Name for Ledger {
+        const NAME: &'static str = "Ledger";
+        const PACKAGE: &'static str = "cosmos.crypto.keyring.v1";
+        fn full_name() -> ::prost::alloc::string::String {
+            "cosmos.crypto.keyring.v1.Record.Ledger".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/cosmos.crypto.keyring.v1.Record.Ledger".into()
+        }
+    }
     /// Multi item
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Multi {}
+    impl ::prost::Name for Multi {
+        const NAME: &'static str = "Multi";
+        const PACKAGE: &'static str = "cosmos.crypto.keyring.v1";
+        fn full_name() -> ::prost::alloc::string::String {
+            "cosmos.crypto.keyring.v1.Record.Multi".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/cosmos.crypto.keyring.v1.Record.Multi".into()
+        }
+    }
     /// Offline item
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct Offline {}
+    impl ::prost::Name for Offline {
+        const NAME: &'static str = "Offline";
+        const PACKAGE: &'static str = "cosmos.crypto.keyring.v1";
+        fn full_name() -> ::prost::alloc::string::String {
+            "cosmos.crypto.keyring.v1.Record.Offline".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "/cosmos.crypto.keyring.v1.Record.Offline".into()
+        }
+    }
     /// Record contains one of the following items
     #[allow(clippy::derive_partial_eq_without_eq)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
@@ -54,5 +94,15 @@ pub mod record {
         /// Offline does not store any other information.
         #[prost(message, tag = "6")]
         Offline(Offline),
+    }
+}
+impl ::prost::Name for Record {
+    const NAME: &'static str = "Record";
+    const PACKAGE: &'static str = "cosmos.crypto.keyring.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.crypto.keyring.v1.Record".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.crypto.keyring.v1.Record".into()
     }
 }

@@ -15,6 +15,16 @@ pub struct InterfaceDescriptor {
     #[prost(string, tag = "2")]
     pub description: ::prost::alloc::string::String,
 }
+impl ::prost::Name for InterfaceDescriptor {
+    const NAME: &'static str = "InterfaceDescriptor";
+    const PACKAGE: &'static str = "cosmos_proto";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos_proto.InterfaceDescriptor".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos_proto.InterfaceDescriptor".into()
+    }
+}
 /// ScalarDescriptor describes an scalar type to be used with
 /// the scalar field option and declared by declare_scalar.
 /// Scalars extend simple protobuf built-in types with additional
@@ -42,6 +52,16 @@ pub struct ScalarDescriptor {
     /// bytes fields are supported for scalars.
     #[prost(enumeration = "ScalarType", repeated, tag = "3")]
     pub field_type: ::prost::alloc::vec::Vec<i32>,
+}
+impl ::prost::Name for ScalarDescriptor {
+    const NAME: &'static str = "ScalarDescriptor";
+    const PACKAGE: &'static str = "cosmos_proto";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos_proto.ScalarDescriptor".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos_proto.ScalarDescriptor".into()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]

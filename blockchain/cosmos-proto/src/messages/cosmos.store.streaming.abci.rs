@@ -12,10 +12,30 @@ pub struct ListenFinalizeBlockRequest {
         super::super::super::super::tendermint::abci::ResponseFinalizeBlock,
     >,
 }
+impl ::prost::Name for ListenFinalizeBlockRequest {
+    const NAME: &'static str = "ListenFinalizeBlockRequest";
+    const PACKAGE: &'static str = "cosmos.store.streaming.abci";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.store.streaming.abci.ListenFinalizeBlockRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.store.streaming.abci.ListenFinalizeBlockRequest".into()
+    }
+}
 /// ListenEndBlockResponse is the response type for the ListenEndBlock RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListenFinalizeBlockResponse {}
+impl ::prost::Name for ListenFinalizeBlockResponse {
+    const NAME: &'static str = "ListenFinalizeBlockResponse";
+    const PACKAGE: &'static str = "cosmos.store.streaming.abci";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.store.streaming.abci.ListenFinalizeBlockResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.store.streaming.abci.ListenFinalizeBlockResponse".into()
+    }
+}
 /// ListenCommitRequest is the request type for the ListenCommit RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -30,10 +50,30 @@ pub struct ListenCommitRequest {
     #[prost(message, repeated, tag = "3")]
     pub change_set: ::prost::alloc::vec::Vec<super::super::v1beta1::StoreKvPair>,
 }
+impl ::prost::Name for ListenCommitRequest {
+    const NAME: &'static str = "ListenCommitRequest";
+    const PACKAGE: &'static str = "cosmos.store.streaming.abci";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.store.streaming.abci.ListenCommitRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.store.streaming.abci.ListenCommitRequest".into()
+    }
+}
 /// ListenCommitResponse is the response type for the ListenCommit RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ListenCommitResponse {}
+impl ::prost::Name for ListenCommitResponse {
+    const NAME: &'static str = "ListenCommitResponse";
+    const PACKAGE: &'static str = "cosmos.store.streaming.abci";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.store.streaming.abci.ListenCommitResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.store.streaming.abci.ListenCommitResponse".into()
+    }
+}
 /// Generated client implementations.
 pub mod abci_listener_service_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]

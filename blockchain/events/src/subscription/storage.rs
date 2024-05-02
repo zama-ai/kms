@@ -42,7 +42,7 @@ impl TomlStorageServiceImpl {
         }
         tracing::debug!("Loading storage from path {:?}", path);
         let db = FileDatabase::load_from_path_or_default(path.clone()).await?;
-        tracing::debug!("Loaded storage from path {:?}", path.clone());
+        tracing::info!("Loaded storage from path {:?}", path.clone());
 
         Ok(TomlStorageServiceImpl { db, outside_height })
     }

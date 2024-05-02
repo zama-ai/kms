@@ -8,21 +8,17 @@ use secp256k1::{PublicKey as PublicKeyEC, SecretKey};
 use sha2::Sha512;
 use std::str::FromStr;
 
+/// BIP-0044 path for deriving the cryptographic keys from a mnemonic.
+const COSMOS_KEY_PATH: &str = "m/44'/118'/0'/0/0";
+
 /// Derives a private key from a mnemonic phrase and passphrase, using a BIP-44 HDPath
 /// The actual seed bytes are derived from the mnemonic phrase, which are then used to derive
 /// the root of a Bip32 HD wallet. From that application private keys are derived
 /// on the given hd_path (e.g. Cosmos' m/44'/118'/0'/0/a where a=0 is the most common value used).
 /// Most Cosmos wallets do not even expose a=1..n much less the rest of
 /// the potential key space.
-pub fn derive_key(
-    hd_path: &str,
-    phrase: &str,
-    passphrase: &str,
-) -> Result<[u8; 32], PrivateKeyError> {
-    if !hd_path.starts_with('m') || hd_path.contains('\\') {
-        return Err(HdWalletError::InvalidPathSpec(hd_path.to_string()).into());
-    }
-    let mut iterator = hd_path.split('/');
+pub fn derive_key(phrase: &str, passphrase: &str) -> Result<[u8; 32], PrivateKeyError> {
+    let mut iterator = COSMOS_KEY_PATH.split('/');
     // discard the m
     let _ = iterator.next();
 
@@ -43,7 +39,7 @@ pub fn derive_key(
             secret_key = s;
             chain_code = c;
         } else {
-            return Err(HdWalletError::InvalidPathSpec(hd_path.to_string()).into());
+            return Err(HdWalletError::InvalidPathSpec(COSMOS_KEY_PATH.to_string()).into());
         }
     }
     Ok(secret_key)

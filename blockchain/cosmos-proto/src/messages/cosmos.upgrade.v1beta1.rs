@@ -32,6 +32,16 @@ pub struct Plan {
     #[prost(message, optional, tag = "5")]
     pub upgraded_client_state: ::core::option::Option<::prost_types::Any>,
 }
+impl ::prost::Name for Plan {
+    const NAME: &'static str = "Plan";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.Plan".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.Plan".into()
+    }
+}
 /// SoftwareUpgradeProposal is a gov Content type for initiating a software
 /// upgrade.
 /// Deprecated: This legacy proposal is deprecated in favor of Msg-based gov
@@ -49,6 +59,16 @@ pub struct SoftwareUpgradeProposal {
     #[prost(message, optional, tag = "3")]
     pub plan: ::core::option::Option<Plan>,
 }
+impl ::prost::Name for SoftwareUpgradeProposal {
+    const NAME: &'static str = "SoftwareUpgradeProposal";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.SoftwareUpgradeProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.SoftwareUpgradeProposal".into()
+    }
+}
 /// CancelSoftwareUpgradeProposal is a gov Content type for cancelling a software
 /// upgrade.
 /// Deprecated: This legacy proposal is deprecated in favor of Msg-based gov
@@ -63,6 +83,16 @@ pub struct CancelSoftwareUpgradeProposal {
     #[prost(string, tag = "2")]
     pub description: ::prost::alloc::string::String,
 }
+impl ::prost::Name for CancelSoftwareUpgradeProposal {
+    const NAME: &'static str = "CancelSoftwareUpgradeProposal";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.CancelSoftwareUpgradeProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.CancelSoftwareUpgradeProposal".into()
+    }
+}
 /// ModuleVersion specifies a module and its consensus version.
 ///
 /// Since: cosmos-sdk 0.43
@@ -76,11 +106,31 @@ pub struct ModuleVersion {
     #[prost(uint64, tag = "2")]
     pub version: u64,
 }
+impl ::prost::Name for ModuleVersion {
+    const NAME: &'static str = "ModuleVersion";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.ModuleVersion".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.ModuleVersion".into()
+    }
+}
 /// QueryCurrentPlanRequest is the request type for the Query/CurrentPlan RPC
 /// method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryCurrentPlanRequest {}
+impl ::prost::Name for QueryCurrentPlanRequest {
+    const NAME: &'static str = "QueryCurrentPlanRequest";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.QueryCurrentPlanRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.QueryCurrentPlanRequest".into()
+    }
+}
 /// QueryCurrentPlanResponse is the response type for the Query/CurrentPlan RPC
 /// method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -89,6 +139,16 @@ pub struct QueryCurrentPlanResponse {
     /// plan is the current upgrade plan.
     #[prost(message, optional, tag = "1")]
     pub plan: ::core::option::Option<Plan>,
+}
+impl ::prost::Name for QueryCurrentPlanResponse {
+    const NAME: &'static str = "QueryCurrentPlanResponse";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.QueryCurrentPlanResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.QueryCurrentPlanResponse".into()
+    }
 }
 /// QueryCurrentPlanRequest is the request type for the Query/AppliedPlan RPC
 /// method.
@@ -99,6 +159,16 @@ pub struct QueryAppliedPlanRequest {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QueryAppliedPlanRequest {
+    const NAME: &'static str = "QueryAppliedPlanRequest";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.QueryAppliedPlanRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.QueryAppliedPlanRequest".into()
+    }
+}
 /// QueryAppliedPlanResponse is the response type for the Query/AppliedPlan RPC
 /// method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -107,6 +177,16 @@ pub struct QueryAppliedPlanResponse {
     /// height is the block height at which the plan was applied.
     #[prost(int64, tag = "1")]
     pub height: i64,
+}
+impl ::prost::Name for QueryAppliedPlanResponse {
+    const NAME: &'static str = "QueryAppliedPlanResponse";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.QueryAppliedPlanResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.QueryAppliedPlanResponse".into()
+    }
 }
 /// QueryUpgradedConsensusStateRequest is the request type for the Query/UpgradedConsensusState
 /// RPC method.
@@ -118,6 +198,16 @@ pub struct QueryUpgradedConsensusStateRequest {
     #[prost(int64, tag = "1")]
     pub last_height: i64,
 }
+impl ::prost::Name for QueryUpgradedConsensusStateRequest {
+    const NAME: &'static str = "QueryUpgradedConsensusStateRequest";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.QueryUpgradedConsensusStateRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.QueryUpgradedConsensusStateRequest".into()
+    }
+}
 /// QueryUpgradedConsensusStateResponse is the response type for the Query/UpgradedConsensusState
 /// RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -126,6 +216,16 @@ pub struct QueryUpgradedConsensusStateResponse {
     /// Since: cosmos-sdk 0.43
     #[prost(bytes = "vec", tag = "2")]
     pub upgraded_consensus_state: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for QueryUpgradedConsensusStateResponse {
+    const NAME: &'static str = "QueryUpgradedConsensusStateResponse";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.QueryUpgradedConsensusStateResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.QueryUpgradedConsensusStateResponse".into()
+    }
 }
 /// QueryModuleVersionsRequest is the request type for the Query/ModuleVersions
 /// RPC method.
@@ -140,6 +240,16 @@ pub struct QueryModuleVersionsRequest {
     #[prost(string, tag = "1")]
     pub module_name: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QueryModuleVersionsRequest {
+    const NAME: &'static str = "QueryModuleVersionsRequest";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.QueryModuleVersionsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.QueryModuleVersionsRequest".into()
+    }
+}
 /// QueryModuleVersionsResponse is the response type for the Query/ModuleVersions
 /// RPC method.
 ///
@@ -151,12 +261,32 @@ pub struct QueryModuleVersionsResponse {
     #[prost(message, repeated, tag = "1")]
     pub module_versions: ::prost::alloc::vec::Vec<ModuleVersion>,
 }
+impl ::prost::Name for QueryModuleVersionsResponse {
+    const NAME: &'static str = "QueryModuleVersionsResponse";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.QueryModuleVersionsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.QueryModuleVersionsResponse".into()
+    }
+}
 /// QueryAuthorityRequest is the request type for Query/Authority
 ///
 /// Since: cosmos-sdk 0.46
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryAuthorityRequest {}
+impl ::prost::Name for QueryAuthorityRequest {
+    const NAME: &'static str = "QueryAuthorityRequest";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.QueryAuthorityRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.QueryAuthorityRequest".into()
+    }
+}
 /// QueryAuthorityResponse is the response type for Query/Authority
 ///
 /// Since: cosmos-sdk 0.46
@@ -165,6 +295,16 @@ pub struct QueryAuthorityRequest {}
 pub struct QueryAuthorityResponse {
     #[prost(string, tag = "1")]
     pub address: ::prost::alloc::string::String,
+}
+impl ::prost::Name for QueryAuthorityResponse {
+    const NAME: &'static str = "QueryAuthorityResponse";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.QueryAuthorityResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.QueryAuthorityResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod query_client {
@@ -413,12 +553,32 @@ pub struct MsgSoftwareUpgrade {
     #[prost(message, optional, tag = "2")]
     pub plan: ::core::option::Option<Plan>,
 }
+impl ::prost::Name for MsgSoftwareUpgrade {
+    const NAME: &'static str = "MsgSoftwareUpgrade";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.MsgSoftwareUpgrade".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.MsgSoftwareUpgrade".into()
+    }
+}
 /// MsgSoftwareUpgradeResponse is the Msg/SoftwareUpgrade response type.
 ///
 /// Since: cosmos-sdk 0.46
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgSoftwareUpgradeResponse {}
+impl ::prost::Name for MsgSoftwareUpgradeResponse {
+    const NAME: &'static str = "MsgSoftwareUpgradeResponse";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.MsgSoftwareUpgradeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.MsgSoftwareUpgradeResponse".into()
+    }
+}
 /// MsgCancelUpgrade is the Msg/CancelUpgrade request type.
 ///
 /// Since: cosmos-sdk 0.46
@@ -429,12 +589,32 @@ pub struct MsgCancelUpgrade {
     #[prost(string, tag = "1")]
     pub authority: ::prost::alloc::string::String,
 }
+impl ::prost::Name for MsgCancelUpgrade {
+    const NAME: &'static str = "MsgCancelUpgrade";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.MsgCancelUpgrade".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.MsgCancelUpgrade".into()
+    }
+}
 /// MsgCancelUpgradeResponse is the Msg/CancelUpgrade response type.
 ///
 /// Since: cosmos-sdk 0.46
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgCancelUpgradeResponse {}
+impl ::prost::Name for MsgCancelUpgradeResponse {
+    const NAME: &'static str = "MsgCancelUpgradeResponse";
+    const PACKAGE: &'static str = "cosmos.upgrade.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.upgrade.v1beta1.MsgCancelUpgradeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.upgrade.v1beta1.MsgCancelUpgradeResponse".into()
+    }
+}
 /// Generated client implementations.
 pub mod msg_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]

@@ -3,3 +3,13 @@
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Module {}
+impl ::prost::Name for Module {
+    const NAME: &'static str = "Module";
+    const PACKAGE: &'static str = "cosmos.feegrant.module.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.feegrant.module.v1.Module".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.feegrant.module.v1.Module".into()
+    }
+}

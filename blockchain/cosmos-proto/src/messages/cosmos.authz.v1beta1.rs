@@ -8,6 +8,16 @@ pub struct GenericAuthorization {
     #[prost(string, tag = "1")]
     pub msg: ::prost::alloc::string::String,
 }
+impl ::prost::Name for GenericAuthorization {
+    const NAME: &'static str = "GenericAuthorization";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.GenericAuthorization".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.GenericAuthorization".into()
+    }
+}
 /// Grant gives permissions to execute
 /// the provide method with expiration time.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -20,6 +30,16 @@ pub struct Grant {
     /// may apply to invalidate the grant)
     #[prost(message, optional, tag = "2")]
     pub expiration: ::core::option::Option<::prost_types::Timestamp>,
+}
+impl ::prost::Name for Grant {
+    const NAME: &'static str = "Grant";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.Grant".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.Grant".into()
+    }
 }
 /// GrantAuthorization extends a grant with both the addresses of the grantee and granter.
 /// It is used in genesis.proto and query.proto
@@ -35,6 +55,16 @@ pub struct GrantAuthorization {
     #[prost(message, optional, tag = "4")]
     pub expiration: ::core::option::Option<::prost_types::Timestamp>,
 }
+impl ::prost::Name for GrantAuthorization {
+    const NAME: &'static str = "GrantAuthorization";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.GrantAuthorization".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.GrantAuthorization".into()
+    }
+}
 /// GrantQueueItem contains the list of TypeURL of a sdk.Msg.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -42,6 +72,16 @@ pub struct GrantQueueItem {
     /// msg_type_urls contains the list of TypeURL of a sdk.Msg.
     #[prost(string, repeated, tag = "1")]
     pub msg_type_urls: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+impl ::prost::Name for GrantQueueItem {
+    const NAME: &'static str = "GrantQueueItem";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.GrantQueueItem".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.GrantQueueItem".into()
+    }
 }
 /// EventGrant is emitted on Msg/Grant
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -57,6 +97,16 @@ pub struct EventGrant {
     #[prost(string, tag = "4")]
     pub grantee: ::prost::alloc::string::String,
 }
+impl ::prost::Name for EventGrant {
+    const NAME: &'static str = "EventGrant";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.EventGrant".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.EventGrant".into()
+    }
+}
 /// EventRevoke is emitted on Msg/Revoke
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -71,12 +121,32 @@ pub struct EventRevoke {
     #[prost(string, tag = "4")]
     pub grantee: ::prost::alloc::string::String,
 }
+impl ::prost::Name for EventRevoke {
+    const NAME: &'static str = "EventRevoke";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.EventRevoke".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.EventRevoke".into()
+    }
+}
 /// GenesisState defines the authz module's genesis state.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GenesisState {
     #[prost(message, repeated, tag = "1")]
     pub authorization: ::prost::alloc::vec::Vec<GrantAuthorization>,
+}
+impl ::prost::Name for GenesisState {
+    const NAME: &'static str = "GenesisState";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.GenesisState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.GenesisState".into()
+    }
 }
 /// QueryGrantsRequest is the request type for the Query/Grants RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -95,6 +165,16 @@ pub struct QueryGrantsRequest {
         super::super::base::query::v1beta1::PageRequest,
     >,
 }
+impl ::prost::Name for QueryGrantsRequest {
+    const NAME: &'static str = "QueryGrantsRequest";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.QueryGrantsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.QueryGrantsRequest".into()
+    }
+}
 /// QueryGrantsResponse is the response type for the Query/Authorizations RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -108,6 +188,16 @@ pub struct QueryGrantsResponse {
         super::super::base::query::v1beta1::PageResponse,
     >,
 }
+impl ::prost::Name for QueryGrantsResponse {
+    const NAME: &'static str = "QueryGrantsResponse";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.QueryGrantsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.QueryGrantsResponse".into()
+    }
+}
 /// QueryGranterGrantsRequest is the request type for the Query/GranterGrants RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -119,6 +209,16 @@ pub struct QueryGranterGrantsRequest {
     pub pagination: ::core::option::Option<
         super::super::base::query::v1beta1::PageRequest,
     >,
+}
+impl ::prost::Name for QueryGranterGrantsRequest {
+    const NAME: &'static str = "QueryGranterGrantsRequest";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.QueryGranterGrantsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.QueryGranterGrantsRequest".into()
+    }
 }
 /// QueryGranterGrantsResponse is the response type for the Query/GranterGrants RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -133,6 +233,16 @@ pub struct QueryGranterGrantsResponse {
         super::super::base::query::v1beta1::PageResponse,
     >,
 }
+impl ::prost::Name for QueryGranterGrantsResponse {
+    const NAME: &'static str = "QueryGranterGrantsResponse";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.QueryGranterGrantsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.QueryGranterGrantsResponse".into()
+    }
+}
 /// QueryGranteeGrantsRequest is the request type for the Query/GranteeGrants RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -144,6 +254,16 @@ pub struct QueryGranteeGrantsRequest {
     pub pagination: ::core::option::Option<
         super::super::base::query::v1beta1::PageRequest,
     >,
+}
+impl ::prost::Name for QueryGranteeGrantsRequest {
+    const NAME: &'static str = "QueryGranteeGrantsRequest";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.QueryGranteeGrantsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.QueryGranteeGrantsRequest".into()
+    }
 }
 /// QueryGranteeGrantsResponse is the response type for the Query/GranteeGrants RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -157,6 +277,16 @@ pub struct QueryGranteeGrantsResponse {
     pub pagination: ::core::option::Option<
         super::super::base::query::v1beta1::PageResponse,
     >,
+}
+impl ::prost::Name for QueryGranteeGrantsResponse {
+    const NAME: &'static str = "QueryGranteeGrantsResponse";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.QueryGranteeGrantsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.QueryGranteeGrantsResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod query_client {
@@ -340,10 +470,30 @@ pub struct MsgGrant {
     #[prost(message, optional, tag = "3")]
     pub grant: ::core::option::Option<Grant>,
 }
+impl ::prost::Name for MsgGrant {
+    const NAME: &'static str = "MsgGrant";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.MsgGrant".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.MsgGrant".into()
+    }
+}
 /// MsgGrantResponse defines the Msg/MsgGrant response type.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgGrantResponse {}
+impl ::prost::Name for MsgGrantResponse {
+    const NAME: &'static str = "MsgGrantResponse";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.MsgGrantResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.MsgGrantResponse".into()
+    }
+}
 /// MsgExec attempts to execute the provided messages using
 /// authorizations granted to the grantee. Each message should have only
 /// one signer corresponding to the granter of the authorization.
@@ -358,12 +508,32 @@ pub struct MsgExec {
     #[prost(message, repeated, tag = "2")]
     pub msgs: ::prost::alloc::vec::Vec<::prost_types::Any>,
 }
+impl ::prost::Name for MsgExec {
+    const NAME: &'static str = "MsgExec";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.MsgExec".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.MsgExec".into()
+    }
+}
 /// MsgExecResponse defines the Msg/MsgExecResponse response type.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgExecResponse {
     #[prost(bytes = "vec", repeated, tag = "1")]
     pub results: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+impl ::prost::Name for MsgExecResponse {
+    const NAME: &'static str = "MsgExecResponse";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.MsgExecResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.MsgExecResponse".into()
+    }
 }
 /// MsgRevoke revokes any authorization with the provided sdk.Msg type on the
 /// granter's account with that has been granted to the grantee.
@@ -377,10 +547,30 @@ pub struct MsgRevoke {
     #[prost(string, tag = "3")]
     pub msg_type_url: ::prost::alloc::string::String,
 }
+impl ::prost::Name for MsgRevoke {
+    const NAME: &'static str = "MsgRevoke";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.MsgRevoke".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.MsgRevoke".into()
+    }
+}
 /// MsgRevokeResponse defines the Msg/MsgRevokeResponse response type.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgRevokeResponse {}
+impl ::prost::Name for MsgRevokeResponse {
+    const NAME: &'static str = "MsgRevokeResponse";
+    const PACKAGE: &'static str = "cosmos.authz.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.authz.v1beta1.MsgRevokeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.authz.v1beta1.MsgRevokeResponse".into()
+    }
+}
 /// Generated client implementations.
 pub mod msg_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]

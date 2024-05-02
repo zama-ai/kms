@@ -10,3 +10,13 @@ pub struct LegacyAminoPubKey {
     #[prost(message, repeated, tag = "2")]
     pub public_keys: ::prost::alloc::vec::Vec<::prost_types::Any>,
 }
+impl ::prost::Name for LegacyAminoPubKey {
+    const NAME: &'static str = "LegacyAminoPubKey";
+    const PACKAGE: &'static str = "cosmos.crypto.multisig";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.crypto.multisig.LegacyAminoPubKey".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.crypto.multisig.LegacyAminoPubKey".into()
+    }
+}

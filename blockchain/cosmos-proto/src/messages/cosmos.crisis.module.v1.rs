@@ -10,3 +10,13 @@ pub struct Module {
     #[prost(string, tag = "2")]
     pub authority: ::prost::alloc::string::String,
 }
+impl ::prost::Name for Module {
+    const NAME: &'static str = "Module";
+    const PACKAGE: &'static str = "cosmos.crisis.module.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.crisis.module.v1.Module".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.crisis.module.v1.Module".into()
+    }
+}

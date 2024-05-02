@@ -7,3 +7,13 @@ pub struct GenesisState {
     #[prost(bytes = "vec", repeated, tag = "1")]
     pub gen_txs: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
 }
+impl ::prost::Name for GenesisState {
+    const NAME: &'static str = "GenesisState";
+    const PACKAGE: &'static str = "cosmos.genutil.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.genutil.v1beta1.GenesisState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.genutil.v1beta1.GenesisState".into()
+    }
+}

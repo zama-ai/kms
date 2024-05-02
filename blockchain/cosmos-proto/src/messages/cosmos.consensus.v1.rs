@@ -3,6 +3,16 @@
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryParamsRequest {}
+impl ::prost::Name for QueryParamsRequest {
+    const NAME: &'static str = "QueryParamsRequest";
+    const PACKAGE: &'static str = "cosmos.consensus.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.consensus.v1.QueryParamsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.consensus.v1.QueryParamsRequest".into()
+    }
+}
 /// QueryParamsResponse defines the response type for querying x/consensus parameters.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -14,6 +24,16 @@ pub struct QueryParamsResponse {
     pub params: ::core::option::Option<
         super::super::super::tendermint::types::ConsensusParams,
     >,
+}
+impl ::prost::Name for QueryParamsResponse {
+    const NAME: &'static str = "QueryParamsResponse";
+    const PACKAGE: &'static str = "cosmos.consensus.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.consensus.v1.QueryParamsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.consensus.v1.QueryParamsResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod query_client {
@@ -157,11 +177,31 @@ pub struct MsgUpdateParams {
     #[prost(message, optional, tag = "5")]
     pub abci: ::core::option::Option<super::super::super::tendermint::types::AbciParams>,
 }
+impl ::prost::Name for MsgUpdateParams {
+    const NAME: &'static str = "MsgUpdateParams";
+    const PACKAGE: &'static str = "cosmos.consensus.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.consensus.v1.MsgUpdateParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.consensus.v1.MsgUpdateParams".into()
+    }
+}
 /// MsgUpdateParamsResponse defines the response structure for executing a
 /// MsgUpdateParams message.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUpdateParamsResponse {}
+impl ::prost::Name for MsgUpdateParamsResponse {
+    const NAME: &'static str = "MsgUpdateParamsResponse";
+    const PACKAGE: &'static str = "cosmos.consensus.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.consensus.v1.MsgUpdateParamsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.consensus.v1.MsgUpdateParamsResponse".into()
+    }
+}
 /// Generated client implementations.
 pub mod msg_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]

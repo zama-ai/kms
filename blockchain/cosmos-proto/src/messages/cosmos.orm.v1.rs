@@ -15,6 +15,16 @@ pub struct TableDescriptor {
     #[prost(uint32, tag = "3")]
     pub id: u32,
 }
+impl ::prost::Name for TableDescriptor {
+    const NAME: &'static str = "TableDescriptor";
+    const PACKAGE: &'static str = "cosmos.orm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.orm.v1.TableDescriptor".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.orm.v1.TableDescriptor".into()
+    }
+}
 /// PrimaryKeyDescriptor describes a table primary key.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -60,6 +70,16 @@ pub struct PrimaryKeyDescriptor {
     #[prost(bool, tag = "2")]
     pub auto_increment: bool,
 }
+impl ::prost::Name for PrimaryKeyDescriptor {
+    const NAME: &'static str = "PrimaryKeyDescriptor";
+    const PACKAGE: &'static str = "cosmos.orm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.orm.v1.PrimaryKeyDescriptor".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.orm.v1.PrimaryKeyDescriptor".into()
+    }
+}
 /// PrimaryKeyDescriptor describes a table secondary index.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -84,6 +104,16 @@ pub struct SecondaryIndexDescriptor {
     #[prost(bool, tag = "3")]
     pub unique: bool,
 }
+impl ::prost::Name for SecondaryIndexDescriptor {
+    const NAME: &'static str = "SecondaryIndexDescriptor";
+    const PACKAGE: &'static str = "cosmos.orm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.orm.v1.SecondaryIndexDescriptor".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.orm.v1.SecondaryIndexDescriptor".into()
+    }
+}
 /// TableDescriptor describes an ORM singleton table which has at most one instance.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -93,4 +123,14 @@ pub struct SingletonDescriptor {
     /// can be auto-generated.
     #[prost(uint32, tag = "1")]
     pub id: u32,
+}
+impl ::prost::Name for SingletonDescriptor {
+    const NAME: &'static str = "SingletonDescriptor";
+    const PACKAGE: &'static str = "cosmos.orm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.orm.v1.SingletonDescriptor".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.orm.v1.SingletonDescriptor".into()
+    }
 }

@@ -43,11 +43,18 @@ pub enum Mode {
 }
 
 #[derive(TypedBuilder, Deserialize, Serialize, Clone)]
+pub struct ContractFee {
+    pub amount: u64,
+    pub coin_denom: String,
+}
+
+#[derive(TypedBuilder, Deserialize, Serialize, Clone)]
 pub struct ConnectorConfig {
     pub grpc_addresses: Vec<String>,
-    pub contract_addresses: String,
+    pub contract_address: String,
     pub tick_interval_secs: u64,
     pub storage_path: String,
+    pub contract_fee: ContractFee,
     pub tracing: Option<Tracing>,
 }
 

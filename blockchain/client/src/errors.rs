@@ -1,25 +1,35 @@
+use deep_space::error::PrivateKeyError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Failed to parse account ID: {0}")]
-    AccountIdParseError(String),
+    #[error("Cannot create gRPC Client with: {0}")]
+    GrpcClientCreateError(String),
 
-    #[error("Failed to construct execute message: {0}")]
-    MsgExecuteError(String),
+    #[error("Failed to broadcast transaction: {0}")]
+    BroadcastTxError(#[from] tonic::Status),
 
-    #[error("Failed to sign the document: {0}")]
-    SignDocError(String),
+    #[error("Invalid signature: {0}")]
+    InvalidSignature(String),
 
-    #[error("Blockchain transaction error: {0}")]
-    BlockchainTransactionError(String),
+    #[error("Invalid decode from bytes to proto message: {0}")]
+    DecodeError(#[from] prost::DecodeError),
 
-    #[error("Check transaction failed: {0}")]
-    CheckTxError(String),
+    #[error("Invalid encode to bytes from proto message: {0}")]
+    EncodeError(#[from] prost::EncodeError),
 
-    #[error("Transaction result error: {0}")]
-    TxResultError(String),
+    #[error("PublicKey Error: {0}")]
+    InvalidPublicKey(String),
 
-    #[error("Unknown error: {0}")]
-    Unknown(String),
+    #[error("AccountId Error: {0}")]
+    InvalidAccount(String),
+
+    #[error("AccountId Error: Invalid bech32 converting from str {0}")]
+    InvalidBech32Account(#[from] subtle_encoding::Error),
+
+    #[error("Error deriving private key from mnemonic: {0}")]
+    DerivePrivateKeyError(#[from] PrivateKeyError),
+
+    #[error("Signature Error: {0}")]
+    SignatureError(#[from] k256::ecdsa::Error),
 }

@@ -8,18 +8,18 @@ edition = "2021"
 [dependencies]
 anyhow = "~1.0"
 async-trait = "~0.1"
-cosmwasm-std = { version = "2.0.0" }
-cosmos-proto = { path = "../cosmos-proto" }
 clap = { version = "~4", features = ["derive", "env"] }
 config = "0.14.0"
 enum_dispatch = "0.3.12"
 events = { path = "../events", features = ["subscription"] }
+kms-blockchain-client = { path = "../client" }
 lazy_static = "~1.4"
 opentelemetry = { version = "0.21.0"}
 opentelemetry-otlp = { version = "0.14.0", features = ["tokio"]}
 opentelemetry-semantic-conventions = { version = "0.13.0" }
 opentelemetry-stdout = { version = "0.2.0", features = ["trace", "metrics"] }
 opentelemetry_sdk = { version = "0.21.2", features = ["rt-tokio", "logs"]}
+retrying = { version = "0.1.0", features = ["tokio"]}
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0"
 strum = { version = "0.26", features = ["derive"] }
@@ -30,4 +30,3 @@ tracing = { version = "~0.1", features = ["log"] }
 tracing-opentelemetry = "0.22"
 tracing-subscriber = { version = "~0.3.16", features = ["env-filter", "fmt"] }
 typed-builder = "0.18.1"
-

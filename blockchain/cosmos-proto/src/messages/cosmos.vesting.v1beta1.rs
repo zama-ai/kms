@@ -16,6 +16,16 @@ pub struct BaseVestingAccount {
     #[prost(int64, tag = "5")]
     pub end_time: i64,
 }
+impl ::prost::Name for BaseVestingAccount {
+    const NAME: &'static str = "BaseVestingAccount";
+    const PACKAGE: &'static str = "cosmos.vesting.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.vesting.v1beta1.BaseVestingAccount".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.vesting.v1beta1.BaseVestingAccount".into()
+    }
+}
 /// ContinuousVestingAccount implements the VestingAccount interface. It
 /// continuously vests by unlocking coins linearly with respect to time.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -27,6 +37,16 @@ pub struct ContinuousVestingAccount {
     #[prost(int64, tag = "2")]
     pub start_time: i64,
 }
+impl ::prost::Name for ContinuousVestingAccount {
+    const NAME: &'static str = "ContinuousVestingAccount";
+    const PACKAGE: &'static str = "cosmos.vesting.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.vesting.v1beta1.ContinuousVestingAccount".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.vesting.v1beta1.ContinuousVestingAccount".into()
+    }
+}
 /// DelayedVestingAccount implements the VestingAccount interface. It vests all
 /// coins after a specific time, but non prior. In other words, it keeps them
 /// locked until a specified time.
@@ -35,6 +55,16 @@ pub struct ContinuousVestingAccount {
 pub struct DelayedVestingAccount {
     #[prost(message, optional, tag = "1")]
     pub base_vesting_account: ::core::option::Option<BaseVestingAccount>,
+}
+impl ::prost::Name for DelayedVestingAccount {
+    const NAME: &'static str = "DelayedVestingAccount";
+    const PACKAGE: &'static str = "cosmos.vesting.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.vesting.v1beta1.DelayedVestingAccount".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.vesting.v1beta1.DelayedVestingAccount".into()
+    }
 }
 /// Period defines a length of time and amount of coins that will vest.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -45,6 +75,16 @@ pub struct Period {
     pub length: i64,
     #[prost(message, repeated, tag = "2")]
     pub amount: ::prost::alloc::vec::Vec<super::super::base::v1beta1::Coin>,
+}
+impl ::prost::Name for Period {
+    const NAME: &'static str = "Period";
+    const PACKAGE: &'static str = "cosmos.vesting.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.vesting.v1beta1.Period".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.vesting.v1beta1.Period".into()
+    }
 }
 /// PeriodicVestingAccount implements the VestingAccount interface. It
 /// periodically vests by unlocking coins during each specified period.
@@ -58,6 +98,16 @@ pub struct PeriodicVestingAccount {
     #[prost(message, repeated, tag = "3")]
     pub vesting_periods: ::prost::alloc::vec::Vec<Period>,
 }
+impl ::prost::Name for PeriodicVestingAccount {
+    const NAME: &'static str = "PeriodicVestingAccount";
+    const PACKAGE: &'static str = "cosmos.vesting.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.vesting.v1beta1.PeriodicVestingAccount".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.vesting.v1beta1.PeriodicVestingAccount".into()
+    }
+}
 /// PermanentLockedAccount implements the VestingAccount interface. It does
 /// not ever release coins, locking them indefinitely. Coins in this account can
 /// still be used for delegating and for governance votes even while locked.
@@ -68,6 +118,16 @@ pub struct PeriodicVestingAccount {
 pub struct PermanentLockedAccount {
     #[prost(message, optional, tag = "1")]
     pub base_vesting_account: ::core::option::Option<BaseVestingAccount>,
+}
+impl ::prost::Name for PermanentLockedAccount {
+    const NAME: &'static str = "PermanentLockedAccount";
+    const PACKAGE: &'static str = "cosmos.vesting.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.vesting.v1beta1.PermanentLockedAccount".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.vesting.v1beta1.PermanentLockedAccount".into()
+    }
 }
 /// MsgCreateVestingAccount defines a message that enables creating a vesting
 /// account.
@@ -86,10 +146,30 @@ pub struct MsgCreateVestingAccount {
     #[prost(bool, tag = "5")]
     pub delayed: bool,
 }
+impl ::prost::Name for MsgCreateVestingAccount {
+    const NAME: &'static str = "MsgCreateVestingAccount";
+    const PACKAGE: &'static str = "cosmos.vesting.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.vesting.v1beta1.MsgCreateVestingAccount".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.vesting.v1beta1.MsgCreateVestingAccount".into()
+    }
+}
 /// MsgCreateVestingAccountResponse defines the Msg/CreateVestingAccount response type.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgCreateVestingAccountResponse {}
+impl ::prost::Name for MsgCreateVestingAccountResponse {
+    const NAME: &'static str = "MsgCreateVestingAccountResponse";
+    const PACKAGE: &'static str = "cosmos.vesting.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.vesting.v1beta1.MsgCreateVestingAccountResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.vesting.v1beta1.MsgCreateVestingAccountResponse".into()
+    }
+}
 /// MsgCreatePermanentLockedAccount defines a message that enables creating a permanent
 /// locked account.
 ///
@@ -104,12 +184,32 @@ pub struct MsgCreatePermanentLockedAccount {
     #[prost(message, repeated, tag = "3")]
     pub amount: ::prost::alloc::vec::Vec<super::super::base::v1beta1::Coin>,
 }
+impl ::prost::Name for MsgCreatePermanentLockedAccount {
+    const NAME: &'static str = "MsgCreatePermanentLockedAccount";
+    const PACKAGE: &'static str = "cosmos.vesting.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.vesting.v1beta1.MsgCreatePermanentLockedAccount".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.vesting.v1beta1.MsgCreatePermanentLockedAccount".into()
+    }
+}
 /// MsgCreatePermanentLockedAccountResponse defines the Msg/CreatePermanentLockedAccount response type.
 ///
 /// Since: cosmos-sdk 0.46
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgCreatePermanentLockedAccountResponse {}
+impl ::prost::Name for MsgCreatePermanentLockedAccountResponse {
+    const NAME: &'static str = "MsgCreatePermanentLockedAccountResponse";
+    const PACKAGE: &'static str = "cosmos.vesting.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.vesting.v1beta1.MsgCreatePermanentLockedAccountResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.vesting.v1beta1.MsgCreatePermanentLockedAccountResponse".into()
+    }
+}
 /// MsgCreateVestingAccount defines a message that enables creating a vesting
 /// account.
 ///
@@ -127,6 +227,16 @@ pub struct MsgCreatePeriodicVestingAccount {
     #[prost(message, repeated, tag = "4")]
     pub vesting_periods: ::prost::alloc::vec::Vec<Period>,
 }
+impl ::prost::Name for MsgCreatePeriodicVestingAccount {
+    const NAME: &'static str = "MsgCreatePeriodicVestingAccount";
+    const PACKAGE: &'static str = "cosmos.vesting.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.vesting.v1beta1.MsgCreatePeriodicVestingAccount".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.vesting.v1beta1.MsgCreatePeriodicVestingAccount".into()
+    }
+}
 /// MsgCreateVestingAccountResponse defines the Msg/CreatePeriodicVestingAccount
 /// response type.
 ///
@@ -134,6 +244,16 @@ pub struct MsgCreatePeriodicVestingAccount {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgCreatePeriodicVestingAccountResponse {}
+impl ::prost::Name for MsgCreatePeriodicVestingAccountResponse {
+    const NAME: &'static str = "MsgCreatePeriodicVestingAccountResponse";
+    const PACKAGE: &'static str = "cosmos.vesting.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.vesting.v1beta1.MsgCreatePeriodicVestingAccountResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.vesting.v1beta1.MsgCreatePeriodicVestingAccountResponse".into()
+    }
+}
 /// Generated client implementations.
 pub mod msg_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]

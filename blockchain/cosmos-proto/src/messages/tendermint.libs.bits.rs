@@ -7,3 +7,13 @@ pub struct BitArray {
     #[prost(uint64, repeated, tag = "2")]
     pub elems: ::prost::alloc::vec::Vec<u64>,
 }
+impl ::prost::Name for BitArray {
+    const NAME: &'static str = "BitArray";
+    const PACKAGE: &'static str = "tendermint.libs.bits";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.libs.bits.BitArray".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.libs.bits.BitArray".into()
+    }
+}

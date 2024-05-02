@@ -3,6 +3,16 @@
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FileDescriptorsRequest {}
+impl ::prost::Name for FileDescriptorsRequest {
+    const NAME: &'static str = "FileDescriptorsRequest";
+    const PACKAGE: &'static str = "cosmos.reflection.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.reflection.v1.FileDescriptorsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.reflection.v1.FileDescriptorsRequest".into()
+    }
+}
 /// FileDescriptorsResponse is the Query/FileDescriptors response type.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -10,6 +20,16 @@ pub struct FileDescriptorsResponse {
     /// files is the file descriptors.
     #[prost(message, repeated, tag = "1")]
     pub files: ::prost::alloc::vec::Vec<::prost_types::FileDescriptorProto>,
+}
+impl ::prost::Name for FileDescriptorsResponse {
+    const NAME: &'static str = "FileDescriptorsResponse";
+    const PACKAGE: &'static str = "cosmos.reflection.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.reflection.v1.FileDescriptorsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.reflection.v1.FileDescriptorsResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod reflection_service_client {

@@ -6,6 +6,16 @@ pub struct AccessTypeParam {
     #[prost(enumeration = "AccessType", tag = "1")]
     pub value: i32,
 }
+impl ::prost::Name for AccessTypeParam {
+    const NAME: &'static str = "AccessTypeParam";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.AccessTypeParam".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.AccessTypeParam".into()
+    }
+}
 /// AccessConfig access control type.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -15,6 +25,16 @@ pub struct AccessConfig {
     #[prost(string, repeated, tag = "3")]
     pub addresses: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for AccessConfig {
+    const NAME: &'static str = "AccessConfig";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.AccessConfig".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.AccessConfig".into()
+    }
+}
 /// Params defines the set of wasm parameters.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -23,6 +43,16 @@ pub struct Params {
     pub code_upload_access: ::core::option::Option<AccessConfig>,
     #[prost(enumeration = "AccessType", tag = "2")]
     pub instantiate_default_permission: i32,
+}
+impl ::prost::Name for Params {
+    const NAME: &'static str = "Params";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.Params".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.Params".into()
+    }
 }
 /// CodeInfo is data for the uploaded contract WASM code
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -37,6 +67,16 @@ pub struct CodeInfo {
     /// InstantiateConfig access control to apply on contract creation, optional
     #[prost(message, optional, tag = "5")]
     pub instantiate_config: ::core::option::Option<AccessConfig>,
+}
+impl ::prost::Name for CodeInfo {
+    const NAME: &'static str = "CodeInfo";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.CodeInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.CodeInfo".into()
+    }
 }
 /// ContractInfo stores a WASM contract instance
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -64,6 +104,16 @@ pub struct ContractInfo {
     #[prost(message, optional, tag = "7")]
     pub extension: ::core::option::Option<::prost_types::Any>,
 }
+impl ::prost::Name for ContractInfo {
+    const NAME: &'static str = "ContractInfo";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.ContractInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.ContractInfo".into()
+    }
+}
 /// ContractCodeHistoryEntry metadata to a contract.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -79,6 +129,16 @@ pub struct ContractCodeHistoryEntry {
     #[prost(bytes = "vec", tag = "4")]
     pub msg: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for ContractCodeHistoryEntry {
+    const NAME: &'static str = "ContractCodeHistoryEntry";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.ContractCodeHistoryEntry".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.ContractCodeHistoryEntry".into()
+    }
+}
 /// AbsoluteTxPosition is a unique transaction position that allows for global
 /// ordering of transactions.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -92,6 +152,16 @@ pub struct AbsoluteTxPosition {
     #[prost(uint64, tag = "2")]
     pub tx_index: u64,
 }
+impl ::prost::Name for AbsoluteTxPosition {
+    const NAME: &'static str = "AbsoluteTxPosition";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.AbsoluteTxPosition".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.AbsoluteTxPosition".into()
+    }
+}
 /// Model is a struct that holds a KV pair
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -102,6 +172,16 @@ pub struct Model {
     /// base64-encode raw value
     #[prost(bytes = "vec", tag = "2")]
     pub value: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for Model {
+    const NAME: &'static str = "Model";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.Model".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.Model".into()
+    }
 }
 /// AccessType permission types
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -194,6 +274,16 @@ pub struct StoreCodeAuthorization {
     #[prost(message, repeated, tag = "1")]
     pub grants: ::prost::alloc::vec::Vec<CodeGrant>,
 }
+impl ::prost::Name for StoreCodeAuthorization {
+    const NAME: &'static str = "StoreCodeAuthorization";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.StoreCodeAuthorization".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.StoreCodeAuthorization".into()
+    }
+}
 /// ContractExecutionAuthorization defines authorization for wasm execute.
 /// Since: wasmd 0.30
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -203,6 +293,16 @@ pub struct ContractExecutionAuthorization {
     #[prost(message, repeated, tag = "1")]
     pub grants: ::prost::alloc::vec::Vec<ContractGrant>,
 }
+impl ::prost::Name for ContractExecutionAuthorization {
+    const NAME: &'static str = "ContractExecutionAuthorization";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.ContractExecutionAuthorization".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.ContractExecutionAuthorization".into()
+    }
+}
 /// ContractMigrationAuthorization defines authorization for wasm contract
 /// migration. Since: wasmd 0.30
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -211,6 +311,16 @@ pub struct ContractMigrationAuthorization {
     /// Grants for contract migrations
     #[prost(message, repeated, tag = "1")]
     pub grants: ::prost::alloc::vec::Vec<ContractGrant>,
+}
+impl ::prost::Name for ContractMigrationAuthorization {
+    const NAME: &'static str = "ContractMigrationAuthorization";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.ContractMigrationAuthorization".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.ContractMigrationAuthorization".into()
+    }
 }
 /// CodeGrant a granted permission for a single code
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -225,6 +335,16 @@ pub struct CodeGrant {
     /// Optional
     #[prost(message, optional, tag = "2")]
     pub instantiate_permission: ::core::option::Option<AccessConfig>,
+}
+impl ::prost::Name for CodeGrant {
+    const NAME: &'static str = "CodeGrant";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.CodeGrant".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.CodeGrant".into()
+    }
 }
 /// ContractGrant a granted permission for a single contract
 /// Since: wasmd 0.30
@@ -244,6 +364,16 @@ pub struct ContractGrant {
     #[prost(message, optional, tag = "3")]
     pub filter: ::core::option::Option<::prost_types::Any>,
 }
+impl ::prost::Name for ContractGrant {
+    const NAME: &'static str = "ContractGrant";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.ContractGrant".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.ContractGrant".into()
+    }
+}
 /// MaxCallsLimit limited number of calls to the contract. No funds transferable.
 /// Since: wasmd 0.30
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -252,6 +382,16 @@ pub struct MaxCallsLimit {
     /// Remaining number that is decremented on each execution
     #[prost(uint64, tag = "1")]
     pub remaining: u64,
+}
+impl ::prost::Name for MaxCallsLimit {
+    const NAME: &'static str = "MaxCallsLimit";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MaxCallsLimit".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MaxCallsLimit".into()
+    }
 }
 /// MaxFundsLimit defines the maximal amounts that can be sent to the contract.
 /// Since: wasmd 0.30
@@ -263,6 +403,16 @@ pub struct MaxFundsLimit {
     pub amounts: ::prost::alloc::vec::Vec<
         super::super::super::cosmos::base::v1beta1::Coin,
     >,
+}
+impl ::prost::Name for MaxFundsLimit {
+    const NAME: &'static str = "MaxFundsLimit";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MaxFundsLimit".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MaxFundsLimit".into()
+    }
 }
 /// CombinedLimit defines the maximal amounts that can be sent to a contract and
 /// the maximal number of calls executable. Both need to remain >0 to be valid.
@@ -279,12 +429,32 @@ pub struct CombinedLimit {
         super::super::super::cosmos::base::v1beta1::Coin,
     >,
 }
+impl ::prost::Name for CombinedLimit {
+    const NAME: &'static str = "CombinedLimit";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.CombinedLimit".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.CombinedLimit".into()
+    }
+}
 /// AllowAllMessagesFilter is a wildcard to allow any type of contract payload
 /// message.
 /// Since: wasmd 0.30
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AllowAllMessagesFilter {}
+impl ::prost::Name for AllowAllMessagesFilter {
+    const NAME: &'static str = "AllowAllMessagesFilter";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.AllowAllMessagesFilter".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.AllowAllMessagesFilter".into()
+    }
+}
 /// AcceptedMessageKeysFilter accept only the specific contract message keys in
 /// the json object to be executed.
 /// Since: wasmd 0.30
@@ -295,6 +465,16 @@ pub struct AcceptedMessageKeysFilter {
     #[prost(string, repeated, tag = "1")]
     pub keys: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for AcceptedMessageKeysFilter {
+    const NAME: &'static str = "AcceptedMessageKeysFilter";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.AcceptedMessageKeysFilter".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.AcceptedMessageKeysFilter".into()
+    }
+}
 /// AcceptedMessagesFilter accept only the specific raw contract messages to be
 /// executed.
 /// Since: wasmd 0.30
@@ -304,6 +484,16 @@ pub struct AcceptedMessagesFilter {
     /// Messages is the list of raw contract messages
     #[prost(bytes = "vec", repeated, tag = "1")]
     pub messages: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+impl ::prost::Name for AcceptedMessagesFilter {
+    const NAME: &'static str = "AcceptedMessagesFilter";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.AcceptedMessagesFilter".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.AcceptedMessagesFilter".into()
+    }
 }
 /// GenesisState - genesis state of x/wasm
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -317,6 +507,16 @@ pub struct GenesisState {
     pub contracts: ::prost::alloc::vec::Vec<Contract>,
     #[prost(message, repeated, tag = "4")]
     pub sequences: ::prost::alloc::vec::Vec<Sequence>,
+}
+impl ::prost::Name for GenesisState {
+    const NAME: &'static str = "GenesisState";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.GenesisState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.GenesisState".into()
+    }
 }
 /// Code struct encompasses CodeInfo and CodeBytes
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -332,6 +532,16 @@ pub struct Code {
     #[prost(bool, tag = "4")]
     pub pinned: bool,
 }
+impl ::prost::Name for Code {
+    const NAME: &'static str = "Code";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.Code".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.Code".into()
+    }
+}
 /// Contract struct encompasses ContractAddress, ContractInfo, and ContractState
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -345,6 +555,16 @@ pub struct Contract {
     #[prost(message, repeated, tag = "4")]
     pub contract_code_history: ::prost::alloc::vec::Vec<ContractCodeHistoryEntry>,
 }
+impl ::prost::Name for Contract {
+    const NAME: &'static str = "Contract";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.Contract".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.Contract".into()
+    }
+}
 /// Sequence key and value of an id generation counter
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -353,6 +573,16 @@ pub struct Sequence {
     pub id_key: ::prost::alloc::vec::Vec<u8>,
     #[prost(uint64, tag = "2")]
     pub value: u64,
+}
+impl ::prost::Name for Sequence {
+    const NAME: &'static str = "Sequence";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.Sequence".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.Sequence".into()
+    }
 }
 /// MsgIBCSend
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -374,6 +604,16 @@ pub struct MsgIbcSend {
     #[prost(bytes = "vec", tag = "6")]
     pub data: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for MsgIbcSend {
+    const NAME: &'static str = "MsgIBCSend";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgIBCSend".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgIBCSend".into()
+    }
+}
 /// MsgIBCSendResponse
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -382,12 +622,32 @@ pub struct MsgIbcSendResponse {
     #[prost(uint64, tag = "1")]
     pub sequence: u64,
 }
+impl ::prost::Name for MsgIbcSendResponse {
+    const NAME: &'static str = "MsgIBCSendResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgIBCSendResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgIBCSendResponse".into()
+    }
+}
 /// MsgIBCCloseChannel port and channel need to be owned by the contract
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgIbcCloseChannel {
     #[prost(string, tag = "2")]
     pub channel: ::prost::alloc::string::String,
+}
+impl ::prost::Name for MsgIbcCloseChannel {
+    const NAME: &'static str = "MsgIBCCloseChannel";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgIBCCloseChannel".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgIBCCloseChannel".into()
+    }
 }
 /// Deprecated: Do not use. Since wasmd v0.40, there is no longer a need for
 /// an explicit StoreCodeProposal. To submit WASM code to the system,
@@ -426,6 +686,16 @@ pub struct StoreCodeProposal {
     #[prost(bytes = "vec", tag = "11")]
     pub code_hash: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for StoreCodeProposal {
+    const NAME: &'static str = "StoreCodeProposal";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.StoreCodeProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.StoreCodeProposal".into()
+    }
+}
 /// Deprecated: Do not use. Since wasmd v0.40, there is no longer a need for
 /// an explicit InstantiateContractProposal. To instantiate a contract,
 /// a simple MsgInstantiateContract can be invoked from the x/gov module via
@@ -459,6 +729,16 @@ pub struct InstantiateContractProposal {
     pub funds: ::prost::alloc::vec::Vec<
         super::super::super::cosmos::base::v1beta1::Coin,
     >,
+}
+impl ::prost::Name for InstantiateContractProposal {
+    const NAME: &'static str = "InstantiateContractProposal";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.InstantiateContractProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.InstantiateContractProposal".into()
+    }
 }
 /// Deprecated: Do not use. Since wasmd v0.40, there is no longer a need for
 /// an explicit InstantiateContract2Proposal. To instantiate contract 2,
@@ -501,6 +781,16 @@ pub struct InstantiateContract2Proposal {
     #[prost(bool, tag = "10")]
     pub fix_msg: bool,
 }
+impl ::prost::Name for InstantiateContract2Proposal {
+    const NAME: &'static str = "InstantiateContract2Proposal";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.InstantiateContract2Proposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.InstantiateContract2Proposal".into()
+    }
+}
 /// Deprecated: Do not use. Since wasmd v0.40, there is no longer a need for
 /// an explicit MigrateContractProposal. To migrate a contract,
 /// a simple MsgMigrateContract can be invoked from the x/gov module via
@@ -526,6 +816,16 @@ pub struct MigrateContractProposal {
     #[prost(bytes = "vec", tag = "6")]
     pub msg: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for MigrateContractProposal {
+    const NAME: &'static str = "MigrateContractProposal";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MigrateContractProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MigrateContractProposal".into()
+    }
+}
 /// Deprecated: Do not use. Since wasmd v0.40, there is no longer a need for
 /// an explicit SudoContractProposal. To call sudo on a contract,
 /// a simple MsgSudoContract can be invoked from the x/gov module via
@@ -545,6 +845,16 @@ pub struct SudoContractProposal {
     /// Msg json encoded message to be passed to the contract as sudo
     #[prost(bytes = "vec", tag = "4")]
     pub msg: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for SudoContractProposal {
+    const NAME: &'static str = "SudoContractProposal";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.SudoContractProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.SudoContractProposal".into()
+    }
 }
 /// Deprecated: Do not use. Since wasmd v0.40, there is no longer a need for
 /// an explicit ExecuteContractProposal. To call execute on a contract,
@@ -574,6 +884,16 @@ pub struct ExecuteContractProposal {
         super::super::super::cosmos::base::v1beta1::Coin,
     >,
 }
+impl ::prost::Name for ExecuteContractProposal {
+    const NAME: &'static str = "ExecuteContractProposal";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.ExecuteContractProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.ExecuteContractProposal".into()
+    }
+}
 /// Deprecated: Do not use. Since wasmd v0.40, there is no longer a need for
 /// an explicit UpdateAdminProposal. To set an admin for a contract,
 /// a simple MsgUpdateAdmin can be invoked from the x/gov module via
@@ -594,6 +914,16 @@ pub struct UpdateAdminProposal {
     #[prost(string, tag = "4")]
     pub contract: ::prost::alloc::string::String,
 }
+impl ::prost::Name for UpdateAdminProposal {
+    const NAME: &'static str = "UpdateAdminProposal";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.UpdateAdminProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.UpdateAdminProposal".into()
+    }
+}
 /// Deprecated: Do not use. Since wasmd v0.40, there is no longer a need for
 /// an explicit ClearAdminProposal. To clear the admin of a contract,
 /// a simple MsgClearAdmin can be invoked from the x/gov module via
@@ -610,6 +940,16 @@ pub struct ClearAdminProposal {
     /// Contract is the address of the smart contract
     #[prost(string, tag = "3")]
     pub contract: ::prost::alloc::string::String,
+}
+impl ::prost::Name for ClearAdminProposal {
+    const NAME: &'static str = "ClearAdminProposal";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.ClearAdminProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.ClearAdminProposal".into()
+    }
 }
 /// Deprecated: Do not use. Since wasmd v0.40, there is no longer a need for
 /// an explicit PinCodesProposal. To pin a set of code ids in the wasmvm
@@ -628,6 +968,16 @@ pub struct PinCodesProposal {
     #[prost(uint64, repeated, packed = "false", tag = "3")]
     pub code_ids: ::prost::alloc::vec::Vec<u64>,
 }
+impl ::prost::Name for PinCodesProposal {
+    const NAME: &'static str = "PinCodesProposal";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.PinCodesProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.PinCodesProposal".into()
+    }
+}
 /// Deprecated: Do not use. Since wasmd v0.40, there is no longer a need for
 /// an explicit UnpinCodesProposal. To unpin a set of code ids in the wasmvm
 /// cache, a simple MsgUnpinCodes can be invoked from the x/gov module via
@@ -645,6 +995,16 @@ pub struct UnpinCodesProposal {
     #[prost(uint64, repeated, packed = "false", tag = "3")]
     pub code_ids: ::prost::alloc::vec::Vec<u64>,
 }
+impl ::prost::Name for UnpinCodesProposal {
+    const NAME: &'static str = "UnpinCodesProposal";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.UnpinCodesProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.UnpinCodesProposal".into()
+    }
+}
 /// AccessConfigUpdate contains the code id and the access config to be
 /// applied.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -656,6 +1016,16 @@ pub struct AccessConfigUpdate {
     /// InstantiatePermission to apply to the set of code ids
     #[prost(message, optional, tag = "2")]
     pub instantiate_permission: ::core::option::Option<AccessConfig>,
+}
+impl ::prost::Name for AccessConfigUpdate {
+    const NAME: &'static str = "AccessConfigUpdate";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.AccessConfigUpdate".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.AccessConfigUpdate".into()
+    }
 }
 /// Deprecated: Do not use. Since wasmd v0.40, there is no longer a need for
 /// an explicit UpdateInstantiateConfigProposal. To update instantiate config
@@ -674,6 +1044,16 @@ pub struct UpdateInstantiateConfigProposal {
     /// to be applied.
     #[prost(message, repeated, tag = "3")]
     pub access_config_updates: ::prost::alloc::vec::Vec<AccessConfigUpdate>,
+}
+impl ::prost::Name for UpdateInstantiateConfigProposal {
+    const NAME: &'static str = "UpdateInstantiateConfigProposal";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.UpdateInstantiateConfigProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.UpdateInstantiateConfigProposal".into()
+    }
 }
 /// Deprecated: Do not use. Since wasmd v0.40, there is no longer a need for
 /// an explicit StoreAndInstantiateContractProposal. To store and instantiate
@@ -726,6 +1106,16 @@ pub struct StoreAndInstantiateContractProposal {
     #[prost(bytes = "vec", tag = "13")]
     pub code_hash: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for StoreAndInstantiateContractProposal {
+    const NAME: &'static str = "StoreAndInstantiateContractProposal";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.StoreAndInstantiateContractProposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.StoreAndInstantiateContractProposal".into()
+    }
+}
 /// QueryContractInfoRequest is the request type for the Query/ContractInfo RPC
 /// method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -734,6 +1124,16 @@ pub struct QueryContractInfoRequest {
     /// address is the address of the contract to query
     #[prost(string, tag = "1")]
     pub address: ::prost::alloc::string::String,
+}
+impl ::prost::Name for QueryContractInfoRequest {
+    const NAME: &'static str = "QueryContractInfoRequest";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryContractInfoRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryContractInfoRequest".into()
+    }
 }
 /// QueryContractInfoResponse is the response type for the Query/ContractInfo RPC
 /// method
@@ -745,6 +1145,16 @@ pub struct QueryContractInfoResponse {
     pub address: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "2")]
     pub contract_info: ::core::option::Option<ContractInfo>,
+}
+impl ::prost::Name for QueryContractInfoResponse {
+    const NAME: &'static str = "QueryContractInfoResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryContractInfoResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryContractInfoResponse".into()
+    }
 }
 /// QueryContractHistoryRequest is the request type for the Query/ContractHistory
 /// RPC method
@@ -760,6 +1170,16 @@ pub struct QueryContractHistoryRequest {
         super::super::super::cosmos::base::query::v1beta1::PageRequest,
     >,
 }
+impl ::prost::Name for QueryContractHistoryRequest {
+    const NAME: &'static str = "QueryContractHistoryRequest";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryContractHistoryRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryContractHistoryRequest".into()
+    }
+}
 /// QueryContractHistoryResponse is the response type for the
 /// Query/ContractHistory RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -772,6 +1192,16 @@ pub struct QueryContractHistoryResponse {
     pub pagination: ::core::option::Option<
         super::super::super::cosmos::base::query::v1beta1::PageResponse,
     >,
+}
+impl ::prost::Name for QueryContractHistoryResponse {
+    const NAME: &'static str = "QueryContractHistoryResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryContractHistoryResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryContractHistoryResponse".into()
+    }
 }
 /// QueryContractsByCodeRequest is the request type for the Query/ContractsByCode
 /// RPC method
@@ -787,6 +1217,16 @@ pub struct QueryContractsByCodeRequest {
         super::super::super::cosmos::base::query::v1beta1::PageRequest,
     >,
 }
+impl ::prost::Name for QueryContractsByCodeRequest {
+    const NAME: &'static str = "QueryContractsByCodeRequest";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryContractsByCodeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryContractsByCodeRequest".into()
+    }
+}
 /// QueryContractsByCodeResponse is the response type for the
 /// Query/ContractsByCode RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -800,6 +1240,16 @@ pub struct QueryContractsByCodeResponse {
     pub pagination: ::core::option::Option<
         super::super::super::cosmos::base::query::v1beta1::PageResponse,
     >,
+}
+impl ::prost::Name for QueryContractsByCodeResponse {
+    const NAME: &'static str = "QueryContractsByCodeResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryContractsByCodeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryContractsByCodeResponse".into()
+    }
 }
 /// QueryAllContractStateRequest is the request type for the
 /// Query/AllContractState RPC method
@@ -815,6 +1265,16 @@ pub struct QueryAllContractStateRequest {
         super::super::super::cosmos::base::query::v1beta1::PageRequest,
     >,
 }
+impl ::prost::Name for QueryAllContractStateRequest {
+    const NAME: &'static str = "QueryAllContractStateRequest";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryAllContractStateRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryAllContractStateRequest".into()
+    }
+}
 /// QueryAllContractStateResponse is the response type for the
 /// Query/AllContractState RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -828,6 +1288,16 @@ pub struct QueryAllContractStateResponse {
         super::super::super::cosmos::base::query::v1beta1::PageResponse,
     >,
 }
+impl ::prost::Name for QueryAllContractStateResponse {
+    const NAME: &'static str = "QueryAllContractStateResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryAllContractStateResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryAllContractStateResponse".into()
+    }
+}
 /// QueryRawContractStateRequest is the request type for the
 /// Query/RawContractState RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -839,6 +1309,16 @@ pub struct QueryRawContractStateRequest {
     #[prost(bytes = "vec", tag = "2")]
     pub query_data: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for QueryRawContractStateRequest {
+    const NAME: &'static str = "QueryRawContractStateRequest";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryRawContractStateRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryRawContractStateRequest".into()
+    }
+}
 /// QueryRawContractStateResponse is the response type for the
 /// Query/RawContractState RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -847,6 +1327,16 @@ pub struct QueryRawContractStateResponse {
     /// Data contains the raw store data
     #[prost(bytes = "vec", tag = "1")]
     pub data: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for QueryRawContractStateResponse {
+    const NAME: &'static str = "QueryRawContractStateResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryRawContractStateResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryRawContractStateResponse".into()
+    }
 }
 /// QuerySmartContractStateRequest is the request type for the
 /// Query/SmartContractState RPC method
@@ -860,6 +1350,16 @@ pub struct QuerySmartContractStateRequest {
     #[prost(bytes = "vec", tag = "2")]
     pub query_data: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for QuerySmartContractStateRequest {
+    const NAME: &'static str = "QuerySmartContractStateRequest";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QuerySmartContractStateRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QuerySmartContractStateRequest".into()
+    }
+}
 /// QuerySmartContractStateResponse is the response type for the
 /// Query/SmartContractState RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -869,6 +1369,16 @@ pub struct QuerySmartContractStateResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub data: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for QuerySmartContractStateResponse {
+    const NAME: &'static str = "QuerySmartContractStateResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QuerySmartContractStateResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QuerySmartContractStateResponse".into()
+    }
+}
 /// QueryCodeRequest is the request type for the Query/Code RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -876,6 +1386,16 @@ pub struct QueryCodeRequest {
     /// grpc-gateway_out does not support Go style CodID
     #[prost(uint64, tag = "1")]
     pub code_id: u64,
+}
+impl ::prost::Name for QueryCodeRequest {
+    const NAME: &'static str = "QueryCodeRequest";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryCodeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryCodeRequest".into()
+    }
 }
 /// CodeInfoResponse contains code meta data from CodeInfo
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -891,6 +1411,16 @@ pub struct CodeInfoResponse {
     #[prost(message, optional, tag = "6")]
     pub instantiate_permission: ::core::option::Option<AccessConfig>,
 }
+impl ::prost::Name for CodeInfoResponse {
+    const NAME: &'static str = "CodeInfoResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.CodeInfoResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.CodeInfoResponse".into()
+    }
+}
 /// QueryCodeResponse is the response type for the Query/Code RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -899,6 +1429,16 @@ pub struct QueryCodeResponse {
     pub code_info: ::core::option::Option<CodeInfoResponse>,
     #[prost(bytes = "vec", tag = "2")]
     pub data: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for QueryCodeResponse {
+    const NAME: &'static str = "QueryCodeResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryCodeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryCodeResponse".into()
+    }
 }
 /// QueryCodesRequest is the request type for the Query/Codes RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -909,6 +1449,16 @@ pub struct QueryCodesRequest {
     pub pagination: ::core::option::Option<
         super::super::super::cosmos::base::query::v1beta1::PageRequest,
     >,
+}
+impl ::prost::Name for QueryCodesRequest {
+    const NAME: &'static str = "QueryCodesRequest";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryCodesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryCodesRequest".into()
+    }
 }
 /// QueryCodesResponse is the response type for the Query/Codes RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -922,6 +1472,16 @@ pub struct QueryCodesResponse {
         super::super::super::cosmos::base::query::v1beta1::PageResponse,
     >,
 }
+impl ::prost::Name for QueryCodesResponse {
+    const NAME: &'static str = "QueryCodesResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryCodesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryCodesResponse".into()
+    }
+}
 /// QueryPinnedCodesRequest is the request type for the Query/PinnedCodes
 /// RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -932,6 +1492,16 @@ pub struct QueryPinnedCodesRequest {
     pub pagination: ::core::option::Option<
         super::super::super::cosmos::base::query::v1beta1::PageRequest,
     >,
+}
+impl ::prost::Name for QueryPinnedCodesRequest {
+    const NAME: &'static str = "QueryPinnedCodesRequest";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryPinnedCodesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryPinnedCodesRequest".into()
+    }
 }
 /// QueryPinnedCodesResponse is the response type for the
 /// Query/PinnedCodes RPC method
@@ -946,10 +1516,30 @@ pub struct QueryPinnedCodesResponse {
         super::super::super::cosmos::base::query::v1beta1::PageResponse,
     >,
 }
+impl ::prost::Name for QueryPinnedCodesResponse {
+    const NAME: &'static str = "QueryPinnedCodesResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryPinnedCodesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryPinnedCodesResponse".into()
+    }
+}
 /// QueryParamsRequest is the request type for the Query/Params RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryParamsRequest {}
+impl ::prost::Name for QueryParamsRequest {
+    const NAME: &'static str = "QueryParamsRequest";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryParamsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryParamsRequest".into()
+    }
+}
 /// QueryParamsResponse is the response type for the Query/Params RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -957,6 +1547,16 @@ pub struct QueryParamsResponse {
     /// params defines the parameters of the module.
     #[prost(message, optional, tag = "1")]
     pub params: ::core::option::Option<Params>,
+}
+impl ::prost::Name for QueryParamsResponse {
+    const NAME: &'static str = "QueryParamsResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryParamsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryParamsResponse".into()
+    }
 }
 /// QueryContractsByCreatorRequest is the request type for the
 /// Query/ContractsByCreator RPC method.
@@ -972,6 +1572,16 @@ pub struct QueryContractsByCreatorRequest {
         super::super::super::cosmos::base::query::v1beta1::PageRequest,
     >,
 }
+impl ::prost::Name for QueryContractsByCreatorRequest {
+    const NAME: &'static str = "QueryContractsByCreatorRequest";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryContractsByCreatorRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryContractsByCreatorRequest".into()
+    }
+}
 /// QueryContractsByCreatorResponse is the response type for the
 /// Query/ContractsByCreator RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -985,6 +1595,16 @@ pub struct QueryContractsByCreatorResponse {
     pub pagination: ::core::option::Option<
         super::super::super::cosmos::base::query::v1beta1::PageResponse,
     >,
+}
+impl ::prost::Name for QueryContractsByCreatorResponse {
+    const NAME: &'static str = "QueryContractsByCreatorResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryContractsByCreatorResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryContractsByCreatorResponse".into()
+    }
 }
 /// QueryBuildAddressRequest is the request type for the Query/BuildAddress RPC
 /// method.
@@ -1005,6 +1625,16 @@ pub struct QueryBuildAddressRequest {
     #[prost(bytes = "vec", tag = "4")]
     pub init_args: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for QueryBuildAddressRequest {
+    const NAME: &'static str = "QueryBuildAddressRequest";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryBuildAddressRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryBuildAddressRequest".into()
+    }
+}
 /// QueryBuildAddressResponse is the response type for the Query/BuildAddress RPC
 /// method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1013,6 +1643,16 @@ pub struct QueryBuildAddressResponse {
     /// Address is the contract address
     #[prost(string, tag = "1")]
     pub address: ::prost::alloc::string::String,
+}
+impl ::prost::Name for QueryBuildAddressResponse {
+    const NAME: &'static str = "QueryBuildAddressResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.QueryBuildAddressResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.QueryBuildAddressResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod query_client {
@@ -1429,6 +2069,16 @@ pub struct MsgStoreCode {
     #[prost(message, optional, tag = "5")]
     pub instantiate_permission: ::core::option::Option<AccessConfig>,
 }
+impl ::prost::Name for MsgStoreCode {
+    const NAME: &'static str = "MsgStoreCode";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgStoreCode".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgStoreCode".into()
+    }
+}
 /// MsgStoreCodeResponse returns store result data.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1439,6 +2089,16 @@ pub struct MsgStoreCodeResponse {
     /// Checksum is the sha256 hash of the stored code
     #[prost(bytes = "vec", tag = "2")]
     pub checksum: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for MsgStoreCodeResponse {
+    const NAME: &'static str = "MsgStoreCodeResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgStoreCodeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgStoreCodeResponse".into()
+    }
 }
 /// MsgInstantiateContract create a new smart contract instance for the given
 /// code id.
@@ -1466,6 +2126,16 @@ pub struct MsgInstantiateContract {
         super::super::super::cosmos::base::v1beta1::Coin,
     >,
 }
+impl ::prost::Name for MsgInstantiateContract {
+    const NAME: &'static str = "MsgInstantiateContract";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgInstantiateContract".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgInstantiateContract".into()
+    }
+}
 /// MsgInstantiateContractResponse return instantiation result data
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1476,6 +2146,16 @@ pub struct MsgInstantiateContractResponse {
     /// Data contains bytes to returned from the contract
     #[prost(bytes = "vec", tag = "2")]
     pub data: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for MsgInstantiateContractResponse {
+    const NAME: &'static str = "MsgInstantiateContractResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgInstantiateContractResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgInstantiateContractResponse".into()
+    }
 }
 /// MsgInstantiateContract2 create a new smart contract instance for the given
 /// code id with a predicable address.
@@ -1510,6 +2190,16 @@ pub struct MsgInstantiateContract2 {
     #[prost(bool, tag = "8")]
     pub fix_msg: bool,
 }
+impl ::prost::Name for MsgInstantiateContract2 {
+    const NAME: &'static str = "MsgInstantiateContract2";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgInstantiateContract2".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgInstantiateContract2".into()
+    }
+}
 /// MsgInstantiateContract2Response return instantiation result data
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1520,6 +2210,16 @@ pub struct MsgInstantiateContract2Response {
     /// Data contains bytes to returned from the contract
     #[prost(bytes = "vec", tag = "2")]
     pub data: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for MsgInstantiateContract2Response {
+    const NAME: &'static str = "MsgInstantiateContract2Response";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgInstantiateContract2Response".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgInstantiateContract2Response".into()
+    }
 }
 /// MsgExecuteContract submits the given message data to a smart contract
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1540,6 +2240,16 @@ pub struct MsgExecuteContract {
         super::super::super::cosmos::base::v1beta1::Coin,
     >,
 }
+impl ::prost::Name for MsgExecuteContract {
+    const NAME: &'static str = "MsgExecuteContract";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgExecuteContract".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgExecuteContract".into()
+    }
+}
 /// MsgExecuteContractResponse returns execution result data.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1547,6 +2257,16 @@ pub struct MsgExecuteContractResponse {
     /// Data contains bytes to returned from the contract
     #[prost(bytes = "vec", tag = "1")]
     pub data: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for MsgExecuteContractResponse {
+    const NAME: &'static str = "MsgExecuteContractResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgExecuteContractResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgExecuteContractResponse".into()
+    }
 }
 /// MsgMigrateContract runs a code upgrade/ downgrade for a smart contract
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1565,6 +2285,16 @@ pub struct MsgMigrateContract {
     #[prost(bytes = "vec", tag = "4")]
     pub msg: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for MsgMigrateContract {
+    const NAME: &'static str = "MsgMigrateContract";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgMigrateContract".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgMigrateContract".into()
+    }
+}
 /// MsgMigrateContractResponse returns contract migration result data.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1573,6 +2303,16 @@ pub struct MsgMigrateContractResponse {
     /// (May be empty)
     #[prost(bytes = "vec", tag = "1")]
     pub data: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for MsgMigrateContractResponse {
+    const NAME: &'static str = "MsgMigrateContractResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgMigrateContractResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgMigrateContractResponse".into()
+    }
 }
 /// MsgUpdateAdmin sets a new admin for a smart contract
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1588,10 +2328,30 @@ pub struct MsgUpdateAdmin {
     #[prost(string, tag = "3")]
     pub contract: ::prost::alloc::string::String,
 }
+impl ::prost::Name for MsgUpdateAdmin {
+    const NAME: &'static str = "MsgUpdateAdmin";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgUpdateAdmin".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgUpdateAdmin".into()
+    }
+}
 /// MsgUpdateAdminResponse returns empty data
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUpdateAdminResponse {}
+impl ::prost::Name for MsgUpdateAdminResponse {
+    const NAME: &'static str = "MsgUpdateAdminResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgUpdateAdminResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgUpdateAdminResponse".into()
+    }
+}
 /// MsgClearAdmin removes any admin stored for a smart contract
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1603,10 +2363,30 @@ pub struct MsgClearAdmin {
     #[prost(string, tag = "3")]
     pub contract: ::prost::alloc::string::String,
 }
+impl ::prost::Name for MsgClearAdmin {
+    const NAME: &'static str = "MsgClearAdmin";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgClearAdmin".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgClearAdmin".into()
+    }
+}
 /// MsgClearAdminResponse returns empty data
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgClearAdminResponse {}
+impl ::prost::Name for MsgClearAdminResponse {
+    const NAME: &'static str = "MsgClearAdminResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgClearAdminResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgClearAdminResponse".into()
+    }
+}
 /// MsgUpdateInstantiateConfig updates instantiate config for a smart contract
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1621,10 +2401,30 @@ pub struct MsgUpdateInstantiateConfig {
     #[prost(message, optional, tag = "3")]
     pub new_instantiate_permission: ::core::option::Option<AccessConfig>,
 }
+impl ::prost::Name for MsgUpdateInstantiateConfig {
+    const NAME: &'static str = "MsgUpdateInstantiateConfig";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgUpdateInstantiateConfig".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgUpdateInstantiateConfig".into()
+    }
+}
 /// MsgUpdateInstantiateConfigResponse returns empty data
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUpdateInstantiateConfigResponse {}
+impl ::prost::Name for MsgUpdateInstantiateConfigResponse {
+    const NAME: &'static str = "MsgUpdateInstantiateConfigResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgUpdateInstantiateConfigResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgUpdateInstantiateConfigResponse".into()
+    }
+}
 /// MsgUpdateParams is the MsgUpdateParams request type.
 ///
 /// Since: 0.40
@@ -1640,6 +2440,16 @@ pub struct MsgUpdateParams {
     #[prost(message, optional, tag = "2")]
     pub params: ::core::option::Option<Params>,
 }
+impl ::prost::Name for MsgUpdateParams {
+    const NAME: &'static str = "MsgUpdateParams";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgUpdateParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgUpdateParams".into()
+    }
+}
 /// MsgUpdateParamsResponse defines the response structure for executing a
 /// MsgUpdateParams message.
 ///
@@ -1647,6 +2457,16 @@ pub struct MsgUpdateParams {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUpdateParamsResponse {}
+impl ::prost::Name for MsgUpdateParamsResponse {
+    const NAME: &'static str = "MsgUpdateParamsResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgUpdateParamsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgUpdateParamsResponse".into()
+    }
+}
 /// MsgSudoContract is the MsgSudoContract request type.
 ///
 /// Since: 0.40
@@ -1663,6 +2483,16 @@ pub struct MsgSudoContract {
     #[prost(bytes = "vec", tag = "3")]
     pub msg: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for MsgSudoContract {
+    const NAME: &'static str = "MsgSudoContract";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgSudoContract".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgSudoContract".into()
+    }
+}
 /// MsgSudoContractResponse defines the response structure for executing a
 /// MsgSudoContract message.
 ///
@@ -1673,6 +2503,16 @@ pub struct MsgSudoContractResponse {
     /// Data contains bytes to returned from the contract
     #[prost(bytes = "vec", tag = "1")]
     pub data: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for MsgSudoContractResponse {
+    const NAME: &'static str = "MsgSudoContractResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgSudoContractResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgSudoContractResponse".into()
+    }
 }
 /// MsgPinCodes is the MsgPinCodes request type.
 ///
@@ -1687,6 +2527,16 @@ pub struct MsgPinCodes {
     #[prost(uint64, repeated, packed = "false", tag = "2")]
     pub code_ids: ::prost::alloc::vec::Vec<u64>,
 }
+impl ::prost::Name for MsgPinCodes {
+    const NAME: &'static str = "MsgPinCodes";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgPinCodes".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgPinCodes".into()
+    }
+}
 /// MsgPinCodesResponse defines the response structure for executing a
 /// MsgPinCodes message.
 ///
@@ -1694,6 +2544,16 @@ pub struct MsgPinCodes {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgPinCodesResponse {}
+impl ::prost::Name for MsgPinCodesResponse {
+    const NAME: &'static str = "MsgPinCodesResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgPinCodesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgPinCodesResponse".into()
+    }
+}
 /// MsgUnpinCodes is the MsgUnpinCodes request type.
 ///
 /// Since: 0.40
@@ -1707,6 +2567,16 @@ pub struct MsgUnpinCodes {
     #[prost(uint64, repeated, packed = "false", tag = "2")]
     pub code_ids: ::prost::alloc::vec::Vec<u64>,
 }
+impl ::prost::Name for MsgUnpinCodes {
+    const NAME: &'static str = "MsgUnpinCodes";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgUnpinCodes".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgUnpinCodes".into()
+    }
+}
 /// MsgUnpinCodesResponse defines the response structure for executing a
 /// MsgUnpinCodes message.
 ///
@@ -1714,6 +2584,16 @@ pub struct MsgUnpinCodes {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUnpinCodesResponse {}
+impl ::prost::Name for MsgUnpinCodesResponse {
+    const NAME: &'static str = "MsgUnpinCodesResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgUnpinCodesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgUnpinCodesResponse".into()
+    }
+}
 /// MsgStoreAndInstantiateContract is the MsgStoreAndInstantiateContract
 /// request type.
 ///
@@ -1761,6 +2641,16 @@ pub struct MsgStoreAndInstantiateContract {
     #[prost(bytes = "vec", tag = "12")]
     pub code_hash: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for MsgStoreAndInstantiateContract {
+    const NAME: &'static str = "MsgStoreAndInstantiateContract";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgStoreAndInstantiateContract".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgStoreAndInstantiateContract".into()
+    }
+}
 /// MsgStoreAndInstantiateContractResponse defines the response structure
 /// for executing a MsgStoreAndInstantiateContract message.
 ///
@@ -1775,6 +2665,16 @@ pub struct MsgStoreAndInstantiateContractResponse {
     #[prost(bytes = "vec", tag = "2")]
     pub data: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for MsgStoreAndInstantiateContractResponse {
+    const NAME: &'static str = "MsgStoreAndInstantiateContractResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgStoreAndInstantiateContractResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgStoreAndInstantiateContractResponse".into()
+    }
+}
 /// MsgAddCodeUploadParamsAddresses is the
 /// MsgAddCodeUploadParamsAddresses request type.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1786,11 +2686,31 @@ pub struct MsgAddCodeUploadParamsAddresses {
     #[prost(string, repeated, tag = "2")]
     pub addresses: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for MsgAddCodeUploadParamsAddresses {
+    const NAME: &'static str = "MsgAddCodeUploadParamsAddresses";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgAddCodeUploadParamsAddresses".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgAddCodeUploadParamsAddresses".into()
+    }
+}
 /// MsgAddCodeUploadParamsAddressesResponse defines the response
 /// structure for executing a MsgAddCodeUploadParamsAddresses message.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgAddCodeUploadParamsAddressesResponse {}
+impl ::prost::Name for MsgAddCodeUploadParamsAddressesResponse {
+    const NAME: &'static str = "MsgAddCodeUploadParamsAddressesResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgAddCodeUploadParamsAddressesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgAddCodeUploadParamsAddressesResponse".into()
+    }
+}
 /// MsgRemoveCodeUploadParamsAddresses is the
 /// MsgRemoveCodeUploadParamsAddresses request type.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -1802,11 +2722,31 @@ pub struct MsgRemoveCodeUploadParamsAddresses {
     #[prost(string, repeated, tag = "2")]
     pub addresses: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for MsgRemoveCodeUploadParamsAddresses {
+    const NAME: &'static str = "MsgRemoveCodeUploadParamsAddresses";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgRemoveCodeUploadParamsAddresses".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgRemoveCodeUploadParamsAddresses".into()
+    }
+}
 /// MsgRemoveCodeUploadParamsAddressesResponse defines the response
 /// structure for executing a MsgRemoveCodeUploadParamsAddresses message.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgRemoveCodeUploadParamsAddressesResponse {}
+impl ::prost::Name for MsgRemoveCodeUploadParamsAddressesResponse {
+    const NAME: &'static str = "MsgRemoveCodeUploadParamsAddressesResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgRemoveCodeUploadParamsAddressesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgRemoveCodeUploadParamsAddressesResponse".into()
+    }
+}
 /// MsgStoreAndMigrateContract is the MsgStoreAndMigrateContract
 /// request type.
 ///
@@ -1830,6 +2770,16 @@ pub struct MsgStoreAndMigrateContract {
     #[prost(bytes = "vec", tag = "5")]
     pub msg: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for MsgStoreAndMigrateContract {
+    const NAME: &'static str = "MsgStoreAndMigrateContract";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgStoreAndMigrateContract".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgStoreAndMigrateContract".into()
+    }
+}
 /// MsgStoreAndMigrateContractResponse defines the response structure
 /// for executing a MsgStoreAndMigrateContract message.
 ///
@@ -1847,6 +2797,16 @@ pub struct MsgStoreAndMigrateContractResponse {
     #[prost(bytes = "vec", tag = "3")]
     pub data: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for MsgStoreAndMigrateContractResponse {
+    const NAME: &'static str = "MsgStoreAndMigrateContractResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgStoreAndMigrateContractResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgStoreAndMigrateContractResponse".into()
+    }
+}
 /// MsgUpdateContractLabel sets a new label for a smart contract
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1861,10 +2821,30 @@ pub struct MsgUpdateContractLabel {
     #[prost(string, tag = "3")]
     pub contract: ::prost::alloc::string::String,
 }
+impl ::prost::Name for MsgUpdateContractLabel {
+    const NAME: &'static str = "MsgUpdateContractLabel";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgUpdateContractLabel".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgUpdateContractLabel".into()
+    }
+}
 /// MsgUpdateContractLabelResponse returns empty data
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUpdateContractLabelResponse {}
+impl ::prost::Name for MsgUpdateContractLabelResponse {
+    const NAME: &'static str = "MsgUpdateContractLabelResponse";
+    const PACKAGE: &'static str = "cosmwasm.wasm.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmwasm.wasm.v1.MsgUpdateContractLabelResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmwasm.wasm.v1.MsgUpdateContractLabelResponse".into()
+    }
+}
 /// Generated client implementations.
 pub mod msg_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]

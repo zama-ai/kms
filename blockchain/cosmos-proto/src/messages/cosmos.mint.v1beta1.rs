@@ -10,6 +10,16 @@ pub struct Minter {
     #[prost(string, tag = "2")]
     pub annual_provisions: ::prost::alloc::string::String,
 }
+impl ::prost::Name for Minter {
+    const NAME: &'static str = "Minter";
+    const PACKAGE: &'static str = "cosmos.mint.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.mint.v1beta1.Minter".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.mint.v1beta1.Minter".into()
+    }
+}
 /// Params defines the parameters for the x/mint module.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -33,6 +43,16 @@ pub struct Params {
     #[prost(uint64, tag = "6")]
     pub blocks_per_year: u64,
 }
+impl ::prost::Name for Params {
+    const NAME: &'static str = "Params";
+    const PACKAGE: &'static str = "cosmos.mint.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.mint.v1beta1.Params".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.mint.v1beta1.Params".into()
+    }
+}
 /// GenesisState defines the mint module's genesis state.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -44,10 +64,30 @@ pub struct GenesisState {
     #[prost(message, optional, tag = "2")]
     pub params: ::core::option::Option<Params>,
 }
+impl ::prost::Name for GenesisState {
+    const NAME: &'static str = "GenesisState";
+    const PACKAGE: &'static str = "cosmos.mint.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.mint.v1beta1.GenesisState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.mint.v1beta1.GenesisState".into()
+    }
+}
 /// QueryParamsRequest is the request type for the Query/Params RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryParamsRequest {}
+impl ::prost::Name for QueryParamsRequest {
+    const NAME: &'static str = "QueryParamsRequest";
+    const PACKAGE: &'static str = "cosmos.mint.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.mint.v1beta1.QueryParamsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.mint.v1beta1.QueryParamsRequest".into()
+    }
+}
 /// QueryParamsResponse is the response type for the Query/Params RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -56,10 +96,30 @@ pub struct QueryParamsResponse {
     #[prost(message, optional, tag = "1")]
     pub params: ::core::option::Option<Params>,
 }
+impl ::prost::Name for QueryParamsResponse {
+    const NAME: &'static str = "QueryParamsResponse";
+    const PACKAGE: &'static str = "cosmos.mint.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.mint.v1beta1.QueryParamsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.mint.v1beta1.QueryParamsResponse".into()
+    }
+}
 /// QueryInflationRequest is the request type for the Query/Inflation RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryInflationRequest {}
+impl ::prost::Name for QueryInflationRequest {
+    const NAME: &'static str = "QueryInflationRequest";
+    const PACKAGE: &'static str = "cosmos.mint.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.mint.v1beta1.QueryInflationRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.mint.v1beta1.QueryInflationRequest".into()
+    }
+}
 /// QueryInflationResponse is the response type for the Query/Inflation RPC
 /// method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -69,11 +129,31 @@ pub struct QueryInflationResponse {
     #[prost(bytes = "vec", tag = "1")]
     pub inflation: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for QueryInflationResponse {
+    const NAME: &'static str = "QueryInflationResponse";
+    const PACKAGE: &'static str = "cosmos.mint.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.mint.v1beta1.QueryInflationResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.mint.v1beta1.QueryInflationResponse".into()
+    }
+}
 /// QueryAnnualProvisionsRequest is the request type for the
 /// Query/AnnualProvisions RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct QueryAnnualProvisionsRequest {}
+impl ::prost::Name for QueryAnnualProvisionsRequest {
+    const NAME: &'static str = "QueryAnnualProvisionsRequest";
+    const PACKAGE: &'static str = "cosmos.mint.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.mint.v1beta1.QueryAnnualProvisionsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.mint.v1beta1.QueryAnnualProvisionsRequest".into()
+    }
+}
 /// QueryAnnualProvisionsResponse is the response type for the
 /// Query/AnnualProvisions RPC method.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -82,6 +162,16 @@ pub struct QueryAnnualProvisionsResponse {
     /// annual_provisions is the current minting annual provisions value.
     #[prost(bytes = "vec", tag = "1")]
     pub annual_provisions: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for QueryAnnualProvisionsResponse {
+    const NAME: &'static str = "QueryAnnualProvisionsResponse";
+    const PACKAGE: &'static str = "cosmos.mint.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.mint.v1beta1.QueryAnnualProvisionsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.mint.v1beta1.QueryAnnualProvisionsResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod query_client {
@@ -266,6 +356,16 @@ pub struct MsgUpdateParams {
     #[prost(message, optional, tag = "2")]
     pub params: ::core::option::Option<Params>,
 }
+impl ::prost::Name for MsgUpdateParams {
+    const NAME: &'static str = "MsgUpdateParams";
+    const PACKAGE: &'static str = "cosmos.mint.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.mint.v1beta1.MsgUpdateParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.mint.v1beta1.MsgUpdateParams".into()
+    }
+}
 /// MsgUpdateParamsResponse defines the response structure for executing a
 /// MsgUpdateParams message.
 ///
@@ -273,6 +373,16 @@ pub struct MsgUpdateParams {
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgUpdateParamsResponse {}
+impl ::prost::Name for MsgUpdateParamsResponse {
+    const NAME: &'static str = "MsgUpdateParamsResponse";
+    const PACKAGE: &'static str = "cosmos.mint.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.mint.v1beta1.MsgUpdateParamsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.mint.v1beta1.MsgUpdateParamsResponse".into()
+    }
+}
 /// Generated client implementations.
 pub mod msg_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]

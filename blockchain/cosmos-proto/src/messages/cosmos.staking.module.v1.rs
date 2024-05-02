@@ -18,3 +18,13 @@ pub struct Module {
     #[prost(string, tag = "4")]
     pub bech32_prefix_consensus: ::prost::alloc::string::String,
 }
+impl ::prost::Name for Module {
+    const NAME: &'static str = "Module";
+    const PACKAGE: &'static str = "cosmos.staking.module.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.staking.module.v1.Module".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.staking.module.v1.Module".into()
+    }
+}

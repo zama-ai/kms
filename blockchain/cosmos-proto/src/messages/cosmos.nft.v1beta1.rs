@@ -16,6 +16,16 @@ pub struct EventSend {
     #[prost(string, tag = "4")]
     pub receiver: ::prost::alloc::string::String,
 }
+impl ::prost::Name for EventSend {
+    const NAME: &'static str = "EventSend";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.EventSend".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.EventSend".into()
+    }
+}
 /// EventMint is emitted on Mint
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -30,6 +40,16 @@ pub struct EventMint {
     #[prost(string, tag = "3")]
     pub owner: ::prost::alloc::string::String,
 }
+impl ::prost::Name for EventMint {
+    const NAME: &'static str = "EventMint";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.EventMint".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.EventMint".into()
+    }
+}
 /// EventBurn is emitted on Burn
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -43,6 +63,16 @@ pub struct EventBurn {
     /// owner is the owner address of the nft
     #[prost(string, tag = "3")]
     pub owner: ::prost::alloc::string::String,
+}
+impl ::prost::Name for EventBurn {
+    const NAME: &'static str = "EventBurn";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.EventBurn".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.EventBurn".into()
+    }
 }
 /// Class defines the class of the nft type.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -70,6 +100,16 @@ pub struct Class {
     #[prost(message, optional, tag = "7")]
     pub data: ::core::option::Option<::prost_types::Any>,
 }
+impl ::prost::Name for Class {
+    const NAME: &'static str = "Class";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.Class".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.Class".into()
+    }
+}
 /// NFT defines the NFT.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -90,6 +130,16 @@ pub struct Nft {
     #[prost(message, optional, tag = "10")]
     pub data: ::core::option::Option<::prost_types::Any>,
 }
+impl ::prost::Name for Nft {
+    const NAME: &'static str = "NFT";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.NFT".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.NFT".into()
+    }
+}
 /// GenesisState defines the nft module's genesis state.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -100,6 +150,16 @@ pub struct GenesisState {
     /// entry defines all nft owned by a person.
     #[prost(message, repeated, tag = "2")]
     pub entries: ::prost::alloc::vec::Vec<Entry>,
+}
+impl ::prost::Name for GenesisState {
+    const NAME: &'static str = "GenesisState";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.GenesisState".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.GenesisState".into()
+    }
 }
 /// Entry Defines all nft owned by a person
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -112,6 +172,16 @@ pub struct Entry {
     #[prost(message, repeated, tag = "2")]
     pub nfts: ::prost::alloc::vec::Vec<Nft>,
 }
+impl ::prost::Name for Entry {
+    const NAME: &'static str = "Entry";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.Entry".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.Entry".into()
+    }
+}
 /// QueryBalanceRequest is the request type for the Query/Balance RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -123,6 +193,16 @@ pub struct QueryBalanceRequest {
     #[prost(string, tag = "2")]
     pub owner: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QueryBalanceRequest {
+    const NAME: &'static str = "QueryBalanceRequest";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QueryBalanceRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QueryBalanceRequest".into()
+    }
+}
 /// QueryBalanceResponse is the response type for the Query/Balance RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -130,6 +210,16 @@ pub struct QueryBalanceResponse {
     /// amount is the number of all NFTs of a given class owned by the owner
     #[prost(uint64, tag = "1")]
     pub amount: u64,
+}
+impl ::prost::Name for QueryBalanceResponse {
+    const NAME: &'static str = "QueryBalanceResponse";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QueryBalanceResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QueryBalanceResponse".into()
+    }
 }
 /// QueryOwnerRequest is the request type for the Query/Owner RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -142,6 +232,16 @@ pub struct QueryOwnerRequest {
     #[prost(string, tag = "2")]
     pub id: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QueryOwnerRequest {
+    const NAME: &'static str = "QueryOwnerRequest";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QueryOwnerRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QueryOwnerRequest".into()
+    }
+}
 /// QueryOwnerResponse is the response type for the Query/Owner RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -149,6 +249,16 @@ pub struct QueryOwnerResponse {
     /// owner is the owner address of the nft
     #[prost(string, tag = "1")]
     pub owner: ::prost::alloc::string::String,
+}
+impl ::prost::Name for QueryOwnerResponse {
+    const NAME: &'static str = "QueryOwnerResponse";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QueryOwnerResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QueryOwnerResponse".into()
+    }
 }
 /// QuerySupplyRequest is the request type for the Query/Supply RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -158,6 +268,16 @@ pub struct QuerySupplyRequest {
     #[prost(string, tag = "1")]
     pub class_id: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QuerySupplyRequest {
+    const NAME: &'static str = "QuerySupplyRequest";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QuerySupplyRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QuerySupplyRequest".into()
+    }
+}
 /// QuerySupplyResponse is the response type for the Query/Supply RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -165,6 +285,16 @@ pub struct QuerySupplyResponse {
     /// amount is the number of all NFTs from the given class
     #[prost(uint64, tag = "1")]
     pub amount: u64,
+}
+impl ::prost::Name for QuerySupplyResponse {
+    const NAME: &'static str = "QuerySupplyResponse";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QuerySupplyResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QuerySupplyResponse".into()
+    }
 }
 /// QueryNFTstRequest is the request type for the Query/NFTs RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -182,6 +312,16 @@ pub struct QueryNfTsRequest {
         super::super::base::query::v1beta1::PageRequest,
     >,
 }
+impl ::prost::Name for QueryNfTsRequest {
+    const NAME: &'static str = "QueryNFTsRequest";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QueryNFTsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QueryNFTsRequest".into()
+    }
+}
 /// QueryNFTsResponse is the response type for the Query/NFTs RPC methods
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -195,6 +335,16 @@ pub struct QueryNfTsResponse {
         super::super::base::query::v1beta1::PageResponse,
     >,
 }
+impl ::prost::Name for QueryNfTsResponse {
+    const NAME: &'static str = "QueryNFTsResponse";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QueryNFTsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QueryNFTsResponse".into()
+    }
+}
 /// QueryNFTRequest is the request type for the Query/NFT RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -206,6 +356,16 @@ pub struct QueryNftRequest {
     #[prost(string, tag = "2")]
     pub id: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QueryNftRequest {
+    const NAME: &'static str = "QueryNFTRequest";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QueryNFTRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QueryNFTRequest".into()
+    }
+}
 /// QueryNFTResponse is the response type for the Query/NFT RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -213,6 +373,16 @@ pub struct QueryNftResponse {
     /// owner is the owner address of the nft
     #[prost(message, optional, tag = "1")]
     pub nft: ::core::option::Option<Nft>,
+}
+impl ::prost::Name for QueryNftResponse {
+    const NAME: &'static str = "QueryNFTResponse";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QueryNFTResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QueryNFTResponse".into()
+    }
 }
 /// QueryClassRequest is the request type for the Query/Class RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -222,6 +392,16 @@ pub struct QueryClassRequest {
     #[prost(string, tag = "1")]
     pub class_id: ::prost::alloc::string::String,
 }
+impl ::prost::Name for QueryClassRequest {
+    const NAME: &'static str = "QueryClassRequest";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QueryClassRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QueryClassRequest".into()
+    }
+}
 /// QueryClassResponse is the response type for the Query/Class RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -229,6 +409,16 @@ pub struct QueryClassResponse {
     /// class defines the class of the nft type.
     #[prost(message, optional, tag = "1")]
     pub class: ::core::option::Option<Class>,
+}
+impl ::prost::Name for QueryClassResponse {
+    const NAME: &'static str = "QueryClassResponse";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QueryClassResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QueryClassResponse".into()
+    }
 }
 /// QueryClassesRequest is the request type for the Query/Classes RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -239,6 +429,16 @@ pub struct QueryClassesRequest {
     pub pagination: ::core::option::Option<
         super::super::base::query::v1beta1::PageRequest,
     >,
+}
+impl ::prost::Name for QueryClassesRequest {
+    const NAME: &'static str = "QueryClassesRequest";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QueryClassesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QueryClassesRequest".into()
+    }
 }
 /// QueryClassesResponse is the response type for the Query/Classes RPC method
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -252,6 +452,16 @@ pub struct QueryClassesResponse {
     pub pagination: ::core::option::Option<
         super::super::base::query::v1beta1::PageResponse,
     >,
+}
+impl ::prost::Name for QueryClassesResponse {
+    const NAME: &'static str = "QueryClassesResponse";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.QueryClassesResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.QueryClassesResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod query_client {
@@ -541,10 +751,30 @@ pub struct MsgSend {
     #[prost(string, tag = "4")]
     pub receiver: ::prost::alloc::string::String,
 }
+impl ::prost::Name for MsgSend {
+    const NAME: &'static str = "MsgSend";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.MsgSend".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.MsgSend".into()
+    }
+}
 /// MsgSendResponse defines the Msg/Send response type.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct MsgSendResponse {}
+impl ::prost::Name for MsgSendResponse {
+    const NAME: &'static str = "MsgSendResponse";
+    const PACKAGE: &'static str = "cosmos.nft.v1beta1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.nft.v1beta1.MsgSendResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.nft.v1beta1.MsgSendResponse".into()
+    }
+}
 /// Generated client implementations.
 pub mod msg_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]

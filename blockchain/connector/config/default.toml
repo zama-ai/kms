@@ -1,7 +1,12 @@
 grpc_addresses = ["htpp://localhost:9090"]
-contract_addresses = "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
+contract_address = "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
+connector_address = "cosmos1dcg6pmr647hljt3c89d3w0lxlqvtee0te0ka5d"
 tick_interval_secs = 3
 storage_path = "./temp/events.toml"
+
+[contract_fee]
+coin_denom = "ucosm"
+amount = 100000
 
 [tracing]
 service_name = "kms-asc-connector"

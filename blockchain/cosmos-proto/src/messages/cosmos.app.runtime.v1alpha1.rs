@@ -46,6 +46,16 @@ pub struct Module {
     #[prost(string, repeated, tag = "9")]
     pub prepare_check_staters: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for Module {
+    const NAME: &'static str = "Module";
+    const PACKAGE: &'static str = "cosmos.app.runtime.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.app.runtime.v1alpha1.Module".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.app.runtime.v1alpha1.Module".into()
+    }
+}
 /// StoreKeyConfig may be supplied to override the default module store key, which
 /// is the module name.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -57,4 +67,14 @@ pub struct StoreKeyConfig {
     /// the kv store key to use instead of the module name.
     #[prost(string, tag = "2")]
     pub kv_store_key: ::prost::alloc::string::String,
+}
+impl ::prost::Name for StoreKeyConfig {
+    const NAME: &'static str = "StoreKeyConfig";
+    const PACKAGE: &'static str = "cosmos.app.runtime.v1alpha1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.app.runtime.v1alpha1.StoreKeyConfig".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.app.runtime.v1alpha1.StoreKeyConfig".into()
+    }
 }

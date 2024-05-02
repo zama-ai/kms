@@ -15,6 +15,16 @@ pub struct ConsensusParams {
     #[prost(message, optional, tag = "5")]
     pub abci: ::core::option::Option<AbciParams>,
 }
+impl ::prost::Name for ConsensusParams {
+    const NAME: &'static str = "ConsensusParams";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.ConsensusParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.ConsensusParams".into()
+    }
+}
 /// BlockParams contains limits on the block size.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -27,6 +37,16 @@ pub struct BlockParams {
     /// Note: must be greater or equal to -1
     #[prost(int64, tag = "2")]
     pub max_gas: i64,
+}
+impl ::prost::Name for BlockParams {
+    const NAME: &'static str = "BlockParams";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.BlockParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.BlockParams".into()
+    }
 }
 /// EvidenceParams determine how we handle evidence of malfeasance.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -51,6 +71,16 @@ pub struct EvidenceParams {
     #[prost(int64, tag = "3")]
     pub max_bytes: i64,
 }
+impl ::prost::Name for EvidenceParams {
+    const NAME: &'static str = "EvidenceParams";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.EvidenceParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.EvidenceParams".into()
+    }
+}
 /// ValidatorParams restrict the public key types validators can use.
 /// NOTE: uses ABCI pubkey naming, not Amino names.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -59,12 +89,32 @@ pub struct ValidatorParams {
     #[prost(string, repeated, tag = "1")]
     pub pub_key_types: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for ValidatorParams {
+    const NAME: &'static str = "ValidatorParams";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.ValidatorParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.ValidatorParams".into()
+    }
+}
 /// VersionParams contains the ABCI application version.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct VersionParams {
     #[prost(uint64, tag = "1")]
     pub app: u64,
+}
+impl ::prost::Name for VersionParams {
+    const NAME: &'static str = "VersionParams";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.VersionParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.VersionParams".into()
+    }
 }
 /// HashedParams is a subset of ConsensusParams.
 ///
@@ -76,6 +126,16 @@ pub struct HashedParams {
     pub block_max_bytes: i64,
     #[prost(int64, tag = "2")]
     pub block_max_gas: i64,
+}
+impl ::prost::Name for HashedParams {
+    const NAME: &'static str = "HashedParams";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.HashedParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.HashedParams".into()
+    }
 }
 /// ABCIParams configure functionality specific to the Application Blockchain Interface.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -93,6 +153,16 @@ pub struct AbciParams {
     #[prost(int64, tag = "1")]
     pub vote_extensions_enable_height: i64,
 }
+impl ::prost::Name for AbciParams {
+    const NAME: &'static str = "ABCIParams";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.ABCIParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.ABCIParams".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ValidatorSet {
@@ -102,6 +172,16 @@ pub struct ValidatorSet {
     pub proposer: ::core::option::Option<Validator>,
     #[prost(int64, tag = "3")]
     pub total_voting_power: i64,
+}
+impl ::prost::Name for ValidatorSet {
+    const NAME: &'static str = "ValidatorSet";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.ValidatorSet".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.ValidatorSet".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -115,6 +195,16 @@ pub struct Validator {
     #[prost(int64, tag = "4")]
     pub proposer_priority: i64,
 }
+impl ::prost::Name for Validator {
+    const NAME: &'static str = "Validator";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.Validator".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.Validator".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SimpleValidator {
@@ -122,6 +212,16 @@ pub struct SimpleValidator {
     pub pub_key: ::core::option::Option<super::crypto::PublicKey>,
     #[prost(int64, tag = "2")]
     pub voting_power: i64,
+}
+impl ::prost::Name for SimpleValidator {
+    const NAME: &'static str = "SimpleValidator";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.SimpleValidator".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.SimpleValidator".into()
+    }
 }
 /// BlockIdFlag indicates which BlockID the signature is for
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -169,6 +269,16 @@ pub struct PartSetHeader {
     #[prost(bytes = "vec", tag = "2")]
     pub hash: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for PartSetHeader {
+    const NAME: &'static str = "PartSetHeader";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.PartSetHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.PartSetHeader".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Part {
@@ -179,6 +289,16 @@ pub struct Part {
     #[prost(message, optional, tag = "3")]
     pub proof: ::core::option::Option<super::crypto::Proof>,
 }
+impl ::prost::Name for Part {
+    const NAME: &'static str = "Part";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.Part".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.Part".into()
+    }
+}
 /// BlockID
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -187,6 +307,16 @@ pub struct BlockId {
     pub hash: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, optional, tag = "2")]
     pub part_set_header: ::core::option::Option<PartSetHeader>,
+}
+impl ::prost::Name for BlockId {
+    const NAME: &'static str = "BlockID";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.BlockID".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.BlockID".into()
+    }
 }
 /// Header defines the structure of a block header.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -238,6 +368,16 @@ pub struct Header {
     #[prost(bytes = "vec", tag = "14")]
     pub proposer_address: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for Header {
+    const NAME: &'static str = "Header";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.Header".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.Header".into()
+    }
+}
 /// Data contains the set of transactions included in the block
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -247,6 +387,16 @@ pub struct Data {
     /// This means that block.AppHash does not include these txs.
     #[prost(bytes = "vec", repeated, tag = "1")]
     pub txs: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+impl ::prost::Name for Data {
+    const NAME: &'static str = "Data";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.Data".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.Data".into()
+    }
 }
 /// Vote represents a prevote or precommit vote from validators for
 /// consensus.
@@ -282,6 +432,16 @@ pub struct Vote {
     #[prost(bytes = "vec", tag = "10")]
     pub extension_signature: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for Vote {
+    const NAME: &'static str = "Vote";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.Vote".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.Vote".into()
+    }
+}
 /// Commit contains the evidence that a block was committed by a set of validators.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -294,6 +454,16 @@ pub struct Commit {
     pub block_id: ::core::option::Option<BlockId>,
     #[prost(message, repeated, tag = "4")]
     pub signatures: ::prost::alloc::vec::Vec<CommitSig>,
+}
+impl ::prost::Name for Commit {
+    const NAME: &'static str = "Commit";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.Commit".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.Commit".into()
+    }
 }
 /// CommitSig is a part of the Vote included in a Commit.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -308,6 +478,16 @@ pub struct CommitSig {
     #[prost(bytes = "vec", tag = "4")]
     pub signature: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for CommitSig {
+    const NAME: &'static str = "CommitSig";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.CommitSig".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.CommitSig".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExtendedCommit {
@@ -319,6 +499,16 @@ pub struct ExtendedCommit {
     pub block_id: ::core::option::Option<BlockId>,
     #[prost(message, repeated, tag = "4")]
     pub extended_signatures: ::prost::alloc::vec::Vec<ExtendedCommitSig>,
+}
+impl ::prost::Name for ExtendedCommit {
+    const NAME: &'static str = "ExtendedCommit";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.ExtendedCommit".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.ExtendedCommit".into()
+    }
 }
 /// ExtendedCommitSig retains all the same fields as CommitSig but adds vote
 /// extension-related fields. We use two signatures to ensure backwards compatibility.
@@ -341,6 +531,16 @@ pub struct ExtendedCommitSig {
     #[prost(bytes = "vec", tag = "6")]
     pub extension_signature: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for ExtendedCommitSig {
+    const NAME: &'static str = "ExtendedCommitSig";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.ExtendedCommitSig".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.ExtendedCommitSig".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Proposal {
@@ -359,6 +559,16 @@ pub struct Proposal {
     #[prost(bytes = "vec", tag = "7")]
     pub signature: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for Proposal {
+    const NAME: &'static str = "Proposal";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.Proposal".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.Proposal".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SignedHeader {
@@ -367,6 +577,16 @@ pub struct SignedHeader {
     #[prost(message, optional, tag = "2")]
     pub commit: ::core::option::Option<Commit>,
 }
+impl ::prost::Name for SignedHeader {
+    const NAME: &'static str = "SignedHeader";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.SignedHeader".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.SignedHeader".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct LightBlock {
@@ -374,6 +594,16 @@ pub struct LightBlock {
     pub signed_header: ::core::option::Option<SignedHeader>,
     #[prost(message, optional, tag = "2")]
     pub validator_set: ::core::option::Option<ValidatorSet>,
+}
+impl ::prost::Name for LightBlock {
+    const NAME: &'static str = "LightBlock";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.LightBlock".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.LightBlock".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -387,6 +617,16 @@ pub struct BlockMeta {
     #[prost(int64, tag = "4")]
     pub num_txs: i64,
 }
+impl ::prost::Name for BlockMeta {
+    const NAME: &'static str = "BlockMeta";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.BlockMeta".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.BlockMeta".into()
+    }
+}
 /// TxProof represents a Merkle proof of the presence of a transaction in the Merkle tree.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -397,6 +637,16 @@ pub struct TxProof {
     pub data: ::prost::alloc::vec::Vec<u8>,
     #[prost(message, optional, tag = "3")]
     pub proof: ::core::option::Option<super::crypto::Proof>,
+}
+impl ::prost::Name for TxProof {
+    const NAME: &'static str = "TxProof";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.TxProof".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.TxProof".into()
+    }
 }
 /// SignedMsgType is a type of signed message in the consensus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -450,6 +700,16 @@ pub mod evidence {
         LightClientAttackEvidence(super::LightClientAttackEvidence),
     }
 }
+impl ::prost::Name for Evidence {
+    const NAME: &'static str = "Evidence";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.Evidence".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.Evidence".into()
+    }
+}
 /// DuplicateVoteEvidence contains evidence of a validator signed two conflicting votes.
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -464,6 +724,16 @@ pub struct DuplicateVoteEvidence {
     pub validator_power: i64,
     #[prost(message, optional, tag = "5")]
     pub timestamp: ::core::option::Option<::prost_types::Timestamp>,
+}
+impl ::prost::Name for DuplicateVoteEvidence {
+    const NAME: &'static str = "DuplicateVoteEvidence";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.DuplicateVoteEvidence".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.DuplicateVoteEvidence".into()
+    }
 }
 /// LightClientAttackEvidence contains evidence of a set of validators attempting to mislead a light client.
 #[allow(clippy::derive_partial_eq_without_eq)]
@@ -480,11 +750,31 @@ pub struct LightClientAttackEvidence {
     #[prost(message, optional, tag = "5")]
     pub timestamp: ::core::option::Option<::prost_types::Timestamp>,
 }
+impl ::prost::Name for LightClientAttackEvidence {
+    const NAME: &'static str = "LightClientAttackEvidence";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.LightClientAttackEvidence".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.LightClientAttackEvidence".into()
+    }
+}
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct EvidenceList {
     #[prost(message, repeated, tag = "1")]
     pub evidence: ::prost::alloc::vec::Vec<Evidence>,
+}
+impl ::prost::Name for EvidenceList {
+    const NAME: &'static str = "EvidenceList";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.EvidenceList".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.EvidenceList".into()
+    }
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -497,4 +787,14 @@ pub struct Block {
     pub evidence: ::core::option::Option<EvidenceList>,
     #[prost(message, optional, tag = "4")]
     pub last_commit: ::core::option::Option<Commit>,
+}
+impl ::prost::Name for Block {
+    const NAME: &'static str = "Block";
+    const PACKAGE: &'static str = "tendermint.types";
+    fn full_name() -> ::prost::alloc::string::String {
+        "tendermint.types.Block".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/tendermint.types.Block".into()
+    }
 }

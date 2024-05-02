@@ -20,3 +20,13 @@ pub struct Bip44Params {
     #[prost(uint32, tag = "5")]
     pub address_index: u32,
 }
+impl ::prost::Name for Bip44Params {
+    const NAME: &'static str = "BIP44Params";
+    const PACKAGE: &'static str = "cosmos.crypto.hd.v1";
+    fn full_name() -> ::prost::alloc::string::String {
+        "cosmos.crypto.hd.v1.BIP44Params".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "/cosmos.crypto.hd.v1.BIP44Params".into()
+    }
+}

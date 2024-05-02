@@ -3,22 +3,31 @@
 //! This module provides a comprehensive set of tools and structures for interacting with blockchain-based
 //! contracts, specifically targeting the CosmWasm smart contracts within the Cosmos SDK. It includes functionality
 //! for cryptographic operations, RPC communications, and transaction handling.
-
-use crate::bip::derive_key;
+use crate::cosmos::account::AccountId;
+use crate::crypto::signing_key::SigningKey;
 use crate::errors::Error;
-use cosmrs::cosmwasm::MsgExecuteContract;
-use cosmrs::tendermint::chain;
-use cosmrs::AccountId;
-use cosmrs::{
-    crypto::secp256k1,
-    rpc,
-    tx::{self, AccountNumber, Fee, Msg, SignDoc, SignerInfo},
-    Coin,
+use crate::prost::ext::MessageExt as _;
+use base64::{engine::general_purpose, Engine as _};
+use cosmos_proto::messages::cosmos::auth::v1beta1::query_client::QueryClient;
+use cosmos_proto::messages::cosmos::auth::v1beta1::{
+    BaseAccount, QueryAccountRequest, QueryAccountResponse,
 };
-use rpc::endpoint::broadcast::tx_commit::Response;
-use serde_json::json;
+use cosmos_proto::messages::cosmos::base::v1beta1::Coin;
+use cosmos_proto::messages::cosmos::tx::v1beta1::mode_info::{Single, Sum};
+use cosmos_proto::messages::cosmos::tx::v1beta1::service_client::ServiceClient;
+use cosmos_proto::messages::cosmos::tx::v1beta1::{
+    AuthInfo, BroadcastTxRequest, BroadcastTxResponse, Fee, ModeInfo, SignDoc, SignerInfo, TxBody,
+    TxRaw,
+};
+use cosmos_proto::messages::cosmwasm::wasm::v1::MsgExecuteContract;
+use prost_types::Any;
 use std::str;
 use std::str::FromStr;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
+use std::time::Duration;
+use tonic::transport::{Channel, Endpoint};
+use typed_builder::TypedBuilder;
 
 /// Default chain ID used for initializing the blockchain client in a test environment.
 const DEFAULT_CHAIN_ID: &str = "testing";
@@ -29,120 +38,135 @@ const ACCOUNT_PREFIX: &str = "wasm";
 /// Denomination for transaction fees and balances.
 const DENOM: &str = "ucosm";
 
-/// BIP-0044 path for deriving the cryptographic keys from a mnemonic.
-const COSMOS_KEY_PATH: &str = "m/44'/118'/0'/0/0";
+#[derive(TypedBuilder)]
+pub struct ClientBuilder<'a> {
+    grpc_addresses: Vec<&'a str>,
+    contract_address: &'a str,
+    mnemonic_wallet: &'a str,
+    #[builder(default = None, setter(strip_option))]
+    chain_id: Option<&'a str>,
+    #[builder(default = None, setter(strip_option))]
+    coin_denom: Option<&'a str>,
+}
 
-/// Struct holding metadata required for transaction execution.
-pub struct Metadata {
-    /// Sequence number of the transaction within the current account.
-    pub sequence_number: u64,
-    /// Gas limit set for the execution of the transaction.
-    pub gas_limit: u64,
+impl TryFrom<ClientBuilder<'_>> for Client {
+    type Error = Error;
+    fn try_from(value: ClientBuilder) -> Result<Self, Self::Error> {
+        let sender_key = SigningKey::key_from_mnemonic(value.mnemonic_wallet)?;
+        let endpoints = value
+            .grpc_addresses
+            .iter()
+            .map(|endpoint| Endpoint::new(endpoint.to_string()))
+            .collect::<Result<Vec<Endpoint>, _>>()
+            .map_err(|e| {
+                Error::GrpcClientCreateError(format!("Error connecting to blockchain {:?}", e))
+            })?;
+        let endpoints = endpoints
+            .into_iter()
+            .map(|e| e.timeout(Duration::from_secs(60)).clone());
+        let client = Channel::balance_list(endpoints);
+
+        let chain_id = value.chain_id.unwrap_or(DEFAULT_CHAIN_ID).to_string();
+
+        let coin_denom = value.coin_denom.unwrap_or(DENOM).to_string();
+
+        let contract_address = AccountId::from_str(value.contract_address)?;
+
+        Ok(Client {
+            client,
+            sender_key,
+            chain_id,
+            coin_denom,
+            contract_address,
+            client_state: None,
+        })
+    }
+}
+
+pub struct ClientState {
+    account_number: u64,
+    sequence_number: Arc<AtomicU64>,
 }
 
 /// A client for interacting with CosmWasm smart contracts via Cosmos SDK's Tendermint protocol.
 pub struct Client {
-    rpc_client: rpc::HttpClient,
-    sender_key: secp256k1::SigningKey,
+    client: Channel,
+    sender_key: SigningKey,
     contract_address: AccountId,
-    chain_id: chain::Id,
-    account_number: AccountNumber,
+    client_state: Option<ClientState>,
+    coin_denom: String,
+    chain_id: String,
 }
 
 impl Client {
-    /// Constructs a new `Client`.
-    ///
-    /// # Arguments
-    /// * `rpc_address` - Endpoint for the RPC client.
-    /// * `contract_address` - Bech32 encoded address of the contract.
-    /// * `sender_key` - Signing key of the sender.
-    /// * `chain_id` - Chain ID for the blockchain network.
-    /// * `account_number` - Account number for the sender's account.
-    ///
-    /// # Returns
-    /// An instance of `Client`.
-    pub fn new(
-        rpc_address: &str,
-        contract_address: &str,
-        sender_key: secp256k1::SigningKey,
-        chain_id: Option<String>,
-        account_number: AccountNumber,
-    ) -> Self {
-        let rpc_client = rpc::HttpClient::new(rpc_address).unwrap();
-        let contract_address = AccountId::from_str(contract_address).unwrap();
-        let chain_id = chain_id
-            .unwrap_or_else(|| DEFAULT_CHAIN_ID.to_string())
-            .parse()
-            .unwrap();
-        Client {
-            rpc_client,
-            sender_key,
-            contract_address,
-            chain_id,
-            account_number,
+    pub fn builder<'a>() -> ClientBuilderBuilder<'a> {
+        ClientBuilder::builder()
+    }
+
+    /// Queries the blockchain for the account details of the sender.
+    async fn query_account(&self) -> Result<BaseAccount, Error> {
+        let mut query = QueryClient::new(self.client.clone());
+        let query_req = QueryAccountRequest {
+            address: self
+                .sender_key
+                .public_key()
+                .account_id(ACCOUNT_PREFIX)?
+                .to_string(),
+        };
+        let resp: QueryAccountResponse = query.account(query_req).await?.into_inner();
+        let resp_acc: BaseAccount = resp
+            .account
+            .ok_or_else(|| Error::InvalidAccount("Account not found in chain".to_string()))?
+            .to_msg()?;
+        Ok(resp_acc)
+    }
+
+    /// Initializes the client state by querying the account details from the blockchain.
+    #[tracing::instrument(skip(self))]
+    async fn init_lazy_query_account(&mut self) -> Result<(), Error> {
+        match self.client_state {
+            Some(ref mut state) => {
+                state
+                    .sequence_number
+                    .fetch_add(1, std::sync::atomic::Ordering::Release);
+                Ok(())
+            }
+            None => {
+                let account = self.query_account().await?;
+                let account_number = account.account_number;
+                let sequence_number = account.sequence;
+                self.client_state = Some(ClientState {
+                    account_number,
+                    sequence_number: Arc::new(AtomicU64::new(sequence_number)),
+                });
+                Ok(())
+            }
         }
     }
 
-    /// Derives a signing key from a mnemonic using a specified key derivation path.
-    ///
-    /// # Arguments
-    /// * `mnemonic` - The mnemonic seed phrase.
-    ///
-    /// # Returns
-    /// A `secp256k1::SigningKey` derived from the mnemonic.
-    pub fn key_from_mnemonic(mnemonic: &str) -> secp256k1::SigningKey {
-        let pk = derive_key(COSMOS_KEY_PATH, mnemonic, "").unwrap();
-        secp256k1::SigningKey::from_slice(&pk).unwrap()
+    fn get_sequence_number(&self) -> Result<u64, Error> {
+        Ok(self
+            .client_state
+            .as_ref()
+            .ok_or_else(|| {
+                Error::InvalidAccount(
+                    "Account not initialized. Cannot get sequence_number".to_string(),
+                )
+            })?
+            .sequence_number
+            .load(std::sync::atomic::Ordering::Acquire))
     }
 
-    /// Sends a decryption request to the smart contract and awaits its response.
-    ///
-    /// # Arguments
-    /// * `ciphertext` - The encrypted data.
-    /// * `fhe_type` - The type of fully homomorphic encryption used.
-    /// * `metadata` - Transaction metadata including gas and sequence number.
-    ///
-    /// # Returns
-    /// A `Result` containing either the contract's response or an error.
-    pub async fn decrypt_request(
-        &self,
-        ciphertext: Vec<u8>,
-        fhe_type: &str,
-        metadata: &Metadata,
-    ) -> Result<Response, Error> {
-        let msg_payload = json!({
-          "decrypt": {
-            "ciphertext": ciphertext,
-            "fhe_type": fhe_type.to_string()
-          }
-        })
-        .to_string();
-        self.execute(msg_payload.as_bytes(), metadata).await
-    }
-
-    /// Sends a response to a decryption request back to the smart contract.
-    ///
-    /// # Arguments
-    /// * `txn_id` - Transaction ID of the decryption request.
-    /// * `plaintext` - The decrypted data.
-    /// * `metadata` - Transaction metadata including gas and sequence number.
-    ///
-    /// # Returns
-    /// A `Result` containing either the contract's response or an error.
-    pub async fn decrypt_response(
-        &self,
-        txn_id: Vec<u8>,
-        plaintext: Vec<u8>,
-        metadata: &Metadata,
-    ) -> Result<Response, Error> {
-        let msg_payload = json!({
-          "decrypt_response": {
-            "txn_id": txn_id,
-            "plaintext": plaintext,
-          }
-        })
-        .to_string();
-        self.execute(msg_payload.as_bytes(), metadata).await
+    fn get_account_number(&self) -> Result<u64, Error> {
+        Ok(self
+            .client_state
+            .as_ref()
+            .ok_or_else(|| {
+                Error::InvalidAccount(
+                    "Account not initialized. Cannot get account_number".to_string(),
+                )
+            })?
+            .account_number)
     }
 
     /// Executes a transaction on the blockchain by broadcasting a signed transaction message.
@@ -153,66 +177,106 @@ impl Client {
     ///
     /// # Returns
     /// A `Result` containing either the transaction response from the blockchain or an error.
-    pub async fn execute(
-        &self,
+    #[tracing::instrument(skip(self, msg_payload))]
+    pub async fn execute_contract(
+        &mut self,
         msg_payload: &[u8],
-        metadata: &Metadata,
-    ) -> Result<Response, Error> {
-        let sender_public_key = self.sender_key.public_key();
-        let sender_account_id = sender_public_key
-            .account_id(ACCOUNT_PREFIX)
-            .map_err(|e| Error::AccountIdParseError(e.to_string()))?;
+        gas_limit: u64,
+    ) -> Result<BroadcastTxResponse, Error> {
+        self.init_lazy_query_account().await?;
 
-        let execute = MsgExecuteContract {
-            sender: sender_account_id.clone(),
-            contract: self.contract_address.clone(),
+        let tx_bytes = self.prepare_msg(msg_payload, gas_limit).await?;
+
+        let broadcast = BroadcastTxRequest { tx_bytes, mode: 2 };
+
+        let mut tx_client = ServiceClient::new(self.client.clone());
+
+        tracing::info!("Broadcasting transaction to blockchain for excuting contract",);
+
+        let result = tx_client
+            .broadcast_tx(broadcast)
+            .await
+            .map(|response| response.into_inner())?;
+
+        tracing::info!("Transaction broadcasted successfully");
+
+        Ok(result)
+    }
+
+    /// Prepares a transaction message for execution on the blockchain.
+    async fn prepare_msg(&self, msg_payload: &[u8], gas_limit: u64) -> Result<Vec<u8>, Error> {
+        let sender_public_key = self.sender_key.public_key();
+        let sender_account_id = sender_public_key.account_id(ACCOUNT_PREFIX)?;
+
+        let msg = MsgExecuteContract {
+            sender: sender_account_id.to_string(),
+            contract: self.contract_address.to_string(),
             msg: msg_payload.to_vec(),
             funds: vec![],
-        }
-        .to_any()
-        .map_err(|e| Error::MsgExecuteError(e.to_string()))?;
+        };
 
-        let tx_body = tx::BodyBuilder::new().msg(execute).finish();
+        let message = Any::from_msg(&msg)?;
 
-        let denom = DENOM
-            .parse()
-            .map_err(|_| Error::Unknown("Error parsing DENOM".to_string()))?;
-        let fee = Fee::from_amount_and_gas(
-            Coin {
-                amount: metadata.gas_limit.into(),
-                denom,
-            },
-            metadata.gas_limit,
+        let tx_body = TxBody {
+            messages: vec![message],
+            memo: "".to_string(),
+            timeout_height: 0,
+            extension_options: vec![],
+            non_critical_extension_options: vec![],
+        };
+
+        let fee = Fee {
+            amount: vec![Coin {
+                denom: self.coin_denom.clone(),
+                amount: gas_limit.to_string(),
+            }],
+            gas_limit,
+            payer: "".to_string(),
+            granter: "".to_string(),
+        };
+
+        let signer_info = SignerInfo {
+            public_key: Some(sender_public_key.into()),
+            mode_info: Some(ModeInfo {
+                sum: Some(Sum::Single(Single { mode: 1 })),
+            }),
+            sequence: self.get_sequence_number()?,
+        };
+
+        let body_bytes = tx_body.to_bytes()?;
+
+        #[allow(deprecated)]
+        let auth_info = AuthInfo {
+            signer_infos: vec![signer_info],
+            fee: Some(fee),
+            tip: None,
+        };
+
+        let auth_info_bytes = auth_info.to_bytes()?;
+
+        let sign_doc = SignDoc {
+            body_bytes: body_bytes.clone(),
+            auth_info_bytes: auth_info_bytes.clone(),
+            chain_id: self.chain_id.clone(),
+            account_number: self.get_account_number()?,
+        };
+
+        let sign_doc_bytes = sign_doc.to_bytes()?;
+        let signature = self.sender_key.sign(&sign_doc_bytes)?;
+
+        let tx_raw = TxRaw {
+            body_bytes,
+            auth_info_bytes,
+            signatures: vec![signature.to_vec()],
+        };
+
+        let tx_bytes_raw = tx_raw.to_bytes()?;
+
+        tracing::info!(
+            "TxRaw to be broadcasted: {:?}",
+            general_purpose::STANDARD.encode(&tx_bytes_raw)
         );
 
-        let auth_info =
-            SignerInfo::single_direct(Some(sender_public_key), metadata.sequence_number)
-                .auth_info(fee);
-        let sign_doc = SignDoc::new(&tx_body, &auth_info, &self.chain_id, self.account_number)
-            .map_err(|e| Error::SignDocError(e.to_string()))?;
-
-        let tx_raw = sign_doc
-            .sign(&self.sender_key)
-            .map_err(|e| Error::SignDocError(e.to_string()))?;
-
-        let tx_commit_response = tx_raw
-            .broadcast_commit(&self.rpc_client)
-            .await
-            .map_err(|e| Error::BlockchainTransactionError(e.to_string()))?;
-
-        if tx_commit_response.check_tx.code.is_err() {
-            return Err(Error::CheckTxError(format!(
-                "{:?}",
-                tx_commit_response.check_tx.log
-            )));
-        }
-        if tx_commit_response.tx_result.code.is_err() {
-            return Err(Error::TxResultError(format!(
-                "{:?}",
-                tx_commit_response.tx_result.log
-            )));
-        }
-
-        Ok(tx_commit_response)
+        Ok(tx_bytes_raw)
     }
 }
