@@ -209,29 +209,29 @@ impl TryFrom<Vec<Attribute>> for ReencryptResponseValues {
 
 #[cw_serde]
 #[derive(Default, Eq, TypedBuilder)]
-pub struct CsrGenResponseValues {
-    csr: Vec<u8>,
+pub struct CrsGenResponseValues {
+    crs: Vec<u8>,
 }
 
-impl From<CsrGenResponseValues> for Vec<Attribute> {
-    fn from(value: CsrGenResponseValues) -> Self {
-        vec![Attribute::new("csr".to_string(), hex::encode(value.csr))]
+impl From<CrsGenResponseValues> for Vec<Attribute> {
+    fn from(value: CrsGenResponseValues) -> Self {
+        vec![Attribute::new("crs".to_string(), hex::encode(value.crs))]
     }
 }
 
-impl TryFrom<Vec<Attribute>> for CsrGenResponseValues {
+impl TryFrom<Vec<Attribute>> for CrsGenResponseValues {
     type Error = anyhow::Error;
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        let mut csr = None;
+        let mut crs = None;
         for attribute in attributes {
             match attribute.key.as_str() {
-                "csr" => {
-                    csr = Some(hex::decode(attribute.value).unwrap());
+                "crs" => {
+                    crs = Some(hex::decode(attribute.value).unwrap());
                 }
                 _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
             }
         }
-        Ok(CsrGenResponseValues { csr: csr.unwrap() })
+        Ok(CrsGenResponseValues { crs: crs.unwrap() })
     }
 }
 
@@ -254,18 +254,18 @@ impl TryFrom<Vec<Attribute>> for KeyGenValues {
 
 #[cw_serde]
 #[derive(Eq, Default)]
-pub struct CsrGenValues {}
+pub struct CrsGenValues {}
 
-impl From<CsrGenValues> for Vec<Attribute> {
-    fn from(_value: CsrGenValues) -> Self {
+impl From<CrsGenValues> for Vec<Attribute> {
+    fn from(_value: CrsGenValues) -> Self {
         vec![]
     }
 }
 
-impl TryFrom<Vec<Attribute>> for CsrGenValues {
+impl TryFrom<Vec<Attribute>> for CrsGenValues {
     type Error = anyhow::Error;
     fn try_from(_attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        Ok(CsrGenValues {})
+        Ok(CrsGenValues {})
     }
 }
 
@@ -286,11 +286,11 @@ pub enum KmsOperationAttribute {
     #[strum(serialize = "keygen_response", props(response = "true"))]
     #[serde(rename = "keygen_response")]
     KeyGenResponse(KeyGenResponseValues),
-    #[strum(serialize = "csr_gen", props(request = "true"))]
-    #[serde(rename = "csr_gen")]
-    CsrGen(CsrGenValues),
-    #[strum(serialize = "csr_gen_response", props(response = "true"))]
-    CsrGenResponse(CsrGenResponseValues),
+    #[strum(serialize = "crs_gen", props(request = "true"))]
+    #[serde(rename = "crs_gen")]
+    CrsGen(CrsGenValues),
+    #[strum(serialize = "crs_gen_response", props(response = "true"))]
+    CrsGenResponse(CrsGenResponseValues),
 }
 
 impl KmsOperationAttribute {
@@ -324,11 +324,11 @@ impl From<KmsOperationAttribute> for Vec<Attribute> {
             KmsOperationAttribute::KeyGenResponse(values) => {
                 <KeyGenResponseValues as Into<Vec<Attribute>>>::into(values)
             }
-            KmsOperationAttribute::CsrGen(values) => {
-                <CsrGenValues as Into<Vec<Attribute>>>::into(values)
+            KmsOperationAttribute::CrsGen(values) => {
+                <CrsGenValues as Into<Vec<Attribute>>>::into(values)
             }
-            KmsOperationAttribute::CsrGenResponse(values) => {
-                <CsrGenResponseValues as Into<Vec<Attribute>>>::into(values)
+            KmsOperationAttribute::CrsGenResponse(values) => {
+                <CrsGenResponseValues as Into<Vec<Attribute>>>::into(values)
             }
         }
     }
@@ -424,9 +424,9 @@ impl TryFrom<Event> for KmsEvent {
             "wasm-keygen" => KmsOperationAttribute::KeyGen(KeyGenValues::default()),
             "wasm-keygen_response" => KeyGenResponseValues::try_from(attributes.clone())
                 .map(KmsOperationAttribute::KeyGenResponse)?,
-            "wasm-csr_gen" => KmsOperationAttribute::CsrGen(CsrGenValues::default()),
-            "wasm-csr_gen_response" => CsrGenResponseValues::try_from(attributes.clone())
-                .map(KmsOperationAttribute::CsrGenResponse)?,
+            "wasm-crs_gen" => KmsOperationAttribute::CrsGen(CrsGenValues::default()),
+            "wasm-crs_gen_response" => CrsGenResponseValues::try_from(attributes.clone())
+                .map(KmsOperationAttribute::CrsGenResponse)?,
             _ => return Err(anyhow::anyhow!("Invalid event type {:?}", event.ty)),
         };
         Ok(KmsEvent { operation, txn_id })
@@ -505,10 +505,10 @@ mod tests {
         }
     }
 
-    impl Arbitrary for CsrGenResponseValues {
-        fn arbitrary(g: &mut Gen) -> CsrGenResponseValues {
-            CsrGenResponseValues {
-                csr: Vec::<u8>::arbitrary(g),
+    impl Arbitrary for CrsGenResponseValues {
+        fn arbitrary(g: &mut Gen) -> CrsGenResponseValues {
+            CrsGenResponseValues {
+                crs: Vec::<u8>::arbitrary(g),
             }
         }
     }
@@ -524,8 +524,8 @@ mod tests {
                 }
                 4 => KmsOperationAttribute::KeyGen(KeyGenValues::default()),
                 5 => KmsOperationAttribute::KeyGenResponse(KeyGenResponseValues::arbitrary(g)),
-                6 => KmsOperationAttribute::CsrGen(CsrGenValues::default()),
-                _ => KmsOperationAttribute::CsrGenResponse(CsrGenResponseValues::arbitrary(g)),
+                6 => KmsOperationAttribute::CrsGen(CrsGenValues::default()),
+                _ => KmsOperationAttribute::CrsGenResponse(CrsGenResponseValues::arbitrary(g)),
             }
         }
     }
@@ -704,25 +704,25 @@ mod tests {
     }
 
     #[test]
-    fn test_csr_gen_event_to_json() {
+    fn test_crs_gen_event_to_json() {
         let operation = KmsEvent::builder()
-            .operation(KmsOperationAttribute::CsrGen(CsrGenValues::default()))
+            .operation(KmsOperationAttribute::CrsGen(CrsGenValues::default()))
             .txn_id(vec![1])
             .build();
 
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
-            "csr_gen": {}
+            "crs_gen": {}
         });
         assert_eq!(json, json_str);
     }
 
     #[test]
-    fn test_csr_gen_response_event_to_json() {
-        let csr_gen_response_values = CsrGenResponseValues::builder().csr(vec![1, 2, 3]).build();
+    fn test_crs_gen_response_event_to_json() {
+        let crs_gen_response_values = CrsGenResponseValues::builder().crs(vec![1, 2, 3]).build();
         let operation = KmsEvent::builder()
-            .operation(KmsOperationAttribute::CsrGenResponse(
-                csr_gen_response_values.clone(),
+            .operation(KmsOperationAttribute::CrsGenResponse(
+                crs_gen_response_values.clone(),
             ))
             .txn_id(vec![1])
             .build();
@@ -730,8 +730,8 @@ mod tests {
         assert!(operation.operation.is_response());
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
-            "csr_gen_response": {
-                "csr": [1, 2, 3],
+            "crs_gen_response": {
+                "crs": [1, 2, 3],
                 "txn_id": vec![1]
             }
         });

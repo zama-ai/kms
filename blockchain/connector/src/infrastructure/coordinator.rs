@@ -2,7 +2,7 @@ use crate::domain::blockchain::{
     BlockchainOperationVal, DecryptResponseVal, KeyGenResponseVal, KmsOperationResponse,
     ReencryptResponseVal,
 };
-use crate::domain::kms::{CsrGenVal, DecryptVal, KeyGenVal, Kms, ReencryptVal};
+use crate::domain::kms::{CrsGenVal, DecryptVal, KeyGenVal, Kms, ReencryptVal};
 use async_trait::async_trait;
 use events::kms::{DecryptResponseValues, KeyGenResponseValues, ReencryptResponseValues};
 use typed_builder::TypedBuilder;
@@ -65,12 +65,12 @@ impl Kms for KeyGenVal {
 }
 
 #[async_trait]
-impl Kms for CsrGenVal {
+impl Kms for CrsGenVal {
     async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
-        Ok(KmsOperationResponse::CsrGenResponse(
-            crate::domain::blockchain::CsrGenResponseVal {
-                csr_gen_response: events::kms::CsrGenResponseValues::builder()
-                    .csr([9; 10].to_vec())
+        Ok(KmsOperationResponse::CrsGenResponse(
+            crate::domain::blockchain::CrsGenResponseVal {
+                crs_gen_response: events::kms::CrsGenResponseValues::builder()
+                    .crs([9; 10].to_vec())
                     .build(),
                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                     tx_id: self.operation_val.tx_id.clone(),

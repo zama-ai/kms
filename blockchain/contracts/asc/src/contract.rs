@@ -3,10 +3,10 @@ use cosmwasm_std::{Attribute, VerificationError};
 use cosmwasm_std::{Response, StdResult};
 use cw_storage_plus::Map;
 use events::kms::{
-    CsrGenResponseValues, DecryptResponseValues, DecryptValues, FheType, KeyGenResponseValues,
+    CrsGenResponseValues, DecryptResponseValues, DecryptValues, FheType, KeyGenResponseValues,
     KeyGenValues, KmsOperationAttribute, ReencryptResponseValues, ReencryptValues,
 };
-use events::kms::{CsrGenValues, KmsEvent};
+use events::kms::{CrsGenValues, KmsEvent};
 use sha2::Digest;
 use sylvia::types::{ExecCtx, InstantiateCtx, QueryCtx};
 use sylvia::{contract, entry_points};
@@ -221,10 +221,10 @@ impl KmsContract {
     }
 
     #[sv::msg(exec)]
-    pub fn csr_gen(&self, ctx: ExecCtx) -> StdResult<Response> {
+    pub fn crs_gen(&self, ctx: ExecCtx) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx);
         let event = KmsEvent::builder()
-            .operation(KmsOperationAttribute::CsrGen(CsrGenValues::default()))
+            .operation(KmsOperationAttribute::CrsGen(CrsGenValues::default()))
             .txn_id(txn_id.clone())
             .build();
         let response = Response::new().add_event(event.into());
@@ -234,11 +234,11 @@ impl KmsContract {
     }
 
     #[sv::msg(exec)]
-    pub fn csr_gen_response(
+    pub fn crs_gen_response(
         &self,
         ctx: ExecCtx,
         txn_id: Vec<u8>,
-        csr: Vec<u8>,
+        crs: Vec<u8>,
     ) -> StdResult<Response> {
         if !self.transactions.has(ctx.deps.storage, txn_id.clone()) {
             return Err(cosmwasm_std::StdError::verification_err(
@@ -246,8 +246,8 @@ impl KmsContract {
             ));
         }
         let event = KmsEvent::builder()
-            .operation(KmsOperationAttribute::CsrGenResponse(
-                CsrGenResponseValues::builder().csr(csr).build(),
+            .operation(KmsOperationAttribute::CrsGenResponse(
+                CrsGenResponseValues::builder().crs(crs).build(),
             ))
             .txn_id(txn_id.clone())
             .build();
@@ -261,8 +261,8 @@ impl KmsContract {
 mod tests {
     use crate::contract::sv::mt::{CodeId, KmsContractProxy as _};
     use cosmwasm_std::Event;
-    use events::kms::CsrGenResponseValues;
-    use events::kms::CsrGenValues;
+    use events::kms::CrsGenResponseValues;
+    use events::kms::CrsGenValues;
     use events::kms::DecryptResponseValues;
     use events::kms::DecryptValues;
     use events::kms::FheType;
@@ -498,7 +498,7 @@ mod tests {
     }
 
     #[test]
-    fn test_csr_gen() {
+    fn test_crs_gen() {
         let app = App::default();
         let code_id = CodeId::store_code(&app);
 
@@ -509,28 +509,28 @@ mod tests {
             .call(&owner)
             .unwrap();
 
-        let response = contract.csr_gen().call(&owner).unwrap();
+        let response = contract.crs_gen().call(&owner).unwrap();
 
         let txn_id = expected_transaction_id(12345, 0);
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
-            .operation(KmsOperationAttribute::CsrGen(CsrGenValues::default()))
+            .operation(KmsOperationAttribute::CrsGen(CrsGenValues::default()))
             .txn_id(txn_id.clone())
             .build();
 
         assert_event(&response.events, &expected_event);
 
         let response = contract
-            .csr_gen_response(txn_id.clone(), vec![4, 5, 6])
+            .crs_gen_response(txn_id.clone(), vec![4, 5, 6])
             .call(&owner)
             .unwrap();
 
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
-            .operation(KmsOperationAttribute::CsrGenResponse(
-                CsrGenResponseValues::builder().csr(vec![4, 5, 6]).build(),
+            .operation(KmsOperationAttribute::CrsGenResponse(
+                CrsGenResponseValues::builder().crs(vec![4, 5, 6]).build(),
             ))
             .txn_id(txn_id.clone())
             .build();

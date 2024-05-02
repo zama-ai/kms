@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use events::kms::{
-    CsrGenResponseValues, DecryptResponseValues, KeyGenResponseValues, KmsEvent,
+    CrsGenResponseValues, DecryptResponseValues, KeyGenResponseValues, KmsEvent,
     KmsOperationAttribute, ReencryptResponseValues, TransactionId,
 };
 use strum_macros::{Display, EnumString};
@@ -29,8 +29,8 @@ pub struct KeyGenResponseVal {
 }
 
 #[derive(Default, PartialEq, Eq)]
-pub struct CsrGenResponseVal {
-    pub csr_gen_response: CsrGenResponseValues,
+pub struct CrsGenResponseVal {
+    pub crs_gen_response: CrsGenResponseValues,
     pub operation_val: BlockchainOperationVal,
 }
 
@@ -39,7 +39,7 @@ pub enum KmsOperationResponse {
     DecryptResponse(DecryptResponseVal),
     ReencryptResponse(ReencryptResponseVal),
     KeyGenResponse(KeyGenResponseVal),
-    CsrGenResponse(CsrGenResponseVal),
+    CrsGenResponse(CrsGenResponseVal),
 }
 
 impl KmsOperationResponse {
@@ -48,7 +48,7 @@ impl KmsOperationResponse {
             KmsOperationResponse::DecryptResponse(val) => &val.operation_val.tx_id,
             KmsOperationResponse::ReencryptResponse(val) => &val.operation_val.tx_id,
             KmsOperationResponse::KeyGenResponse(val) => &val.operation_val.tx_id,
-            KmsOperationResponse::CsrGenResponse(val) => &val.operation_val.tx_id,
+            KmsOperationResponse::CrsGenResponse(val) => &val.operation_val.tx_id,
         }
     }
 
@@ -74,8 +74,8 @@ impl From<KmsOperationResponse> for KmsEvent {
                 .operation(KmsOperationAttribute::KeyGenResponse(val.keygen_response))
                 .txn_id(val.operation_val.tx_id)
                 .build(),
-            KmsOperationResponse::CsrGenResponse(val) => KmsEvent::builder()
-                .operation(KmsOperationAttribute::CsrGenResponse(val.csr_gen_response))
+            KmsOperationResponse::CrsGenResponse(val) => KmsEvent::builder()
+                .operation(KmsOperationAttribute::CrsGenResponse(val.crs_gen_response))
                 .txn_id(val.operation_val.tx_id)
                 .build(),
         }

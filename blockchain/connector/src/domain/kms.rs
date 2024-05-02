@@ -24,7 +24,7 @@ pub struct KeyGenVal {
     pub operation_val: KmsOperationVal,
 }
 
-pub struct CsrGenVal {
+pub struct CrsGenVal {
     pub operation_val: KmsOperationVal,
 }
 
@@ -33,7 +33,7 @@ pub enum KmsOperationRequest {
     Reencrypt(ReencryptVal),
     Decrypt(DecryptVal),
     KeyGen(KeyGenVal),
-    CsrGen(CsrGenVal),
+    CrsGen(CrsGenVal),
 }
 
 pub fn create_kms_operation(
@@ -58,8 +58,8 @@ pub fn create_kms_operation(
         KmsOperationAttribute::KeyGen(_) => {
             KmsOperationRequest::KeyGen(KeyGenVal { operation_val })
         }
-        KmsOperationAttribute::CsrGen(_) => {
-            KmsOperationRequest::CsrGen(CsrGenVal { operation_val })
+        KmsOperationAttribute::CrsGen(_) => {
+            KmsOperationRequest::CrsGen(CrsGenVal { operation_val })
         }
         _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
     };
