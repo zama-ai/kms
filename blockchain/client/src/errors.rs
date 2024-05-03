@@ -21,6 +21,9 @@ pub enum Error {
     #[error("PublicKey Error: {0}")]
     InvalidPublicKey(String),
 
+    #[error("PrivateKey Error parsing error from bip32: {0}")]
+    InvalidPrivateKey(#[from] bip32::Error),
+
     #[error("AccountId Error: {0}")]
     InvalidAccount(String),
 
@@ -28,7 +31,10 @@ pub enum Error {
     InvalidBech32Account(#[from] subtle_encoding::Error),
 
     #[error("Error deriving private key from mnemonic: {0}")]
-    DerivePrivateKeyError(#[from] PrivateKeyError),
+    InvalidMnemonicPrivKey(#[from] PrivateKeyError),
+
+    #[error("Error deriving private key from mnemonic or bip32 string: {0}")]
+    PrivateKeyMissing(String),
 
     #[error("Signature Error: {0}")]
     SignatureError(#[from] k256::ecdsa::Error),

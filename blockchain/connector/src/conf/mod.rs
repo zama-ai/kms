@@ -49,27 +49,26 @@ pub struct ContractFee {
 }
 
 #[derive(TypedBuilder, Deserialize, Serialize, Clone)]
-pub struct ConnectorConfig {
+pub struct BlockchainConfig {
     pub grpc_addresses: Vec<String>,
     pub contract_address: String,
-    pub tick_interval_secs: u64,
-    pub storage_path: String,
-    pub contract_fee: ContractFee,
-    pub tracing: Option<Tracing>,
-    pub coordinator_config: CoordinatorConfig,
+    pub fee: ContractFee,
+    pub mnemonic_wallet: Option<String>,
+    pub bip32_private_key: Option<String>,
 }
 
-impl ConnectorConfig {
+#[derive(TypedBuilder, Deserialize, Serialize, Clone)]
+pub struct ConnectorConfig {
+    pub tick_interval_secs: u64,
+    pub storage_path: String,
+    pub tracing: Option<Tracing>,
+    pub blockchain: BlockchainConfig,
+    pub coordinator: CoordinatorConfig,
+}
+
+impl BlockchainConfig {
     pub fn grpc_addresses(&self) -> Vec<&str> {
         self.grpc_addresses.iter().map(|s| s.as_str()).collect()
-    }
-
-    pub fn coordinator_addresses(&self) -> Vec<&str> {
-        self.coordinator_config
-            .addresses
-            .iter()
-            .map(|s| s.as_str())
-            .collect()
     }
 }
 
@@ -77,6 +76,12 @@ impl ConnectorConfig {
 pub struct CoordinatorConfig {
     pub addresses: Vec<String>,
     pub n_parties: u64,
+}
+
+impl CoordinatorConfig {
+    pub fn coordinator_addresses(&self) -> Vec<&str> {
+        self.addresses.iter().map(|s| s.as_str()).collect()
+    }
 }
 
 #[derive(TypedBuilder)]

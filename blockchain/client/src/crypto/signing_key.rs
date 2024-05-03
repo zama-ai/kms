@@ -1,5 +1,8 @@
 //! Transaction signing key
 
+use std::str::FromStr;
+
+use bip32::XPrv;
 use ecdsa::signature::{Keypair, Signer};
 use k256::ecdsa::{Signature, VerifyingKey};
 
@@ -34,6 +37,21 @@ impl SigningKey {
     /// A `secp256k1::SigningKey` derived from the mnemonic.
     pub fn key_from_mnemonic(mnemonic: &str) -> Result<SigningKey, Error> {
         let pk = derive_key(mnemonic, "")?;
+        SigningKey::from_slice(&pk)
+    }
+
+    /// Derives a signing key from a bip32 encoded string.
+    ///
+    /// # Arguments
+    ///
+    /// * `bip32_encoded` - The bip32 encoded string.
+    ///
+    /// # Returns
+    ///
+    /// A `secp256k1::SigningKey` derived from the bip32 encoded string.
+    ///
+    pub fn from_bip32(bip32_encoded: &str) -> Result<SigningKey, Error> {
+        let pk = XPrv::from_str(bip32_encoded)?.to_bytes();
         SigningKey::from_slice(&pk)
     }
 
@@ -91,4 +109,35 @@ pub trait EcdsaSigner:
 impl<T> EcdsaSigner for T where
     T: Signer<Signature> + Keypair<VerifyingKey = VerifyingKey> + Sync + Send
 {
+}
+
+#[cfg(test)]
+mod tests {
+    use bip32::Prefix;
+    use ecdsa::signature::rand_core::OsRng;
+
+    use super::*;
+
+    #[test]
+    fn test_signing_key_from_mnemonic() {
+        let mnemonic = "thing guitar always vacuum cabbage shove practice defense seminar pair ensure trim crew fade hawk rough flame cupboard illness decline gesture gentle denial giant";
+        let signing_key = SigningKey::key_from_mnemonic(mnemonic);
+        assert!(signing_key.is_ok());
+    }
+
+    #[test]
+    fn test_signing_key_from_bip32() {
+        let mnemonic_seed = bip32::Mnemonic::random(OsRng, Default::default());
+        let seed = mnemonic_seed.to_seed("");
+        let bip32 = bip32::XPrv::new(seed.as_bytes()).unwrap();
+
+        let signing_key = SigningKey::from_bip32(bip32.to_string(Prefix::XPRV).as_str());
+        assert!(signing_key.is_ok());
+    }
+
+    #[test]
+    fn test_signing_key_from_bip32_manually_generated() {
+        let key = SigningKey::from_bip32("xprv9s21ZrQH143K4JxNZRVvjEHhWWkjRMrtUvKVXa58yFkqxkywvuqFehnnfxMQFZPK25jz2X2PbmGXYr873VbVNsXrFCycje7R7DuFwprZxk2");
+        assert!(key.is_ok());
+    }
 }

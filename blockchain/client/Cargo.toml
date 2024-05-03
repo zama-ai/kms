@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 base64 = "0.22.0"
+bip32 = "0.5.1"
 cosmos-proto = { path = "../cosmos-proto" }
 deep_space = "2.24.1"
 ecdsa = { version = "0.16.9", features = ["alloc"] }

@@ -13,7 +13,7 @@ async fn main() {
     // let alice_mnemonic_phrase = "bachelor similar spirit copper rely carbon web hobby conduct wrap conduct wire shine parrot erosion divert crucial balance lock reason price ignore educate open";
     let bob_mnemonic_phrase = "feel wife neither never floor volume express actor initial year throw hawk pink gaze deny prevent helmet clump hurt hour river behind employ ribbon";
     let mut client: Client = ClientBuilder::builder()
-        .mnemonic_wallet(bob_mnemonic_phrase)
+        .mnemonic_wallet(Some(bob_mnemonic_phrase))
         .grpc_addresses(vec!["http://localhost:9090"])
         .contract_address("wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d")
         .build()

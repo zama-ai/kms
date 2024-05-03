@@ -1,10 +1,10 @@
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::{global, KeyValue};
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::metrics::{MeterProvider, PeriodicReader};
+use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
-use opentelemetry_sdk::runtime::{self, Tokio};
-use opentelemetry_sdk::trace::{BatchSpanProcessor, Config, Tracer, TracerProvider};
+use opentelemetry_sdk::runtime::Tokio;
+use opentelemetry_sdk::trace::{Config, Tracer, TracerProvider};
 use opentelemetry_sdk::Resource;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::{layer, Layer};
@@ -26,42 +26,44 @@ impl From<Tracing> for Tracer {
                     )
                     .with_trace_config(opentelemetry_sdk::trace::config().with_resource(
                         Resource::new(vec![KeyValue::new(
-                            opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+                            opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
                             settings.service_name().to_string(),
                         )]),
                     ))
                     .install_batch(Tokio)
                     .expect("Failed to install OpenTelemetry tracer.")
             }
-            _ => stdout_pipeline(),
+            _ => stdout_pipeline(settings.clone()),
         }
     }
 }
 
-fn init_metrics(settings: Tracing) -> MeterProvider {
-    let exporter = opentelemetry_stdout::MetricsExporter::default();
-    let reader = PeriodicReader::builder(exporter, runtime::Tokio).build();
-    MeterProvider::builder()
-        .with_reader(reader)
+fn init_metrics(settings: Tracing) -> SdkMeterProvider {
+    let registry = prometheus::Registry::new();
+    let exporter = opentelemetry_prometheus::exporter()
+        .with_registry(registry.clone())
+        .build()
+        .expect("Failed to create Prometheus exporter.");
+    SdkMeterProvider::builder()
+        .with_reader(exporter)
         .with_resource(Resource::new(vec![KeyValue::new(
-            opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+            opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
             settings.service_name().to_string(),
         )]))
         .build()
 }
 
-fn stdout_pipeline() -> Tracer {
+fn stdout_pipeline(settings: Tracing) -> Tracer {
     let exporter = opentelemetry_stdout::SpanExporter::default();
-    let processor = BatchSpanProcessor::builder(exporter, Tokio).build();
     let config = Config::default().with_resource(Resource::new(vec![KeyValue::new(
-        opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-        "distributed-decryption".to_string(),
+        opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+        settings.service_name().to_string(),
     )]));
     TracerProvider::builder()
-        .with_span_processor(processor)
+        .with_simple_exporter(exporter)
         .with_config(config)
         .build()
-        .tracer("distributed-decryption")
+        .tracer(settings.service_name().to_string())
 }
 
 fn fmt_layer<S>() -> Layer<S> {
@@ -76,7 +78,7 @@ pub fn init_tracing(settings: Option<Tracing>) -> Result<(), anyhow::Error> {
     let tracer: Tracer = settings
         .clone()
         .map(Into::into)
-        .unwrap_or_else(stdout_pipeline);
+        .ok_or_else(|| anyhow::anyhow!("No settings found."))?;
     // Layer to filter traces based on level - trace, debug, info, warn, error.
     let fmt_layer = fmt_layer();
     let env_filter = EnvFilter::try_from_default_env()

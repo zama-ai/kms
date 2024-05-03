@@ -1,5 +1,6 @@
-use crate::conf::ConnectorConfig;
+use crate::conf::BlockchainConfig;
 use crate::domain::blockchain::{Blockchain, KmsOperationResponse};
+use crate::infrastructure::metrics::{MetricType, Metrics};
 use async_trait::async_trait;
 use events::kms::KmsEvent;
 use kms_blockchain_client::client::{Client, ClientBuilder};
@@ -8,25 +9,33 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use typed_builder::TypedBuilder;
 
+use super::metrics::OpenTelemetryMetrics;
+
 #[derive(Clone, TypedBuilder)]
 pub struct KmsBlockchain {
     client: Arc<Mutex<Client>>,
-    config: ConnectorConfig,
+    config: BlockchainConfig,
+    metrics: Arc<OpenTelemetryMetrics>,
 }
 
 impl KmsBlockchain {
-    pub(crate) async fn new(config: ConnectorConfig) -> Result<Self, anyhow::Error> {
+    pub(crate) async fn new(
+        config: BlockchainConfig,
+        metrics: OpenTelemetryMetrics,
+    ) -> Result<Self, anyhow::Error> {
         let client: Client = ClientBuilder::builder()
             .contract_address(&config.contract_address)
             .grpc_addresses(config.grpc_addresses())
-            .coin_denom(&config.contract_fee.coin_denom)
-            .mnemonic_wallet("")
+            .coin_denom(&config.fee.coin_denom)
+            .mnemonic_wallet(config.mnemonic_wallet.as_deref())
+            .bip32_private_key(config.bip32_private_key.as_deref())
             .build()
             .try_into()
             .map_err(|e| anyhow::anyhow!("Error creating blockchain client {:?}", e))?;
         Ok(KmsBlockchain {
             client: Arc::new(Mutex::new(client)),
             config,
+            metrics: Arc::new(metrics),
         })
     }
 
@@ -51,14 +60,26 @@ impl Blockchain for KmsBlockchain {
     async fn send_result(&self, result: KmsOperationResponse) -> anyhow::Result<()> {
         let mut client = self.client.lock().await;
         let msg_str = <KmsOperationResponse as Into<KmsEvent>>::into(result)
-            .to_json()?
+            .to_json()
+            .map_err(|e| {
+                self.metrics.increment(
+                    MetricType::BlockchainError,
+                    1,
+                    &[("error", &e.to_string())],
+                );
+                e
+            })?
             .to_string();
         tracing::info!("Sending result to contract: {:?}", msg_str);
-        self.call_execute_contract(
-            &mut client,
-            msg_str.as_bytes(),
-            self.config.contract_fee.amount,
-        )
-        .await
+        self.call_execute_contract(&mut client, msg_str.as_bytes(), self.config.fee.amount)
+            .await
+            .map_err(|e| {
+                self.metrics.increment(
+                    MetricType::BlockchainError,
+                    1,
+                    &[("error", &e.to_string())],
+                );
+                e
+            })
     }
 }

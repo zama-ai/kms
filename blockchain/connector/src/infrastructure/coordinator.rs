@@ -1,5 +1,4 @@
-use std::time::Duration;
-
+use super::metrics::OpenTelemetryMetrics;
 use crate::domain::blockchain::{
     BlockchainOperationVal, DecryptResponseVal, KeyGenResponseVal, KmsOperationResponse,
     ReencryptResponseVal,
@@ -11,6 +10,8 @@ use events::kms::{DecryptResponseValues, KeyGenResponseValues, ReencryptResponse
 use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
 use kms_lib::kms::RequestId;
 use kms_lib::kms::{Config, CrsGenRequest, ParamChoice};
+use std::sync::Arc;
+use std::time::Duration;
 use tokio::time::sleep;
 use tonic::transport::{Channel, Endpoint};
 use typed_builder::TypedBuilder;
@@ -21,9 +22,13 @@ const MAX_CRS_GEN_DURATION_PER_PARTY_SECS: u64 = 60;
 pub struct KmsCoordinator {
     channel: Channel,
     n_parties: u64,
+    _metrics: Arc<OpenTelemetryMetrics>,
 }
 impl KmsCoordinator {
-    pub(crate) async fn new(config: crate::conf::ConnectorConfig) -> Result<Self, anyhow::Error> {
+    pub(crate) async fn new(
+        config: crate::conf::CoordinatorConfig,
+        metrics: OpenTelemetryMetrics,
+    ) -> Result<Self, anyhow::Error> {
         // NOTE: we don't need multiple endpoints for now
         // but we keep it like this to match the blockchain implementation
         let endpoints = config
@@ -43,7 +48,8 @@ impl KmsCoordinator {
         );
         Ok(KmsCoordinator {
             channel,
-            n_parties: config.coordinator_config.n_parties,
+            n_parties: config.n_parties,
+            _metrics: Arc::new(metrics),
         })
     }
 }

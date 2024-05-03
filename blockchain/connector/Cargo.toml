@@ -12,15 +12,18 @@ clap = { version = "~4", features = ["derive", "env"] }
 # TODO: ideally we'd like to use `default-features = false` but this has a lot of warnings, like wasm
 kms = { path = "../../coordinator" }
 config = "0.14.0"
+dashmap = "5"
 enum_dispatch = "0.3.12"
 events = { path = "../events", features = ["subscription"] }
 kms-blockchain-client = { path = "../client" }
 lazy_static = "~1.4"
-opentelemetry = { version = "0.21.0"}
-opentelemetry-otlp = { version = "0.14.0", features = ["tokio"]}
+opentelemetry = { version = "0.22", features = ["metrics"]}
+opentelemetry-otlp = { version = "0.15.0", features = ["tokio"]}
+opentelemetry-prometheus = "0.15.0"
 opentelemetry-semantic-conventions = { version = "0.13.0" }
-opentelemetry-stdout = { version = "0.2.0", features = ["trace", "metrics"] }
-opentelemetry_sdk = { version = "0.21.2", features = ["rt-tokio", "logs"]}
+opentelemetry-stdout = { version = "0.3.0", features = ["trace"] }
+opentelemetry_sdk = { version = "0.22", features = ["rt-tokio", "logs", "metrics"]}
+prometheus = "=0.13.3"
 retrying = { version = "0.1.0", features = ["tokio"]}
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0"
@@ -29,6 +32,6 @@ strum_macros = "0.26"
 tokio = { version = "1.36", features = ["full"] }
 tonic = { version = "0.11", features = ["transport","tls","tls-roots"]}
 tracing = { version = "~0.1", features = ["log"] }
-tracing-opentelemetry = "0.22"
+tracing-opentelemetry = "=0.23"
 tracing-subscriber = { version = "~0.3.16", features = ["env-filter", "fmt"] }
 typed-builder = "0.18.1"

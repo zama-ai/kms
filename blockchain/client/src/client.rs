@@ -42,7 +42,10 @@ const DENOM: &str = "ucosm";
 pub struct ClientBuilder<'a> {
     grpc_addresses: Vec<&'a str>,
     contract_address: &'a str,
-    mnemonic_wallet: &'a str,
+    #[builder(default = None)]
+    mnemonic_wallet: Option<&'a str>,
+    #[builder(default = None)]
+    bip32_private_key: Option<&'a str>,
     #[builder(default = None, setter(strip_option))]
     chain_id: Option<&'a str>,
     #[builder(default = None, setter(strip_option))]
@@ -52,7 +55,17 @@ pub struct ClientBuilder<'a> {
 impl TryFrom<ClientBuilder<'_>> for Client {
     type Error = Error;
     fn try_from(value: ClientBuilder) -> Result<Self, Self::Error> {
-        let sender_key = SigningKey::key_from_mnemonic(value.mnemonic_wallet)?;
+        let sender_key = value
+            .mnemonic_wallet
+            .map(SigningKey::key_from_mnemonic)
+            .or_else(|| value.bip32_private_key.map(SigningKey::from_bip32))
+            .transpose()?
+            .ok_or_else(|| {
+                Error::PrivateKeyMissing("No private key provided for wallet".to_string())
+            })?;
+
+        tracing::info!("Wallet private key initialized successfully");
+
         let endpoints = value
             .grpc_addresses
             .iter()
@@ -65,6 +78,8 @@ impl TryFrom<ClientBuilder<'_>> for Client {
             .into_iter()
             .map(|e| e.timeout(Duration::from_secs(60)).clone());
         let client = Channel::balance_list(endpoints);
+
+        tracing::info!("gRPC client initialized successfully");
 
         let chain_id = value.chain_id.unwrap_or(DEFAULT_CHAIN_ID).to_string();
 

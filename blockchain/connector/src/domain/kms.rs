@@ -86,12 +86,12 @@ mod test {
     use tokio::task::JoinSet;
 
     use crate::{
-        conf::{ConnectorConfig, ContractFee, CoordinatorConfig},
+        conf::CoordinatorConfig,
         domain::{
             blockchain::KmsOperationResponse,
             kms::{create_kms_operation, Kms},
         },
-        infrastructure::coordinator::KmsCoordinator,
+        infrastructure::{coordinator::KmsCoordinator, metrics::OpenTelemetryMetrics},
     };
 
     #[tokio::test]
@@ -115,20 +115,9 @@ mod test {
             .map(|i| {
                 let port = BASE_PORT + i + 1;
                 let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
-                ConnectorConfig {
-                    grpc_addresses: vec![],
-                    contract_address: "".to_string(),
-                    tick_interval_secs: 0,
-                    contract_fee: ContractFee {
-                        amount: 2,
-                        coin_denom: "2".to_string(),
-                    },
-                    storage_path: "".to_string(),
-                    tracing: None,
-                    coordinator_config: CoordinatorConfig {
-                        addresses: vec![url],
-                        n_parties: AMOUNT_PARTIES as u64,
-                    },
+                CoordinatorConfig {
+                    addresses: vec![url],
+                    n_parties: AMOUNT_PARTIES as u64,
                 }
             })
             .collect::<Vec<_>>();
@@ -136,7 +125,11 @@ mod test {
         // create the clients
         let mut clients = vec![];
         for config in configs {
-            clients.push(KmsCoordinator::new(config.clone()).await.unwrap());
+            clients.push(
+                KmsCoordinator::new(config.clone(), OpenTelemetryMetrics::new())
+                    .await
+                    .unwrap(),
+            );
         }
 
         // create events
