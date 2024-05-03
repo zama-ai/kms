@@ -30,16 +30,13 @@ type JobResultType<Z> = (Role, anyhow::Result<Vec<Z>>);
 /// - degree as the degree of the secret sharing
 /// - t as the max. number of errors we allow (if no party has been flagged as corrupt, this is session.threshold)
 /// - a set of jobs to receive the shares from the other parties
-async fn try_reconstruct_from_shares<Z: Ring, P: ParameterHandles>(
+async fn try_reconstruct_from_shares<Z: Ring + ErrorCorrect, P: ParameterHandles>(
     session_parameters: &P,
     sharings: &mut [ShamirSharings<Z>],
     degree: usize,
     threshold: usize,
     jobs: &mut JoinSet<Result<JobResultType<Z>, Elapsed>>,
-) -> anyhow::Result<Option<Vec<Z>>>
-where
-    Z: ErrorCorrect,
-{
+) -> anyhow::Result<Option<Vec<Z>>> {
     let num_parties = session_parameters.num_parties();
     let own_role = session_parameters.my_role()?;
     let num_secrets = sharings.len();

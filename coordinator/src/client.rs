@@ -1300,6 +1300,98 @@ pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
     }
 }
 
+#[cfg(feature = "non-wasm")]
+pub mod test_tools {
+    use super::*;
+    use crate::consts::{BASE_PORT, DEFAULT_PROT, DEFAULT_URL};
+    use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
+    use crate::storage::DevStorage;
+    use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
+    use crate::util::file_handling::read_element_async;
+    use crate::util::key_setup::ThresholdTestingKeys;
+    use std::str::FromStr;
+    use tokio::task::JoinHandle;
+    use tonic::transport::{Channel, Uri};
+
+    pub async fn setup_threshold_no_client(
+        amount: usize,
+        threshold: u8,
+        threshold_key_path_prefix: &str,
+    ) -> HashMap<u32, JoinHandle<()>> {
+        let mut handles = Vec::new();
+        tracing::info!("Spawning servers...");
+        for i in 1..=amount {
+            let prefix = format!("p{}", i);
+            let storage = DevStorage::new(&prefix);
+            let key_path = format!("{threshold_key_path_prefix}-{i}.bin");
+            handles.push(tokio::spawn(async move {
+                tracing::info!("Server {i} reading keys..");
+                let keys: ThresholdTestingKeys =
+                    read_element_async(key_path.to_string()).await.unwrap();
+                tracing::info!("Server {i} read keys..");
+                let server = threshold_server_init(
+                    DEFAULT_URL.to_owned(),
+                    BASE_PORT,
+                    amount,
+                    threshold,
+                    i,
+                    keys.kms_keys,
+                    None,
+                    None,
+                    storage,
+                )
+                .await;
+                (i, server)
+            }));
+        }
+        // Wait for the server to start
+        tracing::info!("Client waiting for server");
+        let mut servers = Vec::with_capacity(amount);
+        for cur_handle in handles {
+            let (i, kms_server_res) = cur_handle.await.unwrap();
+            match kms_server_res {
+                Ok(kms_server) => servers.push((i, kms_server)),
+                Err(e) => tracing::warn!("Failed to start server {i} with error {:?}", e),
+            }
+        }
+        tracing::info!("Servers initialized. Starting servers...");
+        let mut server_handles = HashMap::new();
+        for (i, cur_server) in servers {
+            let handle = tokio::spawn(async move {
+                println!("server starting on {}, {}, {}", DEFAULT_URL, BASE_PORT, i);
+                let _ =
+                    threshold_server_start(DEFAULT_URL.to_owned(), BASE_PORT, i, cur_server).await;
+            });
+            server_handles.insert(i as u32, handle);
+        }
+        // We need to sleep as the servers keep running in the background and hence do not return
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        server_handles
+    }
+
+    pub async fn setup_threshold(
+        amount: usize,
+        threshold: u8,
+        threshold_key_path_prefix: &str,
+    ) -> (
+        HashMap<u32, JoinHandle<()>>,
+        HashMap<u32, CoordinatorEndpointClient<Channel>>,
+    ) {
+        let server_handles =
+            setup_threshold_no_client(amount, threshold, threshold_key_path_prefix).await;
+        let mut client_handles = HashMap::new();
+        for i in 1..=amount {
+            let port = BASE_PORT + i as u16;
+            let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
+            let uri = Uri::from_str(&url).unwrap();
+            let channel = Channel::builder(uri).connect().await.unwrap();
+            client_handles.insert(i as u32, CoordinatorEndpointClient::new(channel));
+        }
+        tracing::info!("Client connected to servers");
+        (server_handles, client_handles)
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::Client;
@@ -1332,7 +1424,6 @@ pub(crate) mod tests {
     use crate::rpc::central_rpc::server_handle;
     use crate::rpc::rpc_types::BaseKms;
     use crate::storage::PublicStorageReader;
-    use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
     use crate::util::file_handling::{read_as_json, read_element, read_element_async};
@@ -1394,73 +1485,6 @@ pub(crate) mod tests {
         (kms_server, kms_client, internal_client)
     }
 
-    async fn setup_threshold(
-        amount: usize,
-        threshold: u8,
-        threshold_key_path_prefix: &str,
-    ) -> (
-        HashMap<u32, JoinHandle<()>>,
-        HashMap<u32, CoordinatorEndpointClient<Channel>>,
-    ) {
-        let mut handles = Vec::new();
-        tracing::info!("Spawning servers...");
-        for i in 1..=amount {
-            let prefix = format!("p{}", i);
-            let storage = DevStorage::new(&prefix);
-            let key_path = format!("{threshold_key_path_prefix}-{i}.bin");
-            handles.push(tokio::spawn(async move {
-                tracing::info!("Server {i} reading keys..");
-                let keys: ThresholdTestingKeys =
-                    read_element_async(key_path.to_string()).await.unwrap();
-                tracing::info!("Server {i} read keys..");
-                let server = threshold_server_init(
-                    DEFAULT_URL.to_owned(),
-                    BASE_PORT,
-                    amount,
-                    threshold,
-                    i,
-                    keys.kms_keys,
-                    None,
-                    None,
-                    storage,
-                )
-                .await;
-                (i, server)
-            }));
-        }
-        // Wait for the server to start
-        tracing::info!("Client waiting for server");
-        let mut servers = Vec::with_capacity(amount);
-        for cur_handle in handles {
-            let (i, kms_server_res) = cur_handle.await.unwrap();
-            match kms_server_res {
-                Ok(kms_server) => servers.push((i, kms_server)),
-                Err(e) => tracing::warn!("Failed to start server {i} with error {:?}", e),
-            }
-        }
-        tracing::info!("Servers initialized. Starting servers...");
-        let mut server_handles = HashMap::new();
-        for (i, cur_server) in servers {
-            let handle = tokio::spawn(async move {
-                let _ =
-                    threshold_server_start(DEFAULT_URL.to_owned(), BASE_PORT, i, cur_server).await;
-            });
-            server_handles.insert(i as u32, handle);
-        }
-        // We need to sleep as the servers keep running in the background and hence do not return
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        let mut client_handles = HashMap::new();
-        for i in 1..=amount {
-            let port = BASE_PORT + i as u16;
-            let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
-            let uri = Uri::from_str(&url).unwrap();
-            let channel = Channel::builder(uri).connect().await.unwrap();
-            client_handles.insert(i as u32, CoordinatorEndpointClient::new(channel));
-        }
-        tracing::info!("Client connected to servers");
-        (server_handles, client_handles)
-    }
-
     /// Reads the testing keys for the threshold servers and starts them up, and returns a hash map
     /// of the servers, based on their ID, which starts from 1. A smiliar map is also returned
     /// is the client endpoints needed to talk with each of the servers, finally the internal
@@ -1474,7 +1498,8 @@ pub(crate) mod tests {
         Client,
     ) {
         let (kms_servers, kms_clients) =
-            setup_threshold(AMOUNT_PARTIES, THRESHOLD as u8, threshold_key_path).await;
+            super::test_tools::setup_threshold(AMOUNT_PARTIES, THRESHOLD as u8, threshold_key_path)
+                .await;
         let keys: ThresholdTestingKeys = read_element_async(format!("{threshold_key_path}-1.bin"))
             .await
             .unwrap();

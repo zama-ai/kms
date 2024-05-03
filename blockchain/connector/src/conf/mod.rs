@@ -56,12 +56,27 @@ pub struct ConnectorConfig {
     pub storage_path: String,
     pub contract_fee: ContractFee,
     pub tracing: Option<Tracing>,
+    pub coordinator_config: CoordinatorConfig,
 }
 
 impl ConnectorConfig {
     pub fn grpc_addresses(&self) -> Vec<&str> {
         self.grpc_addresses.iter().map(|s| s.as_str()).collect()
     }
+
+    pub fn coordinator_addresses(&self) -> Vec<&str> {
+        self.coordinator_config
+            .addresses
+            .iter()
+            .map(|s| s.as_str())
+            .collect()
+    }
+}
+
+#[derive(TypedBuilder, Deserialize, Serialize, Clone)]
+pub struct CoordinatorConfig {
+    pub addresses: Vec<String>,
+    pub n_parties: u64,
 }
 
 #[derive(TypedBuilder)]

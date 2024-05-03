@@ -248,7 +248,9 @@ async fn round_1<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 
     let mut received_data: Vec<ExchangedDataRound1<Z>> =
         vec![ExchangedDataRound1::default(num_parties, num_secrets); num_parties];
-    received_data[my_role.zero_based()].double_poly = map_double_shares[&my_role].clone();
+    received_data[my_role.zero_based()]
+        .double_poly
+        .clone_from(&map_double_shares[&my_role]);
 
     //For every party, create challenges for every VSS
     let challenges: Vec<Challenge<Z>> = (0..num_parties)
@@ -1324,7 +1326,7 @@ pub(crate) mod tests {
         );
         let mut expected_secrets = vec![vec![Z::ZERO; num_secrets]; params.num_parties];
         for (party_idx, _, s, _) in res.iter() {
-            expected_secrets[*party_idx] = s.clone();
+            expected_secrets[*party_idx].clone_from(s);
         }
 
         for i in 0..num_secrets {
@@ -1419,14 +1421,14 @@ pub(crate) mod tests {
         //Create a vec of expected secrets
         let mut expected_secrets = vec![vec![Z::ZERO; num_secrets]; params.num_parties];
         for (party_idx, _, s, _) in results_honest.iter() {
-            expected_secrets[*party_idx] = s.clone();
+            expected_secrets[*party_idx].clone_from(s);
         }
 
         if !params.should_be_detected {
             for result_malicious in results_malicious.iter() {
                 assert!(result_malicious.is_ok());
                 let (party_idx, s) = result_malicious.as_ref().unwrap();
-                expected_secrets[*party_idx] = s.clone();
+                expected_secrets[*party_idx].clone_from(s);
             }
         }
 

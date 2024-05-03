@@ -402,12 +402,7 @@ where
     }
 }
 
-pub async fn bit_dec_batch<
-    Z,
-    P: TriplePreprocessing<ResiduePoly<Z>> + BitPreprocessing<ResiduePoly<Z>> + ?Sized,
-    Rnd: Rng + CryptoRng,
-    Ses: BaseSessionHandles<Rnd>,
->(
+pub async fn bit_dec_batch<Z, P, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
     session: &mut Ses,
     prep: &mut P,
     inputs: SecretVec<ResiduePoly<Z>>,
@@ -417,7 +412,7 @@ where
     ResiduePoly<Z>: Solve,
     ResiduePoly<Z>: ErrorCorrect,
     Z: BitExtract,
-    P: Send,
+    P: TriplePreprocessing<ResiduePoly<Z>> + BitPreprocessing<ResiduePoly<Z>> + ?Sized + Send,
 {
     let batch_size = inputs.len();
 

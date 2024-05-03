@@ -184,7 +184,7 @@ impl BGVDkgPreprocessing for InMemoryBGVDkgPreprocessing {
 impl BasePreprocessing<LevelKsw> for InMemoryBGVDkgPreprocessing {}
 
 pub async fn bgv_distributed_keygen<
-    N: Clone + Const,
+    N,
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     P: BGVDkgPreprocessing,
@@ -195,7 +195,7 @@ pub async fn bgv_distributed_keygen<
     plaintext_mod: u64,
 ) -> anyhow::Result<(PublicKey<LevelEll, LevelKsw, N>, BGVShareSecretKey)>
 where
-    N: NTTConstants<LevelKsw>,
+    N: NTTConstants<LevelKsw> + Clone + Const,
     RqElement<LevelKsw, N>: Mul<RqElement<LevelKsw, N>, Output = RqElement<LevelKsw, N>>,
     for<'r> RqElement<LevelKsw, N>: Mul<&'r LevelKsw, Output = RqElement<LevelKsw, N>>,
 {

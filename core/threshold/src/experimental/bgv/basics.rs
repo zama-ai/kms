@@ -163,7 +163,7 @@ where
         .data
         .iter()
         .map(|p| {
-            assert!(p < &p_mod);
+            assert!(p < p_mod);
             p.0 as u16
         })
         .collect();

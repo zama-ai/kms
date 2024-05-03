@@ -15,6 +15,7 @@ pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) ->
     anyhow!("Warning in {}: {}", Location::caller(), msg)
 }
 
+#[cfg(feature = "non-wasm")]
 pub(crate) fn log_error_wrapper<S: AsRef<str> + fmt::Display>(msg: S) -> S {
     tracing::error!("Error in {}: {}", Location::caller(), msg);
     msg

@@ -4,7 +4,7 @@ use cosmwasm_std::{Response, StdResult};
 use cw_storage_plus::Map;
 use events::kms::{
     CrsGenResponseValues, DecryptResponseValues, DecryptValues, FheType, KeyGenResponseValues,
-    KeyGenValues, KmsOperationAttribute, ReencryptResponseValues, ReencryptValues,
+    KeyGenValues, KmsOperationAttribute, ReencryptResponseValues, ReencryptValues, TransactionId,
 };
 use events::kms::{CrsGenValues, KmsEvent};
 use sha2::Digest;
@@ -238,16 +238,22 @@ impl KmsContract {
         &self,
         ctx: ExecCtx,
         txn_id: Vec<u8>,
-        crs: Vec<u8>,
+        digest: String,
+        signature: Vec<u8>,
     ) -> StdResult<Response> {
         if !self.transactions.has(ctx.deps.storage, txn_id.clone()) {
             return Err(cosmwasm_std::StdError::verification_err(
                 VerificationError::GenericErr,
             ));
         }
+
         let event = KmsEvent::builder()
             .operation(KmsOperationAttribute::CrsGenResponse(
-                CrsGenResponseValues::builder().crs(crs).build(),
+                CrsGenResponseValues::builder()
+                    .request_id(TransactionId::from(txn_id.clone()).to_hex())
+                    .digest(digest)
+                    .signature(signature)
+                    .build(),
             ))
             .txn_id(txn_id.clone())
             .build();
@@ -272,6 +278,7 @@ mod tests {
     use events::kms::KmsOperationAttribute;
     use events::kms::ReencryptResponseValues;
     use events::kms::ReencryptValues;
+    use events::kms::TransactionId;
     use sha2::Digest;
     use sylvia::cw_multi_test::IntoAddr as _;
     use sylvia::multitest::App;
@@ -522,7 +529,7 @@ mod tests {
         assert_event(&response.events, &expected_event);
 
         let response = contract
-            .crs_gen_response(txn_id.clone(), vec![4, 5, 6])
+            .crs_gen_response(txn_id.clone(), "my digest".to_string(), vec![4, 5, 6])
             .call(&owner)
             .unwrap();
 
@@ -530,7 +537,11 @@ mod tests {
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperationAttribute::CrsGenResponse(
-                CrsGenResponseValues::builder().crs(vec![4, 5, 6]).build(),
+                CrsGenResponseValues::builder()
+                    .request_id(TransactionId::from(txn_id.clone()).to_hex())
+                    .digest("my digest".to_string())
+                    .signature(vec![4, 5, 6])
+                    .build(),
             ))
             .txn_id(txn_id.clone())
             .build();

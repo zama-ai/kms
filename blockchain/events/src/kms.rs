@@ -210,28 +210,61 @@ impl TryFrom<Vec<Attribute>> for ReencryptResponseValues {
 #[cw_serde]
 #[derive(Default, Eq, TypedBuilder)]
 pub struct CrsGenResponseValues {
-    crs: Vec<u8>,
+    /// The request ID of the CRS generation.
+    request_id: String,
+    /// The CRS digest, which can be used to derive the storage URL for the CRS.
+    digest: String,
+    /// The signature on the digest.
+    signature: Vec<u8>,
+}
+
+impl CrsGenResponseValues {
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+
+    pub fn signature(&self) -> &[u8] {
+        &self.signature
+    }
 }
 
 impl From<CrsGenResponseValues> for Vec<Attribute> {
     fn from(value: CrsGenResponseValues) -> Self {
-        vec![Attribute::new("crs".to_string(), hex::encode(value.crs))]
+        vec![
+            Attribute::new("request_id".to_string(), value.request_id),
+            Attribute::new("digest".to_string(), value.digest),
+            Attribute::new("signature".to_string(), hex::encode(value.signature)),
+        ]
     }
 }
 
 impl TryFrom<Vec<Attribute>> for CrsGenResponseValues {
     type Error = anyhow::Error;
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        let mut crs = None;
+        let mut request_id = None;
+        let mut digest = None;
+        let mut signature = None;
         for attribute in attributes {
             match attribute.key.as_str() {
-                "crs" => {
-                    crs = Some(hex::decode(attribute.value).unwrap());
+                "request_id" => {
+                    request_id = Some(attribute.value);
                 }
+                "digest" => {
+                    digest = Some(attribute.value);
+                }
+                "signature" => signature = Some(hex::decode(attribute.value).unwrap()),
                 _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
             }
         }
-        Ok(CrsGenResponseValues { crs: crs.unwrap() })
+        Ok(CrsGenResponseValues {
+            request_id: request_id.unwrap(),
+            digest: digest.unwrap(),
+            signature: signature.unwrap(),
+        })
     }
 }
 
@@ -507,8 +540,12 @@ mod tests {
 
     impl Arbitrary for CrsGenResponseValues {
         fn arbitrary(g: &mut Gen) -> CrsGenResponseValues {
+            // TODO consider constraining the arbitrary domain
+            // to only use request_id and digest of fixed length hex digits
             CrsGenResponseValues {
-                crs: Vec::<u8>::arbitrary(g),
+                request_id: String::arbitrary(g),
+                digest: String::arbitrary(g),
+                signature: Vec::<u8>::arbitrary(g),
             }
         }
     }
@@ -719,7 +756,11 @@ mod tests {
 
     #[test]
     fn test_crs_gen_response_event_to_json() {
-        let crs_gen_response_values = CrsGenResponseValues::builder().crs(vec![1, 2, 3]).build();
+        let crs_gen_response_values = CrsGenResponseValues::builder()
+            .request_id("abcdef".to_string())
+            .digest("123456".to_string())
+            .signature(vec![1, 2, 3])
+            .build();
         let operation = KmsEvent::builder()
             .operation(KmsOperationAttribute::CrsGenResponse(
                 crs_gen_response_values.clone(),
@@ -731,7 +772,9 @@ mod tests {
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
             "crs_gen_response": {
-                "crs": [1, 2, 3],
+                "request_id": "abcdef".to_string(),
+                "digest": "123456".to_string(),
+                "signature": vec![1, 2, 3],
                 "txn_id": vec![1]
             }
         });

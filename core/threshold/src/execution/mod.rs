@@ -11,13 +11,12 @@ pub mod runtime {
     #[cfg(any(test, feature = "testing"))]
     pub mod test_runtime;
 }
+
+#[cfg(feature = "non-wasm")]
 pub mod small_execution {
-    #[cfg(feature = "non-wasm")]
     pub mod agree_random;
-    #[cfg(feature = "non-wasm")]
     pub mod offline;
     pub mod prf;
-    #[cfg(feature = "non-wasm")]
     pub mod prss;
 }
 pub mod random;

@@ -180,9 +180,9 @@ impl FromStr for PublicKey {
     }
 }
 
-impl ToString for PublicKey {
-    fn to_string(&self) -> String {
-        self.to_json()
+impl std::fmt::Display for PublicKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_json())
     }
 }
 

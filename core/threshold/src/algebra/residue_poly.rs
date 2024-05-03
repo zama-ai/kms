@@ -10,6 +10,8 @@ use super::{
     syndrome::lagrange_numerators,
 };
 use crate::error::error_handler::anyhow_error_and_log;
+#[cfg(feature = "non-wasm")]
+use crate::execution::small_execution::prf::PRSSConversions;
 use crate::{algebra::structure_traits::Field, execution::sharing::shamir::ShamirFieldPoly};
 use crate::{
     algebra::{
@@ -19,7 +21,6 @@ use crate::{
     execution::{
         runtime::party::Role,
         sharing::{shamir::ShamirSharings, share::Share},
-        small_execution::prf::PRSSConversions,
     },
 };
 use itertools::Itertools;
@@ -959,6 +960,7 @@ impl Derive for ResiduePoly128 {
     }
 }
 
+#[cfg(feature = "non-wasm")]
 impl PRSSConversions for ResiduePoly128 {
     fn from_u128_chunks(coefs: Vec<u128>) -> Self {
         assert_eq!(coefs.len(), F_DEG);
@@ -1031,6 +1033,7 @@ impl Derive for ResiduePoly64 {
     }
 }
 
+#[cfg(feature = "non-wasm")]
 impl PRSSConversions for ResiduePoly64 {
     fn from_u128_chunks(coefs: Vec<u128>) -> Self {
         assert_eq!(coefs.len(), F_DEG / 2);

@@ -93,7 +93,7 @@ struct CrsMetaStore {
 /// Initialize a threshold KMS server using the DDec initialization protocol.
 /// This MUST be done before the server is started.
 #[allow(clippy::too_many_arguments)]
-pub async fn threshold_server_init<S: PublicStorage + Sync + Send>(
+pub async fn threshold_server_init<S: PublicStorage + Sync + Send + 'static>(
     url: String,
     base_port: u16,
     parties: usize,
@@ -1285,6 +1285,10 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
 
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         let req_inner = request.into_inner();
+        tracing::info!(
+            "Starting crs generation on kms for request ID {:?}",
+            req_inner.request_id
+        );
 
         let fhe_params = crate::rpc::central_rpc::retrieve_parameters(req_inner.params)
             .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?

@@ -41,8 +41,8 @@ pub fn create_kms_operation(
     kms_client: KmsCoordinator,
 ) -> anyhow::Result<KmsOperationRequest> {
     let operation_val = KmsOperationVal {
-        tx_id: event.txn_id.clone(),
         kms_client,
+        tx_id: event.txn_id.clone(),
     };
     let request = match event.operation {
         KmsOperationAttribute::Reencrypt(reencrypt) => {
@@ -72,4 +72,111 @@ pub trait Kms {
     async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse>;
 }
 
-pub trait KmsClient {}
+#[cfg(test)]
+mod test {
+    use events::kms::{CrsGenValues, KmsEvent, KmsOperationAttribute, TransactionId};
+    use kms_lib::{
+        client::test_tools,
+        consts::{
+            AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, TEST_PARAM_PATH,
+            TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
+        },
+        util::key_setup::{ensure_dir_exist, ensure_threshold_key_ct_exist},
+    };
+    use tokio::task::JoinSet;
+
+    use crate::{
+        conf::{ConnectorConfig, ContractFee, CoordinatorConfig},
+        domain::{
+            blockchain::KmsOperationResponse,
+            kms::{create_kms_operation, Kms},
+        },
+        infrastructure::coordinator::KmsCoordinator,
+    };
+
+    #[tokio::test]
+    async fn crs_sunshine() {
+        ensure_dir_exist();
+        let test_param_path = format!("../../coordinator/{}", TEST_PARAM_PATH);
+        ensure_threshold_key_ct_exist(
+            &test_param_path,
+            TEST_THRESHOLD_KEYS_PATH,
+            TEST_THRESHOLD_CT_PATH,
+        );
+        let coordinator_handles = test_tools::setup_threshold_no_client(
+            AMOUNT_PARTIES,
+            THRESHOLD as u8,
+            TEST_THRESHOLD_KEYS_PATH,
+        )
+        .await;
+
+        // create configs
+        let configs = (0..AMOUNT_PARTIES as u16)
+            .map(|i| {
+                let port = BASE_PORT + i + 1;
+                let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
+                ConnectorConfig {
+                    grpc_addresses: vec![],
+                    contract_address: "".to_string(),
+                    tick_interval_secs: 0,
+                    contract_fee: ContractFee {
+                        amount: 2,
+                        coin_denom: "2".to_string(),
+                    },
+                    storage_path: "".to_string(),
+                    tracing: None,
+                    coordinator_config: CoordinatorConfig {
+                        addresses: vec![url],
+                        n_parties: AMOUNT_PARTIES as u64,
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
+
+        // create the clients
+        let mut clients = vec![];
+        for config in configs {
+            clients.push(KmsCoordinator::new(config.clone()).await.unwrap());
+        }
+
+        // create events
+        let txn_id = TransactionId::from(vec![2u8; 20]);
+        let events = vec![
+            KmsEvent {
+                operation: KmsOperationAttribute::CrsGen(CrsGenValues {}),
+                txn_id: txn_id.clone(),
+            };
+            AMOUNT_PARTIES
+        ];
+
+        // each client will make the crs generation request
+        // but this needs to happen in parallel
+        let mut tasks = JoinSet::new();
+        for (event, client) in events.into_iter().zip(clients) {
+            let op = create_kms_operation(event, client).unwrap();
+            tasks.spawn(async move { op.run_operation().await });
+        }
+        let mut results = vec![];
+        while let Some(Ok(Ok(res))) = tasks.join_next().await {
+            results.push(res);
+        }
+
+        // check the responses
+        for result in results {
+            match result {
+                KmsOperationResponse::CrsGenResponse(resp) => {
+                    assert_eq!(resp.crs_gen_response.request_id(), txn_id.to_hex());
+                    assert_eq!(resp.crs_gen_response.digest().len(), 40);
+                    assert_eq!(resp.crs_gen_response.signature().len(), 72);
+                }
+                _ => {
+                    panic!("invalid response");
+                }
+            }
+        }
+
+        for (_, h) in coordinator_handles {
+            h.abort();
+        }
+    }
+}

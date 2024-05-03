@@ -54,12 +54,10 @@ impl BitwisePoly {
     /// a_{i,2} = 1 => add [0, 0, x^i_0, ..., x^i_7, ... 0] to res_coefs
     ///
     /// and so on...
-    pub fn lazy_eval<Z: Clone>(&self, powers: &Vec<ResiduePoly<Z>>) -> ResiduePoly<Z>
+    pub fn lazy_eval<Z>(&self, powers: &Vec<ResiduePoly<Z>>) -> ResiduePoly<Z>
     where
-        Z: Zero,
-        Z: for<'a> AddAssign<&'a Z>,
+        Z: Zero + for<'a> AddAssign<&'a Z> + Copy + Clone,
         ResiduePoly<Z>: LutMulReduction<Z>,
-        Z: Copy,
     {
         let mut res_coefs = [Z::ZERO; 2 * (F_DEG - 1) + 1];
         // now we go through each

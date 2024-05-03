@@ -9,6 +9,8 @@ edition = "2021"
 anyhow = "~1.0"
 async-trait = "~0.1"
 clap = { version = "~4", features = ["derive", "env"] }
+# TODO: ideally we'd like to use `default-features = false` but this has a lot of warnings, like wasm
+kms = { path = "../../coordinator" }
 config = "0.14.0"
 enum_dispatch = "0.3.12"
 events = { path = "../events", features = ["subscription"] }
