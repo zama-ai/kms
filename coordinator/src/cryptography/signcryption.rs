@@ -16,7 +16,9 @@ use super::der_types::{
 use crate::rpc::rpc_types::{RawDecryption, SigncryptionPayload};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use ::signature::{Signer, Verifier};
-use alloy_sol_types::{Eip712Domain, SolStruct};
+#[cfg(feature = "non-wasm")]
+use alloy_sol_types::Eip712Domain;
+use alloy_sol_types::SolStruct;
 use crypto_box::aead::{Aead, AeadCore};
 use crypto_box::{Nonce, SalsaBox, SecretKey};
 use k256::ecdsa::SigningKey;
@@ -69,6 +71,7 @@ pub fn sign_eip712<T: SolStruct>(
 /// Verify a plain signature.
 ///
 /// Returns true if the signature is ok and false otherwise.
+#[cfg(feature = "non-wasm")]
 pub(crate) fn internal_verify_sig<T>(
     payload: &T,
     sig: &Signature,
@@ -95,6 +98,7 @@ where
     true
 }
 
+#[cfg(feature = "non-wasm")]
 pub(crate) fn internal_verify_sig_eip712<T: SolStruct>(
     msg: &T,
     domain: &Eip712Domain,
@@ -320,6 +324,7 @@ where
 }
 
 /// Serialize an element and hash it using a cryptographic hash function.
+#[cfg(feature = "non-wasm")]
 pub(crate) fn serialize_hash_element<T>(msg: &T) -> anyhow::Result<Vec<u8>>
 where
     T: Serialize,

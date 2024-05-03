@@ -4,42 +4,23 @@ use crate::cryptography::der_types::{
     PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair,
     SigncryptionPrivKey, SigncryptionPubKey,
 };
-#[cfg(feature = "non-wasm")]
-use crate::cryptography::signcryption::serialize_hash_element;
 use crate::cryptography::signcryption::{
     decrypt_signcryption, encryption_key_generation, sign_eip712, RND_SIZE,
 };
-#[cfg(feature = "non-wasm")]
-use crate::cryptography::{central_kms::compute_handle, der_types::Signature};
-#[cfg(feature = "non-wasm")]
-use crate::kms::{
-    AggregatedDecryptionResponse, CrsGenRequest, CrsGenResult, DecryptionRequest,
-    DecryptionResponsePayload, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
-};
+use crate::kms::RequestId;
 use crate::kms::{
     AggregatedReencryptionResponse, FheType, ReencryptionRequest, ReencryptionRequestPayload,
     ReencryptionResponse,
 };
-use crate::kms::{ParamChoice, RequestId};
 use crate::rpc::rpc_types::{
     allow_to_protobuf_domain, protobuf_to_alloy_domain, MetaResponse, Plaintext,
     ReencryptionRequestSigPayload, CURRENT_FORMAT_VERSION,
 };
-#[cfg(feature = "non-wasm")]
-use crate::rpc::rpc_types::{
-    DecryptionRequestSerializable, DecryptionResponseSigPayload, PubDataType,
-};
-#[cfg(feature = "non-wasm")]
-use crate::{cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms};
-#[cfg(feature = "non-wasm")]
-use crate::{storage::PublicStorageReader, util::key_setup::FhePublicKey};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use distributed_decryption::execution::endpoints::reconstruct::combine128;
 use distributed_decryption::execution::sharing::shamir::reconstruct_w_errors_sync;
 use distributed_decryption::execution::sharing::shamir::{fill_indexed_shares, ShamirSharings};
-#[cfg(feature = "non-wasm")]
-use distributed_decryption::execution::zk::ceremony::PublicParameter;
 use distributed_decryption::execution::{
     endpoints::reconstruct::reconstruct_message, runtime::party::Role,
 };
@@ -52,14 +33,30 @@ use distributed_decryption::{
 };
 use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
-#[cfg(feature = "non-wasm")]
-use serde::de::DeserializeOwned;
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-#[cfg(feature = "non-wasm")]
-use tfhe::ServerKey;
 use wasm_bindgen::prelude::*;
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "non-wasm")] {
+        use tfhe::ServerKey;
+        use serde::de::DeserializeOwned;
+        use distributed_decryption::execution::zk::ceremony::PublicParameter;
+        use crate::rpc::rpc_types::{
+            DecryptionRequestSerializable, DecryptionResponseSigPayload, PubDataType,
+        };
+        use crate::{cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms};
+        use crate::{storage::PublicStorageReader, util::key_setup::FhePublicKey};
+        use crate::kms::{
+            AggregatedDecryptionResponse, CrsGenRequest, CrsGenResult, DecryptionRequest,
+            DecryptionResponsePayload, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
+        };
+        use crate::cryptography::{central_kms::compute_handle, der_types::Signature};
+        use crate::kms::ParamChoice;
+        use crate::cryptography::signcryption::serialize_hash_element;
+    }
+}
 
 fn some_or_err<T: fmt::Debug>(input: Option<T>, error: String) -> anyhow::Result<T> {
     input.ok_or_else(|| {
@@ -190,7 +187,8 @@ pub struct TestingReencryptionTranscript {
 /// ```
 /// node --test tests/js
 /// ```
-#[cfg(not(feature = "non-wasm"))]
+// Do not compile this module for grpc-client
+#[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]
 pub mod js_api {
     use crypto_box::{
         aead::{Aead, AeadCore},

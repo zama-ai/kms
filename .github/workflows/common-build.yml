@@ -101,7 +101,7 @@ jobs:
 
       - name: Build wasm with tests
         if: ${{ inputs.run-wasm }}
-        run: RUSTFLAGS="$RUSTFLAGS -A dead_code -A unused_imports" wasm-pack build --target nodejs . --no-default-features -F wasm_tests
+        run: wasm-pack build --target nodejs . --no-default-features -F wasm_tests
 
       - name: Install node
         if: ${{ inputs.run-wasm }}

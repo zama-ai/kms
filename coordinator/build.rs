@@ -2,7 +2,7 @@ const DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize)]";
 const EXTENDED_DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize, Hash, Eq)]";
 
 // Adding doc
-#[cfg(not(feature = "non-wasm"))]
+#[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::configure()
         .build_client(false)
@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(feature = "non-wasm")]
+#[cfg(any(feature = "non-wasm", feature = "grpc-client"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::configure()
         .type_attribute("ReencryptionRequest", DERIVES)

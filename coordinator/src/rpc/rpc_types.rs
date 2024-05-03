@@ -1,20 +1,26 @@
-use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
+use crate::anyhow_error_and_log;
 use crate::kms::{
     DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType,
     ReencryptionRequestPayload, ReencryptionResponse,
 };
-#[cfg(feature = "non-wasm")]
-use crate::util::key_setup::FhePrivateKey;
-use crate::{anyhow_error_and_log, cryptography::der_types::PrivateSigKey};
 use crate::{consts::ID_LENGTH, kms::RequestId};
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::{sol, Eip712Domain, SolStruct};
-use rand::{CryptoRng, RngCore};
+use alloy_sol_types::{sol, Eip712Domain};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_asn1_der::from_bytes;
 use std::fmt;
 use wasm_bindgen::prelude::wasm_bindgen;
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "non-wasm")] {
+        use crate::util::key_setup::FhePrivateKey;
+        use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
+        use crate::{cryptography::der_types::PrivateSigKey};
+        use alloy_sol_types::SolStruct;
+        use rand::{CryptoRng, RngCore};
+    }
+}
 
 pub static CURRENT_FORMAT_VERSION: u32 = 1;
 
@@ -154,6 +160,7 @@ pub(crate) struct RawDecryption {
     pub(crate) fhe_type: FheType,
 }
 
+#[cfg(feature = "non-wasm")]
 impl RawDecryption {
     pub(crate) fn new(bytes: Vec<u8>, fhe_type: FheType) -> Self {
         Self { bytes, fhe_type }
