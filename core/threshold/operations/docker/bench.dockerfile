@@ -1,6 +1,6 @@
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.76-slim-buster as base
+FROM rust:1.78-slim-buster as base
 
 ARG CONCRETE_ACTIONS_TOKEN
 

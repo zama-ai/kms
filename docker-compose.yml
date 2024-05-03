@@ -78,21 +78,17 @@ services:
     volumes:
       - validator-data:/root/.wasmd
 
-  kms-smart-contract-run:
+  kms-connector:
     build:
-      context: blockchain
-      dockerfile: contracts/Dockerfile
-    entrypoint: "/bin/sh"
-    command: >
-      -c "
-      sleep 5;
-      echo \"1234567890\" | wasmd tx wasm execute wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d '{\"increment_count\":{\"count_param\":2}}' --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 -y;"
+      context: .
+      dockerfile: blockchain/connector/operations/docker/local.dockerfile
+    command:
+      - "./connector"
     depends_on:
       kms-full-node:
         condition: service_healthy
     volumes:
       - validator-data:/root/.wasmd
-    profiles: ["contract"]
 
   smart-contract-explorer:
     build:
@@ -101,6 +97,7 @@ services:
       - "3000:3000"
     depends_on:
       - kms-full-node
+    profiles: ["ui"]
 
 volumes:
      validator-data:

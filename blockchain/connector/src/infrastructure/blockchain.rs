@@ -24,11 +24,11 @@ impl KmsBlockchain {
         metrics: OpenTelemetryMetrics,
     ) -> Result<Self, anyhow::Error> {
         let client: Client = ClientBuilder::builder()
-            .contract_address(&config.contract_address)
+            .contract_address(&config.contract)
             .grpc_addresses(config.grpc_addresses())
-            .coin_denom(&config.fee.coin_denom)
-            .mnemonic_wallet(config.mnemonic_wallet.as_deref())
-            .bip32_private_key(config.bip32_private_key.as_deref())
+            .coin_denom(&config.fee.denom)
+            .mnemonic_wallet(config.signkey.mnemonic.as_deref())
+            .bip32_private_key(config.signkey.bip32.as_deref())
             .build()
             .try_into()
             .map_err(|e| anyhow::anyhow!("Error creating blockchain client {:?}", e))?;

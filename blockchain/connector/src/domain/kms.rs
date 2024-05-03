@@ -117,7 +117,7 @@ mod test {
                 let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
                 CoordinatorConfig {
                     addresses: vec![url],
-                    n_parties: AMOUNT_PARTIES as u64,
+                    parties: AMOUNT_PARTIES as u64,
                 }
             })
             .collect::<Vec<_>>();

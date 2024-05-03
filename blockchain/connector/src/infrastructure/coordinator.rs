@@ -48,7 +48,7 @@ impl KmsCoordinator {
         );
         Ok(KmsCoordinator {
             channel,
-            n_parties: config.n_parties,
+            n_parties: config.parties,
             _metrics: Arc::new(metrics),
         })
     }

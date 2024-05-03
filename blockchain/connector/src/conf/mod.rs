@@ -45,16 +45,21 @@ pub enum Mode {
 #[derive(TypedBuilder, Deserialize, Serialize, Clone)]
 pub struct ContractFee {
     pub amount: u64,
-    pub coin_denom: String,
+    pub denom: String,
+}
+
+#[derive(TypedBuilder, Deserialize, Serialize, Clone)]
+pub struct SignKeyConfig {
+    pub mnemonic: Option<String>,
+    pub bip32: Option<String>,
 }
 
 #[derive(TypedBuilder, Deserialize, Serialize, Clone)]
 pub struct BlockchainConfig {
-    pub grpc_addresses: Vec<String>,
-    pub contract_address: String,
+    pub addresses: Vec<String>,
+    pub contract: String,
     pub fee: ContractFee,
-    pub mnemonic_wallet: Option<String>,
-    pub bip32_private_key: Option<String>,
+    pub signkey: SignKeyConfig,
 }
 
 #[derive(TypedBuilder, Deserialize, Serialize, Clone)]
@@ -68,14 +73,14 @@ pub struct ConnectorConfig {
 
 impl BlockchainConfig {
     pub fn grpc_addresses(&self) -> Vec<&str> {
-        self.grpc_addresses.iter().map(|s| s.as_str()).collect()
+        self.addresses.iter().map(|s| s.as_str()).collect()
     }
 }
 
 #[derive(TypedBuilder, Deserialize, Serialize, Clone)]
 pub struct CoordinatorConfig {
     pub addresses: Vec<String>,
-    pub n_parties: u64,
+    pub parties: u64,
 }
 
 impl CoordinatorConfig {
@@ -118,7 +123,8 @@ impl<'a> Settings<'a> {
             .add_source(
                 config::Environment::default()
                     .prefix("ASC_CONN")
-                    .separator("_"),
+                    .separator("_")
+                    .list_separator(","),
             )
             .build()?;
 
