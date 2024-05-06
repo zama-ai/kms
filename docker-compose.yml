@@ -29,12 +29,12 @@ services:
   fevm-light-node:
     image: cometbft/cometbft:v0.38.6
     ports:
-      - "8888:8888"
+      - "8880:8888"
     entrypoint: "/bin/bash"
     command: >
       -c "sleep 20;
       curl -s http://fevm-full-node:26657/commit | jq -r '.result.signed_header.commit.block_id.hash';
-      cometbft light ethermint_9000-1 -p http://fevm-full-node:26657 -w http://fevm-full-node:26657 --hash $(curl -s http://fevm-full-node:26657/commit | jq -r '.result.signed_header.commit.block_id.hash') --height $(curl -s http://fevm-full-node:26657/commit | jq -r '.result.signed_header.header.height') --laddr tcp://0.0.0.0:8888 --sequential";
+      cometbft light ethermint_9000-1 -p http://fevm-full-node:26657 -w http://fevm-full-node:26657 --hash $(curl -s http://fevm-full-node:26657/commit | jq -r '.result.signed_header.commit.block_id.hash') --height $(curl -s http://fevm-full-node:26657/commit | jq -r '.result.signed_header.header.height') --laddr tcp://0.0.0.0:8880 --sequential";
     depends_on:
       - fevm-full-node
 
@@ -83,12 +83,30 @@ services:
       context: .
       dockerfile: blockchain/connector/operations/docker/local.dockerfile
     command:
-      - "./kms-blockchain-connector"
+      - "kms-blockchain-connector"
     depends_on:
       kms-full-node:
         condition: service_healthy
     volumes:
       - validator-data:/root/.wasmd
+    environment:
+      - RUN_MODE=dev
+      - NO_COLOR=true
+      - ASC_CONN_TRACING_SERVICE_NAME=kms-connector
+      - ASC_CONN_TRACING_ENDPOINT=http://otel-collector:4317
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib
+    volumes:
+      - ./config/local/otel-config.yaml:/etc/otelcol-contrib/config.yaml
+    ports:
+      - 1888:1888 # pprof extension
+      - 8888:8888 # Prometheus metrics exposed by the Collector
+      - 8889:8889 # Prometheus exporter metrics
+      - 13133:13133 # health_check extension
+      - 4317:4317 # OTLP gRPC receiver
+      - 4318:4318 # OTLP http receiver
+      - 55679:55679 # zpages extension
 
   smart-contract-explorer:
     build:

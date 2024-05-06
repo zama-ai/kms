@@ -39,4 +39,3 @@ ENV PATH="$PATH:/app/kms-connector/bin"
 COPY --from=base /app/kms-connector/blockchain/connector/bin/ /app/kms-connector/bin/
 COPY ./blockchain/connector/config/default.toml /app/kms-connector/config/default.toml
 
-ENTRYPOINT ["/bin/bash"]
