@@ -83,7 +83,7 @@ services:
       context: .
       dockerfile: blockchain/connector/operations/docker/local.dockerfile
     command:
-      - "./connector"
+      - "./kms-blockchain-connector"
     depends_on:
       kms-full-node:
         condition: service_healthy

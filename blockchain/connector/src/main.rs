@@ -1,7 +1,7 @@
 use clap::Parser;
-use connector::application::sync_handler::SyncHandler;
-use connector::conf::telemetry::init_tracing;
-use connector::conf::{ConnectorConfig, Settings};
+use kms_blockchain_connector::application::sync_handler::SyncHandler;
+use kms_blockchain_connector::conf::telemetry::init_tracing;
+use kms_blockchain_connector::conf::{ConnectorConfig, Settings};
 
 #[derive(Parser, Debug)]
 #[clap(name = "kms-asc-connector")]

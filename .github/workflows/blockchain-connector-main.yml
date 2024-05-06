@@ -1,0 +1,49 @@
+name: "[Blockchain-Connector-Merge Main] Pipeline Run"
+
+on:
+  push:
+    branches: ['main']
+    paths:
+      - 'blockchain/connector/**'
+      - '.github/workflows/blockchain-connector-main.yml'
+
+
+jobs:
+  build:
+    uses: ./.github/workflows/common-build.yml
+    with:
+      working-directory: './blockchain/connector'
+      args-tests-fhe: ''
+    permissions:
+      contents: 'write'
+      id-token: 'write'
+      pages: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
+  docker:
+    uses: ./.github/workflows/common-docker.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
+    with:
+      working-directory: "./blockchain/connector"
+      push_image: true
+      image-name: 'kms-blockchain-connector'
+    needs:
+      - build
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
+
+  done:
+    runs-on: ubuntu-latest
+    name: Pipeline Done
+    steps:
+      - name: Success
+        run: echo Pipeline Done
+    needs:
+      - build
+      - docker
+

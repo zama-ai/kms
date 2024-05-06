@@ -1,11 +1,11 @@
-name: '[Blockchain-PR] Pipeline Run'
+name: '[Blockchain-Smart-Contracts-Merge Main] Pipeline Run'
 
 on:
-  pull_request:
-    branches: ['*']
+  push:
+    branches: ['main']
     paths:
-      - 'blockchain/**'
-      - '.github/workflows/blockchain-pr.yml'
+      - 'blockchain/contracts/**'
+      - '.github/workflows/blockchain-smart-contracts-main.yml'
 
 jobs:
   build-smart-contracts:
@@ -37,11 +37,15 @@ jobs:
     permissions:
       contents: 'read'
       id-token: 'write'
+      packages: 'write'
     with:
       working-directory: './blockchain/contracts'
       docker-context: './blockchain'
-      push_image: false
+      push_image: true
       image-name: 'kms-smart-contract-deploy'
+    needs:
+        - build-smart-contracts
+        - optimize-smart-contracts
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
