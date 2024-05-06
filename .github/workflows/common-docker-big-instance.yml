@@ -54,19 +54,17 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       label: ${{ steps.start-ec2-runner.outputs.label }}
-      ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
     steps:
       - name: Start EC2 runner
         id: start-ec2-runner
-        uses: zama-ai/slab-github-runner@f3a88ba3074b9cbf77857f6c4d8849c3b01b5ff9
+        uses: zama-ai/slab-github-runner@1dced74825027fe3d481392163ed8fc56813fb5d
         with:
           mode: start
           github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          region: eu-west-3
-          ec2-image-id:	ami-006a9a76dbf4d880c
-          ec2-instance-type: c6i.8xlarge
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
+          backend: aws
+          profile: docker-big-instance
 
   run-docker:
     needs: start-runner
@@ -92,13 +90,12 @@ jobs:
     if: ${{ always() }} # required to stop the runner even if the error happened in the previous jobs
     steps:
       - name: Stop EC2 runner
-        uses: zama-ai/slab-github-runner@f3a88ba3074b9cbf77857f6c4d8849c3b01b5ff9
+        uses: zama-ai/slab-github-runner@1dced74825027fe3d481392163ed8fc56813fb5d
         with:
           mode: stop
           github-token: ${{ secrets.SLAB_ACTION_TOKEN }}
-          region: eu-west-3
-          label: ${{ needs.start-runner.outputs.label }}
           slab-url: ${{ secrets.SLAB_BASE_URL }}
           job-secret: ${{ secrets.JOB_SECRET }}
+          label: ${{ needs.start-runner.outputs.label }}
 
 

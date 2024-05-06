@@ -1,0 +1,9 @@
+[backend.aws.big-instance]
+region = "eu-west-3"
+image_id = "ami-006a9a76dbf4d880c"
+instance_type = "m6i.4xlarge"
+
+[backend.aws.docker-big-instance]
+region = "eu-west-3"
+image_id = "ami-006a9a76dbf4d880c"
+instance_type = "c6i.8xlarge"
