@@ -42,19 +42,19 @@ pub enum Mode {
     Test,
 }
 
-#[derive(TypedBuilder, Deserialize, Serialize, Clone)]
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
 pub struct ContractFee {
     pub amount: u64,
     pub denom: String,
 }
 
-#[derive(TypedBuilder, Deserialize, Serialize, Clone)]
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
 pub struct SignKeyConfig {
     pub mnemonic: Option<String>,
     pub bip32: Option<String>,
 }
 
-#[derive(TypedBuilder, Deserialize, Serialize, Clone)]
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
 pub struct BlockchainConfig {
     pub addresses: Vec<String>,
     pub contract: String,
@@ -62,7 +62,7 @@ pub struct BlockchainConfig {
     pub signkey: SignKeyConfig,
 }
 
-#[derive(TypedBuilder, Deserialize, Serialize, Clone)]
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
 pub struct ConnectorConfig {
     pub tick_interval_secs: u64,
     pub storage_path: String,
@@ -77,7 +77,7 @@ impl BlockchainConfig {
     }
 }
 
-#[derive(TypedBuilder, Deserialize, Serialize, Clone)]
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
 pub struct CoordinatorConfig {
     pub addresses: Vec<String>,
     pub parties: u64,

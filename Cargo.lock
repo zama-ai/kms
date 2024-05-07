@@ -3855,6 +3855,8 @@ dependencies = [
  "serial_test",
  "strum",
  "strum_macros",
+ "test-context",
+ "test-utilities",
  "tokio",
  "tonic 0.11.0",
  "tracing",
@@ -7024,6 +7026,10 @@ dependencies = [
  "quote",
  "syn 2.0.60",
 ]
+
+[[package]]
+name = "test-utilities"
+version = "0.1.0"
 
 [[package]]
 name = "tfhe"
