@@ -148,29 +148,81 @@ impl TryFrom<Vec<Attribute>> for DecryptResponseValues {
 
 #[cw_serde]
 #[derive(Default, Eq, TypedBuilder)]
+pub struct KeyGenPreprocResponseValues {
+    // NOTE: there's no actual response except an "ok"
+}
+
+impl From<KeyGenPreprocResponseValues> for Vec<Attribute> {
+    fn from(_value: KeyGenPreprocResponseValues) -> Self {
+        vec![]
+    }
+}
+
+#[cw_serde]
+#[derive(Default, Eq, TypedBuilder)]
 pub struct KeyGenResponseValues {
-    key: Vec<u8>,
+    request_id: String,
+    public_key_digest: String,
+    public_key_signature: Vec<u8>,
+    // server key is bootstrap key
+    server_key_digest: String,
+    server_key_signature: Vec<u8>,
+    // we do not need SnS key
 }
 
 impl From<KeyGenResponseValues> for Vec<Attribute> {
     fn from(value: KeyGenResponseValues) -> Self {
-        vec![Attribute::new("key".to_string(), hex::encode(value.key))]
+        vec![
+            Attribute::new("request_id".to_string(), value.request_id),
+            Attribute::new("public_key_digest".to_string(), value.public_key_digest),
+            Attribute::new(
+                "public_key_signature".to_string(),
+                hex::encode(value.public_key_signature),
+            ),
+            Attribute::new("server_key_digest".to_string(), value.server_key_digest),
+            Attribute::new(
+                "server_key_signature".to_string(),
+                hex::encode(value.server_key_signature),
+            ),
+        ]
     }
 }
 
 impl TryFrom<Vec<Attribute>> for KeyGenResponseValues {
     type Error = anyhow::Error;
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        let mut key = None;
+        let mut request_id = None;
+        let mut public_key_digest = None;
+        let mut public_key_signature = None;
+        let mut server_key_digest = None;
+        let mut server_key_signature = None;
         for attribute in attributes {
             match attribute.key.as_str() {
-                "key" => {
-                    key = Some(hex::decode(attribute.value).unwrap());
+                "request_id" => {
+                    request_id = Some(attribute.value);
+                }
+                "public_key_digest" => {
+                    public_key_digest = Some(attribute.value);
+                }
+                "public_key_signature" => {
+                    public_key_signature = Some(hex::decode(attribute.value).unwrap());
+                }
+                "server_key_digest" => {
+                    server_key_digest = Some(attribute.value);
+                }
+                "server_key_signature" => {
+                    server_key_signature = Some(hex::decode(attribute.value).unwrap());
                 }
                 _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
             }
         }
-        Ok(KeyGenResponseValues { key: key.unwrap() })
+        Ok(KeyGenResponseValues {
+            request_id: request_id.unwrap(),
+            public_key_digest: public_key_digest.unwrap(),
+            public_key_signature: public_key_signature.unwrap(),
+            server_key_digest: server_key_digest.unwrap(),
+            server_key_signature: server_key_signature.unwrap(),
+        })
     }
 }
 
@@ -270,18 +322,56 @@ impl TryFrom<Vec<Attribute>> for CrsGenResponseValues {
 
 #[cw_serde]
 #[derive(Eq, Default)]
-pub struct KeyGenValues {}
+pub struct KeyGenPreprocValues {}
+
+impl From<KeyGenPreprocValues> for Vec<Attribute> {
+    fn from(_value: KeyGenPreprocValues) -> Self {
+        vec![]
+    }
+}
+
+impl TryFrom<Vec<Attribute>> for KeyGenPreprocValues {
+    type Error = anyhow::Error;
+    fn try_from(_attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
+        Ok(KeyGenPreprocValues {})
+    }
+}
+
+#[cw_serde]
+#[derive(Eq, Default, TypedBuilder)]
+pub struct KeyGenValues {
+    /// Hex-encoded preprocessing ID.
+    /// This ID refers to the request ID of a preprocessing request.
+    preproc_id: String,
+}
+
+impl KeyGenValues {
+    pub fn preproc_id(&self) -> &str {
+        &self.preproc_id
+    }
+}
 
 impl From<KeyGenValues> for Vec<Attribute> {
-    fn from(_value: KeyGenValues) -> Self {
-        vec![]
+    fn from(value: KeyGenValues) -> Self {
+        vec![Attribute::new("preproc_id".to_string(), value.preproc_id)]
     }
 }
 
 impl TryFrom<Vec<Attribute>> for KeyGenValues {
     type Error = anyhow::Error;
-    fn try_from(_attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        Ok(KeyGenValues {})
+    fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
+        let mut preproc_id = None;
+        for attribute in attributes {
+            match attribute.key.as_str() {
+                "preproc_id" => {
+                    preproc_id = Some(attribute.value);
+                }
+                _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
+            }
+        }
+        Ok(KeyGenValues {
+            preproc_id: preproc_id.unwrap(),
+        })
     }
 }
 
@@ -313,6 +403,12 @@ pub enum KmsOperationAttribute {
     Reencrypt(ReencryptValues),
     #[strum(serialize = "reencrypt_response", props(response = "true"))]
     ReencryptResponse(ReencryptResponseValues),
+    #[strum(serialize = "keygen_preproc", props(request = "true"))]
+    #[serde(rename = "keygen_preproc")]
+    KeyGenPreproc(KeyGenPreprocValues),
+    #[strum(serialize = "keygen_preproc_response", props(response = "true"))]
+    #[serde(rename = "keygen_preproc_response")]
+    KeyGenPreprocResponse(KeyGenPreprocResponseValues),
     #[strum(serialize = "keygen", props(request = "true"))]
     #[serde(rename = "keygen")]
     KeyGen(KeyGenValues),
@@ -350,6 +446,12 @@ impl From<KmsOperationAttribute> for Vec<Attribute> {
             }
             KmsOperationAttribute::ReencryptResponse(values) => {
                 <ReencryptResponseValues as Into<Vec<Attribute>>>::into(values)
+            }
+            KmsOperationAttribute::KeyGenPreproc(values) => {
+                <KeyGenPreprocValues as Into<Vec<Attribute>>>::into(values)
+            }
+            KmsOperationAttribute::KeyGenPreprocResponse(values) => {
+                <KeyGenPreprocResponseValues as Into<Vec<Attribute>>>::into(values)
             }
             KmsOperationAttribute::KeyGen(values) => {
                 <KeyGenValues as Into<Vec<Attribute>>>::into(values)
@@ -525,7 +627,11 @@ mod tests {
     impl Arbitrary for KeyGenResponseValues {
         fn arbitrary(g: &mut Gen) -> KeyGenResponseValues {
             KeyGenResponseValues {
-                key: Vec::<u8>::arbitrary(g),
+                request_id: String::arbitrary(g),
+                public_key_digest: String::arbitrary(g),
+                public_key_signature: Vec::<u8>::arbitrary(g),
+                server_key_digest: String::arbitrary(g),
+                server_key_signature: Vec::<u8>::arbitrary(g),
             }
         }
     }
@@ -721,7 +827,13 @@ mod tests {
 
     #[test]
     fn test_keygen_response_event_to_json() {
-        let keygen_response_values = KeyGenResponseValues::builder().key(vec![1, 2, 3]).build();
+        let keygen_response_values = KeyGenResponseValues::builder()
+            .request_id("xyz".to_string())
+            .public_key_digest("abc".to_string())
+            .public_key_signature(vec![1, 2, 3])
+            .server_key_digest("def".to_string())
+            .server_key_signature(vec![4, 5, 6])
+            .build();
         let operation = KmsEvent::builder()
             .operation(KmsOperationAttribute::KeyGenResponse(
                 keygen_response_values.clone(),
@@ -733,7 +845,11 @@ mod tests {
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
             "keygen_response": {
-                "key": [1, 2, 3],
+                "request_id": "xyz",
+                "public_key_digest": "abc",
+                "public_key_signature": [1, 2, 3],
+                "server_key_digest": "def",
+                "server_key_signature": [4, 5, 6],
                 "txn_id": vec![1]
             }
         });

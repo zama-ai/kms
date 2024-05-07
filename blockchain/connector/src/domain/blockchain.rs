@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use events::kms::{
-    CrsGenResponseValues, DecryptResponseValues, KeyGenResponseValues, KmsEvent,
-    KmsOperationAttribute, ReencryptResponseValues, TransactionId,
+    CrsGenResponseValues, DecryptResponseValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
+    KmsEvent, KmsOperationAttribute, ReencryptResponseValues, TransactionId,
 };
 use strum_macros::{Display, EnumString};
 
@@ -23,6 +23,12 @@ pub struct ReencryptResponseVal {
 }
 
 #[derive(Default, PartialEq, Eq)]
+pub struct KeyGenPreprocResponseVal {
+    pub keygen_preproc_response: KeyGenPreprocResponseValues,
+    pub operation_val: BlockchainOperationVal,
+}
+
+#[derive(Default, PartialEq, Eq)]
 pub struct KeyGenResponseVal {
     pub keygen_response: KeyGenResponseValues,
     pub operation_val: BlockchainOperationVal,
@@ -38,6 +44,7 @@ pub struct CrsGenResponseVal {
 pub enum KmsOperationResponse {
     DecryptResponse(DecryptResponseVal),
     ReencryptResponse(ReencryptResponseVal),
+    KeyGenPreprocResponse(KeyGenPreprocResponseVal),
     KeyGenResponse(KeyGenResponseVal),
     CrsGenResponse(CrsGenResponseVal),
 }
@@ -47,6 +54,7 @@ impl KmsOperationResponse {
         match self {
             KmsOperationResponse::DecryptResponse(val) => &val.operation_val.tx_id,
             KmsOperationResponse::ReencryptResponse(val) => &val.operation_val.tx_id,
+            KmsOperationResponse::KeyGenPreprocResponse(val) => &val.operation_val.tx_id,
             KmsOperationResponse::KeyGenResponse(val) => &val.operation_val.tx_id,
             KmsOperationResponse::CrsGenResponse(val) => &val.operation_val.tx_id,
         }
@@ -67,6 +75,12 @@ impl From<KmsOperationResponse> for KmsEvent {
             KmsOperationResponse::ReencryptResponse(val) => KmsEvent::builder()
                 .operation(KmsOperationAttribute::ReencryptResponse(
                     val.reencrypt_response,
+                ))
+                .txn_id(val.operation_val.tx_id)
+                .build(),
+            KmsOperationResponse::KeyGenPreprocResponse(val) => KmsEvent::builder()
+                .operation(KmsOperationAttribute::KeyGenPreprocResponse(
+                    KeyGenPreprocResponseValues {},
                 ))
                 .txn_id(val.operation_val.tx_id)
                 .build(),

@@ -1,19 +1,27 @@
 use super::metrics::OpenTelemetryMetrics;
 use crate::domain::blockchain::{
-    BlockchainOperationVal, DecryptResponseVal, KeyGenResponseVal, KmsOperationResponse,
-    ReencryptResponseVal,
+    BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse, ReencryptResponseVal,
 };
-use crate::domain::kms::{CrsGenVal, DecryptVal, KeyGenVal, Kms, ReencryptVal};
+use crate::domain::kms::{CrsGenVal, DecryptVal, KeyGenPreprocVal, KeyGenVal, Kms, ReencryptVal};
+use crate::infrastructure::metrics::{MetricType, Metrics};
 use anyhow::anyhow;
 use async_trait::async_trait;
-use events::kms::{DecryptResponseValues, KeyGenResponseValues, ReencryptResponseValues};
+use events::kms::{
+    DecryptResponseValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
+    ReencryptResponseValues,
+};
 use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
-use kms_lib::kms::RequestId;
-use kms_lib::kms::{Config, CrsGenRequest, ParamChoice};
+use kms_lib::kms::{
+    Config, CrsGenRequest, CrsGenResult, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
+    KeyGenResult, ParamChoice,
+};
+use kms_lib::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
+use kms_lib::rpc::rpc_types::PubDataType;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tonic::transport::{Channel, Endpoint};
+use tonic::{Response, Status};
 use typed_builder::TypedBuilder;
 
 const MAX_CRS_GEN_DURATION_PER_PARTY_SECS: u64 = 60;
@@ -22,8 +30,9 @@ const MAX_CRS_GEN_DURATION_PER_PARTY_SECS: u64 = 60;
 pub struct KmsCoordinator {
     channel: Channel,
     n_parties: u64,
-    _metrics: Arc<OpenTelemetryMetrics>,
+    metrics: Arc<OpenTelemetryMetrics>,
 }
+
 impl KmsCoordinator {
     pub(crate) async fn new(
         config: crate::conf::CoordinatorConfig,
@@ -36,7 +45,8 @@ impl KmsCoordinator {
             .iter()
             .map(|endpoint| Endpoint::new(endpoint.to_string()))
             .collect::<Result<Vec<Endpoint>, _>>()
-            .map_err(|e| anyhow::anyhow!("Error connecting to blockchain {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Error connecting to coordinator {:?}", e))?;
+
         // TODO should we have a configurable timeout?
         let endpoints = endpoints
             .into_iter()
@@ -49,9 +59,59 @@ impl KmsCoordinator {
         Ok(KmsCoordinator {
             channel,
             n_parties: config.parties,
-            _metrics: Arc::new(metrics),
+            metrics: Arc::new(metrics),
         })
     }
+}
+
+enum PollerStatus<T> {
+    Done(T),
+    Poll,
+}
+
+/// This is a macro that helps us simplify polling code.
+macro_rules! poller {
+    ($f_to_poll:expr,$res_map:expr,$retry_interval:expr,$total_duration:expr,$info:expr,$metrics:expr) => {
+        let mut cnt = 0u64;
+        loop {
+            sleep(Duration::from_secs($retry_interval)).await;
+            let resp = $f_to_poll.await;
+            match $res_map(resp) {
+                Ok(PollerStatus::Done(res)) => {
+                    $metrics.increment(MetricType::CoordinatorResponseSuccess, 1, &[("ok", "ok")]);
+                    return Ok(res);
+                }
+                Ok(PollerStatus::Poll) => {
+                    if cnt > $total_duration {
+                        let err_msg = "time out while trying to get response";
+                        $metrics.increment(
+                            MetricType::CoordinatorResponseError,
+                            1,
+                            &[("error", err_msg)],
+                        );
+                        return Err(anyhow!(err_msg));
+                    } else {
+                        cnt += 1;
+                        tracing::info!(
+                            "Polling coordinator {}, tries: {cnt}, interval: {}, max duration: {}",
+                            $info,
+                            $retry_interval,
+                            $total_duration
+                        );
+                    }
+                }
+                Err(e) => {
+                    let err_msg = format!("error while trying to get response {e}");
+                    $metrics.increment(
+                        MetricType::CoordinatorResponseError,
+                        1,
+                        &[("error", &err_msg)],
+                    );
+                    return Err(anyhow!(err_msg));
+                }
+            }
+        }
+    };
 }
 
 #[async_trait]
@@ -90,16 +150,183 @@ impl Kms for ReencryptVal {
 }
 
 #[async_trait]
-impl Kms for KeyGenVal {
+impl Kms for KeyGenPreprocVal {
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
-        Ok(KmsOperationResponse::KeyGenResponse(KeyGenResponseVal {
-            keygen_response: KeyGenResponseValues::builder()
-                .key([9; 10].to_vec())
-                .build(),
-            operation_val: BlockchainOperationVal {
-                tx_id: self.operation_val.tx_id.clone(),
-            },
-        }))
+        let chan = &self.operation_val.kms_client.channel;
+        let mut client = CoordinatorEndpointClient::new(chan.clone());
+
+        let req_id = RequestId {
+            request_id: self.operation_val.tx_id.to_hex(),
+        };
+        let req = KeyGenPreprocRequest {
+            config: Some(Config {}),
+            params: ParamChoice::Test.into(), // TODO load from blockchain
+            request_id: Some(req_id.clone()),
+        };
+
+        let metrics = self.operation_val.kms_client.metrics.clone();
+
+        // the response should be empty
+        let _resp = client
+            .key_gen_preproc(tonic::Request::new(req.clone()))
+            .await
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                tracing::error!(err_msg);
+                metrics.increment(MetricType::CoordinatorError, 1, &[("error", &err_msg)]);
+                e
+            })?;
+        metrics.increment(
+            MetricType::CoordinatorSuccess,
+            1,
+            &[("ok", "KeyGenPreproc")],
+        );
+
+        let g =
+            |res: Result<Response<KeyGenPreprocStatus>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
+            match res {
+                Ok(res) => {
+                    let inner = res.into_inner().result;
+                    let status = KeyGenPreprocStatusEnum::try_from(inner)?;
+                    match status {
+                        KeyGenPreprocStatusEnum::Finished => {
+                            Ok(PollerStatus::Done(KmsOperationResponse::KeyGenPreprocResponse(
+                                crate::domain::blockchain::KeyGenPreprocResponseVal {
+                                    keygen_preproc_response: KeyGenPreprocResponseValues {},
+                                    operation_val: crate::domain::blockchain::BlockchainOperationVal {
+                                        tx_id: self.operation_val.tx_id.clone(),
+                                    },
+                                },
+                            )))
+                        }
+                        KeyGenPreprocStatusEnum::InProgress => {
+                            Ok(PollerStatus::Poll)
+                        }
+                        other => {
+                            Err(anyhow!("error while getting status: {}", other.as_str_name()))
+                        }
+                    }
+                }
+                Err(e) => {
+                    Err(anyhow!(e.to_string()))
+                }
+            }
+        };
+
+        // TODO: these timeouts are for testing,
+        // these need to be configured correctly for production!
+
+        // preprocessing is slow, so we wait for a bit before even trying
+        const INITIAL_WAITING_TIME: u64 = 30;
+        tokio::time::sleep(Duration::from_secs(INITIAL_WAITING_TIME)).await;
+
+        // NOTE: we can't use the poller macro to help us poll the result since
+        // the preproc endpoint is a bit different,
+        // it returns Ok(status), instead of an error
+        const RETRY_INTERVAL: u64 = 10;
+        const MAX_DUR: u64 = 600;
+
+        // loop to get response
+        poller!(
+            client.get_preproc_status(tonic::Request::new(req.clone())),
+            g,
+            RETRY_INTERVAL,
+            MAX_DUR,
+            "(KeyGenPreproc)",
+            metrics
+        );
+    }
+}
+
+#[async_trait]
+impl Kms for KeyGenVal {
+    #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
+    async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
+        let chan = &self.operation_val.kms_client.channel;
+        let mut client = CoordinatorEndpointClient::new(chan.clone());
+
+        let req_id = RequestId {
+            request_id: self.operation_val.tx_id.to_hex(),
+        };
+
+        let preproc_id = RequestId {
+            request_id: self.keygen.preproc_id().to_string(),
+        };
+        let req = KeyGenRequest {
+            config: Some(Config {}),
+            // TODO load params from blockchain, timeout needs to be adjusted for this
+            params: ParamChoice::Test.into(),
+            preproc_id: Some(preproc_id),
+            request_id: Some(req_id.clone()),
+        };
+
+        let metrics = self.operation_val.kms_client.metrics.clone();
+
+        // the response should be empty
+        let _resp = client
+            .key_gen(tonic::Request::new(req))
+            .await
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                tracing::error!(err_msg);
+                metrics.increment(MetricType::CoordinatorError, 1, &[("error", &err_msg)]);
+                e
+            })?;
+        metrics.increment(MetricType::CoordinatorSuccess, 1, &[("ok", "KeyGen")]);
+
+        let g =
+            |res: Result<Response<KeyGenResult>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
+                match res {
+                    Ok(response) => {
+                        let inner = response.into_inner();
+                        let request_id = inner.request_id.ok_or(anyhow!("empty request_id"))?;
+                        let pk_info = inner
+                            .key_results
+                            .get(&PubDataType::PublicKey.to_string())
+                            .ok_or(anyhow!("empty public key info"))?;
+                        let ek_info = inner
+                            .key_results
+                            .get(&PubDataType::ServerKey.to_string())
+                            .ok_or(anyhow!("empty evaluation key info"))?;
+                        Ok(PollerStatus::Done(KmsOperationResponse::KeyGenResponse(
+                            crate::domain::blockchain::KeyGenResponseVal {
+                                keygen_response: KeyGenResponseValues::builder()
+                                    .request_id(request_id.request_id)
+                                    .public_key_digest(pk_info.key_handle.clone())
+                                    .public_key_signature(pk_info.signature.clone())
+                                    .server_key_digest(ek_info.key_handle.clone())
+                                    .server_key_signature(ek_info.signature.clone())
+                                    .build(),
+                                operation_val: crate::domain::blockchain::BlockchainOperationVal {
+                                    tx_id: self.operation_val.tx_id.clone(),
+                                },
+                            },
+                        )))
+                    }
+                    // we ignore all errors and just poll
+                    Err(_) => Ok(PollerStatus::Poll),
+                }
+            };
+
+        // TODO: these timeouts are for testing,
+        // these need to be configured correctly for production!
+
+        // keygen is slow, so we wait for a bit before even trying
+        const INITIAL_WAITING_TIME: u64 = 30;
+        tokio::time::sleep(Duration::from_secs(INITIAL_WAITING_TIME)).await;
+
+        const RETRY_INTERVAL: u64 = 10;
+        const MAX_DUR: u64 = 600;
+        // loop to get response
+        poller!(
+            client.get_key_gen_result(tonic::Request::new(req_id.clone())),
+            g,
+            RETRY_INTERVAL,
+            MAX_DUR,
+            "(KeyGen)",
+            metrics
+        );
     }
 }
 
@@ -115,53 +342,59 @@ impl Kms for CrsGenVal {
         };
         let req = CrsGenRequest {
             config: Some(Config {}),
-            params: ParamChoice::Test.into(), // TODO load from blockchain
+            // TODO load params from blockchain, timeout needs to be adjusted for this
+            params: ParamChoice::Test.into(),
             request_id: Some(req_id.clone()),
         };
+
+        let metrics = self.operation_val.kms_client.metrics.clone();
+
         // the response should be empty
-        let _resp = client.crs_gen(tonic::Request::new(req)).await?;
+        let _resp = client
+            .crs_gen(tonic::Request::new(req))
+            .await
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                tracing::error!(err_msg);
+                metrics.increment(MetricType::CoordinatorError, 1, &[("error", &err_msg)]);
+                e
+            })?;
+        metrics.increment(MetricType::CoordinatorSuccess, 1, &[("ok", "CRS")]);
+
+        let g =
+            |res: Result<Response<CrsGenResult>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
+                match res {
+                    Ok(response) => {
+                        let inner = response.into_inner();
+                        let request_id = inner.request_id.ok_or(anyhow!("empty request_id"))?;
+                        let crs_results = inner.crs_results.ok_or(anyhow!("empty crs result"))?;
+                        Ok(PollerStatus::Done(KmsOperationResponse::CrsGenResponse(
+                            crate::domain::blockchain::CrsGenResponseVal {
+                                crs_gen_response: events::kms::CrsGenResponseValues::builder()
+                                    .request_id(request_id.request_id)
+                                    .digest(crs_results.key_handle)
+                                    .signature(crs_results.signature)
+                                    .build(),
+                                operation_val: crate::domain::blockchain::BlockchainOperationVal {
+                                    tx_id: self.operation_val.tx_id.clone(),
+                                },
+                            },
+                        )))
+                    }
+                    Err(_) => Ok(PollerStatus::Poll),
+                }
+            };
 
         // loop to get response
         const RETRY_INTERVAL: u64 = 10;
-        let mut cnt = 0u64;
-        loop {
-            sleep(Duration::from_secs(RETRY_INTERVAL)).await;
-            let resp = client
-                .get_crs_gen_result(tonic::Request::new(req_id.clone()))
-                .await;
-            match resp {
-                Ok(res) => {
-                    let inner = res.into_inner();
-                    let request_id = inner.request_id.ok_or(anyhow!("empty request_id"))?;
-                    let crs_results = inner.crs_results.ok_or(anyhow!("empty crs result"))?;
-                    return Ok(KmsOperationResponse::CrsGenResponse(
-                        crate::domain::blockchain::CrsGenResponseVal {
-                            crs_gen_response: events::kms::CrsGenResponseValues::builder()
-                                .request_id(request_id.request_id)
-                                .digest(crs_results.key_handle)
-                                .signature(crs_results.signature)
-                                .build(),
-                            operation_val: crate::domain::blockchain::BlockchainOperationVal {
-                                tx_id: self.operation_val.tx_id.clone(),
-                            },
-                        },
-                    ));
-                }
-                Err(_) => {
-                    let max_dur = MAX_CRS_GEN_DURATION_PER_PARTY_SECS
-                        * self.operation_val.kms_client.n_parties;
-                    if cnt > max_dur {
-                        // NOTE: CRS generation time is proportional to the number of parties
-                        // so we need to multiply the max timeout by the number of parties
-                        return Err(anyhow!("time out while trying to get response"));
-                    } else {
-                        cnt += 1;
-                        tracing::info!(
-                            "Retrying get CRS response, tries: {cnt}, interval: {RETRY_INTERVAL}, max duration: {max_dur}"
-                        );
-                    }
-                }
-            }
-        }
+        let max_dur = MAX_CRS_GEN_DURATION_PER_PARTY_SECS * self.operation_val.kms_client.n_parties;
+        poller!(
+            client.get_crs_gen_result(tonic::Request::new(req_id.clone())),
+            g,
+            RETRY_INTERVAL,
+            max_dur,
+            "(CRS)",
+            metrics
+        );
     }
 }

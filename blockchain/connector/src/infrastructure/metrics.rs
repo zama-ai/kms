@@ -12,6 +12,10 @@ pub enum MetricType {
     TxError,
     BlockchainSuccess,
     BlockchainError,
+    CoordinatorSuccess,
+    CoordinatorError,
+    CoordinatorResponseSuccess,
+    CoordinatorResponseError,
 }
 
 #[derive(Clone)]
@@ -46,6 +50,26 @@ impl OpenTelemetryMetrics {
                 "Count the number of transactions responses submitted to blockchain that succeeded",
             )
             .init();
+        let coordinator_success = meter
+            .u64_observable_counter("coordinator_success")
+            .with_description("Count the number of successful coordinator requests")
+            .init();
+        let coordinator_error = meter
+            .u64_observable_counter("coordinator_error")
+            .with_description("Count the number of failed coordinator requests")
+            .init();
+        let coordinator_response_success = meter
+            .u64_observable_counter("coordinator_response_success")
+            .with_description(
+                "Count the number of successful coordinator responses (not including polling)",
+            )
+            .init();
+        let coordinator_response_error = meter
+            .u64_observable_counter("coordinator_error")
+            .with_description(
+                "Count the number of failed coordinator responses (not including polling)",
+            )
+            .init();
         let counters = vec![
             (MetricType::TxProcessed, connector_txs_processed),
             (MetricType::TxError, connector_txs_error),
@@ -56,6 +80,16 @@ impl OpenTelemetryMetrics {
             (
                 MetricType::BlockchainError,
                 blockchain_submit_response_error,
+            ),
+            (MetricType::CoordinatorSuccess, coordinator_success),
+            (MetricType::CoordinatorError, coordinator_error),
+            (
+                MetricType::CoordinatorResponseSuccess,
+                coordinator_response_success,
+            ),
+            (
+                MetricType::CoordinatorResponseError,
+                coordinator_response_error,
             ),
         ]
         .into_iter()

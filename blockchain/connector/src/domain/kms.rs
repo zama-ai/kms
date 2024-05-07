@@ -1,7 +1,9 @@
 use crate::infrastructure::coordinator::KmsCoordinator;
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
-use events::kms::{DecryptValues, KmsEvent, KmsOperationAttribute, ReencryptValues, TransactionId};
+use events::kms::{
+    DecryptValues, KeyGenValues, KmsEvent, KmsOperationAttribute, ReencryptValues, TransactionId,
+};
 
 use super::blockchain::KmsOperationResponse;
 
@@ -20,7 +22,12 @@ pub struct ReencryptVal {
     pub operation_val: KmsOperationVal,
 }
 
+pub struct KeyGenPreprocVal {
+    pub operation_val: KmsOperationVal,
+}
+
 pub struct KeyGenVal {
+    pub keygen: KeyGenValues,
     pub operation_val: KmsOperationVal,
 }
 
@@ -32,6 +39,7 @@ pub struct CrsGenVal {
 pub enum KmsOperationRequest {
     Reencrypt(ReencryptVal),
     Decrypt(DecryptVal),
+    KeyGenPreproc(KeyGenPreprocVal),
     KeyGen(KeyGenVal),
     CrsGen(CrsGenVal),
 }
@@ -55,9 +63,13 @@ pub fn create_kms_operation(
             decrypt,
             operation_val,
         }),
-        KmsOperationAttribute::KeyGen(_) => {
-            KmsOperationRequest::KeyGen(KeyGenVal { operation_val })
+        KmsOperationAttribute::KeyGenPreproc(_keygen_preproc) => {
+            KmsOperationRequest::KeyGenPreproc(KeyGenPreprocVal { operation_val })
         }
+        KmsOperationAttribute::KeyGen(keygen) => KmsOperationRequest::KeyGen(KeyGenVal {
+            keygen,
+            operation_val,
+        }),
         KmsOperationAttribute::CrsGen(_) => {
             KmsOperationRequest::CrsGen(CrsGenVal { operation_val })
         }
@@ -74,7 +86,9 @@ pub trait Kms {
 
 #[cfg(test)]
 mod test {
-    use events::kms::{CrsGenValues, KmsEvent, KmsOperationAttribute, TransactionId};
+    use events::kms::{
+        CrsGenValues, KeyGenPreprocValues, KmsEvent, KmsOperationAttribute, TransactionId,
+    };
     use kms_lib::{
         client::test_tools,
         consts::{
@@ -94,8 +108,9 @@ mod test {
         infrastructure::{coordinator::KmsCoordinator, metrics::OpenTelemetryMetrics},
     };
 
-    #[tokio::test]
-    async fn crs_sunshine() {
+    async fn generic_sunshine_test(
+        op: KmsOperationAttribute,
+    ) -> (Vec<KmsOperationResponse>, TransactionId) {
         ensure_dir_exist();
         let test_param_path = format!("../../coordinator/{}", TEST_PARAM_PATH);
         ensure_threshold_key_ct_exist(
@@ -136,7 +151,7 @@ mod test {
         let txn_id = TransactionId::from(vec![2u8; 20]);
         let events = vec![
             KmsEvent {
-                operation: KmsOperationAttribute::CrsGen(CrsGenValues {}),
+                operation: op,
                 txn_id: txn_id.clone(),
             };
             AMOUNT_PARTIES
@@ -154,7 +169,37 @@ mod test {
             results.push(res);
         }
 
-        // check the responses
+        for (_, h) in coordinator_handles {
+            h.abort();
+        }
+
+        (results, txn_id)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
+    async fn preproc_sunshine() {
+        let op = KmsOperationAttribute::KeyGenPreproc(KeyGenPreprocValues {});
+        let (results, txn_id) = generic_sunshine_test(op).await;
+
+        for result in results {
+            match result {
+                KmsOperationResponse::KeyGenPreprocResponse(resp) => {
+                    assert_eq!(resp.operation_val.tx_id, txn_id);
+                }
+                _ => {
+                    panic!("invalid response");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn crs_sunshine() {
+        let op = KmsOperationAttribute::CrsGen(CrsGenValues {});
+        let (results, txn_id) = generic_sunshine_test(op).await;
+
         for result in results {
             match result {
                 KmsOperationResponse::CrsGenResponse(resp) => {
@@ -166,10 +211,6 @@ mod test {
                     panic!("invalid response");
                 }
             }
-        }
-
-        for (_, h) in coordinator_handles {
-            h.abort();
         }
     }
 }

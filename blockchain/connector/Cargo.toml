@@ -37,3 +37,4 @@ typed-builder = "0.18.1"
 
 [dev-dependencies]
 kms = { path = "../../coordinator" }
+serial_test = "3.1.1"

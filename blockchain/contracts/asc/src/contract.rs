@@ -3,8 +3,9 @@ use cosmwasm_std::{Attribute, VerificationError};
 use cosmwasm_std::{Response, StdResult};
 use cw_storage_plus::Map;
 use events::kms::{
-    CrsGenResponseValues, DecryptResponseValues, DecryptValues, FheType, KeyGenResponseValues,
-    KeyGenValues, KmsOperationAttribute, ReencryptResponseValues, ReencryptValues, TransactionId,
+    CrsGenResponseValues, DecryptResponseValues, DecryptValues, FheType,
+    KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
+    KmsOperationAttribute, ReencryptResponseValues, ReencryptValues, TransactionId,
 };
 use events::kms::{CrsGenValues, KmsEvent};
 use sha2::Digest;
@@ -137,10 +138,45 @@ impl KmsContract {
     }
 
     #[sv::msg(exec)]
-    pub fn keygen(&self, ctx: ExecCtx) -> StdResult<Response> {
+    pub fn keygen_preproc(&self, ctx: ExecCtx) -> StdResult<Response> {
         let txn_id = self.derive_transaction_id(&ctx);
         let event = KmsEvent::builder()
-            .operation(KmsOperationAttribute::KeyGen(KeyGenValues::default()))
+            .operation(KmsOperationAttribute::KeyGenPreproc(KeyGenPreprocValues {}))
+            .txn_id(txn_id.clone())
+            .build();
+        let response = Response::new().add_event(event.into());
+        self.transactions
+            .save(ctx.deps.storage, txn_id.clone(), &txn_id)?;
+        Ok(response)
+    }
+
+    #[sv::msg(exec)]
+    pub fn keygen_preproc_response(&self, ctx: ExecCtx, txn_id: Vec<u8>) -> StdResult<Response> {
+        if !self.transactions.has(ctx.deps.storage, txn_id.clone()) {
+            return Err(cosmwasm_std::StdError::verification_err(
+                VerificationError::GenericErr,
+            ));
+        }
+        let event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::KeyGenPreprocResponse(
+                KeyGenPreprocResponseValues {},
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+        let response = Response::new().add_event(event.into());
+        self.transactions.remove(ctx.deps.storage, txn_id);
+        Ok(response)
+    }
+
+    #[sv::msg(exec)]
+    pub fn keygen(&self, ctx: ExecCtx, preproc_id: Vec<u8>) -> StdResult<Response> {
+        let txn_id = self.derive_transaction_id(&ctx);
+        let event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::KeyGen(
+                KeyGenValues::builder()
+                    .preproc_id(TransactionId::from(preproc_id).to_hex())
+                    .build(),
+            ))
             .txn_id(txn_id.clone())
             .build();
         let response = Response::new().add_event(event.into());
@@ -154,7 +190,10 @@ impl KmsContract {
         &self,
         ctx: ExecCtx,
         txn_id: Vec<u8>,
-        key: Vec<u8>,
+        public_key_digest: String,
+        public_key_signature: Vec<u8>,
+        server_key_digest: String,
+        server_key_signature: Vec<u8>,
     ) -> StdResult<Response> {
         if !self.transactions.has(ctx.deps.storage, txn_id.clone()) {
             return Err(cosmwasm_std::StdError::verification_err(
@@ -163,7 +202,13 @@ impl KmsContract {
         }
         let event = KmsEvent::builder()
             .operation(KmsOperationAttribute::KeyGenResponse(
-                KeyGenResponseValues::builder().key(key).build(),
+                KeyGenResponseValues::builder()
+                    .request_id(TransactionId::from(txn_id.clone()).to_hex())
+                    .public_key_digest(public_key_digest)
+                    .public_key_signature(public_key_signature)
+                    .server_key_digest(server_key_digest)
+                    .server_key_signature(server_key_signature)
+                    .build(),
             ))
             .txn_id(txn_id.clone())
             .build();
@@ -272,6 +317,8 @@ mod tests {
     use events::kms::DecryptResponseValues;
     use events::kms::DecryptValues;
     use events::kms::FheType;
+    use events::kms::KeyGenPreprocResponseValues;
+    use events::kms::KeyGenPreprocValues;
     use events::kms::KeyGenResponseValues;
     use events::kms::KeyGenValues;
     use events::kms::KmsEvent;
@@ -415,6 +462,45 @@ mod tests {
     }
 
     #[test]
+    fn test_preproc() {
+        let app = App::default();
+        let code_id = CodeId::store_code(&app);
+
+        let owner = "owner".into_addr();
+
+        let contract = code_id
+            .instantiate("name".to_owned(), "kc1212".to_owned())
+            .call(&owner)
+            .unwrap();
+
+        let response = contract.keygen_preproc().call(&owner).unwrap();
+        let txn_id = expected_transaction_id(12345, 0);
+        assert_eq!(response.events.len(), 2);
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::KeyGenPreproc(KeyGenPreprocValues {}))
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
+
+        let response = contract
+            .keygen_preproc_response(txn_id.clone())
+            .call(&owner)
+            .unwrap();
+        assert_eq!(response.events.len(), 2);
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperationAttribute::KeyGenPreprocResponse(
+                KeyGenPreprocResponseValues {},
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
+    }
+
+    #[test]
     fn test_keygen() {
         let app = App::default();
         let code_id = CodeId::store_code(&app);
@@ -426,27 +512,44 @@ mod tests {
             .call(&owner)
             .unwrap();
 
-        let response = contract.keygen().call(&owner).unwrap();
+        let preproc_id = vec![2, 2, 2];
+        let response = contract.keygen(preproc_id.clone()).call(&owner).unwrap();
         println!("response: {:#?}", response);
         let txn_id = expected_transaction_id(12345, 0);
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
-            .operation(KmsOperationAttribute::KeyGen(KeyGenValues::default()))
+            .operation(KmsOperationAttribute::KeyGen(
+                KeyGenValues::builder()
+                    .preproc_id(TransactionId::from(preproc_id).to_hex())
+                    .build(),
+            ))
             .txn_id(txn_id.clone())
             .build();
 
         assert_event(&response.events, &expected_event);
 
         let response = contract
-            .keygen_response(txn_id.clone(), vec![4, 5, 6])
+            .keygen_response(
+                txn_id.clone(),
+                "digest1".to_string(),
+                vec![4, 5, 6],
+                "digest2".to_string(),
+                vec![7, 8, 9],
+            )
             .call(&owner)
             .unwrap();
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperationAttribute::KeyGenResponse(
-                KeyGenResponseValues::builder().key(vec![4, 5, 6]).build(),
+                KeyGenResponseValues::builder()
+                    .request_id(TransactionId::from(txn_id.clone()).to_hex())
+                    .public_key_digest("digest1".to_string())
+                    .public_key_signature(vec![4, 5, 6])
+                    .server_key_digest("digest2".to_string())
+                    .server_key_signature(vec![7, 8, 9])
+                    .build(),
             ))
             .txn_id(txn_id.clone())
             .build();

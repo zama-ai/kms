@@ -2432,6 +2432,7 @@ pub(crate) mod tests {
             &kms_clients,
         )
         .await;
+
         //This request is not ok because the ParamChoice is not the same as the initial preproc request
         let req_status_nok_params = internal_client
             .preproc_request(&request_id, Some(ParamChoice::Default))

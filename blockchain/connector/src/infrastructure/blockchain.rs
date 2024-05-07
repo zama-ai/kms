@@ -15,6 +15,7 @@ use super::metrics::OpenTelemetryMetrics;
 pub struct KmsBlockchain {
     client: Arc<Mutex<Client>>,
     config: BlockchainConfig,
+    // TODO should this be std::sync::Arc or the one from tokio?
     metrics: Arc<OpenTelemetryMetrics>,
 }
 
