@@ -1291,7 +1291,12 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
         );
 
         let fhe_params = crate::rpc::central_rpc::retrieve_parameters(req_inner.params)
-            .map_err(|e| tonic::Status::new(tonic::Code::NotFound, e.to_string()))?
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::NotFound,
+                    format!("Can not retrieve fhe parameters with error {e}"),
+                )
+            })?
             .ciphertext_parameters;
         let witness_dim = tonic_handle_potential_err(
             compute_witness_dim(&fhe_params),

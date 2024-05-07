@@ -302,7 +302,7 @@ impl Kms for KeyGenPreprocVal {
         // these need to be configured correctly for production!
 
         // preprocessing is slow, so we wait for a bit before even trying
-        const INITIAL_WAITING_TIME: u64 = 30;
+        const INITIAL_WAITING_TIME: u64 = 1;
         tokio::time::sleep(Duration::from_secs(INITIAL_WAITING_TIME)).await;
 
         // NOTE: we can't use the poller macro to help us poll the result since
@@ -397,7 +397,7 @@ impl Kms for KeyGenVal {
         // these need to be configured correctly for production!
 
         // keygen is slow, so we wait for a bit before even trying
-        const INITIAL_WAITING_TIME: u64 = 30;
+        const INITIAL_WAITING_TIME: u64 = 1;
         tokio::time::sleep(Duration::from_secs(INITIAL_WAITING_TIME)).await;
 
         const RETRY_INTERVAL: u64 = 10;
@@ -494,6 +494,7 @@ mod test {
             AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, TEST_PARAM_PATH,
             TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
         },
+        threshold::mock_threshold_kms::setup_mock_kms,
         util::key_setup::{ensure_dir_exist, ensure_threshold_key_ct_exist},
     };
     use tokio::task::JoinSet;
@@ -507,21 +508,25 @@ mod test {
     use super::Kms as _;
 
     async fn generic_sunshine_test(
+        slow: bool,
         op: KmsOperationAttribute,
     ) -> (Vec<KmsOperationResponse>, TransactionId) {
-        ensure_dir_exist();
-        let test_param_path = format!("../../coordinator/{}", TEST_PARAM_PATH);
-        ensure_threshold_key_ct_exist(
-            &test_param_path,
-            TEST_THRESHOLD_KEYS_PATH,
-            TEST_THRESHOLD_CT_PATH,
-        );
-        let coordinator_handles = test_tools::setup_threshold_no_client(
-            AMOUNT_PARTIES,
-            THRESHOLD as u8,
-            TEST_THRESHOLD_KEYS_PATH,
-        )
-        .await;
+        let coordinator_handles = if slow {
+            ensure_dir_exist();
+            ensure_threshold_key_ct_exist(
+                TEST_PARAM_PATH,
+                TEST_THRESHOLD_KEYS_PATH,
+                TEST_THRESHOLD_CT_PATH,
+            );
+            test_tools::setup_threshold_no_client(
+                AMOUNT_PARTIES,
+                THRESHOLD as u8,
+                TEST_THRESHOLD_KEYS_PATH,
+            )
+            .await
+        } else {
+            setup_mock_kms(AMOUNT_PARTIES).await
+        };
 
         // create configs
         let configs = (0..AMOUNT_PARTIES as u16)
@@ -557,6 +562,7 @@ mod test {
 
         // each client will make the crs generation request
         // but this needs to happen in parallel
+        assert_eq!(events.len(), clients.len());
         let mut tasks = JoinSet::new();
         for (event, client) in events.into_iter().zip(clients) {
             let op = client.create_kms_operation(event).unwrap();
@@ -566,6 +572,7 @@ mod test {
         while let Some(Ok(Ok(res))) = tasks.join_next().await {
             results.push(res);
         }
+        assert_eq!(results.len(), AMOUNT_PARTIES);
 
         for (_, h) in coordinator_handles {
             h.abort();
@@ -574,11 +581,10 @@ mod test {
         (results, txn_id)
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    #[serial_test::serial]
-    async fn preproc_sunshine() {
+    async fn preproc_sunshine(slow: bool) {
         let op = KmsOperationAttribute::KeyGenPreproc(KeyGenPreprocValues {});
-        let (results, txn_id) = generic_sunshine_test(op).await;
+        let (results, txn_id) = generic_sunshine_test(slow, op).await;
+        assert_eq!(results.len(), AMOUNT_PARTIES);
 
         for result in results {
             match result {
@@ -592,23 +598,69 @@ mod test {
         }
     }
 
-    #[tokio::test]
-    #[serial_test::serial]
-    async fn crs_sunshine() {
+    async fn crs_sunshine(slow: bool) {
         let op = KmsOperationAttribute::CrsGen(CrsGenValues {});
-        let (results, txn_id) = generic_sunshine_test(op).await;
+        let (results, txn_id) = generic_sunshine_test(slow, op).await;
+        assert_eq!(results.len(), AMOUNT_PARTIES);
 
+        // we stop testing the response logic in "fast" mode, which uses a dummy kms
+        if !slow {
+            return;
+        }
+
+        // the digests should all be the same but the signatures are all different
+        let mut digest = None;
+        let mut signature = None;
         for result in results {
             match result {
                 KmsOperationResponse::CrsGenResponse(resp) => {
                     assert_eq!(resp.crs_gen_response.request_id(), txn_id.to_hex());
                     assert_eq!(resp.crs_gen_response.digest().len(), 40);
+                    if digest.is_some() {
+                        assert_eq!(digest.clone().unwrap(), resp.crs_gen_response.digest());
+                    } else {
+                        digest = Some(resp.crs_gen_response.digest().to_string());
+                    }
                     assert_eq!(resp.crs_gen_response.signature().len(), 72);
+                    if signature.is_some() {
+                        assert_ne!(
+                            signature.clone().unwrap(),
+                            resp.crs_gen_response.signature()
+                        );
+                    } else {
+                        signature = Some(resp.crs_gen_response.signature().to_vec());
+                    }
                 }
                 _ => {
                     panic!("invalid response");
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn preproc_sunshine_mocked_coordinator() {
+        preproc_sunshine(false).await
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn crs_sunshine_mocked_coordinator() {
+        crs_sunshine(false).await
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
+    async fn preproc_sunshine_slow() {
+        preproc_sunshine(true).await
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn crs_sunshine_slow() {
+        crs_sunshine(true).await
     }
 }

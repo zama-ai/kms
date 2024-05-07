@@ -40,6 +40,7 @@ pub mod cryptography {
 }
 #[cfg(feature = "non-wasm")]
 pub mod threshold {
+    pub mod mock_threshold_kms;
     pub mod threshold_kms;
 }
 #[cfg(feature = "non-wasm")]

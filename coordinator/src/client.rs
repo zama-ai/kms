@@ -1302,11 +1302,14 @@ pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
 pub mod test_tools {
     use super::*;
     use crate::consts::{BASE_PORT, DEFAULT_PROT, DEFAULT_URL};
+    use crate::cryptography::central_kms::{CrsHashMap, SoftwareKmsKeys};
     use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
+    use crate::rpc::central_rpc::server_handle;
     use crate::storage::DevStorage;
     use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
-    use crate::util::file_handling::read_element_async;
-    use crate::util::key_setup::ThresholdTestingKeys;
+    use crate::util::file_handling::{read_element, read_element_async};
+    use crate::util::key_setup::{CentralizedTestingKeys, CrsHandleStore, ThresholdTestingKeys};
+    use std::net::SocketAddr;
     use std::str::FromStr;
     use tokio::task::JoinHandle;
     use tonic::transport::{Channel, Uri};
@@ -1388,62 +1391,11 @@ pub mod test_tools {
         tracing::info!("Client connected to servers");
         (server_handles, client_handles)
     }
-}
 
-#[cfg(test)]
-pub(crate) mod tests {
-    use super::Client;
-    #[cfg(feature = "wasm_tests")]
-    use crate::client::TestingReencryptionTranscript;
-    use crate::consts::{
-        AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, KEY_PATH_PREFIX,
-        TEST_CENTRAL_CRS_PATH, TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_CRS_ID,
-        TEST_DEC_ID, TEST_FHE_TYPE, TEST_MSG, TEST_PARAM_PATH, TEST_REENC_ID,
-        TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
-    };
-    #[cfg(feature = "slow_tests")]
-    use crate::consts::{
-        DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH,
-        DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
-    };
-    #[cfg(feature = "wasm_tests")]
-    use crate::consts::{TEST_CENTRAL_WASM_TRANSCRIPT_PATH, TEST_THRESHOLD_WASM_TRANSCRIPT_PATH};
-    use crate::cryptography::central_kms::{
-        compute_handle, BaseKmsStruct, CrsHashMap, SoftwareKmsKeys,
-    };
-    use crate::cryptography::der_types::Signature;
-    use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
-    #[cfg(feature = "slow_tests")]
-    use crate::kms::CrsGenResult;
-    use crate::kms::RequestId;
-    use crate::kms::{
-        AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType, ParamChoice,
-    };
-    use crate::rpc::central_rpc::server_handle;
-    use crate::rpc::rpc_types::BaseKms;
-    use crate::storage::PublicStorageReader;
-    #[cfg(feature = "wasm_tests")]
-    use crate::util::file_handling::write_element;
-    use crate::util::file_handling::{read_as_json, read_element, read_element_async};
-    use crate::util::key_setup::{CentralizedTestingKeys, ThresholdTestingKeys};
-    use crate::util::key_setup::{CrsHandleStore, FhePublicKey};
-    use crate::{client::num_blocks, rpc::rpc_types::PubDataType};
-    use crate::{kms::Empty, storage::DevStorage};
-    use alloy_sol_types::Eip712Domain;
-    use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
-    use distributed_decryption::execution::zk::ceremony::PublicParameter;
-    use serial_test::serial;
-    use std::collections::{HashMap, HashSet};
-    use std::net::SocketAddr;
-    use std::str::FromStr;
-    use std::{env, fs};
-    use tokio::task::{JoinHandle, JoinSet};
-    use tonic::transport::{Channel, Uri};
-
-    async fn setup(
+    async fn setup_no_client(
         kms_keys: SoftwareKmsKeys,
         crs_store: Option<CrsHashMap>,
-    ) -> (JoinHandle<()>, CoordinatorEndpointClient<Channel>) {
+    ) -> JoinHandle<()> {
         let server_handle = tokio::spawn(async move {
             let url = format!("{DEFAULT_URL}:{}", BASE_PORT + 1);
             let add = SocketAddr::from_str(url.as_str()).unwrap();
@@ -1451,6 +1403,14 @@ pub(crate) mod tests {
         });
         // We have to wait for the server to start since it will keep running in the background
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        server_handle
+    }
+
+    pub(crate) async fn setup(
+        kms_keys: SoftwareKmsKeys,
+        crs_store: Option<CrsHashMap>,
+    ) -> (JoinHandle<()>, CoordinatorEndpointClient<Channel>) {
+        let server_handle = setup_no_client(kms_keys, crs_store).await;
         let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
         let uri = Uri::from_str(&url).unwrap();
         let channel = Channel::builder(uri).connect().await.unwrap();
@@ -1461,7 +1421,7 @@ pub(crate) mod tests {
     /// Read the centralized keys for testing from `centralized_key_path` and construct a KMS
     /// server, client end-point connection (which is needed to communicate with the server) and
     /// an internal client (for constructing requests and validating responses).
-    async fn centralized_handles(
+    pub async fn centralized_handles(
         centralized_key_path: &str,
         centralized_crs_path: Option<&str>,
     ) -> (JoinHandle<()>, CoordinatorEndpointClient<Channel>, Client) {
@@ -1482,6 +1442,51 @@ pub(crate) mod tests {
         );
         (kms_server, kms_client, internal_client)
     }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::Client;
+    #[cfg(feature = "wasm_tests")]
+    use crate::client::TestingReencryptionTranscript;
+    use crate::consts::{
+        AMOUNT_PARTIES, KEY_PATH_PREFIX, TEST_CENTRAL_CRS_PATH, TEST_CENTRAL_CT_PATH,
+        TEST_CENTRAL_KEYS_PATH, TEST_CRS_ID, TEST_DEC_ID, TEST_FHE_TYPE, TEST_MSG, TEST_PARAM_PATH,
+        TEST_REENC_ID, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
+    };
+    #[cfg(feature = "slow_tests")]
+    use crate::consts::{
+        DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH,
+        DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
+    };
+    #[cfg(feature = "wasm_tests")]
+    use crate::consts::{TEST_CENTRAL_WASM_TRANSCRIPT_PATH, TEST_THRESHOLD_WASM_TRANSCRIPT_PATH};
+    use crate::cryptography::central_kms::{compute_handle, BaseKmsStruct};
+    use crate::cryptography::der_types::Signature;
+    use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
+    #[cfg(feature = "slow_tests")]
+    use crate::kms::CrsGenResult;
+    use crate::kms::RequestId;
+    use crate::kms::{
+        AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType, ParamChoice,
+    };
+    use crate::rpc::rpc_types::BaseKms;
+    use crate::storage::PublicStorageReader;
+    #[cfg(feature = "wasm_tests")]
+    use crate::util::file_handling::write_element;
+    use crate::util::file_handling::{read_as_json, read_element, read_element_async};
+    use crate::util::key_setup::FhePublicKey;
+    use crate::util::key_setup::ThresholdTestingKeys;
+    use crate::{client::num_blocks, rpc::rpc_types::PubDataType};
+    use crate::{kms::Empty, storage::DevStorage};
+    use alloy_sol_types::Eip712Domain;
+    use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+    use distributed_decryption::execution::zk::ceremony::PublicParameter;
+    use serial_test::serial;
+    use std::collections::{HashMap, HashSet};
+    use std::{env, fs};
+    use tokio::task::{JoinHandle, JoinSet};
+    use tonic::transport::Channel;
 
     /// Reads the testing keys for the threshold servers and starts them up, and returns a hash map
     /// of the servers, based on their ID, which starts from 1. A smiliar map is also returned
@@ -1537,7 +1542,7 @@ pub(crate) mod tests {
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
-            centralized_handles(centralized_key_path, None).await;
+            super::test_tools::centralized_handles(centralized_key_path, None).await;
         // Remove exisiting keys to make the test idempotent
         let storage = DevStorage::default();
         let _ = fs::remove_dir_all(storage.root_dir());
@@ -1616,8 +1621,11 @@ pub(crate) mod tests {
         request_id: &RequestId,
         params: Option<ParamChoice>,
     ) {
-        let (kms_server, mut kms_client, internal_client) =
-            centralized_handles(centralized_key_path, Some(centralized_crs_path)).await;
+        let (kms_server, mut kms_client, internal_client) = super::test_tools::centralized_handles(
+            centralized_key_path,
+            Some(centralized_crs_path),
+        )
+        .await;
 
         let ceremony_req = internal_client.crs_gen_request(request_id, params).unwrap();
 
@@ -1694,8 +1702,11 @@ pub(crate) mod tests {
         request_id: &RequestId,
         params: Option<ParamChoice>,
     ) {
-        let (kms_server, mut kms_client, internal_client) =
-            centralized_handles(centralized_key_path, Some(centralized_crs_path)).await;
+        let (kms_server, mut kms_client, internal_client) = super::test_tools::centralized_handles(
+            centralized_key_path,
+            Some(centralized_crs_path),
+        )
+        .await;
 
         let storage = DevStorage::default();
         let _ = fs::remove_dir_all(storage.root_dir());
@@ -1977,7 +1988,7 @@ pub(crate) mod tests {
         // TODO refactor with setup and teardown setting up servers that can be used to run tests in
         // parallel
         let (kms_server, mut kms_client, mut internal_client) =
-            centralized_handles(centralized_key_path, None).await;
+            super::test_tools::centralized_handles(centralized_key_path, None).await;
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
 
         let req = internal_client
@@ -2050,7 +2061,7 @@ pub(crate) mod tests {
         _ = write_transcript;
 
         let (kms_server, mut kms_client, mut internal_client) =
-            centralized_handles(centralized_key_path, None).await;
+            super::test_tools::centralized_handles(centralized_key_path, None).await;
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
         let request_id = &TEST_REENC_ID;
         let (req, enc_pk, enc_sk) = internal_client
@@ -2284,8 +2295,10 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_largecipher() {
-        let keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH).unwrap();
-        let (kms_server, mut kms_client) = setup(keys.software_kms_keys, None).await;
+        let keys: crate::util::key_setup::CentralizedTestingKeys =
+            read_element(DEFAULT_CENTRAL_KEYS_PATH).unwrap();
+        let (kms_server, mut kms_client) =
+            super::test_tools::setup(keys.software_kms_keys, None).await;
         let ct = Vec::from([1_u8; 1000000]);
         let fhe_type = FheType::Euint32;
         let mut internal_client = Client::new(
