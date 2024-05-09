@@ -20,7 +20,7 @@ pub struct KmsBlockchain {
 }
 
 impl KmsBlockchain {
-    pub(crate) async fn new(
+    pub async fn new(
         config: BlockchainConfig,
         metrics: OpenTelemetryMetrics,
     ) -> Result<Self, anyhow::Error> {
@@ -40,7 +40,7 @@ impl KmsBlockchain {
         })
     }
 
-    #[retry(stop=(attempts(4)|duration(5)),wait=fixed(10))]
+    #[retry(stop=(attempts(4)|duration(10)),wait=fixed(2))]
     async fn call_execute_contract(
         &self,
         client: &mut Client,

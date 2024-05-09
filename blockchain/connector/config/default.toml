@@ -1,5 +1,6 @@
 tick_interval_secs = 3
 storage_path = "./temp/events.toml"
+mode = "request"
 
 [blockchain]
 addresses = ["http://localhost:9090"]

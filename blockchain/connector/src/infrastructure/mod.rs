@@ -1,3 +1,3 @@
-pub(crate) mod blockchain;
-pub(crate) mod coordinator;
-pub(crate) mod metrics;
+pub mod blockchain;
+pub mod coordinator;
+pub mod metrics;

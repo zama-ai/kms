@@ -2,6 +2,7 @@ use std::env;
 use std::str::FromStr;
 
 use config::{Config, ConfigError, File};
+use events::subscription::handler::EventsMode;
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, Display, EnumString};
 use typed_builder::TypedBuilder;
@@ -10,7 +11,7 @@ lazy_static::lazy_static! {
     pub static ref ENVIRONMENT: Mode = mode();
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder, Default)]
 pub struct Tracing {
     service_name: String,
     endpoint: String,
@@ -66,6 +67,7 @@ pub struct BlockchainConfig {
 pub struct ConnectorConfig {
     pub tick_interval_secs: u64,
     pub storage_path: String,
+    pub mode: Option<EventsMode>,
     pub tracing: Option<Tracing>,
     pub blockchain: BlockchainConfig,
     pub coordinator: CoordinatorConfig,

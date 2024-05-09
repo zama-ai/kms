@@ -6,8 +6,8 @@ edition = "2021"
 [dependencies]
 anyhow = "~1.0"
 async-trait = {version = "~0.1", optional = true}
-cosmwasm-std = { version = "2.0.1" }
-cosmwasm-schema = "2.0.1"
+cosmwasm-std = { version = "2.0.2" }
+cosmwasm-schema = "2.0.2"
 cosmos-proto = { path = "../cosmos-proto", optional = true }
 hex = "0.4.3"
 koit-toml = { version = "=0.2.1", optional = true }

@@ -18,13 +18,13 @@ pub enum MetricType {
     CoordinatorResponseError,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct OpenTelemetryMetrics {
     counters: DashMap<MetricType, ObservableCounter<u64>>,
 }
 
 impl OpenTelemetryMetrics {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let meter = global::meter("kms_connector");
         let connector_txs_processed = meter
             .u64_observable_counter("txs_processed")

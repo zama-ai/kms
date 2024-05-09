@@ -16,10 +16,8 @@ services:
     entrypoint: "/bin/sh"
     command: >
       -c "/opt/setup_wasmd.sh cosmos1pkptre7fdkl6gfrzlesjjvhxhlc3r4gmmk8rs6 wasm1z6rlvnjrm5nktcvt75x9yera4gu48jflhy2ysv wasm1flmuthp6yx0w6qt6078fucffrdkqlz4j5cw26n wasm1s50rdsxjuw8wnnk4qva5j20vfcrjuut0z2wxu4 wasm1k4c4wk2qjlf2vm303t936qaell4dcdmqx4umdf wasm1a9rs6gue7th8grjcudfkgzcphlx3fas7dtv5ka &&
-      sed -i .back -re 's/^(enabled-unsafe-cors =.*)$.*/enabled-unsafe-cors = true/g' /root/.wasmd/config/app.toml &&
-      sed -i .back -re 's/^(address = \"localhost:9090\")$.*/address = \"0.0.0.0:9090\"/g' /root/.wasmd/config/app.toml &&
-      sed -i .back -re 's/^(cors_allowed_origins =.*)$.*/cors_allowed_origins = \[\"*\"\]/g' /root/.wasmd/config/config.toml &&
-      sed -i .back -re 's/^(timeout_commit =.*)$.*/timeout_commit = \"500ms\"/g' /root/.wasmd/config/config.toml &&
+      sed -i -re 's/^(address = \"localhost:9090\")$.*/address = \"0.0.0.0:9090\"/g' /root/.wasmd/config/app.toml &&
+      sed -i -re 's/^(timeout_commit =.*)$.*/timeout_commit = \"500ms\"/g' /root/.wasmd/config/config.toml &&
       /opt/run_wasmd.sh"
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"
@@ -35,9 +33,9 @@ services:
     entrypoint: "/bin/sh"
     command: >
       -c "
-      sleep 1 &&
       echo \"1234567890\" | wasmd tx wasm upload /app/asc.wasm --from validator --chain-id testing --node tcp://kms-full-node:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json &&
-      echo \"1234567890\" | wasmd tx wasm instantiate 1 '{\"key\":\"foo\", \"value\": \"bar\"}' --label \"configuration_0\" --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 -y --no-admin && "
+      sleep 2 &&
+      echo \"1234567890\" | wasmd tx wasm instantiate 1 '{\"key\":\"foo\", \"value\": \"bar\"}' --label \"configuration_0\" --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 -y --no-admin"
     depends_on:
       kms-full-node:
         condition: service_healthy

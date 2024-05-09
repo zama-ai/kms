@@ -1,17 +1,18 @@
 use super::metrics::{Metrics, OpenTelemetryMetrics};
 use super::{BlockchainService, GrpcBlockchainService, StorageService, TomlStorageServiceImpl};
-use crate::kms::{KmsEvent, KmsOperationAttribute};
+use crate::kms::{KmsEvent, KmsOperationAttribute, TransactionEvent};
 use async_trait::async_trait;
 use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
-use cosmos_proto::messages::tendermint::abci::Event as AbciEvent;
 use cosmwasm_std::Event;
 use koit_toml::KoitError;
 #[cfg(test)]
 use mockall::{automock, mock, predicate::*};
 use retrying::retry;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
-use strum::IntoEnumIterator;
+use strum::IntoEnumIterator as _;
+use strum_macros::EnumString;
 use thiserror::Error;
 use tokio::time::sleep;
 use typed_builder::TypedBuilder;
@@ -30,6 +31,16 @@ pub enum SubscriptionError {
     StorageError(#[from] KoitError),
 }
 
+#[derive(Debug, Clone, Copy, EnumString, PartialEq, Eq, Deserialize, Serialize)]
+pub enum EventsMode {
+    /// Filter only events that are requests
+    #[strum(serialize = "request")]
+    Request,
+    /// Filter only events that are responses
+    #[strum(serialize = "response")]
+    Response,
+}
+
 /// Subscription entry point for building a Subscription Service
 /// The builder pattern is used to create a Subscription Service
 #[derive(TypedBuilder)]
@@ -42,6 +53,8 @@ pub struct SubscriptionEventBuilder<'a> {
     contract_address: &'a str,
     #[builder(default = 5)]
     tick_time_in_sec: u64,
+    #[builder(default, setter(into))]
+    filter_events_mode: Option<EventsMode>,
 }
 
 pub struct SubscriptionEventChannel<B, S, M> {
@@ -65,7 +78,11 @@ where
         >,
         SubscriptionError,
     > {
-        let blockchain = GrpcBlockchainService::new(self.grpc_addresses, self.contract_address)?;
+        let blockchain = GrpcBlockchainService::new(
+            self.grpc_addresses,
+            self.contract_address,
+            self.filter_events_mode,
+        )?;
         let storage = TomlStorageServiceImpl::new(&self.storage_path, self.height).await?;
         let metrics = OpenTelemetryMetrics::new();
         Ok(SubscriptionEventChannel {
@@ -85,7 +102,7 @@ where
 pub trait SubscriptionHandler {
     async fn on_message(
         &self,
-        message: KmsEvent,
+        message: TransactionEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
 }
 
@@ -156,19 +173,14 @@ where
         let events = results
             .iter()
             .map(|tx| {
-                tx.events
-                    .iter()
-                    .filter(|x| {
-                        KmsOperationAttribute::iter()
-                            .any(|attr| x.r#type == format!("wasm-{}", attr))
-                    })
-                    .map(|x| Self::to_event(x))
-                    .map(<Event as TryInto<KmsEvent>>::try_into)
-                    .collect::<Result<Vec<KmsEvent>, _>>()
+                Self::try_from(tx)
                     .map_err(|e| SubscriptionError::DeserializationError(e.to_string()))
             })
-            .collect::<Result<Vec<Vec<KmsEvent>>, _>>()?;
-        let events = events.into_iter().flatten().collect::<Vec<KmsEvent>>();
+            .collect::<Result<Vec<Vec<TransactionEvent>>, _>>()?;
+        let events = events
+            .into_iter()
+            .flatten()
+            .collect::<Vec<TransactionEvent>>();
         let results_size = events.len();
         tracing::info!("Sending events to be processed to handler {}", results_size);
         for result in events {
@@ -202,7 +214,7 @@ where
         self.storage.save_last_height(last_height).await
     }
 
-    fn to_event(event: &AbciEvent) -> Event {
+    fn to_event(event: &cosmos_proto::messages::tendermint::abci::Event) -> Event {
         let mut result = Event::new(event.r#type.clone());
         for attribute in event.attributes.iter() {
             let key = attribute.key.clone();
@@ -211,15 +223,32 @@ where
         }
         result
     }
+
+    fn try_from(tx: &TxResponse) -> anyhow::Result<Vec<TransactionEvent>> {
+        tx.events
+            .iter()
+            .filter(|x| {
+                KmsOperationAttribute::iter().any(|attr| x.r#type == format!("wasm-{}", attr))
+            })
+            .map(|x| Self::to_event(x))
+            .map(<Event as TryInto<KmsEvent>>::try_into)
+            .map(|e| {
+                e.map(|ev| TransactionEvent {
+                    tx_hash: tx.txhash.clone(),
+                    event: ev,
+                })
+            })
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kms::{DecryptValues, KmsOperationAttribute};
+    use crate::kms::{DecryptValues, KmsEvent, KmsOperationAttribute};
     use crate::subscription::blockchain::*;
     use crate::subscription::storage::MockStorageService;
-    use cosmwasm_std::Attribute;
+    use cosmwasm_std::{Attribute, Event};
     use std::error::Error;
     use std::sync::Arc;
     use test_context::{test_context, AsyncTestContext};
@@ -233,7 +262,7 @@ mod tests {
 
         #[async_trait::async_trait]
         impl SubscriptionHandler for NeverCalledSubscriptionHandler {
-            async fn on_message(&self, _message: KmsEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
+            async fn on_message(&self, _message: TransactionEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
         }
     }
 
@@ -290,7 +319,7 @@ mod tests {
     impl crate::subscription::handler::SubscriptionHandler for TestHandler {
         async fn on_message(
             &self,
-            message: KmsEvent,
+            message: TransactionEvent,
         ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
             tracing::info!("Received message: {:?}", message);
             self.sender.send(()).await?;
@@ -369,22 +398,24 @@ mod tests {
             .txn_id(vec![1])
             .build();
         let attrs: Vec<Attribute> = <KmsEvent as Into<Event>>::into(event).attributes;
-        tx_response.events.push(AbciEvent {
-            r#type: format!(
-                "wasm-{}",
-                KmsOperationAttribute::Decrypt(DecryptValues::default())
-            ),
-            attributes: attrs
-                .iter()
-                .map(
-                    |x| cosmos_proto::messages::tendermint::abci::EventAttribute {
-                        key: x.key.to_string(),
-                        value: x.value.to_string(),
-                        index: true,
-                    },
-                )
-                .collect(),
-        });
+        tx_response
+            .events
+            .push(cosmos_proto::messages::tendermint::abci::Event {
+                r#type: format!(
+                    "wasm-{}",
+                    KmsOperationAttribute::Decrypt(DecryptValues::default())
+                ),
+                attributes: attrs
+                    .iter()
+                    .map(
+                        |x| cosmos_proto::messages::tendermint::abci::EventAttribute {
+                            key: x.key.to_string(),
+                            value: x.value.to_string(),
+                            index: true,
+                        },
+                    )
+                    .collect(),
+            });
         server
             .subscription
             .blockchain

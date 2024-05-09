@@ -8,9 +8,8 @@ use crate::crypto::signing_key::SigningKey;
 use crate::errors::Error;
 use crate::prost::ext::MessageExt as _;
 use base64::{engine::general_purpose, Engine as _};
-use cosmos_proto::messages::cosmos::auth::v1beta1::query_client::QueryClient;
 use cosmos_proto::messages::cosmos::auth::v1beta1::{
-    BaseAccount, QueryAccountRequest, QueryAccountResponse,
+    query_client::QueryClient, BaseAccount, QueryAccountRequest, QueryAccountResponse,
 };
 use cosmos_proto::messages::cosmos::base::v1beta1::Coin;
 use cosmos_proto::messages::cosmos::tx::v1beta1::mode_info::{Single, Sum};
@@ -66,6 +65,11 @@ impl TryFrom<ClientBuilder<'_>> for Client {
 
         tracing::info!("Wallet private key initialized successfully");
 
+        if value.grpc_addresses.is_empty() {
+            return Err(Error::GrpcClientCreateError(
+                "No gRPC addresses provided".to_string(),
+            ));
+        }
         let endpoints = value
             .grpc_addresses
             .iter()

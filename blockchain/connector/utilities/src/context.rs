@@ -19,17 +19,9 @@ impl DockerComposeCmd {
             .arg(self.file.clone())
             .arg("up")
             .arg("-d")
+            .arg("--wait")
             .output()
             .expect("Failed to execute command");
-
-        Command::new("docker")
-            .arg("compose")
-            .arg("-f")
-            .arg(self.file.clone())
-            .arg("ps")
-            .arg("--services")
-            .output()
-            .unwrap();
     }
 
     pub fn down(&self) {

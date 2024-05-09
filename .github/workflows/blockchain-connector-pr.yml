@@ -13,6 +13,7 @@ jobs:
     with:
       working-directory: './blockchain/connector'
       args-tests-fhe: ''
+      args-tests: '--lib'
     permissions:
       contents: 'read'
       id-token: 'write'

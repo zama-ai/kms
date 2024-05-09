@@ -1,4 +1,4 @@
-use super::handler::SubscriptionError;
+use super::handler::{EventsMode, SubscriptionError};
 use crate::kms::KmsOperationAttribute;
 use async_trait::async_trait;
 use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
@@ -8,8 +8,8 @@ use cosmos_proto::messages::cosmos::tx::v1beta1::service_client::ServiceClient;
 use cosmos_proto::messages::cosmos::tx::v1beta1::{GetTxsEventRequest, OrderBy};
 #[cfg(test)]
 use mockall::automock;
-use retrying::Duration;
 use strum::IntoEnumIterator;
+use tokio::time::Duration;
 use tonic::transport::{Channel, Endpoint};
 
 #[cfg_attr(test, automock)]
@@ -22,13 +22,20 @@ pub trait BlockchainService {
 pub struct GrpcBlockchainService<'a> {
     channel: Channel,
     contract_address: &'a str,
+    mode: Option<EventsMode>,
 }
 
 impl<'a> GrpcBlockchainService<'a> {
     pub(crate) fn new(
         addresses: &[&str],
         contract_address: &'a str,
+        mode: Option<EventsMode>,
     ) -> Result<Self, SubscriptionError> {
+        if addresses.is_empty() {
+            return Err(SubscriptionError::ConnectionError(
+                "No gRPC addresses provided".to_string(),
+            ));
+        }
         let endpoints = addresses
             .iter()
             .map(|endpoint| Endpoint::new(endpoint.to_string()))
@@ -43,6 +50,7 @@ impl<'a> GrpcBlockchainService<'a> {
         Ok(GrpcBlockchainService {
             channel,
             contract_address,
+            mode,
         })
     }
     pub(crate) fn to_query(&self, height: u64) -> String {
@@ -52,10 +60,21 @@ impl<'a> GrpcBlockchainService<'a> {
         )
     }
 
-    fn is_kms_request_operation(tx: &TxResponse) -> bool {
+    fn filter_attributes(&self, attr: &KmsOperationAttribute) -> bool {
+        if let Some(mode) = self.mode {
+            match mode {
+                EventsMode::Request => attr.is_request(),
+                EventsMode::Response => attr.is_response(),
+            }
+        } else {
+            true
+        }
+    }
+
+    fn is_kms_request_operation(&self, tx: &TxResponse) -> bool {
         tx.events.iter().any(|event| {
             KmsOperationAttribute::iter()
-                .filter(|x| x.is_request())
+                .filter(|attr| self.filter_attributes(attr))
                 .any(|attr| event.r#type == format!("wasm-{}", attr))
         })
     }
@@ -89,7 +108,7 @@ impl BlockchainService for GrpcBlockchainService<'_> {
             results.extend(
                 txs.tx_responses
                     .iter()
-                    .filter(|x| Self::is_kms_request_operation(x))
+                    .filter(|x| self.is_kms_request_operation(x))
                     .cloned(),
             );
             let total_pages = txs.total / 10 + 1;

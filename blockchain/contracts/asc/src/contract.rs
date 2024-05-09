@@ -1,11 +1,11 @@
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Attribute, VerificationError};
+use cosmwasm_std::VerificationError;
 use cosmwasm_std::{Response, StdResult};
 use cw_storage_plus::Map;
 use events::kms::{
     CrsGenResponseValues, DecryptResponseValues, DecryptValues, FheType,
     KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
-    KmsOperationAttribute, ReencryptResponseValues, ReencryptValues, TransactionId,
+    KmsOperationAttribute, ReencryptResponseValues, ReencryptValues, Transaction, TransactionId,
 };
 use events::kms::{CrsGenValues, KmsEvent};
 use sha2::Digest;
@@ -14,7 +14,7 @@ use sylvia::{contract, entry_points};
 
 pub struct KmsContract {
     pub(crate) config: Map<String, String>,
-    pub(crate) transactions: Map<Vec<u8>, Vec<u8>>,
+    pub(crate) transactions: Map<Vec<u8>, Transaction>,
 }
 
 impl Default for KmsContract {
@@ -27,11 +27,6 @@ impl Default for KmsContract {
 }
 
 #[cw_serde]
-pub struct TransactionPayload {
-    pub attributes: Vec<Attribute>,
-}
-
-#[cw_serde]
 pub struct SequenceResponse {
     pub sequence: u64,
 }
@@ -39,11 +34,6 @@ pub struct SequenceResponse {
 #[cw_serde]
 pub struct ConfigurationResponse {
     pub value: String,
-}
-
-#[cw_serde]
-pub struct TransactionResponse {
-    pub value: TransactionPayload,
 }
 
 #[entry_points]
@@ -79,13 +69,26 @@ impl KmsContract {
         Ok(Response::default())
     }
 
-    fn derive_transaction_id(&self, ctx: &ExecCtx) -> Vec<u8> {
+    fn derive_transaction_id(&self, ctx: &ExecCtx) -> (Vec<u8>, Transaction) {
         let mut hasher = sha2::Sha256::new();
-        hasher.update(ctx.env.block.height.to_string());
-        hasher.update(ctx.env.transaction.clone().unwrap().index.to_string());
+        let block_height = ctx.env.block.height;
+        let transaction_index = ctx.env.transaction.clone().unwrap().index;
+        hasher.update(block_height.to_string());
+        hasher.update(transaction_index.to_string());
         let result = hasher.finalize();
         // truncate the result to 20 bytes
-        result[..20].to_vec()
+        let id = result[..20].to_vec();
+        let transaction = Transaction {
+            block_height,
+            transaction_index,
+        };
+        (id, transaction)
+    }
+
+    #[sv::msg(query)]
+    pub fn transactions(&self, ctx: QueryCtx, txn_id: Vec<u8>) -> StdResult<Transaction> {
+        let value = self.transactions.load(ctx.deps.storage, txn_id)?;
+        Ok(value)
     }
 
     #[sv::msg(exec)]
@@ -95,7 +98,7 @@ impl KmsContract {
         ciphertext: Vec<u8>,
         fhe_type: FheType,
     ) -> StdResult<Response> {
-        let txn_id = self.derive_transaction_id(&ctx);
+        let (txn_id, transaction) = self.derive_transaction_id(&ctx);
         let event = KmsEvent::builder()
             .operation(KmsOperationAttribute::Decrypt(
                 DecryptValues::builder()
@@ -107,7 +110,7 @@ impl KmsContract {
             .build();
         let response = Response::new().add_event(event.into());
         self.transactions
-            .save(ctx.deps.storage, txn_id.clone(), &txn_id)?;
+            .save(ctx.deps.storage, txn_id, &transaction)?;
         Ok(response)
     }
 
@@ -133,20 +136,18 @@ impl KmsContract {
             .build();
         let response = Response::new().add_event(event.into());
 
-        self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
 
     #[sv::msg(exec)]
     pub fn keygen_preproc(&self, ctx: ExecCtx) -> StdResult<Response> {
-        let txn_id = self.derive_transaction_id(&ctx);
+        let (txn_id, tx) = self.derive_transaction_id(&ctx);
         let event = KmsEvent::builder()
             .operation(KmsOperationAttribute::KeyGenPreproc(KeyGenPreprocValues {}))
             .txn_id(txn_id.clone())
             .build();
         let response = Response::new().add_event(event.into());
-        self.transactions
-            .save(ctx.deps.storage, txn_id.clone(), &txn_id)?;
+        self.transactions.save(ctx.deps.storage, txn_id, &tx)?;
         Ok(response)
     }
 
@@ -164,13 +165,12 @@ impl KmsContract {
             .txn_id(txn_id.clone())
             .build();
         let response = Response::new().add_event(event.into());
-        self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
 
     #[sv::msg(exec)]
     pub fn keygen(&self, ctx: ExecCtx, preproc_id: Vec<u8>) -> StdResult<Response> {
-        let txn_id = self.derive_transaction_id(&ctx);
+        let (txn_id, tx) = self.derive_transaction_id(&ctx);
         let event = KmsEvent::builder()
             .operation(KmsOperationAttribute::KeyGen(
                 KeyGenValues::builder()
@@ -180,8 +180,7 @@ impl KmsContract {
             .txn_id(txn_id.clone())
             .build();
         let response = Response::new().add_event(event.into());
-        self.transactions
-            .save(ctx.deps.storage, txn_id.clone(), &txn_id)?;
+        self.transactions.save(ctx.deps.storage, txn_id, &tx)?;
         Ok(response)
     }
 
@@ -213,7 +212,6 @@ impl KmsContract {
             .txn_id(txn_id.clone())
             .build();
         let response = Response::new().add_event(event.into());
-        self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
 
@@ -224,7 +222,7 @@ impl KmsContract {
         ciphertext: Vec<u8>,
         fhe_type: FheType,
     ) -> StdResult<Response> {
-        let txn_id = self.derive_transaction_id(&ctx);
+        let (txn_id, tx) = self.derive_transaction_id(&ctx);
         let event = KmsEvent::builder()
             .operation(KmsOperationAttribute::Reencrypt(
                 ReencryptValues::builder()
@@ -235,8 +233,7 @@ impl KmsContract {
             .txn_id(txn_id.clone())
             .build();
         let response = Response::new().add_event(event.into());
-        self.transactions
-            .save(ctx.deps.storage, txn_id.clone(), &txn_id)?;
+        self.transactions.save(ctx.deps.storage, txn_id, &tx)?;
         Ok(response)
     }
 
@@ -261,20 +258,18 @@ impl KmsContract {
             .txn_id(txn_id.clone())
             .build();
         let response = Response::new().add_event(event.into());
-        self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
 
     #[sv::msg(exec)]
     pub fn crs_gen(&self, ctx: ExecCtx) -> StdResult<Response> {
-        let txn_id = self.derive_transaction_id(&ctx);
+        let (txn_id, tx) = self.derive_transaction_id(&ctx);
         let event = KmsEvent::builder()
             .operation(KmsOperationAttribute::CrsGen(CrsGenValues::default()))
             .txn_id(txn_id.clone())
             .build();
         let response = Response::new().add_event(event.into());
-        self.transactions
-            .save(ctx.deps.storage, txn_id.clone(), &txn_id)?;
+        self.transactions.save(ctx.deps.storage, txn_id, &tx)?;
         Ok(response)
     }
 
@@ -303,7 +298,6 @@ impl KmsContract {
             .txn_id(txn_id.clone())
             .build();
         let response = Response::new().add_event(event.into());
-        self.transactions.remove(ctx.deps.storage, txn_id);
         Ok(response)
     }
 }
@@ -459,6 +453,10 @@ mod tests {
             .build();
 
         assert_event(&response.events, &expected_event);
+
+        let response = contract.transactions(txn_id.clone()).unwrap();
+        assert_eq!(response.block_height, 12345);
+        assert_eq!(response.transaction_index, 0);
     }
 
     #[test]

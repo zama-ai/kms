@@ -12,7 +12,6 @@ jobs:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
       working-directory: './core/threshold'
-      build-publish-docs: true
       args-tests: '-F slow_tests'
       run-redis: true
     permissions:

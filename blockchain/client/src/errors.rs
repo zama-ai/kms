@@ -6,6 +6,9 @@ pub enum Error {
     #[error("Cannot create gRPC Client with: {0}")]
     GrpcClientCreateError(String),
 
+    #[error("Failed to query blockchain: {0}")]
+    QueryError(String),
+
     #[error("Failed to broadcast transaction: {0}")]
     BroadcastTxError(#[from] tonic::Status),
 

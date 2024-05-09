@@ -7,6 +7,13 @@ use strum_macros::{Display, EnumIter, EnumString};
 use typed_builder::TypedBuilder;
 
 #[cw_serde]
+#[derive(Eq, TypedBuilder, Default)]
+pub struct Transaction {
+    pub block_height: u64,
+    pub transaction_index: u32,
+}
+
+#[cw_serde]
 #[derive(Default, EnumString, Eq, Display)]
 pub enum FheType {
     #[default]
@@ -65,7 +72,7 @@ impl TryFrom<Vec<Attribute>> for DecryptValues {
                 "ciphertext" => {
                     ciphertext = Some(hex::decode(attribute.value).unwrap());
                 }
-                _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
+                _ => (),
             }
         }
         Ok(DecryptValues {
@@ -103,7 +110,7 @@ impl TryFrom<Vec<Attribute>> for ReencryptValues {
                 "ciphertext" => {
                     ciphertext = Some(hex::decode(attribute.value).unwrap());
                 }
-                _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
+                _ => (),
             }
         }
         Ok(ReencryptValues {
@@ -133,11 +140,8 @@ impl TryFrom<Vec<Attribute>> for DecryptResponseValues {
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
         let mut plaintext = None;
         for attribute in attributes {
-            match attribute.key.as_str() {
-                "plaintext" => {
-                    plaintext = Some(hex::decode(attribute.value).unwrap());
-                }
-                _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
+            if let "plaintext" = attribute.key.as_str() {
+                plaintext = Some(hex::decode(attribute.value).unwrap());
             }
         }
         Ok(DecryptResponseValues {
@@ -213,7 +217,7 @@ impl TryFrom<Vec<Attribute>> for KeyGenResponseValues {
                 "server_key_signature" => {
                     server_key_signature = Some(hex::decode(attribute.value).unwrap());
                 }
-                _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
+                _ => (),
             }
         }
         Ok(KeyGenResponseValues {
@@ -246,11 +250,8 @@ impl TryFrom<Vec<Attribute>> for ReencryptResponseValues {
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
         let mut cyphertext = None;
         for attribute in attributes {
-            match attribute.key.as_str() {
-                "cyphertext" => {
-                    cyphertext = Some(hex::decode(attribute.value).unwrap());
-                }
-                _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
+            if let "cyphertext" = attribute.key.as_str() {
+                cyphertext = Some(hex::decode(attribute.value).unwrap());
             }
         }
         Ok(ReencryptResponseValues {
@@ -309,7 +310,7 @@ impl TryFrom<Vec<Attribute>> for CrsGenResponseValues {
                     digest = Some(attribute.value);
                 }
                 "signature" => signature = Some(hex::decode(attribute.value).unwrap()),
-                _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
+                _ => (),
             }
         }
         Ok(CrsGenResponseValues {
@@ -362,11 +363,8 @@ impl TryFrom<Vec<Attribute>> for KeyGenValues {
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
         let mut preproc_id = None;
         for attribute in attributes {
-            match attribute.key.as_str() {
-                "preproc_id" => {
-                    preproc_id = Some(attribute.value);
-                }
-                _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
+            if let "preproc_id" = attribute.key.as_str() {
+                preproc_id = Some(attribute.value);
             }
         }
         Ok(KeyGenValues {
@@ -566,6 +564,13 @@ impl TryFrom<Event> for KmsEvent {
         };
         Ok(KmsEvent { operation, txn_id })
     }
+}
+
+#[cw_serde]
+#[derive(Eq, TypedBuilder)]
+pub struct TransactionEvent {
+    pub tx_hash: String,
+    pub event: KmsEvent,
 }
 
 #[cfg(test)]
@@ -820,7 +825,7 @@ mod tests {
 
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
-            "keygen": {}
+            "keygen": { "preproc_id": ""}
         });
         assert_eq!(json, json_str);
     }
