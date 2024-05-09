@@ -485,45 +485,68 @@ impl Kms for CrsGenVal {
 
 #[cfg(test)]
 mod test {
+    use super::Kms as _;
+    use crate::{
+        conf::CoordinatorConfig,
+        domain::blockchain::KmsOperationResponse,
+        infrastructure::{coordinator::KmsCoordinator, metrics::OpenTelemetryMetrics},
+    };
     use events::kms::{
         CrsGenValues, KeyGenPreprocValues, KmsEvent, KmsOperationAttribute, TransactionId,
     };
     use kms_lib::{
         client::test_tools,
         consts::{
-            AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, TEST_PARAM_PATH,
+            AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, TEST_KEY_ID, TEST_PARAM_PATH,
             TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
         },
+        rpc::rpc_types::{PrivDataType, PubDataType},
+        storage::{FileStorage, PublicStorage, PublicStorageReader, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
-        util::key_setup::{ensure_dir_exist, ensure_threshold_key_ct_exist},
+        util::{
+            file_handling::read_element,
+            key_setup::{
+                ensure_ciphertext_exist, ensure_dir_exist, ensure_threshold_keys_exist,
+                ThresholdTestingKeys,
+            },
+        },
     };
     use tokio::task::JoinSet;
-
-    use crate::{
-        conf::CoordinatorConfig,
-        domain::blockchain::KmsOperationResponse,
-        infrastructure::{coordinator::KmsCoordinator, metrics::OpenTelemetryMetrics},
-    };
-
-    use super::Kms as _;
 
     async fn generic_sunshine_test(
         slow: bool,
         op: KmsOperationAttribute,
     ) -> (Vec<KmsOperationResponse>, TransactionId) {
+        let txn_id = TransactionId::from(vec![2u8; 20]);
         let coordinator_handles = if slow {
             ensure_dir_exist();
-            ensure_threshold_key_ct_exist(
+            ensure_threshold_keys_exist(
                 TEST_PARAM_PATH,
                 TEST_THRESHOLD_KEYS_PATH,
-                TEST_THRESHOLD_CT_PATH,
+                &TEST_KEY_ID.to_string(),
             );
-            test_tools::setup_threshold_no_client(
-                AMOUNT_PARTIES,
-                THRESHOLD as u8,
-                TEST_THRESHOLD_KEYS_PATH,
-            )
-            .await
+            let threshold_keys: ThresholdTestingKeys =
+                read_element(&format!("{TEST_THRESHOLD_KEYS_PATH}-1.bin")).unwrap();
+            ensure_ciphertext_exist(TEST_THRESHOLD_CT_PATH, &threshold_keys.fhe_pub);
+            let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+            // Delete potentially existing CRS
+            let _ = pub_storage.delete_data(
+                &pub_storage
+                    .compute_url(&txn_id.to_hex(), &PubDataType::CRS.to_string())
+                    .unwrap(),
+            );
+            let mut priv_storage = Vec::new();
+            for i in 1..=AMOUNT_PARTIES {
+                let cur_priv = FileStorage::new(&format!("priv-p{i}"));
+                // Delete potentially existing CRS info
+                let _ = pub_storage.delete_data(
+                    &cur_priv
+                        .compute_url(&txn_id.to_hex(), &PrivDataType::CrsInfo.to_string())
+                        .unwrap(),
+                );
+                priv_storage.push(cur_priv);
+            }
+            test_tools::setup_threshold_no_client(THRESHOLD as u8, pub_storage, priv_storage).await
         } else {
             setup_mock_kms(AMOUNT_PARTIES).await
         };
@@ -551,7 +574,6 @@ mod test {
         }
 
         // create events
-        let txn_id = TransactionId::from(vec![2u8; 20]);
         let events = vec![
             KmsEvent {
                 operation: op,

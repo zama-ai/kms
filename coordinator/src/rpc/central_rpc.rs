@@ -1,11 +1,12 @@
 use super::rpc_types::{
-    protobuf_to_alloy_domain, BaseKms, DecryptionRequestSerializable,
+    protobuf_to_alloy_domain, BaseKms, DecryptionRequestSerializable, PrivDataType,
     ReencryptionRequestSigPayload, CURRENT_FORMAT_VERSION,
 };
 use crate::cryptography::central_kms::{async_decrypt, async_reencrypt, CompMap};
 use crate::cryptography::central_kms::{async_generate_crs, compute_info};
 use crate::kms::{KeyGenPreprocRequest, KeyGenPreprocStatus};
-use crate::storage::{store_crs, DevStorage, PublicStorage};
+use crate::rpc::rpc_types::DecryptionResponseSigPayload;
+use crate::storage::{store_request_id, FileStorage, PublicStorage};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use crate::{
     consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH},
@@ -19,9 +20,7 @@ use crate::{
     },
 };
 use crate::{
-    cryptography::central_kms::{
-        async_generate_fhe_keys, BaseKmsStruct, CrsHashMap, SoftwareKms, SoftwareKmsKeys,
-    },
+    cryptography::central_kms::{async_generate_fhe_keys, BaseKmsStruct, SoftwareKms},
     kms::FhePubKeyInfo,
 };
 use crate::{
@@ -32,7 +31,6 @@ use crate::{kms::coordinator_endpoint_server::CoordinatorEndpoint, rpc::rpc_type
 use crate::{
     kms::coordinator_endpoint_server::CoordinatorEndpointServer, util::file_handling::read_as_json,
 };
-use crate::{rpc::rpc_types::DecryptionResponseSigPayload, storage::store_public_keys};
 use alloy_sol_types::SolStruct;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use serde_asn1_der::{from_bytes, to_vec};
@@ -42,13 +40,15 @@ use std::net::SocketAddr;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
-pub async fn server_handle(
+pub async fn server_handle<
+    PubS: PublicStorage + Sync + Send + 'static,
+    PrivS: PublicStorage + Sync + Send + 'static,
+>(
     socket: SocketAddr,
-    kms_keys: SoftwareKmsKeys,
-    crs_store: Option<CrsHashMap>,
+    public_storage: PubS,
+    private_storage: PrivS,
 ) -> anyhow::Result<()> {
-    let storage = DevStorage::default();
-    let kms = SoftwareKms::new(storage, kms_keys.key_info, kms_keys.sig_sk, crs_store);
+    let kms = SoftwareKms::new(public_storage, private_storage)?;
     tracing::info!("Starting centralized KMS server ...");
 
     Server::builder()
@@ -59,8 +59,10 @@ pub async fn server_handle(
 }
 
 #[tonic::async_trait]
-impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> CoordinatorEndpoint
-    for SoftwareKms<S>
+impl<
+        PubS: PublicStorage + std::marker::Sync + std::marker::Send + 'static,
+        PrivS: PublicStorage + std::marker::Sync + std::marker::Send + 'static,
+    > CoordinatorEndpoint for SoftwareKms<PubS, PrivS>
 {
     async fn key_gen_preproc(
         &self,
@@ -84,41 +86,34 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
 
     /// starts the centralized KMS key generation
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
-        let mut key_gen_map = self.key_gen_map.lock().await;
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(
             inner.request_id,
             "No request ID present in request".to_string(),
         )?;
         validate_request_id(&request_id)?;
-        if key_gen_map.get(&request_id).is_some() {
+        {
+            let key_handles = self.key_handles.lock().await;
+            if key_handles.contains_key(&request_id) {
+                tracing::warn!(
+                    "Keys with request ID {} already exist!",
+                    request_id.to_string()
+                );
+                return Err(tonic::Status::new(
+                    tonic::Code::AlreadyExists,
+                    format!("Keys with request ID {} already exist!", request_id),
+                ));
+            }
+        }
+
+        let mut key_gen_map = self.key_gen_map.lock().await;
+        if key_gen_map.contains_key(&request_id) {
             return Err(tonic::Status::new(
                 tonic::Code::AlreadyExists,
                 format!(
                     "A key generation request with request ID {} is already being processed!",
                     request_id
                 ),
-            ));
-        }
-        if tonic_handle_potential_err(
-            self.storage
-                .data_exists(&request_id, PubDataType::PublicKey),
-            "Could not validate if the public key exist".to_string(),
-        )? || tonic_handle_potential_err(
-            self.storage
-                .data_exists(&request_id, PubDataType::ServerKey),
-            "Could not validate if the server key exist".to_string(),
-        )? || tonic_handle_potential_err(
-            self.storage.data_exists(&request_id, PubDataType::SnsKey),
-            "Could not validate if the SnS key exist".to_string(),
-        )? {
-            tracing::warn!(
-                "Keys with request ID {} already exist!",
-                request_id.to_string()
-            );
-            return Err(tonic::Status::new(
-                tonic::Code::AlreadyExists,
-                format!("Keys with request ID {} already exist!", request_id),
             ));
         }
         let params = tonic_handle_potential_err(
@@ -208,7 +203,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         let future_reenc = tokio::spawn(async move {
             (
                 (servers_needed, fhe_type, req_digest.clone()),
-                async_reencrypt::<S>(
+                async_reencrypt::<PubS, PrivS>(
                     &client_key,
                     &sig_key,
                     &mut rng,
@@ -233,8 +228,11 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         validate_request_id(&request_id)?;
 
         let ((servers_needed, fhe_type, req_digest), partial_dec) =
-            SoftwareKms::<DevStorage>::process_decryption(&self.reenc_map, request_id.clone())
-                .await?;
+            SoftwareKms::<FileStorage, FileStorage>::process_decryption(
+                &self.reenc_map,
+                request_id.clone(),
+            )
+            .await?;
 
         let server_verf_key = tonic_handle_potential_err(
             to_vec(&self.get_verf_key()),
@@ -282,7 +280,7 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
         let future_plaintext = tokio::spawn(async move {
             (
                 req_digest,
-                async_decrypt::<S>(&client_key, &ciphertext, fhe_type).await,
+                async_decrypt::<PubS, PrivS>(&client_key, &ciphertext, fhe_type).await,
             )
         });
 
@@ -296,9 +294,11 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
     ) -> Result<Response<DecryptionResponse>, Status> {
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
-        let (req_digest, plaintext) =
-            SoftwareKms::<DevStorage>::process_decryption(&self.decrypt_map, request_id.clone())
-                .await?;
+        let (req_digest, plaintext) = SoftwareKms::<FileStorage, FileStorage>::process_decryption(
+            &self.decrypt_map,
+            request_id.clone(),
+        )
+        .await?;
 
         let server_verf_key = tonic_handle_potential_err(
             to_vec(&self.get_verf_key()),
@@ -342,6 +342,20 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
                 format!("Request ID {} is not valid!", request_id),
             ));
         }
+        // ensure that the CRS under that handle does not exist yet
+        {
+            let crs_handles = self.crs_handles.lock().await;
+            if crs_handles.contains_key(request_id) {
+                tracing::warn!(
+                    "CRS with request ID {} already exist!",
+                    request_id.to_string()
+                );
+                return Err(tonic::Status::new(
+                    tonic::Code::AlreadyExists,
+                    format!("CRS with request ID {} already exist!", request_id),
+                ));
+            }
+        }
         let mut crs_gen_map = self.crs_gen_map.lock().await;
         if crs_gen_map.get(request_id).is_some() {
             return Err(tonic::Status::new(
@@ -352,24 +366,6 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
                 ),
             ));
         }
-        // ensure that the CRS under that handle does not exist yet
-        if tonic_handle_potential_err(
-            self.storage.data_exists(request_id, PubDataType::CRS),
-            "Could not validate the existance of the CRS".to_string(),
-        )? {
-            tracing::warn!(
-                "A CRS with request ID {} already exist - cannot create it again!",
-                request_id.to_string()
-            );
-            return Err(tonic::Status::new(
-                tonic::Code::NotFound,
-                format!(
-                    "A CRS with request ID {} already exist - cannot create it again!",
-                    request_id
-                ),
-            ));
-        }
-
         let params = tonic_handle_potential_err(
             retrieve_parameters(inner.params),
             "Parameter choice is not recognized".to_string(),
@@ -431,7 +427,9 @@ impl<S: PublicStorage + std::marker::Sync + std::marker::Send + 'static> Coordin
     }
 }
 
-impl<S: PublicStorage> SoftwareKms<S> {
+impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
+    SoftwareKms<PubS, PrivS>
+{
     /// check if CRS for a given request ID have been generated
     ///
     /// TODO: this could be merged to some degree with [check_key_generation_process]
@@ -465,7 +463,24 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 let crs_info = compute_info(self, &pp)?;
                 // Insert the key information into the map of keys
                 crs_handles.insert(request_id.clone(), crs_info.clone());
-                store_crs(&self.storage, &request_id, &crs_info, &pp)?;
+                {
+                    let mut pub_storage = self.public_storage.lock().await;
+                    store_request_id(
+                        &mut (*pub_storage),
+                        &request_id,
+                        &pp,
+                        &PubDataType::CRS.to_string(),
+                    )?;
+                }
+                {
+                    let mut priv_storage = self.private_storage.lock().await;
+                    store_request_id(
+                        &mut (*priv_storage),
+                        &request_id,
+                        &crs_info,
+                        &PrivDataType::CrsInfo.to_string(),
+                    )?;
+                }
                 Ok(Some(crs_info))
             }
             None => {
@@ -517,12 +532,30 @@ impl<S: PublicStorage> SoftwareKms<S> {
                 let new_key_info = KmsFheKeyHandles::new(self, client_key, &pub_keys)?;
                 // Insert the key information into the map of keys
                 key_handles.insert(request_id.clone(), new_key_info.clone());
-                store_public_keys(
-                    &self.storage,
-                    &request_id,
-                    &new_key_info.public_key_info,
-                    &pub_keys,
-                )?;
+                {
+                    let mut pub_storage = self.public_storage.lock().await;
+                    store_request_id(
+                        &mut (*pub_storage),
+                        &request_id,
+                        &pub_keys.public_key,
+                        &PubDataType::PublicKey.to_string(),
+                    )?;
+                    store_request_id(
+                        &mut (*pub_storage),
+                        &request_id,
+                        &pub_keys.server_key,
+                        &PubDataType::ServerKey.to_string(),
+                    )?;
+                }
+                {
+                    let mut priv_storage = self.private_storage.lock().await;
+                    let _ = &store_request_id(
+                        &mut (*priv_storage),
+                        &request_id,
+                        &new_key_info,
+                        &PrivDataType::FheKeyInfo.to_string(),
+                    )?;
+                }
                 Ok(Some(new_key_info.public_key_info))
             }
             None => {

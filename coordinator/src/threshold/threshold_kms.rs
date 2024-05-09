@@ -1,8 +1,3 @@
-use crate::anyhow_error_and_log;
-use crate::consts::{MINIMUM_SESSIONS_PREPROC, SEC_PAR};
-use crate::cryptography::central_kms::compute_info_from_key;
-use crate::kms::FhePubKeyInfo;
-use crate::kms::{coordinator_endpoint_server::CoordinatorEndpoint, RequestId};
 use crate::kms::{
     CrsGenRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
 };
@@ -18,7 +13,13 @@ use crate::rpc::rpc_types::{
     BaseKms, DecryptionResponseSigPayload, Plaintext, PubDataType, RawDecryption,
     SigncryptionPayload, CURRENT_FORMAT_VERSION,
 };
-use crate::storage::{store_public_keys, PublicStorage};
+use crate::storage::PublicStorage;
+use crate::{anyhow_error_and_log, storage::store_request_id};
+use crate::{
+    consts::{MINIMUM_SESSIONS_PREPROC, SEC_PAR},
+    rpc::rpc_types::PrivDataType,
+};
+use crate::{cryptography::central_kms::compute_info_from_key, storage::delete_request_id};
 use crate::{
     cryptography::central_kms::BaseKmsStruct,
     kms::coordinator_endpoint_server::CoordinatorEndpointServer,
@@ -28,6 +29,11 @@ use crate::{
     kms::CrsGenResult,
 };
 use crate::{cryptography::signcryption::signcrypt, kms::Empty};
+use crate::{kms::FhePubKeyInfo, storage::read_all_data};
+use crate::{
+    kms::{coordinator_endpoint_server::CoordinatorEndpoint, RequestId},
+    some_or_err,
+};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
@@ -83,7 +89,7 @@ use tonic::{Request, Response, Status};
 pub const PORT_JUMP: u16 = 100;
 pub const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct CrsMetaStore {
     // digest is the 160-bit hex-encoded value, computed using compute_info/handle
     digest: String,
@@ -93,17 +99,20 @@ struct CrsMetaStore {
 /// Initialize a threshold KMS server using the DDec initialization protocol.
 /// This MUST be done before the server is started.
 #[allow(clippy::too_many_arguments)]
-pub async fn threshold_server_init<S: PublicStorage + Sync + Send + 'static>(
+pub async fn threshold_server_init<
+    PubS: PublicStorage + Sync + Send + 'static,
+    PrivS: PublicStorage + Sync + Send + 'static,
+>(
     url: String,
     base_port: u16,
     parties: usize,
     threshold: u8,
     my_id: usize,
-    keys: ThresholdKmsKeys,
     preproc_redis_conf: Option<RedisConf>,
     num_sessions_preproc: Option<u128>,
-    public_storage: S,
-) -> anyhow::Result<ThresholdKms<S>> {
+    public_storage: PubS,
+    private_storage: PrivS,
+) -> anyhow::Result<ThresholdKms<PubS, PrivS>> {
     //If no RedisConf is provided, we just use in-memory storage for the preprocessing buckets.
     //NOTE: This should probably only be allowed for testing
     let factory = match preproc_redis_conf {
@@ -120,7 +129,6 @@ pub async fn threshold_server_init<S: PublicStorage + Sync + Send + 'static>(
         MINIMUM_SESSIONS_PREPROC
     };
     let mut kms = ThresholdKms::new(
-        keys,
         parties,
         threshold,
         &url,
@@ -129,6 +137,7 @@ pub async fn threshold_server_init<S: PublicStorage + Sync + Send + 'static>(
         factory,
         num_sessions_preproc,
         public_storage,
+        private_storage,
     )?;
     tracing::info!("Initializing threshold KMS server for {my_id}...");
     kms.init().await?;
@@ -138,11 +147,14 @@ pub async fn threshold_server_init<S: PublicStorage + Sync + Send + 'static>(
 
 /// Starts threshold KMS server. Its port will be `base_port`+`my_id``.
 /// This MUST be done after the server has been initialized.
-pub async fn threshold_server_start<S: PublicStorage + Sync + Send>(
+pub async fn threshold_server_start<
+    PubS: PublicStorage + Sync + Send + 'static,
+    PrivS: PublicStorage + Sync + Send + 'static,
+>(
     url: String,
     base_port: u16,
     my_id: usize,
-    kms_server: ThresholdKms<S>,
+    kms_server: ThresholdKms<PubS, PrivS>,
 ) -> anyhow::Result<()> {
     let port = base_port + (my_id as u16);
     let socket: std::net::SocketAddr = format!("{}:{}", url, port).parse()?;
@@ -236,7 +248,10 @@ enum DkgHandlerStatus {
     Done(HashMap<PubDataType, FhePubKeyInfo>),
 }
 
-pub struct ThresholdKms<S: PublicStorage + Sync + Send + 'static> {
+pub struct ThresholdKms<
+    PubS: PublicStorage + Sync + Send + 'static,
+    PrivS: PublicStorage + Sync + Send + 'static,
+> {
     fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
     decrypt_map: Arc<Mutex<HashMap<RequestId, ThresholdDecHandle>>>,
     reencrypt_map: Arc<Mutex<HashMap<RequestId, ThresholdReencHandle>>>,
@@ -251,15 +266,17 @@ pub struct ThresholdKms<S: PublicStorage + Sync + Send + 'static> {
     preproc_buckets: Arc<Mutex<RequestIDBucketMap>>,
     preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
     num_sessions_preproc: u128,
-    public_storage: Arc<Mutex<S>>,
+    public_storage: Arc<Mutex<PubS>>,
+    private_storage: Arc<Mutex<PrivS>>,
     crs_meta_store: Arc<Mutex<HashMap<RequestId, CrsHandlerStatus>>>,
     dkg_pubinfo_meta_store: Arc<Mutex<HashMap<RequestId, DkgHandlerStatus>>>,
 }
 
-impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
+impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
+    ThresholdKms<PubS, PrivS>
+{
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        keys: ThresholdKmsKeys,
         parties: usize,
         threshold: u8,
         url: &str,
@@ -267,8 +284,26 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
         my_id: usize,
         preproc_factory: Box<dyn PreprocessorFactory>,
         num_sessions_preproc: u128,
-        public_storage: S,
+        public_storage: PubS,
+        private_storage: PrivS,
     ) -> anyhow::Result<Self> {
+        let sks: HashMap<RequestId, PrivateSigKey> =
+            read_all_data(&private_storage, &PrivDataType::SigningKey.to_string())?;
+        let sk: PrivateSigKey = some_or_err(
+            sks.values().collect_vec().first(),
+            "There is no private signing key stored".to_string(),
+        )?
+        .to_owned()
+        .to_owned();
+        let key_info: HashMap<RequestId, ThresholdFheKeys> =
+            read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string())?;
+        let cs: HashMap<RequestId, CrsMetaStore> =
+            read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string())?;
+        let cs_w_status: HashMap<RequestId, CrsHandlerStatus> = cs
+            .iter()
+            .map(|(id, crs)| (id.to_owned(), CrsHandlerStatus::Done(crs.to_owned())))
+            .collect();
+
         let role_assignment: RoleAssignment = (1..=parties)
             .map(|party_id| {
                 let port = base_port + PORT_JUMP + (party_id as u16);
@@ -302,9 +337,9 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
 
         let networking_strategy: NetworkingStrategy =
             Box::new(move |session_id, roles| networking_manager.make_session(session_id, roles));
-        let base_kms = BaseKmsStruct::new(keys.sig_sk);
+        let base_kms = BaseKmsStruct::new(sk);
         Ok(ThresholdKms {
-            fhe_keys: Arc::new(RwLock::new(keys.fhe_keys)),
+            fhe_keys: Arc::new(RwLock::new(key_info)),
             decrypt_map: Arc::new(Mutex::new(HashMap::new())),
             reencrypt_map: Arc::new(Mutex::new(HashMap::new())),
             base_kms,
@@ -318,7 +353,8 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
             preproc_factory: Arc::new(Mutex::new(preproc_factory)),
             num_sessions_preproc,
             public_storage: Arc::new(Mutex::new(public_storage)),
-            crs_meta_store: Arc::new(Mutex::new(HashMap::new())),
+            private_storage: Arc::new(Mutex::new(private_storage)),
+            crs_meta_store: Arc::new(Mutex::new(cs_w_status)),
             dkg_pubinfo_meta_store: Arc::new(Mutex::new(HashMap::new())),
         })
     }
@@ -364,7 +400,9 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
     }
 }
 
-impl<S: PublicStorage + Sync + Send + 'static> BaseKms for ThresholdKms<S> {
+impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
+    BaseKms for ThresholdKms<PubS, PrivS>
+{
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
         signature: &der_types::Signature,
@@ -402,7 +440,9 @@ impl<S: PublicStorage + Sync + Send + 'static> BaseKms for ThresholdKms<S> {
         self.base_kms.sign_eip712(msg, domain)
     }
 }
-impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
+impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
+    ThresholdKms<PubS, PrivS>
+{
     async fn inner_decrypt(
         &self,
         fhe_type: FheType,
@@ -504,10 +544,6 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
         {
             // do not generate a new CRS if it already exists or it's already in progress
             // also do not generate a new one if an error has occured
-            //
-            // TODO this part needs to be updated to use persistent storage
-            // since [crs_meta_store] will be emptied after a restart and we
-            // lose the CRS generation status
             let mut guarded_meta_store = self.crs_meta_store.lock().await;
             match guarded_meta_store.get_mut(req_id) {
                 Some(CrsHandlerStatus::Done(_)) => Err(anyhow_error_and_log(format!(
@@ -532,7 +568,8 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
         let session_id = SessionId(req_id.clone().into());
         let mut session = self.prepare_ddec_data_from_sessionid(session_id)?;
         let meta_store = self.crs_meta_store.clone();
-        let storage = self.public_storage.clone();
+        let public_storage = self.public_storage.clone();
+        let private_storage = self.private_storage.clone();
         let copied_req_id = req_id.clone();
 
         // we need to clone the signature key because it needs to be given
@@ -547,57 +584,74 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
             let res_pp = real_ceremony
                 .execute::<Z64, _, _>(&mut session, witness_dim)
                 .await;
-
             let res_info_pp =
                 res_pp.and_then(|pp| compute_info_from_key(&sig_key, &pp).map(|info| (info, pp)));
             let f = || async {
                 // we take these two locks at the same time in case there are races
                 // on return, the two locks should be dropped in the correct order also
-                let guarded_storage = storage.lock().await;
-                let mut guarded_meta_store = meta_store.lock().await;
+                let mut pub_storage = public_storage.lock().await;
+                let mut priv_storage = private_storage.lock().await;
 
                 let (info, pp) = match res_info_pp {
                     Ok(info_pp) => info_pp,
                     Err(e) => {
-                        guarded_meta_store.insert(copied_req_id, CrsHandlerStatus::Error(e));
+                        {
+                            let mut guarded_meta_store = meta_store.lock().await;
+                            guarded_meta_store.insert(copied_req_id, CrsHandlerStatus::Error(e));
+                        }
                         return;
                     }
                 };
 
-                match guarded_storage.compute_url(
+                let crs_meta_data = CrsMetaStore {
+                    digest: info.key_handle,
+                    signature: info.signature,
+                };
+                if store_request_id(
+                    &mut (*pub_storage),
                     &copied_req_id,
-                    &info,
-                    crate::rpc::rpc_types::PubDataType::CRS,
-                ) {
-                    Ok(url) => {
-                        if guarded_storage.store_data(pp, url.clone()) {
-                            let meta_store = CrsMetaStore {
-                                digest: info.key_handle,
-                                signature: info.signature,
-                            };
-                            guarded_meta_store
-                                .insert(copied_req_id, CrsHandlerStatus::Done(meta_store));
-                        } else {
-                            let err_msg =
-                                format!("failed to store data to public storage at {}", url);
-                            guarded_meta_store.insert(
-                                copied_req_id,
-                                CrsHandlerStatus::Error(anyhow!(err_msg.clone())),
-                            );
-                            tracing::error!(err_msg);
-                        }
+                    &pp,
+                    &PubDataType::CRS.to_string(),
+                )
+                .is_ok()
+                    && store_request_id(
+                        &mut (*priv_storage),
+                        &copied_req_id,
+                        &crs_meta_data,
+                        &PrivDataType::CrsInfo.to_string(),
+                    )
+                    .is_ok()
+                {
+                    {
+                        let mut guarded_meta_store = meta_store.lock().await;
+                        guarded_meta_store
+                            .insert(copied_req_id, CrsHandlerStatus::Done(crs_meta_data));
                     }
-                    Err(e) => {
-                        let err_msg = format!(
-                            "failed to compute url for request ID: {}, error: {}",
-                            copied_req_id, e
-                        );
+                } else {
+                    // Try to delete stored data to avoid anything dangling
+                    // Ignore any failure to delete something. It might be because the data exist. In any case, we can't do much
+                    let _ = delete_request_id(
+                        &mut (*pub_storage),
+                        &copied_req_id,
+                        &PubDataType::CRS.to_string(),
+                    );
+                    let _ = delete_request_id(
+                        &mut (*priv_storage),
+                        &copied_req_id,
+                        &PrivDataType::CrsInfo.to_string(),
+                    );
+                    let err_msg = format!(
+                        "failed to store data to public storage for ID {}",
+                        copied_req_id
+                    );
+                    {
+                        let mut guarded_meta_store = meta_store.lock().await;
                         guarded_meta_store.insert(
                             copied_req_id,
                             CrsHandlerStatus::Error(anyhow!(err_msg.clone())),
                         );
-                        tracing::error!(err_msg);
                     }
+                    tracing::error!(err_msg);
                 }
             };
             let _ = f().await;
@@ -658,7 +712,6 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
                 })
                 .collect_vec()
         }
-
         //Derive a sequence of sessionId from request_id
         let session_id: u128 = request_id.clone().into();
         let own_identity = self.own_identity()?;
@@ -694,7 +747,6 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
             };
             tracing::info!("Starting Preproc Orchestration on P[{my_id}]");
             let preproc_result = orchestrator.orchestrate_small_session_dkg_processing(sessions);
-
             let preproc_handle_result = match preproc_result {
                 Ok((_, preproc_handle)) => Ok(preproc_handle),
                 Err(e) => Err(e),
@@ -756,10 +808,11 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
 
         //Clone all the Arcs to give them to the tokio thread
         let meta_store = self.dkg_pubinfo_meta_store.clone();
-        let storage = self.public_storage.clone();
-        let priv_store = self.fhe_keys.clone();
+        let public_storage = self.public_storage.clone();
+        let private_storage = self.private_storage.clone();
         let copied_reqid = request_id.clone();
         let sig_key = self.base_kms.sig_key.clone();
+        let fhe_keys = self.fhe_keys.clone();
         //Start the async dkg job
         let _handle = tokio::spawn(async move {
             //Actually do the dkg
@@ -796,7 +849,6 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
             let pub_key_info = compute_info_from_key(&sig_key, &pub_key_set.public_key);
             let serv_key_info = compute_info_from_key(&sig_key, &pub_key_set.server_key);
             let sns_key_info = compute_info_from_key(&sig_key, &sns_key);
-
             //Make sure we did manage to compute the info
             let info = match (pub_key_info, serv_key_info, sns_key_info) {
                 (Ok(pub_key_info), Ok(serv_key_info), Ok(sns_key_info)) => {
@@ -820,43 +872,96 @@ impl<S: PublicStorage + Sync + Send + 'static> ThresholdKms<S> {
             };
 
             //Take lock on all the storage at once, so we either update everything or nothing
-            let guarded_storage = storage.lock().await;
-            let mut guarded_meta_storage = meta_store.lock().await;
-            let mut guarded_priv_store = priv_store.write().await;
+            let mut pub_storage = public_storage.lock().await;
+            let mut priv_storage = private_storage.lock().await;
 
+            let private_key_data = ThresholdFheKeys {
+                private_keys,
+                sns_key: sns_key.clone(),
+            };
             //Try to store public information
-            match store_public_keys(&(*guarded_storage), &copied_reqid, &info, &pub_key_set) {
-                Ok(_) => {
-                    //If everything succeeded, update state and store private key
-                    guarded_meta_storage.insert(copied_reqid.clone(), DkgHandlerStatus::Done(info));
-
-                    guarded_priv_store.insert(
-                        copied_reqid.clone(),
-                        ThresholdFheKeys {
-                            private_keys,
-                            sns_key,
-                        },
-                    );
-                    tracing::info!("Finished DKG for Request Id {copied_reqid}.");
+            if store_request_id(
+                &mut (*pub_storage),
+                &copied_reqid,
+                &pub_key_set.public_key,
+                &PubDataType::PublicKey.to_string(),
+            )
+            .is_ok()
+                && store_request_id(
+                    &mut (*pub_storage),
+                    &copied_reqid,
+                    &pub_key_set.server_key,
+                    &PubDataType::ServerKey.to_string(),
+                )
+                .is_ok()
+                && store_request_id(
+                    &mut (*pub_storage),
+                    &copied_reqid,
+                    &sns_key,
+                    &PubDataType::SnsKey.to_string(),
+                )
+                .is_ok()
+                && store_request_id(
+                    &mut (*priv_storage),
+                    &copied_reqid,
+                    &private_key_data,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .is_ok()
+            {
+                {
+                    let mut guarded_fhe_keys = fhe_keys.write().await;
+                    guarded_fhe_keys.insert(copied_reqid.clone(), private_key_data);
                 }
-                Err(_) => {
-                    //If writing to public store failed, update status
+                //If everything succeeded, update state and store private key
+                {
+                    let mut guarded_meta_storage = meta_store.lock().await;
+                    guarded_meta_storage.insert(copied_reqid.clone(), DkgHandlerStatus::Done(info));
+                }
+                tracing::info!("Finished DKG for Request Id {copied_reqid}.");
+            } else {
+                // Try to delete stored data to avoid anything dangling
+                // Ignore any failure to delete something. It might be because the data exist. In any case, we can't do much
+                let _ = delete_request_id(
+                    &mut (*pub_storage),
+                    &copied_reqid,
+                    &PubDataType::PublicKey.to_string(),
+                );
+                let _ = delete_request_id(
+                    &mut (*pub_storage),
+                    &copied_reqid,
+                    &PubDataType::ServerKey.to_string(),
+                );
+                let _ = delete_request_id(
+                    &mut (*pub_storage),
+                    &copied_reqid,
+                    &PubDataType::SnsKey.to_string(),
+                );
+                let _ = delete_request_id(
+                    &mut (*priv_storage),
+                    &copied_reqid,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                );
+                //If writing to public store failed, update status
+                {
+                    let mut guarded_meta_storage = meta_store.lock().await;
                     guarded_meta_storage.insert(
                         copied_reqid,
                         DkgHandlerStatus::Error(anyhow_error_and_log(
-                            "Failed to write to public store",
+                            "Failed to write the public key to public store",
                         )),
                     );
                 }
             }
         });
-
         Ok(())
     }
 }
 
 #[tonic::async_trait]
-impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for ThresholdKms<S> {
+impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
+    CoordinatorEndpoint for ThresholdKms<PubS, PrivS>
+{
     async fn key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
@@ -914,7 +1019,6 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
                 request_id
             );
         }
-
         Ok(Response::new(Empty {}))
     }
 
@@ -984,7 +1088,6 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
                 }
             }
         };
-
         Ok(Response::new(KeyGenPreprocStatus {
             result: response.into(),
         }))
@@ -1006,20 +1109,28 @@ impl<S: PublicStorage + Sync + Send + 'static> CoordinatorEndpoint for Threshold
         }
 
         let storage = self.public_storage.clone();
-        //TODO: SINCE WE DO NOT PERSIST SECRET KEY
-        //IF COORDINATOR CRASHES, WE WILL HAVE A DANGLING PK
-        //separate scope to request mutex on storage
-        //and make sure storage doesnt hold a key for request_id
         {
             let storage = storage.lock().await;
+            // TODO I don't think we need to do this check since the key will only be stored if it is already persisted in dkg_pubinfo_meta_store
             if tonic_handle_potential_err(
-                storage.data_exists(&request_id, PubDataType::PublicKey),
+                storage.data_exists(&tonic_handle_potential_err(
+                    storage
+                        .compute_url(&request_id.to_string(), &PubDataType::PublicKey.to_string()),
+                    "Could not compute url for public key".to_string(),
+                )?),
                 "Could not validate if the public key exist".to_string(),
             )? || tonic_handle_potential_err(
-                storage.data_exists(&request_id, PubDataType::ServerKey),
+                storage.data_exists(&tonic_handle_potential_err(
+                    storage
+                        .compute_url(&request_id.to_string(), &PubDataType::ServerKey.to_string()),
+                    "Could not compute url for server key".to_string(),
+                )?),
                 "Could not validate if the server key exist".to_string(),
             )? || tonic_handle_potential_err(
-                storage.data_exists(&request_id, PubDataType::SnsKey),
+                storage.data_exists(&tonic_handle_potential_err(
+                    storage.compute_url(&request_id.to_string(), &PubDataType::SnsKey.to_string()),
+                    "Could not compute url for SnS key".to_string(),
+                )?),
                 "Could not validate if the SnS key exist".to_string(),
             )? {
                 tracing::warn!(

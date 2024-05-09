@@ -13,9 +13,8 @@ pub const DEFAULT_THRESHOLD_KEYS_PATH: &str = "temp/default-threshold-keys";
 pub const DEFAULT_THRESHOLD_CT_PATH: &str = "temp/default-threshold-ciphertext.bin";
 pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 pub const DEFAULT_CENTRAL_CRS_PATH: &str = "crs/default-crs-store.bin";
-pub const DEFAULT_CENTRAL_MULTI_KEYS_PATH: &str = "temp/default-central-multi-keys.bin";
 pub const DEFAULT_CENTRAL_CT_PATH: &str = "temp/default-central-ciphertext.bin";
-pub const DEFAULT_CENTRAL_MULTI_CT_PATH: &str = "temp/default-central-multi-keys-ciphertext.bin";
+pub const DEFAULT_CENTRAL_OTHER_CT_PATH: &str = "temp/default-central-other-ciphertext.bin";
 
 // TODO Test should be in a test module, however I have spend an hour trying to refactor this
 // without success. Someone with good rust skills are very welcome to try this
@@ -45,8 +44,20 @@ lazy_static! {
     pub static ref TEST_REENC_ID: RequestId = RequestId {
         request_id: String::from("0000000000000000000000000000000000000003")
     };
-    pub static ref OTHER_KEY_HANDLE: RequestId = RequestId {
+    pub static ref OTHER_TEST_ID: RequestId = RequestId {
         request_id: String::from("1111111111111111111111111111111111111111")
+    };
+    pub static ref DEFAULT_KEY_ID: RequestId = RequestId {
+        request_id: String::from("1000000000000000000000000000000000000000")
+    };
+    pub static ref DEFAULT_CRS_ID: RequestId = RequestId {
+        request_id: String::from("1000000000000000000000000000000000000001")
+    };
+    pub static ref DEFAULT_DEC_ID: RequestId = RequestId {
+        request_id: String::from("1000000000000000000000000000000000000002")
+    };
+    pub static ref OTHER_DEFAULT_ID: RequestId = RequestId {
+        request_id: String::from("0111111111111111111111111111111111111111")
     };
 }
 
@@ -55,9 +66,8 @@ pub const TEST_THRESHOLD_KEYS_PATH: &str = "temp/test-threshold-keys";
 pub const TEST_THRESHOLD_CT_PATH: &str = "temp/test-threshold-ciphertext.bin";
 pub const TEST_CENTRAL_KEYS_PATH: &str = "temp/test-central-keys.bin";
 pub const TEST_CENTRAL_CRS_PATH: &str = "crs/test-crs-store.bin";
-pub const TEST_CENTRAL_MULTI_KEYS_PATH: &str = "temp/test-central-multi-keys.bin";
 pub const TEST_CENTRAL_CT_PATH: &str = "temp/test-central-ciphertext.bin";
-pub const TEST_CENTRAL_MULTI_CT_PATH: &str = "temp/test-central-multi-keys-ciphertext.bin";
+pub const TEST_CENTRAL_OTHER_CT_PATH: &str = "temp/test-central-other-ciphertext.bin";
 pub const TEST_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/test-central-wasm-transcript.bin";
 pub const TEST_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/test-threshold-wasm-transcript.bin";
 

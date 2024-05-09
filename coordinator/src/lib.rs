@@ -53,6 +53,15 @@ pub mod rpc {
     pub mod rpc_types;
 }
 
+/// Helper method for returning the optional value of `input` if it exists, otherwise
+/// returning a custom anyhow error.
+pub fn some_or_err<T: fmt::Debug>(input: Option<T>, error: String) -> anyhow::Result<T> {
+    input.ok_or_else(|| {
+        tracing::warn!(error);
+        anyhow::Error::msg("Invalid request")
+    })
+}
+
 // NOTE: the below is copied from core/threshold
 // since the calling tracing from another crate
 // does not generate correct logs in tracing_test::traced_test
@@ -71,7 +80,7 @@ pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) ->
 #[cfg(feature = "non-wasm")]
 pub fn write_default_keys(path: &str) {
     use crate::{
-        consts::{TEST_KEY_ID, TMP_PATH_PREFIX},
+        consts::{DEFAULT_KEY_ID, OTHER_DEFAULT_ID, TMP_PATH_PREFIX},
         util::{
             file_handling::read_element,
             key_setup::{ensure_central_keys_exist, CentralizedTestingKeys},
@@ -96,10 +105,11 @@ pub fn write_default_keys(path: &str) {
     ensure_central_keys_exist(
         DEFAULT_PARAM_PATH,
         path,
-        Some(((*TEST_KEY_ID).clone()).clone()),
+        &DEFAULT_KEY_ID.clone(),
+        &OTHER_DEFAULT_ID.clone(),
     );
     let central_keys: CentralizedTestingKeys = read_element(path).unwrap();
-    let pks = central_keys.pub_fhe_keys.get(&TEST_KEY_ID).unwrap();
+    let pks = central_keys.pub_fhe_keys.get(&DEFAULT_KEY_ID).unwrap();
     // Write down the seperate keys needed to run the server
     if !Path::new(&format!("{TMP_PATH_PREFIX}/pks.bin"))
         .try_exists()
@@ -125,7 +135,7 @@ pub fn write_default_keys(path: &str) {
             &central_keys
                 .software_kms_keys
                 .key_info
-                .get(&TEST_KEY_ID)
+                .get(&DEFAULT_KEY_ID)
                 .unwrap()
                 .client_key,
         )
@@ -136,14 +146,14 @@ pub fn write_default_keys(path: &str) {
 
 #[cfg(feature = "non-wasm")]
 pub fn write_default_crs_store() {
-    use crate::consts::{DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_KEYS_PATH, TEST_CRS_ID};
+    use crate::consts::{DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CRS_ID};
     use util::key_setup::ensure_central_crs_store_exists;
 
     ensure_central_crs_store_exists(
         DEFAULT_PARAM_PATH,
         DEFAULT_CENTRAL_CRS_PATH,
         DEFAULT_CENTRAL_KEYS_PATH,
-        Some((*TEST_CRS_ID).clone()),
+        &DEFAULT_CRS_ID,
     );
 }
 
@@ -152,18 +162,13 @@ pub fn write_default_crs_store() {
 mod tests {
     #[cfg(test)]
     #[ctor::ctor]
-    fn ensure_server_keys_exist() {
+    fn ensure_server_keys_crs_exist() {
         use crate::consts::DEFAULT_CENTRAL_KEYS_PATH;
+        use crate::write_default_crs_store;
         use crate::write_default_keys;
 
         println!("Write default keys started...");
         write_default_keys(DEFAULT_CENTRAL_KEYS_PATH);
-    }
-
-    #[cfg(test)]
-    #[ctor::ctor]
-    fn ensure_crs_exist() {
-        use crate::write_default_crs_store;
 
         println!("Write default CRS store started...");
         write_default_crs_store();

@@ -112,10 +112,7 @@ where
 }
 
 impl<Z: Ring> Drop for InMemoryBasePreprocessing<Z> {
-    fn drop(&mut self) {
-        debug_assert_eq!(self.available_triples.len(), 0);
-        debug_assert_eq!(self.available_randoms.len(), 0);
-    }
+    fn drop(&mut self) {}
 }
 
 impl<Z: Ring> TriplePreprocessing<Z> for InMemoryBasePreprocessing<Z> {

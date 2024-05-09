@@ -12,13 +12,16 @@ use aws_sdk_s3::Client as S3Client;
 use clap::{Parser, ValueEnum};
 use cms::enveloped_data::{EnvelopedData, RecipientInfo as PKCS7RecipientInfo};
 use der::{Decode, DecodeValue, Header, SliceReader};
-use kms_lib::util::file_handling::read_element;
-use kms_lib::write_default_keys;
+use kms_lib::storage::FileStorage;
 use kms_lib::{
-    consts::{DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_KEYS_PATH, TEST_CRS_ID, TEST_KEY_ID},
+    consts::{DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_KEYS_PATH},
     write_default_crs_store,
 };
-use kms_lib::{cryptography::central_kms::SoftwareKmsKeys, util::key_setup::CrsHandleStore};
+use kms_lib::{
+    consts::{DEFAULT_CRS_ID, DEFAULT_KEY_ID},
+    write_default_keys,
+};
+use kms_lib::{cryptography::central_kms::SoftwareKmsKeys, storage::StorageType};
 use kms_lib::{
     cryptography::der_types::{PrivateSigKey, PublicSigKey},
     rpc::central_rpc::server_handle as kms_server_handle,
@@ -107,23 +110,20 @@ async fn main() -> Result<(), anyhow::Error> {
         Mode::Dev => {
             if !Path::new(DEFAULT_CENTRAL_KEYS_PATH).exists() {
                 tracing::info!(
-                    "Could not find default keys. Generating new keys with default parameters and ID \"{}\"...", (*TEST_KEY_ID).clone()
+                    "Could not find default keys. Generating new keys with default parameters and ID \"{}\"...", (*DEFAULT_KEY_ID).clone()
                 );
                 write_default_keys(DEFAULT_CENTRAL_KEYS_PATH);
             };
-            tracing::info!("Reading keys");
-            let keys: SoftwareKmsKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH)?;
-
             if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
                 tracing::info!(
-                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", (*TEST_CRS_ID).clone()
+                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", (*DEFAULT_CRS_ID).clone()
                 );
                 write_default_crs_store();
             };
-            tracing::info!("Reading crs");
-            let crs_store: CrsHandleStore = read_element(DEFAULT_CENTRAL_CRS_PATH)?;
 
-            kms_server_handle(socket, keys, Some(crs_store.crs_info)).await
+            let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+            let priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
+            kms_server_handle(socket, pub_storage, priv_storage).await
         }
         Mode::Proxy => kms_proxy_server_handle(socket, &args.enclave_vsock).await,
         Mode::Enclave => {
@@ -261,19 +261,21 @@ async fn main() -> Result<(), anyhow::Error> {
             let fhe_sk = bincode::deserialize_from(fhe_sk_bytes.as_slice())?;
 
             // start the KMS
-            let keys = SoftwareKmsKeys {
-                key_info: HashMap::from([((*TEST_KEY_ID).clone(), fhe_sk)]),
+            let _keys = SoftwareKmsKeys {
+                key_info: HashMap::from([((*DEFAULT_KEY_ID).clone(), fhe_sk)]),
                 sig_sk,
                 sig_pk,
             };
             if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
                 tracing::info!(
-                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", (*TEST_CRS_ID).clone()
+                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", (*DEFAULT_CRS_ID).clone()
                 );
                 write_default_crs_store();
             };
-            let crs_store: CrsHandleStore = read_element(DEFAULT_CENTRAL_CRS_PATH)?;
-            kms_server_handle(socket, keys, Some(crs_store.crs_info)).await
+            // TODO this should be glued together with Nitro properly after mergning #442
+            let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+            let priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
+            kms_server_handle(socket, pub_storage, priv_storage).await
         }
     }?;
     Ok(())

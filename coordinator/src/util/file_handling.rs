@@ -21,6 +21,9 @@ pub fn read_as_json<T: DeserializeOwned>(file_path: String) -> anyhow::Result<T>
     Ok(res)
 }
 
+/// Write an element to a filepath.
+/// The function will create the necessary directories in the path in order to write the [element].
+/// If the file already exists then it will be COMPLETELY OVERWRITTEN without warning.
 pub fn write_element<T: serde::Serialize>(file_path: String, element: &T) -> anyhow::Result<()> {
     let mut serialized_data = Vec::new();
     let _ = bincode::serialize_into(&mut serialized_data, &element);
@@ -33,6 +36,9 @@ pub fn write_element<T: serde::Serialize>(file_path: String, element: &T) -> any
     Ok(())
 }
 
+/// Write bytes to a filepath.
+/// The function will create the necessary directories in the path in order to write the [bytes].
+/// If the file already exists then it will be COMPLETELY OVERWRITTEN without warning.
 pub fn write_bytes<S: AsRef<std::ffi::OsStr> + ?Sized, B: AsRef<[u8]>>(
     file_path: &S,
     bytes: B,

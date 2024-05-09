@@ -1,3 +1,4 @@
+use kms_lib::consts::DEFAULT_KEY_ID;
 use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
 use kms_lib::kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType};
 use kms_lib::util::key_setup::CentralizedTestingKeys;
@@ -77,10 +78,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         central_keys.client_pk,
         Some(central_keys.client_sk),
         1,
+        1,
         central_keys.params,
     );
 
     // DECRYPTION REQUEST
+    let req_key_id = RequestId {
+        request_id: DEFAULT_KEY_ID.to_string(),
+    };
     // Generate a random request ID, just for testing
     let mut rng = AesRng::from_entropy();
     let dec_req_id = {
@@ -90,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             request_id: hex::encode(buf),
         }
     };
-    let req = internal_client.decryption_request(ct.clone(), fhe_type, &dec_req_id, None)?;
+    let req = internal_client.decryption_request(ct.clone(), fhe_type, &dec_req_id, &req_key_id)?;
     let response = kms_client.decrypt(tonic::Request::new(req.clone())).await?;
     tracing::debug!("DECRYPT RESPONSE={:?}", response);
     // Wait for the servers to complete the decryption
@@ -127,8 +132,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             request_id: hex::encode(buf),
         }
     };
-    let (req, enc_pk, enc_sk) =
-        internal_client.reencyption_request(ct, &dummy_domain(), fhe_type, &reenc_req_id, None)?;
+    let (req, enc_pk, enc_sk) = internal_client.reencyption_request(
+        ct,
+        &dummy_domain(),
+        fhe_type,
+        &reenc_req_id,
+        &req_key_id,
+    )?;
     let response = kms_client
         .reencrypt(tonic::Request::new(req.clone()))
         .await?;

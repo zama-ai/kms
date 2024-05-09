@@ -3,19 +3,19 @@ use super::signcryption::{
     internal_verify_sig, internal_verify_sig_eip712, serialize_hash_element, sign, sign_eip712,
     signcrypt, RND_SIZE,
 };
-use crate::anyhow_error_and_log;
-use crate::consts::TEST_KEY_ID;
-use crate::kms::FhePubKeyInfo;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
 #[cfg(feature = "non-wasm")]
 use crate::storage::PublicStorage;
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
+use crate::{anyhow_error_and_log, storage::read_all_data};
 use crate::{
     consts::ID_LENGTH,
     rpc::rpc_types::{BaseKms, Kms, Plaintext, RawDecryption, SigncryptionPayload},
 };
+use crate::{consts::TEST_KEY_ID, rpc::rpc_types::PrivDataType};
+use crate::{kms::FhePubKeyInfo, some_or_err};
 use crate::{kms::FheType, rpc::rpc_types::PubDataType};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
@@ -24,6 +24,7 @@ use der::zeroize::Zeroize;
 use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use distributed_decryption::execution::zk::ceremony::{make_proof_deterministic, PublicParameter};
+use itertools::Itertools;
 use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -212,13 +213,14 @@ impl BaseKms for BaseKmsStruct {
 #[cfg(feature = "non-wasm")]
 #[derive(Serialize, Deserialize)]
 pub struct SoftwareKmsKeys {
-    pub key_info: HashMap<RequestId, KmsFheKeyHandles>,
+    pub key_info: KeysHashMap,
     pub sig_sk: PrivateSigKey,
     pub sig_pk: PublicSigKey,
 }
 
 // TODO rename to CrcInfoHashMap (later, to avoid conflicts with other PRs)
 pub type CrsHashMap = HashMap<RequestId, FhePubKeyInfo>;
+pub type KeysHashMap = HashMap<RequestId, KmsFheKeyHandles>;
 
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize)]
@@ -272,11 +274,19 @@ pub type ReencCallValues = ((u32, FheType, Vec<u8>), anyhow::Result<Vec<u8>>);
 pub type CompMap<A> = Arc<Mutex<HashMap<RequestId, JoinHandle<A>>>>;
 /// Software based KMS where keys are stored in a local file
 #[cfg(feature = "non-wasm")]
-pub struct SoftwareKms<S: PublicStorage> {
+pub struct SoftwareKms<
+    PubS: PublicStorage + Sync + Send + 'static,
+    PrivS: PublicStorage + Sync + Send + 'static,
+> {
     pub(crate) base_kms: BaseKmsStruct,
-    pub(crate) storage: S,
+    // Storage for data that is supposed to be readable by anyone on the internet,
+    // but _may_ be suseptible to malicious modifications.
+    pub(crate) public_storage: Arc<Mutex<PubS>>,
+    // Storage for data that is supposed to only be readable, writable and modifiable by the entity owner
+    // and where any modification will be detected.
+    pub(crate) private_storage: Arc<Mutex<PrivS>>,
     // Map storing the already generated FHE keys.
-    pub key_handles: Arc<Mutex<HashMap<RequestId, KmsFheKeyHandles>>>,
+    pub key_handles: Arc<Mutex<KeysHashMap>>,
     // Map storing ongoing key generation requests.
     pub key_gen_map: CompMap<KeyGenCallValues>,
     // Map storing ongoing decryption requests.
@@ -291,13 +301,16 @@ pub struct SoftwareKms<S: PublicStorage> {
 
 /// Perform asynchronous decryption and serialize the result using asn1
 #[cfg(feature = "non-wasm")]
-pub async fn async_decrypt<S: PublicStorage>(
+pub async fn async_decrypt<
+    PubS: PublicStorage + Sync + Send + 'static,
+    PrivS: PublicStorage + Sync + Send + 'static,
+>(
     client_key: &FhePrivateKey,
     high_level_ct: &[u8],
     fhe_type: FheType,
 ) -> anyhow::Result<Vec<u8>> {
     handle_potential_err(
-        to_vec(&SoftwareKms::<S>::decrypt(
+        to_vec(&SoftwareKms::<PubS, PrivS>::decrypt(
             client_key,
             high_level_ct,
             fhe_type,
@@ -309,7 +322,10 @@ pub async fn async_decrypt<S: PublicStorage>(
 /// Perform asynchronous reencryption and serialize the result using asn1
 #[cfg(feature = "non-wasm")]
 #[allow(clippy::too_many_arguments)]
-pub async fn async_reencrypt<S: PublicStorage>(
+pub async fn async_reencrypt<
+    PubS: PublicStorage + Sync + Send + 'static,
+    PrivS: PublicStorage + Sync + Send + 'static,
+>(
     client_key: &FhePrivateKey,
     sig_key: &PrivateSigKey,
     rng: &mut (impl CryptoRng + RngCore),
@@ -319,7 +335,7 @@ pub async fn async_reencrypt<S: PublicStorage>(
     client_enc_key: &PublicEncKey,
     client_verf_key: &PublicSigKey,
 ) -> anyhow::Result<Vec<u8>> {
-    SoftwareKms::<S>::reencrypt(
+    SoftwareKms::<PubS, PrivS>::reencrypt(
         client_key,
         sig_key,
         rng,
@@ -333,7 +349,9 @@ pub async fn async_reencrypt<S: PublicStorage>(
 
 // impl fmt::Debug for SoftwareKms, we don't want to include the decryption key in the debug output
 #[cfg(feature = "non-wasm")]
-impl<S: PublicStorage> fmt::Debug for SoftwareKms<S> {
+impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
+    fmt::Debug for SoftwareKms<PubS, PrivS>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SoftwareKms")
             .field("sig_key", &self.base_kms.sig_key)
@@ -342,7 +360,9 @@ impl<S: PublicStorage> fmt::Debug for SoftwareKms<S> {
 }
 
 #[cfg(feature = "non-wasm")]
-impl<S: PublicStorage> BaseKms for SoftwareKms<S> {
+impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
+    BaseKms for SoftwareKms<PubS, PrivS>
+{
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
         signature: &super::der_types::Signature,
@@ -386,7 +406,9 @@ impl<S: PublicStorage> BaseKms for SoftwareKms<S> {
 }
 
 #[cfg(feature = "non-wasm")]
-impl<S: PublicStorage> Kms for SoftwareKms<S> {
+impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static> Kms
+    for SoftwareKms<PubS, PrivS>
+{
     fn decrypt(
         client_key: &FhePrivateKey,
         high_level_ct: &[u8],
@@ -475,29 +497,32 @@ impl<S: PublicStorage> Kms for SoftwareKms<S> {
 }
 
 #[cfg(feature = "non-wasm")]
-impl<S: PublicStorage> SoftwareKms<S> {
-    pub fn new(
-        storage: S,
-        key_info: HashMap<RequestId, KmsFheKeyHandles>,
-        sig_key: PrivateSigKey,
-        crs_store: Option<CrsHashMap>,
-    ) -> Self {
-        // Use the crs_store passed in if it exists, otherwise create a new one
-        let cs = match crs_store {
-            Some(crs_store) => crs_store,
-            None => CrsHashMap::new(),
-        };
-
-        SoftwareKms {
-            base_kms: BaseKmsStruct::new(sig_key),
-            storage,
+impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
+    SoftwareKms<PubS, PrivS>
+{
+    pub fn new(public_storage: PubS, private_storage: PrivS) -> anyhow::Result<Self> {
+        let sks: HashMap<RequestId, PrivateSigKey> =
+            read_all_data(&private_storage, &PrivDataType::SigningKey.to_string())?;
+        let sk = some_or_err(
+            sks.values().collect_vec().first(),
+            "There is no private signing key stored".to_string(),
+        )?
+        .to_owned()
+        .to_owned();
+        let key_info: KeysHashMap =
+            read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string())?;
+        let cs: CrsHashMap = read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string())?;
+        Ok(SoftwareKms {
+            base_kms: BaseKmsStruct::new(sk),
+            public_storage: Arc::new(Mutex::new(public_storage)),
+            private_storage: Arc::new(Mutex::new(private_storage)),
             key_handles: Arc::new(Mutex::new(key_info)),
             key_gen_map: Arc::new(Mutex::new(HashMap::new())),
             decrypt_map: Arc::new(Mutex::new(HashMap::new())),
             reenc_map: Arc::new(Mutex::new(HashMap::new())),
             crs_handles: Arc::new(Mutex::new(cs)),
             crs_gen_map: Arc::new(Mutex::new(HashMap::new())),
-        }
+        })
     }
 }
 
@@ -549,29 +574,34 @@ mod tests {
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH,
-        DEFAULT_CENTRAL_MULTI_CT_PATH, DEFAULT_CENTRAL_MULTI_KEYS_PATH, DEFAULT_PARAM_PATH,
-        DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH, TEST_CRS_ID,
+        DEFAULT_CENTRAL_OTHER_CT_PATH, DEFAULT_CRS_ID, DEFAULT_KEY_ID, DEFAULT_PARAM_PATH,
+        DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH, OTHER_DEFAULT_ID,
     };
-    use crate::consts::{
-        OTHER_KEY_HANDLE, TEST_CENTRAL_CRS_PATH, TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH,
-        TEST_CENTRAL_MULTI_CT_PATH, TEST_CENTRAL_MULTI_KEYS_PATH, TEST_KEY_ID, TEST_PARAM_PATH,
-        TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH,
-    };
-    use crate::cryptography::request::ephemeral_key_generation;
     use crate::cryptography::signcryption::decrypt_signcryption;
     use crate::kms::{FheType, RequestId};
     use crate::rpc::rpc_types::Plaintext;
     use crate::util::file_handling::read_element;
     use crate::util::key_setup::{
-        ensure_central_crs_store_exists, ensure_central_key_ct_exist,
-        ensure_central_multiple_keys_ct_exist, ensure_dir_exist, ensure_threshold_key_ct_exist,
-        CentralizedTestingKeys,
+        ensure_central_crs_store_exists, ensure_dir_exist, CentralizedTestingKeys,
+    };
+    use crate::{
+        consts::TEST_CRS_ID,
+        util::key_setup::{ensure_central_keys_exist, ensure_ciphertext_exist},
+    };
+    use crate::{
+        consts::{
+            OTHER_TEST_ID, TEST_CENTRAL_CRS_PATH, TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH,
+            TEST_CENTRAL_OTHER_CT_PATH, TEST_KEY_ID, TEST_PARAM_PATH, TEST_THRESHOLD_CT_PATH,
+            TEST_THRESHOLD_KEYS_PATH,
+        },
+        storage::RamStorage,
     };
     use crate::{
         cryptography::central_kms::{gen_sig_keys, SoftwareKms},
         rpc::rpc_types::Kms,
     };
-    use crate::{cryptography::der_types::PrivateSigKey, storage::DevStorage};
+    use crate::{cryptography::der_types::PrivateSigKey, storage::FileStorage};
+    use crate::{cryptography::request::ephemeral_key_generation, storage::StorageType};
     use aes_prng::AesRng;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use rand::{RngCore, SeedableRng};
@@ -613,7 +643,7 @@ mod tests {
     fn sunshine_default_decrypt() {
         sunshine_decrypt(
             DEFAULT_CENTRAL_KEYS_PATH,
-            (*TEST_KEY_ID).clone(),
+            (*DEFAULT_KEY_ID).clone(),
             DEFAULT_CENTRAL_CT_PATH,
         );
     }
@@ -622,9 +652,9 @@ mod tests {
     #[serial]
     fn multiple_test_keys_decrypt() {
         sunshine_decrypt(
-            TEST_CENTRAL_MULTI_KEYS_PATH,
-            (*OTHER_KEY_HANDLE).clone(),
-            TEST_CENTRAL_MULTI_CT_PATH,
+            TEST_CENTRAL_KEYS_PATH,
+            (*OTHER_TEST_ID).clone(),
+            TEST_CENTRAL_OTHER_CT_PATH,
         );
     }
 
@@ -632,42 +662,57 @@ mod tests {
     #[test]
     fn multiple_default_keys_decrypt() {
         sunshine_decrypt(
-            DEFAULT_CENTRAL_MULTI_KEYS_PATH,
-            (*OTHER_KEY_HANDLE).clone(),
-            DEFAULT_CENTRAL_MULTI_CT_PATH,
+            DEFAULT_CENTRAL_KEYS_PATH,
+            (*OTHER_DEFAULT_ID).clone(),
+            DEFAULT_CENTRAL_OTHER_CT_PATH,
         );
     }
     #[cfg(test)]
     #[ctor::ctor]
     fn ensure_testing_material_exists() {
-        use crate::consts::TEST_CRS_ID;
+        use crate::util::key_setup::{ensure_threshold_keys_exist, ThresholdTestingKeys};
 
         ensure_dir_exist();
-
-        ensure_central_key_ct_exist(
+        ensure_central_keys_exist(
             TEST_PARAM_PATH,
             TEST_CENTRAL_KEYS_PATH,
-            TEST_CENTRAL_CT_PATH,
+            &TEST_KEY_ID,
+            &OTHER_TEST_ID,
         );
 
         ensure_central_crs_store_exists(
             TEST_PARAM_PATH,
             TEST_CENTRAL_CRS_PATH,
             TEST_CENTRAL_KEYS_PATH,
-            Some((*TEST_CRS_ID).clone()),
+            &TEST_CRS_ID,
         );
 
-        ensure_threshold_key_ct_exist(
+        ensure_threshold_keys_exist(
             TEST_PARAM_PATH,
             TEST_THRESHOLD_KEYS_PATH,
-            TEST_THRESHOLD_CT_PATH,
+            &TEST_KEY_ID.to_string(),
         );
 
-        ensure_central_multiple_keys_ct_exist(
-            TEST_PARAM_PATH,
-            TEST_CENTRAL_MULTI_KEYS_PATH,
-            (*OTHER_KEY_HANDLE).clone(),
-            TEST_CENTRAL_MULTI_CT_PATH,
+        let threshold_keys: ThresholdTestingKeys =
+            read_element(&format!("{TEST_THRESHOLD_KEYS_PATH}-1.bin")).unwrap();
+        ensure_ciphertext_exist(TEST_THRESHOLD_CT_PATH, &threshold_keys.fhe_pub);
+
+        let central_keys: CentralizedTestingKeys = read_element(TEST_CENTRAL_KEYS_PATH).unwrap();
+        ensure_ciphertext_exist(
+            TEST_CENTRAL_CT_PATH,
+            &central_keys
+                .pub_fhe_keys
+                .get(&TEST_KEY_ID)
+                .unwrap()
+                .public_key,
+        );
+        ensure_ciphertext_exist(
+            TEST_CENTRAL_OTHER_CT_PATH,
+            &central_keys
+                .pub_fhe_keys
+                .get(&OTHER_TEST_ID)
+                .unwrap()
+                .public_key,
         );
     }
 
@@ -675,49 +720,64 @@ mod tests {
     #[cfg(test)]
     #[ctor::ctor]
     fn ensure_default_material_exists() {
+        use crate::{
+            consts::OTHER_DEFAULT_ID,
+            util::key_setup::{ensure_threshold_keys_exist, ThresholdTestingKeys},
+        };
+
         ensure_dir_exist();
 
-        ensure_central_key_ct_exist(
+        ensure_central_keys_exist(
             DEFAULT_PARAM_PATH,
             DEFAULT_CENTRAL_KEYS_PATH,
-            DEFAULT_CENTRAL_CT_PATH,
+            &DEFAULT_KEY_ID,
+            &OTHER_DEFAULT_ID,
         );
-
         ensure_central_crs_store_exists(
             DEFAULT_PARAM_PATH,
             DEFAULT_CENTRAL_CRS_PATH,
             DEFAULT_CENTRAL_KEYS_PATH,
-            Some((*TEST_CRS_ID).clone()),
+            &DEFAULT_CRS_ID,
         );
-
-        ensure_threshold_key_ct_exist(
+        ensure_threshold_keys_exist(
             DEFAULT_PARAM_PATH,
             DEFAULT_THRESHOLD_KEYS_PATH,
-            DEFAULT_THRESHOLD_CT_PATH,
+            &DEFAULT_KEY_ID.to_string(),
         );
 
-        ensure_central_multiple_keys_ct_exist(
-            DEFAULT_PARAM_PATH,
-            DEFAULT_CENTRAL_MULTI_KEYS_PATH,
-            (*OTHER_KEY_HANDLE).clone(),
-            DEFAULT_CENTRAL_MULTI_CT_PATH,
+        let threshold_keys: ThresholdTestingKeys =
+            read_element(&format!("{DEFAULT_THRESHOLD_KEYS_PATH}-1.bin")).unwrap();
+        ensure_ciphertext_exist(DEFAULT_THRESHOLD_CT_PATH, &threshold_keys.fhe_pub);
+
+        let central_keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH).unwrap();
+        ensure_ciphertext_exist(
+            DEFAULT_CENTRAL_CT_PATH,
+            &central_keys
+                .pub_fhe_keys
+                .get(&DEFAULT_KEY_ID)
+                .unwrap()
+                .public_key,
+        );
+        ensure_ciphertext_exist(
+            DEFAULT_CENTRAL_OTHER_CT_PATH,
+            &central_keys
+                .pub_fhe_keys
+                .get(&OTHER_DEFAULT_ID)
+                .unwrap()
+                .public_key,
         );
     }
 
     #[test]
     fn multiple_test_keys_access() {
-        let central_keys: CentralizedTestingKeys =
-            read_element(TEST_CENTRAL_MULTI_KEYS_PATH).unwrap();
+        let central_keys: CentralizedTestingKeys = read_element(TEST_CENTRAL_KEYS_PATH).unwrap();
 
         // try to get keys with the default handle
         let default_key = central_keys.software_kms_keys.key_info.get(&TEST_KEY_ID);
         assert!(default_key.is_some());
 
         // try to get keys with the some other handle
-        let some_key = central_keys
-            .software_kms_keys
-            .key_info
-            .get(&OTHER_KEY_HANDLE);
+        let some_key = central_keys.software_kms_keys.key_info.get(&OTHER_TEST_ID);
         assert!(some_key.is_some());
 
         // try to get keys with a non-existent handle
@@ -743,21 +803,19 @@ mod tests {
     ) {
         let msg = 42_u8;
         let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
-        let storage = DevStorage::default();
         let kms = {
             let inner = SoftwareKms::new(
-                storage,
-                keys.software_kms_keys.key_info.clone(),
-                keys.software_kms_keys.sig_sk,
-                None,
-            );
+                RamStorage::new(StorageType::PUB),
+                RamStorage::from_existing_keys(&keys.software_kms_keys).unwrap(),
+            )
+            .unwrap();
             if sim_type == SimulationType::BadFheKey {
                 set_wrong_client_key(&inner, &key_id, keys.params);
             }
             inner
         };
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
-        let raw_plaintext = SoftwareKms::<DevStorage>::decrypt(
+        let raw_plaintext = SoftwareKms::<FileStorage, FileStorage>::decrypt(
             &kms.key_handles
                 .try_lock()
                 .unwrap()
@@ -826,7 +884,7 @@ mod tests {
     fn sunshine_default_reencrypt() {
         sunshine_reencrypt(
             DEFAULT_CENTRAL_KEYS_PATH,
-            &TEST_KEY_ID,
+            &DEFAULT_KEY_ID,
             DEFAULT_CENTRAL_CT_PATH,
         );
     }
@@ -835,9 +893,9 @@ mod tests {
     #[serial]
     fn multiple_test_keys_reencrypt() {
         sunshine_reencrypt(
-            TEST_CENTRAL_MULTI_KEYS_PATH,
-            &OTHER_KEY_HANDLE,
-            TEST_CENTRAL_MULTI_CT_PATH,
+            TEST_CENTRAL_KEYS_PATH,
+            &OTHER_TEST_ID,
+            TEST_CENTRAL_OTHER_CT_PATH,
         );
     }
 
@@ -845,9 +903,9 @@ mod tests {
     #[test]
     fn multiple_default_keys_reencrypt() {
         sunshine_reencrypt(
-            DEFAULT_CENTRAL_MULTI_KEYS_PATH,
-            &OTHER_KEY_HANDLE,
-            DEFAULT_CENTRAL_MULTI_CT_PATH,
+            DEFAULT_CENTRAL_KEYS_PATH,
+            &OTHER_DEFAULT_ID,
+            DEFAULT_CENTRAL_OTHER_CT_PATH,
         );
     }
 
@@ -860,8 +918,11 @@ mod tests {
         )
     }
 
-    fn set_wrong_client_key<S: PublicStorage>(
-        inner: &SoftwareKms<S>,
+    fn set_wrong_client_key<
+        PubS: PublicStorage + Sync + Send + 'static,
+        PrivS: PublicStorage + Sync + Send + 'static,
+    >(
+        inner: &SoftwareKms<PubS, PrivS>,
         key_handle: &RequestId,
         params: NoiseFloodParameters,
     ) {
@@ -877,7 +938,13 @@ mod tests {
         *x = wrong_handles;
     }
 
-    fn set_wrong_sig_key<S: PublicStorage>(inner: &mut SoftwareKms<S>, rng: &mut AesRng) {
+    fn set_wrong_sig_key<
+        PubS: PublicStorage + Sync + Send + 'static,
+        PrivS: PublicStorage + Sync + Send + 'static,
+    >(
+        inner: &mut SoftwareKms<PubS, PrivS>,
+        rng: &mut AesRng,
+    ) {
         // move to the next state so ensure we're generating a different ecdsa key
         _ = rng.next_u64();
         let wrong_ecdsa_key = k256::ecdsa::SigningKey::random(rng);
@@ -896,14 +963,14 @@ mod tests {
         let msg = 42_u8;
         let mut rng = AesRng::seed_from_u64(1);
         let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
-        let storage = DevStorage::default();
         let kms = {
             let mut inner = SoftwareKms::new(
-                storage,
-                keys.software_kms_keys.key_info.clone(),
-                keys.software_kms_keys.sig_sk,
-                None,
-            );
+                RamStorage::new(StorageType::PUB),
+                RamStorage::from_existing_keys(&keys.software_kms_keys).unwrap(),
+            )
+            .unwrap();
+            // TODO this should be updated since things might fail with probability 1/256
+            // if the key sampled randomly gives the message chosen (since it is only 8 bit)
             if sim_type == SimulationType::BadFheKey {
                 set_wrong_client_key(&inner, key_handle, keys.params);
             }
@@ -924,7 +991,7 @@ mod tests {
             keys
         };
         let mut rng = kms.base_kms.new_rng().unwrap();
-        let raw_cipher = SoftwareKms::<DevStorage>::reencrypt(
+        let raw_cipher = SoftwareKms::<FileStorage, FileStorage>::reencrypt(
             &kms.key_handles
                 .try_lock()
                 .unwrap()
@@ -987,14 +1054,12 @@ mod tests {
         // this test makes sure the output is consistent
         let kms_key_path = TEST_CENTRAL_KEYS_PATH;
         let keys: CentralizedTestingKeys = read_element(kms_key_path).unwrap();
-        let storage = DevStorage::default();
         let kms = {
             SoftwareKms::new(
-                storage,
-                keys.software_kms_keys.key_info.clone(),
-                keys.software_kms_keys.sig_sk,
-                None,
+                RamStorage::new(StorageType::PUB),
+                RamStorage::from_existing_keys(&keys.software_kms_keys).unwrap(),
             )
+            .unwrap()
         };
 
         let value = "bonjour".to_string();

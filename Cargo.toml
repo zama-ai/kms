@@ -11,3 +11,14 @@ members = [
     "blockchain/proofs",
     "blockchain/contracts/asc",
 ]
+
+[profile.dev.package."*"]
+# Set the default for dependencies in Development mode.
+opt-level = 3
+
+[profile.dev]
+# Turn on a small amount of optimization in Development mode.
+opt-level = 1
+
+[profile.test]
+opt-level = 3

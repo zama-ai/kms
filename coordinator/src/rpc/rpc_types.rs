@@ -1,37 +1,47 @@
 use crate::anyhow_error_and_log;
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::der_types::PrivateSigKey;
+#[cfg(feature = "non-wasm")]
+use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
+use crate::cryptography::signcryption::serialize_hash_element;
 use crate::kms::{
     DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType,
     ReencryptionRequestPayload, ReencryptionResponse,
 };
+#[cfg(feature = "non-wasm")]
+use crate::util::key_setup::FhePrivateKey;
 use crate::{consts::ID_LENGTH, kms::RequestId};
 use alloy_primitives::{Address, B256, U256};
+#[cfg(feature = "non-wasm")]
+use alloy_sol_types::SolStruct;
 use alloy_sol_types::{sol, Eip712Domain};
+use anyhow::anyhow;
+#[cfg(feature = "non-wasm")]
+use rand::{CryptoRng, RngCore};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_asn1_der::from_bytes;
 use std::fmt;
+use strum_macros::EnumIter;
 use wasm_bindgen::prelude::wasm_bindgen;
 
-cfg_if::cfg_if! {
-    if #[cfg(feature = "non-wasm")] {
-        use crate::util::key_setup::FhePrivateKey;
-        use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
-        use crate::{cryptography::der_types::PrivateSigKey};
-        use alloy_sol_types::SolStruct;
-        use rand::{CryptoRng, RngCore};
-    }
-}
-
 pub static CURRENT_FORMAT_VERSION: u32 = 1;
+pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
+pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
+pub static DEC_REQUEST_NAME: &str = "dec_request";
+pub static REENC_REQUEST_NAME: &str = "reenc_request";
 
 /// Enum which represents the different kinds of public information that can be stored as part of key generation.
 /// In practice this means the CRS and different types of public keys.
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+/// Data of this type is supposed to be readable by anyone on the internet
+/// and stored on a medium that _may_ be suseptible to malicious modifications.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 pub enum PubDataType {
     PublicKey,
     ServerKey,
     SnsKey,
     CRS,
+    VerfKey,
 }
 
 impl fmt::Display for PubDataType {
@@ -41,6 +51,28 @@ impl fmt::Display for PubDataType {
             PubDataType::ServerKey => write!(f, "ServerKey"),
             PubDataType::SnsKey => write!(f, "SnsKey"),
             PubDataType::CRS => write!(f, "CRS"),
+            PubDataType::VerfKey => write!(f, "VerfKey"),
+        }
+    }
+}
+
+/// Enum which represents the different kinds of private information that can be stored as part of running the KMS.
+/// In practice this means the signing key, public key and CRS meta data and signatures.
+/// Data of this type is supposed to only be readable, writable and modifiable by a single entity
+/// and stored on a medium that is not readable, writable or modifiable by any other entity (without detection).
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+pub enum PrivDataType {
+    SigningKey,
+    FheKeyInfo,
+    CrsInfo,
+}
+
+impl fmt::Display for PrivDataType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            PrivDataType::FheKeyInfo => write!(f, "FheKeyInfo"),
+            PrivDataType::SigningKey => write!(f, "SigningKey"),
+            PrivDataType::CrsInfo => write!(f, "CrsInfo"),
         }
     }
 }
@@ -154,14 +186,15 @@ pub(crate) struct SigncryptionPayload {
     pub(crate) req_digest: Vec<u8>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct RawDecryption {
     pub(crate) bytes: Vec<u8>,
     pub(crate) fhe_type: FheType,
 }
 
-#[cfg(feature = "non-wasm")]
 impl RawDecryption {
+    #[allow(dead_code)]
     pub(crate) fn new(bytes: Vec<u8>, fhe_type: FheType) -> Self {
         Self { bytes, fhe_type }
     }
@@ -640,9 +673,25 @@ impl fmt::Display for RequestId {
 }
 
 impl RequestId {
+    // TODO make proper new instead of deriving since the real implementaiton will be different !!!!
+    pub fn new<S>(value: &S, name: String) -> anyhow::Result<Self>
+    where
+        S: Serialize + fmt::Debug,
+    {
+        let mut hashed_payload = serialize_hash_element(value)?;
+        let mut hashed_name = serialize_hash_element(&name)?;
+        hashed_payload.append(&mut hashed_name);
+        let mut res_hash = serialize_hash_element(&hashed_payload)?;
+        // Truncate and convert to hex
+        res_hash.truncate(ID_LENGTH);
+        let res_hash = hex::encode(res_hash);
+        Ok(RequestId {
+            request_id: res_hash,
+        })
+    }
+
     /// Validates if a user-specified input is a request ID.
-    ///
-    /// By valid we mean it is a hex string of a static length. This is done to ensure it can be part of a valid
+    /// By valid we mean if it is a hex string of a static length. This is done to ensure it can be part of a valid
     /// path, without risk of path-traversal attacks in case the key request call is publicly accessible.
     pub fn is_valid(&self) -> bool {
         let hex = match hex::decode(self.to_string()) {
@@ -665,12 +714,24 @@ impl RequestId {
 }
 
 impl From<RequestId> for u128 {
-    // Should not panic if RequestId passed is_valid()
+    // Convert a RequestId to a u128 through truncation of the first bytes.
+    // May panic if RequestId passed is not valid
     fn from(value: RequestId) -> Self {
         let hex = hex::decode(value.to_string()).unwrap();
-        // hex.len() should equal to ID_LENGTH, and ID_LENGTH >= 16
-        let hex_truncated: [u8; 16] = hex[ID_LENGTH - 16..ID_LENGTH].try_into().unwrap();
+        let hex_truncated: [u8; 16] = hex[4..20].try_into().unwrap();
         u128::from_be_bytes(hex_truncated)
+    }
+}
+
+impl TryFrom<String> for RequestId {
+    type Error = anyhow::Error;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let request_id = RequestId { request_id: value };
+        if !request_id.is_valid() {
+            return Err(anyhow!("The string is not valid as request ID"));
+        }
+        Ok(request_id)
     }
 }
 

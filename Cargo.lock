@@ -3786,6 +3786,8 @@ dependencies = [
  "serial_test",
  "sha3",
  "signature 2.2.0",
+ "strum",
+ "strum_macros",
  "tfhe",
  "tfhe-zk-pok",
  "tokio",
