@@ -153,12 +153,14 @@ pub async fn threshold_server_start<
 >(
     url: String,
     base_port: u16,
+    timeout_secs: u64,
     my_id: usize,
     kms_server: ThresholdKms<PubS, PrivS>,
 ) -> anyhow::Result<()> {
     let port = base_port + (my_id as u16);
     let socket: std::net::SocketAddr = format!("{}:{}", url, port).parse()?;
     Server::builder()
+        .timeout(tokio::time::Duration::from_secs(timeout_secs))
         .add_service(CoordinatorEndpointServer::new(kms_server))
         .serve(socket)
         .await?;

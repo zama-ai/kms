@@ -1369,7 +1369,8 @@ pub mod test_tools {
         for (i, cur_server) in servers {
             let handle = tokio::spawn(async move {
                 let _ =
-                    threshold_server_start(DEFAULT_URL.to_owned(), BASE_PORT, i, cur_server).await;
+                    threshold_server_start(DEFAULT_URL.to_owned(), BASE_PORT, 360, i, cur_server)
+                        .await;
             });
             server_handles.insert(i as u32, handle);
         }

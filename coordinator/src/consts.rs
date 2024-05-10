@@ -21,6 +21,7 @@ pub const DEFAULT_CENTRAL_OTHER_CT_PATH: &str = "temp/default-central-other-ciph
 pub const BASE_PORT: u16 = 50050;
 pub const DEFAULT_URL: &str = "127.0.0.1";
 pub const DEFAULT_PROT: &str = "http";
+pub const DEFAULT_TIMEOUT: u64 = 60;
 pub const TEST_MSG: u8 = 42;
 pub const TEST_FHE_TYPE: FheType = FheType::Euint8;
 pub const AMOUNT_PARTIES: usize = 4;

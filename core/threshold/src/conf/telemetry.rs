@@ -33,7 +33,7 @@ impl From<Tracing> for Tracer {
                     )
                     .with_trace_config(opentelemetry_sdk::trace::config().with_resource(
                         Resource::new(vec![KeyValue::new(
-                            opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+                            opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
                             settings.service_name().to_string(),
                         )]),
                     ))
@@ -49,7 +49,7 @@ fn stdout_pipeline() -> Tracer {
     let exporter = opentelemetry_stdout::SpanExporter::default();
     let processor = BatchSpanProcessor::builder(exporter, Tokio).build();
     let config = Config::default().with_resource(Resource::new(vec![KeyValue::new(
-        opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+        opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
         "distributed-decryption".to_string(),
     )]));
     TracerProvider::builder()

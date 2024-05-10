@@ -131,7 +131,7 @@ jobs:
 
       - name: Install Cosign
         if: ${{ inputs.push_image }}
-        uses: sigstore/cosign-installer@v3.3.0
+        uses: sigstore/cosign-installer@v3.5.0
 
       - name: Push Enclave file to ghcr.io
         if: ${{ inputs.push_image }}

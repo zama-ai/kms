@@ -156,7 +156,6 @@ mod tests {
             ],
         };
 
-        let _raw_proof_ops: RawProofOps = proof_ops.clone().into();
         // Serialize using prost
         //let encoded: Vec<u8> = prost::Message::encode_to_vec(&raw_proof_ops);
 

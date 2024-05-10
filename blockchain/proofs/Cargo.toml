@@ -9,8 +9,8 @@ edition = "2021"
 hex = { version = "0.4.3", features = ["serde"] }
 bincode = "~1.3"
 tendermint = "0.34.1"
-tendermint-rpc = { version = "0.34.1", features = [ "http-client" ] }
-tendermint-proto = "0.34.1"
+tendermint-rpc = { version = "0.36.0", features = [ "http-client" ] }
+tendermint-proto = "0.36.0"
 percent-encoding = "2.1"
 ics23 = "0.11.1"
 prost = "0.12.3"
