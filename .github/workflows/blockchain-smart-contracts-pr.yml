@@ -39,7 +39,6 @@ jobs:
       id-token: 'write'
     with:
       working-directory: './blockchain/contracts'
-      docker-context: './blockchain'
       push_image: false
       image-name: 'kms-smart-contract-deploy'
     secrets:

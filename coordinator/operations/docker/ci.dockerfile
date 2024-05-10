@@ -4,7 +4,7 @@ FROM rust:1.78-slim-buster as base
 
 ARG BLOCKCHAIN_ACTIONS_TOKEN
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
-    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config libssl-dev
+    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config
 
 WORKDIR /app/kms
 COPY . .
@@ -16,10 +16,13 @@ RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 # Install the binary leaving it in the WORKDIR/bin folder
 RUN mkdir -p /app/kms/bin
 RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
+
+# Cargo build from coordinator directory
+WORKDIR /app/kms/coordinator
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path coordinator --root coordinator --bin kms-server
+    cargo install --path . --root . --bin kms-server
 
 # Second stage builds the runtime image.
 # This stage will be the final image

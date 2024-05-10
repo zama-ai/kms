@@ -111,7 +111,7 @@ jobs:
       - name: Docker Build and Push
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${{ inputs.docker-context }}
           build-args: |
             BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
           file: ${{ inputs.working-directory }}/operations/docker/ci.dockerfile

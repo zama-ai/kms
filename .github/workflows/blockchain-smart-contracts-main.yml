@@ -40,7 +40,6 @@ jobs:
       packages: 'write'
     with:
       working-directory: './blockchain/contracts'
-      docker-context: './blockchain'
       push_image: true
       image-name: 'kms-smart-contract-deploy'
     needs:
