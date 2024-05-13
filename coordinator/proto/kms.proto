@@ -180,7 +180,7 @@ message ReencryptionRequestPayload {
   bytes verification_key = 3;
   // Randomness specified in the request to ensure EU-CMA of the signed response.
   // TODO check that we don't need two types of randomness. One for the reuqest and one for the response
-  // TODO also check potentiel risk with repeated calls
+  // TODO also check potential risk with repeated calls
   bytes randomness = 4;
   // Encoding of the user's public encryption key for this request.
   // Encoding using the default encoding of libsodium, i.e. the 32 bytes of a
@@ -192,8 +192,6 @@ message ReencryptionRequestPayload {
   RequestId key_id = 7;
   // The actual ciphertext to decrypt, taken directly from the fhevm.
   bytes ciphertext = 8;
-  // The ID of the reencryption request. Will be the hash digest the other fields of this message object.
-  RequestId request_id = 9;
 }
 
 // https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator
@@ -211,6 +209,9 @@ message ReencryptionRequest {
   bytes signature = 1;
   ReencryptionRequestPayload payload = 2;
   Eip712DomainMsg domain = 3;
+  // The ID that identifies this request.
+  // Future queries for the result must use this request ID.
+  RequestId request_id = 4;
 }
 
 message ReencryptionResponse {

@@ -660,7 +660,7 @@ impl Client {
     /// the users's wallet private key. Returns the full ReencryptionRequest containing
     /// the signed payload to send to the servers, along with the generated
     /// reencryption key pair.
-    pub fn reencyption_request(
+    pub fn reencryption_request(
         &mut self,
         ct: Vec<u8>,
         domain: &Eip712Domain,
@@ -686,7 +686,6 @@ impl Client {
             ciphertext: ct,
             randomness,
             key_id: key_id.to_string(),
-            request_id: request_id.to_string(),
         };
         let sig = match &self.client_sk {
             Some(sk) => sign_eip712(&sig_payload, domain, sk)?,
@@ -698,6 +697,7 @@ impl Client {
                 signature: to_vec(&sig)?,
                 payload: Some(sig_payload.into()),
                 domain: Some(domain_msg),
+                request_id: Some(request_id.clone()),
             },
             enc_pk,
             enc_sk,
@@ -2181,7 +2181,7 @@ pub(crate) mod tests {
         let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
         let request_id = &TEST_REENC_ID;
         let (req, enc_pk, enc_sk) = internal_client
-            .reencyption_request(
+            .reencryption_request(
                 ct,
                 &dummy_domain(),
                 fhe_type,
@@ -2198,14 +2198,14 @@ pub(crate) mod tests {
         assert_eq!(response.into_inner(), Empty {});
 
         let mut response = kms_client
-            .get_reencrypt_result(req.clone().payload.unwrap().request_id.clone().unwrap())
+            .get_reencrypt_result(req.request_id.clone().unwrap())
             .await;
         while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
         {
             // Sleep to give the server some time to complete reencryption
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             response = kms_client
-                .get_reencrypt_result(req.clone().payload.unwrap().request_id.clone().unwrap())
+                .get_reencrypt_result(req.request_id.clone().unwrap())
                 .await;
         }
 
@@ -2371,7 +2371,7 @@ pub(crate) mod tests {
 
         let request_id = &TEST_REENC_ID;
         let (req, enc_pk, enc_sk) = internal_client
-            .reencyption_request(
+            .reencryption_request(
                 ct,
                 &dummy_domain(),
                 fhe_type,
@@ -2403,9 +2403,7 @@ pub(crate) mod tests {
                 (
                     i,
                     cur_client
-                        .get_reencrypt_result(tonic::Request::new(
-                            req_clone.clone().payload.unwrap().request_id.unwrap(),
-                        ))
+                        .get_reencrypt_result(tonic::Request::new(req_clone.request_id.unwrap()))
                         .await,
                 )
             });
@@ -2475,7 +2473,7 @@ pub(crate) mod tests {
 
         let request_id = &TEST_REENC_ID;
         let (req, _enc_pk, _enc_sk) = internal_client
-            .reencyption_request(
+            .reencryption_request(
                 ct,
                 &dummy_domain(),
                 fhe_type,
@@ -2492,14 +2490,14 @@ pub(crate) mod tests {
         assert_eq!(response.into_inner(), Empty {});
 
         let mut response = kms_client
-            .get_reencrypt_result(req.clone().payload.unwrap().request_id.clone().unwrap())
+            .get_reencrypt_result(req.request_id.clone().unwrap())
             .await;
         while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
         {
             // Sleep to give the server some time to complete reencryption
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             response = kms_client
-                .get_reencrypt_result(req.clone().payload.unwrap().request_id.clone().unwrap())
+                .get_reencrypt_result(req.request_id.clone().unwrap())
                 .await;
         }
         // Check that we get a server error instead of a server crash

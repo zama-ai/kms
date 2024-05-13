@@ -696,10 +696,8 @@ pub async fn validate_reencrypt_req(
         req.payload.as_ref(),
         format!("The request {:?} does not have a payload", req),
     )?;
-    let request_id = tonic_some_or_err(
-        payload.request_id.clone(),
-        "Request ID is not set".to_string(),
-    )?;
+    let request_id =
+        tonic_some_or_err(req.request_id.clone(), "Request ID is not set".to_string())?;
     if !request_id.is_valid() {
         return Err(anyhow_error_and_warn_log(format!(
             "The value {} is not a valid request ID!",

@@ -533,7 +533,6 @@ sol! {
         uint8[] randomness;
         uint8[] ciphertext;
         string key_id;
-        string request_id;
     }
 }
 impl From<ReencryptionRequestSigPayload> for ReencryptionRequestPayload {
@@ -548,9 +547,6 @@ impl From<ReencryptionRequestSigPayload> for ReencryptionRequestPayload {
             ciphertext: val.ciphertext,
             key_id: Some(RequestId {
                 request_id: val.key_id,
-            }),
-            request_id: Some(RequestId {
-                request_id: val.request_id,
             }),
         }
     }
@@ -570,10 +566,6 @@ impl TryFrom<ReencryptionRequestPayload> for ReencryptionRequestSigPayload {
             key_id: val
                 .key_id
                 .ok_or_else(|| anyhow_error_and_log("Key id missing in".to_string()))?
-                .request_id,
-            request_id: val
-                .request_id
-                .ok_or_else(|| anyhow_error_and_log("Request id is missing".to_string()))?
                 .request_id,
         })
     }

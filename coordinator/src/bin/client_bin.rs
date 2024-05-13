@@ -132,7 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             request_id: hex::encode(buf),
         }
     };
-    let (req, enc_pk, enc_sk) = internal_client.reencyption_request(
+    let (req, enc_pk, enc_sk) = internal_client.reencryption_request(
         ct,
         &dummy_domain(),
         fhe_type,
@@ -145,17 +145,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::debug!("REENCRYPT RESPONSE={:?}", response);
     // Wait for the servers to complete the reencryption
     let mut response = kms_client
-        .get_reencrypt_result(tonic::Request::new(
-            req.clone().payload.unwrap().request_id.unwrap(),
-        ))
+        .get_reencrypt_result(tonic::Request::new(req.request_id.clone().unwrap()))
         .await;
     while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable {
         // Sleep to give the server some time to complete reencryption
         std::thread::sleep(std::time::Duration::from_millis(100));
         response = kms_client
-            .get_reencrypt_result(tonic::Request::new(
-                req.clone().payload.unwrap().request_id.unwrap(),
-            ))
+            .get_reencrypt_result(tonic::Request::new(req.request_id.clone().unwrap()))
             .await;
     }
     tracing::debug!("GET REENCRYPT RESPONSE={:?}", response);
