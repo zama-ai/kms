@@ -4,7 +4,7 @@ use tokio::task::JoinHandle;
 use tonic::{transport, Request, Response, Status};
 
 use crate::{
-    consts::{BASE_PORT, DEFAULT_URL},
+    consts::{BASE_PORT, DEFAULT_URL, TEST_MSG},
     kms::{
         coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer},
         CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
@@ -12,6 +12,7 @@ use crate::{
         KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ReencryptionRequest,
         ReencryptionResponse, RequestId,
     },
+    rpc::rpc_types::{Plaintext, CURRENT_FORMAT_VERSION},
 };
 
 pub async fn setup_mock_kms(n: usize) -> HashMap<u32, JoinHandle<()>> {
@@ -82,7 +83,14 @@ impl CoordinatorEndpoint for MockThresholdKms {
         &self,
         _request: Request<RequestId>,
     ) -> Result<Response<ReencryptionResponse>, Status> {
-        Ok(Response::new(ReencryptionResponse::default()))
+        Ok(Response::new(ReencryptionResponse {
+            version: CURRENT_FORMAT_VERSION,
+            servers_needed: 0,
+            verification_key: vec![],
+            digest: "dummy digest".as_bytes().to_vec(),
+            fhe_type: crate::kms::FheType::Euint8.into(),
+            signcrypted_ciphertext: "signcrypted_ciphertext".as_bytes().to_vec(),
+        }))
     }
 
     async fn decrypt(
@@ -98,7 +106,17 @@ impl CoordinatorEndpoint for MockThresholdKms {
     ) -> Result<Response<DecryptionResponse>, Status> {
         Ok(Response::new(DecryptionResponse {
             signature: vec![],
-            payload: Some(DecryptionResponsePayload::default()),
+            payload: Some(DecryptionResponsePayload {
+                version: CURRENT_FORMAT_VERSION,
+                servers_needed: 0,
+                verification_key: vec![],
+                digest: "dummy digest".as_bytes().to_vec(),
+                plaintext: serde_asn1_der::to_vec(&Plaintext::new(
+                    TEST_MSG as u128,
+                    crate::kms::FheType::Euint8,
+                ))
+                .unwrap(),
+            }),
         }))
     }
 

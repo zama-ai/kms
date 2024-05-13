@@ -7,7 +7,7 @@ use crate::cryptography::central_kms::{async_generate_crs, compute_info};
 use crate::kms::{KeyGenPreprocRequest, KeyGenPreprocStatus};
 use crate::rpc::rpc_types::DecryptionResponseSigPayload;
 use crate::storage::{store_request_id, FileStorage, PublicStorage};
-use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
+use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use crate::{
     consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH},
     kms::RequestId,
@@ -828,13 +828,6 @@ pub fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Resul
     }
 }
 
-/// Take the max(20, s.len()) characters of s.
-fn top_n_chars(mut s: String) -> String {
-    let n = std::cmp::max(s.len(), 20);
-    _ = s.split_off(n);
-    s
-}
-
 pub fn tonic_some_or_err<T>(input: Option<T>, error: String) -> Result<T, tonic::Status> {
     input.ok_or_else(|| {
         tracing::warn!(error);
@@ -849,12 +842,13 @@ pub fn tonic_some_ref_or_err<T>(input: Option<&T>, error: String) -> Result<&T, 
     })
 }
 
-pub fn tonic_handle_potential_err<T, E>(
+pub fn tonic_handle_potential_err<T, E: ToString>(
     resp: Result<T, E>,
     error: String,
 ) -> Result<T, tonic::Status> {
-    resp.map_err(|_| {
-        tracing::warn!(error);
-        tonic::Status::new(tonic::Code::Aborted, top_n_chars(error))
+    resp.map_err(|e| {
+        let msg = format!("{}: {}", error, e.to_string());
+        tracing::warn!(msg);
+        tonic::Status::new(tonic::Code::Aborted, top_n_chars(msg))
     })
 }

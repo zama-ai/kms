@@ -488,6 +488,7 @@ impl TryFrom<DecryptionRequest> for DecryptionRequestSerializable {
 /// Observe that this seemingly redundant types are required since the Protobuf compiled types do
 /// not implement the serializable and deserializable traits. Hence [DecryptionResponseSigPayload]
 /// implement data to be asn1 serialized which will be signed.
+/// NOTE: tonic_build::configure can let us derive Serialize and Deserialize for [DecryptionResponsePayload]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DecryptionResponseSigPayload {
     pub version: u32,

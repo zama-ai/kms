@@ -3793,6 +3793,8 @@ dependencies = [
 name = "kms-blockchain-connector"
 version = "0.1.0"
 dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
  "anyhow",
  "async-trait",
  "clap",
@@ -3812,6 +3814,7 @@ dependencies = [
  "prometheus",
  "retrying",
  "serde",
+ "serde_asn1_der",
  "serde_json",
  "serial_test",
  "strum",

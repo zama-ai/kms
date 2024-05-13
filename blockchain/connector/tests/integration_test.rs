@@ -15,6 +15,7 @@ use kms_blockchain_connector::domain::blockchain::{
 use kms_blockchain_connector::domain::kms::KmsOperation;
 use kms_blockchain_connector::infrastructure::blockchain::KmsBlockchain;
 use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
+use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
 use retrying::retry;
 use serde_json::json;
 use std::env::set_var;
@@ -56,7 +57,8 @@ impl KmsOperation for KmsMock {
         self.channel.send(event.clone()).await?;
         Ok(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
             decrypt_response: DecryptResponseValues::builder()
-                .plaintext("Hello World".as_bytes().to_vec())
+                .signature(vec![1, 2, 3])
+                .payload("Hello World".as_bytes().to_vec())
                 .build(),
             operation_val: BlockchainOperationVal {
                 tx_id: event.txn_id,
@@ -236,7 +238,11 @@ async fn send_decrypt_request(
 
     let operation = events::kms::KmsOperationAttribute::Decrypt(
         DecryptValues::builder()
+            .version(CURRENT_FORMAT_VERSION)
+            .servers_needed(2)
+            .key_id("kid".to_string())
             .ciphertext(vec![1, 2, 3, 4, 5])
+            .randomness(vec![6, 7, 8, 9, 0])
             .fhe_type(FheType::Euint8)
             .build(),
     );

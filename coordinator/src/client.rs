@@ -657,7 +657,7 @@ impl Client {
     /// Creates a reencryption request to send to the KMS servers. This generates
     /// an ephemeral reencryption key pair, signature payload containing the ciphertext,
     /// required number of shares, and other metadata. It signs this payload with
-    /// the users's wallet private key. Returns the full ReencryptionRequest containing
+    /// the users's wallet private key. Returns the full [ReencryptionRequest] containing
     /// the signed payload to send to the servers, along with the generated
     /// reencryption key pair.
     pub fn reencryption_request(

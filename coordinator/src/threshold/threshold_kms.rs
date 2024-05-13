@@ -159,12 +159,12 @@ pub async fn threshold_server_start<
 ) -> anyhow::Result<()> {
     let port = base_port + (my_id as u16);
     let socket: std::net::SocketAddr = format!("{}:{}", url, port).parse()?;
+    tracing::info!("Starting server {my_id}");
     Server::builder()
         .timeout(tokio::time::Duration::from_secs(timeout_secs))
         .add_service(CoordinatorEndpointServer::new(kms_server))
         .serve(socket)
         .await?;
-    tracing::info!("Started server {my_id}");
     Ok(())
 }
 
@@ -461,9 +461,9 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         let keys = match fhe_keys_rlock.get(key_handle) {
             Some(keys) => keys,
             None => {
-                return Err(anyhow_error_and_log(
-                    "Key handle {key_handle} does not exist",
-                ))
+                return Err(anyhow_error_and_log(format!(
+                    "Key handle {key_handle} does not exist"
+                )))
             }
         };
         let (partial_dec, _time) = decrypt_using_noiseflooding(
@@ -1254,7 +1254,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             request_id,
         ) = tonic_handle_potential_err(
             validate_reencrypt_req(&inner).await,
-            format!("Invalid key in request {:?}", inner),
+            format!("Invalid reencryption request {:?}", inner),
         )?;
         // TODO this will be replaced with an async method once issue 414 is implemented
         let return_cipher = process_response(
@@ -1329,7 +1329,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         let raw_decryption = tonic_handle_potential_err(
             self.inner_decrypt(fhe_type, &ciphertext, &key_id, &request_id)
                 .await,
-            format!("Decryption failed for request {:?}", inner),
+            format!("Decryption failed for request {:?}", inner.request_id),
         )?;
         let plaintext = Plaintext::new(raw_decryption.0 as u128, fhe_type);
 

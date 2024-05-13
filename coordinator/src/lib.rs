@@ -53,12 +53,19 @@ pub mod rpc {
     pub mod rpc_types;
 }
 
+/// Take the max(20, s.len()) characters of s.
+pub(crate) fn top_n_chars(mut s: String) -> String {
+    let n = std::cmp::max(s.len(), 20);
+    _ = s.split_off(n);
+    s
+}
+
 /// Helper method for returning the optional value of `input` if it exists, otherwise
 /// returning a custom anyhow error.
 pub fn some_or_err<T: fmt::Debug>(input: Option<T>, error: String) -> anyhow::Result<T> {
     input.ok_or_else(|| {
         tracing::warn!(error);
-        anyhow::Error::msg("Invalid request")
+        anyhow!("Invalid request: {}", top_n_chars(error.to_string()))
     })
 }
 

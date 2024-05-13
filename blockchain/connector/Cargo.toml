@@ -26,6 +26,7 @@ prometheus = "=0.13.3"
 retrying = { version = "0.1.0", features = ["tokio"]}
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0"
+serde_asn1_der = "0.8.0"
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
 tokio = { version = "1.37", features = ["full"] }
@@ -36,6 +37,8 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
 typed-builder = "0.18.1"
 
 [dev-dependencies]
+alloy-sol-types = "0.7.0"
+alloy-primitives = "0.7.0"
 kms = { path = "../../coordinator" }
 serial_test = "3.1.1"
 test-context = "0.3.0"

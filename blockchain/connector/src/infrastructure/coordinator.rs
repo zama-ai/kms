@@ -14,11 +14,13 @@ use events::kms::{
 };
 use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
 use kms_lib::kms::{
-    Config, CrsGenRequest, CrsGenResult, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
-    KeyGenResult, ParamChoice,
+    Config, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, Eip712DomainMsg,
+    KeyGenPreprocStatus, KeyGenPreprocStatusEnum, KeyGenResult, ParamChoice, ReencryptionRequest,
+    ReencryptionRequestPayload, ReencryptionResponse,
 };
 use kms_lib::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
-use kms_lib::rpc::rpc_types::PubDataType;
+use kms_lib::rpc::rpc_types::{DecryptionResponseSigPayload, PubDataType, CURRENT_FORMAT_VERSION};
+use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -83,6 +85,7 @@ pub trait Kms {
 pub struct KmsCoordinator {
     channel: Channel,
     n_parties: u64,
+    shares_needed: u64,
     metrics: Arc<OpenTelemetryMetrics>,
 }
 
@@ -112,6 +115,7 @@ impl KmsCoordinator {
         Ok(KmsCoordinator {
             channel,
             n_parties: config.parties,
+            shares_needed: config.shared_needed,
             metrics: Arc::new(metrics),
         })
     }
@@ -201,35 +205,250 @@ macro_rules! poller {
 #[async_trait]
 impl Kms for DecryptVal {
     async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
-        // TODO: Implement this
-        Ok(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
-            decrypt_response: DecryptResponseValues::builder()
-                .plaintext(
-                    "This is a mocked response of decyprt request"
-                        .as_bytes()
-                        .to_vec(),
-                )
-                .build(),
-            operation_val: BlockchainOperationVal {
-                tx_id: self.operation_val.tx_id.clone(),
-            },
-        }))
+        let chan = &self.operation_val.kms_client.channel;
+        let mut client = CoordinatorEndpointClient::new(chan.clone());
+
+        if self.operation_val.kms_client.shares_needed as u32 != self.decrypt.servers_needed() {
+            return Err(anyhow!(
+                "shares_needed not supported: supported={}, requested={}",
+                self.operation_val.kms_client.shares_needed,
+                self.decrypt.servers_needed()
+            ));
+        }
+
+        if CURRENT_FORMAT_VERSION != self.decrypt.version() {
+            return Err(anyhow!(
+                "version not supported: supported={}, requested={}",
+                CURRENT_FORMAT_VERSION,
+                self.decrypt.version()
+            ));
+        }
+
+        let req_id = RequestId {
+            request_id: self.operation_val.tx_id.to_hex(),
+        };
+        let version = self.decrypt.version();
+        let servers_needed = self.decrypt.servers_needed();
+        let key_id = self.decrypt.key_id().to_string();
+        let fhe_type = self.decrypt.fhe_type() as i32;
+        let ciphertext = self.decrypt.ciphertext().to_vec();
+        let randomness = self.decrypt.randomness().to_vec();
+
+        // TODO version, servers_needed probably should come from the outside
+        let req = DecryptionRequest {
+            version,
+            servers_needed,
+            randomness,
+            fhe_type,
+            key_id: Some(RequestId { request_id: key_id }),
+            ciphertext,
+            request_id: Some(req_id.clone()),
+        };
+
+        let metrics = self.operation_val.kms_client.metrics.clone();
+
+        // the response should be empty
+        let _resp = client
+            .decrypt(tonic::Request::new(req.clone()))
+            .await
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                tracing::error!(err_msg);
+                metrics.increment(MetricType::CoordinatorError, 1, &[("error", &err_msg)]);
+                e
+            })?;
+        metrics.increment(MetricType::CoordinatorSuccess, 1, &[("ok", "Decrypt")]);
+
+        let g =
+            |res: Result<Response<DecryptionResponse>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
+            match res {
+                Ok(res) => {
+                    let inner = res.into_inner();
+                    let payload: DecryptionResponseSigPayload = inner.payload.ok_or(anyhow!("empty decryption payload"))?.into();
+                        Ok(PollerStatus::Done(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
+                            decrypt_response: DecryptResponseValues::builder()
+                                .signature(inner.signature)
+                                .payload(serde_asn1_der::to_vec(&payload)?)
+                                .build(),
+                            operation_val: BlockchainOperationVal {
+                                tx_id: self.operation_val.tx_id.clone(),
+                            },
+                        })))
+                }
+                Err(_) => {
+                    Ok(PollerStatus::Poll)
+                }
+            }
+        };
+
+        // TODO: these timeouts are for testing,
+        // these need to be configured correctly for production!
+
+        // preprocessing is slow, so we wait for a bit before even trying
+        const INITIAL_WAITING_TIME: u64 = 1;
+        tokio::time::sleep(Duration::from_secs(INITIAL_WAITING_TIME)).await;
+
+        // NOTE: we can't use the poller macro to help us poll the result since
+        // the preproc endpoint is a bit different,
+        // it returns Ok(status), instead of an error
+        const RETRY_INTERVAL: u64 = 10;
+        const MAX_DUR: u64 = 600;
+
+        // loop to get response
+        poller!(
+            client.get_decrypt_result(tonic::Request::new(req_id.clone())),
+            g,
+            RETRY_INTERVAL,
+            MAX_DUR,
+            "(Decrypt)",
+            metrics
+        );
+    }
+}
+
+struct WrappingFheType(events::kms::FheType);
+
+impl TryFrom<i32> for WrappingFheType {
+    type Error = anyhow::Error;
+    fn try_from(value: i32) -> anyhow::Result<Self> {
+        let fhe_type = if kms_lib::kms::FheType::Bool as i32 == value {
+            events::kms::FheType::Ebool
+        } else if kms_lib::kms::FheType::Euint4 as i32 == value {
+            events::kms::FheType::Euint4
+        } else if kms_lib::kms::FheType::Euint8 as i32 == value {
+            events::kms::FheType::Euint8
+        } else if kms_lib::kms::FheType::Euint16 as i32 == value {
+            events::kms::FheType::Euint16
+        } else if kms_lib::kms::FheType::Euint32 as i32 == value {
+            events::kms::FheType::Euint32
+        } else if kms_lib::kms::FheType::Euint64 as i32 == value {
+            events::kms::FheType::Euint64
+        } else if kms_lib::kms::FheType::Euint128 as i32 == value {
+            events::kms::FheType::Euint128
+        } else if kms_lib::kms::FheType::Euint160 as i32 == value {
+            events::kms::FheType::Euint160
+        } else {
+            return Err(anyhow!("invalid fhe type"));
+        };
+        Ok(WrappingFheType(fhe_type))
     }
 }
 
 #[async_trait]
 impl Kms for ReencryptVal {
     async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
-        Ok(KmsOperationResponse::ReencryptResponse(
-            ReencryptResponseVal {
-                reencrypt_response: ReencryptResponseValues::builder()
-                    .cyphertext([9; 10].to_vec())
-                    .build(),
-                operation_val: BlockchainOperationVal {
-                    tx_id: self.operation_val.tx_id.clone(),
-                },
-            },
-        ))
+        let chan = &self.operation_val.kms_client.channel;
+        let mut client = CoordinatorEndpointClient::new(chan.clone());
+
+        let req_id = RequestId {
+            request_id: self.operation_val.tx_id.to_hex(),
+        };
+
+        if self.operation_val.kms_client.shares_needed as u32 != self.reencrypt.servers_needed() {
+            return Err(anyhow!(
+                "shares_needed not supported: supported={}, requested={}",
+                self.operation_val.kms_client.shares_needed,
+                self.reencrypt.servers_needed()
+            ));
+        }
+
+        if CURRENT_FORMAT_VERSION != self.reencrypt.version() {
+            return Err(anyhow!(
+                "version not supported: supported={}, requested={}",
+                CURRENT_FORMAT_VERSION,
+                self.reencrypt.version()
+            ));
+        }
+
+        let reencrypt = &self.reencrypt;
+        let req = ReencryptionRequest {
+            signature: self.reencrypt.signature().to_vec(),
+            payload: Some(ReencryptionRequestPayload {
+                version: reencrypt.version(),
+                servers_needed: reencrypt.servers_needed(),
+                verification_key: reencrypt.verification_key().to_vec(),
+                randomness: reencrypt.randomness().to_vec(),
+                enc_key: reencrypt.enc_key().to_vec(),
+                fhe_type: reencrypt.fhe_type() as i32,
+                key_id: Some(RequestId {
+                    request_id: reencrypt.key_id().to_string(),
+                }),
+                ciphertext: reencrypt.ciphertext().to_vec(),
+            }),
+            domain: Some(Eip712DomainMsg {
+                name: reencrypt.eip712_name().to_string(),
+                version: reencrypt.eip712_version().to_string(),
+                chain_id: reencrypt.eip712_chain_id().to_vec(),
+                verifying_contract: reencrypt.eip712_verifying_contract().to_string(),
+                salt: reencrypt.eip712_salt().to_vec(),
+            }),
+            request_id: Some(req_id.clone()),
+        };
+
+        let metrics = self.operation_val.kms_client.metrics.clone();
+
+        // the response should be empty
+        let _resp = client
+            .reencrypt(tonic::Request::new(req.clone()))
+            .await
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                tracing::error!(err_msg);
+                metrics.increment(MetricType::CoordinatorError, 1, &[("error", &err_msg)]);
+                e
+            })?;
+        metrics.increment(MetricType::CoordinatorSuccess, 1, &[("ok", "Reencrypt")]);
+
+        let g =
+            |res: Result<Response<ReencryptionResponse>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
+            match res {
+                Ok(res) => {
+                    let inner = res.into_inner();
+                    let fhe_type: WrappingFheType = WrappingFheType::try_from(inner.fhe_type)?;
+                    Ok(PollerStatus::Done(KmsOperationResponse::ReencryptResponse(
+                        ReencryptResponseVal {
+                            reencrypt_response: ReencryptResponseValues::builder()
+                                .version(inner.version)
+                                .servers_needed(inner.servers_needed)
+                                .verification_key(inner.verification_key.clone())
+                                .digest(inner.digest.clone())
+                                .fhe_type(fhe_type.0)
+                                .signcrypted_ciphertext(inner.signcrypted_ciphertext.clone())
+                                .build(),
+                            operation_val: BlockchainOperationVal {
+                                tx_id: self.operation_val.tx_id.clone(),
+                            },
+                        },
+                    )))
+                }
+                Err(_) => {
+                    Ok(PollerStatus::Poll)
+                }
+            }
+        };
+
+        // TODO: these timeouts are for testing,
+        // these need to be configured correctly for production!
+
+        // preprocessing is slow, so we wait for a bit before even trying
+        const INITIAL_WAITING_TIME: u64 = 1;
+        tokio::time::sleep(Duration::from_secs(INITIAL_WAITING_TIME)).await;
+
+        // NOTE: we can't use the poller macro to help us poll the result since
+        // the preproc endpoint is a bit different,
+        // it returns Ok(status), instead of an error
+        const RETRY_INTERVAL: u64 = 10;
+        const MAX_DUR: u64 = 600;
+
+        // loop to get response
+        poller!(
+            client.get_reencrypt_result(tonic::Request::new(req_id.clone())),
+            g,
+            RETRY_INTERVAL,
+            MAX_DUR,
+            "(Reencrypt)",
+            metrics
+        );
     }
 }
 
@@ -485,26 +704,37 @@ impl Kms for CrsGenVal {
 
 #[cfg(test)]
 mod test {
+    use std::collections::{HashMap, HashSet};
+
     use super::Kms as _;
     use crate::{
         conf::CoordinatorConfig,
         domain::blockchain::KmsOperationResponse,
-        infrastructure::{coordinator::KmsCoordinator, metrics::OpenTelemetryMetrics},
+        infrastructure::{
+            coordinator::{KmsCoordinator, WrappingFheType},
+            metrics::OpenTelemetryMetrics,
+        },
     };
     use events::kms::{
-        CrsGenValues, KeyGenPreprocValues, KmsEvent, KmsOperationAttribute, TransactionId,
+        CrsGenValues, DecryptValues, KeyGenPreprocValues, KmsEvent, KmsOperationAttribute,
+        ReencryptValues, TransactionId,
     };
     use kms_lib::{
-        client::test_tools,
+        client::{test_tools, Client},
         consts::{
-            AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, TEST_KEY_ID, TEST_PARAM_PATH,
-            TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
+            AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, TEST_KEY_ID, TEST_MSG,
+            TEST_PARAM_PATH, TEST_REENC_ID, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH,
+            THRESHOLD,
         },
-        rpc::rpc_types::{PrivDataType, PubDataType},
+        kms::{AggregatedReencryptionResponse, ReencryptionResponse},
+        rpc::rpc_types::{
+            DecryptionResponseSigPayload, Plaintext, PrivDataType, PubDataType,
+            CURRENT_FORMAT_VERSION,
+        },
         storage::{FileStorage, PublicStorage, PublicStorageReader, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
         util::{
-            file_handling::read_element,
+            file_handling::{read_element, read_element_async},
             key_setup::{
                 ensure_ciphertext_exist, ensure_dir_exist, ensure_threshold_keys_exist,
                 ThresholdTestingKeys,
@@ -516,18 +746,19 @@ mod test {
     async fn generic_sunshine_test(
         slow: bool,
         op: KmsOperationAttribute,
-    ) -> (Vec<KmsOperationResponse>, TransactionId) {
+    ) -> (Vec<KmsOperationResponse>, TransactionId, Vec<u32>) {
         let txn_id = TransactionId::from(vec![2u8; 20]);
+        ensure_dir_exist();
+        ensure_threshold_keys_exist(
+            TEST_PARAM_PATH,
+            TEST_THRESHOLD_KEYS_PATH,
+            &TEST_KEY_ID.to_string(),
+        );
+        let threshold_keys: ThresholdTestingKeys =
+            read_element(&format!("{TEST_THRESHOLD_KEYS_PATH}-1.bin")).unwrap();
+        ensure_ciphertext_exist(TEST_THRESHOLD_CT_PATH, &threshold_keys.fhe_pub);
+
         let coordinator_handles = if slow {
-            ensure_dir_exist();
-            ensure_threshold_keys_exist(
-                TEST_PARAM_PATH,
-                TEST_THRESHOLD_KEYS_PATH,
-                &TEST_KEY_ID.to_string(),
-            );
-            let threshold_keys: ThresholdTestingKeys =
-                read_element(&format!("{TEST_THRESHOLD_KEYS_PATH}-1.bin")).unwrap();
-            ensure_ciphertext_exist(TEST_THRESHOLD_CT_PATH, &threshold_keys.fhe_pub);
             let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
             // Delete potentially existing CRS
             let _ = pub_storage.delete_data(
@@ -559,6 +790,7 @@ mod test {
                 CoordinatorConfig {
                     addresses: vec![url],
                     parties: AMOUNT_PARTIES as u64,
+                    shared_needed: THRESHOLD as u64 + 1,
                 }
             })
             .collect::<Vec<_>>();
@@ -582,17 +814,20 @@ mod test {
             AMOUNT_PARTIES
         ];
 
-        // each client will make the crs generation request
+        // each client will make the request
         // but this needs to happen in parallel
         assert_eq!(events.len(), clients.len());
         let mut tasks = JoinSet::new();
-        for (event, client) in events.into_iter().zip(clients) {
+        for (i, (event, client)) in events.into_iter().zip(clients).enumerate() {
             let op = client.create_kms_operation(event).unwrap();
-            tasks.spawn(async move { op.run_operation().await });
+            tasks.spawn(async move { (i as u32 + 1, op.run_operation().await) });
         }
         let mut results = vec![];
-        while let Some(Ok(Ok(res))) = tasks.join_next().await {
+        let mut ids = vec![];
+        // tasks.join_next().await.unwrap().unwrap().1.unwrap();
+        while let Some(Ok((i, Ok(res)))) = tasks.join_next().await {
             results.push(res);
+            ids.push(i);
         }
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
@@ -600,12 +835,148 @@ mod test {
             h.abort();
         }
 
-        (results, txn_id)
+        (results, txn_id, ids)
+    }
+
+    async fn ddec_sunshine(slow: bool) {
+        let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
+            read_element_async(TEST_THRESHOLD_CT_PATH.to_string())
+                .await
+                .unwrap();
+        let op = KmsOperationAttribute::Decrypt(
+            DecryptValues::builder()
+                .version(CURRENT_FORMAT_VERSION)
+                .servers_needed(THRESHOLD as u32 + 1)
+                .key_id(TEST_KEY_ID.request_id.clone())
+                .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
+                .ciphertext(ct)
+                .randomness(vec![1, 2, 3])
+                .build(),
+        );
+        let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
+        assert_eq!(results.len(), AMOUNT_PARTIES);
+
+        for result in results {
+            match result {
+                KmsOperationResponse::DecryptResponse(resp) => {
+                    let payload: DecryptionResponseSigPayload =
+                        serde_asn1_der::from_bytes(resp.decrypt_response.payload()).unwrap();
+                    assert_eq!(
+                        serde_asn1_der::from_bytes::<Plaintext>(&payload.plaintext)
+                            .unwrap()
+                            .as_u8(),
+                        TEST_MSG
+                    );
+                    assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
+                    assert_eq!(resp.operation_val.tx_id, txn_id);
+                }
+                _ => {
+                    panic!("invalid response");
+                }
+            }
+        }
+    }
+
+    async fn reenc_sunshine(slow: bool) {
+        let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
+            read_element_async(TEST_THRESHOLD_CT_PATH.to_string())
+                .await
+                .unwrap();
+
+        // we need a KMS client to simply the boilerplate
+        // for setting up the request correctly
+        let testing_keys: ThresholdTestingKeys =
+            read_element(&format!("{TEST_THRESHOLD_KEYS_PATH}-1.bin")).unwrap();
+        let mut kms_client = Client::new(
+            HashSet::from_iter(testing_keys.server_keys),
+            testing_keys.client_pk,
+            Some(testing_keys.client_sk),
+            THRESHOLD as u32 + 1,
+            AMOUNT_PARTIES as u32,
+            testing_keys.params.to_noiseflood_parameters(),
+        );
+
+        fn dummy_domain() -> alloy_sol_types::Eip712Domain {
+            alloy_sol_types::eip712_domain!(
+                name: "dummy",
+                version: "1",
+                chain_id: 1,
+                verifying_contract: alloy_primitives::Address::ZERO,
+            )
+        }
+
+        let request_id = &TEST_REENC_ID;
+        let key_id = &TEST_KEY_ID;
+        let (kms_req, enc_pk, enc_sk) = kms_client
+            .reencryption_request(ct, &dummy_domain(), fhe_type, request_id, key_id)
+            .unwrap();
+        let payload = kms_req.payload.clone().unwrap();
+        let eip712 = kms_req.domain.clone().unwrap();
+        let op = KmsOperationAttribute::Reencrypt(
+            ReencryptValues::builder()
+                .signature(kms_req.signature.clone())
+                .version(payload.version)
+                .servers_needed(payload.servers_needed)
+                .verification_key(payload.verification_key)
+                .randomness(payload.randomness)
+                .enc_key(payload.enc_key)
+                .fhe_type(WrappingFheType::try_from(payload.fhe_type).unwrap().0)
+                .key_id(payload.key_id.unwrap().request_id)
+                .ciphertext(payload.ciphertext)
+                .eip712_name(eip712.name)
+                .eip712_version(eip712.version)
+                .eip712_chain_id(eip712.chain_id)
+                .eip712_verifying_contract(eip712.verifying_contract)
+                .eip712_salt(eip712.salt)
+                .build(),
+        );
+        let (results, txn_id, ids) = generic_sunshine_test(slow, op).await;
+        assert_eq!(results.len(), AMOUNT_PARTIES);
+
+        if slow {
+            // process the result using the kms client when we're running in the slow mode
+            // i.e., it is an integration test
+            let agg_resp = AggregatedReencryptionResponse {
+                responses: HashMap::from_iter(ids.into_iter().zip(results.into_iter().map(|r| {
+                    let r = match r {
+                        KmsOperationResponse::ReencryptResponse(resp) => resp,
+                        _ => panic!("invalid response"),
+                    }
+                    .reencrypt_response;
+                    ReencryptionResponse {
+                        version: r.version(),
+                        servers_needed: r.servers_needed(),
+                        verification_key: r.verification_key().to_vec(),
+                        digest: r.digest().to_vec(),
+                        fhe_type: r.fhe_type() as i32,
+                        signcrypted_ciphertext: r.signcrypted_ciphertext().to_vec(),
+                    }
+                }))),
+            };
+            _ = kms_client
+                .process_reencryption_resp(Some(kms_req), &agg_resp, &enc_pk, &enc_sk)
+                .unwrap()
+        } else {
+            // otherwise just check that we're getting dummy values back
+            for result in results {
+                match result {
+                    KmsOperationResponse::ReencryptResponse(resp) => {
+                        let payload = &resp.reencrypt_response;
+                        assert_eq!(resp.operation_val.tx_id, txn_id);
+                        assert_eq!(payload.version(), CURRENT_FORMAT_VERSION);
+                        assert_eq!(payload.digest(), "dummy digest".as_bytes());
+                    }
+                    _ => {
+                        panic!("invalid response");
+                    }
+                }
+            }
+        }
     }
 
     async fn preproc_sunshine(slow: bool) {
         let op = KmsOperationAttribute::KeyGenPreproc(KeyGenPreprocValues {});
-        let (results, txn_id) = generic_sunshine_test(slow, op).await;
+        let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
         for result in results {
@@ -622,7 +993,7 @@ mod test {
 
     async fn crs_sunshine(slow: bool) {
         let op = KmsOperationAttribute::CrsGen(CrsGenValues {});
-        let (results, txn_id) = generic_sunshine_test(slow, op).await;
+        let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
         // we stop testing the response logic in "fast" mode, which uses a dummy kms
@@ -662,6 +1033,18 @@ mod test {
 
     #[tokio::test]
     #[serial_test::serial]
+    async fn ddec_sunshine_mocked_coordinator() {
+        ddec_sunshine(false).await
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn reenc_sunshine_mocked_coordinator() {
+        reenc_sunshine(false).await
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
     async fn preproc_sunshine_mocked_coordinator() {
         preproc_sunshine(false).await
     }
@@ -670,6 +1053,20 @@ mod test {
     #[serial_test::serial]
     async fn crs_sunshine_mocked_coordinator() {
         crs_sunshine(false).await
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn ddec_sunshine_slow() {
+        ddec_sunshine(true).await
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn reenc_sunshine_slow() {
+        reenc_sunshine(true).await
     }
 
     #[cfg(feature = "slow_tests")]
