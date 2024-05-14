@@ -12,6 +12,9 @@ pub enum Error {
     #[error("Failed to broadcast transaction: {0}")]
     BroadcastTxError(#[from] tonic::Status),
 
+    #[error("Failed to execute contract: {0}")]
+    ExecutionContractError(String),
+
     #[error("Invalid signature: {0}")]
     InvalidSignature(String),
 

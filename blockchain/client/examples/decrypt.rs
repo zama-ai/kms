@@ -36,5 +36,5 @@ async fn main() {
         .execute_contract(msg_payload.as_bytes(), 100_000u64)
         .await
         .unwrap();
-    tracing::info!("Response: {:?}", response.clone().tx_response.unwrap());
+    tracing::info!("Response: {:?}", response);
 }

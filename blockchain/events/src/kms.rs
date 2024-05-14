@@ -1,3 +1,5 @@
+use super::conversions::*;
+use crate::{attrs_to_optionals, field_to_attr};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Attribute, Event};
 use serde::de::Error as _;
@@ -44,55 +46,6 @@ pub enum KmsEventAttributeKey {
     TransactionId,
 }
 
-macro_rules! field_to_attr {
-    (tohex; $value:expr, $name:ident) => {
-        Attribute::new(stringify!($name).to_string(), hex::encode($value.$name))
-    };
-    (tostr; $value:expr, $name:ident) => {
-        Attribute::new(stringify!($name).to_string(), $value.$name.to_string())
-    };
-    (same; $value:expr, $name:ident) => {
-        Attribute::new(stringify!($name).to_string(), $value.$name)
-    };
-}
-
-macro_rules! attrs_to_optionals {
-    ($attributes:expr; same $($str_name:ident),*;
-        bytes $($byte_name:ident),*;
-        generics $($generic_name:ident),*) => {
-
-        $(
-            let mut $str_name = None;
-        )*
-        $(
-            let mut $byte_name = None;
-        )*
-        $(
-            let mut $generic_name = None;
-        )*
-        for attribute in $attributes {
-            match attribute.key.as_str() {
-                $(
-                    stringify!($str_name) => {
-                        $str_name = Some(attribute.value)
-                    }
-                )*
-                $(
-                    stringify!($byte_name) => {
-                        $byte_name = Some(hex::decode(attribute.value).unwrap())
-                    }
-                )*
-                $(
-                    stringify!($generic_name) => {
-                        $generic_name = Some(attribute.value.parse().unwrap())
-                    }
-                )*
-                _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
-            }
-        }
-    };
-}
-
 #[cw_serde]
 #[derive(Eq, TypedBuilder, Default)]
 pub struct DecryptValues {
@@ -100,10 +53,13 @@ pub struct DecryptValues {
     servers_needed: u32,
     /// key_id refers to the key that should be used for decryption
     /// created at key generation.
-    key_id: String,
+    #[builder(setter(into))]
+    key_id: HexVector,
     fhe_type: FheType,
-    ciphertext: Vec<u8>,
-    randomness: Vec<u8>,
+    #[builder(setter(into))]
+    ciphertext: HexVector,
+    #[builder(setter(into))]
+    randomness: HexVector,
 }
 
 impl DecryptValues {
@@ -115,7 +71,7 @@ impl DecryptValues {
         self.servers_needed
     }
 
-    pub fn key_id(&self) -> &str {
+    pub fn key_id(&self) -> &HexVector {
         &self.key_id
     }
 
@@ -123,12 +79,18 @@ impl DecryptValues {
         self.fhe_type
     }
 
-    pub fn ciphertext(&self) -> &[u8] {
+    pub fn ciphertext(&self) -> &HexVector {
         &self.ciphertext
     }
 
-    pub fn randomness(&self) -> &[u8] {
+    pub fn randomness(&self) -> &HexVector {
         &self.randomness
+    }
+}
+
+impl From<DecryptValues> for KmsOperationAttribute {
+    fn from(value: DecryptValues) -> Self {
+        KmsOperationAttribute::Decrypt(value)
     }
 }
 
@@ -137,7 +99,7 @@ impl From<DecryptValues> for Vec<Attribute> {
         vec![
             field_to_attr!(tostr; value, version),
             field_to_attr!(tostr; value, servers_needed),
-            field_to_attr!(same; value, key_id),
+            field_to_attr!(tohex; value, key_id),
             field_to_attr!(tostr; value, fhe_type),
             field_to_attr!(tohex; value, ciphertext),
             field_to_attr!(tohex; value, randomness),
@@ -150,17 +112,17 @@ impl TryFrom<Vec<Attribute>> for DecryptValues {
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
         attrs_to_optionals!(
             attributes;
-            same key_id;
-            bytes ciphertext, randomness;
+            same;
+            bytes ciphertext, randomness, key_id;
             generics version, servers_needed, fhe_type
         );
         Ok(DecryptValues {
-            version: version.unwrap(),
-            servers_needed: servers_needed.unwrap(),
-            key_id: key_id.unwrap(),
-            fhe_type: fhe_type.unwrap(),
-            ciphertext: ciphertext.unwrap(),
-            randomness: randomness.unwrap(),
+            version,
+            servers_needed,
+            key_id,
+            fhe_type,
+            ciphertext,
+            randomness,
         })
     }
 }
@@ -168,28 +130,36 @@ impl TryFrom<Vec<Attribute>> for DecryptValues {
 #[cw_serde]
 #[derive(Eq, TypedBuilder, Default)]
 pub struct ReencryptValues {
-    signature: Vec<u8>,
+    #[builder(setter(into))]
+    signature: HexVector,
 
     // payload
     version: u32,
     servers_needed: u32,
-    verification_key: Vec<u8>,
-    randomness: Vec<u8>,
-    enc_key: Vec<u8>,
+    #[builder(setter(into))]
+    verification_key: HexVector,
+    #[builder(setter(into))]
+    randomness: HexVector,
+    #[builder(setter(into))]
+    enc_key: HexVector,
     fhe_type: FheType,
-    key_id: String,
-    ciphertext: Vec<u8>,
+    #[builder(setter(into))]
+    key_id: HexVector,
+    #[builder(setter(into))]
+    ciphertext: HexVector,
 
     // eip712
     eip712_name: String,
     eip712_version: String,
-    eip712_chain_id: Vec<u8>,
+    #[builder(setter(into))]
+    eip712_chain_id: HexVector,
     eip712_verifying_contract: String,
-    eip712_salt: Vec<u8>,
+    #[builder(setter(into))]
+    eip712_salt: HexVector,
 }
 
 impl ReencryptValues {
-    pub fn signature(&self) -> &[u8] {
+    pub fn signature(&self) -> &HexVector {
         &self.signature
     }
 
@@ -201,15 +171,15 @@ impl ReencryptValues {
         self.servers_needed
     }
 
-    pub fn verification_key(&self) -> &[u8] {
+    pub fn verification_key(&self) -> &HexVector {
         &self.verification_key
     }
 
-    pub fn randomness(&self) -> &[u8] {
+    pub fn randomness(&self) -> &HexVector {
         &self.randomness
     }
 
-    pub fn enc_key(&self) -> &[u8] {
+    pub fn enc_key(&self) -> &HexVector {
         &self.enc_key
     }
 
@@ -217,11 +187,11 @@ impl ReencryptValues {
         self.fhe_type
     }
 
-    pub fn key_id(&self) -> &str {
+    pub fn key_id(&self) -> &HexVector {
         &self.key_id
     }
 
-    pub fn ciphertext(&self) -> &[u8] {
+    pub fn ciphertext(&self) -> &HexVector {
         &self.ciphertext
     }
 
@@ -233,7 +203,7 @@ impl ReencryptValues {
         &self.eip712_version
     }
 
-    pub fn eip712_chain_id(&self) -> &[u8] {
+    pub fn eip712_chain_id(&self) -> &HexVector {
         &self.eip712_chain_id
     }
 
@@ -241,7 +211,7 @@ impl ReencryptValues {
         &self.eip712_verifying_contract
     }
 
-    pub fn eip712_salt(&self) -> &[u8] {
+    pub fn eip712_salt(&self) -> &HexVector {
         &self.eip712_salt
     }
 }
@@ -256,7 +226,7 @@ impl From<ReencryptValues> for Vec<Attribute> {
             field_to_attr!(tohex; value, randomness),
             field_to_attr!(tohex; value, enc_key),
             field_to_attr!(tostr; value, fhe_type),
-            field_to_attr!(same; value, key_id),
+            field_to_attr!(tohex; value, key_id),
             field_to_attr!(tohex; value, ciphertext),
             field_to_attr!(same; value, eip712_name),
             field_to_attr!(same; value, eip712_version),
@@ -272,46 +242,54 @@ impl TryFrom<Vec<Attribute>> for ReencryptValues {
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
         attrs_to_optionals!(
             attributes;
-            same key_id, eip712_name, eip712_version, eip712_verifying_contract;
-            bytes signature, verification_key, randomness, ciphertext, enc_key, eip712_chain_id, eip712_salt;
+            same eip712_name, eip712_version, eip712_verifying_contract;
+            bytes signature, verification_key, randomness, ciphertext, enc_key, eip712_chain_id, eip712_salt, key_id;
             generics version, servers_needed, fhe_type
         );
 
         Ok(ReencryptValues {
-            signature: signature.unwrap(),
-            version: version.unwrap(),
-            servers_needed: servers_needed.unwrap(),
-            verification_key: verification_key.unwrap(),
-            randomness: randomness.unwrap(),
-            enc_key: enc_key.unwrap(),
-            fhe_type: fhe_type.unwrap(),
-            key_id: key_id.unwrap(),
-            ciphertext: ciphertext.unwrap(),
-            eip712_name: eip712_name.unwrap(),
-            eip712_version: eip712_version.unwrap(),
-            eip712_chain_id: eip712_chain_id.unwrap(),
-            eip712_verifying_contract: eip712_verifying_contract.unwrap(),
-            eip712_salt: eip712_salt.unwrap(),
+            signature,
+            version,
+            servers_needed,
+            verification_key,
+            randomness,
+            enc_key,
+            fhe_type,
+            key_id,
+            ciphertext,
+            eip712_name,
+            eip712_version,
+            eip712_chain_id,
+            eip712_verifying_contract,
+            eip712_salt,
         })
+    }
+}
+
+impl From<ReencryptValues> for KmsOperationAttribute {
+    fn from(value: ReencryptValues) -> Self {
+        KmsOperationAttribute::Reencrypt(value)
     }
 }
 
 #[cw_serde]
 #[derive(Default, Eq, TypedBuilder)]
 pub struct DecryptResponseValues {
-    signature: Vec<u8>,
+    #[builder(setter(into))]
+    signature: HexVector,
     /// This is the response payload,
     /// we keep it in the serialized form because
     /// we need to use it to verify the signature.
-    payload: Vec<u8>,
+    #[builder(setter(into))]
+    payload: HexVector,
 }
 
 impl DecryptResponseValues {
-    pub fn signature(&self) -> &[u8] {
+    pub fn signature(&self) -> &HexVector {
         &self.signature
     }
 
-    pub fn payload(&self) -> &[u8] {
+    pub fn payload(&self) -> &HexVector {
         &self.payload
     }
 }
@@ -319,8 +297,8 @@ impl DecryptResponseValues {
 impl From<DecryptResponseValues> for Vec<Attribute> {
     fn from(value: DecryptResponseValues) -> Self {
         vec![
-            Attribute::new("signature".to_string(), hex::encode(value.signature)),
-            Attribute::new("payload".to_string(), hex::encode(value.payload)),
+            field_to_attr!(tohex; value, signature),
+            field_to_attr!(tohex; value, payload),
         ]
     }
 }
@@ -328,23 +306,20 @@ impl From<DecryptResponseValues> for Vec<Attribute> {
 impl TryFrom<Vec<Attribute>> for DecryptResponseValues {
     type Error = anyhow::Error;
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        let mut signature = None;
-        let mut payload = None;
-        for attribute in attributes {
-            match attribute.key.as_str() {
-                "signature" => {
-                    signature = Some(hex::decode(attribute.value).unwrap());
-                }
-                "payload" => {
-                    payload = Some(hex::decode(attribute.value).unwrap());
-                }
-                _ => return Err(anyhow::anyhow!("Invalid attribute key {:?}", attribute.key)),
-            }
-        }
-        Ok(DecryptResponseValues {
-            signature: signature.unwrap(),
-            payload: payload.unwrap(),
-        })
+        attrs_to_optionals!(
+            attributes;
+            same;
+            bytes signature, payload;
+            generics
+        );
+
+        Ok(DecryptResponseValues { signature, payload })
+    }
+}
+
+impl From<DecryptResponseValues> for KmsOperationAttribute {
+    fn from(value: DecryptResponseValues) -> Self {
+        KmsOperationAttribute::DecryptResponse(value)
     }
 }
 
@@ -360,32 +335,41 @@ impl From<KeyGenPreprocResponseValues> for Vec<Attribute> {
     }
 }
 
+impl TryFrom<Vec<Attribute>> for KeyGenPreprocResponseValues {
+    type Error = anyhow::Error;
+    fn try_from(_attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
+        Ok(KeyGenPreprocResponseValues {})
+    }
+}
+
+impl From<KeyGenPreprocResponseValues> for KmsOperationAttribute {
+    fn from(_value: KeyGenPreprocResponseValues) -> Self {
+        KmsOperationAttribute::KeyGenPreprocResponse(KeyGenPreprocResponseValues {})
+    }
+}
+
 #[cw_serde]
 #[derive(Default, Eq, TypedBuilder)]
 pub struct KeyGenResponseValues {
     request_id: String,
     public_key_digest: String,
-    public_key_signature: Vec<u8>,
+    #[builder(setter(into))]
+    public_key_signature: HexVector,
     // server key is bootstrap key
     server_key_digest: String,
-    server_key_signature: Vec<u8>,
+    #[builder(setter(into))]
+    server_key_signature: HexVector,
     // we do not need SnS key
 }
 
 impl From<KeyGenResponseValues> for Vec<Attribute> {
     fn from(value: KeyGenResponseValues) -> Self {
         vec![
-            Attribute::new("request_id".to_string(), value.request_id),
-            Attribute::new("public_key_digest".to_string(), value.public_key_digest),
-            Attribute::new(
-                "public_key_signature".to_string(),
-                hex::encode(value.public_key_signature),
-            ),
-            Attribute::new("server_key_digest".to_string(), value.server_key_digest),
-            Attribute::new(
-                "server_key_signature".to_string(),
-                hex::encode(value.server_key_signature),
-            ),
+            field_to_attr!(tostr; value, request_id),
+            field_to_attr!(tostr; value, public_key_digest),
+            field_to_attr!(tohex; value, public_key_signature),
+            field_to_attr!(tostr; value, server_key_digest),
+            field_to_attr!(tohex; value, server_key_signature),
         ]
     }
 }
@@ -393,38 +377,26 @@ impl From<KeyGenResponseValues> for Vec<Attribute> {
 impl TryFrom<Vec<Attribute>> for KeyGenResponseValues {
     type Error = anyhow::Error;
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        let mut request_id = None;
-        let mut public_key_digest = None;
-        let mut public_key_signature = None;
-        let mut server_key_digest = None;
-        let mut server_key_signature = None;
-        for attribute in attributes {
-            match attribute.key.as_str() {
-                "request_id" => {
-                    request_id = Some(attribute.value);
-                }
-                "public_key_digest" => {
-                    public_key_digest = Some(attribute.value);
-                }
-                "public_key_signature" => {
-                    public_key_signature = Some(hex::decode(attribute.value).unwrap());
-                }
-                "server_key_digest" => {
-                    server_key_digest = Some(attribute.value);
-                }
-                "server_key_signature" => {
-                    server_key_signature = Some(hex::decode(attribute.value).unwrap());
-                }
-                _ => (),
-            }
-        }
+        attrs_to_optionals!(
+            attributes;
+            same request_id, public_key_digest, server_key_digest;
+            bytes public_key_signature, server_key_signature;
+            generics
+        );
+
         Ok(KeyGenResponseValues {
-            request_id: request_id.unwrap(),
-            public_key_digest: public_key_digest.unwrap(),
-            public_key_signature: public_key_signature.unwrap(),
-            server_key_digest: server_key_digest.unwrap(),
-            server_key_signature: server_key_signature.unwrap(),
+            request_id,
+            public_key_digest,
+            public_key_signature,
+            server_key_digest,
+            server_key_signature,
         })
+    }
+}
+
+impl From<KeyGenResponseValues> for KmsOperationAttribute {
+    fn from(value: KeyGenResponseValues) -> Self {
+        KmsOperationAttribute::KeyGenResponse(value)
     }
 }
 
@@ -433,10 +405,13 @@ impl TryFrom<Vec<Attribute>> for KeyGenResponseValues {
 pub struct ReencryptResponseValues {
     version: u32,
     servers_needed: u32,
-    verification_key: Vec<u8>,
-    digest: Vec<u8>,
+    #[builder(setter(into))]
+    verification_key: HexVector,
+    #[builder(setter(into))]
+    digest: HexVector,
     fhe_type: FheType,
-    signcrypted_ciphertext: Vec<u8>,
+    #[builder(setter(into))]
+    signcrypted_ciphertext: HexVector,
 }
 
 impl ReencryptResponseValues {
@@ -448,11 +423,11 @@ impl ReencryptResponseValues {
         self.servers_needed
     }
 
-    pub fn verification_key(&self) -> &[u8] {
+    pub fn verification_key(&self) -> &HexVector {
         &self.verification_key
     }
 
-    pub fn digest(&self) -> &[u8] {
+    pub fn digest(&self) -> &HexVector {
         &self.digest
     }
 
@@ -460,7 +435,7 @@ impl ReencryptResponseValues {
         self.fhe_type
     }
 
-    pub fn signcrypted_ciphertext(&self) -> &[u8] {
+    pub fn signcrypted_ciphertext(&self) -> &HexVector {
         &self.signcrypted_ciphertext
     }
 }
@@ -487,14 +462,21 @@ impl TryFrom<Vec<Attribute>> for ReencryptResponseValues {
             bytes verification_key, digest, signcrypted_ciphertext;
             generics version, servers_needed, fhe_type
         );
+
         Ok(ReencryptResponseValues {
-            version: version.unwrap(),
-            servers_needed: servers_needed.unwrap(),
-            verification_key: verification_key.unwrap(),
-            digest: digest.unwrap(),
-            fhe_type: fhe_type.unwrap(),
-            signcrypted_ciphertext: signcrypted_ciphertext.unwrap(),
+            version,
+            servers_needed,
+            verification_key,
+            digest,
+            fhe_type,
+            signcrypted_ciphertext,
         })
+    }
+}
+
+impl From<ReencryptResponseValues> for KmsOperationAttribute {
+    fn from(value: ReencryptResponseValues) -> Self {
+        KmsOperationAttribute::ReencryptResponse(value)
     }
 }
 
@@ -506,7 +488,8 @@ pub struct CrsGenResponseValues {
     /// The CRS digest, which can be used to derive the storage URL for the CRS.
     digest: String,
     /// The signature on the digest.
-    signature: Vec<u8>,
+    #[builder(setter(into))]
+    signature: HexVector,
 }
 
 impl CrsGenResponseValues {
@@ -518,7 +501,7 @@ impl CrsGenResponseValues {
         &self.digest
     }
 
-    pub fn signature(&self) -> &[u8] {
+    pub fn signature(&self) -> &HexVector {
         &self.signature
     }
 }
@@ -526,9 +509,9 @@ impl CrsGenResponseValues {
 impl From<CrsGenResponseValues> for Vec<Attribute> {
     fn from(value: CrsGenResponseValues) -> Self {
         vec![
-            Attribute::new("request_id".to_string(), value.request_id),
-            Attribute::new("digest".to_string(), value.digest),
-            Attribute::new("signature".to_string(), hex::encode(value.signature)),
+            field_to_attr!(tostr; value, request_id),
+            field_to_attr!(tostr; value, digest),
+            field_to_attr!(tohex; value, signature),
         ]
     }
 }
@@ -536,26 +519,24 @@ impl From<CrsGenResponseValues> for Vec<Attribute> {
 impl TryFrom<Vec<Attribute>> for CrsGenResponseValues {
     type Error = anyhow::Error;
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        let mut request_id = None;
-        let mut digest = None;
-        let mut signature = None;
-        for attribute in attributes {
-            match attribute.key.as_str() {
-                "request_id" => {
-                    request_id = Some(attribute.value);
-                }
-                "digest" => {
-                    digest = Some(attribute.value);
-                }
-                "signature" => signature = Some(hex::decode(attribute.value).unwrap()),
-                _ => (),
-            }
-        }
+        attrs_to_optionals!(
+            attributes;
+            same request_id, digest;
+            bytes signature;
+            generics
+        );
+
         Ok(CrsGenResponseValues {
-            request_id: request_id.unwrap(),
-            digest: digest.unwrap(),
-            signature: signature.unwrap(),
+            request_id,
+            digest,
+            signature,
         })
+    }
+}
+
+impl From<CrsGenResponseValues> for KmsOperationAttribute {
+    fn from(value: CrsGenResponseValues) -> Self {
+        KmsOperationAttribute::CrsGenResponse(value)
     }
 }
 
@@ -576,38 +557,48 @@ impl TryFrom<Vec<Attribute>> for KeyGenPreprocValues {
     }
 }
 
+impl From<KeyGenPreprocValues> for KmsOperationAttribute {
+    fn from(_value: KeyGenPreprocValues) -> Self {
+        KmsOperationAttribute::KeyGenPreproc(KeyGenPreprocValues {})
+    }
+}
+
 #[cw_serde]
 #[derive(Eq, Default, TypedBuilder)]
 pub struct KeyGenValues {
     /// Hex-encoded preprocessing ID.
     /// This ID refers to the request ID of a preprocessing request.
-    preproc_id: String,
+    preproc_id: HexVector,
 }
 
 impl KeyGenValues {
-    pub fn preproc_id(&self) -> &str {
+    pub fn preproc_id(&self) -> &HexVector {
         &self.preproc_id
     }
 }
 
 impl From<KeyGenValues> for Vec<Attribute> {
     fn from(value: KeyGenValues) -> Self {
-        vec![Attribute::new("preproc_id".to_string(), value.preproc_id)]
+        vec![field_to_attr!(tohex; value, preproc_id)]
     }
 }
 
 impl TryFrom<Vec<Attribute>> for KeyGenValues {
     type Error = anyhow::Error;
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        let mut preproc_id = None;
-        for attribute in attributes {
-            if let "preproc_id" = attribute.key.as_str() {
-                preproc_id = Some(attribute.value);
-            }
-        }
-        Ok(KeyGenValues {
-            preproc_id: preproc_id.unwrap(),
-        })
+        attrs_to_optionals!(
+            attributes;
+            same;
+            bytes preproc_id;
+            generics
+        );
+        Ok(KeyGenValues { preproc_id })
+    }
+}
+
+impl From<KeyGenValues> for KmsOperationAttribute {
+    fn from(value: KeyGenValues) -> Self {
+        KmsOperationAttribute::KeyGen(value)
     }
 }
 
@@ -625,6 +616,12 @@ impl TryFrom<Vec<Attribute>> for CrsGenValues {
     type Error = anyhow::Error;
     fn try_from(_attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
         Ok(CrsGenValues {})
+    }
+}
+
+impl From<CrsGenValues> for KmsOperationAttribute {
+    fn from(_value: CrsGenValues) -> Self {
+        KmsOperationAttribute::CrsGen(CrsGenValues {})
     }
 }
 
@@ -707,17 +704,37 @@ impl From<KmsOperationAttribute> for Vec<Attribute> {
 
 #[cw_serde]
 #[derive(Eq, Default)]
-pub struct TransactionId(Vec<u8>);
+pub struct TransactionId(pub(crate) HexVector);
 
 impl TransactionId {
     pub fn to_hex(&self) -> String {
-        hex::encode(self.0.clone())
+        self.0.to_hex()
+    }
+
+    pub fn from_hex(hex: &str) -> anyhow::Result<Self> {
+        Ok(TransactionId(HexVector::from_hex(hex)?))
+    }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.0.clone().into()
+    }
+}
+
+impl From<&HexVector> for TransactionId {
+    fn from(value: &HexVector) -> Self {
+        TransactionId(value.clone())
+    }
+}
+
+impl From<HexVector> for TransactionId {
+    fn from(value: HexVector) -> Self {
+        TransactionId(value)
     }
 }
 
 impl From<Vec<u8>> for TransactionId {
     fn from(value: Vec<u8>) -> Self {
-        TransactionId(value)
+        TransactionId(HexVector(value))
     }
 }
 
@@ -725,7 +742,7 @@ impl From<TransactionId> for Attribute {
     fn from(value: TransactionId) -> Self {
         Attribute::new(
             KmsEventAttributeKey::TransactionId.to_string(),
-            hex::encode(value.0),
+            value.0.to_hex(),
         )
     }
 }
@@ -733,6 +750,7 @@ impl From<TransactionId> for Attribute {
 #[cw_serde]
 #[derive(Eq, TypedBuilder)]
 pub struct KmsEvent {
+    #[builder(setter(into))]
     pub operation: KmsOperationAttribute,
     #[builder(setter(into))]
     pub txn_id: TransactionId,
@@ -740,12 +758,24 @@ pub struct KmsEvent {
 
 impl KmsEvent {
     pub fn to_json(&self) -> Result<Value, serde_json::error::Error> {
-        let mut object = serde_json::to_value(self.operation.clone())?;
+        let event_value = serde_json::to_value(self.operation.clone())?;
+        let event_type = self.operation.to_string();
+        let mut value = serde_json::json!({event_type.clone(): {}});
+        if let Some(obj) = event_value.as_object() {
+            if let Some(inner) = obj.get(event_type.as_str()) {
+                if let Some(inner_obj) = inner.as_object() {
+                    if !inner_obj.is_empty() {
+                        value = serde_json::json!({event_type.clone(): event_value});
+                    }
+                }
+            }
+        }
+
         if self.operation.is_response() {
-            object
+            value
                 .as_object_mut()
                 .ok_or(serde_json::Error::custom("Invalid operation"))?
-                .get_mut(self.operation.to_string().as_str())
+                .get_mut(event_type.as_str())
                 .ok_or(serde_json::Error::custom("Invalid operation"))?
                 .as_object_mut()
                 .ok_or(serde_json::Error::custom("Invalid operation"))?
@@ -754,7 +784,7 @@ impl KmsEvent {
                     serde_json::to_value(self.txn_id.0.clone())?,
                 );
         }
-        Ok(object)
+        Ok(value)
     }
 }
 
@@ -779,7 +809,7 @@ impl TryFrom<Event> for KmsEvent {
             .get(pos_tx_id)
             .map(|a| hex::decode(a.value.as_str()))
             .transpose()?
-            .map(TransactionId)
+            .map(Into::into)
             .ok_or(anyhow::anyhow!("Missing txn_id attribute"))?;
         attributes.remove(pos_tx_id);
         let operation = match event.ty.as_str() {
@@ -841,15 +871,21 @@ mod tests {
         }
     }
 
+    impl Arbitrary for HexVector {
+        fn arbitrary(g: &mut Gen) -> HexVector {
+            HexVector(Vec::<u8>::arbitrary(g))
+        }
+    }
+
     impl Arbitrary for DecryptValues {
         fn arbitrary(g: &mut Gen) -> DecryptValues {
             DecryptValues {
                 version: u32::arbitrary(g),
                 servers_needed: u32::arbitrary(g),
-                key_id: String::arbitrary(g),
+                key_id: HexVector::arbitrary(g),
                 fhe_type: FheType::arbitrary(g),
-                ciphertext: Vec::<u8>::arbitrary(g),
-                randomness: Vec::<u8>::arbitrary(g),
+                ciphertext: HexVector::arbitrary(g),
+                randomness: HexVector::arbitrary(g),
             }
         }
     }
@@ -857,20 +893,20 @@ mod tests {
     impl Arbitrary for ReencryptValues {
         fn arbitrary(g: &mut Gen) -> ReencryptValues {
             ReencryptValues {
-                signature: Vec::<u8>::arbitrary(g),
+                signature: HexVector::arbitrary(g),
                 version: u32::arbitrary(g),
                 servers_needed: u32::arbitrary(g),
-                verification_key: Vec::<u8>::arbitrary(g),
-                randomness: Vec::<u8>::arbitrary(g),
-                enc_key: Vec::<u8>::arbitrary(g),
+                verification_key: HexVector::arbitrary(g),
+                randomness: HexVector::arbitrary(g),
+                enc_key: HexVector::arbitrary(g),
                 fhe_type: FheType::arbitrary(g),
-                key_id: String::arbitrary(g),
-                ciphertext: Vec::<u8>::arbitrary(g),
+                key_id: HexVector::arbitrary(g),
+                ciphertext: HexVector::arbitrary(g),
                 eip712_name: String::arbitrary(g),
                 eip712_version: String::arbitrary(g),
-                eip712_chain_id: Vec::<u8>::arbitrary(g),
+                eip712_chain_id: HexVector::arbitrary(g),
                 eip712_verifying_contract: String::arbitrary(g),
-                eip712_salt: Vec::<u8>::arbitrary(g),
+                eip712_salt: HexVector::arbitrary(g),
             }
         }
     }
@@ -878,8 +914,8 @@ mod tests {
     impl Arbitrary for DecryptResponseValues {
         fn arbitrary(g: &mut Gen) -> DecryptResponseValues {
             DecryptResponseValues {
-                signature: Vec::<u8>::arbitrary(g),
-                payload: Vec::<u8>::arbitrary(g),
+                signature: HexVector::arbitrary(g),
+                payload: HexVector::arbitrary(g),
             }
         }
     }
@@ -889,9 +925,9 @@ mod tests {
             KeyGenResponseValues {
                 request_id: String::arbitrary(g),
                 public_key_digest: String::arbitrary(g),
-                public_key_signature: Vec::<u8>::arbitrary(g),
+                public_key_signature: HexVector::arbitrary(g),
                 server_key_digest: String::arbitrary(g),
-                server_key_signature: Vec::<u8>::arbitrary(g),
+                server_key_signature: HexVector::arbitrary(g),
             }
         }
     }
@@ -901,10 +937,10 @@ mod tests {
             ReencryptResponseValues {
                 version: u32::arbitrary(g),
                 servers_needed: u32::arbitrary(g),
-                verification_key: Vec::<u8>::arbitrary(g),
-                digest: Vec::<u8>::arbitrary(g),
+                verification_key: HexVector::arbitrary(g),
+                digest: HexVector::arbitrary(g),
                 fhe_type: FheType::arbitrary(g),
-                signcrypted_ciphertext: Vec::<u8>::arbitrary(g),
+                signcrypted_ciphertext: HexVector::arbitrary(g),
             }
         }
     }
@@ -916,7 +952,7 @@ mod tests {
             CrsGenResponseValues {
                 request_id: String::arbitrary(g),
                 digest: String::arbitrary(g),
-                signature: Vec::<u8>::arbitrary(g),
+                signature: HexVector::arbitrary(g),
             }
         }
     }
@@ -940,7 +976,7 @@ mod tests {
 
     impl Arbitrary for TransactionId {
         fn arbitrary(g: &mut Gen) -> TransactionId {
-            TransactionId(Vec::<u8>::arbitrary(g))
+            TransactionId(HexVector::arbitrary(g))
         }
     }
 
@@ -958,7 +994,7 @@ mod tests {
         let decrypt_values = DecryptValues::builder()
             .version(1)
             .servers_needed(2)
-            .key_id("key_id".to_string())
+            .key_id("key_id".as_bytes().to_vec())
             .fhe_type(FheType::Ebool)
             .ciphertext(vec![1, 2, 3])
             .randomness(vec![4, 5, 6])
@@ -992,7 +1028,7 @@ mod tests {
         assert!(result.is_some());
         let result = attributes
             .iter()
-            .find(move |a| a.key == "key_id" && a.value == "key_id");
+            .find(move |a| a.key == "key_id" && a.value == hex::encode("key_id".as_bytes()));
         assert!(result.is_some());
         let result = attributes
             .iter()
@@ -1013,7 +1049,7 @@ mod tests {
         let decrypt_values = DecryptValues::builder()
             .version(1)
             .servers_needed(2)
-            .key_id("mykeyid".to_string())
+            .key_id("mykeyid".as_bytes().to_vec())
             .fhe_type(FheType::Ebool)
             .ciphertext(vec![1, 2, 3])
             .randomness(vec![4, 5, 6])
@@ -1026,12 +1062,14 @@ mod tests {
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
             "decrypt": {
-                "version": 1,
-                "servers_needed": 2,
-                "key_id": "mykeyid",
-                "fhe_type": "ebool",
-                "ciphertext": [1, 2, 3],
-                "randomness": [4, 5, 6],
+                "decrypt":{
+                    "version": 1,
+                    "servers_needed": 2,
+                    "key_id": hex::encode("mykeyid".as_bytes()),
+                    "fhe_type": "ebool",
+                    "ciphertext": hex::encode([1, 2, 3]),
+                    "randomness": hex::encode([4, 5, 6]),
+                }
             }
         });
         assert_eq!(json, json_str);
@@ -1054,9 +1092,11 @@ mod tests {
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
             "decrypt_response": {
-                "signature": [4, 5, 6],
-                "payload": [1, 2, 3],
-                "txn_id": vec![1]
+                "decrypt_response": {
+                    "signature": hex::encode([4, 5, 6]),
+                    "payload": hex::encode([1, 2, 3]),
+                },
+                "txn_id": hex::encode([1]),
             }
         });
         assert_eq!(json, json_str);
@@ -1072,7 +1112,7 @@ mod tests {
             .randomness(vec![3])
             .enc_key(vec![4])
             .fhe_type(FheType::Ebool)
-            .key_id("kid".to_string())
+            .key_id("kid".as_bytes().to_vec())
             .ciphertext(vec![5])
             .eip712_name("name".to_string())
             .eip712_version("version".to_string())
@@ -1088,20 +1128,22 @@ mod tests {
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
             "reencrypt": {
-                "signature": vec![1],
-                "version": 1,
-                "servers_needed": 2,
-                "verification_key": vec![2],
-                "randomness": vec![3],
-                "enc_key": vec![4],
-                "fhe_type": "ebool",
-                "key_id": "kid",
-                "ciphertext": vec![5],
-                "eip712_name": "name",
-                "eip712_version": "version",
-                "eip712_chain_id": vec![6],
-                "eip712_verifying_contract": "contract",
-                "eip712_salt": vec![7],
+                "reencrypt": {
+                    "signature": hex::encode([1]),
+                    "version": 1,
+                    "servers_needed": 2,
+                    "verification_key": hex::encode(vec![2]),
+                    "randomness": hex::encode(vec![3]),
+                    "enc_key": hex::encode(vec![4]),
+                    "fhe_type": "ebool",
+                    "key_id": hex::encode("kid".as_bytes()),
+                    "ciphertext": hex::encode(vec![5]),
+                    "eip712_name": "name",
+                    "eip712_version": "version",
+                    "eip712_chain_id": hex::encode([6]),
+                    "eip712_verifying_contract": "contract",
+                    "eip712_salt": hex::encode([7]),
+                }
             }
         });
         assert_eq!(json, json_str);
@@ -1128,13 +1170,15 @@ mod tests {
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
             "reencrypt_response": {
-                "version": 1,
-                "servers_needed": 2,
-                "verification_key": vec![1],
-                "digest": vec![2],
-                "fhe_type": "ebool",
-                "signcrypted_ciphertext": vec![3],
-                "txn_id": vec![1],
+                "reencrypt_response": {
+                    "version": 1,
+                    "servers_needed": 2,
+                    "verification_key": hex::encode([1]),
+                    "digest": hex::encode([2]),
+                    "fhe_type": "ebool",
+                    "signcrypted_ciphertext": hex::encode([3]),
+                },
+                "txn_id": hex::encode(vec![1])
             }
         });
         assert_eq!(json, json_str);
@@ -1149,7 +1193,11 @@ mod tests {
 
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
-            "keygen": { "preproc_id": ""}
+            "keygen": {
+                "keygen": {
+                    "preproc_id": ""
+                },
+            }
         });
         assert_eq!(json, json_str);
     }
@@ -1174,12 +1222,15 @@ mod tests {
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
             "keygen_response": {
-                "request_id": "xyz",
-                "public_key_digest": "abc",
-                "public_key_signature": [1, 2, 3],
-                "server_key_digest": "def",
-                "server_key_signature": [4, 5, 6],
-                "txn_id": vec![1]
+                "keygen_response": {
+                    "request_id": "xyz",
+                    "public_key_digest": "abc",
+                    "public_key_signature": hex::encode([1, 2, 3]),
+                    "server_key_digest": "def",
+                    "server_key_signature": hex::encode([4, 5, 6]),
+                },
+                "txn_id": hex::encode(vec![1])
+
             }
         });
         assert_eq!(json, json_str);
@@ -1217,10 +1268,12 @@ mod tests {
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
             "crs_gen_response": {
-                "request_id": "abcdef".to_string(),
-                "digest": "123456".to_string(),
-                "signature": vec![1, 2, 3],
-                "txn_id": vec![1]
+                "crs_gen_response": {
+                    "request_id": "abcdef",
+                    "digest": "123456",
+                    "signature": hex::encode([1, 2, 3]),
+                },
+                "txn_id": hex::encode(vec![1])
             }
         });
         assert_eq!(json, json_str);

@@ -229,10 +229,10 @@ impl Kms for DecryptVal {
         };
         let version = self.decrypt.version();
         let servers_needed = self.decrypt.servers_needed();
-        let key_id = self.decrypt.key_id().to_string();
+        let key_id = self.decrypt.key_id().to_hex();
         let fhe_type = self.decrypt.fhe_type() as i32;
-        let ciphertext = self.decrypt.ciphertext().to_vec();
-        let randomness = self.decrypt.randomness().to_vec();
+        let ciphertext = self.decrypt.ciphertext().into();
+        let randomness = self.decrypt.randomness().into();
 
         // TODO version, servers_needed probably should come from the outside
         let req = DecryptionRequest {
@@ -362,25 +362,25 @@ impl Kms for ReencryptVal {
 
         let reencrypt = &self.reencrypt;
         let req = ReencryptionRequest {
-            signature: self.reencrypt.signature().to_vec(),
+            signature: self.reencrypt.signature().into(),
             payload: Some(ReencryptionRequestPayload {
                 version: reencrypt.version(),
                 servers_needed: reencrypt.servers_needed(),
-                verification_key: reencrypt.verification_key().to_vec(),
-                randomness: reencrypt.randomness().to_vec(),
-                enc_key: reencrypt.enc_key().to_vec(),
+                verification_key: reencrypt.verification_key().into(),
+                randomness: reencrypt.randomness().into(),
+                enc_key: reencrypt.enc_key().into(),
                 fhe_type: reencrypt.fhe_type() as i32,
                 key_id: Some(RequestId {
-                    request_id: reencrypt.key_id().to_string(),
+                    request_id: reencrypt.key_id().to_hex(),
                 }),
-                ciphertext: reencrypt.ciphertext().to_vec(),
+                ciphertext: reencrypt.ciphertext().into(),
             }),
             domain: Some(Eip712DomainMsg {
                 name: reencrypt.eip712_name().to_string(),
                 version: reencrypt.eip712_version().to_string(),
-                chain_id: reencrypt.eip712_chain_id().to_vec(),
+                chain_id: reencrypt.eip712_chain_id().into(),
                 verifying_contract: reencrypt.eip712_verifying_contract().to_string(),
-                salt: reencrypt.eip712_salt().to_vec(),
+                salt: reencrypt.eip712_salt().into(),
             }),
             request_id: Some(req_id.clone()),
         };
@@ -554,7 +554,7 @@ impl Kms for KeyGenVal {
         };
 
         let preproc_id = RequestId {
-            request_id: self.keygen.preproc_id().to_string(),
+            request_id: self.keygen.preproc_id().to_hex(),
         };
         let req = KeyGenRequest {
             config: Some(Config {}),
@@ -715,9 +715,12 @@ mod test {
             metrics::OpenTelemetryMetrics,
         },
     };
-    use events::kms::{
-        CrsGenValues, DecryptValues, KeyGenPreprocValues, KmsEvent, KmsOperationAttribute,
-        ReencryptValues, TransactionId,
+    use events::{
+        kms::{
+            CrsGenValues, DecryptValues, KeyGenPreprocValues, KmsEvent, KmsOperationAttribute,
+            ReencryptValues, TransactionId,
+        },
+        HexVector,
     };
     use kms_lib::{
         client::{test_tools, Client},
@@ -847,7 +850,7 @@ mod test {
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
                 .servers_needed(THRESHOLD as u32 + 1)
-                .key_id(TEST_KEY_ID.request_id.clone())
+                .key_id(TEST_KEY_ID.request_id.as_bytes().to_vec())
                 .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
                 .ciphertext(ct)
                 .randomness(vec![1, 2, 3])
@@ -859,8 +862,11 @@ mod test {
         for result in results {
             match result {
                 KmsOperationResponse::DecryptResponse(resp) => {
-                    let payload: DecryptionResponseSigPayload =
-                        serde_asn1_der::from_bytes(resp.decrypt_response.payload()).unwrap();
+                    let payload: DecryptionResponseSigPayload = serde_asn1_der::from_bytes(
+                        <&HexVector as Into<Vec<u8>>>::into(resp.decrypt_response.payload())
+                            .as_slice(),
+                    )
+                    .unwrap();
                     assert_eq!(
                         serde_asn1_der::from_bytes::<Plaintext>(&payload.plaintext)
                             .unwrap()
@@ -921,7 +927,7 @@ mod test {
                 .randomness(payload.randomness)
                 .enc_key(payload.enc_key)
                 .fhe_type(WrappingFheType::try_from(payload.fhe_type).unwrap().0)
-                .key_id(payload.key_id.unwrap().request_id)
+                .key_id(HexVector::from_hex(payload.key_id.unwrap().request_id.as_str()).unwrap())
                 .ciphertext(payload.ciphertext)
                 .eip712_name(eip712.name)
                 .eip712_version(eip712.version)
@@ -946,10 +952,10 @@ mod test {
                     ReencryptionResponse {
                         version: r.version(),
                         servers_needed: r.servers_needed(),
-                        verification_key: r.verification_key().to_vec(),
-                        digest: r.digest().to_vec(),
+                        verification_key: r.verification_key().into(),
+                        digest: r.digest().into(),
                         fhe_type: r.fhe_type() as i32,
-                        signcrypted_ciphertext: r.signcrypted_ciphertext().to_vec(),
+                        signcrypted_ciphertext: r.signcrypted_ciphertext().into(),
                     }
                 }))),
             };
@@ -964,7 +970,10 @@ mod test {
                         let payload = &resp.reencrypt_response;
                         assert_eq!(resp.operation_val.tx_id, txn_id);
                         assert_eq!(payload.version(), CURRENT_FORMAT_VERSION);
-                        assert_eq!(payload.digest(), "dummy digest".as_bytes());
+                        assert_eq!(
+                            payload.digest().clone(),
+                            <Vec<u8> as Into<HexVector>>::into("dummy digest".as_bytes().to_vec())
+                        );
                     }
                     _ => {
                         panic!("invalid response");
@@ -1003,7 +1012,7 @@ mod test {
 
         // the digests should all be the same but the signatures are all different
         let mut digest = None;
-        let mut signature = None;
+        let mut signature: Option<Vec<u8>> = None;
         for result in results {
             match result {
                 KmsOperationResponse::CrsGenResponse(resp) => {
@@ -1014,14 +1023,18 @@ mod test {
                     } else {
                         digest = Some(resp.crs_gen_response.digest().to_string());
                     }
-                    assert_eq!(resp.crs_gen_response.signature().len(), 72);
+                    assert_eq!(
+                        <&HexVector as Into<Vec<u8>>>::into(resp.crs_gen_response.signature())
+                            .len(),
+                        72
+                    );
                     if signature.is_some() {
                         assert_ne!(
                             signature.clone().unwrap(),
-                            resp.crs_gen_response.signature()
+                            <&HexVector as Into<Vec<u8>>>::into(resp.crs_gen_response.signature())
                         );
                     } else {
-                        signature = Some(resp.crs_gen_response.signature().to_vec());
+                        signature = Some(resp.crs_gen_response.signature().into());
                     }
                 }
                 _ => {

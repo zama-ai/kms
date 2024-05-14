@@ -70,7 +70,9 @@ impl KmsOperation for KmsMock {
 #[test_context(DockerComposeContext)]
 #[tokio::test]
 async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
-    set_var("RUST_LOG", "error");
+    option_env!("RUST_LOG")
+        .map(|_| ())
+        .unwrap_or_else(|| set_var("RUST_LOG", "error"));
     init_tracing(Some(Tracing::default())).unwrap();
     let mnemonic = Some("feel wife neither never floor volume express actor initial year throw hawk pink gaze deny prevent helmet clump hurt hour river behind employ ribbon".to_string());
     let addresses = vec!["http://localhost:9090"];
@@ -88,7 +90,12 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     let contract_address = get_contract_address(&query_client).await.unwrap();
 
     // Send decryption request to the blockchain in order to get events after
-    let _ = send_decrypt_request(mnemonic.clone(), addresses.clone(), &contract_address).await;
+    let txhash = send_decrypt_request(mnemonic.clone(), addresses.clone(), &contract_address).await;
+
+    let query_client = Arc::new(query_client);
+    wait_for_tx_processed(query_client.clone(), txhash.clone())
+        .await
+        .unwrap();
 
     let (tx, mut rc) = channel(1);
     // Start SyncHandler to listen events
@@ -105,7 +112,6 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     let (tx_response, mut rc_response) = channel(1);
     tokio::spawn(handler.listen_for_events());
     tokio::spawn(timeout_task);
-    let query_client = Arc::new(query_client);
     tokio::select! {
         _ = timeout_rx => {
             panic!("Timeout")
@@ -128,6 +134,18 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     }
 
     assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), 1);
+}
+
+#[retry(stop=(attempts(4)|duration(20)),wait=fixed(5))]
+async fn wait_for_tx_processed(
+    query_client: Arc<QueryClient>,
+    txhash: String,
+) -> anyhow::Result<()> {
+    query_client
+        .query_tx(txhash.clone())
+        .await
+        .map(|_| ())
+        .map_err(|e| anyhow::anyhow!("Transaction error {:?}", e))
 }
 
 /// Check the event status in the blockchain to verify if it was processed and
@@ -240,7 +258,7 @@ async fn send_decrypt_request(
         DecryptValues::builder()
             .version(CURRENT_FORMAT_VERSION)
             .servers_needed(2)
-            .key_id("kid".to_string())
+            .key_id("kid".as_bytes().to_vec())
             .ciphertext(vec![1, 2, 3, 4, 5])
             .randomness(vec![6, 7, 8, 9, 0])
             .fhe_type(FheType::Euint8)
@@ -260,5 +278,5 @@ async fn send_decrypt_request(
         .await
         .unwrap();
 
-    resp.tx_response.unwrap().txhash
+    resp.txhash
 }

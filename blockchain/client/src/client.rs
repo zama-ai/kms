@@ -11,12 +11,12 @@ use base64::{engine::general_purpose, Engine as _};
 use cosmos_proto::messages::cosmos::auth::v1beta1::{
     query_client::QueryClient, BaseAccount, QueryAccountRequest, QueryAccountResponse,
 };
+use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
 use cosmos_proto::messages::cosmos::base::v1beta1::Coin;
 use cosmos_proto::messages::cosmos::tx::v1beta1::mode_info::{Single, Sum};
 use cosmos_proto::messages::cosmos::tx::v1beta1::service_client::ServiceClient;
 use cosmos_proto::messages::cosmos::tx::v1beta1::{
-    AuthInfo, BroadcastTxRequest, BroadcastTxResponse, Fee, ModeInfo, SignDoc, SignerInfo, TxBody,
-    TxRaw,
+    AuthInfo, BroadcastTxRequest, Fee, ModeInfo, SignDoc, SignerInfo, TxBody, TxRaw,
 };
 use cosmos_proto::messages::cosmwasm::wasm::v1::MsgExecuteContract;
 use prost_types::Any;
@@ -201,7 +201,7 @@ impl Client {
         &mut self,
         msg_payload: &[u8],
         gas_limit: u64,
-    ) -> Result<BroadcastTxResponse, Error> {
+    ) -> Result<TxResponse, Error> {
         self.init_lazy_query_account().await?;
 
         let tx_bytes = self.prepare_msg(msg_payload, gas_limit).await?;
@@ -217,9 +217,20 @@ impl Client {
             .await
             .map(|response| response.into_inner())?;
 
-        tracing::info!("Transaction broadcasted successfully");
-
-        Ok(result)
+        if let Some(ref tx) = result.tx_response {
+            if tx.code != 0 {
+                return Err(Error::ExecutionContractError(format!(
+                    "Execution contract failed with error code {:?} and message {:?}",
+                    tx.code, tx.raw_log
+                )));
+            }
+            tracing::info!("Transaction broadcasted successfully");
+            Ok(tx.clone())
+        } else {
+            return Err(Error::ExecutionContractError(
+                "No transaction response received".to_string(),
+            ));
+        }
     }
 
     /// Prepares a transaction message for execution on the blockchain.
