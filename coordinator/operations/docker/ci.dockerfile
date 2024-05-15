@@ -22,7 +22,9 @@ WORKDIR /app/kms/coordinator
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path . --root . --bin kms-server
+    cargo install --path . --root . --bin kms-server --bin kms-gen-keys
+RUN cargo test -F slow_tests --release
+# RUN /app/kms/coordinator/bin/kms-gen-keys /app/kms/coordinator/temp/default-central-keys.bin
 
 # Second stage builds the runtime image.
 # This stage will be the final image
@@ -43,13 +45,18 @@ RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
 # Third stage: Copy the binaries from the base stage and the go-runtime stage
 FROM debian:stable-slim as runtime
-WORKDIR /app/kms
-
 # Set the path to include the binaries and not just the default /usr/local/bin
-ENV PATH="$PATH:/app/kms/bin"
+ENV PATH="$PATH:/app/kms/coordinator/bin"
+WORKDIR /app/kms/coordinator
 # Copy the binaries from the base stage
-COPY --from=base /app/kms/coordinator/bin/ /app/kms/bin/
-COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
+COPY --from=base /app/kms/coordinator/bin/ /app/kms/coordinator/bin/
+COPY --from=base /app/kms/coordinator/parameters/ /app/kms/coordinator/parameters/
+COPY --from=base /app/kms/coordinator/crs/ /app/kms/coordinator/crs/
+COPY --from=base /app/kms/coordinator/keys/ /app/kms/coordinator/keys/
+COPY --from=base /app/kms/coordinator/temp/default-central-keys.bin /app/kms/coordinator/temp/
+COPY --from=base /app/kms/coordinator/temp/pks.bin /app/kms/coordinator/temp/
+COPY --from=base /app/kms/coordinator/temp/sks.bin /app/kms/coordinator/temp/
+COPY --from=base /app/kms/coordinator/temp/cks.bin /app/kms/coordinator/temp/
+COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/coordinator/bin/
 
 CMD ["kms-server"]
-
