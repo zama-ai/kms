@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
     DecryptResponseValues, DecryptValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
-    KeyGenValues, KmsEvent, KmsOperationAttribute, ReencryptResponseValues, ReencryptValues,
+    KeyGenValues, KmsEvent, KmsOperationAttribute, Proof, ReencryptResponseValues, ReencryptValues,
     TransactionId,
 };
 use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
@@ -33,6 +33,7 @@ const MAX_CRS_GEN_DURATION_PER_PARTY_SECS: u64 = 60;
 pub struct KmsOperationVal {
     pub kms_client: KmsCoordinator,
     pub tx_id: TransactionId,
+    pub proof: Proof,
 }
 
 pub struct DecryptVal {
@@ -124,6 +125,7 @@ impl KmsCoordinator {
         let operation_val = KmsOperationVal {
             kms_client: self.clone(),
             tx_id: event.txn_id.clone(),
+            proof: event.proof.clone(),
         };
         let request = match event.operation {
             KmsOperationAttribute::Reencrypt(reencrypt) => {
@@ -272,6 +274,7 @@ impl Kms for DecryptVal {
                                 .build(),
                             operation_val: BlockchainOperationVal {
                                 tx_id: self.operation_val.tx_id.clone(),
+                                proof: self.operation_val.proof.clone(),
                             },
                         })))
                 }
@@ -417,6 +420,7 @@ impl Kms for ReencryptVal {
                                 .build(),
                             operation_val: BlockchainOperationVal {
                                 tx_id: self.operation_val.tx_id.clone(),
+                                proof: self.operation_val.proof.clone(),
                             },
                         },
                     )))
@@ -499,6 +503,7 @@ impl Kms for KeyGenPreprocVal {
                                     keygen_preproc_response: KeyGenPreprocResponseValues {},
                                     operation_val: crate::domain::blockchain::BlockchainOperationVal {
                                         tx_id: self.operation_val.tx_id.clone(),
+                                        proof: self.operation_val.proof.clone(),
                                     },
                                 },
                             )))
@@ -603,6 +608,7 @@ impl Kms for KeyGenVal {
                                     .build(),
                                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                                     tx_id: self.operation_val.tx_id.clone(),
+                                    proof: self.operation_val.proof.clone(),
                                 },
                             },
                         )))
@@ -680,6 +686,7 @@ impl Kms for CrsGenVal {
                                     .build(),
                                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                                     tx_id: self.operation_val.tx_id.clone(),
+                                    proof: self.operation_val.proof.clone(),
                                 },
                             },
                         )))
@@ -718,7 +725,7 @@ mod test {
     use events::{
         kms::{
             CrsGenValues, DecryptValues, KeyGenPreprocValues, KmsEvent, KmsOperationAttribute,
-            ReencryptValues, TransactionId,
+            Proof, ReencryptValues, TransactionId,
         },
         HexVector,
     };
@@ -813,6 +820,7 @@ mod test {
             KmsEvent {
                 operation: op,
                 txn_id: txn_id.clone(),
+                proof: Proof::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
             };
             AMOUNT_PARTIES
         ];

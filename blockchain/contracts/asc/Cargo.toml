@@ -20,6 +20,12 @@ serde = "1.0.197"
 cw-storage-plus = "2.0.0"
 hex = "0.4.3"
 sha2 = "0.10.8"
+bincode = "1.3.3"
+anyhow = "1.0.83"
+tendermint = "0.36.0"
+ibc-clients = "0.52.0"
+#ibc-core = "0.52.0"
+#ibc-client-cw = "0.52.0"
 
 [dev-dependencies]
 cw-multi-test = "2.0.1"

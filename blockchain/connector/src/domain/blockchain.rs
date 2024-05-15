@@ -1,13 +1,14 @@
 use async_trait::async_trait;
 use events::kms::{
     CrsGenResponseValues, DecryptResponseValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
-    KmsEvent, KmsOperationAttribute, ReencryptResponseValues, TransactionId,
+    KmsEvent, KmsOperationAttribute, Proof, ReencryptResponseValues, TransactionId,
 };
 use strum_macros::{Display, EnumString};
 
 #[derive(Default, PartialEq, Eq)]
 pub struct BlockchainOperationVal {
     pub tx_id: TransactionId,
+    pub proof: Proof,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -71,26 +72,31 @@ impl From<KmsOperationResponse> for KmsEvent {
             KmsOperationResponse::DecryptResponse(val) => KmsEvent::builder()
                 .operation(KmsOperationAttribute::DecryptResponse(val.decrypt_response))
                 .txn_id(val.operation_val.tx_id)
+                .proof(val.operation_val.proof)
                 .build(),
             KmsOperationResponse::ReencryptResponse(val) => KmsEvent::builder()
                 .operation(KmsOperationAttribute::ReencryptResponse(
                     val.reencrypt_response,
                 ))
                 .txn_id(val.operation_val.tx_id)
+                .proof(val.operation_val.proof)
                 .build(),
             KmsOperationResponse::KeyGenPreprocResponse(val) => KmsEvent::builder()
                 .operation(KmsOperationAttribute::KeyGenPreprocResponse(
                     KeyGenPreprocResponseValues {},
                 ))
                 .txn_id(val.operation_val.tx_id)
+                .proof(val.operation_val.proof)
                 .build(),
             KmsOperationResponse::KeyGenResponse(val) => KmsEvent::builder()
                 .operation(KmsOperationAttribute::KeyGenResponse(val.keygen_response))
                 .txn_id(val.operation_val.tx_id)
+                .proof(val.operation_val.proof)
                 .build(),
             KmsOperationResponse::CrsGenResponse(val) => KmsEvent::builder()
                 .operation(KmsOperationAttribute::CrsGenResponse(val.crs_gen_response))
                 .txn_id(val.operation_val.tx_id)
+                .proof(val.operation_val.proof)
                 .build(),
         }
     }

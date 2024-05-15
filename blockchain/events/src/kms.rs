@@ -44,6 +44,8 @@ pub enum KmsEventAttributeKey {
     OperationType,
     #[strum(serialize = "txn_id")]
     TransactionId,
+    #[strum(serialize = "proof")]
+    Proof,
 }
 
 #[cw_serde]
@@ -748,12 +750,56 @@ impl From<TransactionId> for Attribute {
 }
 
 #[cw_serde]
+#[derive(Eq, Default)]
+pub struct Proof(pub(crate) HexVector);
+
+impl Proof {
+    pub fn to_hex(&self) -> String {
+        self.0.to_hex()
+    }
+
+    pub fn from_hex(hex: &str) -> anyhow::Result<Self> {
+        Ok(Proof(HexVector::from_hex(hex)?))
+    }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.0.clone().into()
+    }
+}
+
+impl From<&HexVector> for Proof {
+    fn from(value: &HexVector) -> Self {
+        Proof(value.clone())
+    }
+}
+
+impl From<HexVector> for Proof {
+    fn from(value: HexVector) -> Self {
+        Proof(value)
+    }
+}
+
+impl From<Vec<u8>> for Proof {
+    fn from(value: Vec<u8>) -> Self {
+        Proof(HexVector(value))
+    }
+}
+
+impl From<Proof> for Attribute {
+    fn from(value: Proof) -> Self {
+        Attribute::new(KmsEventAttributeKey::Proof.to_string(), value.0.to_hex())
+    }
+}
+
+#[cw_serde]
 #[derive(Eq, TypedBuilder)]
 pub struct KmsEvent {
     #[builder(setter(into))]
     pub operation: KmsOperationAttribute,
     #[builder(setter(into))]
     pub txn_id: TransactionId,
+    #[builder(setter(into))]
+    pub proof: Proof,
 }
 
 impl KmsEvent {
@@ -783,6 +829,18 @@ impl KmsEvent {
                     "txn_id".to_string(),
                     serde_json::to_value(self.txn_id.0.clone())?,
                 );
+
+            value
+                .as_object_mut()
+                .ok_or(serde_json::Error::custom("Invalid operation"))?
+                .get_mut(event_type.as_str())
+                .ok_or(serde_json::Error::custom("Invalid operation"))?
+                .as_object_mut()
+                .ok_or(serde_json::Error::custom("Invalid operation"))?
+                .insert(
+                    "proof".to_string(),
+                    serde_json::to_value(self.proof.0.clone())?,
+                );
         }
         Ok(value)
     }
@@ -793,6 +851,7 @@ impl From<KmsEvent> for Event {
         let event_type = value.operation.to_string();
         let mut attributes = <KmsOperationAttribute as Into<Vec<Attribute>>>::into(value.operation);
         attributes.push(<TransactionId as Into<Attribute>>::into(value.txn_id));
+        attributes.push(<Proof as Into<Attribute>>::into(value.proof));
         Event::new(event_type).add_attributes(attributes)
     }
 }
@@ -811,6 +870,16 @@ impl TryFrom<Event> for KmsEvent {
             .transpose()?
             .map(Into::into)
             .ok_or(anyhow::anyhow!("Missing txn_id attribute"))?;
+        let pos_proof_id = attributes
+            .iter()
+            .position(|a| a.key == "proof")
+            .ok_or(anyhow::anyhow!("Missing proof attribute"))?;
+        let proof = attributes
+            .get(pos_proof_id)
+            .map(|a| hex::decode(a.value.as_str()))
+            .transpose()?
+            .map(Into::into)
+            .ok_or(anyhow::anyhow!("Missing proof attribute"))?;
         attributes.remove(pos_tx_id);
         let operation = match event.ty.as_str() {
             "wasm-decrypt" => {
@@ -830,7 +899,11 @@ impl TryFrom<Event> for KmsEvent {
                 .map(KmsOperationAttribute::CrsGenResponse)?,
             _ => return Err(anyhow::anyhow!("Invalid event type {:?}", event.ty)),
         };
-        Ok(KmsEvent { operation, txn_id })
+        Ok(KmsEvent {
+            operation,
+            txn_id,
+            proof,
+        })
     }
 }
 
@@ -980,11 +1053,18 @@ mod tests {
         }
     }
 
+    impl Arbitrary for Proof {
+        fn arbitrary(g: &mut Gen) -> Proof {
+            Proof(HexVector::arbitrary(g))
+        }
+    }
+
     impl Arbitrary for KmsEvent {
         fn arbitrary(g: &mut Gen) -> KmsEvent {
             KmsEvent {
                 operation: KmsOperationAttribute::arbitrary(g),
                 txn_id: TransactionId::arbitrary(g),
+                proof: Proof::arbitrary(g),
             }
         }
     }
@@ -1002,6 +1082,7 @@ mod tests {
         let operation = KmsEvent::builder()
             .operation(KmsOperationAttribute::Decrypt(decrypt_values.clone()))
             .txn_id(vec![1])
+            .proof(vec![1, 2, 3])
             .build();
 
         let event: Event = operation.into();
@@ -1012,7 +1093,7 @@ mod tests {
             KmsOperationAttribute::Decrypt(decrypt_values.clone()).to_string()
         );
 
-        assert_eq!(attributes.len(), 7);
+        assert_eq!(attributes.len(), 8);
         let result = attributes.iter().find(move |a| {
             a.key == KmsEventAttributeKey::TransactionId.to_string()
                 && a.value == hex::encode(vec![1])
@@ -1057,6 +1138,7 @@ mod tests {
         let operation = KmsEvent::builder()
             .operation(KmsOperationAttribute::Decrypt(decrypt_values.clone()))
             .txn_id(vec![1])
+            .proof(vec![1, 2, 3])
             .build();
 
         let json = operation.to_json().unwrap();
@@ -1086,6 +1168,7 @@ mod tests {
                 decrypt_response_values.clone(),
             ))
             .txn_id(vec![1])
+            .proof(vec![1, 2, 3])
             .build();
 
         assert!(operation.operation.is_response());
@@ -1096,6 +1179,7 @@ mod tests {
                     "signature": hex::encode([4, 5, 6]),
                     "payload": hex::encode([1, 2, 3]),
                 },
+                "proof": hex::encode([1, 2, 3]),
                 "txn_id": hex::encode([1]),
             }
         });
@@ -1123,6 +1207,7 @@ mod tests {
         let operation = KmsEvent::builder()
             .operation(KmsOperationAttribute::Reencrypt(reencrypt_values.clone()))
             .txn_id(vec![1])
+            .proof(vec![1, 2, 3])
             .build();
 
         let json = operation.to_json().unwrap();
@@ -1164,6 +1249,7 @@ mod tests {
                 reencrypt_response_values.clone(),
             ))
             .txn_id(vec![1])
+            .proof(vec![1, 2, 3])
             .build();
 
         assert!(operation.operation.is_response());
@@ -1178,6 +1264,7 @@ mod tests {
                     "fhe_type": "ebool",
                     "signcrypted_ciphertext": hex::encode([3]),
                 },
+                "proof": hex::encode([1, 2, 3]),
                 "txn_id": hex::encode(vec![1])
             }
         });
@@ -1189,6 +1276,7 @@ mod tests {
         let operation = KmsEvent::builder()
             .operation(KmsOperationAttribute::KeyGen(KeyGenValues::default()))
             .txn_id(vec![1])
+            .proof(vec![1, 2, 3])
             .build();
 
         let json = operation.to_json().unwrap();
@@ -1216,6 +1304,7 @@ mod tests {
                 keygen_response_values.clone(),
             ))
             .txn_id(vec![1])
+            .proof(vec![1, 2, 3])
             .build();
 
         assert!(operation.operation.is_response());
@@ -1229,8 +1318,8 @@ mod tests {
                     "server_key_digest": "def",
                     "server_key_signature": hex::encode([4, 5, 6]),
                 },
+                "proof": hex::encode([1, 2, 3]),
                 "txn_id": hex::encode(vec![1])
-
             }
         });
         assert_eq!(json, json_str);
@@ -1241,6 +1330,7 @@ mod tests {
         let operation = KmsEvent::builder()
             .operation(KmsOperationAttribute::CrsGen(CrsGenValues::default()))
             .txn_id(vec![1])
+            .proof(vec![1, 2, 3])
             .build();
 
         let json = operation.to_json().unwrap();
@@ -1262,6 +1352,7 @@ mod tests {
                 crs_gen_response_values.clone(),
             ))
             .txn_id(vec![1])
+            .proof(vec![1, 2, 3])
             .build();
 
         assert!(operation.operation.is_response());
@@ -1273,6 +1364,7 @@ mod tests {
                     "digest": "123456",
                     "signature": hex::encode([1, 2, 3]),
                 },
+                "proof": hex::encode([1, 2, 3]),
                 "txn_id": hex::encode(vec![1])
             }
         });

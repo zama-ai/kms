@@ -1,3 +1,4 @@
+use events::kms::Proof;
 use events::kms::{
     DecryptResponseValues, DecryptValues, FheType, KmsEvent, Transaction, TransactionId,
 };
@@ -27,7 +28,6 @@ use tokio::fs;
 use tokio::sync::mpsc::{channel, Sender};
 use tokio::sync::oneshot;
 use tokio::time::sleep;
-
 struct DockerComposeContext {
     cmd: DockerCompose,
 }
@@ -62,6 +62,7 @@ impl KmsOperation for KmsMock {
                 .build(),
             operation_val: BlockchainOperationVal {
                 tx_id: event.txn_id,
+                proof: Proof::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]),
             },
         }))
     }
@@ -265,9 +266,11 @@ async fn send_decrypt_request(
             .build(),
     );
 
+    let proof = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
     let request = KmsEvent::builder()
         .txn_id(<Vec<u8> as Into<TransactionId>>::into(vec![1]))
         .operation(operation)
+        .proof(proof)
         .build()
         .to_json()
         .unwrap()
