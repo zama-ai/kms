@@ -829,19 +829,18 @@ impl KmsEvent {
                     "txn_id".to_string(),
                     serde_json::to_value(self.txn_id.0.clone())?,
                 );
-
-            value
-                .as_object_mut()
-                .ok_or(serde_json::Error::custom("Invalid operation"))?
-                .get_mut(event_type.as_str())
-                .ok_or(serde_json::Error::custom("Invalid operation"))?
-                .as_object_mut()
-                .ok_or(serde_json::Error::custom("Invalid operation"))?
-                .insert(
-                    "proof".to_string(),
-                    serde_json::to_value(self.proof.0.clone())?,
-                );
         }
+        value
+            .as_object_mut()
+            .ok_or(serde_json::Error::custom("Invalid operation"))?
+            .get_mut(event_type.as_str())
+            .ok_or(serde_json::Error::custom("Invalid operation"))?
+            .as_object_mut()
+            .ok_or(serde_json::Error::custom("Invalid operation"))?
+            .insert(
+                "proof".to_string(),
+                serde_json::to_value(self.proof.0.clone())?,
+            );
         Ok(value)
     }
 }
@@ -1151,7 +1150,8 @@ mod tests {
                     "fhe_type": "ebool",
                     "ciphertext": hex::encode([1, 2, 3]),
                     "randomness": hex::encode([4, 5, 6]),
-                }
+                },
+                "proof": hex::encode([1, 2, 3]),
             }
         });
         assert_eq!(json, json_str);
@@ -1228,7 +1228,8 @@ mod tests {
                     "eip712_chain_id": hex::encode([6]),
                     "eip712_verifying_contract": "contract",
                     "eip712_salt": hex::encode([7]),
-                }
+                },
+                "proof": hex::encode([1, 2, 3]),
             }
         });
         assert_eq!(json, json_str);
@@ -1285,6 +1286,7 @@ mod tests {
                 "keygen": {
                     "preproc_id": ""
                 },
+                "proof": hex::encode([1, 2, 3]),
             }
         });
         assert_eq!(json, json_str);
@@ -1335,7 +1337,7 @@ mod tests {
 
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
-            "crs_gen": {}
+            "crs_gen": { "proof": hex::encode([1, 2, 3]) }
         });
         assert_eq!(json, json_str);
     }
