@@ -68,7 +68,7 @@ tracing = { version = "0.1.40", features = ["log"] }
 tracing-opentelemetry = "0.23"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
 typed-builder = "0.18.1"
-x509-parser = "~0.15"
+x509-parser = "~0.16"
 zeroize = { version = "~1.7", features = ["zeroize_derive"] }
 tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "083c06814464cf8f517af2c2aade1d8133ffe29b",  optional = true }
 
