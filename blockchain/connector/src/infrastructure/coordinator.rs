@@ -744,7 +744,7 @@ mod test {
         storage::{FileStorage, PublicStorage, PublicStorageReader, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
         util::{
-            file_handling::{read_element, read_element_async},
+            file_handling::read_element_async,
             key_setup::{
                 ensure_ciphertext_exist, ensure_dir_exist, ensure_threshold_keys_exist,
                 ThresholdTestingKeys,
@@ -765,7 +765,9 @@ mod test {
             &TEST_KEY_ID.to_string(),
         );
         let threshold_keys: ThresholdTestingKeys =
-            read_element(&format!("{TEST_THRESHOLD_KEYS_PATH}-1.bin")).unwrap();
+            read_element_async(format!("{TEST_THRESHOLD_KEYS_PATH}-1.bin"))
+                .await
+                .unwrap();
         ensure_ciphertext_exist(TEST_THRESHOLD_CT_PATH, &threshold_keys.fhe_pub);
 
         let coordinator_handles = if slow {
@@ -900,7 +902,9 @@ mod test {
         // we need a KMS client to simply the boilerplate
         // for setting up the request correctly
         let testing_keys: ThresholdTestingKeys =
-            read_element(&format!("{TEST_THRESHOLD_KEYS_PATH}-1.bin")).unwrap();
+            read_element_async(format!("{TEST_THRESHOLD_KEYS_PATH}-1.bin"))
+                .await
+                .unwrap();
         let mut kms_client = Client::new(
             HashSet::from_iter(testing_keys.server_keys),
             testing_keys.client_pk,

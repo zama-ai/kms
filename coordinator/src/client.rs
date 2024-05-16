@@ -2295,6 +2295,8 @@ pub(crate) mod tests {
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             let req_clone = req.clone();
             resp_tasks.spawn(async move {
+                // Sleep to give the server some time to complete decryption
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 cur_client
                     .get_decrypt_result(tonic::Request::new(req_clone.request_id.unwrap()))
                     .await
@@ -2400,6 +2402,8 @@ pub(crate) mod tests {
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             let req_clone = req.clone();
             resp_tasks.spawn(async move {
+                // Sleep to give the server some time to complete reencryption
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 (
                     i,
                     cur_client
