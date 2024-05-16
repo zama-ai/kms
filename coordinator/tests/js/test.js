@@ -37,7 +37,7 @@ test('centralized reencryption response', (t) => {
 
     let response = centralized_reencryption_response_from_transcript(transcript);
 
-    let pt = process_reencryption_resp(client, undefined, response.agg_resp, response.agg_resp_ids, response.enc_pk, response.enc_sk);
+    let pt = process_reencryption_resp(client, response.req, response.agg_resp, response.agg_resp_ids, response.enc_pk, response.enc_sk);
     assert.deepEqual(42, pt);
 });
 

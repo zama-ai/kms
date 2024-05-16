@@ -658,7 +658,7 @@ mod tests {
         assert_event(&response.events, &expected_event);
 
         let keygen_response = KeyGenResponseValues::builder()
-            .request_id(txn_id.clone().to_hex())
+            .request_id(txn_id.to_vec())
             .public_key_digest("digest1".to_string())
             .public_key_signature(vec![4, 5, 6])
             .server_key_digest("digest2".to_string())
@@ -676,7 +676,6 @@ mod tests {
             .txn_id(txn_id.clone())
             .proof(proof)
             .build();
-
         assert_event(&response.events, &expected_event);
     }
 
@@ -706,6 +705,7 @@ mod tests {
             .fhe_type(FheType::Euint8)
             .key_id(vec![5])
             .ciphertext(vec![6])
+            .ciphertext_digest(vec![9])
             .eip712_name("name".to_string())
             .eip712_version("version".to_string())
             .eip712_chain_id(vec![7])

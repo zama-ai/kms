@@ -56,6 +56,12 @@ where
     Ok(Signature { sig })
 }
 
+alloy_sol_types::sol! {
+    struct ReencryptSol {
+        uint8[] pub_enc_key;
+    }
+}
+
 pub fn sign_eip712<T: SolStruct>(
     msg: &T,
     domain: &alloy_sol_types::Eip712Domain,
@@ -356,7 +362,7 @@ pub(crate) fn decrypt_signcryption(
         }
     };
     let signcrypted_msg: SigncryptionPayload = serde_asn1_der::from_bytes(&decrypted_signcryption)?;
-    if link != signcrypted_msg.req_digest {
+    if link != signcrypted_msg.link {
         tracing::warn!("Link validation for signcryption failed");
         return Ok(None);
     }

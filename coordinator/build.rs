@@ -8,6 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_client(false)
         .build_server(false)
         .build_transport(false)
+        .type_attribute("DecryptionResponsePayload", DERIVES)
         .type_attribute("ReencryptionRequest", DERIVES)
         .type_attribute("ReencryptionRequestPayload", DERIVES)
         .type_attribute("ReencryptionResponse", DERIVES)
@@ -47,6 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(any(feature = "non-wasm", feature = "grpc-client"))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tonic_build::configure()
+        .type_attribute("DecryptionResponsePayload", DERIVES)
         .type_attribute("ReencryptionRequest", DERIVES)
         .type_attribute("ReencryptionRequestPayload", DERIVES)
         .type_attribute("ReencryptionResponse", DERIVES)

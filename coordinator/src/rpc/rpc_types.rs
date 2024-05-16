@@ -3,18 +3,16 @@ use crate::anyhow_error_and_log;
 use crate::cryptography::der_types::PrivateSigKey;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
-use crate::cryptography::signcryption::serialize_hash_element;
+use crate::cryptography::signcryption::{hash_element, serialize_hash_element, ReencryptSol};
 use crate::kms::{
-    DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType,
-    ReencryptionRequestPayload, ReencryptionResponse,
+    DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType, ReencryptionResponse,
 };
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::FhePrivateKey;
 use crate::{consts::ID_LENGTH, kms::RequestId};
 use alloy_primitives::{Address, B256, U256};
-#[cfg(feature = "non-wasm")]
+use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
-use alloy_sol_types::{sol, Eip712Domain};
 use anyhow::anyhow;
 #[cfg(feature = "non-wasm")]
 use rand::{CryptoRng, RngCore};
@@ -178,12 +176,41 @@ pub trait Kms: BaseKms {
     ) -> anyhow::Result<Vec<u8>>;
 }
 
-/// Representation of the data stored in a signcryption, needed to facilitate FHE decryption and
-/// request linking
+/// Representation of the data stored in a signcryption,
+/// needed to facilitate FHE decryption and request linking.
+/// The result is linked to some byte array.
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
 pub(crate) struct SigncryptionPayload {
     pub(crate) raw_decryption: RawDecryption,
-    pub(crate) req_digest: Vec<u8>,
+    pub(crate) link: Vec<u8>,
+}
+
+impl crate::kms::ReencryptionRequest {
+    pub(crate) fn compute_link_checked(&self) -> anyhow::Result<Vec<u8>> {
+        let payload = self.payload.as_ref().ok_or(anyhow!("payload not found"))?;
+        let pk_sol = ReencryptSol {
+            pub_enc_key: payload.enc_key.clone(),
+        };
+
+        let domain =
+            protobuf_to_alloy_domain(self.domain.as_ref().ok_or(anyhow!("domain not found"))?)?;
+
+        let req_digest = pk_sol.eip712_signing_hash(&domain).to_vec();
+
+        let mut actual_ct_digest = hash_element(
+            payload
+                .ciphertext
+                .as_ref()
+                .ok_or(anyhow!("missing ciphertext"))?,
+        );
+        if payload.ciphertext_digest != actual_ct_digest {
+            return Err(anyhow!("ciphertext digest mismatch"));
+        }
+
+        let mut link = req_digest;
+        link.append(&mut actual_ct_digest);
+        Ok(link)
+    }
 }
 
 #[allow(dead_code)]
@@ -481,93 +508,6 @@ impl TryFrom<DecryptionRequest> for DecryptionRequestSerializable {
             ciphertext: val.ciphertext,
             key_id,
             request_id: req_id,
-        })
-    }
-}
-
-/// Observe that this seemingly redundant types are required since the Protobuf compiled types do
-/// not implement the serializable and deserializable traits. Hence [DecryptionResponseSigPayload]
-/// implement data to be asn1 serialized which will be signed.
-/// NOTE: tonic_build::configure can let us derive Serialize and Deserialize for [DecryptionResponsePayload]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DecryptionResponseSigPayload {
-    pub version: u32,
-    pub servers_needed: u32,
-    pub verification_key: Vec<u8>,
-    pub plaintext: Vec<u8>,
-    pub digest: Vec<u8>,
-}
-impl From<DecryptionResponseSigPayload> for DecryptionResponsePayload {
-    fn from(val: DecryptionResponseSigPayload) -> DecryptionResponsePayload {
-        DecryptionResponsePayload {
-            version: val.version,
-            servers_needed: val.servers_needed,
-            verification_key: val.verification_key,
-            plaintext: val.plaintext,
-            digest: val.digest,
-        }
-    }
-}
-impl From<DecryptionResponsePayload> for DecryptionResponseSigPayload {
-    fn from(val: DecryptionResponsePayload) -> Self {
-        DecryptionResponseSigPayload {
-            version: val.version,
-            servers_needed: val.servers_needed,
-            verification_key: val.verification_key,
-            plaintext: val.plaintext,
-            digest: val.digest,
-        }
-    }
-}
-
-sol! {
-    /// Observe that this seemingly redundant types are required since the Protobuf compiled types do
-    /// not implement the serializable and deserializable traits. Hence [ReencryptionRequestSigPayload]
-    /// implement data to be asn1 serialized which will be signed.
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-    struct ReencryptionRequestSigPayload {
-        uint32 version;
-        uint32 servers_needed;
-        uint8[] verification_key;
-        uint8[] enc_key;
-        uint8 fhe_type;
-        uint8[] randomness;
-        uint8[] ciphertext;
-        string key_id;
-    }
-}
-impl From<ReencryptionRequestSigPayload> for ReencryptionRequestPayload {
-    fn from(val: ReencryptionRequestSigPayload) -> ReencryptionRequestPayload {
-        ReencryptionRequestPayload {
-            version: val.version,
-            servers_needed: val.servers_needed,
-            verification_key: val.verification_key,
-            enc_key: val.enc_key,
-            fhe_type: val.fhe_type.into(),
-            randomness: val.randomness,
-            ciphertext: val.ciphertext,
-            key_id: Some(RequestId {
-                request_id: val.key_id,
-            }),
-        }
-    }
-}
-impl TryFrom<ReencryptionRequestPayload> for ReencryptionRequestSigPayload {
-    type Error = anyhow::Error;
-
-    fn try_from(val: ReencryptionRequestPayload) -> Result<Self, Self::Error> {
-        Ok(ReencryptionRequestSigPayload {
-            version: val.version,
-            servers_needed: val.servers_needed,
-            verification_key: val.verification_key,
-            enc_key: val.enc_key,
-            fhe_type: val.fhe_type.try_into()?,
-            randomness: val.randomness,
-            ciphertext: val.ciphertext,
-            key_id: val
-                .key_id
-                .ok_or_else(|| anyhow_error_and_log("Key id missing in".to_string()))?
-                .request_id,
         })
     }
 }

@@ -1,5 +1,6 @@
 use crate::kms::{
-    CrsGenRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
+    CrsGenRequest, DecryptionResponsePayload, KeyGenPreprocRequest, KeyGenPreprocStatus,
+    KeyGenPreprocStatusEnum,
 };
 use crate::kms::{
     DecryptionRequest, DecryptionResponse, FheType, KeyGenRequest, KeyGenResult,
@@ -10,8 +11,7 @@ use crate::rpc::central_rpc::{
     validate_decrypt_req, validate_reencrypt_req, validate_request_id,
 };
 use crate::rpc::rpc_types::{
-    BaseKms, DecryptionResponseSigPayload, Plaintext, PubDataType, RawDecryption,
-    SigncryptionPayload, CURRENT_FORMAT_VERSION,
+    BaseKms, Plaintext, PubDataType, RawDecryption, SigncryptionPayload, CURRENT_FORMAT_VERSION,
 };
 use crate::storage::PublicStorage;
 use crate::{anyhow_error_and_log, storage::store_request_id};
@@ -505,10 +505,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         fhe_type: FheType,
+        link: Vec<u8>,
         key_handle: &RequestId,
         client_enc_key: &PublicEncKey,
         client_verf_key: &PublicSigKey,
-        req_digest: Vec<u8>,
         sig_key: Arc<PrivateSigKey>,
         fhe_keys: RwLockReadGuard<'_, HashMap<RequestId, ThresholdFheKeys>>,
     ) -> anyhow::Result<Vec<u8>> {
@@ -535,7 +535,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                         let partial_dec_serialized = serde_asn1_der::to_vec(&partial_dec)?;
                         let signcryption_msg = SigncryptionPayload {
                             raw_decryption: RawDecryption::new(partial_dec_serialized, fhe_type),
-                            req_digest,
+                            link,
                         };
                         let enc_res = signcrypt(
                             rng,
@@ -1202,7 +1202,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         let (
             ciphertext,
             fhe_type,
-            req_digest,
+            link,
             client_enc_key,
             client_verf_key,
             servers_needed,
@@ -1244,10 +1244,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 &mut rng,
                 &ciphertext,
                 fhe_type,
+                link.clone(),
                 &key_id,
                 &client_enc_key,
                 &client_verf_key,
-                req_digest.clone(),
                 sig_key,
                 fhe_keys_rlock,
             )
@@ -1256,7 +1256,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 Ok(partial_dec) => {
                     guarded_meta_store.insert(
                         req_id,
-                        HandlerStatus::Done((servers_needed, req_digest, fhe_type, partial_dec)),
+                        HandlerStatus::Done((servers_needed, link, fhe_type, partial_dec)),
                     );
                 }
                 Result::Err(e) => {
@@ -1285,7 +1285,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 format!("The value {} is not a valid request ID!", request_id),
             ));
         }
-        let (servers_needed, req_digest, fhe_type, signcrypted_ciphertext) = {
+        let (servers_needed, link, fhe_type, signcrypted_ciphertext) = {
             let guarded_meta_store = self.reenc_meta_store.read().await;
             guarded_meta_store.retrieve_result(&request_id, "Reencryption")?
         };
@@ -1298,7 +1298,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             servers_needed,
             signcrypted_ciphertext,
             fhe_type: fhe_type.into(),
-            digest: req_digest,
+            digest: link,
             verification_key: server_verf_key,
         }))
     }
@@ -1400,7 +1400,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             serde_asn1_der::to_vec(&self.get_verf_key()),
             "Could not serialize server verification key".to_string(),
         )?;
-        let sig_payload = DecryptionResponseSigPayload {
+        let sig_payload = DecryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
             servers_needed,
             plaintext: decrypted_bytes,
@@ -1419,7 +1419,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         )?;
         Ok(Response::new(DecryptionResponse {
             signature: sig.sig.to_vec(),
-            payload: Some(sig_payload.into()),
+            payload: Some(sig_payload),
         }))
     }
 

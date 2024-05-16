@@ -470,7 +470,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         rng: &mut (impl CryptoRng + RngCore),
         ct: &[u8],
         fhe_type: FheType,
-        req_digest: &[u8],
+        link: &[u8],
         client_enc_key: &PublicEncKey,
         client_verf_key: &PublicSigKey,
     ) -> anyhow::Result<Vec<u8>> {
@@ -481,7 +481,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         let raw_decryption = RawDecryption::new(bytes, fhe_type);
         let signcryption_msg = SigncryptionPayload {
             raw_decryption,
-            req_digest: req_digest.to_vec(),
+            link: link.to_vec(),
         };
         let enc_res = signcrypt(
             rng,

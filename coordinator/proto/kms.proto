@@ -191,7 +191,12 @@ message ReencryptionRequestPayload {
   // The key id to use for decryption. Will be the request_id used during key generation
   RequestId key_id = 7;
   // The actual ciphertext to decrypt, taken directly from the fhevm.
-  bytes ciphertext = 8;
+  // When creating the payload, this field may be empty,
+  // it is the responsibility of the gateway to fetch the
+  // ciphertext for the given digest below.
+  optional bytes ciphertext = 8;
+  // The SHA3 digest of the ciphertext above.
+  bytes ciphertext_digest = 9;
 }
 
 // https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator

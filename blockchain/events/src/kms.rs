@@ -149,6 +149,8 @@ pub struct ReencryptValues {
     key_id: HexVector,
     #[builder(setter(into))]
     ciphertext: HexVector,
+    #[builder(setter(into))]
+    ciphertext_digest: HexVector,
 
     // eip712
     eip712_name: String,
@@ -197,6 +199,10 @@ impl ReencryptValues {
         &self.ciphertext
     }
 
+    pub fn ciphertext_digest(&self) -> &HexVector {
+        &self.ciphertext_digest
+    }
+
     pub fn eip712_name(&self) -> &str {
         &self.eip712_name
     }
@@ -230,6 +236,7 @@ impl From<ReencryptValues> for Vec<Attribute> {
             field_to_attr!(tostr; value, fhe_type),
             field_to_attr!(tohex; value, key_id),
             field_to_attr!(tohex; value, ciphertext),
+            field_to_attr!(tohex; value, ciphertext_digest),
             field_to_attr!(same; value, eip712_name),
             field_to_attr!(same; value, eip712_version),
             field_to_attr!(tohex; value, eip712_chain_id),
@@ -245,7 +252,7 @@ impl TryFrom<Vec<Attribute>> for ReencryptValues {
         attrs_to_optionals!(
             attributes;
             same eip712_name, eip712_version, eip712_verifying_contract;
-            bytes signature, verification_key, randomness, ciphertext, enc_key, eip712_chain_id, eip712_salt, key_id;
+            bytes signature, verification_key, randomness, ciphertext, ciphertext_digest, enc_key, eip712_chain_id, eip712_salt, key_id;
             generics version, servers_needed, fhe_type
         );
 
@@ -259,6 +266,7 @@ impl TryFrom<Vec<Attribute>> for ReencryptValues {
             fhe_type,
             key_id,
             ciphertext,
+            ciphertext_digest,
             eip712_name,
             eip712_version,
             eip712_chain_id,
@@ -353,7 +361,8 @@ impl From<KeyGenPreprocResponseValues> for KmsOperationAttribute {
 #[cw_serde]
 #[derive(Default, Eq, TypedBuilder)]
 pub struct KeyGenResponseValues {
-    request_id: String,
+    #[builder(setter(into))]
+    request_id: HexVector,
     public_key_digest: String,
     #[builder(setter(into))]
     public_key_signature: HexVector,
@@ -367,7 +376,7 @@ pub struct KeyGenResponseValues {
 impl From<KeyGenResponseValues> for Vec<Attribute> {
     fn from(value: KeyGenResponseValues) -> Self {
         vec![
-            field_to_attr!(tostr; value, request_id),
+            field_to_attr!(tohex; value, request_id),
             field_to_attr!(tostr; value, public_key_digest),
             field_to_attr!(tohex; value, public_key_signature),
             field_to_attr!(tostr; value, server_key_digest),
@@ -381,8 +390,8 @@ impl TryFrom<Vec<Attribute>> for KeyGenResponseValues {
     fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
         attrs_to_optionals!(
             attributes;
-            same request_id, public_key_digest, server_key_digest;
-            bytes public_key_signature, server_key_signature;
+            same public_key_digest, server_key_digest;
+            bytes request_id, public_key_signature, server_key_signature;
             generics
         );
 
@@ -974,6 +983,7 @@ mod tests {
                 fhe_type: FheType::arbitrary(g),
                 key_id: HexVector::arbitrary(g),
                 ciphertext: HexVector::arbitrary(g),
+                ciphertext_digest: HexVector::arbitrary(g),
                 eip712_name: String::arbitrary(g),
                 eip712_version: String::arbitrary(g),
                 eip712_chain_id: HexVector::arbitrary(g),
@@ -995,7 +1005,7 @@ mod tests {
     impl Arbitrary for KeyGenResponseValues {
         fn arbitrary(g: &mut Gen) -> KeyGenResponseValues {
             KeyGenResponseValues {
-                request_id: String::arbitrary(g),
+                request_id: HexVector::arbitrary(g),
                 public_key_digest: String::arbitrary(g),
                 public_key_signature: HexVector::arbitrary(g),
                 server_key_digest: String::arbitrary(g),
@@ -1198,6 +1208,7 @@ mod tests {
             .fhe_type(FheType::Ebool)
             .key_id("kid".as_bytes().to_vec())
             .ciphertext(vec![5])
+            .ciphertext_digest(vec![8])
             .eip712_name("name".to_string())
             .eip712_version("version".to_string())
             .eip712_chain_id(vec![6])
@@ -1223,6 +1234,7 @@ mod tests {
                     "fhe_type": "ebool",
                     "key_id": hex::encode("kid".as_bytes()),
                     "ciphertext": hex::encode(vec![5]),
+                    "ciphertext_digest": hex::encode(vec![8]),
                     "eip712_name": "name",
                     "eip712_version": "version",
                     "eip712_chain_id": hex::encode([6]),
@@ -1295,7 +1307,7 @@ mod tests {
     #[test]
     fn test_keygen_response_event_to_json() {
         let keygen_response_values = KeyGenResponseValues::builder()
-            .request_id("xyz".to_string())
+            .request_id(vec![2, 2, 2])
             .public_key_digest("abc".to_string())
             .public_key_signature(vec![1, 2, 3])
             .server_key_digest("def".to_string())
@@ -1314,7 +1326,7 @@ mod tests {
         let json_str = serde_json::json!({
             "keygen_response": {
                 "keygen_response": {
-                    "request_id": "xyz",
+                    "request_id": hex::encode([2, 2, 2]),
                     "public_key_digest": "abc",
                     "public_key_signature": hex::encode([1, 2, 3]),
                     "server_key_digest": "def",

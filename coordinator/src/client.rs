@@ -3,7 +3,8 @@ use crate::cryptography::der_types::{
     SigncryptionPrivKey, SigncryptionPubKey,
 };
 use crate::cryptography::signcryption::{
-    decrypt_signcryption, encryption_key_generation, sign_eip712, RND_SIZE,
+    decrypt_signcryption, encryption_key_generation, hash_element, sign_eip712, ReencryptSol,
+    RND_SIZE,
 };
 use crate::kms::RequestId;
 use crate::kms::{
@@ -11,12 +12,11 @@ use crate::kms::{
     ReencryptionResponse,
 };
 use crate::rpc::rpc_types::{
-    allow_to_protobuf_domain, protobuf_to_alloy_domain, MetaResponse, Plaintext,
-    ReencryptionRequestSigPayload, CURRENT_FORMAT_VERSION,
+    allow_to_protobuf_domain, MetaResponse, Plaintext, CURRENT_FORMAT_VERSION,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
-use alloy_sol_types::{Eip712Domain, SolStruct};
+use alloy_sol_types::Eip712Domain;
 use distributed_decryption::execution::endpoints::reconstruct::combine128;
 use distributed_decryption::execution::sharing::shamir::reconstruct_w_errors_sync;
 use distributed_decryption::execution::sharing::shamir::{fill_indexed_shares, ShamirSharings};
@@ -42,7 +42,7 @@ cfg_if::cfg_if! {
         use serde::de::DeserializeOwned;
         use distributed_decryption::execution::zk::ceremony::PublicParameter;
         use crate::rpc::rpc_types::{
-            DecryptionRequestSerializable, DecryptionResponseSigPayload, PubDataType,
+            DecryptionRequestSerializable, PubDataType,
         };
         use crate::{cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms};
         use crate::{storage::PublicStorageReader, util::key_setup::FhePublicKey};
@@ -85,7 +85,6 @@ fn decrypted_blocks_to_raw_decryption(
 /// client_sk is optional because sometimes the private signing key is kept
 /// in a secure location, e.g., hardware wallet. Calling functions that requires
 /// client_sk when it is None will return an error.
-#[allow(dead_code)]
 #[wasm_bindgen]
 pub struct Client {
     rng: Box<AesRng>,
@@ -187,6 +186,7 @@ pub struct TestingReencryptionTranscript {
 // Do not compile this module for grpc-client
 #[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]
 pub mod js_api {
+    use crate::kms::Eip712DomainMsg;
     use crypto_box::{
         aead::{Aead, AeadCore},
         Nonce, SalsaBox,
@@ -247,7 +247,7 @@ pub mod js_api {
         let transcript: TestingReencryptionTranscript =
             serde_wasm_bindgen::from_value(transcript).unwrap();
         DummyReencResponse {
-            req: None,
+            req: transcript.request,
             agg_resp: vec![transcript.agg_resp.get(&1).unwrap().clone()],
             agg_resp_ids: vec![1],
             enc_pk: transcript.eph_pk.clone(),
@@ -346,7 +346,49 @@ pub mod js_api {
         salsa_box.decrypt(&ct.nonce, &ct.ct[..]).unwrap()
     }
 
-    /// This function takes `AggregatedReencryptionResponse` normally
+    /// This function assembles [ReencryptionRequest]
+    /// from a signature and other metadata.
+    /// The signature is on the ephemeral public key
+    /// signed by the client's private key
+    /// following the EIP712 standard.
+    #[wasm_bindgen]
+    pub fn make_reencryption_req(
+        client: &mut Client,
+        signature: Vec<u8>,
+        enc_pk: PublicEncKey,
+        fhe_type: FheType,
+        key_id: RequestId,
+        ciphertext_digest: Vec<u8>,
+        domain: Eip712DomainMsg,
+    ) -> Result<ReencryptionRequest, JsError> {
+        // `num_servers`` is only used in the "rust" client
+        // so we make a dummy assignment to avoid warning.
+        _ = client.num_servers;
+
+        let mut randomness: Vec<u8> = Vec::with_capacity(RND_SIZE);
+        client.rng.fill_bytes(&mut randomness);
+        let payload = ReencryptionRequestPayload {
+            version: CURRENT_FORMAT_VERSION,
+            randomness,
+            servers_needed: client.shares_needed,
+            enc_key: serde_asn1_der::to_vec(&enc_pk)?,
+            verification_key: serde_asn1_der::to_vec(&client.client_pk)?,
+            fhe_type: fhe_type as i32,
+            key_id: Some(key_id),
+            // this is None because the gateway needs to fill it
+            ciphertext: None,
+            ciphertext_digest,
+        };
+        Ok(ReencryptionRequest {
+            signature: signature,
+            payload: Some(payload),
+            domain: Some(domain),
+            // the request_id needs to be filled by the gateway/connector
+            request_id: None,
+        })
+    }
+
+    /// This function takes [AggregatedReencryptionResponse] normally
     /// but wasm does not support HashMap so we need to take two parameters:
     /// `agg_resp` and `agg_resp_id`.
     #[wasm_bindgen]
@@ -662,7 +704,7 @@ impl Client {
     /// reencryption key pair.
     pub fn reencryption_request(
         &mut self,
-        ct: Vec<u8>,
+        ciphertext: Vec<u8>,
         domain: &Eip712Domain,
         fhe_type: FheType,
         request_id: &RequestId,
@@ -674,28 +716,33 @@ impl Client {
             ));
         }
 
+        let ciphertext_digest = hash_element(&ciphertext);
         let (enc_pk, enc_sk) = encryption_key_generation(&mut self.rng);
         let mut randomness = Vec::with_capacity(RND_SIZE);
         self.rng.fill_bytes(&mut randomness);
-        let sig_payload = ReencryptionRequestSigPayload {
+        let sig_payload = ReencryptionRequestPayload {
             version: CURRENT_FORMAT_VERSION,
             servers_needed: self.shares_needed,
             enc_key: to_vec(&enc_pk)?,
             verification_key: to_vec(&self.client_pk)?,
-            fhe_type: fhe_type as u8,
-            ciphertext: ct,
+            fhe_type: fhe_type as i32,
             randomness,
-            key_id: key_id.to_string(),
+            key_id: Some(key_id.clone()),
+            ciphertext: Some(ciphertext),
+            ciphertext_digest,
+        };
+        let sol_pk = ReencryptSol {
+            pub_enc_key: sig_payload.enc_key.clone(),
         };
         let sig = match &self.client_sk {
-            Some(sk) => sign_eip712(&sig_payload, domain, sk)?,
+            Some(sk) => sign_eip712(&sol_pk, domain, sk)?,
             None => return Err(anyhow_error_and_log("client signing key is None")),
         };
         let domain_msg = allow_to_protobuf_domain(domain)?;
         Ok((
             ReencryptionRequest {
                 signature: to_vec(&sig)?,
-                payload: Some(sig_payload.into()),
+                payload: Some(sig_payload),
                 domain: Some(domain_msg),
                 request_id: Some(request_id.clone()),
             },
@@ -859,11 +906,10 @@ impl Client {
                 tracing::warn!("Some server did not provide the proper response!");
                 return Ok(None);
             }
-            let sig_payload: DecryptionResponseSigPayload = cur_payload.into();
-            // Observe that it has already been verified in [validate_meta_data] that server
+            // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissble keys
-            let cur_verf_key: PublicSigKey = from_bytes(&sig_payload.verification_key)?;
-            if !BaseKmsStruct::verify_sig(&to_vec(&sig_payload)?, &sig, &cur_verf_key) {
+            let cur_verf_key: PublicSigKey = from_bytes(&cur_payload.verification_key)?;
+            if !BaseKmsStruct::verify_sig(&to_vec(&cur_payload)?, &sig, &cur_verf_key) {
                 tracing::warn!("Signature on received response is not valid!");
                 return Ok(None);
             }
@@ -898,13 +944,17 @@ impl Client {
                 enc_key: enc_pk.clone(),
             },
         };
+        let request = request.ok_or(anyhow_error_and_log(
+            "empty request while processing reencryption response",
+        ))?;
+
         // Execute simplified and faster flow for the centralized case
         // Observe that we don't encode exactly the same in the centralized case and in the
         // distributed case. For the centralized case we directly encode the [Plaintext]
         // object whereas for the distributed we encode the plain text as a
         // Vec<ResiduePoly<Z128>>
         if agg_resp.responses.len() <= 1 {
-            self.centralized_reencryption_resp(agg_resp, &client_keys)
+            self.centralized_reencryption_resp(request, agg_resp, &client_keys)
         } else {
             self.distributed_reencryption_resp(request, agg_resp, &client_keys)
         }
@@ -973,6 +1023,7 @@ impl Client {
                 }
             };
             // Set the first existing element as pivot
+            // NOTE: this is the optimistic case where the pivot cannot be wrong
             let pivot_payload = match &option_pivot_payload {
                 Some(pivot_payload) => pivot_payload,
                 None => {
@@ -984,12 +1035,11 @@ impl Client {
             let sig = Signature {
                 sig: k256::ecdsa::Signature::from_slice(&cur_resp.signature)?,
             };
-            let sig_payload: DecryptionResponseSigPayload = cur_payload.clone().into();
             // Validate the signature on the response
-            // Observe that it has already been verified in [validate_meta_data] that server
+            // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissble keys
-            let cur_verf_key: PublicSigKey = from_bytes(&sig_payload.verification_key)?;
-            if !BaseKmsStruct::verify_sig(&to_vec(&sig_payload)?, &sig, &cur_verf_key) {
+            let cur_verf_key: PublicSigKey = from_bytes(&cur_payload.verification_key)?;
+            if !BaseKmsStruct::verify_sig(&to_vec(&cur_payload)?, &sig, &cur_verf_key) {
                 tracing::warn!("Signature on received response is not valid!");
                 continue;
             }
@@ -1012,9 +1062,9 @@ impl Client {
     /// Validates the aggregated reencryption responses received from the servers
     /// against the given reencryption request. Returns the validated responses
     /// mapped to the server ID on success.
-    fn validate_reencryption_resp(
+    fn validate_agg_reenc_resp(
         &self,
-        request: Option<ReencryptionRequest>,
+        request: ReencryptionRequest,
         agg_resp: &AggregatedReencryptionResponse,
     ) -> anyhow::Result<
         Option<(
@@ -1022,49 +1072,38 @@ impl Client {
             HashMap<u32, ReencryptionResponse>,
         )>,
     > {
-        match request {
-            Some(req) => match req.payload {
-                Some(req_payload) => {
-                    let resp_parsed = some_or_err(
-                        self.validate_individual_reenc_resp(req_payload.servers_needed, agg_resp)?,
-                        "Could not validate the aggregated responses".to_string(),
-                    )?;
-                    let pivot_resp = resp_parsed.values().collect_vec()[0];
-                    if req_payload.version != pivot_resp.version() {
-                        tracing::warn!("Version in the reencryption request is incorrect");
-                        return Ok(None);
-                    }
-                    if req_payload.fhe_type() != pivot_resp.fhe_type() {
-                        tracing::warn!("Fhe type in the reencryption response is incorrect");
-                        return Ok(None);
-                    }
-                    let sig_payload: ReencryptionRequestSigPayload = req_payload.try_into()?;
-                    let domain = protobuf_to_alloy_domain(&some_or_err(
-                        req.domain,
-                        "domain not found".to_string(),
-                    )?)?;
-                    let req_digest = sig_payload.eip712_signing_hash(&domain).to_vec();
-                    if req_digest != pivot_resp.digest {
-                        tracing::warn!(
-                            "The reencryption response is not linked to the correct request"
-                        );
-                        return Ok(None);
-                    }
-                    Ok(Some((sig_payload.into(), resp_parsed)))
+        let expected_link = request.compute_link_checked()?;
+        match request.payload {
+            Some(req_payload) => {
+                let resp_parsed = some_or_err(
+                    self.validate_individual_agg_reenc_resp(req_payload.servers_needed, agg_resp)?,
+                    "Could not validate the aggregated responses".to_string(),
+                )?;
+                let pivot_resp = resp_parsed.values().collect_vec()[0];
+                if req_payload.version != pivot_resp.version() {
+                    tracing::warn!("Version in the reencryption request is incorrect");
+                    return Ok(None);
                 }
-                None => {
-                    tracing::warn!("No payload in the reencryption request!");
-                    Ok(None)
+                if req_payload.fhe_type() != pivot_resp.fhe_type() {
+                    tracing::warn!("Fhe type in the reencryption response is incorrect");
+                    return Ok(None);
                 }
-            },
+                if expected_link != pivot_resp.digest {
+                    tracing::warn!(
+                        "The reencryption response is not linked to the correct request"
+                    );
+                    return Ok(None);
+                }
+                Ok(Some((req_payload, resp_parsed)))
+            }
             None => {
-                tracing::warn!("No reencryption request!");
+                tracing::warn!("No payload in the reencryption request!");
                 Ok(None)
             }
         }
     }
 
-    fn validate_individual_reenc_resp(
+    fn validate_individual_agg_reenc_resp(
         &self,
         shares_needed: u32,
         agg_resp: &AggregatedReencryptionResponse,
@@ -1103,6 +1142,7 @@ impl Client {
 
     fn centralized_reencryption_resp(
         &self,
+        request: ReencryptionRequest,
         agg_resp: &AggregatedReencryptionResponse,
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Option<Plaintext>> {
@@ -1110,10 +1150,16 @@ impl Client {
             agg_resp.responses.values().last(),
             "Response does not exist".to_owned(),
         )?;
+
+        let link = request.compute_link_checked()?;
+        if link != resp.digest {
+            return Err(anyhow_error_and_log("link mismatch"));
+        }
+
         let cur_verf_key: PublicSigKey = from_bytes(&resp.verification_key)?;
         match decrypt_signcryption(
             &resp.signcrypted_ciphertext,
-            &resp.digest,
+            &link,
             client_keys,
             &cur_verf_key,
         )? {
@@ -1127,12 +1173,12 @@ impl Client {
 
     fn distributed_reencryption_resp(
         &self,
-        request: Option<ReencryptionRequest>,
+        request: ReencryptionRequest,
         agg_resp: &AggregatedReencryptionResponse,
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Option<Plaintext>> {
         let (req_payload, validated_resps) = some_or_err(
-            self.validate_reencryption_resp(request, agg_resp)?,
+            self.validate_agg_reenc_resp(request, agg_resp)?,
             "Could not validate request".to_owned(),
         )?;
         let sharings =
@@ -1140,6 +1186,7 @@ impl Client {
         let amount_shares = sharings.len();
         let mut decrypted_blocks = Vec::new();
         for cur_block_shares in sharings {
+            // NOTE: this performs optimistic reconstruction
             if let Ok(Some(r)) = reconstruct_w_errors_sync(
                 amount_shares,
                 (req_payload.servers_needed - 1) as usize,
@@ -1176,6 +1223,9 @@ impl Client {
         for (cur_role_id, cur_resp) in &agg_resp {
             // Observe that it has already been verified in [validate_meta_data] that server
             // verification key is in the set of permissble keys
+            //
+            // Also it's ok to use [cur_resp.digest] as the link since we already checked
+            // that it matches with the original request
             let cur_verf_key: PublicSigKey = from_bytes(&cur_resp.verification_key)?;
             match decrypt_signcryption(
                 &cur_resp.signcrypted_ciphertext,
@@ -2222,7 +2272,7 @@ pub(crate) mod tests {
                     client_pk: internal_client.client_pk.clone(),
                     shares_needed: 0,
                     params: internal_client.params,
-                    request: None,
+                    request: Some(req.clone()),
                     eph_sk: enc_sk.clone(),
                     eph_pk: enc_pk.clone(),
                     agg_resp: HashMap::from([(1, inner_response.clone())]),

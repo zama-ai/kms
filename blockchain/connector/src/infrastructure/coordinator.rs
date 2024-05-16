@@ -12,14 +12,16 @@ use events::kms::{
     KeyGenValues, KmsEvent, KmsOperationAttribute, Proof, ReencryptResponseValues, ReencryptValues,
     TransactionId,
 };
+use events::HexVector;
 use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
 use kms_lib::kms::{
-    Config, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, Eip712DomainMsg,
-    KeyGenPreprocStatus, KeyGenPreprocStatusEnum, KeyGenResult, ParamChoice, ReencryptionRequest,
-    ReencryptionRequestPayload, ReencryptionResponse,
+    Config, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
+    DecryptionResponsePayload, Eip712DomainMsg, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
+    KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionRequestPayload,
+    ReencryptionResponse,
 };
 use kms_lib::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
-use kms_lib::rpc::rpc_types::{DecryptionResponseSigPayload, PubDataType, CURRENT_FORMAT_VERSION};
+use kms_lib::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
 use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::Duration;
@@ -236,7 +238,6 @@ impl Kms for DecryptVal {
         let ciphertext = self.decrypt.ciphertext().into();
         let randomness = self.decrypt.randomness().into();
 
-        // TODO version, servers_needed probably should come from the outside
         let req = DecryptionRequest {
             version,
             servers_needed,
@@ -266,7 +267,7 @@ impl Kms for DecryptVal {
             match res {
                 Ok(res) => {
                     let inner = res.into_inner();
-                    let payload: DecryptionResponseSigPayload = inner.payload.ok_or(anyhow!("empty decryption payload"))?.into();
+                    let payload: DecryptionResponsePayload = inner.payload.ok_or(anyhow!("empty decryption payload"))?;
                         Ok(PollerStatus::Done(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
                             decrypt_response: DecryptResponseValues::builder()
                                 .signature(inner.signature)
@@ -376,7 +377,8 @@ impl Kms for ReencryptVal {
                 key_id: Some(RequestId {
                     request_id: reencrypt.key_id().to_hex(),
                 }),
-                ciphertext: reencrypt.ciphertext().into(),
+                ciphertext: Some(reencrypt.ciphertext().into()),
+                ciphertext_digest: reencrypt.ciphertext_digest().into(),
             }),
             domain: Some(Eip712DomainMsg {
                 name: reencrypt.eip712_name().to_string(),
@@ -600,7 +602,7 @@ impl Kms for KeyGenVal {
                         Ok(PollerStatus::Done(KmsOperationResponse::KeyGenResponse(
                             crate::domain::blockchain::KeyGenResponseVal {
                                 keygen_response: KeyGenResponseValues::builder()
-                                    .request_id(request_id.request_id)
+                                    .request_id(HexVector::from_hex(&request_id.request_id)?)
                                     .public_key_digest(pk_info.key_handle.clone())
                                     .public_key_signature(pk_info.signature.clone())
                                     .server_key_digest(ek_info.key_handle.clone())
@@ -736,11 +738,8 @@ mod test {
             TEST_PARAM_PATH, TEST_REENC_ID, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH,
             THRESHOLD,
         },
-        kms::{AggregatedReencryptionResponse, ReencryptionResponse},
-        rpc::rpc_types::{
-            DecryptionResponseSigPayload, Plaintext, PrivDataType, PubDataType,
-            CURRENT_FORMAT_VERSION,
-        },
+        kms::{AggregatedReencryptionResponse, DecryptionResponsePayload, ReencryptionResponse},
+        rpc::rpc_types::{Plaintext, PrivDataType, PubDataType, CURRENT_FORMAT_VERSION},
         storage::{FileStorage, PublicStorage, PublicStorageReader, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
         util::{
@@ -860,7 +859,7 @@ mod test {
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
                 .servers_needed(THRESHOLD as u32 + 1)
-                .key_id(TEST_KEY_ID.request_id.as_bytes().to_vec())
+                .key_id(HexVector::from_hex(&TEST_KEY_ID.request_id).unwrap())
                 .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
                 .ciphertext(ct)
                 .randomness(vec![1, 2, 3])
@@ -872,7 +871,7 @@ mod test {
         for result in results {
             match result {
                 KmsOperationResponse::DecryptResponse(resp) => {
-                    let payload: DecryptionResponseSigPayload = serde_asn1_der::from_bytes(
+                    let payload: DecryptionResponsePayload = serde_asn1_der::from_bytes(
                         <&HexVector as Into<Vec<u8>>>::into(resp.decrypt_response.payload())
                             .as_slice(),
                     )
@@ -940,7 +939,8 @@ mod test {
                 .enc_key(payload.enc_key)
                 .fhe_type(WrappingFheType::try_from(payload.fhe_type).unwrap().0)
                 .key_id(HexVector::from_hex(payload.key_id.unwrap().request_id.as_str()).unwrap())
-                .ciphertext(payload.ciphertext)
+                .ciphertext(payload.ciphertext.unwrap())
+                .ciphertext_digest(payload.ciphertext_digest)
                 .eip712_name(eip712.name)
                 .eip712_version(eip712.version)
                 .eip712_chain_id(eip712.chain_id)

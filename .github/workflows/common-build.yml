@@ -70,6 +70,8 @@ jobs:
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
+        with:
+          version: "26.x"
 
       - name: Setup usage of private repo
         run: git config --global url."https://${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}@github.com".insteadOf ssh://git@github.com

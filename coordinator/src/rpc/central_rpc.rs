@@ -1,11 +1,11 @@
 use super::rpc_types::{
     protobuf_to_alloy_domain, BaseKms, DecryptionRequestSerializable, PrivDataType,
-    ReencryptionRequestSigPayload, CURRENT_FORMAT_VERSION,
+    CURRENT_FORMAT_VERSION,
 };
 use crate::cryptography::central_kms::{async_decrypt, async_reencrypt, CompMap};
 use crate::cryptography::central_kms::{async_generate_crs, compute_info};
-use crate::kms::{KeyGenPreprocRequest, KeyGenPreprocStatus};
-use crate::rpc::rpc_types::DecryptionResponseSigPayload;
+use crate::cryptography::signcryption::ReencryptSol;
+use crate::kms::{DecryptionResponsePayload, KeyGenPreprocRequest, KeyGenPreprocStatus};
 use crate::storage::{store_request_id, FileStorage, PublicStorage};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use crate::{
@@ -31,7 +31,6 @@ use crate::{kms::coordinator_endpoint_server::CoordinatorEndpoint, rpc::rpc_type
 use crate::{
     kms::coordinator_endpoint_server::CoordinatorEndpointServer, util::file_handling::read_as_json,
 };
-use alloy_sol_types::SolStruct;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
@@ -168,7 +167,7 @@ impl<
         let (
             ciphertext,
             fhe_type,
-            req_digest,
+            link,
             client_enc_key,
             client_verf_key,
             servers_needed,
@@ -202,14 +201,14 @@ impl<
         let sig_key = self.base_kms.sig_key.clone();
         let future_reenc = tokio::spawn(async move {
             (
-                (servers_needed, fhe_type, req_digest.clone()),
+                (servers_needed, fhe_type, link.clone()),
                 async_reencrypt::<PubS, PrivS>(
                     &client_key,
                     &sig_key,
                     &mut rng,
                     &ciphertext,
                     fhe_type,
-                    &req_digest,
+                    &link,
                     &client_enc_key,
                     &client_verf_key,
                 )
@@ -304,7 +303,7 @@ impl<
             to_vec(&self.get_verf_key()),
             "Could not serialize server verification key".to_string(),
         )?;
-        let sig_payload = DecryptionResponseSigPayload {
+        let sig_payload = DecryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
             servers_needed: 1,
             plaintext,
@@ -323,7 +322,7 @@ impl<
         )?;
         Ok(Response::new(DecryptionResponse {
             signature: sig.sig.to_vec(),
-            payload: Some(sig_payload.into()),
+            payload: Some(sig_payload),
         }))
     }
 
@@ -710,29 +709,19 @@ pub async fn validate_reencrypt_req(
             payload.version, CURRENT_FORMAT_VERSION
         )));
     }
-    let key_id = tonic_some_or_err(
-        payload.key_id.clone(),
-        format!("The request {:?} does not have a key_id", req),
-    )?;
-    let sig_payload: ReencryptionRequestSigPayload = payload.clone().try_into()?;
-    let sig_payload_serialized = to_vec(&sig_payload)?;
     let domain = protobuf_to_alloy_domain(tonic_some_ref_or_err(
         req.domain.as_ref(),
         "domain not found".to_string(),
     )?)?;
-    let req_digest = sig_payload.eip712_signing_hash(&domain).to_vec();
-    tonic_handle_potential_err(
-        BaseKmsStruct::digest(&sig_payload_serialized),
-        format!("Could not hash payload {:?}", req),
-    )?;
-    let fhe_type = payload.fhe_type();
+    let pk_sol = ReencryptSol {
+        pub_enc_key: payload.enc_key.clone(),
+    };
     let client_verf_key: PublicSigKey = tonic_handle_potential_err(
         from_bytes(&payload.verification_key),
         format!("Invalid verification key in request {:?}", req),
     )?;
-    let client_enc_key: PublicEncKey = from_bytes(&sig_payload.enc_key)?;
     if !BaseKmsStruct::verify_sig_eip712(
-        &sig_payload,
+        &pk_sol,
         &domain,
         &from_bytes(&req.signature)?,
         &client_verf_key,
@@ -742,10 +731,25 @@ pub async fn validate_reencrypt_req(
             req
         )));
     }
+
+    let ciphertext = payload
+        .ciphertext
+        .clone()
+        .ok_or(anyhow_error_and_log(format!(
+            "Missing ciphertext in request {:?}",
+            req
+        )))?;
+    let fhe_type = payload.fhe_type();
+    let link = req.compute_link_checked()?;
+    let client_enc_key: PublicEncKey = from_bytes(&payload.enc_key)?;
+    let key_id = tonic_some_or_err(
+        payload.key_id.clone(),
+        format!("The request {:?} does not have a key_id", req),
+    )?;
     Ok((
-        payload.ciphertext.clone(),
+        ciphertext,
         fhe_type,
-        req_digest,
+        link,
         client_enc_key,
         client_verf_key,
         payload.servers_needed,
