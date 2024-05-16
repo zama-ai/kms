@@ -87,7 +87,7 @@ criterion = "~0.5"
 ctor = "~0.2"
 proptest = "~1.4"
 pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
-rstest = "~0.18"
+rstest = "~0.19"
 test-log = { version = "0.2", features = ["trace"] }
 tracing-test = "0.2"
 
