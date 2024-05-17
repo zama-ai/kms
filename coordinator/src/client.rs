@@ -315,8 +315,23 @@ pub mod js_api {
     }
 
     #[wasm_bindgen]
-    pub fn cryptobox_pk_to_vec(pk: &PublicEncKey) -> Vec<u8> {
-        to_vec(pk).unwrap()
+    pub fn cryptobox_pk_to_u8vec(pk: &PublicEncKey) -> Result<Vec<u8>, JsError> {
+        serde_asn1_der::to_vec(pk).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    #[wasm_bindgen]
+    pub fn cryptobox_sk_to_u8vec(sk: &PrivateEncKey) -> Result<Vec<u8>, JsError> {
+        serde_asn1_der::to_vec(sk).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    #[wasm_bindgen]
+    pub fn u8vec_to_cryptobox_pk(v: &[u8]) -> Result<PublicEncKey, JsError> {
+        serde_asn1_der::from_bytes(v).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    #[wasm_bindgen]
+    pub fn u8vec_to_cryptobox_sk(v: &[u8]) -> Result<PrivateEncKey, JsError> {
+        serde_asn1_der::from_bytes(v).map_err(|e| JsError::new(&e.to_string()))
     }
 
     #[wasm_bindgen]
