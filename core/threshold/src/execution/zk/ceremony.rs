@@ -443,11 +443,16 @@ impl Ceremony for RealCeremony {
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn(move || {
                     let partial_proof = make_proof_deterministic(&pp, tau, round + 1, r);
+                    tau.zeroize();
+                    r.zeroize();
                     let _ = send.send(partial_proof);
                 });
 
-                tau.zeroize();
-                r.zeroize();
+                // WARNING: [tau] and [r] are of Type [Zp] which is a [Copy].
+                // this means if they're used again outside of [rayon::spawn],
+                // then the secret data is copied implicitly.
+                // Do not use [tau] and [r] again outside of the rayon
+                // thread since that would implicitly copy secret data.
 
                 let proof = recv.await?;
                 let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
@@ -863,6 +868,14 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("dlog check failed"));
+        }
+        {
+            // note that tau=0
+            let proof = make_proof_deterministic(&pp1, curve::Zp::ZERO, 1, r);
+            assert!(verify_proof(&pp1, &proof)
+                .unwrap_err()
+                .to_string()
+                .contains("non-degenerative check failed"));
         }
         {
             let pp1 = make_degenerative_pp(n);
