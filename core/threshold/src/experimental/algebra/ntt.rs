@@ -10,7 +10,7 @@ use crate::experimental::algebra::levels::LevelKsw;
 use crate::experimental::algebra::levels::LevelOne;
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub struct N65536;
 
 pub trait Const {

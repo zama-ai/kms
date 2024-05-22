@@ -116,6 +116,10 @@ name = "gen-experiment"
 path = "src/bin/benches/gen-experiment.rs"
 required-features = ["templating"]
 
+[[bin]]
+name = "stairwayctl"
+path = "src/experimental/bin/stairwayctl.rs"
+required-features = ["experimental", "choreographer"]
 
 [[bench]]
 name = "ddec"

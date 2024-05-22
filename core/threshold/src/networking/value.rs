@@ -9,6 +9,8 @@ use crate::execution::large_execution::vss::{
 };
 use crate::execution::zk::ceremony;
 use crate::execution::{runtime::party::Role, small_execution::prss::PartySet};
+#[cfg(feature = "experimental")]
+use crate::experimental::bgv::basics::PublicBgvKeySet;
 use crate::{
     commitment::{Commitment, Opening},
     execution::small_execution::prf::PrfKey,
@@ -55,6 +57,8 @@ pub enum AgreeRandomValue {
 pub enum NetworkValue<Z: Eq + Zero> {
     #[cfg(any(test, feature = "testing"))]
     PubKeySet(Box<FhePubKeySet>),
+    #[cfg(feature = "experimental")]
+    PubBgvKeySet(Box<PublicBgvKeySet>),
     RingValue(Z),
     VecRingValue(Vec<Z>),
     VecPairRingValue(Vec<(Z, Z)>),

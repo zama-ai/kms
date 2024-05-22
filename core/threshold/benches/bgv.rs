@@ -3,7 +3,6 @@ use criterion::BenchmarkId;
 use criterion::{criterion_group, criterion_main, Criterion};
 use crypto_bigint::modular::ConstMontyParams;
 use distributed_decryption::execution::runtime::test_runtime::generate_fixed_identities;
-use distributed_decryption::experimental::algebra::cyclotomic::RingElement;
 use distributed_decryption::experimental::algebra::levels::*;
 use distributed_decryption::experimental::algebra::ntt::N65536;
 use distributed_decryption::experimental::algebra::ntt::{Const, NTTConstants};
@@ -29,11 +28,17 @@ fn bench_modswitch(c: &mut Criterion) {
         PLAINTEXT_MODULUS.get().0,
     );
 
-    let m: Vec<u16> = (0..N65536::VALUE)
-        .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u16)
+    let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
+        .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
         .collect();
-    let mr = RingElement::<u16>::from(m);
-    let ct = bgv_enc(&mut rng, &mr, pk.a, pk.b, 1, PLAINTEXT_MODULUS.get().0);
+    let ct = bgv_enc(
+        &mut rng,
+        &plaintext_vec,
+        &pk.a,
+        &pk.b,
+        1,
+        PLAINTEXT_MODULUS.get().0,
+    );
 
     let mut group = c.benchmark_group("modswitch");
     group.sample_size(10);
@@ -48,7 +53,7 @@ fn bench_modswitch(c: &mut Criterion) {
             let ct_prime =
                 modulus_switch::<LevelOne, LevelEll, N65536>(&ct, q, big_q, *PLAINTEXT_MODULUS);
             let plaintext = bgv_dec(&ct_prime, sk.clone(), &PLAINTEXT_MODULUS);
-            assert_eq!(plaintext, mr);
+            assert_eq!(plaintext, plaintext_vec);
         });
     });
 }
@@ -82,10 +87,9 @@ fn bench_bgv_ddec(c: &mut Criterion) {
         PLAINTEXT_MODULUS.get().0,
     );
 
-    let m: Vec<u16> = (0..N65536::VALUE)
-        .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u16)
+    let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
+        .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
         .collect();
-    let plaintext_as_ring = RingElement::<u16>::from(m);
     let params = vec![ThresholdConfig::new(5, 1)];
     let mut group = c.benchmark_group("bgv_ddec");
 
@@ -95,9 +99,9 @@ fn bench_bgv_ddec(c: &mut Criterion) {
     for config in params {
         let ct = bgv_enc(
             &mut rng,
-            &plaintext_as_ring,
-            pk.a.clone(),
-            pk.b.clone(),
+            &plaintext_vec,
+            &pk.a,
+            &pk.b,
             new_hope_bound,
             PLAINTEXT_MODULUS.get().0,
         );

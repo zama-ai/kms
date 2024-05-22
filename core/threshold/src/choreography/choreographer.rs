@@ -24,8 +24,8 @@ use tonic::transport::{Channel, ClientTlsConfig, Uri};
 use tracing::{instrument, Instrument};
 
 pub struct ChoreoRuntime {
-    role_assignments: HashMap<Role, Identity>,
-    channels: HashMap<Role, Channel>,
+    pub role_assignments: HashMap<Role, Identity>,
+    pub channels: HashMap<Role, Channel>,
 }
 
 #[derive(Debug)]
@@ -76,7 +76,7 @@ impl ChoreoRuntime {
         })
     }
 
-    fn new_client(
+    pub fn new_client(
         &self,
         channel: Channel,
     ) -> ChoreographyClient<InterceptedService<Channel, ContextPropagator>> {

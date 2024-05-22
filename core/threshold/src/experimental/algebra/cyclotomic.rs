@@ -28,7 +28,7 @@ pub struct TernaryElement {
 
 /// Cyclotomic polynomial mod Q, degree N
 /// Supports mul via FFT.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub struct RqElement<T, N> {
     pub data: Vec<T>,
     _degree: PhantomData<N>,

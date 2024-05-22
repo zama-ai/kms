@@ -1,12 +1,24 @@
+use std::time::{Duration, Instant};
+
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 
+use super::basics::PrivateBgvKeySet;
 use crate::algebra::poly::Poly;
+use crate::algebra::structure_traits::ZConsts;
 use crate::algebra::structure_traits::{One, Zero};
 use crate::execution::runtime::party::Role;
 use crate::experimental::algebra::cyclotomic::TernaryEntry;
 use crate::experimental::algebra::integers::ZeroCenteredRem;
+use crate::experimental::bgv::basics::SecretKey;
 use crate::experimental::constants::{LOG_B_MULT, LOG_PLAINTEXT, PLAINTEXT_MODULUS};
+use crate::experimental::{
+    algebra::cyclotomic::{RingElement, RqElement},
+    algebra::levels::{LevelEll, LevelOne},
+    algebra::ntt::{Const, NTTConstants},
+    bgv::basics::BGVCiphertext,
+    bgv::dkg::BGVShareSecretKey,
+};
 use crate::{
     algebra::structure_traits::FromU128,
     execution::{
@@ -20,29 +32,24 @@ use crate::{
         bgv::basics::modulus_switch,
     },
 };
-
-use crate::algebra::structure_traits::ZConsts;
-use crate::experimental::bgv::basics::SecretKey;
-use crate::experimental::bgv::dkg::OwnedNttForm;
-use crate::experimental::{
-    algebra::cyclotomic::{RingElement, RqElement},
-    algebra::levels::{LevelEll, LevelOne},
-    algebra::ntt::{Const, NTTConstants},
-    bgv::basics::BGVCiphertext,
-    bgv::dkg::BGVShareSecretKey,
-};
+use std::collections::HashMap;
 
 fn partial_decrypt<N: Const + NTTConstants<LevelOne>>(
     c0: &RqElement<LevelOne, N>,
     c1: &RqElement<LevelOne, N>,
-    ntt_key: &OwnedNttForm<LevelOne>,
+    ntt_key: &PrivateBgvKeySet,
 ) -> Vec<Share<LevelOne>> {
-    let owner = ntt_key.owner;
+    let owner = ntt_key.as_eval()[0].owner();
+    let raw_ntt_key_vec = ntt_key
+        .as_eval()
+        .iter()
+        .map(|ntt_value| ntt_value.value())
+        .collect_vec();
 
     let mut c1_ntt = c1.data.iter().cloned().collect_vec();
     ntt_iter2(&mut c1_ntt, N::VALUE, N::THETA);
 
-    let mut sk_times_c1 = hadamard_product(ntt_key.data.as_slice(), c1_ntt);
+    let mut sk_times_c1 = hadamard_product(raw_ntt_key_vec.as_slice(), c1_ntt);
     ntt_inv::<_, N>(&mut sk_times_c1, N::VALUE);
     let sk_times_c1 = RqElement::<_, N>::from(sk_times_c1);
 
@@ -59,9 +66,10 @@ pub(crate) async fn noise_flood_decryption<
     S: SmallSessionHandles<LevelOne, R>,
 >(
     session: &mut S,
-    keyshares: &OwnedNttForm<LevelOne>,
+    keyshares: &PrivateBgvKeySet,
     ciphertext: &BGVCiphertext<LevelEll, N>,
-) -> anyhow::Result<RingElement<u16>> {
+) -> anyhow::Result<(HashMap<String, Vec<u32>>, Duration)> {
+    let execution_start_timer = Instant::now();
     let own_role = session.my_role()?;
     let prss_state = session.prss_as_mut();
 
@@ -95,17 +103,20 @@ pub(crate) async fn noise_flood_decryption<
     }
     .zero_centered_rem(*PLAINTEXT_MODULUS);
 
-    let supported_ptxt: Vec<u16> = reduced
+    let supported_ptxt: Vec<u32> = reduced
         .data
         .iter()
         .map(|p| {
             assert!(p < &PLAINTEXT_MODULUS);
-            p.0 as u16
+            p.0 as u32
         })
         .collect();
-    Ok(RingElement {
-        data: supported_ptxt,
-    })
+
+    let mut results = HashMap::with_capacity(1);
+    results.insert(format!("{}", session.session_id()), supported_ptxt);
+    let execution_stop_timer = Instant::now();
+    let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
+    Ok((results, elapsed_time))
 }
 
 pub fn keygen_shares<R: Rng + CryptoRng>(
@@ -161,7 +172,6 @@ mod tests {
     use crate::experimental::bgv::basics::keygen;
     use crate::experimental::bgv::ddec::keygen_shares;
     use crate::experimental::bgv::ddec::LevelEll;
-    use crate::experimental::bgv::ddec::RingElement;
     use crate::session_id::SessionId;
     use aes_prng::AesRng;
     use std::collections::HashMap;
@@ -211,15 +221,14 @@ mod tests {
             PLAINTEXT_MODULUS.get().0,
         );
 
-        let m: Vec<u16> = (0..N65536::VALUE)
-            .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u16)
+        let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
+            .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
             .collect();
-        let plaintext_as_ring = RingElement::<u16>::from(m);
         let ct = bgv_enc(
             &mut rng,
-            &plaintext_as_ring,
-            pk.a,
-            pk.b,
+            &plaintext_vec,
+            &pk.a,
+            &pk.b,
             new_hope_bound,
             PLAINTEXT_MODULUS.get().0,
         );
@@ -250,14 +259,16 @@ mod tests {
             let ksc = Arc::clone(&ntt_keyshares);
             let ctc = Arc::clone(&ct);
 
-            let private_key = Arc::new(OwnedNttForm {
-                owner: session.my_role().unwrap(),
-                data: ksc.as_ref()[index_id].clone(),
-            });
+            let own_role = Role::indexed_by_zero(index_id);
+            let ntt_shares = ksc.as_ref()[index_id]
+                .iter()
+                .map(|ntt_val| Share::new(own_role, *ntt_val))
+                .collect_vec();
+            let private_keyset = Arc::new(PrivateBgvKeySet::from_eval_domain(ntt_shares));
 
             set.spawn(async move {
                 let my_role = session.my_role().unwrap();
-                let m = noise_flood_decryption(&mut session, private_key.as_ref(), ctc.as_ref())
+                let m = noise_flood_decryption(&mut session, private_keyset.as_ref(), ctc.as_ref())
                     .await
                     .unwrap();
                 (my_role, m)
@@ -276,6 +287,7 @@ mod tests {
             .into_iter()
             .collect_vec();
         let m = results.first().unwrap().1.clone();
-        assert_eq!(m, plaintext_as_ring);
+        let sid = format!("{}", session_id);
+        assert_eq!(*m.0.get(&sid).unwrap(), plaintext_vec);
     }
 }

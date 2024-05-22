@@ -5,6 +5,10 @@ unstable_features = ["CTRL_C_HANDLING"]
 command = "docker"
 args = ["build", "-f", "operations/docker/local.dockerfile", "--ssh", "default", "-t", "ddec", "."]
 
+[tasks.experimental-docker-image]
+command = "docker"
+args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features experimental", "--ssh", "default", "-t", "ddec", "."]
+
 [tasks.generate-experiment]
 command = "cargo"
 args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-s", "${PROTOCOL}", "-o", "${EXPERIMENT_NAME}", "-m", "${NUM_MESSAGES}", "-e", "${EPOCH_ID}"]
@@ -47,21 +51,27 @@ condition = { env_set = ["DKG_PARAMS", "NUM_SESSIONS_PREPROC"] }
 command = "cargo"
 args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "--dkg-params", "${DKG_PARAMS}", "--num-sessions-preproc", "${NUM_SESSIONS_PREPROC}", "${CHOREO_COMMAND}" ]
 
-
 [tasks.choreo-without-dkg]
 condition = { env_not_set = ["DKG_PARAMS", "NUM_SESSIONS_PREPROC"] }
 command = "cargo"
 args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "${CHOREO_COMMAND}" ]
 
+[tasks.experimental-choreo]
+condition = { env_not_set = ["DKG_PARAMS", "NUM_SESSIONS_PREPROC"] }
+command = "cargo"
+args = ["run", "--bin", "stairwayctl", "--release", "--features", "experimental,choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "${CHOREO_COMMAND}" ]
 
 [tasks.choreo]
 env = { "RUN_MODE" = "choreo", "RUST_LOG" = "info", "RUST_BACKTRACE" = "1"}
 run_task = { name = ["choreo-with-dkg", "choreo-without-dkg"] }
 
-
 [tasks.choreo-init]
 env = { "CHOREO_COMMAND" = "init"}
 run_task = { name = ["choreo"] }
+
+[tasks.experimental-choreo-init]
+env = { "CHOREO_COMMAND" = "init"}
+run_task = { name = ["experimental-choreo"] }
 
 [tasks.choreo-start-crs]
 env = { "CHOREO_COMMAND" = "start-crs-ceremony"}
@@ -75,9 +85,18 @@ run_task = { name = ["choreo"] }
 env = { "CHOREO_COMMAND" = "decrypt"}
 run_task = { name = ["choreo"] }
 
+[tasks.experimental-choreo-decrypt]
+env = { "CHOREO_COMMAND" = "decrypt"}
+run_task = { name = ["experimental-choreo"] }
+
 [tasks.choreo-results]
 env = { "CHOREO_COMMAND" = "results"}
 run_task = { name = ["choreo"] }
+
+[tasks.experimental-choreo-results]
+env = { "CHOREO_COMMAND" = "results"}
+run_task = { name = ["experimental-choreo"] }
+
 
 [tasks.gen-local-choreo]
 command = "cargo"

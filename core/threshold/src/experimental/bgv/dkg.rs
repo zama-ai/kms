@@ -41,6 +41,7 @@ pub struct BGVShareSecretKey {
 
 pub type NttForm<T> = Vec<T>;
 
+#[derive(Clone)]
 pub struct OwnedNttForm<T> {
     pub owner: Role,
     pub data: NttForm<T>,
@@ -338,7 +339,7 @@ mod tests {
         },
         experimental::{
             algebra::{
-                cyclotomic::{RingElement, TernaryElement, TernaryEntry},
+                cyclotomic::{TernaryElement, TernaryEntry},
                 levels::{LevelEll, LevelKsw, LevelOne},
                 ntt::{Const, N65536},
             },
@@ -407,13 +408,19 @@ mod tests {
 
         //Encrypt and decrypt
         let mut rng = AesRng::seed_from_u64(0);
-        let m: Vec<u16> = (0..N65536::VALUE)
-            .map(|_| (rng.next_u64() % plaintext_mod) as u16)
+        let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
+            .map(|_| (rng.next_u64() % plaintext_mod) as u32)
             .collect();
-        let mr = RingElement::<u16>::from(m);
-        let ct = bgv_enc(&mut rng, &mr, pk.a, pk.b, new_hope_bound, plaintext_mod);
+        let ct = bgv_enc(
+            &mut rng,
+            &plaintext_vec,
+            &pk.a,
+            &pk.b,
+            new_hope_bound,
+            plaintext_mod,
+        );
         let plaintext = bgv_dec(&ct, sk_correct_type, &PLAINTEXT_MODULUS);
-        assert_eq!(plaintext, mr);
+        assert_eq!(plaintext, plaintext_vec);
     }
 
     #[test]

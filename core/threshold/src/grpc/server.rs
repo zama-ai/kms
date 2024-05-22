@@ -1,8 +1,11 @@
+#[cfg(not(feature = "experimental"))]
 use crate::choreography::grpc::GrpcChoreography;
 use crate::conf::party::PartyConf;
 use crate::conf::telemetry::{accept_trace, make_span};
 use crate::execution::online::preprocessing::{create_memory_factory, create_redis_factory};
 use crate::execution::runtime::party::{Identity, RoleAssignment};
+#[cfg(feature = "experimental")]
+use crate::experimental::choreography::grpc::ExperimentalGrpcChoreography;
 use crate::networking::constants::NETWORK_TIMEOUT_LONG;
 use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer};
 use tonic::transport::{Server, ServerTlsConfig};
@@ -32,7 +35,16 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
         Some(conf) => create_redis_factory(format!("{own_identity}"), conf),
     };
 
+    #[cfg(not(feature = "experimental"))]
     let choreography = GrpcChoreography::new(
+        own_identity,
+        Box::new(move |session_id, roles| networking.make_session(session_id, roles)),
+        factory,
+    )
+    .into_server();
+
+    #[cfg(feature = "experimental")]
+    let choreography = ExperimentalGrpcChoreography::new(
         own_identity,
         Box::new(move |session_id, roles| networking.make_session(session_id, roles)),
         factory,

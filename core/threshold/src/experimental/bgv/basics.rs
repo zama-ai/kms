@@ -1,4 +1,5 @@
 use crate::algebra::structure_traits::{Ring, ZConsts};
+use crate::execution::sharing::share::Share;
 use crate::experimental::algebra::cyclotomic::NewHopeSampler;
 use crate::experimental::algebra::cyclotomic::RingElement;
 use crate::experimental::algebra::cyclotomic::RqElement;
@@ -7,14 +8,18 @@ use crate::experimental::algebra::integers::IntQ;
 use crate::experimental::algebra::integers::ModReduction;
 use crate::experimental::algebra::integers::PositiveConv;
 use crate::experimental::algebra::integers::ZeroCenteredRem;
-use crate::experimental::algebra::levels::ScalingFactor;
-use crate::experimental::algebra::ntt::Const;
+use crate::experimental::algebra::levels::{LevelEll, LevelKsw, LevelOne, ScalingFactor};
+use crate::experimental::algebra::ntt::ntt_iter2;
 use crate::experimental::algebra::ntt::NTTConstants;
+use crate::experimental::algebra::ntt::{Const, N65536};
+use crate::experimental::constants::PLAINTEXT_MODULUS;
 use crypto_bigint::{Limb, NonZero};
+use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Div, Mul, Sub};
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PublicKey<QMod, QRMod, N> {
     pub a: RqElement<QMod, N>,
     pub b: RqElement<QMod, N>,
@@ -22,9 +27,45 @@ pub struct PublicKey<QMod, QRMod, N> {
     pub b_prime: RqElement<QRMod, N>,
 }
 
+pub type PublicBgvKeySet = PublicKey<LevelEll, LevelKsw, N65536>;
+pub type LevelOneBgvCiphertext = BGVCiphertext<LevelOne, N65536>;
+pub type LevelEllBgvCiphertext = BGVCiphertext<LevelEll, N65536>;
+
 #[derive(Debug, Clone)]
 pub struct SecretKey {
     pub sk: TernaryElement,
+}
+
+/// Set of BGV key shares. Note that the key shares are stored in NTT form.
+#[derive(Clone)]
+pub struct PrivateBgvKeySet {
+    lwe_sk: Vec<Share<LevelOne>>,
+}
+
+impl PrivateBgvKeySet {
+    // Construct a set of BGV key shares given key shares from a BGV key in polynomial form.
+    pub fn from_poly_representation(key_shares: Vec<Share<LevelOne>>) -> Self {
+        let owner = key_shares[0].owner();
+        let mut csk = key_shares
+            .iter()
+            .map(|poly_share| poly_share.value())
+            .collect_vec();
+        ntt_iter2(&mut csk, N65536::VALUE, N65536::THETA);
+        let lwe_shares = csk
+            .iter()
+            .map(|ntt_share| Share::new(owner, *ntt_share))
+            .collect_vec();
+        PrivateBgvKeySet { lwe_sk: lwe_shares }
+    }
+
+    // Construct a set of BGV key shares given the key shares from a BGV key in NTT form.
+    pub fn from_eval_domain(key_shares: Vec<Share<LevelOne>>) -> Self {
+        PrivateBgvKeySet { lwe_sk: key_shares }
+    }
+
+    pub fn as_eval(&self) -> &Vec<Share<LevelOne>> {
+        &self.lwe_sk
+    }
 }
 
 pub fn keygen<R, ModQ, ModQR, N>(
@@ -99,11 +140,23 @@ impl<T, N> BGVCiphertext<T, N> {
     }
 }
 
+pub type PlaintextVec = Vec<u32>;
+pub type EllCiphertextVec = BGVCiphertext<LevelEll, N65536>;
+
+pub fn bgv_pk_encrypt<R: Rng + CryptoRng>(
+    rng: &mut R,
+    m: &PlaintextVec,
+    pk: &PublicBgvKeySet,
+) -> EllCiphertextVec {
+    let new_hope_bound = 1;
+    bgv_enc::<R, LevelEll, N65536>(rng, m, &pk.a, &pk.b, new_hope_bound, PLAINTEXT_MODULUS.0)
+}
+
 pub fn bgv_enc<R: Rng + CryptoRng, ModQ, N>(
     rng: &mut R,
-    m: &RingElement<u16>,
-    pk_a: RqElement<ModQ, N>,
-    pk_b: RqElement<ModQ, N>,
+    m: &PlaintextVec,
+    pk_a: &RqElement<ModQ, N>,
+    pk_b: &RqElement<ModQ, N>,
     new_hope_bound: usize,
     plaintext_mod: u64,
 ) -> BGVCiphertext<ModQ, N>
@@ -125,16 +178,15 @@ where
     let p_mod_q = ModQ::from_u128(plaintext_mod as u128);
 
     let m_mod_q = RqElement::<ModQ, N>::from(
-        m.data
-            .iter()
+        m.iter()
             .map(|m| ModQ::from_u128(*m as u128))
             .collect::<Vec<ModQ>>(),
     );
 
-    let mut c0 = &pk_b * &v + e0 * &p_mod_q;
+    let mut c0 = pk_b * &v + e0 * &p_mod_q;
     c0 = c0 + m_mod_q;
 
-    let c1 = &pk_a * &v + e1 * &p_mod_q;
+    let c1 = pk_a * &v + e1 * &p_mod_q;
 
     BGVCiphertext { c0, c1, level: 15 }
 }
@@ -143,7 +195,7 @@ pub fn bgv_dec<ModQ, N>(
     ct: &BGVCiphertext<ModQ, N>,
     sk: SecretKey,
     p_mod: &NonZero<Limb>,
-) -> RingElement<u16>
+) -> PlaintextVec
 where
     N: Const,
     N: NTTConstants<ModQ>,
@@ -159,17 +211,15 @@ where
     let p = ct.get_c0() - &(ct.get_c1() * sk_mod_q);
     // reinterpret this as integer over (-p/2, p/2] and do the final plaintext reduction p_mod.
     let p_red = RingElement::<IntQ>::from(p).zero_centered_rem(*p_mod);
-    let supported_ptxt: Vec<u16> = p_red
+    let supported_ptxt: Vec<u32> = p_red
         .data
         .iter()
         .map(|p| {
             assert!(p < p_mod);
-            p.0 as u16
+            p.0 as u32
         })
         .collect();
-    RingElement {
-        data: supported_ptxt,
-    }
+    supported_ptxt
 }
 
 pub fn modulus_switch<NewQ, ModQ, N>(
@@ -246,13 +296,19 @@ mod tests {
             PLAINTEXT_MODULUS.get().0,
         );
 
-        let m: Vec<u16> = (0..N65536::VALUE)
-            .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u16)
+        let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
+            .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
             .collect();
-        let mr = RingElement::<u16>::from(m);
-        let ct = bgv_enc(&mut rng, &mr, pk.a, pk.b, 1, PLAINTEXT_MODULUS.get().0);
+        let ct = bgv_enc(
+            &mut rng,
+            &plaintext_vec,
+            &pk.a,
+            &pk.b,
+            1,
+            PLAINTEXT_MODULUS.get().0,
+        );
         let plaintext = bgv_dec(&ct, sk, &PLAINTEXT_MODULUS);
-        assert_eq!(plaintext, mr);
+        assert_eq!(plaintext, plaintext_vec);
     }
 
     #[test]
@@ -265,13 +321,19 @@ mod tests {
             PLAINTEXT_MODULUS.get().0,
         );
 
-        let m: Vec<u16> = (0..N65536::VALUE)
-            .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u16)
+        let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
+            .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
             .collect();
-        let mr = RingElement::<u16>::from(m);
-        let ct = bgv_enc(&mut rng, &mr, pk.a, pk.b, 1, PLAINTEXT_MODULUS.get().0);
+        let ct = bgv_enc(
+            &mut rng,
+            &plaintext_vec,
+            &pk.a,
+            &pk.b,
+            1,
+            PLAINTEXT_MODULUS.get().0,
+        );
         let plaintext = bgv_dec(&ct, sk, &PLAINTEXT_MODULUS);
-        assert_eq!(plaintext, mr);
+        assert_eq!(plaintext, plaintext_vec);
     }
 
     #[test]
@@ -284,20 +346,19 @@ mod tests {
             PLAINTEXT_MODULUS.get().0,
         );
 
-        let m: Vec<u16> = (0..N65536::VALUE)
-            .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u16)
+        let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
+            .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
             .collect();
-        let mr = RingElement::<u16>::from(m);
         let ct = bgv_enc(
             &mut rng,
-            &mr,
-            pk.a,
-            pk.b,
+            &plaintext_vec,
+            &pk.a,
+            &pk.b,
             new_hope_bound,
             PLAINTEXT_MODULUS.get().0,
         );
         let plaintext = bgv_dec(&ct, sk.clone(), &PLAINTEXT_MODULUS);
-        assert_eq!(plaintext, mr);
+        assert_eq!(plaintext, plaintext_vec);
 
         let q = LevelOne {
             value: GenericModulus(*Q1::MODULUS.as_ref()),
@@ -310,6 +371,6 @@ mod tests {
             modulus_switch::<LevelOne, LevelEll, N65536>(&ct, q, big_q, *PLAINTEXT_MODULUS);
         let plaintext = bgv_dec::<LevelOne, N65536>(&ct_prime, sk, &PLAINTEXT_MODULUS);
 
-        assert_eq!(plaintext, mr);
+        assert_eq!(plaintext, plaintext_vec);
     }
 }
