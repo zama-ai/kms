@@ -1,13 +1,12 @@
+use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
+use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer};
 use crate::kms::{
-    coordinator_endpoint_client::CoordinatorEndpointClient,
-    coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer},
-    KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenResult,
+    CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, Empty,
+    KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest, KeyGenResult, ReencryptionRequest,
+    ReencryptionResponse, RequestId,
 };
-use crate::kms::{CrsGenRequest, CrsGenResult, Empty, RequestId};
-use crate::kms::{
-    DecryptionRequest, DecryptionResponse, KeyGenRequest, ReencryptionRequest, ReencryptionResponse,
-};
-use backoff::{future::retry, ExponentialBackoff};
+use backoff::future::retry;
+use backoff::ExponentialBackoff;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -39,6 +38,9 @@ pub async fn server_handle(server_socket: SocketAddr, client_uri: &str) -> anyho
     Ok(())
 }
 
+/// Implements all KMS endpoints by relaying all requests and responses to/from another KMS server
+/// unchanged. The use case of the KMS proxy is to allow a KMS server running in a Nitro enclave to
+/// communicate with the outside world.
 #[tonic::async_trait]
 impl CoordinatorEndpoint for KmsProxy {
     async fn key_gen_preproc(

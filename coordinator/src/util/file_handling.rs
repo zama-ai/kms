@@ -4,7 +4,7 @@ use std::path::Path;
 
 // TODO: consider using PathBuf for file_path for all the functions in this file
 // TODO remove this file and use ddec instead or vice versa
-pub fn write_as_json<T: serde::Serialize>(file_path: String, to_store: &T) -> anyhow::Result<()> {
+pub fn write_as_json<T: Serialize>(file_path: String, to_store: &T) -> anyhow::Result<()> {
     let json_data = serde_json::to_string(&to_store)?;
     let path = Path::new(&file_path);
     // Create the parent directories of the file path if they don't exist
@@ -24,7 +24,7 @@ pub fn read_as_json<T: DeserializeOwned>(file_path: String) -> anyhow::Result<T>
 /// Write an element to a filepath.
 /// The function will create the necessary directories in the path in order to write the [element].
 /// If the file already exists then it will be COMPLETELY OVERWRITTEN without warning.
-pub fn write_element<T: serde::Serialize>(file_path: String, element: &T) -> anyhow::Result<()> {
+pub fn write_element<T: Serialize>(file_path: String, element: &T) -> anyhow::Result<()> {
     let mut serialized_data = Vec::new();
     let _ = bincode::serialize_into(&mut serialized_data, &element);
     let path = Path::new(&file_path);
@@ -52,13 +52,13 @@ pub fn write_bytes<S: AsRef<std::ffi::OsStr> + ?Sized, B: AsRef<[u8]>>(
     Ok(())
 }
 
-pub fn read_element<T: DeserializeOwned + Serialize>(file_path: &str) -> anyhow::Result<T> {
+pub fn read_element<T: DeserializeOwned>(file_path: &str) -> anyhow::Result<T> {
     let read_element = std::fs::read(file_path)?;
     Ok(bincode::deserialize_from(read_element.as_slice())?)
 }
 
 /// Same method as [write_as_json] but async and hence can be used for multi-threaded writes.
-pub async fn write_as_json_async<T: serde::Serialize>(
+pub async fn write_as_json_async<T: Serialize>(
     file_path: String,
     to_store: &T,
 ) -> anyhow::Result<()> {
@@ -80,7 +80,7 @@ pub async fn read_as_json_async<T: DeserializeOwned>(file_path: String) -> anyho
 }
 
 /// Same method as [write_element] but async and hence can be used for multi-threaded writes.
-pub async fn write_element_async<T: serde::Serialize>(
+pub async fn write_element_async<T: Serialize>(
     file_path: String,
     element: &T,
 ) -> anyhow::Result<()> {
@@ -96,9 +96,7 @@ pub async fn write_element_async<T: serde::Serialize>(
 }
 
 /// Same method as [read_element] but async and hence can be used for multi-threaded reads.
-pub async fn read_element_async<T: DeserializeOwned + Serialize>(
-    file_path: String,
-) -> anyhow::Result<T> {
+pub async fn read_element_async<T: DeserializeOwned>(file_path: String) -> anyhow::Result<T> {
     let read_element = tokio::fs::read(file_path.clone()).await?;
     Ok(bincode::deserialize_from(read_element.as_slice())?)
 }

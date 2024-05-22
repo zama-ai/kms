@@ -6,10 +6,9 @@ use crate::cryptography::signcryption::{
     decrypt_signcryption, encryption_key_generation, hash_element, sign_eip712, ReencryptSol,
     RND_SIZE,
 };
-use crate::kms::RequestId;
 use crate::kms::{
     AggregatedReencryptionResponse, FheType, ReencryptionRequest, ReencryptionRequestPayload,
-    ReencryptionResponse,
+    ReencryptionResponse, RequestId,
 };
 use crate::rpc::rpc_types::{
     allow_to_protobuf_domain, MetaResponse, Plaintext, CURRENT_FORMAT_VERSION,
@@ -17,18 +16,15 @@ use crate::rpc::rpc_types::{
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
-use distributed_decryption::execution::endpoints::reconstruct::combine128;
-use distributed_decryption::execution::sharing::shamir::reconstruct_w_errors_sync;
-use distributed_decryption::execution::sharing::shamir::{fill_indexed_shares, ShamirSharings};
-use distributed_decryption::execution::{
-    endpoints::reconstruct::reconstruct_message, runtime::party::Role,
+use distributed_decryption::algebra::base_ring::Z128;
+use distributed_decryption::algebra::residue_poly::ResiduePoly;
+use distributed_decryption::execution::endpoints::reconstruct::{combine128, reconstruct_message};
+use distributed_decryption::execution::runtime::party::Role;
+use distributed_decryption::execution::sharing::shamir::{
+    fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
 };
-use distributed_decryption::{
-    algebra::base_ring::Z128, execution::tfhe_internals::parameters::NoiseFloodParameters,
-};
-use distributed_decryption::{
-    algebra::residue_poly::ResiduePoly,
-    execution::tfhe_internals::parameters::AugmentedCiphertextParameters,
+use distributed_decryption::execution::tfhe_internals::parameters::{
+    AugmentedCiphertextParameters, NoiseFloodParameters,
 };
 use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
@@ -163,8 +159,8 @@ pub struct TestingReencryptionTranscript {
 /// cargo install wasm-pack
 /// nvm install 20
 /// ```
-/// Observe that if you are using Brew you might also need to run the following command to get access to nvm:
-/// ```
+/// Observe that if you are using Brew you might also need to run the following command to get
+/// access to nvm: ```
 /// source ~/.nvm/nvm.sh
 /// ```
 ///
@@ -187,10 +183,8 @@ pub struct TestingReencryptionTranscript {
 #[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]
 pub mod js_api {
     use crate::kms::Eip712DomainMsg;
-    use crypto_box::{
-        aead::{Aead, AeadCore},
-        Nonce, SalsaBox,
-    };
+    use crypto_box::aead::{Aead, AeadCore};
+    use crypto_box::{Nonce, SalsaBox};
 
     use super::*;
 
@@ -491,8 +485,8 @@ impl Client {
     /// Generates a key gen request.
     ///
     /// The key generated will then be stored under the request_id handle.
-    /// In the threshold case, we also need to reference the preprocessing we want to consume via its [`RequestId`]
-    /// it can be set to None in the centralised case
+    /// In the threshold case, we also need to reference the preprocessing we want to consume via
+    /// its [`RequestId`] it can be set to None in the centralised case
     #[cfg(feature = "non-wasm")]
     pub fn key_gen_request(
         &self,
@@ -575,7 +569,7 @@ impl Client {
     /// the number of honest parties, that is n - t, where n is the number
     /// of parties and t is the threshold.
     #[cfg(feature = "non-wasm")]
-    pub fn process_distributed_crs_result<S: PublicStorageReader>(
+    pub async fn process_distributed_crs_result<S: PublicStorageReader>(
         &self,
         request_id: &RequestId,
         results: Vec<CrsGenResult>,
@@ -597,7 +591,7 @@ impl Client {
             let (pp, info) = if let Some(info) = result.crs_results {
                 let url =
                     storage.compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())?;
-                let pp: PublicParameter = storage.read_data(&url)?;
+                let pp: PublicParameter = storage.read_data(&url).await?;
                 (pp, info)
             } else {
                 tracing::warn!("empty FhePubKeyInfo");
@@ -768,30 +762,37 @@ impl Client {
 
     // TODO do we need to linking to request?
     #[cfg(feature = "non-wasm")]
-    pub fn process_get_key_gen_resp<R: PublicStorageReader>(
+    pub async fn process_get_key_gen_resp<R: PublicStorageReader>(
         &self,
         resp: &KeyGenResult,
         storage: &R,
     ) -> anyhow::Result<(FhePublicKey, ServerKey)> {
         let pk: FhePublicKey = some_or_err(
-            self.retrieve_key(resp, PubDataType::PublicKey, storage)?,
+            self.retrieve_key(resp, PubDataType::PublicKey, storage)
+                .await?,
             "Could not validate public key".to_string(),
         )?;
-        let server_key: ServerKey =
-            match self.retrieve_key(resp, PubDataType::ServerKey, storage)? {
-                Some(server_key) => server_key,
-                None => {
-                    return Err(anyhow_error_and_log("Could not validate server key"));
-                }
-            };
+        let server_key: ServerKey = match self
+            .retrieve_key(resp, PubDataType::ServerKey, storage)
+            .await?
+        {
+            Some(server_key) => server_key,
+            None => {
+                return Err(anyhow_error_and_log("Could not validate server key"));
+            }
+        };
         Ok((pk, server_key))
     }
 
     /// Retrieve and validate a public key based on the result from a server.
     /// The method will return the key if retrieval and validation is successful,
-    /// but will return None in case the signature is invalid or does not match the actual key handle.
+    /// but will return None in case the signature is invalid or does not match the actual key
+    /// handle.
     #[cfg(feature = "non-wasm")]
-    pub fn retrieve_key<S: serde::Serialize + DeserializeOwned, R: PublicStorageReader>(
+    pub async fn retrieve_key<
+        S: serde::Serialize + DeserializeOwned + Send,
+        R: PublicStorageReader,
+    >(
         &self,
         key_gen_result: &KeyGenResult,
         key_type: PubDataType,
@@ -806,7 +807,7 @@ impl Client {
             "No request id".to_string(),
         )?;
         let url = storage.compute_url(&request_id.to_string(), &key_type.to_string())?;
-        let key: S = storage.read_data(&url)?;
+        let key: S = storage.read_data(&url).await?;
         let serialized_key = bincode::serialize(&key)?;
         let key_handle = compute_handle(&serialized_key)?;
         if key_handle != pki.key_handle {
@@ -829,13 +830,13 @@ impl Client {
 
     // TODO do we need to linking to request?
     #[cfg(feature = "non-wasm")]
-    pub fn process_get_crs_resp<R: PublicStorageReader>(
+    pub async fn process_get_crs_resp<R: PublicStorageReader>(
         &self,
         resp: &CrsGenResult,
         storage: &R,
     ) -> anyhow::Result<PublicParameter> {
         let crs: PublicParameter = some_or_err(
-            self.retrieve_crs(resp, storage)?,
+            self.retrieve_crs(resp, storage).await?,
             "Could not validate CRS".to_string(),
         )?;
         Ok(crs)
@@ -843,9 +844,10 @@ impl Client {
 
     /// Retrieve and validate a public key based on the result from a server.
     /// The method will return the key if retrieval and validation is successful,
-    /// but will return None in case the signature is invalid or does not match the actual key handle.
+    /// but will return None in case the signature is invalid or does not match the actual key
+    /// handle.
     #[cfg(feature = "non-wasm")]
-    pub fn retrieve_crs<R: PublicStorageReader>(
+    pub async fn retrieve_crs<R: PublicStorageReader>(
         &self,
         crs_gen_result: &CrsGenResult,
         storage: &R,
@@ -859,7 +861,7 @@ impl Client {
             "No request id".to_string(),
         )?;
         let url = storage.compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())?;
-        let crs: PublicParameter = storage.read_data(&url)?;
+        let crs: PublicParameter = storage.read_data(&url).await?;
         let serialized_crs = bincode::serialize(&crs)?;
         let crs_handle = compute_handle(&serialized_crs)?;
         if crs_handle != crs_info.key_handle {
@@ -1370,20 +1372,15 @@ pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
 #[cfg(feature = "non-wasm")]
 pub mod test_tools {
     use super::*;
+    use crate::consts::{BASE_PORT, DEFAULT_PROT, DEFAULT_URL};
+    use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
     use crate::rpc::central_rpc::server_handle;
-    use crate::storage::FileStorage;
-    use crate::storage::PublicStorage;
+    use crate::storage::{
+        read_all_data, FileStorage, PublicStorage, RamStorage, StorageType, StorageVersion,
+    };
     use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
     use crate::util::file_handling::read_element;
     use crate::util::key_setup::CentralizedTestingKeys;
-    use crate::{
-        consts::{BASE_PORT, DEFAULT_PROT, DEFAULT_URL},
-        storage::StorageVersion,
-    };
-    use crate::{
-        kms::coordinator_endpoint_client::CoordinatorEndpointClient,
-        storage::{read_all_data, RamStorage, StorageType},
-    };
     use std::net::SocketAddr;
     use std::str::FromStr;
     use tokio::task::JoinHandle;
@@ -1517,14 +1514,18 @@ pub mod test_tools {
                 let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
                 let priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
                 let pks: HashMap<RequestId, PublicSigKey> =
-                    read_all_data(&pub_storage, &PubDataType::VerfKey.to_string()).unwrap();
+                    read_all_data(&pub_storage, &PubDataType::VerfKey.to_string())
+                        .await
+                        .unwrap();
                 (setup(pub_storage, priv_storage).await, pks)
             }
             StorageVersion::Ram => {
                 let pub_storage = RamStorage::new(StorageType::PUB);
                 let priv_storage = RamStorage::new(StorageType::PRIV);
                 let pks: HashMap<RequestId, PublicSigKey> =
-                    read_all_data(&pub_storage, &PubDataType::VerfKey.to_string()).unwrap();
+                    read_all_data(&pub_storage, &PubDataType::VerfKey.to_string())
+                        .await
+                        .unwrap();
                 (setup(pub_storage, priv_storage).await, pks)
             }
         };
@@ -1545,8 +1546,14 @@ pub mod test_tools {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::Client;
+    use crate::client::num_blocks;
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
+    use crate::consts::{
+        AMOUNT_PARTIES, TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_DEC_ID, TEST_FHE_TYPE,
+        TEST_KEY_ID, TEST_MSG, TEST_PARAM_PATH, TEST_REENC_ID, TEST_THRESHOLD_CT_PATH,
+        TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
+    };
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_KEY_ID,
@@ -1554,40 +1561,24 @@ pub(crate) mod tests {
     };
     #[cfg(feature = "wasm_tests")]
     use crate::consts::{TEST_CENTRAL_WASM_TRANSCRIPT_PATH, TEST_THRESHOLD_WASM_TRANSCRIPT_PATH};
+    use crate::cryptography::central_kms::{compute_handle, BaseKmsStruct};
+    use crate::cryptography::der_types::{PublicSigKey, Signature};
+    use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
     #[cfg(feature = "slow_tests")]
     use crate::kms::CrsGenResult;
-    use crate::storage::PublicStorageReader;
+    use crate::kms::{
+        AggregatedDecryptionResponse, AggregatedReencryptionResponse, Empty, FheType, ParamChoice,
+        RequestId,
+    };
+    use crate::rpc::rpc_types::{BaseKms, PrivDataType, PubDataType};
+    use crate::storage::{
+        read_all_data, FileStorage, PublicStorage, PublicStorageReader, RamStorage, StorageType,
+        StorageVersion,
+    };
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
     use crate::util::file_handling::{read_as_json, read_element, read_element_async};
-    use crate::util::key_setup::FhePublicKey;
-    use crate::util::key_setup::ThresholdTestingKeys;
-    use crate::{client::num_blocks, rpc::rpc_types::PubDataType};
-    use crate::{consts::TEST_KEY_ID, rpc::rpc_types::BaseKms};
-    use crate::{
-        consts::{
-            AMOUNT_PARTIES, TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_DEC_ID,
-            TEST_FHE_TYPE, TEST_MSG, TEST_PARAM_PATH, TEST_REENC_ID, TEST_THRESHOLD_CT_PATH,
-            TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
-        },
-        storage::StorageVersion,
-    };
-    use crate::{
-        cryptography::central_kms::{compute_handle, BaseKmsStruct},
-        storage::read_all_data,
-    };
-    use crate::{
-        cryptography::der_types::PublicSigKey,
-        kms::coordinator_endpoint_client::CoordinatorEndpointClient,
-    };
-    use crate::{cryptography::der_types::Signature, storage::RamStorage};
-    use crate::{kms::Empty, storage::FileStorage};
-    use crate::{kms::RequestId, storage::StorageType};
-    use crate::{
-        kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType, ParamChoice},
-        rpc::rpc_types::PrivDataType,
-        storage::PublicStorage,
-    };
+    use crate::util::key_setup::{FhePublicKey, ThresholdTestingKeys};
     use alloy_sol_types::Eip712Domain;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use distributed_decryption::execution::zk::ceremony::PublicParameter;
@@ -1619,7 +1610,9 @@ pub(crate) mod tests {
                     priv_storage.push(FileStorage::new(&format!("priv-p{i}")));
                 }
                 let pks: HashMap<RequestId, PublicSigKey> =
-                    read_all_data(&pub_storage, &PubDataType::VerfKey.to_string()).unwrap();
+                    read_all_data(&pub_storage, &PubDataType::VerfKey.to_string())
+                        .await
+                        .unwrap();
                 (
                     super::test_tools::setup_threshold(THRESHOLD as u8, pub_storage, priv_storage)
                         .await,
@@ -1633,7 +1626,9 @@ pub(crate) mod tests {
                     priv_storage.push(RamStorage::new(StorageType::PRIV));
                 }
                 let pks: HashMap<RequestId, PublicSigKey> =
-                    read_all_data(&pub_storage, &PubDataType::VerfKey.to_string()).unwrap();
+                    read_all_data(&pub_storage, &PubDataType::VerfKey.to_string())
+                        .await
+                        .unwrap();
                 (
                     super::test_tools::setup_threshold(THRESHOLD as u8, pub_storage, priv_storage)
                         .await,
@@ -1658,26 +1653,30 @@ pub(crate) mod tests {
     }
 
     // Purge any kind of data, regardless of type, for a specific request ID
-    fn purge(id: &str) {
+    async fn purge(id: &str) {
         let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
         for cur_type in PubDataType::iter() {
             let _ = pub_storage
-                .delete_data(&pub_storage.compute_url(id, &cur_type.to_string()).unwrap());
+                .delete_data(&pub_storage.compute_url(id, &cur_type.to_string()).unwrap())
+                .await;
         }
 
         let mut priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
         for cur_type in PrivDataType::iter() {
             let _ = priv_storage
-                .delete_data(&priv_storage.compute_url(id, &cur_type.to_string()).unwrap());
+                .delete_data(&priv_storage.compute_url(id, &cur_type.to_string()).unwrap())
+                .await;
         }
         for i in 1..=AMOUNT_PARTIES {
             let mut threshold_priv = FileStorage::new(&format!("priv-p{i}"));
             for cur_type in PrivDataType::iter() {
-                let _ = threshold_priv.delete_data(
-                    &threshold_priv
-                        .compute_url(id, &cur_type.to_string())
-                        .unwrap(),
-                );
+                let _ = threshold_priv
+                    .delete_data(
+                        &threshold_priv
+                            .compute_url(id, &cur_type.to_string())
+                            .unwrap(),
+                    )
+                    .await;
             }
         }
     }
@@ -1689,7 +1688,7 @@ pub(crate) mod tests {
             request_id: "0000000000000000000000000000000000000099".to_string(),
         };
         // Delete potentially old data
-        purge(&request_id.to_string());
+        purge(&request_id.to_string()).await;
         key_gen_centralized(TEST_CENTRAL_KEYS_PATH, &request_id, Some(ParamChoice::Test)).await;
     }
 
@@ -1701,7 +1700,7 @@ pub(crate) mod tests {
             request_id: "0000000000000000000000000000000000000099".to_string(),
         };
         // Delete potentially old data
-        purge(&request_id.to_string());
+        purge(&request_id.to_string()).await;
         key_gen_centralized(
             DEFAULT_CENTRAL_KEYS_PATH,
             &request_id,
@@ -1745,10 +1744,12 @@ pub(crate) mod tests {
         let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
         let pk: Option<FhePublicKey> = internal_client
             .retrieve_key(&inner_resp, PubDataType::PublicKey, &pub_storage)
+            .await
             .unwrap();
         assert!(pk.is_some());
         let server_key: Option<tfhe::ServerKey> = internal_client
             .retrieve_key(&inner_resp, PubDataType::ServerKey, &pub_storage)
+            .await
             .unwrap();
         assert!(server_key.is_some());
         kms_server.abort();
@@ -1762,7 +1763,7 @@ pub(crate) mod tests {
             request_id: "0000000000000000000000000000000000000099".to_string(),
         };
         // Delete potentially old data
-        purge(&request_id.to_string());
+        purge(&request_id.to_string()).await;
         crs_gen_centralized_client(
             DEFAULT_CENTRAL_KEYS_PATH,
             &request_id,
@@ -1778,11 +1779,11 @@ pub(crate) mod tests {
             request_id: "0000000000000000000000000000000000000099".to_string(),
         };
         // Delete potentially old data
-        purge(&request_id.to_string());
+        purge(&request_id.to_string()).await;
         crs_gen_centralized_manual(TEST_CENTRAL_KEYS_PATH, &request_id, Some(ParamChoice::Test))
             .await;
 
-        purge(&request_id.to_string());
+        purge(&request_id.to_string()).await;
         crs_gen_centralized_client(TEST_CENTRAL_KEYS_PATH, &request_id, Some(ParamChoice::Test))
             .await;
     }
@@ -1881,6 +1882,7 @@ pub(crate) mod tests {
         let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
         let crs = internal_client
             .retrieve_crs(&inner_resp, &pub_storage)
+            .await
             .unwrap();
         assert!(crs.is_some());
         kms_server.abort();
@@ -1925,7 +1927,7 @@ pub(crate) mod tests {
             request_id: "0000000000000000000000000000000000000088".to_string(),
         };
         // Ensure the test is idempotent
-        purge(&request_id.to_string());
+        purge(&request_id.to_string()).await;
         crs_gen_threshold(TEST_THRESHOLD_KEYS_PATH, &request_id).await
     }
 
@@ -2029,6 +2031,7 @@ pub(crate) mod tests {
 
         let _pp = internal_client
             .process_distributed_crs_result(req_id, final_responses.clone(), &storage_readers)
+            .await
             .unwrap();
 
         // if there's [THRESHOLD] result missing, we can still recover the result
@@ -2038,6 +2041,7 @@ pub(crate) mod tests {
                 final_responses[0..final_responses.len() - THRESHOLD].to_vec(),
                 &storage_readers,
             )
+            .await
             .unwrap();
 
         // if there are [THRESHOLD+1] results missing, then we do not have consensus
@@ -2047,6 +2051,7 @@ pub(crate) mod tests {
                 final_responses[0..final_responses.len() - (THRESHOLD + 1)].to_vec(),
                 &storage_readers
             )
+            .await
             .is_err());
 
         // if the request_id is wrong, we get nothing
@@ -2059,6 +2064,7 @@ pub(crate) mod tests {
                 final_responses.clone(),
                 &storage_readers
             )
+            .await
             .is_err());
 
         // test that having [THRESHOLD] wrong signatures still works
@@ -2076,12 +2082,14 @@ pub(crate) mod tests {
                 final_responses_with_bad_sig.clone(),
                 &storage_readers,
             )
+            .await
             .unwrap();
 
         // having [THRESHOLD+1] wrong signatures won't work
         set_signatures(&mut final_responses_with_bad_sig, THRESHOLD + 1, &bad_sig);
         assert!(internal_client
             .process_distributed_crs_result(req_id, final_responses_with_bad_sig, &storage_readers)
+            .await
             .is_err());
 
         // having [THRESHOLD] wrong digest still works
@@ -2097,6 +2105,7 @@ pub(crate) mod tests {
                 final_responses_with_bad_digest.clone(),
                 &storage_readers,
             )
+            .await
             .unwrap();
 
         // having [THRESHOLD+1] wrong digests will fail
@@ -2111,6 +2120,7 @@ pub(crate) mod tests {
                 final_responses_with_bad_digest,
                 &storage_readers
             )
+            .await
             .is_err());
     }
 
@@ -2526,7 +2536,9 @@ pub(crate) mod tests {
         let keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH).unwrap();
         let (kms_server, mut kms_client) = super::test_tools::setup(
             RamStorage::new(StorageType::PUB),
-            RamStorage::from_existing_keys(&keys.software_kms_keys).unwrap(),
+            RamStorage::from_existing_keys(&keys.software_kms_keys)
+                .await
+                .unwrap(),
         )
         .await;
         let ct = Vec::from([1_u8; 1000000]);
@@ -2685,7 +2697,8 @@ pub(crate) mod tests {
         )
         .await;
 
-        //This request is not ok because the ParamChoice is not the same as the initial preproc request
+        //This request is not ok because the ParamChoice is not the same as the initial preproc
+        // request
         let req_status_nok_params = internal_client
             .preproc_request(&request_id, Some(ParamChoice::Default))
             .unwrap();
@@ -2768,7 +2781,7 @@ pub(crate) mod tests {
         let req_key = RequestId {
             request_id: request_id_keygen.to_string(),
         };
-        purge(request_id_keygen);
+        purge(request_id_keygen).await;
 
         let (kms_servers, kms_clients, internal_client) =
             threshold_handles(TEST_THRESHOLD_KEYS_PATH, StorageVersion::Dev).await;
@@ -2862,6 +2875,7 @@ pub(crate) mod tests {
         for (idx, kg_res) in finished.into_iter().enumerate() {
             let pk: Option<FhePublicKey> = internal_client
                 .retrieve_key(&kg_res, PubDataType::PublicKey, &storage)
+                .await
                 .unwrap();
             assert!(pk.is_some());
             if idx == 0 {
@@ -2874,6 +2888,7 @@ pub(crate) mod tests {
             }
             let server_key: Option<tfhe::ServerKey> = internal_client
                 .retrieve_key(&kg_res, PubDataType::ServerKey, &storage)
+                .await
                 .unwrap();
             assert!(server_key.is_some());
             if idx == 0 {

@@ -1,75 +1,56 @@
+use crate::consts::{MINIMUM_SESSIONS_PREPROC, SEC_PAR};
+use crate::cryptography::central_kms::{compute_info_from_key, BaseKmsStruct};
+use crate::cryptography::der_types::{self, PrivateSigKey, PublicEncKey, PublicSigKey};
+use crate::cryptography::signcryption::signcrypt;
+use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer};
 use crate::kms::{
-    CrsGenRequest, DecryptionResponsePayload, KeyGenPreprocRequest, KeyGenPreprocStatus,
-    KeyGenPreprocStatusEnum,
-};
-use crate::kms::{
-    DecryptionRequest, DecryptionResponse, FheType, KeyGenRequest, KeyGenResult,
-    ReencryptionRequest, ReencryptionResponse,
+    CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
+    Empty, FhePubKeyInfo, FheType, KeyGenPreprocRequest, KeyGenPreprocStatus,
+    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ReencryptionRequest,
+    ReencryptionResponse, RequestId,
 };
 use crate::rpc::central_rpc::{
     convert_key_response, retrieve_parameters, tonic_handle_potential_err, tonic_some_or_err,
     validate_decrypt_req, validate_reencrypt_req, validate_request_id,
 };
 use crate::rpc::rpc_types::{
-    BaseKms, Plaintext, PubDataType, RawDecryption, SigncryptionPayload, CURRENT_FORMAT_VERSION,
+    BaseKms, Plaintext, PrivDataType, PubDataType, RawDecryption, SigncryptionPayload,
+    CURRENT_FORMAT_VERSION,
 };
-use crate::storage::PublicStorage;
-use crate::{anyhow_error_and_log, storage::store_request_id};
-use crate::{
-    consts::{MINIMUM_SESSIONS_PREPROC, SEC_PAR},
-    rpc::rpc_types::PrivDataType,
-};
-use crate::{cryptography::central_kms::compute_info_from_key, storage::delete_request_id};
-use crate::{
-    cryptography::central_kms::BaseKmsStruct,
-    kms::coordinator_endpoint_server::CoordinatorEndpointServer,
-};
-use crate::{
-    cryptography::der_types::{self, PrivateSigKey, PublicEncKey, PublicSigKey},
-    kms::CrsGenResult,
-};
-use crate::{cryptography::signcryption::signcrypt, kms::Empty};
-use crate::{kms::FhePubKeyInfo, storage::read_all_data};
-use crate::{
-    kms::{coordinator_endpoint_server::CoordinatorEndpoint, RequestId},
-    some_or_err,
-};
+use crate::storage::{delete_request_id, read_all_data, store_request_id, PublicStorage};
+use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
 use distributed_decryption::algebra::base_ring::Z64;
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
+use distributed_decryption::choreography::NetworkingStrategy;
 use distributed_decryption::execution::endpoints::decryption::{
     decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, Small,
 };
-use distributed_decryption::execution::endpoints::keygen::distributed_keygen_z128;
+use distributed_decryption::execution::endpoints::keygen::{
+    distributed_keygen_z128, PrivateKeySet,
+};
 use distributed_decryption::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
 use distributed_decryption::execution::online::preprocessing::redis::RedisConf;
 use distributed_decryption::execution::online::preprocessing::{
     create_memory_factory, create_redis_factory, DKGPreprocessing, PreprocessorFactory,
 };
+use distributed_decryption::execution::runtime::party::{Identity, Role, RoleAssignment};
 use distributed_decryption::execution::runtime::session::{
     BaseSessionStruct, DecryptionMode, ParameterHandles, SessionParameters, SmallSession,
 };
+use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandomWithAbort;
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::execution::tfhe_internals::parameters::{
-    DKGParams, DKGParamsRegular, DKGParamsSnS,
+    Ciphertext64, DKGParams, DKGParamsRegular, DKGParamsSnS,
 };
+use distributed_decryption::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use distributed_decryption::execution::zk::ceremony::{
     compute_witness_dim, Ceremony, RealCeremony,
 };
-use distributed_decryption::execution::{
-    endpoints::keygen::PrivateKeySet, small_execution::agree_random::RealAgreeRandomWithAbort,
-};
-use distributed_decryption::execution::{
-    runtime::party::{Identity, Role, RoleAssignment},
-    tfhe_internals::switch_and_squash::SwitchAndSquashKey,
-};
 use distributed_decryption::networking::grpc::GrpcNetworkingManager;
 use distributed_decryption::session_id::SessionId;
-use distributed_decryption::{
-    choreography::NetworkingStrategy, execution::tfhe_internals::parameters::Ciphertext64,
-};
 use itertools::Itertools;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -132,7 +113,8 @@ pub async fn threshold_server_init<
         num_sessions_preproc,
         public_storage,
         private_storage,
-    )?;
+    )
+    .await?;
     tracing::info!("Initializing threshold KMS server for {my_id}...");
     kms.init().await?;
     tracing::info!("Initialization done! Starting threshold KMS server for {my_id} ...");
@@ -233,9 +215,11 @@ enum HandlerStatus<T> {
 type DecMetaStore = (u32, Vec<u8>, Plaintext);
 // Servers needed, request digest, fhe type of encryption and resultant partial decryption
 type ReencMetaStore = (u32, Vec<u8>, FheType, Vec<u8>);
-// Hashmap of `PubDataType` to the corresponding `FhePubKeyInfo` information for all the different public keys
+// Hashmap of `PubDataType` to the corresponding `FhePubKeyInfo` information for all the different
+// public keys
 type DkgMetaStore = HashMap<PubDataType, FhePubKeyInfo>;
-// digest (the 160-bit hex-encoded value, computed using compute_info/handle) and the signature on the handle
+// digest (the 160-bit hex-encoded value, computed using compute_info/handle) and the signature on
+// the handle
 type CrsMetaStore = (String, Vec<u8>);
 
 // Outer wrapper for a meta store. Purely syntactic sugar.
@@ -253,7 +237,8 @@ pub struct ThresholdKms<
     PubS: PublicStorage + Sync + Send + 'static,
     PrivS: PublicStorage + Sync + Send + 'static,
 > {
-    // NOTE: To avoid deadlocks the fhe_keys SHOULD NOT be written to while holding a meta storage mutex!
+    // NOTE: To avoid deadlocks the fhe_keys SHOULD NOT be written to while holding a meta storage
+    // mutex!
     fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
     base_kms: BaseKmsStruct,
     threshold: u8,
@@ -266,7 +251,8 @@ pub struct ThresholdKms<
     preproc_buckets: Arc<Mutex<RequestIDBucketMap>>,
     preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
     num_sessions_preproc: u128,
-    // NOTE: To avoid deadlocks the public_storage MUST ALWAYS be accessed BEFORE the private_storage when both are needed concurrently
+    // NOTE: To avoid deadlocks the public_storage MUST ALWAYS be accessed BEFORE the
+    // private_storage when both are needed concurrently
     public_storage: Arc<Mutex<PubS>>,
     private_storage: Arc<Mutex<PrivS>>,
     // TODO data is never deleted from these stores so the ram will fill up. This should be handled
@@ -280,7 +266,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
     ThresholdKms<PubS, PrivS>
 {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         parties: usize,
         threshold: u8,
         url: &str,
@@ -292,7 +278,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         private_storage: PrivS,
     ) -> anyhow::Result<Self> {
         let sks: HashMap<RequestId, PrivateSigKey> =
-            read_all_data(&private_storage, &PrivDataType::SigningKey.to_string())?;
+            read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
         let sk: PrivateSigKey = some_or_err(
             sks.values().collect_vec().first(),
             "There is no private signing key stored".to_string(),
@@ -300,9 +286,9 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         .to_owned()
         .to_owned();
         let key_info: HashMap<RequestId, ThresholdFheKeys> =
-            read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string())?;
+            read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
         let cs: HashMap<RequestId, CrsMetaStore> =
-            read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string())?;
+            read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
         let cs_w_status: HashMap<RequestId, HandlerStatus<CrsMetaStore>> = cs
             .iter()
             .map(|(id, crs)| (id.to_owned(), HandlerStatus::Done(crs.to_owned())))
@@ -447,7 +433,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
     ThresholdKms<PubS, PrivS>
 {
-    /// Helper method for decryption which carries out the actual threshold decryption using noise flooding.
+    /// Helper method for decryption which carries out the actual threshold decryption using noise
+    /// flooding.
     async fn inner_decrypt(
         session: &mut SmallSession<ResiduePoly128>,
         protocol: &mut Small,
@@ -497,7 +484,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         Ok(raw_decryption)
     }
 
-    /// Helper method for reencryptin which carries out the actual threshold decryption using noise flooding.
+    /// Helper method for reencryptin which carries out the actual threshold decryption using noise
+    /// flooding.
     #[allow(clippy::too_many_arguments)]
     async fn inner_reencrypt(
         session: &mut SmallSession<ResiduePoly128>,
@@ -615,6 +603,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                     &pp,
                     &PubDataType::CRS.to_string(),
                 )
+                .await
                 .is_ok()
                     && store_request_id(
                         &mut (*priv_storage),
@@ -622,6 +611,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                         &crs_meta_data,
                         &PrivDataType::CrsInfo.to_string(),
                     )
+                    .await
                     .is_ok()
                 {
                     {
@@ -630,17 +620,20 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                     }
                 } else {
                     // Try to delete stored data to avoid anything dangling
-                    // Ignore any failure to delete something. It might be because the data exist. In any case, we can't do much
+                    // Ignore any failure to delete something. It might be because the data exist.
+                    // In any case, we can't do much
                     let _ = delete_request_id(
                         &mut (*pub_storage),
                         &owned_req_id,
                         &PubDataType::CRS.to_string(),
-                    );
+                    )
+                    .await;
                     let _ = delete_request_id(
                         &mut (*priv_storage),
                         &owned_req_id,
                         &PrivDataType::CrsInfo.to_string(),
-                    );
+                    )
+                    .await;
                     let err_msg = format!(
                         "failed to store data to public storage for ID {}",
                         owned_req_id
@@ -736,7 +729,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 
         let prss_setup =
             tonic_some_or_err(self.prss_setup.clone(), "No PRSS setup exists".to_string())?;
-        //NOTE: For now we just discard the handle, we can check status with get_preproc_status endpoint
+        //NOTE: For now we just discard the handle, we can check status with get_preproc_status
+        // endpoint
         let _handle = tokio::spawn(async move {
             let sessions = create_sessions(base_sessions, prss_setup);
             let orchestrator = {
@@ -871,6 +865,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 &pub_key_set.public_key,
                 &PubDataType::PublicKey.to_string(),
             )
+            .await
             .is_ok()
                 && store_request_id(
                     &mut (*pub_storage),
@@ -878,6 +873,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                     &pub_key_set.server_key,
                     &PubDataType::ServerKey.to_string(),
                 )
+                .await
                 .is_ok()
                 && store_request_id(
                     &mut (*pub_storage),
@@ -885,6 +881,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                     &sns_key,
                     &PubDataType::SnsKey.to_string(),
                 )
+                .await
                 .is_ok()
                 && store_request_id(
                     &mut (*priv_storage),
@@ -892,6 +889,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                     &private_key_data,
                     &PrivDataType::FheKeyInfo.to_string(),
                 )
+                .await
                 .is_ok()
             {
                 {
@@ -906,27 +904,32 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 tracing::info!("Finished DKG for Request Id {req_id}.");
             } else {
                 // Try to delete stored data to avoid anything dangling
-                // Ignore any failure to delete something. It might be because the data exist. In any case, we can't do much
+                // Ignore any failure to delete something. It might be because the data exist. In
+                // any case, we can't do much
                 let _ = delete_request_id(
                     &mut (*pub_storage),
                     &req_id,
                     &PubDataType::PublicKey.to_string(),
-                );
+                )
+                .await;
                 let _ = delete_request_id(
                     &mut (*pub_storage),
                     &req_id,
                     &PubDataType::ServerKey.to_string(),
-                );
+                )
+                .await;
                 let _ = delete_request_id(
                     &mut (*pub_storage),
                     &req_id,
                     &PubDataType::SnsKey.to_string(),
-                );
+                )
+                .await;
                 let _ = delete_request_id(
                     &mut (*priv_storage),
                     &req_id,
                     &PrivDataType::FheKeyInfo.to_string(),
-                );
+                )
+                .await;
                 //If writing to public store failed, update status
                 {
                     let mut guarded_meta_storage = meta_store.write().await;
@@ -1096,26 +1099,38 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         let storage = Arc::clone(&self.public_storage);
         {
             let storage = storage.lock().await;
-            // TODO I don't think we need to do this check since the key will only be stored if it is already persisted in dkg_pubinfo_meta_store
+            // TODO I don't think we need to do this check since the key will only be stored if it
+            // is already persisted in dkg_pubinfo_meta_store
             if tonic_handle_potential_err(
-                storage.data_exists(&tonic_handle_potential_err(
-                    storage
-                        .compute_url(&request_id.to_string(), &PubDataType::PublicKey.to_string()),
-                    "Could not compute url for public key".to_string(),
-                )?),
+                storage
+                    .data_exists(&tonic_handle_potential_err(
+                        storage.compute_url(
+                            &request_id.to_string(),
+                            &PubDataType::PublicKey.to_string(),
+                        ),
+                        "Could not compute url for public key".to_string(),
+                    )?)
+                    .await,
                 "Could not validate if the public key exist".to_string(),
             )? || tonic_handle_potential_err(
-                storage.data_exists(&tonic_handle_potential_err(
-                    storage
-                        .compute_url(&request_id.to_string(), &PubDataType::ServerKey.to_string()),
-                    "Could not compute url for server key".to_string(),
-                )?),
+                storage
+                    .data_exists(&tonic_handle_potential_err(
+                        storage.compute_url(
+                            &request_id.to_string(),
+                            &PubDataType::ServerKey.to_string(),
+                        ),
+                        "Could not compute url for server key".to_string(),
+                    )?)
+                    .await,
                 "Could not validate if the server key exist".to_string(),
             )? || tonic_handle_potential_err(
-                storage.data_exists(&tonic_handle_potential_err(
-                    storage.compute_url(&request_id.to_string(), &PubDataType::SnsKey.to_string()),
-                    "Could not compute url for SnS key".to_string(),
-                )?),
+                storage
+                    .data_exists(&tonic_handle_potential_err(
+                        storage
+                            .compute_url(&request_id.to_string(), &PubDataType::SnsKey.to_string()),
+                        "Could not compute url for SnS key".to_string(),
+                    )?)
+                    .await,
                 "Could not validate if the SnS key exist".to_string(),
             )? {
                 tracing::warn!(
@@ -1172,7 +1187,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                         format!("Error launching dkg for request ID {request_id}"),
                     )?;
                 } else {
-                    //This can happen if the preprocessing is still ongoing or if the preprocessing has crashed
+                    //This can happen if the preprocessing is still ongoing or if the preprocessing
+                    // has crashed
                     return Err(tonic::Status::new(tonic::Code::InvalidArgument, format!("The preprocessing bucket is not available for preprocessing ID {preproc_id}")));
                 }
             }

@@ -1,46 +1,26 @@
-use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
-use anyhow::{bail, ensure};
-use aws_config::Region;
-use aws_nitro_enclaves_nsm_api::{
-    api::{Request as NSMRequest, Response as NSMResponse},
-    driver as nsm_driver,
-};
-use aws_sdk_kms::primitives::Blob;
-use aws_sdk_kms::types::{KeyEncryptionMechanism, RecipientInfo as KMSRecipientInfo};
-use aws_sdk_kms::Client as AmazonKMSClient;
-use aws_sdk_s3::Client as S3Client;
 use clap::{Parser, ValueEnum};
-use cms::enveloped_data::{EnvelopedData, RecipientInfo as PKCS7RecipientInfo};
-use der::{Decode, DecodeValue, Header, SliceReader};
-use kms_lib::storage::FileStorage;
-use kms_lib::{
-    consts::{DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_KEYS_PATH},
-    write_default_crs_store,
+use kms_lib::consts::{
+    DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CRS_ID, DEFAULT_KEY_ID,
 };
-use kms_lib::{
-    consts::{DEFAULT_CRS_ID, DEFAULT_KEY_ID},
-    write_default_keys,
+use kms_lib::cryptography::central_kms::SoftwareKmsKeys;
+use kms_lib::cryptography::der_types::{PrivateSigKey, PublicSigKey};
+use kms_lib::cryptography::nitro_enclave::gen_nitro_enclave_keys;
+use kms_lib::rpc::central_rpc::server_handle as kms_server_handle;
+use kms_lib::rpc::central_rpc_proxy::server_handle as kms_proxy_server_handle;
+use kms_lib::storage::{FileStorage, StorageType};
+use kms_lib::util::aws::{
+    build_aws_kms_client, build_s3_client, nitro_enclave_decrypt_app_key, s3_get_blob,
+    EnclaveStorage,
 };
-use kms_lib::{cryptography::central_kms::SoftwareKmsKeys, storage::StorageType};
-use kms_lib::{
-    cryptography::der_types::{PrivateSigKey, PublicSigKey},
-    rpc::central_rpc::server_handle as kms_server_handle,
-    rpc::kms_proxy_rpc::server_handle as kms_proxy_server_handle,
-};
-use rand::rngs::OsRng;
-use rsa::{pkcs1::EncodeRsaPublicKey, sha2::Sha256, Oaep, RsaPrivateKey, RsaPublicKey};
-use serde::{de::DeserializeOwned, Serialize};
-use serde_bytes::ByteBuf;
+use kms_lib::{write_default_crs_store, write_default_keys};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
-use tokio::io::AsyncReadExt;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{filter, Layer};
 use url::Url;
 
-pub const FHE_SK_BLOB_KEY: &str = "fhe_private_key";
 pub const SIG_SK_BLOB_KEY: &str = "private_sig_key";
 pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
 
@@ -67,8 +47,8 @@ struct Args {
     blob_bucket: String,
     /// AWS KMS symmetric key ID for encrypting key blobs
     #[arg(long)]
-    #[clap(default_value = "zama_kms_blob_key")]
-    blob_key_id: String,
+    #[clap(default_value = "zama_kms_root_key")]
+    root_key_id: String,
     /// Server URL without specifying protocol (e.g. 0.0.0.0:50051)
     #[clap(default_value = "http://0.0.0.0:50051")]
     url: String,
@@ -112,13 +92,13 @@ async fn main() -> Result<(), anyhow::Error> {
                 tracing::info!(
                     "Could not find default keys. Generating new keys with default parameters and ID \"{}\"...", (*DEFAULT_KEY_ID).clone()
                 );
-                write_default_keys(DEFAULT_CENTRAL_KEYS_PATH);
+                write_default_keys(DEFAULT_CENTRAL_KEYS_PATH).await;
             };
             if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
                 tracing::info!(
                     "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", (*DEFAULT_CRS_ID).clone()
                 );
-                write_default_crs_store();
+                write_default_crs_store().await;
             };
 
             let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
@@ -128,137 +108,27 @@ async fn main() -> Result<(), anyhow::Error> {
         Mode::Proxy => kms_proxy_server_handle(socket, &args.enclave_vsock).await,
         Mode::Enclave => {
             // set up AWS API
-            let s3_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-                .region(Region::new(args.aws_region.clone()))
-                .endpoint_url(args.aws_s3_proxy)
-                .load()
-                .await;
-            tracing::info!("After s3_config");
-            let kms_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-                .region(Region::new(args.aws_region))
-                .endpoint_url(args.aws_kms_proxy)
-                .load()
-                .await;
-            tracing::info!("After kms_config");
-            let s3_client = S3Client::new(&s3_config);
-            tracing::info!("After s3_client");
-            let aws_kms_client = AmazonKMSClient::new(&kms_config);
-            tracing::info!("After kms_client");
-
-            // generate a Nitro enclave keypair
-            let enclave_sk = RsaPrivateKey::new(&mut OsRng, 2048)?;
-            let enclave_pk = RsaPublicKey::from(&enclave_sk);
-            let enclave_pk_der = enclave_pk.to_pkcs1_der()?;
-            let enclave_pk_der_bytes = enclave_pk_der.as_ref().to_vec();
-
-            // request Nitro enclave attestation
-            let nsm_fd = nsm_driver::nsm_init();
-            let nsm_request = NSMRequest::Attestation {
-                public_key: Some(ByteBuf::from(enclave_pk_der_bytes)),
-                user_data: None,
-                // The nonce can potentially be used in protocols that do not allow using the same
-                // attestation twice. The AWS KMS API allows reusing attestations (in fact, there
-                // does not seem to be a way to forbid it), so we are not setting the nonce.
-                nonce: None,
-            };
-            let NSMResponse::Attestation { document } =
-                nsm_driver::nsm_process_request(nsm_fd, nsm_request)
-            else {
-                nsm_driver::nsm_exit(nsm_fd);
-                bail!("Nitro enclave attestation request failed");
-            };
-            nsm_driver::nsm_exit(nsm_fd);
+            let s3_client = build_s3_client(args.aws_region.clone(), args.aws_s3_proxy).await;
+            let aws_kms_client = build_aws_kms_client(args.aws_region, args.aws_kms_proxy).await;
+            let enclave_keys = gen_nitro_enclave_keys()?;
 
             // fetch key blobs
-            let fhe_sk_blob_bytes =
-                s3_get_blob_bytes(&s3_client, &args.blob_bucket, FHE_SK_BLOB_KEY).await?;
+            tracing::info!("Fetching the FHE keys");
+            let fhe_sk_blob = s3_get_blob(
+                &s3_client,
+                &args.blob_bucket,
+                format!("{}-private.bin", (*DEFAULT_KEY_ID).clone()).as_str(),
+            )
+            .await?;
             let sig_sk: PrivateSigKey =
                 s3_get_blob(&s3_client, &args.blob_bucket, SIG_SK_BLOB_KEY).await?;
             let sig_pk: PublicSigKey =
                 s3_get_blob(&s3_client, &args.blob_bucket, SIG_PK_BLOB_KEY).await?;
 
-            tracing::info!("Fetched key blobs. Before decrypting...");
-            // re-encrypt the encrypted private key blob
-            // on the Nitro enclave public key
-            let fhe_sk_response = aws_kms_client
-                .decrypt()
-                .key_id(args.blob_key_id)
-                .ciphertext_blob(Blob::new(fhe_sk_blob_bytes))
-                .recipient(
-                    KMSRecipientInfo::builder()
-                        .key_encryption_algorithm(KeyEncryptionMechanism::RsaesOaepSha256)
-                        .attestation_document(Blob::new(document))
-                        .build(),
-                )
-                .send()
-                .await?;
-
-            tracing::info!("Decrypted key blobs. Before ensure...");
-            // peek inside the re-encrypted key PKCS7 envelope
-            ensure!(
-                fhe_sk_response.ciphertext_for_recipient.is_some(),
-                "Decryption request came back empty"
-            );
-            let fhe_sk_response_ciphertext_bytes = fhe_sk_response
-                .ciphertext_for_recipient
-                .unwrap()
-                .into_inner();
-            let fhe_sk_envelope_header =
-                Header::from_der(fhe_sk_response_ciphertext_bytes.as_slice())?;
-            let mut fhe_sk_envelope_reader =
-                SliceReader::new(fhe_sk_response_ciphertext_bytes.as_slice())?;
-            let fhe_sk_envelope: EnvelopedData =
-                EnvelopedData::decode_value(&mut fhe_sk_envelope_reader, fhe_sk_envelope_header)?;
-            ensure!(
-                fhe_sk_envelope.recip_infos.0.len() == 1,
-                "Re-encrypted key envelope must have exactly one recipient"
-            );
-            let PKCS7RecipientInfo::Ktri(ktri) = fhe_sk_envelope.recip_infos.0.get(0).unwrap()
-            else {
-                bail!("Re-encrypted key envelope does not contain a session key");
-            };
-            ensure!(
-                ktri.version == fhe_sk_envelope.version,
-                "Re-encrypted key envelope malformed"
-            );
-            let fhe_sk_enc_session_key = ktri.enc_key.as_bytes();
-            // NOTE: `cms` doesn't parse OIDs yet but it would be good to validate that
-            // encrypted_content.content_type == pkcs7_data and that
-            // encrypted_content.content_enc_alg.oid == aes_256_cbc
-            ensure!(
-                fhe_sk_envelope
-                    .encrypted_content
-                    .content_enc_alg
-                    .parameters
-                    .is_some(),
-                "Re-encrypted key envelope does not contain an initialization vector"
-            );
-            let iv = fhe_sk_envelope
-                .encrypted_content
-                .content_enc_alg
-                .parameters
-                .unwrap();
-            ensure!(
-                fhe_sk_envelope
-                    .encrypted_content
-                    .encrypted_content
-                    .is_some(),
-                "Re-encrypted key envelope does not contain a payload"
-            );
-            let fhe_sk_ciphertext = fhe_sk_envelope.encrypted_content.encrypted_content.unwrap();
-
-            // decrypt the PKCS7 envelope session key
-            let fhe_sk_session_key =
-                enclave_sk.decrypt(Oaep::new::<Sha256>(), fhe_sk_enc_session_key)?;
-
-            // decrypt the key ciphertext for recipient enclave
-            let fhe_sk_bytes = cbc::Decryptor::<aes::Aes256>::new(
-                fhe_sk_session_key.as_slice().into(),
-                iv.value().into(),
-            )
-            .decrypt_padded_vec_mut::<Pkcs7>(fhe_sk_ciphertext.as_bytes())
-            .map_err(|e| anyhow::anyhow!(format!("{}", e)))?;
-            let fhe_sk = bincode::deserialize_from(fhe_sk_bytes.as_slice())?;
+            // decrypt the encrypted FHE private key
+            tracing::info!("Decrypting the FHE private key");
+            let fhe_sk =
+                nitro_enclave_decrypt_app_key(&aws_kms_client, &enclave_keys, fhe_sk_blob).await?;
 
             // start the KMS
             let _keys = SoftwareKmsKeys {
@@ -270,39 +140,19 @@ async fn main() -> Result<(), anyhow::Error> {
                 tracing::info!(
                     "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", (*DEFAULT_CRS_ID).clone()
                 );
-                write_default_crs_store();
+                write_default_crs_store().await;
             };
-            // TODO this should be glued together with Nitro properly after mergning #442
+
             let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
-            let priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
+            let priv_storage = EnclaveStorage {
+                s3_client,
+                aws_kms_client,
+                blob_bucket: args.blob_bucket,
+                root_key_id: args.root_key_id,
+                enclave_keys,
+            };
             kms_server_handle(socket, pub_storage, priv_storage).await
         }
     }?;
     Ok(())
-}
-
-async fn s3_get_blob<T: DeserializeOwned + Serialize>(
-    s3_client: &S3Client,
-    bucket: &str,
-    key: &str,
-) -> anyhow::Result<T> {
-    let blob_bytes = s3_get_blob_bytes(s3_client, bucket, key).await?;
-    Ok(bincode::deserialize_from(blob_bytes.as_slice())?)
-}
-
-async fn s3_get_blob_bytes(
-    s3_client: &S3Client,
-    bucket: &str,
-    key: &str,
-) -> anyhow::Result<Vec<u8>> {
-    let blob_response = s3_client
-        .get_object()
-        .bucket(bucket)
-        .key(key)
-        .send()
-        .await?;
-    let mut blob_bytes: Vec<u8> = Vec::with_capacity(32768);
-    let mut blob_bytestream = blob_response.body.into_async_read();
-    blob_bytestream.read_to_end(&mut blob_bytes).await?;
-    Ok(blob_bytes)
 }

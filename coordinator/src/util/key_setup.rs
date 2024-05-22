@@ -1,44 +1,32 @@
 use super::file_handling::read_element;
-use crate::{
-    consts::{
-        AMOUNT_PARTIES, COMPRESSED, CRS_PATH_PREFIX, KEY_PATH_PREFIX, SEC_PAR, TEST_MSG, THRESHOLD,
-        TMP_PATH_PREFIX,
-    },
-    cryptography::central_kms::{compute_handle, BaseKmsStruct},
-    rpc::rpc_types::PubDataType,
-    storage::StorageType,
+use crate::consts::{
+    AMOUNT_PARTIES, COMPRESSED, CRS_PATH_PREFIX, KEY_PATH_PREFIX, SEC_PAR, TEST_MSG, THRESHOLD,
+    TMP_PATH_PREFIX,
 };
-use crate::{cryptography::central_kms::compute_info, storage::FileStorage};
-use crate::{cryptography::central_kms::KmsFheKeyHandles, util::file_handling::read_as_json};
-use crate::{
-    cryptography::central_kms::{
-        gen_centralized_crs, gen_default_kms_keys, gen_sig_keys, generate_fhe_keys, CrsHashMap,
-        SoftwareKmsKeys,
-    },
-    util::file_handling::write_element,
+use crate::cryptography::central_kms::{
+    compute_handle, compute_info, gen_centralized_crs, gen_default_kms_keys, gen_sig_keys,
+    generate_fhe_keys, BaseKmsStruct, CrsHashMap, KmsFheKeyHandles, SoftwareKmsKeys,
 };
-use crate::{
-    cryptography::der_types::{PrivateSigKey, PublicSigKey},
-    threshold::threshold_kms::ThresholdFheKeys,
-};
-use crate::{
-    kms::{FheType, RequestId},
-    storage::store_request_id,
-};
-use crate::{rpc::rpc_types::PrivDataType, threshold::threshold_kms::ThresholdKmsKeys};
+use crate::cryptography::der_types::{PrivateSigKey, PublicSigKey};
+use crate::kms::{FheType, RequestId};
+use crate::rpc::rpc_types::{PrivDataType, PubDataType};
+use crate::storage::{store_request_id, FileStorage, StorageType};
+use crate::threshold::threshold_kms::{ThresholdFheKeys, ThresholdKmsKeys};
+use crate::util::file_handling::{read_as_json, write_element};
 use aes_prng::AesRng;
-use distributed_decryption::execution::zk::ceremony::PublicParameter;
-use distributed_decryption::execution::{
-    endpoints::keygen::FhePubKeySet,
-    tfhe_internals::{
-        parameters::{DKGParamsRegular, DKGParamsSnS, NoiseFloodParameters},
-        test_feature::{gen_key_set, keygen_all_party_shares},
-    },
+use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
+use distributed_decryption::execution::tfhe_internals::parameters::{
+    DKGParamsRegular, DKGParamsSnS, NoiseFloodParameters,
 };
+use distributed_decryption::execution::tfhe_internals::test_feature::{
+    gen_key_set, keygen_all_party_shares,
+};
+use distributed_decryption::execution::zk::ceremony::PublicParameter;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
 use std::path::Path;
-use std::{collections::HashMap, fs};
 use tfhe::prelude::*;
 use tfhe::FheUint8;
 
@@ -81,7 +69,7 @@ pub fn ensure_dir_exist() {
     fs::create_dir_all(CRS_PATH_PREFIX).unwrap();
 }
 
-pub fn ensure_threshold_keys_exist(param_path: &str, threshold_key_path: &str, key_id: &str) {
+pub async fn ensure_threshold_keys_exist(param_path: &str, threshold_key_path: &str, key_id: &str) {
     if !Path::new(&format!("{}-1.bin", threshold_key_path))
         .try_exists()
         .unwrap()
@@ -128,6 +116,7 @@ pub fn ensure_threshold_keys_exist(param_path: &str, threshold_key_path: &str, k
             &key_set.public_keys.public_key,
             &PubDataType::PublicKey.to_string(),
         )
+        .await
         .unwrap();
         store_request_id(
             &mut pub_storage,
@@ -135,6 +124,7 @@ pub fn ensure_threshold_keys_exist(param_path: &str, threshold_key_path: &str, k
             &key_set.public_keys.server_key,
             &PubDataType::ServerKey.to_string(),
         )
+        .await
         .unwrap();
         for i in 1..=AMOUNT_PARTIES {
             println!("Generating key for party {i}");
@@ -165,6 +155,7 @@ pub fn ensure_threshold_keys_exist(param_path: &str, threshold_key_path: &str, k
                 &pks[i - 1].clone(),
                 &PubDataType::VerfKey.to_string(),
             )
+            .await
             .unwrap();
             let mut priv_storage = FileStorage::new(&format!("priv-p{i}"));
             store_request_id(
@@ -173,6 +164,7 @@ pub fn ensure_threshold_keys_exist(param_path: &str, threshold_key_path: &str, k
                 &sks[i - 1].clone(),
                 &PrivDataType::SigningKey.to_string(),
             )
+            .await
             .unwrap();
             store_request_id(
                 &mut priv_storage,
@@ -180,12 +172,13 @@ pub fn ensure_threshold_keys_exist(param_path: &str, threshold_key_path: &str, k
                 &threshold_fhe_keys,
                 &PrivDataType::FheKeyInfo.to_string(),
             )
+            .await
             .unwrap();
         }
     }
 }
 
-pub fn ensure_central_crs_store_exists(
+pub async fn ensure_central_crs_store_exists(
     param_path: &str,
     central_crs_path: &str,
     central_key_path: &str,
@@ -218,11 +211,12 @@ pub fn ensure_central_crs_store_exists(
             &crs_info,
             &PrivDataType::CrsInfo.to_string(),
         )
+        .await
         .unwrap();
     }
 }
 
-pub fn ensure_central_keys_exist(
+pub async fn ensure_central_keys_exist(
     param_path: &str,
     central_keys_path: &str,
     key_id: &RequestId,
@@ -272,6 +266,7 @@ pub fn ensure_central_keys_exist(
             &centralized_test_keys.software_kms_keys.sig_pk.clone(),
             &PubDataType::VerfKey.to_string(),
         )
+        .await
         .unwrap();
         store_request_id(
             &mut priv_storage,
@@ -279,6 +274,7 @@ pub fn ensure_central_keys_exist(
             &centralized_test_keys.software_kms_keys.sig_sk,
             &PrivDataType::SigningKey.to_string(),
         )
+        .await
         .unwrap();
         for (req_id, key_info) in &centralized_test_keys.software_kms_keys.key_info {
             store_request_id(
@@ -287,6 +283,7 @@ pub fn ensure_central_keys_exist(
                 key_info,
                 &PrivDataType::FheKeyInfo.to_string(),
             )
+            .await
             .unwrap();
         }
         for (req_id, cur_keys) in &centralized_test_keys.pub_fhe_keys {
@@ -296,6 +293,7 @@ pub fn ensure_central_keys_exist(
                 &cur_keys.public_key,
                 &PubDataType::PublicKey.to_string(),
             )
+            .await
             .unwrap();
             store_request_id(
                 &mut pub_storage,
@@ -303,6 +301,7 @@ pub fn ensure_central_keys_exist(
                 &cur_keys.server_key,
                 &PubDataType::ServerKey.to_string(),
             )
+            .await
             .unwrap();
         }
     }

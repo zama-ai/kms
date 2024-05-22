@@ -2,35 +2,23 @@ use super::rpc_types::{
     protobuf_to_alloy_domain, BaseKms, DecryptionRequestSerializable, PrivDataType,
     CURRENT_FORMAT_VERSION,
 };
-use crate::cryptography::central_kms::{async_decrypt, async_reencrypt, CompMap};
-use crate::cryptography::central_kms::{async_generate_crs, compute_info};
+use crate::consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH};
+use crate::cryptography::central_kms::{
+    async_decrypt, async_generate_crs, async_generate_fhe_keys, async_reencrypt, compute_info,
+    BaseKmsStruct, CompMap, KmsFheKeyHandles, SoftwareKms,
+};
+use crate::cryptography::der_types::{PublicEncKey, PublicSigKey};
 use crate::cryptography::signcryption::ReencryptSol;
-use crate::kms::{DecryptionResponsePayload, KeyGenPreprocRequest, KeyGenPreprocStatus};
+use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer};
+use crate::kms::{
+    CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
+    Empty, FhePubKeyInfo, FheType, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest,
+    KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse, RequestId,
+};
+use crate::rpc::rpc_types::PubDataType;
 use crate::storage::{store_request_id, FileStorage, PublicStorage};
+use crate::util::file_handling::read_as_json;
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
-use crate::{
-    consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH},
-    kms::RequestId,
-};
-use crate::{
-    cryptography::central_kms::KmsFheKeyHandles,
-    kms::{
-        CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, FheType, KeyGenRequest,
-        KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse,
-    },
-};
-use crate::{
-    cryptography::central_kms::{async_generate_fhe_keys, BaseKmsStruct, SoftwareKms},
-    kms::FhePubKeyInfo,
-};
-use crate::{
-    cryptography::der_types::{PublicEncKey, PublicSigKey},
-    kms::Empty,
-};
-use crate::{kms::coordinator_endpoint_server::CoordinatorEndpoint, rpc::rpc_types::PubDataType};
-use crate::{
-    kms::coordinator_endpoint_server::CoordinatorEndpointServer, util::file_handling::read_as_json,
-};
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
@@ -47,7 +35,7 @@ pub async fn server_handle<
     public_storage: PubS,
     private_storage: PrivS,
 ) -> anyhow::Result<()> {
-    let kms = SoftwareKms::new(public_storage, private_storage)?;
+    let kms = SoftwareKms::new(public_storage, private_storage).await?;
     tracing::info!("Starting centralized KMS server ...");
 
     Server::builder()
@@ -436,8 +424,9 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         &self,
         request_id: RequestId,
     ) -> anyhow::Result<Option<FhePubKeyInfo>> {
-        // Lock both maps since otherwise we might end up in a race condition where the handle is removed from crs_gen_map but
-        // the result of the task is not stored, hence a malicious repeated call for generation could cause two processes with the
+        // Lock both maps since otherwise we might end up in a race condition where the handle is
+        // removed from crs_gen_map but the result of the task is not stored, hence a
+        // malicious repeated call for generation could cause two processes with the
         // same request_ID to occur. Thus leading to unexpected and incorrect behaviour.
         let mut crs_handles = self.crs_handles.lock().await;
         let mut crs_gen_map = self.crs_gen_map.lock().await;
@@ -445,7 +434,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         // Handle the four different cases:
         // 1. Request ID exists and is being generated but is not finished yet
         // 2. Request ID exists and generation has finished, but not been processed yet
-        // 3. Request ID exists, generation has finished and the generated keys have allready been processed
+        // 3. Request ID exists, generation has finished and the generated keys have allready been
+        //    processed
         // 4. Request ID does not exist
         // TODO add tests for each fo these cases
         match crs_gen_handle {
@@ -457,7 +447,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                     return Ok(None);
                 }
 
-                // Case 2: The key generation is finished, so we can now generate the key information
+                // Case 2: The key generation is finished, so we can now generate the key
+                // information
                 let pp = crs_gen_handle.await??;
                 let crs_info = compute_info(self, &pp)?;
                 // Insert the key information into the map of keys
@@ -469,7 +460,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                         &request_id,
                         &pp,
                         &PubDataType::CRS.to_string(),
-                    )?;
+                    )
+                    .await?;
                 }
                 {
                     let mut priv_storage = self.private_storage.lock().await;
@@ -478,14 +470,16 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                         &request_id,
                         &crs_info,
                         &PrivDataType::CrsInfo.to_string(),
-                    )?;
+                    )
+                    .await?;
                 }
                 Ok(Some(crs_info))
             }
             None => {
                 match crs_handles.get(&request_id) {
                     Some(handles) => {
-                        // Case 3: Request is not in crs generation map, so check if it is already done
+                        // Case 3: Request is not in crs generation map, so check if it is already
+                        // done
                         Ok(Some(handles.clone()))
                     }
                     None => {
@@ -507,8 +501,9 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         &self,
         request_id: RequestId,
     ) -> anyhow::Result<Option<HashMap<PubDataType, FhePubKeyInfo>>> {
-        // Lock both maps since otherwise we might end up in a race condition where the handle is removed from key_gen_map but
-        // the result of the task is not stored, hence a malicious repeated call for generation could cause two processes with the
+        // Lock both maps since otherwise we might end up in a race condition where the handle is
+        // removed from key_gen_map but the result of the task is not stored, hence a
+        // malicious repeated call for generation could cause two processes with the
         // same request_ID to occur. Thus leading to unexpected and incorrect behaviour.
         let mut key_handles = self.key_handles.lock().await;
         let mut key_gen_map = self.key_gen_map.lock().await;
@@ -516,7 +511,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         // Handle the four different cases:
         // 1. Request ID exists and is being generated but is not finished yet
         // 2. Request ID exists and generation has finished, but not been processed yet
-        // 3. Request ID exists, generation has finished and the generated keys have allready been processed
+        // 3. Request ID exists, generation has finished and the generated keys have allready been
+        //    processed
         // 4. Request ID does not exist
         // TODO add tests for each fo these cases
         match key_gen_handle {
@@ -526,7 +522,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                     key_gen_map.insert(request_id, key_gen_handle);
                     return Ok(None);
                 }
-                // Case 2: The key generation is finished, so we can now generate the key information
+                // Case 2: The key generation is finished, so we can now generate the key
+                // information
                 let (client_key, pub_keys) = key_gen_handle.await?;
                 let new_key_info = KmsFheKeyHandles::new(self, client_key, &pub_keys)?;
                 // Insert the key information into the map of keys
@@ -538,13 +535,15 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                         &request_id,
                         &pub_keys.public_key,
                         &PubDataType::PublicKey.to_string(),
-                    )?;
+                    )
+                    .await?;
                     store_request_id(
                         &mut (*pub_storage),
                         &request_id,
                         &pub_keys.server_key,
                         &PubDataType::ServerKey.to_string(),
-                    )?;
+                    )
+                    .await?;
                 }
                 {
                     let mut priv_storage = self.private_storage.lock().await;
@@ -553,14 +552,16 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                         &request_id,
                         &new_key_info,
                         &PrivDataType::FheKeyInfo.to_string(),
-                    )?;
+                    )
+                    .await?;
                 }
                 Ok(Some(new_key_info.public_key_info))
             }
             None => {
                 match key_handles.get(&request_id) {
                     Some(handles) => {
-                        // Case 3: Request is not in key generation map, so check if it is already done
+                        // Case 3: Request is not in key generation map, so check if it is already
+                        // done
                         Ok(Some(handles.public_key_info.clone()))
                     }
                     None => {
@@ -576,13 +577,15 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
     }
 
     /// Process a request for getting the decryption or reencryption.
-    /// Takes as input a map of decryption or reencryption processes and checks whether they are done.
-    /// If they are done, it returns the result and removes them from the map, otherwise it returns an informative tonic error.
+    /// Takes as input a map of decryption or reencryption processes and checks whether they are
+    /// done. If they are done, it returns the result and removes them from the map, otherwise
+    /// it returns an informative tonic error.
     async fn process_decryption<Aux>(
         handle_map: &CompMap<(Aux, anyhow::Result<Vec<u8>>)>,
         request_id: RequestId,
     ) -> Result<(Aux, Vec<u8>), Status> {
-        // We remove the handle and thus must remember to reinsert it again if it is not fully processed
+        // We remove the handle and thus must remember to reinsert it again if it is not fully
+        // processed
         let mut unwrapped_handle_map = handle_map.lock().await;
         let handle = unwrapped_handle_map.remove(&request_id);
 
@@ -619,7 +622,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                     }
                 }
             }
-            // Case 3: The request ID is not in the map. Either it has never been started or already returned.
+            // Case 3: The request ID is not in the map. Either it has never been started or already
+            // returned.
             None => {
                 return Err(tonic::Status::new(
                     tonic::Code::NotFound,
@@ -650,8 +654,8 @@ pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), Status> 
 }
 
 /// Helper method which takes a [HashMap<PubDataType, FhePubKeyInfo>] and returns
-/// [HashMap<String, FhePubKeyInfo>] by applying the [ToString] function on [PubDataType] for each element in the map.
-/// The function is needed since protobuf does not support enums in maps.
+/// [HashMap<String, FhePubKeyInfo>] by applying the [ToString] function on [PubDataType] for each
+/// element in the map. The function is needed since protobuf does not support enums in maps.
 pub fn convert_key_response(
     key_info_map: HashMap<PubDataType, FhePubKeyInfo>,
 ) -> HashMap<String, FhePubKeyInfo> {
@@ -674,8 +678,8 @@ pub(crate) fn retrieve_parameters(param_choice: i32) -> anyhow::Result<NoiseFloo
     Ok(params)
 }
 
-/// Validates a reencryption request and returns ciphertext, FheType, request digest, client encryption key, client verification key,
-/// servers_needed key_id and request_id if valid.
+/// Validates a reencryption request and returns ciphertext, FheType, request digest, client
+/// encryption key, client verification key, servers_needed key_id and request_id if valid.
 /// Observe that the key handle is NOT checked for existence here.
 /// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
 /// is needed.

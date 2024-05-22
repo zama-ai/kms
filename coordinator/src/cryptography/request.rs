@@ -24,7 +24,8 @@ pub(crate) struct ClientRequest {
 /// Structure for DER encoding as a SEQUENCE of client_signcryption_key and digest (as OCTET STRING)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub(crate) struct ClientPayload {
-    pub(crate) client_signcryption_key: SigncryptionPubKey, /* The client's public keys needed for
+    pub(crate) client_signcryption_key: SigncryptionPubKey, /* The client's public keys needed
+                                                             * for
                                                              * signcryption */
     pub(crate) digest: Vec<u8>, // Digest of the fhe_cipher the client wish to have decrypted
     pub(crate) sig_randomization: Vec<u8>, /* Randomness to concatenate to the encrypted message to ensure EU-CMA security, see https://link.springer.com/content/pdf/10.1007/3-540-36492-7_1.pdf */

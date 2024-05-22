@@ -1,12 +1,9 @@
-use kms_lib::consts::DEFAULT_KEY_ID;
+use kms_lib::client::Client;
+use kms_lib::consts::{DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_KEY_ID};
 use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
 use kms_lib::kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType};
+use kms_lib::util::file_handling::read_element;
 use kms_lib::util::key_setup::CentralizedTestingKeys;
-use kms_lib::{
-    client::Client,
-    consts::{DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH},
-    util::file_handling::read_element,
-};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use tracing_subscriber::layer::SubscriberExt;
@@ -52,7 +49,8 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use aes_prng::AesRng;
-    use kms_lib::{consts::ID_LENGTH, kms::RequestId};
+    use kms_lib::consts::ID_LENGTH;
+    use kms_lib::kms::RequestId;
     use rand::{RngCore, SeedableRng};
 
     let stdout_log = tracing_subscriber::fmt::layer().pretty();

@@ -6,8 +6,8 @@ use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use wasm_bindgen::prelude::wasm_bindgen;
 
-// Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server uses to
-// encrypt its payload
+// Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server
+// uses to encrypt its payload
 #[wasm_bindgen]
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct PublicEncKey(pub(crate) crypto_box::PublicKey);
@@ -52,8 +52,8 @@ impl<'de> Visitor<'de> for PublicEncKeyVisitor {
     }
 }
 
-// Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the server's
-// encrypted payload
+// Alias wrapping the ephemeral private decryption key the user's wallet constructs to receive the
+// server's encrypted payload
 #[wasm_bindgen]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PrivateEncKey(pub(crate) crypto_box::SecretKey);

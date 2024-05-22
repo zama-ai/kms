@@ -1,4 +1,5 @@
 use crate::anyhow_error_and_log;
+use crate::consts::ID_LENGTH;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::der_types::PrivateSigKey;
 #[cfg(feature = "non-wasm")]
@@ -6,13 +7,12 @@ use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::{hash_element, serialize_hash_element, ReencryptSol};
 use crate::kms::{
     DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType, ReencryptionResponse,
+    RequestId,
 };
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::FhePrivateKey;
-use crate::{consts::ID_LENGTH, kms::RequestId};
 use alloy_primitives::{Address, B256, U256};
-use alloy_sol_types::Eip712Domain;
-use alloy_sol_types::SolStruct;
+use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
 #[cfg(feature = "non-wasm")]
 use rand::{CryptoRng, RngCore};
@@ -29,8 +29,8 @@ pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
 pub static DEC_REQUEST_NAME: &str = "dec_request";
 pub static REENC_REQUEST_NAME: &str = "reenc_request";
 
-/// Enum which represents the different kinds of public information that can be stored as part of key generation.
-/// In practice this means the CRS and different types of public keys.
+/// Enum which represents the different kinds of public information that can be stored as part of
+/// key generation. In practice this means the CRS and different types of public keys.
 /// Data of this type is supposed to be readable by anyone on the internet
 /// and stored on a medium that _may_ be suseptible to malicious modifications.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
@@ -54,10 +54,11 @@ impl fmt::Display for PubDataType {
     }
 }
 
-/// Enum which represents the different kinds of private information that can be stored as part of running the KMS.
-/// In practice this means the signing key, public key and CRS meta data and signatures.
-/// Data of this type is supposed to only be readable, writable and modifiable by a single entity
-/// and stored on a medium that is not readable, writable or modifiable by any other entity (without detection).
+/// Enum which represents the different kinds of private information that can be stored as part of
+/// running the KMS. In practice this means the signing key, public key and CRS meta data and
+/// signatures. Data of this type is supposed to only be readable, writable and modifiable by a
+/// single entity and stored on a medium that is not readable, writable or modifiable by any other
+/// entity (without detection).
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 pub enum PrivDataType {
     SigningKey,
@@ -230,7 +231,8 @@ impl RawDecryption {
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[wasm_bindgen]
 pub struct Plaintext {
-    // Observe that the clunky representation is needed due to the wasm binding, which does not work with vectors or u128 elements directly
+    // Observe that the clunky representation is needed due to the wasm binding, which does not
+    // work with vectors or u128 elements directly
     pub lowest_bits: u64,
     pub middle_bits: u64,
     pub higest_bits: u32,
@@ -624,8 +626,9 @@ impl RequestId {
     }
 
     /// Validates if a user-specified input is a request ID.
-    /// By valid we mean if it is a hex string of a static length. This is done to ensure it can be part of a valid
-    /// path, without risk of path-traversal attacks in case the key request call is publicly accessible.
+    /// By valid we mean if it is a hex string of a static length. This is done to ensure it can be
+    /// part of a valid path, without risk of path-traversal attacks in case the key request
+    /// call is publicly accessible.
     pub fn is_valid(&self) -> bool {
         let hex = match hex::decode(self.to_string()) {
             Ok(hex) => hex,

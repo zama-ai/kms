@@ -123,10 +123,10 @@ pub mod cosmos {
             }
         }
         pub mod multisig {
+            include!("cosmos.crypto.multisig.rs");
             pub mod v1beta1 {
                 include!("cosmos.crypto.multisig.v1beta1.rs");
             }
-            include!("cosmos.crypto.multisig.rs");
         }
         pub mod secp256k1 {
             include!("cosmos.crypto.secp256k1.rs");

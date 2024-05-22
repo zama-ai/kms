@@ -27,6 +27,7 @@ pub mod client;
 pub mod consts;
 #[cfg(feature = "non-wasm")]
 pub mod util {
+    pub mod aws;
     pub mod file_handling;
     pub mod key_setup;
 }
@@ -34,6 +35,7 @@ pub mod cryptography {
     #[cfg(feature = "non-wasm")]
     pub mod central_kms;
     pub mod der_types;
+    pub mod nitro_enclave;
     #[cfg(feature = "non-wasm")]
     pub mod request;
     pub mod signcryption;
@@ -49,7 +51,7 @@ pub mod rpc {
     #[cfg(feature = "non-wasm")]
     pub mod central_rpc;
     #[cfg(feature = "non-wasm")]
-    pub mod kms_proxy_rpc;
+    pub mod central_rpc_proxy;
     pub mod rpc_types;
 }
 
@@ -85,14 +87,10 @@ pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) ->
 }
 
 #[cfg(feature = "non-wasm")]
-pub fn write_default_keys(path: &str) {
-    use crate::{
-        consts::{DEFAULT_KEY_ID, OTHER_DEFAULT_ID, TMP_PATH_PREFIX},
-        util::{
-            file_handling::read_element,
-            key_setup::{ensure_central_keys_exist, CentralizedTestingKeys},
-        },
-    };
+pub async fn write_default_keys(path: &str) {
+    use crate::consts::{DEFAULT_KEY_ID, OTHER_DEFAULT_ID, TMP_PATH_PREFIX};
+    use crate::util::file_handling::read_element;
+    use crate::util::key_setup::{ensure_central_keys_exist, CentralizedTestingKeys};
     use std::path::Path;
 
     // Check if all keys have already been written and return if so.
@@ -114,7 +112,8 @@ pub fn write_default_keys(path: &str) {
         path,
         &DEFAULT_KEY_ID.clone(),
         &OTHER_DEFAULT_ID.clone(),
-    );
+    )
+    .await;
     let central_keys: CentralizedTestingKeys = read_element(path).unwrap();
     let pks = central_keys.pub_fhe_keys.get(&DEFAULT_KEY_ID).unwrap();
     // Write down the seperate keys needed to run the server
@@ -152,7 +151,7 @@ pub fn write_default_keys(path: &str) {
 }
 
 #[cfg(feature = "non-wasm")]
-pub fn write_default_crs_store() {
+pub async fn write_default_crs_store() {
     use crate::consts::{DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CRS_ID};
     use util::key_setup::ensure_central_crs_store_exists;
 
@@ -161,23 +160,24 @@ pub fn write_default_crs_store() {
         DEFAULT_CENTRAL_CRS_PATH,
         DEFAULT_CENTRAL_KEYS_PATH,
         &DEFAULT_CRS_ID,
-    );
+    )
+    .await;
 }
 
 #[cfg(feature = "slow_tests")]
 #[cfg(test)]
 mod tests {
     #[cfg(test)]
+    #[tokio::test]
     #[ctor::ctor]
-    fn ensure_server_keys_crs_exist() {
+    async fn ensure_server_keys_crs_exist() {
         use crate::consts::DEFAULT_CENTRAL_KEYS_PATH;
-        use crate::write_default_crs_store;
-        use crate::write_default_keys;
+        use crate::{write_default_crs_store, write_default_keys};
 
         println!("Write default keys started...");
-        write_default_keys(DEFAULT_CENTRAL_KEYS_PATH);
+        write_default_keys(DEFAULT_CENTRAL_KEYS_PATH).await;
 
         println!("Write default CRS store started...");
-        write_default_crs_store();
+        write_default_crs_store().await;
     }
 }

@@ -22,7 +22,6 @@ use kms_lib::kms::{
 };
 use kms_lib::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
 use kms_lib::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
-use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -762,7 +761,8 @@ mod test {
             TEST_PARAM_PATH,
             TEST_THRESHOLD_KEYS_PATH,
             &TEST_KEY_ID.to_string(),
-        );
+        )
+        .await;
         let threshold_keys: ThresholdTestingKeys =
             read_element_async(format!("{TEST_THRESHOLD_KEYS_PATH}-1.bin"))
                 .await
@@ -772,20 +772,24 @@ mod test {
         let coordinator_handles = if slow {
             let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
             // Delete potentially existing CRS
-            let _ = pub_storage.delete_data(
-                &pub_storage
-                    .compute_url(&txn_id.to_hex(), &PubDataType::CRS.to_string())
-                    .unwrap(),
-            );
+            let _ = pub_storage
+                .delete_data(
+                    &pub_storage
+                        .compute_url(&txn_id.to_hex(), &PubDataType::CRS.to_string())
+                        .unwrap(),
+                )
+                .await;
             let mut priv_storage = Vec::new();
             for i in 1..=AMOUNT_PARTIES {
                 let cur_priv = FileStorage::new(&format!("priv-p{i}"));
                 // Delete potentially existing CRS info
-                let _ = pub_storage.delete_data(
-                    &cur_priv
-                        .compute_url(&txn_id.to_hex(), &PrivDataType::CrsInfo.to_string())
-                        .unwrap(),
-                );
+                let _ = pub_storage
+                    .delete_data(
+                        &cur_priv
+                            .compute_url(&txn_id.to_hex(), &PrivDataType::CrsInfo.to_string())
+                            .unwrap(),
+                    )
+                    .await;
                 priv_storage.push(cur_priv);
             }
             test_tools::setup_threshold_no_client(THRESHOLD as u8, pub_storage, priv_storage).await

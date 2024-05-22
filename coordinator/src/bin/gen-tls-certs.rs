@@ -1,14 +1,13 @@
 use anyhow::anyhow;
 use clap::Parser;
 use kms_lib::util::file_handling::write_bytes;
+use rcgen::BasicConstraints::Constrained;
 use rcgen::{
-    BasicConstraints::Constrained, Certificate, CertificateParams, DistinguishedName, DnType,
-    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
+    Certificate, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256,
 };
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-};
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy)]
 enum CertFileType {
@@ -115,7 +114,8 @@ fn create_coordinator_cert(coordinator_name: &str) -> anyhow::Result<(KeyPair, C
     distinguished_name.push(DnType::CommonName, coordinator_name);
     cp.distinguished_name = distinguished_name;
 
-    // set coordinator cert CA flag to true (only allow to sign core certs directly, without intermediate CAs)
+    // set coordinator cert CA flag to true (only allow to sign core certs directly, without
+    // intermediate CAs)
     cp.is_ca = IsCa::Ca(Constrained(1));
 
     // set coordinator cert Key Usage Purposes
