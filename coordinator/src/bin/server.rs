@@ -1,4 +1,4 @@
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand};
 use kms_lib::consts::{
     DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CRS_ID, DEFAULT_KEY_ID,
 };
@@ -26,42 +26,45 @@ pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
 
 #[derive(Parser)]
 struct Args {
+    #[clap(subcommand)]
     mode: Mode,
-    /// Enclave application CID for proxying
-    #[arg(long)]
-    #[clap(default_value = "vsock://16:5000")]
-    enclave_vsock: String,
-    /// AWS region that the enclave application must use
-    #[arg(long)]
-    #[clap(default_value = "eu-west-3")]
-    aws_region: String,
-    /// TCP-vsock proxy for AWS S3
-    #[clap(default_value = "https://localhost:7000")]
-    aws_s3_proxy: String,
-    /// TCP-vsock proxy for AWS KMS
-    #[clap(default_value = "https://localhost:8000")]
-    aws_kms_proxy: String,
-    /// S3 bucket for storing encrypted key blobs
-    #[arg(long)]
-    #[clap(default_value = "zama_kms_blobs")]
-    blob_bucket: String,
-    /// AWS KMS symmetric key ID for encrypting key blobs
-    #[arg(long)]
-    #[clap(default_value = "zama_kms_root_key")]
-    root_key_id: String,
     /// Server URL without specifying protocol (e.g. 0.0.0.0:50051)
     #[clap(default_value = "http://0.0.0.0:50051")]
     url: String,
 }
 
-#[derive(Clone, ValueEnum)]
+#[derive(Clone, Subcommand)]
 enum Mode {
     /// Do not use the Nitro secure enclave to protect private keys
     Dev,
     /// Run as a gRPC proxy for the Nitro secure enclave application
-    Proxy,
+    Proxy {
+        /// Enclave application CID for proxying
+        #[arg(long)]
+        #[clap(default_value = "vsock://16:5000")]
+        enclave_vsock: String,
+    },
     /// Run as a Nitro secure enclave application
-    Enclave,
+    Enclave {
+        /// S3 bucket for storing encrypted key blobs
+        #[arg(long)]
+        #[clap(default_value = "zama_kms_blobs")]
+        blob_bucket: String,
+        /// AWS KMS symmetric key ID for encrypting key blobs
+        #[arg(long)]
+        #[clap(default_value = "zama_kms_root_key")]
+        root_key_id: String,
+        /// AWS region that the enclave application must use
+        #[arg(long)]
+        #[clap(default_value = "eu-west-3")]
+        aws_region: String,
+        /// TCP-vsock proxy for AWS S3
+        #[clap(default_value = "https://localhost:7000")]
+        aws_s3_proxy: String,
+        /// TCP-vsock proxy for AWS KMS
+        #[clap(default_value = "https://localhost:8000")]
+        aws_kms_proxy: String,
+    },
 }
 
 // Starts a server where the first argument is the URL and following arguments are key handles of
@@ -86,6 +89,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .port_or_known_default()
         .ok_or(anyhow::anyhow!("Invalid port in URL."))?;
     let socket: SocketAddr = format!("{}:{}", host_str, port).parse()?;
+
     match args.mode {
         Mode::Dev => {
             if !Path::new(DEFAULT_CENTRAL_KEYS_PATH).exists() {
@@ -105,25 +109,31 @@ async fn main() -> Result<(), anyhow::Error> {
             let priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
             kms_server_handle(socket, pub_storage, priv_storage).await
         }
-        Mode::Proxy => kms_proxy_server_handle(socket, &args.enclave_vsock).await,
-        Mode::Enclave => {
+        Mode::Proxy { enclave_vsock } => kms_proxy_server_handle(socket, &enclave_vsock).await,
+        Mode::Enclave {
+            aws_region,
+            aws_s3_proxy,
+            aws_kms_proxy,
+            blob_bucket,
+            root_key_id,
+        } => {
             // set up AWS API
-            let s3_client = build_s3_client(args.aws_region.clone(), args.aws_s3_proxy).await;
-            let aws_kms_client = build_aws_kms_client(args.aws_region, args.aws_kms_proxy).await;
+            let s3_client = build_s3_client(aws_region.clone(), aws_s3_proxy).await;
+            let aws_kms_client = build_aws_kms_client(aws_region, aws_kms_proxy).await;
             let enclave_keys = gen_nitro_enclave_keys()?;
 
             // fetch key blobs
             tracing::info!("Fetching the FHE keys");
             let fhe_sk_blob = s3_get_blob(
                 &s3_client,
-                &args.blob_bucket,
+                &blob_bucket,
                 format!("{}-private.bin", (*DEFAULT_KEY_ID).clone()).as_str(),
             )
             .await?;
             let sig_sk: PrivateSigKey =
-                s3_get_blob(&s3_client, &args.blob_bucket, SIG_SK_BLOB_KEY).await?;
+                s3_get_blob(&s3_client, &blob_bucket, SIG_SK_BLOB_KEY).await?;
             let sig_pk: PublicSigKey =
-                s3_get_blob(&s3_client, &args.blob_bucket, SIG_PK_BLOB_KEY).await?;
+                s3_get_blob(&s3_client, &blob_bucket, SIG_PK_BLOB_KEY).await?;
 
             // decrypt the encrypted FHE private key
             tracing::info!("Decrypting the FHE private key");
@@ -147,8 +157,8 @@ async fn main() -> Result<(), anyhow::Error> {
             let priv_storage = EnclaveStorage {
                 s3_client,
                 aws_kms_client,
-                blob_bucket: args.blob_bucket,
-                root_key_id: args.root_key_id,
+                blob_bucket,
+                root_key_id,
                 enclave_keys,
             };
             kms_server_handle(socket, pub_storage, priv_storage).await

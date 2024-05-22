@@ -32,6 +32,9 @@ pub trait PublicStorageReader {
 
     /// Return all URLs stored of a specific data type
     async fn all_urls(&self, data_type: &str) -> anyhow::Result<HashMap<String, Url>>;
+
+    /// Output some information on the storage instance.
+    fn info(&self) -> String;
 }
 
 // Trait for KMS public storage reading and writing
@@ -219,6 +222,10 @@ impl PublicStorageReader for FileStorage {
         }
         Ok(res)
     }
+
+    fn info(&self) -> String {
+        format!("file storage with root_path \'{:?}\'", self.root_dir().ok())
+    }
 }
 
 #[tonic::async_trait]
@@ -332,6 +339,10 @@ impl PublicStorageReader for RamStorage {
             }
         }
         Ok(res)
+    }
+
+    fn info(&self) -> String {
+        "memory storage".to_string()
     }
 }
 

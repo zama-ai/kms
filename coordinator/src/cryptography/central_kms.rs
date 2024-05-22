@@ -509,7 +509,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
         let sk = some_or_err(
             sks.values().collect_vec().first(),
-            "There is no private signing key stored".to_string(),
+            format!(
+                "There is no private signing key stored in {}",
+                private_storage.info()
+            ),
         )?
         .to_owned()
         .to_owned();

@@ -99,6 +99,10 @@ impl PublicStorageReader for EnclaveStorage {
         }
         Ok(urls)
     }
+
+    fn info(&self) -> String {
+        format!("enclave storage with bucket {}", self.blob_bucket)
+    }
 }
 
 #[tonic::async_trait]

@@ -87,6 +87,8 @@ tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "083c06814464cf8f
 
 [dev-dependencies]
 ctor = "~0.2"
+assert_cmd = "2.0.14"
+sysinfo = "0.30.12"
 
 [build-dependencies]
 tonic-build = "0.10"

@@ -86,6 +86,7 @@ pub(crate) fn anyhow_error_and_warn_log<S: AsRef<str> + fmt::Display>(msg: S) ->
     anyhow!("Warning in {}: {}", Location::caller(), msg)
 }
 
+/// When generating keys, [DEFAULT_PARAM_PATH] must exist.
 #[cfg(feature = "non-wasm")]
 pub async fn write_default_keys(path: &str) {
     use crate::consts::{DEFAULT_KEY_ID, OTHER_DEFAULT_ID, TMP_PATH_PREFIX};
@@ -107,6 +108,7 @@ pub async fn write_default_keys(path: &str) {
         println!("Keys already exist. Done executing write_default_keys without the need for writing anything.");
         return;
     }
+
     ensure_central_keys_exist(
         DEFAULT_PARAM_PATH,
         path,
