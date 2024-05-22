@@ -50,7 +50,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tfhe::CompactPublicKey;
-use tracing::instrument;
+use tracing::{instrument, Instrument};
 
 ///Used to store results of decryption
 #[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
@@ -129,7 +129,7 @@ impl GrpcChoreography {
 
 #[async_trait]
 impl Choreography for GrpcChoreography {
-    #[instrument(skip(self, request))]
+    #[instrument(name = "DKG-ENDPOINT", skip(self, request))]
     async fn preproc(
         &self,
         request: tonic::Request<PreprocRequest>,
@@ -200,19 +200,25 @@ impl Choreography for GrpcChoreography {
                 BaseSessionStruct::new(params.clone(), networking, AesRng::from_entropy()).unwrap()
             })
             .collect_vec();
+
         match params {
             DKGParams::WithoutSnS(_) => {
-                tokio::spawn(async move {
+                let my_future = || async move {
                     let sessions = create_sessions(base_sessions).await;
+
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
                         PreprocessingOrchestrator::<ResiduePoly64>::new(factory, params).unwrap()
                     };
-
-                    let (mut sessions, mut preproc) = orchestrator
-                        .orchestrate_small_session_dkg_processing(sessions)
-                        .unwrap();
+                    let (mut sessions, mut preproc) = {
+                        //let _enter = tracing::info_span!("orchestrate").entered();
+                        orchestrator
+                            .orchestrate_small_session_dkg_processing(sessions)
+                            .instrument(tracing::info_span!("orchestrate"))
+                            .await
+                            .unwrap()
+                    };
 
                     //TODO: We dont do anything with the keys,
                     //At some point this should replace the keygen endpoint,
@@ -221,37 +227,39 @@ impl Choreography for GrpcChoreography {
                     distributed_keygen_z64(&mut sessions[0], preproc.as_mut(), params)
                         .await
                         .unwrap()
-                });
+                };
+                tokio::spawn(my_future().instrument(tracing::Span::current()));
             }
             DKGParams::WithSnS(_) => {
-                tokio::spawn(async move {
+                let my_future = || async move {
                     let sessions = create_sessions(base_sessions).await;
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
                         PreprocessingOrchestrator::<ResiduePoly128>::new(factory, params).unwrap()
                     };
-
-                    let (mut sessions, mut preproc) = orchestrator
-                        .orchestrate_small_session_dkg_processing(sessions)
-                        .unwrap();
-
+                    let (mut sessions, mut preproc) = {
+                        orchestrator
+                            .orchestrate_small_session_dkg_processing(sessions)
+                            .await
+                            .unwrap()
+                    };
                     //TODO: We dont do anything with the keys,
                     //At some point this should replace the keygen endpoint,
                     //but probably best to sync with kms ppl
                     distributed_keygen_z128(&mut sessions[0], preproc.as_mut(), params)
                         .await
                         .unwrap()
-                });
+                };
+                tokio::spawn(my_future().instrument(tracing::Span::current()));
             }
         }
-
         Ok(tonic::Response::new(PreprocResponse {}))
     }
 
     ///NOTE: For now we only do threshold decrypt with Ctxt lifting, but we may want to propose both options
     /// (that's why we have setup_store contain a map for both options)
-    #[instrument(skip(self, request))]
+    #[instrument(name = "DDEC ENDPOINT", skip(self, request))]
     async fn threshold_decrypt(
         &self,
         request: tonic::Request<DecryptionRequest>,
@@ -353,6 +361,7 @@ impl Choreography for GrpcChoreography {
                 let base_session =
                     BaseSessionStruct::new(params, Arc::clone(&networking), AesRng::from_entropy())
                         .unwrap();
+                let current_span = tracing::Span::current();
                 match mode {
                     DecryptionMode::PRSSDecrypt => {
                         let prss_setup =
@@ -371,55 +380,61 @@ impl Choreography for GrpcChoreography {
                             )
                         })?;
 
-                        tokio::spawn(async move {
-                            let mut protocol = Small::new(session.clone());
-                            let (results, elapsed_time) = decrypt_using_noiseflooding(
-                                &mut session,
-                                &mut protocol,
-                                &ck,
-                                ct,
-                                &setup_info.secret_key_share,
-                                mode,
-                                own_identity,
-                            )
-                            .await
-                            .unwrap();
-                            result_stores
-                                .get(&session_id)
-                                .map(|res| {
-                                    res.set(ComputationOutputs {
-                                        outputs: results,
-                                        elapsed_time: Some(elapsed_time),
-                                    });
-                                })
-                                .expect("session disappeared unexpectedly");
-                        });
+                        tokio::spawn(
+                            async move {
+                                let mut protocol = Small::new(session.clone());
+                                let (results, elapsed_time) = decrypt_using_noiseflooding(
+                                    &mut session,
+                                    &mut protocol,
+                                    &ck,
+                                    ct,
+                                    &setup_info.secret_key_share,
+                                    mode,
+                                    own_identity,
+                                )
+                                .await
+                                .unwrap();
+                                result_stores
+                                    .get(&session_id)
+                                    .map(|res| {
+                                        res.set(ComputationOutputs {
+                                            outputs: results,
+                                            elapsed_time: Some(elapsed_time),
+                                        });
+                                    })
+                                    .expect("session disappeared unexpectedly");
+                            }
+                            .instrument(current_span),
+                        );
                     }
                     DecryptionMode::LargeDecrypt => {
                         let mut session = LargeSession::new(base_session);
-                        tokio::spawn(async move {
-                            let mut protocol = Large::new(session.clone());
-                            let (results, elapsed_time) = decrypt_using_noiseflooding(
-                                &mut session,
-                                &mut protocol,
-                                &ck,
-                                ct,
-                                &setup_info.secret_key_share,
-                                mode,
-                                own_identity,
-                            )
-                            .await
-                            .unwrap();
-                            result_stores
-                                .get(&session_id)
-                                .map(|res| {
-                                    res.set(ComputationOutputs {
-                                        outputs: results,
-                                        elapsed_time: Some(elapsed_time),
-                                    });
-                                })
-                                .expect("session disappeared unexpectedly");
-                        });
+                        tokio::spawn(
+                            async move {
+                                let mut protocol = Large::new(session.clone());
+                                let (results, elapsed_time) = decrypt_using_noiseflooding(
+                                    &mut session,
+                                    &mut protocol,
+                                    &ck,
+                                    ct,
+                                    &setup_info.secret_key_share,
+                                    mode,
+                                    own_identity,
+                                )
+                                .await
+                                .unwrap();
+                                result_stores
+                                    .get(&session_id)
+                                    .map(|res| {
+                                        res.set(ComputationOutputs {
+                                            outputs: results,
+                                            elapsed_time: Some(elapsed_time),
+                                        });
+                                    })
+                                    .expect("session disappeared unexpectedly");
+                            }
+                            .instrument(current_span),
+                        );
                     }
                     DecryptionMode::BitDecSmallDecrypt => todo!(),
                     DecryptionMode::BitDecLargeDecrypt => todo!(),
@@ -637,6 +652,7 @@ impl Choreography for GrpcChoreography {
         }))
     }
 
+    #[instrument(name = "CRS ENDPONT", skip(self, request))]
     async fn crs_ceremony(
         &self,
         request: tonic::Request<CrsCeremonyRequest>,
@@ -697,31 +713,34 @@ impl Choreography for GrpcChoreography {
                 })?;
 
                 let crs_store = Arc::clone(&self.data.crs_store);
+                let current_span = tracing::Span::current();
+                tokio::spawn(
+                    async move {
+                        let crs_start_timer = Instant::now();
 
-                tokio::spawn(async move {
-                    let crs_start_timer = Instant::now();
+                        let real_ceremony = RealCeremony::default();
+                        let pp = real_ceremony
+                            .execute::<Z64, _, _>(&mut base_session, request.witness_dim as usize)
+                            .await
+                            .unwrap();
 
-                    let real_ceremony = RealCeremony::default();
-                    let pp = real_ceremony
-                        .execute::<Z64, _, _>(&mut base_session, request.witness_dim as usize)
-                        .await
-                        .unwrap();
+                        let crs_stop_timer = Instant::now();
+                        let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
+                        tracing::info!(
+                            "CRS stored. CRS ceremony time was {:?} ms",
+                            (elapsed_time).as_millis()
+                        );
 
-                    let crs_stop_timer = Instant::now();
-                    let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
-                    tracing::info!(
-                        "CRS stored. CRS ceremony time was {:?} ms",
-                        (elapsed_time).as_millis()
-                    );
-
-                    // store the CRS
-                    crs_store
-                        .get(&epoch_id)
-                        .map(|result_cell| {
-                            result_cell.set((pp, elapsed_time));
-                        })
-                        .expect("session disappeared unexpectedly");
-                });
+                        // store the CRS
+                        crs_store
+                            .get(&epoch_id)
+                            .map(|result_cell| {
+                                result_cell.set((pp, elapsed_time));
+                            })
+                            .expect("session disappeared unexpectedly");
+                    }
+                    .instrument(current_span),
+                );
 
                 Ok(tonic::Response::new(CrsCeremonyResponse {}))
             }

@@ -55,7 +55,7 @@ args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "-
 
 
 [tasks.choreo]
-env = { "RUST_LOG" = "info", "RUST_BACKTRACE" = "1"}
+env = { "RUN_MODE" = "choreo", "RUST_LOG" = "info", "RUST_BACKTRACE" = "1"}
 run_task = { name = ["choreo-with-dkg", "choreo-without-dkg"] }
 
 

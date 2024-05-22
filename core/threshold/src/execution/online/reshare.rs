@@ -23,6 +23,7 @@ use crate::{
 use itertools::{izip, Itertools};
 use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
+use tracing::instrument;
 use zeroize::Zeroize;
 
 // this is the L_i in the spec
@@ -54,6 +55,10 @@ fn delta0i<Z: BaseRing>(
     Ok(inv_denom * lagrange_numerators[one_based - 1].eval(&zero))
 }
 
+#[instrument(
+    name = "ReShare (same sets)",
+    skip(preproc128, preproc64, session, input_share)
+)]
 pub async fn reshare_sk_same_sets<
     Rnd: Rng + CryptoRng,
     Ses: BaseSessionHandles<Rnd>,

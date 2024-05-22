@@ -218,9 +218,12 @@ fn test_dkg_orchestrator_large(
                 PreprocessingOrchestrator::<ResiduePoly64>::new(redis_factory.as_mut(), params)
                     .unwrap();
 
-            let (mut sessions, mut preproc) = orchestrator
-                .orchestrate_large_session_dkg_processing(sessions)
-                .unwrap();
+            let (mut sessions, mut preproc) = rt_handle.block_on(async {
+                orchestrator
+                    .orchestrate_large_session_dkg_processing(sessions)
+                    .await
+                    .unwrap()
+            });
 
             sessions.sort_by_key(|session| session.session_id());
             let dkg_session = sessions.get_mut(0).unwrap();

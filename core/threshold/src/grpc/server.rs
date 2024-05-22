@@ -91,10 +91,7 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
     let (mut core_health_reporter, core_health_service) = tonic_health::server::health_reporter();
     core_health_reporter.set_serving::<GrpcServer>().await;
 
-    let core_grpc_layer = tower::ServiceBuilder::new()
-        .timeout(*NETWORK_TIMEOUT_LONG)
-        .layer(TraceLayer::new_for_grpc().make_span_with(make_span))
-        .map_request(accept_trace);
+    let core_grpc_layer = tower::ServiceBuilder::new().timeout(*NETWORK_TIMEOUT_LONG);
 
     let core_router = make_server(true)?
         .layer(core_grpc_layer)

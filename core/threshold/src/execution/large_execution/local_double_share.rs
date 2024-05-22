@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use tracing::instrument;
 
 pub struct DoubleShares<Z> {
     pub(crate) share_t: Vec<Z>,
@@ -51,6 +52,7 @@ pub struct RealLocalDoubleShare<C: Coinflip, S: ShareDispute> {
 
 #[async_trait]
 impl<C: Coinflip, S: ShareDispute> LocalDoubleShare for RealLocalDoubleShare<C, S> {
+    #[instrument(name="LocalDoubleShare",skip(self,session,secrets),fields(session_id = ?session.session_id(),own_identity=?session.own_identity(),batch_size=?secrets.len()))]
     async fn execute<
         Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert,
         R: Rng + CryptoRng,

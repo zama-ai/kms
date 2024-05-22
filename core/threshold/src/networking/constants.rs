@@ -22,5 +22,5 @@ lazy_static! {
     pub(crate) static ref NETWORK_TIMEOUT_LONG: Duration = Duration::from_secs(60);
 
     // max message size for decoding - enconding message on gRPC protocol
-    pub(crate) static ref MAX_EN_DECODE_MESSAGE_SIZE: usize = 1024 * 1024 * 1024;
+    pub(crate) static ref MAX_EN_DECODE_MESSAGE_SIZE: usize = 2 * 1024 * 1024 * 1024;
 }

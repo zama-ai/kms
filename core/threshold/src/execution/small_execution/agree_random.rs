@@ -22,6 +22,7 @@ use sha3::{
     Shake256,
 };
 use std::collections::HashMap;
+use tracing::instrument;
 
 #[async_trait]
 pub trait AgreeRandom {
@@ -278,6 +279,7 @@ async fn agree_random_communication<Z: Ring, R: Rng + CryptoRng, S: BaseSessionH
 
 #[async_trait]
 impl AgreeRandom for RealAgreeRandom {
+    #[instrument(name = "AgreeRandom", skip(session),fields(session_id = ?session.session_id(),own_identity = ?session.own_identity()))]
     async fn agree_random<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {
@@ -324,6 +326,7 @@ pub struct RealAgreeRandomWithAbort {}
 
 #[async_trait]
 impl AgreeRandom for RealAgreeRandomWithAbort {
+    #[instrument(name="AgreeRandom-w-Abort",skip(session),fields(session_id = ?session.session_id(),own_identity = ?session.own_identity()))]
     async fn agree_random<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Vec<PrfKey>> {

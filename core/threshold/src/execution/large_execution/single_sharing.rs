@@ -12,6 +12,7 @@ use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
+use tracing::instrument;
 
 #[async_trait]
 pub trait SingleSharing<Z: Ring>: Send + Default + Clone {
@@ -41,6 +42,7 @@ pub struct RealSingleSharing<Z, S: LocalSingleShare> {
 impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> SingleSharing<Z>
     for RealSingleSharing<Z, S>
 {
+    #[instrument(name="SingleSharing.Init",skip(self,session),fields(session_id = ?session.session_id(),own_identity=?session.own_identity(), batch_size = ?l))]
     async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -72,6 +74,9 @@ impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> 
         }
         Ok(())
     }
+
+    //Note, this may be called too often, might need to put telemetry where its used in a batched way
+    #[instrument(name="SingleSharing.Next",skip(self,session),fields(session_id = ?session.session_id(),own_identity=?session.own_identity()))]
     async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,

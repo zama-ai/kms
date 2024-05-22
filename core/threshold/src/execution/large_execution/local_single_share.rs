@@ -21,6 +21,7 @@ use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use tracing::instrument;
 
 #[async_trait]
 pub trait LocalSingleShare: Send + Sync + Default + Clone {
@@ -65,6 +66,7 @@ pub struct RealLocalSingleShare<C: Coinflip, S: ShareDispute> {
 
 #[async_trait]
 impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, S> {
+    #[instrument(name="LocalSingleShare",skip(self,session,secrets),fields(session_id = ?session.session_id(),own_identity=?session.own_identity(),batch_size = ?secrets.len()))]
     async fn execute<
         Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect,
         R: Rng + CryptoRng,

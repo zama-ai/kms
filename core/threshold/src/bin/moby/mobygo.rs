@@ -375,6 +375,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             retrieve_crs_command(&runtime, &conf).await?;
         }
     };
-
+    opentelemetry::global::shutdown_tracer_provider();
     Ok(())
 }

@@ -4,6 +4,7 @@ use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tokio::{task::JoinSet, time::error::Elapsed};
+use tracing::instrument;
 
 use crate::execution::communication::broadcast::broadcast_from_all_w_corruption;
 use crate::{
@@ -192,6 +193,7 @@ pub struct RealVss {}
 
 #[async_trait]
 impl Vss for RealVss {
+    #[instrument(name="VSS", skip(self,session, secrets),fields(session_id = ?session.session_id(),own_identity = ?session.own_identity()), batch_size= ?secrets.len())]
     async fn execute_many<Z: Ring + RingEmbed, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,

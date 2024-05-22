@@ -226,6 +226,8 @@ mod tests {
         env::set_var("DDEC_CERTPATHS_KEY", "/path/to/key");
         env::set_var("DDEC_CERTPATHS_CALIST", "/path/one,/path/two");
         env::set_var("DDEC_CHOREO_USE_TLS", "true");
+        env::set_var("DDEC_TRACING_SERVICENAME", "moby-p3");
+        env::set_var("DDEC_TRACING_ENDPOINT", "moby-p3-endpoint");
         let party_conf: PartyConf = Settings::builder()
             .path("src/tests/config/ddec_test")
             .build()
@@ -237,5 +239,6 @@ mod tests {
         assert_eq!(bundle.key, "/path/to/key");
         assert_eq!(bundle.calist, "/path/one,/path/two");
         assert!(party_conf.choreo_use_tls);
+        assert_eq!(party_conf.tracing.unwrap().servicename, "moby-p3");
     }
 }

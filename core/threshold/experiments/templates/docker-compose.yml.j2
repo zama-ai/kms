@@ -15,8 +15,8 @@ services:
       - DDEC_PROTOCOL_HOST_PORT=50000
       - DDEC_PROTOCOL_HOST_ID={{ i+1 }}
       - DDEC_PROTOCOL_HOST_CHOREOPORT=60000
-      - DDEC_TRACING_SERVICE_NAME=moby-party-{{ i+1 }}
-      - DDEC_TRACING_ENDPOINT=http://jaeger:4317
+      - DDEC_TRACING_SERVICENAME=moby-party-{{ i+1 }}
+      - DDEC_TRACING_ENDPOINT=http://otel-collector:4317
       - DDEC_REDIS_HOST=redis://redis-p{{ i+1 }}:6379
       - DDEC_CERTPATHS_CERT=/app/ddec/certs/cert_p{{ i+1 }}-core1.pem
       - DDEC_CERTPATHS_KEY=/app/ddec/certs/key_p{{ i+1 }}-core1.pem
@@ -43,7 +43,18 @@ services:
     image: jaegertracing/all-in-one:${JAEGER_VERSION:-latest}
     ports:
       - "16686:16686"
-      - "4317:4317"
     environment:
       - LOG_LEVEL=error
-
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib
+    volumes:
+      - ../experiments/templates/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+      - ../temp/telemetry/:/exports
+    ports:
+      - 1888:1888 # pprof extension
+      - 8888:8888 # Prometheus metrics exposed by the Collector
+      - 8889:8889 # Prometheus exporter metrics
+      - 13133:13133 # health_check extension
+      - 4317:4317 # OTLP gRPC receiver
+      - 4318:4318 # OTLP http receiver
+      - 55679:55679 # zpages extension

@@ -2,7 +2,7 @@ use anyhow::Context;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use std::{cmp::min, collections::HashMap};
-use tracing::instrument;
+use tracing::{info_span, instrument};
 
 use super::{agree_random::AgreeRandom, prf::PRSSConversions};
 use crate::error::error_handler::log_error_wrapper;
@@ -41,7 +41,6 @@ where
 {
     /// Initializes the preprocessing for a new epoch, by preprocessing a batch
     /// NOTE: if None is passed for the option for `batch_sizes`, then the default values are used.
-    #[instrument(skip(session), fields(session_id= ?session.session_id(), own_identity = ?session.own_identity()))]
     pub async fn init<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         batch_sizes: BatchParams,
@@ -64,7 +63,9 @@ where
             )
             .await?;
         }
-        res.next_random_batch(session).await?;
+        if batch.randoms > 0 {
+            res.next_random_batch(session).await?;
+        }
         Ok(res)
     }
 
@@ -72,18 +73,23 @@ where
     /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
     /// If corruption occurs during the process then the corrupt parties are added to the corrupt set in `session` and the method
     /// automatically retries to construct any missing triples, to ensure a full batch has been constructed before returning.
+    #[instrument(name="MPC_Small.GenRandom",skip(self,session), fields(session_id= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?self.batch_sizes.randoms))]
     async fn next_random_batch<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         &mut self,
         session: &mut Ses,
     ) -> anyhow::Result<()> {
         let my_role = session.my_role()?;
-        let mut res = Vec::with_capacity(self.batch_sizes.randoms);
-        for _ in 0..self.batch_sizes.randoms {
-            res.push(Share::new(
-                my_role,
-                session.prss_as_mut().prss_next(my_role)?,
-            ));
-        }
+        let prss_span = info_span!("PRSS.Next", batch_size = self.batch_sizes.randoms);
+        let res = prss_span.in_scope(|| {
+            let mut res = Vec::with_capacity(self.batch_sizes.randoms);
+            for _ in 0..self.batch_sizes.randoms {
+                res.push(Share::new(
+                    my_role,
+                    session.prss_as_mut().prss_next(my_role)?,
+                ));
+            }
+            Ok::<_, anyhow::Error>(res)
+        })?;
         self.elements.append_randoms(res);
         Ok(())
     }
@@ -92,6 +98,7 @@ where
     /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
     /// If corruption occurs during the process then the corrupt parties are added to the corrupt set in `session` and the method
     /// automatically retries to construct any missing triples, to ensure a full batch has been constructed before returning.
+    #[instrument(name="MPC_Small.GenTriples",skip(self,session), fields(session_id= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = amount))]
     async fn next_triple_batch<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         &mut self,
         session: &mut Ses,
@@ -292,6 +299,7 @@ where
         Ok(res)
     }
 
+    #[instrument(name="PRSS.Next",skip(session,amount),fields(batch_size=?amount))]
     fn prss_list<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         amount: usize,
@@ -304,6 +312,7 @@ where
         Ok(vec_prss)
     }
 
+    #[instrument(name="PRZS.Next",skip(session,amount),fields(batch_size=?amount))]
     fn przs_list<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         amount: usize,

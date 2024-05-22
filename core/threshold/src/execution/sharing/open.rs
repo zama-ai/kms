@@ -137,6 +137,7 @@ pub async fn robust_open_to_all<
         _ => Ok(None),
     }
 }
+
 /// Try to reconstruct to all the secret which corresponds to the provided share.
 ///
 /// Inputs:
@@ -146,7 +147,7 @@ pub async fn robust_open_to_all<
 ///
 /// Output:
 /// - The reconstructed secrets if reconstruction for all was possible
-#[instrument(skip(session,shares),fields(session_id= ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="RobustOpen",skip(session,shares),fields(session_id= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
 pub async fn robust_opens_to_all<
     Z: Ring + ErrorCorrect,
     R: Rng + CryptoRng,
@@ -156,39 +157,50 @@ pub async fn robust_opens_to_all<
     shares: &[Z],
     degree: usize,
 ) -> anyhow::Result<Option<Vec<Z>>> {
-    let own_role = session.my_role()?;
+    let chunk_size = super::constants::MAX_MESSAGE_BYTE_SIZE / (Z::BIT_LENGTH >> 3);
 
-    send_to_all(
-        session,
-        &own_role,
-        NetworkValue::VecRingValue(shares.to_vec()),
-    )
-    .await?;
+    let mut result = Vec::new();
+    for shares in shares.chunks(chunk_size) {
+        let own_role = session.my_role()?;
 
-    let mut jobs = JoinSet::<Result<(Role, anyhow::Result<Vec<Z>>), Elapsed>>::new();
-    //Note: we give the set of corrupt parties as the non_answering_parties argument
-    //Thus generic_receive_from_all will not receive from corrupt parties.
-    generic_receive_from_all(
-        &mut jobs,
-        session,
-        &own_role,
-        Some(session.corrupt_roles()),
-        |msg, _id| match msg {
-            NetworkValue::VecRingValue(v) => Ok(v),
-            _ => Err(anyhow_error_and_log(
-                "Received something else than a Ring value in robust open to all".to_string(),
-            )),
-        },
-    )?;
+        send_to_all(
+            session,
+            &own_role,
+            NetworkValue::VecRingValue(shares.to_vec()),
+        )
+        .await?;
 
-    let mut sharings = shares
-        .iter()
-        .map(|share| ShamirSharings::create(vec![Share::new(own_role, *share)]))
-        .collect_vec();
-    //Note: We are not even considering shares for the already known corrupt parties,
-    //thus the effective threshold at this point is the "real" threshold - the number of known corrupt parties
-    let threshold = session.threshold() as usize - session.corrupt_roles().len();
-    try_reconstruct_from_shares(session, &mut sharings, degree, threshold, &mut jobs).await
+        let mut jobs = JoinSet::<Result<(Role, anyhow::Result<Vec<Z>>), Elapsed>>::new();
+        //Note: we give the set of corrupt parties as the non_answering_parties argument
+        //Thus generic_receive_from_all will not receive from corrupt parties.
+        generic_receive_from_all(
+            &mut jobs,
+            session,
+            &own_role,
+            Some(session.corrupt_roles()),
+            |msg, _id| match msg {
+                NetworkValue::VecRingValue(v) => Ok(v),
+                _ => Err(anyhow_error_and_log(
+                    "Received something else than a Ring value in robust open to all".to_string(),
+                )),
+            },
+        )?;
+
+        let mut sharings = shares
+            .iter()
+            .map(|share| ShamirSharings::create(vec![Share::new(own_role, *share)]))
+            .collect_vec();
+        //Note: We are not even considering shares for the already known corrupt parties,
+        //thus the effective threshold at this point is the "real" threshold - the number of known corrupt parties
+        let threshold = session.threshold() as usize - session.corrupt_roles().len();
+        match try_reconstruct_from_shares(session, &mut sharings, degree, threshold, &mut jobs)
+            .await?
+        {
+            Some(res) => result.extend(res),
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(result))
 }
 
 pub async fn robust_open_to<

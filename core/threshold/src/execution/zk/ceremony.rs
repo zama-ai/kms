@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg};
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe_zk_pok::{curve_api::bls12_446 as curve, proofs::pke};
+use tracing::instrument;
 use zeroize::Zeroize;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
@@ -418,6 +419,7 @@ pub struct RealCeremony {}
 
 #[async_trait]
 impl Ceremony for RealCeremony {
+    #[instrument(name = "CRS-Ceremony", skip_all)]
     async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         &self,
         session: &mut S,

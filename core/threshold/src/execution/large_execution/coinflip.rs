@@ -2,6 +2,7 @@ use aes_prng::AesRng;
 use async_trait::async_trait;
 use rand::SeedableRng;
 use rand::{CryptoRng, Rng};
+use tracing::instrument;
 
 use super::vss::Vss;
 use crate::algebra::structure_traits::{ErrorCorrect, Ring, RingEmbed};
@@ -50,6 +51,7 @@ impl<V: Vss> RealCoinflip<V> {
 
 #[async_trait]
 impl<V: Vss> Coinflip for RealCoinflip<V> {
+    #[instrument(name="CoinFlip",skip(self,session),fields(session_id = ?session.session_id(), own_identity=?session.own_identity()))]
     async fn execute<Z, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &self,
         session: &mut L,

@@ -14,7 +14,7 @@ use crate::{
 };
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
-use tracing::instrument;
+use tracing::{info_span, instrument, Instrument};
 
 pub struct LargePreprocessing<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>> {
     triple_batch_size: usize,
@@ -33,19 +33,22 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
     /// - batch size for single and double sharing
     /// - batch size for triple generation
     /// - batch size for random generation
-    #[instrument(skip(session, ssh, dsh), fields(session_id= ?session.session_id(), own_identity = ?session.own_identity()))]
     pub async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         session: &mut L,
         batch_sizes: BatchParams,
         mut ssh: S,
         mut dsh: D,
     ) -> anyhow::Result<Self> {
+        let init_span = info_span!("MPC_Large.Init");
         //Init single sharing
         ssh.init(session, 2 * batch_sizes.triples + batch_sizes.randoms)
+            .instrument(init_span.clone())
             .await?;
 
         //Init double sharing
-        dsh.init(session, batch_sizes.triples).await?;
+        dsh.init(session, batch_sizes.triples)
+            .instrument(init_span)
+            .await?;
 
         //We always want the session to use in-memory storage, it's up to higher level process (e.g. orchestrator)
         //to maybe decide to store data somewhere else
@@ -58,14 +61,19 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
             elements: base_preprocessing,
         };
 
-        large_preproc.next_triple_batch(session).await?;
-        large_preproc.next_random_batch(session).await?;
+        if batch_sizes.triples > 0 {
+            large_preproc.next_triple_batch(session).await?;
+        }
+        if batch_sizes.randoms > 0 {
+            large_preproc.next_random_batch(session).await?;
+        }
 
         Ok(large_preproc)
     }
 
     /// Constructs a new batch of triples and appends this to the internal triple storage.
     /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
+    #[instrument(name="MPC_Large.GenTriples",skip(self,session), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity(), ?batch_size=self.triple_batch_size))]
     async fn next_triple_batch<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,
@@ -125,6 +133,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
 
     /// Computes a new batch of random values and appends the new batch to the the existing stash of prepreocessing random values.
     /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
+    #[instrument(name="MPC_Large.GenRandom",skip(self,session), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity(), batch_size = ?self.random_batch_size))]
     async fn next_random_batch<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,

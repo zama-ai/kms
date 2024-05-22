@@ -745,7 +745,9 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 PreprocessingOrchestrator::<ResiduePoly128>::new(factory, dkg_params).unwrap()
             };
             tracing::info!("Starting Preproc Orchestration on P[{my_id}]");
-            let preproc_result = orchestrator.orchestrate_small_session_dkg_processing(sessions);
+            let preproc_result = orchestrator
+                .orchestrate_small_session_dkg_processing(sessions)
+                .await;
             let preproc_handle_result = match preproc_result {
                 Ok((_, preproc_handle)) => Ok(preproc_handle),
                 Err(e) => Err(e),

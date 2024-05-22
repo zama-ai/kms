@@ -29,6 +29,7 @@ fn commitment_inner_hash(msg: &[u8], o: &Opening) -> Commitment {
     Commitment(com)
 }
 
+//NIST: Level Zero Operation
 /// commit to msg and return a 256-bit commitment and 128-bit opening value
 pub fn commit<R: Rng + CryptoRng>(msg: &[u8], rng: &mut R) -> (Commitment, Opening) {
     let mut opening = [0u8; KEY_BYTE_LEN];

@@ -3,7 +3,7 @@
 FROM rust:1.78-slim-bookworm as base
 
 RUN apt update && \
-    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev
+    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev 
 
 WORKDIR /app/ddec
 COPY . .
@@ -21,7 +21,7 @@ RUN --mount=type=ssh cargo install --path . --root . --bins --features=choreogra
 FROM debian:stable-slim as go-runtime
 
 RUN apt update && \
-    apt install -y iproute2 iputils-ping iperf net-tools dnsutils libssl-dev libprotobuf-dev curl netcat-openbsd
+    apt install -y iproute2 iputils-ping iperf net-tools dnsutils libssl-dev libprotobuf-dev curl netcat-openbsd 
 WORKDIR /app/ddec
 RUN mkdir -p /app/ddec/config
 
@@ -40,6 +40,7 @@ RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
 # Third stage: Copy the binaries from the base stage and the go-runtime stage
 FROM debian:stable-slim as runtime
+
 WORKDIR /app/ddec
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="$PATH:/app/ddec/bin"

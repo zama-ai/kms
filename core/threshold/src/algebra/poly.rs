@@ -516,6 +516,7 @@ fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly
     (r1, t1)
 }
 
+//NIST: Level Zero Operation
 /// runs Gao decoding on coordinates where points holds the x-coordinates and values holds the y-coordinates
 /// k is the RS degree and usually set to threshold + 1 in our case
 /// max_correctable_errs is used to check if the number of errors is at most as large as this value

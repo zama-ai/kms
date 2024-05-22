@@ -13,11 +13,6 @@ use crate::{
 use async_trait::async_trait;
 use mockall::{automock, mock};
 
-/// The amount of triples required in a bitdec distributed decryption
-pub const TRIPLE_BATCH_SIZE: usize = 1281_usize;
-/// The amount of randoms required in a bitdec distributed decryption
-pub const RANDOM_BATCH_SIZE: usize = 60_usize;
-
 #[automock]
 /// Trait that a __store__ for shares of multiplication triples ([`Triple`]) needs to implement.
 pub trait TriplePreprocessing<Z: Ring> {
@@ -147,7 +142,7 @@ pub trait NoiseFloodPreprocessing: Send {
     ) -> anyhow::Result<()>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum NoiseBounds {
     LweNoise(TUniformBound),
     GlweNoise(TUniformBound),
@@ -263,6 +258,7 @@ pub fn create_redis_factory(
     redis_factory(key_prefix, redis_conf)
 }
 
+pub(crate) mod constants;
 pub mod dummy;
 pub(crate) mod memory;
 pub mod orchestrator;

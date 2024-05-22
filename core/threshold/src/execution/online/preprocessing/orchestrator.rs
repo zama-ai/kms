@@ -1,17 +1,8 @@
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, RwLock},
-    thread,
+use super::{
+    constants::{BATCH_SIZE_BITS, BATCH_SIZE_TRIPLES, CHANNEL_BUFFER_SIZE},
+    memory::InMemoryBitPreprocessing,
+    NoiseBounds,
 };
-
-use core::slice::Iter;
-use futures::Future;
-use itertools::{Itertools, PeekingNext};
-use num_integer::div_ceil;
-use rand::{CryptoRng, Rng};
-use tokio::{runtime::Handle, task::JoinSet};
-use tracing::{instrument, Instrument};
-
 use crate::{
     algebra::{
         residue_poly::{ResiduePoly128, ResiduePoly64},
@@ -24,39 +15,44 @@ use crate::{
         online::{
             gen_bits::{BitGenEven, RealBitGenEven},
             preprocessing::{
-                BasePreprocessing, BitPreprocessing, DKGPreprocessing, PreprocessorFactory,
+                DKGPreprocessing, PreprocessorFactory, RandomPreprocessing, TriplePreprocessing,
             },
+            secret_distributions::{RealSecretDistributions, SecretDistributions},
             triple::Triple,
         },
-        runtime::session::{
-            BaseSessionHandles, LargeSession, ParameterHandles, SmallSession, ToBaseSession,
-        },
+        runtime::session::{BaseSessionHandles, LargeSession, ParameterHandles, SmallSession},
         sharing::share::Share,
         small_execution::{
             agree_random::RealAgreeRandom, offline::SmallPreprocessing, prf::PRSSConversions,
         },
         tfhe_internals::parameters::DKGParams,
     },
-    session_id::SessionId,
 };
+use futures::Future;
+use itertools::Itertools;
+use num_integer::div_ceil;
+use rand::{CryptoRng, Rng};
+use std::sync::{Arc, RwLock};
+use tokio::{
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Mutex,
+    },
+    task::JoinSet,
+};
+use tracing::{instrument, Instrument};
 
 #[derive(Clone)]
 pub struct PreprocessingOrchestrator<Z> {
     params: DKGParams,
-    base_preproc: Arc<RwLock<Box<dyn BasePreprocessing<Z>>>>,
-    bit_preproc: Arc<RwLock<Box<dyn BitPreprocessing<Z>>>>,
     dkg_preproc: Arc<RwLock<Box<dyn DKGPreprocessing<Z>>>>,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub enum TypeOrchestration {
-    Triples,
-    Randoms,
-    Bits,
+#[derive(Debug)]
+struct TUniformProduction {
+    bound: NoiseBounds,
+    amount: usize,
 }
-
-const BATCH_SIZE_TRIPLES: usize = 10000;
-const BATCH_SIZE_BITS: usize = 10000;
 
 impl PreprocessingOrchestrator<ResiduePoly64> {
     ///Create a new [`PreprocessingOrchestrator`] to generate
@@ -64,8 +60,6 @@ impl PreprocessingOrchestrator<ResiduePoly64> {
     ///for [`DKGParams::WithoutSnS`]
     ///
     ///Relies on the provided [`PreprocessorFactory`] to create:
-    ///- [`BasePreprocessing`]
-    ///- [`BitPreprocessing`]
     ///- [`DKGPreprocessing`]
     pub fn new<F: PreprocessorFactory + ?Sized>(
         factory: &mut F,
@@ -77,8 +71,6 @@ impl PreprocessingOrchestrator<ResiduePoly64> {
 
         Ok(Self {
             params,
-            base_preproc: Arc::new(RwLock::new(factory.create_base_preprocessing_residue_64())),
-            bit_preproc: Arc::new(RwLock::new(factory.create_bit_preprocessing_residue_64())),
             dkg_preproc: Arc::new(RwLock::new(factory.create_dkg_preprocessing_no_sns())),
         })
     }
@@ -90,8 +82,6 @@ impl PreprocessingOrchestrator<ResiduePoly128> {
     ///for [`DKGParams::WithSnS`]
     ///
     ///Relies on the provided [`PreprocessorFactory`] to create:
-    ///- [`BasePreprocessing`]
-    ///- [`BitPreprocessing`]
     ///- [`DKGPreprocessing`]
     pub fn new<F: PreprocessorFactory + ?Sized>(
         factory: &mut F,
@@ -105,11 +95,57 @@ impl PreprocessingOrchestrator<ResiduePoly128> {
 
         Ok(Self {
             params,
-            base_preproc: Arc::new(RwLock::new(factory.create_base_preprocessing_residue_128())),
-            bit_preproc: Arc::new(RwLock::new(factory.create_bit_preprocessing_residue_128())),
             dkg_preproc: Arc::new(RwLock::new(factory.create_dkg_preprocessing_with_sns())),
         })
     }
+}
+
+type TripleChannels<R> = (
+    Vec<Sender<Vec<Triple<R>>>>,
+    Vec<Mutex<Receiver<Vec<Triple<R>>>>>,
+);
+type ShareChannels<R> = (
+    Vec<Sender<Vec<Share<R>>>>,
+    Vec<Mutex<Receiver<Vec<Share<R>>>>>,
+);
+
+///Creates three sets of channels:
+///- One set for Triples
+///- One set for Randomness
+///- One set for Bits
+fn create_channels<R>(
+    num_basic_sessions: usize,
+    num_bits_sessions: usize,
+) -> (TripleChannels<R>, ShareChannels<R>, ShareChannels<R>) {
+    let mut triple_sender_channels = Vec::new();
+    let mut triple_receiver_channels = Vec::new();
+    for _ in 0..num_basic_sessions {
+        let (tx, rx) = channel::<Vec<Triple<R>>>(CHANNEL_BUFFER_SIZE);
+        triple_sender_channels.push(tx);
+        triple_receiver_channels.push(Mutex::new(rx));
+    }
+
+    //Always have only one random producing thread as it's super fast to produce
+    let mut random_sender_channels = Vec::new();
+    let mut random_receiver_channels = Vec::new();
+    for _ in 0..1 {
+        let (tx, rx) = channel::<Vec<Share<R>>>(CHANNEL_BUFFER_SIZE);
+        random_sender_channels.push(tx);
+        random_receiver_channels.push(Mutex::new(rx));
+    }
+
+    let mut bit_sender_channels = Vec::new();
+    let mut bit_receiver_channels = Vec::new();
+    for _ in 0..num_bits_sessions {
+        let (tx, rx) = channel::<Vec<Share<R>>>(CHANNEL_BUFFER_SIZE);
+        bit_sender_channels.push(tx);
+        bit_receiver_channels.push(Mutex::new(rx));
+    }
+    (
+        (triple_sender_channels, triple_receiver_channels),
+        (random_sender_channels, random_receiver_channels),
+        (bit_sender_channels, bit_receiver_channels),
+    )
 }
 
 type SmallSessionDkgResult<R> =
@@ -123,10 +159,10 @@ where
     ///
     ///Expects a vector of [`SmallSession`] __(at least 2!)__, using each of them in parallel for the preprocessing.
     ///
-    ///__NOTE__ For now we fix the batch_size to 1000 and dedicate 1 in 20 sessions
+    ///__NOTE__ For now we dedicate 1 in 20 sessions
     /// to raw triple and randomness generation and the rest to bit generation
-    #[instrument(skip(self, sessions), fields(own_identity = ?sessions[0].own_identity()))]
-    pub fn orchestrate_small_session_dkg_processing(
+    #[instrument(name="Preprocessing",skip(self,sessions),fields(num_sessions=?sessions.len()))]
+    pub async fn orchestrate_small_session_dkg_processing(
         self,
         mut sessions: Vec<SmallSession<R>>,
     ) -> SmallSessionDkgResult<R> {
@@ -135,24 +171,14 @@ where
             assert_eq!(party_id, session.own_identity());
         }
 
-        let num_bits = self.params.get_params_basics_handle().total_bits_required();
-        let num_triples = self
-            .params
-            .get_params_basics_handle()
-            .total_triples_required()
-            - num_bits;
-        let nb_randomness = self
-            .params
-            .get_params_basics_handle()
-            .total_randomness_required()
-            - num_bits;
+        let (num_bits, num_triples, num_randomness) = self.get_num_correlated_randomness_required();
 
         //Ensures sessions are sorted by session id
         sessions.sort_by_key(|session| session.session_id());
 
         //Dedicate 1 in 20 sessions to raw triples, the rest to bits
         let num_basic_sessions = div_ceil(sessions.len(), 20);
-        let mut basic_sessions = (0..num_basic_sessions)
+        let basic_sessions: Vec<_> = (0..num_basic_sessions)
             .map(|_| {
                 sessions.pop().ok_or_else(|| {
                     anyhow_error_and_log("Fail to retrieve sessions for basic preprocessing")
@@ -160,81 +186,86 @@ where
             })
             .try_collect()?;
 
-        let runtime_handle = tokio::runtime::Handle::current();
-        //We spawn a native thread for the basic orchestrator
-        let basic_orchestrator = self.clone();
-        let basic_orchestrator_thread = thread::spawn(move || {
-            let _guard = runtime_handle.enter();
-            basic_orchestrator.orchestrate_small_session_processing(
-                BATCH_SIZE_TRIPLES,
-                num_triples,
-                TypeOrchestration::Triples,
-                &mut basic_sessions,
-                runtime_handle.clone(),
-            )?;
-            basic_orchestrator.orchestrate_small_session_processing(
-                nb_randomness,
-                nb_randomness,
-                TypeOrchestration::Randoms,
-                &mut basic_sessions,
-                runtime_handle,
-            )?;
-            Ok::<_, anyhow::Error>(basic_sessions)
-        });
+        //Create all the channels we need for the producer to communicate their batches
+        let (
+            (triple_sender_channels, triple_receiver_channels),
+            (random_sender_channels, random_receiver_channels),
+            (bit_sender_channels, bit_receiver_channels),
+        ) = create_channels(num_basic_sessions, sessions.len());
 
-        let runtime_handle = tokio::runtime::Handle::current();
-        //We spawn a native thread for the bit orchestrator
-        let bit_orchestrator = self.clone();
-        let bit_orchestrator_thread = thread::spawn(move || {
-            let _guard = runtime_handle.enter();
-            bit_orchestrator.orchestrate_small_session_processing(
-                BATCH_SIZE_BITS,
-                num_bits,
-                TypeOrchestration::Bits,
-                &mut sessions,
-                runtime_handle,
-            )?;
-            Ok::<_, anyhow::Error>(sessions)
-        });
+        let current_span = tracing::Span::current();
+        //Start the processors
+        let mut joinset_processors = JoinSet::new();
+        let triple_writer = self.dkg_preproc.clone();
+        let _triple_processor = joinset_processors.spawn(
+            Self::triple_processing(triple_writer, num_triples, triple_receiver_channels)
+                .instrument(current_span.clone()),
+        );
 
+        let random_writer = self.dkg_preproc.clone();
+        let _random_processor = joinset_processors.spawn(
+            Self::randomness_processing(random_writer, num_randomness, random_receiver_channels)
+                .instrument(current_span.clone()),
+        );
+
+        let bit_writer = self.dkg_preproc.clone();
+        let (tuniform_productions, num_bits_required) = self.get_num_tuniform_raw_bits_required();
+        let _bit_processor_thread = joinset_processors.spawn(
+            Self::bit_processing(
+                bit_writer,
+                tuniform_productions,
+                num_bits_required,
+                bit_receiver_channels,
+            )
+            .instrument(current_span.clone()),
+        );
+
+        //Start the producers
+        let mut triple_producer_handles = self.orchestrate_small_session_triple_processing(
+            BATCH_SIZE_TRIPLES,
+            num_triples,
+            basic_sessions,
+            triple_sender_channels,
+        );
+        let mut bit_producer_handles = self.orchestrate_small_session_bit_processing(
+            BATCH_SIZE_BITS,
+            num_bits,
+            sessions,
+            bit_sender_channels,
+        );
+
+        //Join on the triple producers as they finish before bit producers
         let mut res_sessions = Vec::new();
-        res_sessions.append(
-            &mut basic_orchestrator_thread.join().map_err(|_| {
-                anyhow_error_and_log("Error joining on basic orchestrator thread")
-            })??,
-        );
-        res_sessions.append(
-            &mut bit_orchestrator_thread
-                .join()
-                .map_err(|_| anyhow_error_and_log("Error joining on bit orchestrator thread"))??,
-        );
-
-        {
-            let mut base_preproc = self.base_preproc.try_write().map_err(|_| {
-                anyhow_error_and_log("Error locking the base preprocessing store for write")
-            })?;
-            let mut bit_preproc = self.bit_preproc.try_write().map_err(|_| {
-                anyhow_error_and_log("Error locking the bit preprocessing store for write ")
-            })?;
-            let mut dkg_preproc = self.dkg_preproc.try_write().map_err(|_| {
-                anyhow_error_and_log("Error locking the dkg preprocessing store for write ")
-            })?;
-
-            dkg_preproc.fill_from_triples_and_bit_preproc(
-                self.params,
-                &mut res_sessions
-                    .first()
-                    .ok_or_else(|| {
-                        anyhow_error_and_log(
-                            "Error retrieving the first session to fill dkg preprocessing",
-                        )
-                    })?
-                    .to_base_session(),
-                base_preproc.as_mut(),
-                bit_preproc.as_mut(),
-            )?;
+        while let Some(Ok(Ok(session))) = triple_producer_handles.join_next().await {
+            res_sessions.push(session);
         }
 
+        res_sessions.sort_by_key(|session| session.session_id());
+
+        //Start producers for randomness
+        let randomness_session = res_sessions
+            .pop()
+            .ok_or_else(|| anyhow_error_and_log("Failed to pop a session for randomness"))?;
+        let mut randomness_producer_handle = self.orchestrate_small_session_random_processing(
+            num_randomness,
+            num_randomness,
+            vec![randomness_session],
+            random_sender_channels,
+        );
+
+        //Join on bits and randomness producers
+        while let Some(Ok(Ok(session))) = randomness_producer_handle.join_next().await {
+            res_sessions.push(session);
+        }
+        while let Some(Ok(Ok(session))) = bit_producer_handles.join_next().await {
+            res_sessions.push(session);
+        }
+
+        res_sessions.sort_by_key(|session| session.session_id());
+        //Join on the processors
+        while joinset_processors.join_next().await.is_some() {}
+
+        //Return handle to preprocessing bucket
         let dkg_preproc_return = Arc::into_inner(self.dkg_preproc).ok_or_else(|| {
             anyhow_error_and_log("Error getting hold of dkg preprocessing store inside the Arc")
         })?;
@@ -248,10 +279,9 @@ where
     ///
     ///Expects a vector of [`LargeSession`] __(at least 2!)__, using each of them in parallel for the preprocessing.
     ///
-    ///__NOTE__ For now we fix the batch_size to 1000 and dedicate 1 in 20 sessions
+    ///__NOTE__ For now we dedicate 1 in 20 sessions
     /// to raw triple and randomness generation and the rest to bit generation
-    #[instrument(skip(self, sessions), fields(own_identity = ?sessions[0].own_identity()))]
-    pub fn orchestrate_large_session_dkg_processing(
+    pub async fn orchestrate_large_session_dkg_processing(
         self,
         mut sessions: Vec<LargeSession>,
     ) -> anyhow::Result<(Vec<LargeSession>, Box<dyn DKGPreprocessing<R>>)> {
@@ -259,24 +289,15 @@ where
         for session in sessions.iter() {
             assert_eq!(party_id, session.own_identity());
         }
-        let num_bits = self.params.get_params_basics_handle().total_bits_required();
-        let num_triples = self
-            .params
-            .get_params_basics_handle()
-            .total_triples_required()
-            - num_bits;
-        let nb_randomness = self
-            .params
-            .get_params_basics_handle()
-            .total_randomness_required()
-            - num_bits;
+
+        let (num_bits, num_triples, num_randomness) = self.get_num_correlated_randomness_required();
 
         //Ensures sessions are sorted by session id
         sessions.sort_by_key(|session| session.session_id());
 
         //Dedicate 1 in 20 sessions to raw triples, the rest to bits
         let num_basic_sessions = div_ceil(sessions.len(), 20);
-        let mut basic_sessions = (0..num_basic_sessions)
+        let basic_sessions: Vec<_> = (0..num_basic_sessions)
             .map(|_| {
                 sessions.pop().ok_or_else(|| {
                     anyhow_error_and_log("Fail to retrieve sessions for basic preprocessing")
@@ -284,472 +305,585 @@ where
             })
             .try_collect()?;
 
-        let runtime_handle = tokio::runtime::Handle::current();
-        //We spawn a native thread for the basic orchestrator
-        let basic_orchestrator = self.clone();
-        let basic_orchestrator_thread = thread::spawn(move || {
-            let _guard = runtime_handle.enter();
-            basic_orchestrator.orchestrate_large_session_processing(
-                BATCH_SIZE_TRIPLES,
-                num_triples,
-                TypeOrchestration::Triples,
-                &mut basic_sessions,
-                runtime_handle.clone(),
-            )?;
-            basic_orchestrator.orchestrate_large_session_processing(
-                nb_randomness,
-                nb_randomness,
-                TypeOrchestration::Randoms,
-                &mut basic_sessions,
-                runtime_handle.clone(),
-            )?;
-            Ok::<_, anyhow::Error>(basic_sessions)
-        });
+        //Create all the channels we need for the producer to communicate their batches
+        let (
+            (triple_sender_channels, triple_receiver_channels),
+            (random_sender_channels, random_receiver_channels),
+            (bit_sender_channels, bit_receiver_channels),
+        ) = create_channels(num_basic_sessions, sessions.len());
 
-        let runtime_handle = tokio::runtime::Handle::current();
-        //We spawn a native thread for the bit orchestrator
-        let bit_orchestrator = self.clone();
-        let bit_orchestrator_thread = thread::spawn(move || {
-            let _guard = runtime_handle.enter();
-            bit_orchestrator.orchestrate_large_session_processing(
-                BATCH_SIZE_BITS,
-                num_bits,
-                TypeOrchestration::Bits,
-                &mut sessions,
-                runtime_handle,
-            )?;
-            Ok::<_, anyhow::Error>(sessions)
-        });
+        let current_span = tracing::Span::current();
+        //Start the processors
+        let mut joinset_processors = JoinSet::new();
+        let triple_writer = self.dkg_preproc.clone();
+        let _triple_processor = joinset_processors.spawn(
+            Self::triple_processing(triple_writer, num_triples, triple_receiver_channels)
+                .instrument(current_span.clone()),
+        );
 
+        let random_writer = self.dkg_preproc.clone();
+        let _random_processor = joinset_processors.spawn(
+            Self::randomness_processing(random_writer, num_randomness, random_receiver_channels)
+                .instrument(current_span.clone()),
+        );
+
+        let bit_writer = self.dkg_preproc.clone();
+        let (tuniform_productions, num_bits_required) = self.get_num_tuniform_raw_bits_required();
+        let _bit_processor_thread = joinset_processors.spawn(
+            Self::bit_processing(
+                bit_writer,
+                tuniform_productions,
+                num_bits_required,
+                bit_receiver_channels,
+            )
+            .instrument(current_span.clone()),
+        );
+
+        //Start the producers
+        let mut triple_producer_handles = self.orchestrate_large_session_triple_processing(
+            BATCH_SIZE_TRIPLES,
+            num_triples,
+            basic_sessions,
+            triple_sender_channels,
+        );
+        let mut bit_producer_handles = self.orchestrate_large_session_bit_processing(
+            BATCH_SIZE_BITS,
+            num_bits,
+            sessions,
+            bit_sender_channels,
+        );
+
+        //Join on the triple producers as they finish before bit producers
         let mut res_sessions = Vec::new();
-        res_sessions.append(
-            &mut basic_orchestrator_thread.join().map_err(|_| {
-                anyhow_error_and_log("Error joining on basic orchestrator thread")
-            })??,
-        );
-        res_sessions.append(
-            &mut bit_orchestrator_thread
-                .join()
-                .map_err(|_| anyhow_error_and_log("Error joining on bit orchestrator thread"))??,
-        );
-
-        {
-            let mut base_preproc = self.base_preproc.try_write().map_err(|_| {
-                anyhow_error_and_log("Error locking the base preprocessing store for write")
-            })?;
-            let mut bit_preproc = self.bit_preproc.try_write().map_err(|_| {
-                anyhow_error_and_log("Error locking the bit preprocessing store for write ")
-            })?;
-            let mut dkg_preproc = self.dkg_preproc.try_write().map_err(|_| {
-                anyhow_error_and_log("Error locking the dkg preprocessing store for write ")
-            })?;
-
-            dkg_preproc.fill_from_triples_and_bit_preproc(
-                self.params,
-                &mut res_sessions
-                    .first()
-                    .ok_or_else(|| {
-                        anyhow_error_and_log(
-                            "Error retrieving the first session to fill dkg preprocessing",
-                        )
-                    })?
-                    .to_base_session(),
-                base_preproc.as_mut(),
-                bit_preproc.as_mut(),
-            )?;
+        while let Some(Ok(Ok(session))) = triple_producer_handles.join_next().await {
+            res_sessions.push(session);
         }
 
+        res_sessions.sort_by_key(|session| session.session_id());
+        //Start producers for randomness
+        let randomness_session = res_sessions
+            .pop()
+            .ok_or_else(|| anyhow_error_and_log("Failed to pop a session for randomness"))?;
+        let mut randomness_producer_handle = self.orchestrate_large_session_random_processing(
+            num_randomness,
+            num_randomness,
+            vec![randomness_session],
+            random_sender_channels,
+        );
+
+        //Join on bits and randomness producers
+        while let Some(Ok(Ok(session))) = randomness_producer_handle.join_next().await {
+            res_sessions.push(session);
+        }
+        while let Some(Ok(Ok(session))) = bit_producer_handles.join_next().await {
+            res_sessions.push(session);
+        }
+
+        res_sessions.sort_by_key(|session| session.session_id());
+        //Join on the processors
+        while joinset_processors.join_next().await.is_some() {}
+
+        //Return handle to preprocessing bucket
         let dkg_preproc_return = Arc::into_inner(self.dkg_preproc).ok_or_else(|| {
             anyhow_error_and_log("Error getting hold of dkg preprocessing store inside the Arc")
         })?;
         let dkg_preproc_return = dkg_preproc_return.into_inner().map_err(|_| {
             anyhow_error_and_log("Error consuming dkg preprocessing inside the Lock")
         })?;
-
         Ok((res_sessions, dkg_preproc_return))
     }
 
-    ///Generic funciton to orchestrate all types of preprocessing for [`SmallSession`]
+    ///Orchestrate triple preprocessing for [`SmallSession`]
     ///
     ///Expects:
     ///- a batch size,
     ///- the total size we need to generate
-    ///- the type of preprocessing as a [`TypeOrchestration`]
     ///- the set of [`SmallSession`] dedicated to this preprocessing
-    ///- a [`Handle`] to the tokio runtime
-    pub fn orchestrate_small_session_processing(
-        &self,
-        batch_size: usize,
-        total_size: usize,
-        type_orchestration: TypeOrchestration,
-        sessions: &mut Vec<SmallSession<R>>,
-        runtime_handle: Handle,
-    ) -> anyhow::Result<()> {
-        let party_id = sessions[0].own_identity();
-        let own_role = sessions[0].my_role()?;
-        for session in sessions.iter() {
-            assert_eq!(party_id, session.own_identity());
-        }
-        tracing::info!("Entering orchestrator for  P[{own_role}]");
-
-        let task_basic_gen = |mut session: SmallSession<R>, span: tracing::Span| async move {
-            let batch_size = match type_orchestration {
-                TypeOrchestration::Triples => BatchParams {
-                    triples: batch_size,
-                    randoms: 0,
-                },
-                TypeOrchestration::Randoms => BatchParams {
-                    triples: 0,
-                    randoms: batch_size,
-                },
-                TypeOrchestration::Bits => BatchParams {
-                    triples: batch_size,
-                    randoms: batch_size,
-                },
-            };
-
-            let preprocessing =
-                SmallPreprocessing::<R, RealAgreeRandom>::init(&mut session, batch_size)
-                    .instrument(span)
-                    .await;
-            (session, preprocessing)
-        };
-
-        self.execute_preprocessing(
-            sessions,
-            total_size,
-            batch_size,
-            type_orchestration,
-            task_basic_gen,
-            runtime_handle,
-        )
-    }
-
-    ///Generic funciton to orchestrate all types of preprocessing for [`LargeSession`]
+    ///- the set of [`Sender`] channels to send the result back
     ///
-    ///Expects:
-    ///- a batch size,
-    ///- the total size we need to generate
-    ///- the type of preprocessing as a [`TypeOrchestration`]
-    ///- the set of [`LargeSession`] dedicated to this preprocessing
-    ///- a [`Handle`] to the tokio runtime
-    pub fn orchestrate_large_session_processing(
+    /// Returns:
+    ///- a [`JoinSet`] to the triple processing tasks
+    #[instrument(name="Triple Factory",skip(self,sessions,sender_channels),fields(num_sessions= ?sessions.len()))]
+    pub fn orchestrate_small_session_triple_processing(
         &self,
         batch_size: usize,
         total_size: usize,
-        type_orchestration: TypeOrchestration,
-        sessions: &mut Vec<LargeSession>,
-        runtime_handle: Handle,
-    ) -> anyhow::Result<()> {
-        let party_id = sessions[0].own_identity();
-        let own_role = sessions[0].my_role()?;
-        for session in sessions.iter() {
-            assert_eq!(party_id, session.own_identity());
-        }
-        tracing::info!("Entering orchestrator for  P[{own_role}]");
-
-        let task_basic_gen = |mut session: LargeSession, span: tracing::Span| async move {
-            let batch_size = match type_orchestration {
-                TypeOrchestration::Triples => BatchParams {
-                    triples: batch_size,
-                    randoms: 0,
-                },
-                TypeOrchestration::Randoms => BatchParams {
-                    triples: 0,
-                    randoms: batch_size,
-                },
-                TypeOrchestration::Bits => BatchParams {
-                    triples: batch_size,
-                    randoms: batch_size,
-                },
-            };
-            let preprocessing = LargePreprocessing::<R, _, _>::init(
-                &mut session,
-                batch_size,
-                TrueSingleSharing::default(),
-                TrueDoubleSharing::default(),
-            )
-            .instrument(span)
-            .await;
-            (session, preprocessing)
-        };
-
-        self.execute_preprocessing(
-            sessions,
-            total_size,
-            batch_size,
-            type_orchestration,
-            task_basic_gen,
-            runtime_handle,
-        )
-    }
-
-    ///Processes the triples in a deterministic order (dictated by [`SessionId`]) into the [`BasePreprocessing`].
-    fn process_triples(
-        &self,
-        data: Vec<Triple<R>>,
-        sid: SessionId,
-        next_sid_to_push: &mut Iter<SessionId>,
-        results: &mut BTreeMap<SessionId, Vec<Triple<R>>>,
-    ) -> anyhow::Result<()> {
-        match next_sid_to_push.peeking_next(|next_sid| **next_sid == sid) {
-            Some(_) => {
-                //push, and try pushing whats in map
-                (*self.base_preproc.try_write().map_err(|_| {
-                    anyhow_error_and_log("Error locking the base preprocessing store for write ")
-                })?)
-                .append_triples(data);
-                let results_keys = results.keys().cloned().collect_vec();
-                for sid in results_keys {
-                    match next_sid_to_push.peeking_next(|next_sid| **next_sid == sid) {
-                        Some(_) => {
-                            (*self.base_preproc.try_write().map_err(|_| {
-                                anyhow_error_and_log(
-                                    "Error locking the base preprocessing store for write ",
-                                )
-                            })?)
-                            .append_triples(
-                                results
-                                    .remove_entry(&sid)
-                                    .ok_or_else(|| {
-                                        anyhow_error_and_log(
-                                            "Error trying to access an entry that should be here",
-                                        )
-                                    })?
-                                    .1,
-                            );
-                        }
-                        None => break,
-                    }
-                }
-            }
-            None => {
-                let _ = results.insert(sid, data);
-            }
-        }
-        Ok(())
-    }
-
-    ///Processes the randomness in a deterministic order (dictated by [`SessionId`]) into the [`BasePreprocessing`].
-    fn process_randoms(
-        &self,
-        data: Vec<Share<R>>,
-        sid: SessionId,
-        next_sid_to_push: &mut Iter<SessionId>,
-        results: &mut BTreeMap<SessionId, Vec<Share<R>>>,
-    ) -> anyhow::Result<()> {
-        match next_sid_to_push.peeking_next(|next_sid| **next_sid == sid) {
-            Some(_) => {
-                //push, and try pushing whats in map
-                (*self.base_preproc.try_write().map_err(|_| {
-                    anyhow_error_and_log("Error locking the base preprocessing store for write ")
-                })?)
-                .append_randoms(data);
-                let results_keys = results.keys().cloned().collect_vec();
-                for sid in results_keys {
-                    match next_sid_to_push.peeking_next(|next_sid| **next_sid == sid) {
-                        Some(_) => {
-                            (*self.base_preproc.try_write().map_err(|_| {
-                                anyhow_error_and_log(
-                                    "Error locking the base preprocessing store for write ",
-                                )
-                            })?)
-                            .append_randoms(
-                                results
-                                    .remove_entry(&sid)
-                                    .ok_or_else(|| {
-                                        anyhow_error_and_log(
-                                            "Error trying to access an entry that should be here",
-                                        )
-                                    })?
-                                    .1,
-                            );
-                        }
-                        None => break,
-                    }
-                }
-            }
-            None => {
-                let _ = results.insert(sid, data);
-            }
-        }
-        Ok(())
-    }
-
-    ///Processes the bits in a deterministic order (dictated by [`SessionId`]) into the [`BitPreprocessing`].
-    fn process_bits(
-        &self,
-        data: Vec<Share<R>>,
-        sid: SessionId,
-        next_sid_to_push: &mut Iter<SessionId>,
-        results: &mut BTreeMap<SessionId, Vec<Share<R>>>,
-    ) -> anyhow::Result<()> {
-        match next_sid_to_push.peeking_next(|next_sid| **next_sid == sid) {
-            Some(_) => {
-                //push, and try pushing whats in map
-                (*self.bit_preproc.try_write().map_err(|_| {
-                    anyhow_error_and_log("Error locking the bit preprocessing store for write ")
-                })?)
-                .append_bits(data);
-                let results_keys = results.keys().cloned().collect_vec();
-                for sid in results_keys {
-                    match next_sid_to_push.peeking_next(|next_sid| **next_sid == sid) {
-                        Some(_) => {
-                            (*self.bit_preproc.try_write().map_err(|_| {
-                                anyhow_error_and_log(
-                                    "Error locking the bit preprocessing store for write ",
-                                )
-                            })?)
-                            .append_bits(
-                                results
-                                    .remove_entry(&sid)
-                                    .ok_or_else(|| {
-                                        anyhow_error_and_log(
-                                            "Error trying to access an entry that should be here",
-                                        )
-                                    })?
-                                    .1,
-                            );
-                        }
-                        None => break,
-                    }
-                }
-            }
-            None => {
-                let _ = results.insert(sid, data);
-            }
-        }
-        Ok(())
-    }
-
-    ///Generic function to execute the actual preprocessing protocol using the sessions
-    #[instrument(skip(self,sessions,task_basic_gen,runtime_handle), fields(own_identity = ?sessions[0].own_identity()))]
-    fn execute_preprocessing<
-        Rnd: Rng + CryptoRng + Sync + 'static,
-        S: BaseSessionHandles<Rnd> + 'static,
-        P: BasePreprocessing<R> + 'static,
-        TaskOutput,
-    >(
-        &self,
-        sessions: &mut Vec<S>,
-        total_size: usize,
-        batch_size: usize,
-        type_orchestration: TypeOrchestration,
-        task_basic_gen: impl Fn(S, tracing::Span) -> TaskOutput,
-        runtime_handle: Handle,
-    ) -> anyhow::Result<()>
-    where
-        TaskOutput: Future<Output = (S, anyhow::Result<P>)> + Send,
-        TaskOutput: Send + 'static,
-    {
+        sessions: Vec<SmallSession<R>>,
+        sender_channels: Vec<Sender<Vec<Triple<R>>>>,
+    ) -> JoinSet<Result<SmallSession<R>, anyhow::Error>> {
         let num_sessions = sessions.len();
         let num_loops = div_ceil(total_size, batch_size * num_sessions);
 
-        let mut session_ids_in_order = sessions
-            .iter()
-            .map(|session| session.session_id())
-            .collect_vec();
-        session_ids_in_order.sort();
+        let task_gen = |mut session: SmallSession<R>, sender_channel: Sender<Vec<Triple<R>>>| async move {
+            let base_batch_size = BatchParams {
+                triples: batch_size,
+                randoms: 0,
+            };
 
-        for _ in 0..num_loops {
-            //Within each orchestrator (which is a native thread), the multiple sessions are run
-            //by the shared tokio runtime
-            let mut basic_gen_tasks = JoinSet::new();
-            let mut bit_gen_tasks = JoinSet::new();
-            for _ in 0..num_sessions {
-                basic_gen_tasks.spawn(task_basic_gen(
-                    sessions
-                        .pop()
-                        .ok_or_else(|| anyhow_error_and_log("Error trying to pop sessions"))?,
-                    tracing::Span::current(),
-                ));
+            for _ in 0..num_loops {
+                let triples =
+                    SmallPreprocessing::<R, RealAgreeRandom>::init(&mut session, base_batch_size)
+                        .await?
+                        .next_triple_vec(batch_size)?;
+
+                //Drop the error on purpose as the receiver end might be closed already if we produced too much
+                let _ = sender_channel.send(triples).await;
+            }
+            Ok::<_, anyhow::Error>(session)
+        };
+
+        self.new_execute_preprocessing(sessions, task_gen, sender_channels)
+    }
+
+    ///Orchestrate randomness preprocessing for [`SmallSession`]
+    ///
+    ///Expects:
+    ///- a batch size,
+    ///- the total size we need to generate
+    ///- the set of [`SmallSession`] dedicated to this preprocessing
+    ///- the set of [`Sender`] channels to send the result back
+    ///
+    /// Returns:
+    ///- a [`JoinSet`] to the randomness processing tasks
+    #[instrument(name="Random Factory",skip(self,sessions,sender_channels),fields(num_sessions= ?sessions.len()))]
+    pub fn orchestrate_small_session_random_processing(
+        &self,
+        batch_size: usize,
+        total_size: usize,
+        sessions: Vec<SmallSession<R>>,
+        sender_channels: Vec<Sender<Vec<Share<R>>>>,
+    ) -> JoinSet<Result<SmallSession<R>, anyhow::Error>> {
+        let num_sessions = sessions.len();
+        let num_loops = div_ceil(total_size, batch_size * num_sessions);
+
+        let task_gen = |mut session: SmallSession<R>, sender_channel: Sender<Vec<Share<R>>>| async move {
+            let base_batch_size = BatchParams {
+                triples: 0,
+                randoms: batch_size,
+            };
+
+            for _ in 0..num_loops {
+                let randoms =
+                    SmallPreprocessing::<R, RealAgreeRandom>::init(&mut session, base_batch_size)
+                        .await?
+                        .next_random_vec(batch_size)?;
+
+                //Drop the error on purpose as the receiver end might be closed already if we produced too much
+                let _ = sender_channel.send(randoms).await;
+            }
+            Ok::<_, anyhow::Error>(session)
+        };
+
+        self.new_execute_preprocessing(sessions, task_gen, sender_channels)
+    }
+
+    ///Orchestrate bit preprocessing for [`SmallSession`]
+    ///
+    ///Expects:
+    ///- a batch size,
+    ///- the total size we need to generate
+    ///- the set of [`SmallSession`] dedicated to this preprocessing
+    ///- the set of [`Sender`] channels to send the result back
+    ///
+    /// Returns:
+    ///- a [`JoinSet`] to the bit processing tasks
+    #[instrument(name="Bit Factory",skip(self,sessions,sender_channels),fields(num_sessions= ?sessions.len()))]
+    pub fn orchestrate_small_session_bit_processing(
+        &self,
+        batch_size: usize,
+        total_size: usize,
+        sessions: Vec<SmallSession<R>>,
+        sender_channels: Vec<Sender<Vec<Share<R>>>>,
+    ) -> JoinSet<Result<SmallSession<R>, anyhow::Error>> {
+        let num_sessions = sessions.len();
+        let num_loops = div_ceil(total_size, batch_size * num_sessions);
+
+        let task_gen = |mut session: SmallSession<R>, sender_channel: Sender<Vec<Share<R>>>| async move {
+            let base_batch_size = BatchParams {
+                triples: batch_size,
+                randoms: batch_size,
+            };
+
+            for _ in 0..num_loops {
+                let mut preproc =
+                    SmallPreprocessing::<R, RealAgreeRandom>::init(&mut session, base_batch_size)
+                        .await?;
+                let bits =
+                    RealBitGenEven::gen_bits_even(batch_size, &mut preproc, &mut session).await?;
+
+                //Drop the error on purpose as the receiver end might be closed already if we produced too much
+                let _ = sender_channel.send(bits).await;
+            }
+            Ok::<_, anyhow::Error>(session)
+        };
+        self.new_execute_preprocessing(sessions, task_gen, sender_channels)
+    }
+
+    ///Orchestrate triple preprocessing for [`LargeSession`]
+    ///
+    ///Expects:
+    ///- a batch size,
+    ///- the total size we need to generate
+    ///- the set of [`SmallSession`] dedicated to this preprocessing
+    ///- the set of [`Sender`] channels to send the result back
+    ///
+    /// Returns:
+    ///- a [`JoinSet`] to the triple processing tasks
+    #[instrument(name="Triple Factory",skip(self,sessions,sender_channels),fields(num_sessions= ?sessions.len()))]
+    pub fn orchestrate_large_session_triple_processing(
+        &self,
+        batch_size: usize,
+        total_size: usize,
+        sessions: Vec<LargeSession>,
+        sender_channels: Vec<Sender<Vec<Triple<R>>>>,
+    ) -> JoinSet<Result<LargeSession, anyhow::Error>> {
+        let num_sessions = sessions.len();
+        let num_loops = div_ceil(total_size, batch_size * num_sessions);
+
+        let task_gen = |mut session: LargeSession, sender_channel: Sender<Vec<Triple<R>>>| async move {
+            let base_batch_size = BatchParams {
+                triples: batch_size,
+                randoms: 0,
+            };
+
+            for _ in 0..num_loops {
+                let triples = LargePreprocessing::<R, _, _>::init(
+                    &mut session,
+                    base_batch_size,
+                    TrueSingleSharing::default(),
+                    TrueDoubleSharing::default(),
+                )
+                .await?
+                .next_triple_vec(batch_size)?;
+
+                //Drop the error on purpose as the receiver end might be closed already if we produced too much
+                let _ = sender_channel.send(triples).await;
+            }
+            Ok::<_, anyhow::Error>(session)
+        };
+
+        self.new_execute_preprocessing(sessions, task_gen, sender_channels)
+    }
+
+    ///Orchestrate randomness preprocessing for [`LargeSession`]
+    ///
+    ///Expects:
+    ///- a batch size,
+    ///- the total size we need to generate
+    ///- the set of [`SmallSession`] dedicated to this preprocessing
+    ///- the set of [`Sender`] channels to send the result back
+    ///
+    /// Returns:
+    ///- a [`JoinSet`] to the randomness processing tasks
+    #[instrument(name="Random Factory",skip(self,sessions,sender_channels),fields(num_sessions= ?sessions.len()))]
+    pub fn orchestrate_large_session_random_processing(
+        &self,
+        batch_size: usize,
+        total_size: usize,
+        sessions: Vec<LargeSession>,
+        sender_channels: Vec<Sender<Vec<Share<R>>>>,
+    ) -> JoinSet<Result<LargeSession, anyhow::Error>> {
+        let num_sessions = sessions.len();
+        let num_loops = div_ceil(total_size, batch_size * num_sessions);
+
+        let task_gen = |mut session: LargeSession, sender_channel: Sender<Vec<Share<R>>>| async move {
+            let base_batch_size = BatchParams {
+                triples: 0,
+                randoms: batch_size,
+            };
+
+            for _ in 0..num_loops {
+                let randoms = LargePreprocessing::<R, _, _>::init(
+                    &mut session,
+                    base_batch_size,
+                    TrueSingleSharing::default(),
+                    TrueDoubleSharing::default(),
+                )
+                .await?
+                .next_random_vec(batch_size)?;
+
+                //Drop the error on purpose as the receiver end might be closed already if we produced too much
+                let _ = sender_channel.send(randoms).await;
+            }
+            Ok::<_, anyhow::Error>(session)
+        };
+
+        self.new_execute_preprocessing(sessions, task_gen, sender_channels)
+    }
+
+    ///Orchestrate bit preprocessing for [`LargeSession`]
+    ///
+    ///Expects:
+    ///- a batch size,
+    ///- the total size we need to generate
+    ///- the set of [`SmallSession`] dedicated to this preprocessing
+    ///- the set of [`Sender`] channels to send the result back
+    ///
+    /// Returns:
+    ///- a [`JoinSet`] to the bit processing tasks
+    #[instrument(name="Bit Factory",skip(self,sessions,sender_channels),fields(num_sessions= ?sessions.len()))]
+    pub fn orchestrate_large_session_bit_processing(
+        &self,
+        batch_size: usize,
+        total_size: usize,
+        sessions: Vec<LargeSession>,
+        sender_channels: Vec<Sender<Vec<Share<R>>>>,
+    ) -> JoinSet<Result<LargeSession, anyhow::Error>> {
+        let num_sessions = sessions.len();
+        let num_loops = div_ceil(total_size, batch_size * num_sessions);
+
+        let task_gen = |mut session: LargeSession, sender_channel: Sender<Vec<Share<R>>>| async move {
+            let base_batch_size = BatchParams {
+                triples: batch_size,
+                randoms: batch_size,
+            };
+
+            for _ in 0..num_loops {
+                let mut preproc = LargePreprocessing::<R, _, _>::init(
+                    &mut session,
+                    base_batch_size,
+                    TrueSingleSharing::default(),
+                    TrueDoubleSharing::default(),
+                )
+                .await?;
+                let bits =
+                    RealBitGenEven::gen_bits_even(batch_size, &mut preproc, &mut session).await?;
+
+                //Drop the error on purpose as the receiver end might be closed already if we produced too much
+                let _ = sender_channel.send(bits).await;
+            }
+            Ok::<_, anyhow::Error>(session)
+        };
+
+        self.new_execute_preprocessing(sessions, task_gen, sender_channels)
+    }
+
+    ///Generic functions that spawn the threads for processing
+    fn new_execute_preprocessing<
+        Rnd: Rng + CryptoRng + Sync + 'static,
+        C,
+        S: BaseSessionHandles<Rnd> + 'static,
+        TaskOutput,
+    >(
+        &self,
+        mut sessions: Vec<S>,
+        task_gen: impl Fn(S, C) -> TaskOutput,
+        sender_channels: Vec<C>,
+    ) -> JoinSet<Result<S, anyhow::Error>>
+    where
+        TaskOutput: Future<Output = anyhow::Result<S>> + Send,
+        TaskOutput: Send + 'static,
+    {
+        sessions.sort_by_key(|s| s.session_id());
+
+        assert_eq!(sessions.len(), sender_channels.len());
+
+        let span = tracing::Span::current();
+        let mut tasks = JoinSet::new();
+        for (session, channel) in sessions.into_iter().zip(sender_channels) {
+            tasks.spawn(task_gen(session, channel).instrument(span.clone()));
+        }
+
+        tasks
+    }
+
+    ///Simple triple processing functions which pushes everything to the provided
+    /// [`triple_writer`]
+    async fn triple_processing(
+        triple_writer: Arc<RwLock<Box<dyn DKGPreprocessing<R>>>>,
+        num_triples: usize,
+        triple_receiver_channels: Vec<Mutex<Receiver<Vec<Triple<R>>>>>,
+    ) -> anyhow::Result<()> {
+        let mut num_triples_needed = num_triples;
+        let inner_triple_receiver_channels = triple_receiver_channels;
+        let receiver_iterator = inner_triple_receiver_channels.iter().cycle();
+        for receiver in receiver_iterator {
+            let triple_batch = receiver
+                .lock()
+                .await
+                .recv()
+                .await
+                .ok_or_else(|| anyhow_error_and_log("Error receiving Triples"))?;
+            let num_triples = std::cmp::min(num_triples_needed, triple_batch.len());
+            (*triple_writer
+                .write()
+                .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
+            .append_triples(triple_batch[..num_triples].to_vec());
+            num_triples_needed -= num_triples;
+            if num_triples_needed == 0 {
+                return Ok(());
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+
+    ///Simple triple processing functions which pushes everything to the provided
+    /// [`randomness_writer`]
+    async fn randomness_processing(
+        randomness_writer: Arc<RwLock<Box<dyn DKGPreprocessing<R>>>>,
+        num_randomness: usize,
+        random_receiver_channels: Vec<Mutex<Receiver<Vec<Share<R>>>>>,
+    ) -> anyhow::Result<()> {
+        let mut num_randomness_needed = num_randomness;
+        let inner_random_receiver_channels = random_receiver_channels;
+        let receiver_iterator = inner_random_receiver_channels.iter().cycle();
+        for receiver in receiver_iterator {
+            let random_batch = receiver
+                .lock()
+                .await
+                .recv()
+                .await
+                .ok_or_else(|| anyhow_error_and_log("Error receiving Triples"))?;
+            let num_randoms = std::cmp::min(num_randomness_needed, random_batch.len());
+            (*randomness_writer
+                .write()
+                .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
+            .append_randoms(random_batch[..num_randoms].to_vec());
+            num_randomness_needed -= num_randoms;
+            if num_randomness_needed == 0 {
+                return Ok(());
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+
+    ///Bit processing function that creates TUniform noise from bits, and pushes
+    ///these and the desired amount of raw bits to the provided
+    /// [`bit_writer`]
+    #[instrument(skip(bit_writer, bit_receiver_channels))]
+    async fn bit_processing(
+        bit_writer: Arc<RwLock<Box<dyn DKGPreprocessing<R>>>>,
+        mut tuniform_productions: Vec<TUniformProduction>,
+        mut num_bits_required: usize,
+        bit_receiver_channels: Vec<Mutex<Receiver<Vec<Share<R>>>>>,
+    ) -> anyhow::Result<()> {
+        let inner_bit_receiver_channels = bit_receiver_channels;
+        let mut receiver_iterator = inner_bit_receiver_channels.iter().cycle();
+        let mut bit_batch = Vec::new();
+        for tuniform_production in tuniform_productions.iter_mut() {
+            let tuniform_req_bits = tuniform_production.bound.get_bound().0 + 2;
+            while tuniform_production.amount != 0 {
+                if bit_batch.len() < tuniform_req_bits {
+                    bit_batch.extend(
+                        receiver_iterator
+                            .next()
+                            .ok_or_else(|| anyhow_error_and_log("Error in channel iterator"))?
+                            .lock()
+                            .await
+                            .recv()
+                            .await
+                            .ok_or_else(|| {
+                                anyhow_error_and_log(format!(
+                                    "Error receiving bits, remaining {}",
+                                    tuniform_production.amount
+                                ))
+                            })?,
+                    );
+                }
+
+                let num_bits_available = bit_batch.len();
+                let num_tuniform = std::cmp::min(
+                    tuniform_production.amount,
+                    num_integer::Integer::div_floor(&num_bits_available, &tuniform_req_bits),
+                );
+                let mut bit_preproc = InMemoryBitPreprocessing {
+                    available_bits: bit_batch
+                        .drain(..num_tuniform * tuniform_req_bits)
+                        .collect(),
+                };
+                (*bit_writer
+                    .write()
+                    .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
+                .append_noises(
+                    RealSecretDistributions::t_uniform(
+                        num_tuniform,
+                        tuniform_production.bound.get_bound(),
+                        &mut bit_preproc,
+                    )?,
+                    tuniform_production.bound,
+                );
+                tuniform_production.amount -= num_tuniform;
+            }
+        }
+
+        while num_bits_required != 0 {
+            if bit_batch.is_empty() {
+                bit_batch = receiver_iterator
+                    .next()
+                    .ok_or_else(|| anyhow_error_and_log("Error in channel iterator"))?
+                    .lock()
+                    .await
+                    .recv()
+                    .await
+                    .ok_or_else(|| {
+                        anyhow_error_and_log(format!(
+                            "Error receiving bits, remaining {}",
+                            num_bits_required
+                        ))
+                    })?;
             }
 
-            let mut next_sid_to_push = session_ids_in_order.iter();
-            runtime_handle.block_on(async {
-                let mut triple_results = BTreeMap::new();
-                let mut randomness_results = BTreeMap::new();
-                while let Some(task_output) = basic_gen_tasks.join_next().await {
-                    let (new_session, preproc) = task_output?;
-                    let mut preproc = preproc?;
-                    match type_orchestration {
-                        TypeOrchestration::Triples => {
-                            let triples = preproc.next_triple_vec(batch_size)?;
-                            let sid = new_session.session_id();
-                            self.process_triples(
-                                triples,
-                                sid,
-                                &mut next_sid_to_push,
-                                &mut triple_results,
-                            )?;
-
-                            sessions.push(new_session);
-                        }
-                        TypeOrchestration::Randoms => {
-                            let randoms = preproc.next_random_vec(batch_size)?;
-                            let sid = new_session.session_id();
-                            self.process_randoms(
-                                randoms,
-                                sid,
-                                &mut next_sid_to_push,
-                                &mut randomness_results,
-                            )?;
-
-                            sessions.push(new_session);
-                        }
-                        TypeOrchestration::Bits => {
-                            bit_gen_tasks.spawn(task_bit_gen(
-                                batch_size,
-                                new_session,
-                                preproc,
-                                tracing::Span::current(),
-                            ));
-                        }
-                    }
-                }
-                Ok::<(), anyhow::Error>(())
-            })?;
-
-            runtime_handle.block_on(async {
-                let mut bit_results: BTreeMap<SessionId, Vec<Share<R>>> = BTreeMap::new();
-                while let Some(task_output) = bit_gen_tasks.join_next().await {
-                    let (new_session, bits) =
-                        task_output.map_err(|_| anyhow_error_and_log("error"))??;
-                    let sid = new_session.session_id();
-                    self.process_bits(bits, sid, &mut next_sid_to_push, &mut bit_results)?;
-
-                    sessions.push(new_session);
-                }
-                Ok::<(), anyhow::Error>(())
-            })?;
+            let num_bits_available = bit_batch.len();
+            let num_bits = std::cmp::min(num_bits_required, num_bits_available);
+            (*bit_writer
+                .write()
+                .map_err(|e| anyhow_error_and_log(format!("Locking Error: {e}")))?)
+            .append_bits(bit_batch.drain(..num_bits).collect());
+            num_bits_required -= num_bits;
         }
-        Ok(())
+        Ok::<(), anyhow::Error>(())
+    }
+
+    ///Returns the numbers of bits, triples and randomness we need to produce
+    fn get_num_correlated_randomness_required(&self) -> (usize, usize, usize) {
+        let params_basics_handle = self.params.get_params_basics_handle();
+
+        let num_bits = params_basics_handle.total_bits_required();
+        let num_triples = params_basics_handle.total_triples_required() - num_bits;
+        let num_randomness = params_basics_handle.total_randomness_required() - num_bits;
+
+        (num_bits, num_triples, num_randomness)
+    }
+
+    ///Returns the numbers of TUniform required as well as the number of raw bits
+    fn get_num_tuniform_raw_bits_required(&self) -> (Vec<TUniformProduction>, usize) {
+        let mut tuniform_productions = Vec::new();
+        let params_basics_handle = self.params.get_params_basics_handle();
+        tuniform_productions.push(TUniformProduction {
+            bound: NoiseBounds::LweNoise(params_basics_handle.lwe_tuniform_bound()),
+            amount: params_basics_handle.num_needed_noise_pk()
+                + params_basics_handle.num_needed_noise_ksk(),
+        });
+        tuniform_productions.push(TUniformProduction {
+            bound: NoiseBounds::GlweNoise(params_basics_handle.glwe_tuniform_bound()),
+            amount: params_basics_handle.num_needed_noise_bk(),
+        });
+
+        match self.params {
+            DKGParams::WithSnS(sns_params) => tuniform_productions.push(TUniformProduction {
+                bound: NoiseBounds::GlweNoiseSnS(sns_params.glwe_tuniform_bound_sns()),
+                amount: sns_params.num_needed_noise_bk_sns(),
+            }),
+            DKGParams::WithoutSnS(_) => (),
+        }
+
+        //Required number of _raw_ bits
+        let num_bits_required = params_basics_handle.lwe_dimension().0
+            + params_basics_handle.glwe_sk_num_bits()
+            + match self.params {
+                DKGParams::WithSnS(sns_params) => sns_params.glwe_sk_num_bits_sns(),
+                DKGParams::WithoutSnS(_) => 0,
+            };
+        (tuniform_productions, num_bits_required)
     }
 }
 
-///Auxiliary function used in [`PreprocessingOrchestrator::execute_preprocessing`] to generate bits from filled [`BasePreprocessing`]
-async fn task_bit_gen<
-    Z: RingEmbed + Solve + ErrorCorrect + Invert,
-    Rnd: Rng + CryptoRng + Sync,
-    S: BaseSessionHandles<Rnd>,
-    Prep: BasePreprocessing<Z>,
->(
-    batch_size: usize,
-    mut session: S,
-    mut preproc: Prep,
-    span: tracing::Span,
-) -> anyhow::Result<(S, Vec<Share<Z>>)> {
-    let bits = RealBitGenEven::gen_bits_even(batch_size, &mut preproc, &mut session)
-        .instrument(span)
-        .await?;
-
-    Ok((session, bits))
-}
 #[cfg(test)]
 mod tests {
     use std::{collections::HashMap, sync::Arc, thread};
 
     use itertools::Itertools;
+    use tokio::sync::mpsc::{channel, Receiver, Sender};
 
     use crate::{
         algebra::{
@@ -758,25 +892,104 @@ mod tests {
             structure_traits::{One, Zero},
         },
         execution::{
-            online::preprocessing::{create_memory_factory, BasePreprocessing, BitPreprocessing},
+            online::{
+                preprocessing::{
+                    create_memory_factory,
+                    memory::{InMemoryBasePreprocessing, InMemoryBitPreprocessing},
+                    BitPreprocessing, RandomPreprocessing, TriplePreprocessing,
+                },
+                triple::Triple,
+            },
             runtime::{
                 party::Identity,
                 test_runtime::{generate_fixed_identities, DistributedTestRuntime},
             },
-            sharing::shamir::{RevealOp, ShamirSharings},
+            sharing::{
+                shamir::{RevealOp, ShamirSharings},
+                share::Share,
+            },
             tfhe_internals::parameters::PARAMS_P8_SMALL_NO_SNS,
         },
         session_id::SessionId,
     };
 
-    use super::{PreprocessingOrchestrator, TypeOrchestration};
+    use super::PreprocessingOrchestrator;
 
+    type TripleChannels<R> = (Vec<Sender<Vec<Triple<R>>>>, Vec<Receiver<Vec<Triple<R>>>>);
+    type ShareChannels<R> = (Vec<Sender<Vec<Share<R>>>>, Vec<Receiver<Vec<Share<R>>>>);
+
+    type ReceiverChannelCollection<R> = (
+        Vec<Receiver<Vec<Triple<R>>>>,
+        Vec<Receiver<Vec<Share<R>>>>,
+        Vec<Receiver<Vec<Share<R>>>>,
+    );
+
+    const TEST_NUM_LOOP: usize = 5;
+
+    fn create_test_channels<R>(
+        num_basic_sessions: usize,
+        num_bits_sessions: usize,
+    ) -> (TripleChannels<R>, ShareChannels<R>, ShareChannels<R>) {
+        let mut triple_sender_channels = Vec::new();
+        let mut triple_receiver_channels = Vec::new();
+        for _ in 0..num_basic_sessions {
+            let (tx, rx) = channel::<Vec<Triple<R>>>(TEST_NUM_LOOP);
+            triple_sender_channels.push(tx);
+            triple_receiver_channels.push(rx);
+        }
+
+        let mut random_sender_channels = Vec::new();
+        let mut random_receiver_channels = Vec::new();
+        for _ in 0..num_basic_sessions {
+            let (tx, rx) = channel::<Vec<Share<R>>>(TEST_NUM_LOOP);
+            random_sender_channels.push(tx);
+            random_receiver_channels.push(rx);
+        }
+
+        let mut bit_sender_channels = Vec::new();
+        let mut bit_receiver_channels = Vec::new();
+        for _ in 0..num_bits_sessions {
+            let (tx, rx) = channel::<Vec<Share<R>>>(TEST_NUM_LOOP);
+            bit_sender_channels.push(tx);
+            bit_receiver_channels.push(rx);
+        }
+        (
+            (triple_sender_channels, triple_receiver_channels),
+            (random_sender_channels, random_receiver_channels),
+            (bit_sender_channels, bit_receiver_channels),
+        )
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum TypeOrchestration {
+        Triples,
+        Randoms,
+        Bits,
+    }
     fn check_triples_reconstruction(
-        triple_preprocs: &mut [Box<dyn BasePreprocessing<ResiduePoly64>>],
+        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePoly64>>,
         identities: &[Identity],
         num_triples: usize,
         threshold: usize,
     ) {
+        let mut triple_preprocs = all_parties_channels
+            .into_iter()
+            .map(|channels| {
+                let mut triples_vec = Vec::new();
+                let mut triple_channels = channels.0;
+                for _ in 0..TEST_NUM_LOOP {
+                    for triple_channel in triple_channels.iter_mut() {
+                        let next_batch = triple_channel.try_recv().unwrap();
+                        triples_vec.extend(next_batch)
+                    }
+                }
+                InMemoryBasePreprocessing {
+                    available_triples: triples_vec,
+                    available_randoms: Vec::new(),
+                }
+            })
+            .collect_vec();
+
         //Retrieve triples and try reconstruct them
         let mut triples_map = HashMap::new();
         for ((party_idx, _party_id), triple_preproc) in identities
@@ -815,11 +1028,28 @@ mod tests {
     }
 
     fn check_bits_reconstruction(
-        bit_preprocs: &mut [Box<dyn BitPreprocessing<ResiduePoly64>>],
+        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePoly64>>,
         identities: &[Identity],
         num_bits: usize,
         threshold: usize,
     ) {
+        let mut bit_preprocs = all_parties_channels
+            .into_iter()
+            .map(|channels| {
+                let mut bit_vec = Vec::new();
+                let mut bit_channels = channels.2;
+                for _ in 0..TEST_NUM_LOOP {
+                    for bit_channel in bit_channels.iter_mut() {
+                        let next_batch = bit_channel.try_recv().unwrap();
+                        bit_vec.extend(next_batch)
+                    }
+                }
+                InMemoryBitPreprocessing {
+                    available_bits: bit_vec,
+                }
+            })
+            .collect_vec();
+
         //Retrieve bits and try reconstruct them
         let mut bits_map = HashMap::new();
         for ((party_idx, _party_id), bit_preproc) in
@@ -847,11 +1077,29 @@ mod tests {
     }
 
     fn check_randomness_reconstruction(
-        random_preprocs: &mut [Box<dyn BasePreprocessing<ResiduePoly64>>],
+        all_parties_channels: Vec<ReceiverChannelCollection<ResiduePoly64>>,
         identities: &[Identity],
         num_randomness: usize,
         threshold: usize,
     ) {
+        let mut random_preprocs = all_parties_channels
+            .into_iter()
+            .map(|channels| {
+                let mut random_vec = Vec::new();
+                let mut random_channels = channels.1;
+                for _ in 0..TEST_NUM_LOOP {
+                    for random_channel in random_channels.iter_mut() {
+                        let next_batch = random_channel.try_recv().unwrap();
+                        random_vec.extend(next_batch)
+                    }
+                }
+                InMemoryBasePreprocessing {
+                    available_triples: Vec::new(),
+                    available_randoms: random_vec,
+                }
+            })
+            .collect_vec();
+
         //Retrieve bits and try reconstruct them
         let mut randomness_map = HashMap::new();
         for ((party_idx, _party_id), random_preproc) in identities
@@ -886,7 +1134,7 @@ mod tests {
         num_parties: usize,
         threshold: u8,
         type_orchestration: TypeOrchestration,
-    ) -> (Vec<Identity>, Vec<PreprocessingOrchestrator<ResiduePoly64>>) {
+    ) -> (Vec<Identity>, Vec<ReceiverChannelCollection<ResiduePoly64>>) {
         //Create identities and runtime
         let identities = generate_fixed_identities(num_parties);
         let runtimes = (0..num_sessions)
@@ -902,11 +1150,12 @@ mod tests {
             let runtimes = runtimes.clone();
             let rt_handle = rt.handle().clone();
             threads.push(thread::spawn(move || {
+                //inside a party
                 let _guard = rt_handle.enter();
                 println!("Thread created for {party_id}");
 
                 //For each party, create num_sessions sessions
-                let mut sessions = runtimes
+                let sessions = runtimes
                     .iter()
                     .zip(0..num_sessions)
                     .map(|(runtime, session_id)| {
@@ -924,42 +1173,69 @@ mod tests {
                     params,
                 )
                 .unwrap();
-                orchestrator
-                    .orchestrate_large_session_processing(
-                        batch_size,
-                        num_correlations,
-                        type_orchestration,
-                        &mut sessions,
-                        rt_handle.clone(),
-                    )
-                    .unwrap();
 
-                orchestrator
+                let (
+                    (triple_sender_channels, triple_receiver_channels),
+                    (random_sender_channels, random_receiver_channels),
+                    (bit_sender_channels, bit_receiver_channels),
+                ) = create_test_channels(sessions.len(), sessions.len());
+
+                let mut joinset = match type_orchestration {
+                    TypeOrchestration::Triples => orchestrator
+                        .orchestrate_large_session_triple_processing(
+                            batch_size,
+                            num_correlations,
+                            sessions,
+                            triple_sender_channels,
+                        ),
+                    TypeOrchestration::Randoms => orchestrator
+                        .orchestrate_large_session_random_processing(
+                            batch_size,
+                            num_correlations,
+                            sessions,
+                            random_sender_channels,
+                        ),
+                    TypeOrchestration::Bits => orchestrator
+                        .orchestrate_large_session_bit_processing(
+                            batch_size,
+                            num_correlations,
+                            sessions,
+                            bit_sender_channels,
+                        ),
+                };
+
+                rt_handle.block_on(async { while joinset.join_next().await.is_some() {} });
+
+                (
+                    triple_receiver_channels,
+                    random_receiver_channels,
+                    bit_receiver_channels,
+                )
             }));
         }
 
-        let mut orchestrators = Vec::new();
+        let mut channels = Vec::new();
         for thread in threads {
-            orchestrators.push(thread.join().unwrap());
+            channels.push(thread.join().unwrap());
         }
 
-        (identities, orchestrators)
+        (identities, channels)
     }
 
     #[test]
     fn test_triple_orchestrator_large() {
         let num_parties = 5;
         let threshold = 1;
-        let num_sessions = 5_u128;
+        let num_sessions = 5;
 
         //Each batch is 100 long
         let batch_size = 100;
 
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
-        let num_triples = 1000;
+        let num_triples = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, orchestrators) = test_orchestrator_large(
-            num_sessions,
+        let (identities, all_parties_channels) = test_orchestrator_large(
+            num_sessions as u128,
             num_triples,
             batch_size,
             num_parties,
@@ -967,18 +1243,8 @@ mod tests {
             TypeOrchestration::Triples,
         );
 
-        let mut triples_preproc = orchestrators
-            .into_iter()
-            .map(|orchestrator| {
-                Arc::into_inner(orchestrator.base_preproc)
-                    .unwrap()
-                    .into_inner()
-                    .unwrap()
-            })
-            .collect_vec();
-
         check_triples_reconstruction(
-            &mut triples_preproc,
+            all_parties_channels,
             &identities,
             num_triples,
             threshold as usize,
@@ -989,16 +1255,16 @@ mod tests {
     fn test_bit_orchestrator_large() {
         let num_parties = 5;
         let threshold = 1;
-        let num_sessions = 5_u128;
+        let num_sessions = 5;
 
         //Each batch is 100 long
         let batch_size = 100;
 
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
-        let num_bits = 1000;
+        let num_bits = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, orchestrators) = test_orchestrator_large(
-            num_sessions,
+        let (identities, all_parties_channels) = test_orchestrator_large(
+            num_sessions as u128,
             num_bits,
             batch_size,
             num_parties,
@@ -1006,33 +1272,28 @@ mod tests {
             TypeOrchestration::Bits,
         );
 
-        let mut bit_preprocs = orchestrators
-            .into_iter()
-            .map(|orchestrator| {
-                Arc::into_inner(orchestrator.bit_preproc)
-                    .unwrap()
-                    .into_inner()
-                    .unwrap()
-            })
-            .collect_vec();
-
-        check_bits_reconstruction(&mut bit_preprocs, &identities, num_bits, threshold as usize);
+        check_bits_reconstruction(
+            all_parties_channels,
+            &identities,
+            num_bits,
+            threshold as usize,
+        );
     }
 
     #[test]
     fn test_random_orchestrator_large() {
         let num_parties = 5;
         let threshold = 1;
-        let num_sessions = 5_u128;
+        let num_sessions = 5;
 
         //Each batch is 100 long
         let batch_size = 100;
 
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
-        let num_randomness = 1000;
+        let num_randomness = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, orchestrators) = test_orchestrator_large(
-            num_sessions,
+        let (identities, all_parties_channels) = test_orchestrator_large(
+            num_sessions as u128,
             num_randomness,
             batch_size,
             num_parties,
@@ -1040,18 +1301,8 @@ mod tests {
             TypeOrchestration::Randoms,
         );
 
-        let mut random_preprocs = orchestrators
-            .into_iter()
-            .map(|orchestrator| {
-                Arc::into_inner(orchestrator.base_preproc)
-                    .unwrap()
-                    .into_inner()
-                    .unwrap()
-            })
-            .collect_vec();
-
         check_randomness_reconstruction(
-            &mut random_preprocs,
+            all_parties_channels,
             &identities,
             num_randomness,
             threshold as usize,
@@ -1065,7 +1316,7 @@ mod tests {
         num_parties: usize,
         threshold: u8,
         type_orchestration: TypeOrchestration,
-    ) -> (Vec<Identity>, Vec<PreprocessingOrchestrator<ResiduePoly64>>) {
+    ) -> (Vec<Identity>, Vec<ReceiverChannelCollection<ResiduePoly64>>) {
         //Create identities and runtime
         let identities = generate_fixed_identities(num_parties);
         let runtimes = (0..num_sessions)
@@ -1082,10 +1333,8 @@ mod tests {
                 let _guard = rt_handle.enter();
                 println!("Thread created for {party_id}");
 
-                //For test runtime we need multiple runtimes for mutltiple channels
-
                 //For each party, create num_sessions sessions
-                let mut sessions = runtimes
+                let sessions = runtimes
                     .iter()
                     .zip(0..num_sessions)
                     .map(|(runtime, session_id)| {
@@ -1103,41 +1352,69 @@ mod tests {
                     params,
                 )
                 .unwrap();
-                orchestrator
-                    .orchestrate_small_session_processing(
-                        batch_size,
-                        num_correlations,
-                        type_orchestration,
-                        &mut sessions,
-                        rt_handle.clone(),
-                    )
-                    .unwrap();
-                orchestrator
+
+                let (
+                    (triple_sender_channels, triple_receiver_channels),
+                    (random_sender_channels, random_receiver_channels),
+                    (bit_sender_channels, bit_receiver_channels),
+                ) = create_test_channels(sessions.len(), sessions.len());
+
+                let mut joinset = match type_orchestration {
+                    TypeOrchestration::Triples => orchestrator
+                        .orchestrate_small_session_triple_processing(
+                            batch_size,
+                            num_correlations,
+                            sessions,
+                            triple_sender_channels,
+                        ),
+                    TypeOrchestration::Randoms => orchestrator
+                        .orchestrate_small_session_random_processing(
+                            batch_size,
+                            num_correlations,
+                            sessions,
+                            random_sender_channels,
+                        ),
+                    TypeOrchestration::Bits => orchestrator
+                        .orchestrate_small_session_bit_processing(
+                            batch_size,
+                            num_correlations,
+                            sessions,
+                            bit_sender_channels,
+                        ),
+                };
+
+                rt_handle.block_on(async { while joinset.join_next().await.is_some() {} });
+
+                (
+                    triple_receiver_channels,
+                    random_receiver_channels,
+                    bit_receiver_channels,
+                )
             }));
         }
 
-        let mut orchestrators = Vec::new();
+        let mut channels = Vec::new();
         for thread in threads {
-            orchestrators.push(thread.join().unwrap());
+            channels.push(thread.join().unwrap());
         }
 
-        (identities, orchestrators)
+        (identities, channels)
     }
 
     #[test]
     fn test_triple_orchestrator_small() {
         let num_parties = 5;
         let threshold = 1;
-        let num_sessions = 5_u128;
+        let num_sessions = 5;
 
         //Each batch is 100 long
         let batch_size = 100;
 
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
-        let num_triples = 1000;
+        let num_triples = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, orchestrators) = test_orchestrator_small(
-            num_sessions,
+        let (identities, all_parties_channels) = test_orchestrator_small(
+            num_sessions as u128,
             num_triples,
             batch_size,
             num_parties,
@@ -1145,18 +1422,8 @@ mod tests {
             TypeOrchestration::Triples,
         );
 
-        let mut triple_preprocs = orchestrators
-            .into_iter()
-            .map(|orchestrator| {
-                Arc::into_inner(orchestrator.base_preproc)
-                    .unwrap()
-                    .into_inner()
-                    .unwrap()
-            })
-            .collect_vec();
-
         check_triples_reconstruction(
-            &mut triple_preprocs,
+            all_parties_channels,
             &identities,
             num_triples,
             threshold as usize,
@@ -1167,16 +1434,16 @@ mod tests {
     fn test_bit_orchestrator_small() {
         let num_parties = 5;
         let threshold = 1;
-        let num_sessions = 5_u128;
+        let num_sessions = 5;
 
         //Each batch is 100 long
         let batch_size = 100;
 
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
-        let num_bits = 1000;
+        let num_bits = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, orchestrators) = test_orchestrator_small(
-            num_sessions,
+        let (identities, all_parties_channels) = test_orchestrator_small(
+            num_sessions as u128,
             num_bits,
             batch_size,
             num_parties,
@@ -1184,33 +1451,28 @@ mod tests {
             TypeOrchestration::Bits,
         );
 
-        let mut bit_preprocs = orchestrators
-            .into_iter()
-            .map(|orchestrator| {
-                Arc::into_inner(orchestrator.bit_preproc)
-                    .unwrap()
-                    .into_inner()
-                    .unwrap()
-            })
-            .collect_vec();
-
-        check_bits_reconstruction(&mut bit_preprocs, &identities, num_bits, threshold as usize);
+        check_bits_reconstruction(
+            all_parties_channels,
+            &identities,
+            num_bits,
+            threshold as usize,
+        );
     }
 
     #[test]
     fn test_randomness_orchestrator_small() {
         let num_parties = 5;
         let threshold = 1;
-        let num_sessions = 5_u128;
+        let num_sessions = 5;
 
         //Each batch is 100 long
         let batch_size = 100;
 
         //Want 1k, so each session needs running twice (5 sessions, each batch is 100)
-        let num_randomness = 1000;
+        let num_randomness = num_sessions * batch_size * TEST_NUM_LOOP;
 
-        let (identities, orchestrators) = test_orchestrator_small(
-            num_sessions,
+        let (identities, all_parties_channels) = test_orchestrator_small(
+            num_sessions as u128,
             num_randomness,
             batch_size,
             num_parties,
@@ -1218,18 +1480,8 @@ mod tests {
             TypeOrchestration::Randoms,
         );
 
-        let mut random_preprocs = orchestrators
-            .into_iter()
-            .map(|orchestrator| {
-                Arc::into_inner(orchestrator.base_preproc)
-                    .unwrap()
-                    .into_inner()
-                    .unwrap()
-            })
-            .collect_vec();
-
         check_randomness_reconstruction(
-            &mut random_preprocs,
+            all_parties_channels,
             &identities,
             num_randomness,
             threshold as usize,

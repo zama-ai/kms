@@ -120,6 +120,7 @@ fn sanity_check_decoding<F: Field>(
     tracing::info!("e {e:?}");
 }
 
+//NIST: Level Zero Operation
 /// decode a given syndrome poly in the field for a given set of points and a RS value r = n - v.
 pub fn decode_syndrome<F: Field>(syndrome: &Poly<F>, x_alpha: &[F], r: usize) -> Vec<F> {
     // nothing to decode if syndrome is zero, return all-zero error vector

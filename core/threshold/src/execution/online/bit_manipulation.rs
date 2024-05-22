@@ -1,5 +1,6 @@
 use rand::{CryptoRng, Rng};
 use std::marker::PhantomData;
+use tracing::instrument;
 
 use crate::algebra::residue_poly::ResiduePoly;
 use crate::algebra::structure_traits::{BaseRing, BitExtract, ErrorCorrect, Solve, ZConsts};
@@ -222,6 +223,7 @@ where
         Ok((res1, res2))
     }
 
+    #[instrument(name="BitAdd (secret,clear)",skip(session,lhs,rhs,prep),fields(batch_size=?lhs.len()))]
     async fn binary_adder_secret_clear<
         Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
@@ -342,6 +344,7 @@ where
         res
     }
 
+    #[instrument(name="XOR", skip(lhs,rhs,preproc,session),fields(batch_size=?lhs.len()))]
     pub async fn xor_list_secret_secret<
         Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
@@ -378,6 +381,7 @@ where
         Ok(prods)
     }
 
+    #[instrument(name="BitSum",skip(input),fields(batch_size=?input.len()))]
     pub fn bit_sum(input: &SecretVec<Z>) -> anyhow::Result<Share<Z>>
     where
         Z: std::ops::Shl<usize, Output = Z>,
@@ -402,6 +406,7 @@ where
     }
 }
 
+#[instrument(name="BitDec",skip(session,prep,inputs),fields(batch_size=?inputs.len()))]
 pub async fn bit_dec_batch<Z, P, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
     session: &mut Ses,
     prep: &mut P,

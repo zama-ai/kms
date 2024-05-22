@@ -7,7 +7,7 @@ id = 1
 choreoport = 60000
 
 [tracing]
-service_name = "moby"
+servicename = "moby"
 endpoint = "http://localhost:4317"
 
 [redis]

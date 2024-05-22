@@ -1,4 +1,5 @@
 use super::grpc::gen::CrsRequest;
+use crate::conf::telemetry::ContextPropagator;
 use crate::execution::tfhe_internals::parameters::{Ciphertext64, NoiseFloodParameters};
 use crate::{
     algebra::base_ring::Z64,
@@ -18,7 +19,9 @@ use crate::{
 use crate::{choreography::grpc::ComputationOutputs, execution::runtime::session::DecryptionMode};
 use std::{collections::HashMap, time::Duration};
 use tokio::task::JoinSet;
+use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Channel, ClientTlsConfig, Uri};
+use tracing::{instrument, Instrument};
 
 pub struct ChoreoRuntime {
     role_assignments: HashMap<Role, Identity>,
@@ -73,12 +76,16 @@ impl ChoreoRuntime {
         })
     }
 
-    fn new_client(&self, channel: Channel) -> ChoreographyClient<Channel> {
-        ChoreographyClient::new(channel)
+    fn new_client(
+        &self,
+        channel: Channel,
+    ) -> ChoreographyClient<InterceptedService<Channel, ContextPropagator>> {
+        ChoreographyClient::with_interceptor(channel, ContextPropagator)
             .max_decoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
             .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
 
+    #[instrument(name = "Init Preproc Request", skip(self))]
     pub async fn initate_preproc(
         &self,
         params: DKGParams,
@@ -99,7 +106,8 @@ impl ChoreoRuntime {
                 num_sessions,
             };
             tracing::debug!("launching the dkg preproc with proto to {:?}", channel);
-            join_set.spawn(async move { client.preproc(request).await });
+            let current_span = tracing::Span::current();
+            join_set.spawn(async move { client.preproc(request).instrument(current_span).await });
         });
         while let Some(response) = join_set.join_next().await {
             response??;
@@ -107,6 +115,7 @@ impl ChoreoRuntime {
         Ok(())
     }
 
+    #[instrument(name = "Init Decrypt Request", skip(self, ct))]
     pub async fn initiate_threshold_decryption(
         &self,
         mode: &DecryptionMode,
@@ -140,7 +149,13 @@ impl ChoreoRuntime {
             };
 
             tracing::debug!("launching the decryption with proto to {:?}", channel);
-            join_set.spawn(async move { client.threshold_decrypt(request).await });
+            let current_span = tracing::Span::current();
+            join_set.spawn(async move {
+                client
+                    .threshold_decrypt(request)
+                    .instrument(current_span)
+                    .await
+            });
         });
         while let Some(response) = join_set.join_next().await {
             response??;
@@ -255,6 +270,7 @@ impl ChoreoRuntime {
         Err("No Public Key received!".into())
     }
 
+    #[instrument(name = "Init CRS request", skip(self))]
     pub async fn initiate_crs_ceremony(
         &self,
         epoch_id: &SessionId,

@@ -697,6 +697,7 @@ impl<Z: Ring> RingEmbed for ResiduePoly<Z> {
 }
 
 impl<Z: BaseRing> Syndrome for ResiduePoly<Z> {
+    //NIST: Level Zero Operation (I believe this is is SynDecode + last step of correction)
     // decode a ring syndrome into an error vector, containing the error magnitudes at the respective indices
     fn syndrome_decode(
         mut syndrome_poly: Poly<ResiduePoly<Z>>,
@@ -751,6 +752,7 @@ impl<Z: BaseRing> Syndrome for ResiduePoly<Z> {
         Ok(e_res)
     }
 
+    //NIST: Level Zero Operation (I believe this is is "Equation 19")
     // compute the syndrome in the GR from a given sharing and threshold
     fn syndrome_compute(
         sharing: &ShamirSharings<ResiduePoly<Z>>,
@@ -879,6 +881,7 @@ static INNER_LOOP: [GF256; 7] = [
 ];
 
 impl<Z: BaseRing> Solve for ResiduePoly<Z> {
+    //NIST: Level Zero Operation
     ///***NOTE: CAREFUL WHEN NOT USING Z64 OR Z128 AS BASE RING***
     fn solve(v: &Self) -> anyhow::Result<Self> {
         //Check to help detect if we forgot about the note above

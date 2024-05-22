@@ -105,6 +105,7 @@ where
     ResiduePoly<Z>: MemoizedExceptionals,
     ResiduePoly<Z>: RingEmbed,
 {
+    //NIST: Level Zero Operation
     fn error_correct(
         sharing: &ShamirSharings<ResiduePoly<Z>>,
         threshold: usize,

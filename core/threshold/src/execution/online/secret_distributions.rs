@@ -1,3 +1,5 @@
+use tracing::instrument;
+
 use super::preprocessing::BitPreprocessing;
 use crate::{
     algebra::structure_traits::Ring,
@@ -28,6 +30,7 @@ impl SecretDistributions for RealSecretDistributions {
     /// Sample shares of a secret sampled from the TUniform(1, -2^bound, 2^bound)
     /// that is every value in (-2^bound, 2^bound) is selected with prob 1/2^{bound+1}
     /// and the endpoints are selected with prob 1/2^{bound+2}
+    #[instrument(name = "MPC.TUniform", skip(n, bound, preproc),fields(bound=?bound,batch_size=?n))]
     fn t_uniform<Z, P>(
         n: usize,
         bound: TUniformBound,
@@ -53,6 +56,7 @@ impl SecretDistributions for RealSecretDistributions {
         Ok(res)
     }
 
+    #[instrument(name = "MPC.NewHope", skip(preproc,bound,n),fields(bound=?bound,batch_size=?n))]
     fn newhope<Z, P>(n: usize, bound: usize, preproc: &mut P) -> anyhow::Result<Vec<Share<Z>>>
     where
         Z: Ring,

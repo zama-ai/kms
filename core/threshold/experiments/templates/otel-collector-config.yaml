@@ -1,0 +1,30 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: otel-collector:4317
+      http:
+        endpoint: otel-collector:4318
+processors:
+  batch:
+
+exporters:
+  logging:
+  otlp:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  file:
+      path: /exports/export.json
+extensions:
+  health_check:
+  pprof:
+  zpages:
+
+service:
+  extensions: [health_check, pprof, zpages]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp, file, logging]

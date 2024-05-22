@@ -54,6 +54,8 @@ pub mod online {
 
 pub mod sharing {
     #[cfg(feature = "non-wasm")]
+    pub mod constants;
+    #[cfg(feature = "non-wasm")]
     pub mod input;
     #[cfg(feature = "non-wasm")]
     pub mod open;

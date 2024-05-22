@@ -35,6 +35,7 @@ use sha3::{
 };
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
+use tracing::instrument;
 
 pub(crate) fn create_sets(n: usize, t: usize) -> Vec<Vec<usize>> {
     (1..=n).combinations(n - t).collect()
@@ -239,6 +240,7 @@ where
 
     /// Compute the PRSS.check() method which returns the summed up psi value for each party based on the supplied counter `ctr`.
     /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
+    #[instrument(name = "PRSS.check", skip(self, session))]
     pub async fn prss_check<R: Rng + CryptoRng, S: SmallSessionHandles<Z, R>>(
         &self,
         session: &mut S,
@@ -274,6 +276,7 @@ where
 
     /// Compute the PRZS.check() method which returns the summed up chi value for each party based on the supplied counter `ctr`.
     /// If parties are behaving maliciously they get added to the corruption list in [SmallSessionHandles]
+    #[instrument(name = "PRZS.Check", skip(self, session, ctr))]
     pub async fn przs_check<R: Rng + CryptoRng, S: SmallSessionHandles<Z, R>>(
         &self,
         session: &mut S,
@@ -496,6 +499,7 @@ where
     Z: Invert,
 {
     /// initialize the PRSS setup for this epoch and a given party
+    #[instrument(name="PRSS.Init (abort)",skip(session),fields(own_identity = ?session.own_identity()))]
     pub async fn init_with_abort<A: AgreeRandom, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
     ) -> anyhow::Result<Self> {
@@ -549,6 +553,7 @@ where
     Z: RingEmbed,
     Z: Invert,
 {
+    #[instrument(name="PRSS.Init (robust)",skip(session, vss),fields(own_identity = ?session.own_identity()))]
     pub async fn robust_init<V: Vss, R: Rng + CryptoRng, L: BaseSessionHandles<R>>(
         session: &mut L,
         vss: &V,
@@ -636,6 +641,7 @@ fn inverse_vdm<Z: Ring + RingEmbed>(rows: usize, columns: usize) -> anyhow::Resu
     Ok(init_vdm::<Z>(columns, rows)?.reversed_axes())
 }
 
+#[instrument(name="AgreeRandom-Robust",skip(session,shares),fields(session_id = ?session.session_id(),own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
 async fn agree_random_robust<
     Z: Ring + ErrorCorrect,
     Rnd: Rng + CryptoRng,

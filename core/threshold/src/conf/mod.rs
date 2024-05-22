@@ -56,14 +56,16 @@ impl From<&Party> for Identity {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct Tracing {
-    service_name: String,
+    //service_name did not work well with the config builder env variable
+    //as _ was reconginzed as a special character for field of a struct
+    servicename: String,
     endpoint: String,
 }
 
 impl Tracing {
     /// Returns the service name.
     pub fn service_name(&self) -> &str {
-        &self.service_name
+        &self.servicename
     }
 
     /// Returns the endpoint.
@@ -79,6 +81,8 @@ pub enum Mode {
     Local,
     #[strum(serialize = "dev")]
     Development,
+    #[strum(serialize = "choreo")]
+    Choreographer,
     Stage,
     #[strum(serialize = "prod")]
     Production,
@@ -128,5 +132,6 @@ impl<'a> Settings<'a> {
 #[cfg(feature = "choreographer")]
 pub mod choreo;
 
+pub mod constants;
 pub mod party;
 pub mod telemetry;

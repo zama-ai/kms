@@ -53,7 +53,7 @@ impl SwitchAndSquashKey {
     /// Converts a ciphertext over a 64 bit domain to a ciphertext over a 128 bit domain (which is needed for secure threshold decryption).
     /// Conversion is done using a precreated conversion key [conversion_key].
     /// Observe that the decryption key will be different after conversion, since [conversion_key] is actually a key-switching key.
-    #[instrument(skip(self, raw_small_ct))]
+    #[instrument(name = "SwitchAndSquash", skip(self, raw_small_ct), fields(num_blocks=?raw_small_ct.blocks().len()))]
     pub fn to_large_ciphertext(
         &self,
         raw_small_ct: &Ciphertext64,

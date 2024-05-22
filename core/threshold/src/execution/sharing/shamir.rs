@@ -147,6 +147,7 @@ where
     Z: Ring,
     Z: RingEmbed,
 {
+    //NIST: Level Zero Operation
     fn share<R: Rng + CryptoRng>(
         rng: &mut R,
         secret: Z,
