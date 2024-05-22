@@ -1,8 +1,10 @@
-use events::kms::Proof;
 use events::kms::{
-    DecryptResponseValues, DecryptValues, FheType, KmsEvent, Transaction, TransactionId,
+    DecryptResponseValues, DecryptValues, FheType, KmsEvent, KmsEventMessage, Transaction,
+    TransactionId,
 };
+use events::kms::{KmsOperation, OperationValue};
 use events::subscription::handler::EventsMode;
+use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder};
 use kms_blockchain_client::query_client::{QueryClient, QueryClientBuilder};
 use kms_blockchain_connector::application::sync_handler::{KmsConnectorEventHandler, SyncHandler};
@@ -13,7 +15,7 @@ use kms_blockchain_connector::conf::{
 use kms_blockchain_connector::domain::blockchain::{
     BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse,
 };
-use kms_blockchain_connector::domain::kms::KmsOperation;
+use kms_blockchain_connector::domain::kms::Kms;
 use kms_blockchain_connector::infrastructure::blockchain::KmsBlockchain;
 use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
 use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
@@ -26,7 +28,7 @@ use test_context::{test_context, AsyncTestContext};
 use test_utilities::context::DockerCompose;
 use tokio::fs;
 use tokio::sync::mpsc::{channel, Sender};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, RwLock};
 use tokio::time::sleep;
 struct DockerComposeContext {
     cmd: DockerCompose,
@@ -52,8 +54,12 @@ struct KmsMock {
 }
 
 #[async_trait::async_trait]
-impl KmsOperation for KmsMock {
-    async fn run(&self, event: KmsEvent) -> anyhow::Result<KmsOperationResponse> {
+impl Kms for KmsMock {
+    async fn run(
+        &self,
+        event: KmsEvent,
+        _operation_value: OperationValue,
+    ) -> anyhow::Result<KmsOperationResponse> {
         self.channel.send(event.clone()).await?;
         Ok(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
             decrypt_response: DecryptResponseValues::builder()
@@ -61,8 +67,8 @@ impl KmsOperation for KmsMock {
                 .payload("Hello World".as_bytes().to_vec())
                 .build(),
             operation_val: BlockchainOperationVal {
-                tx_id: event.txn_id,
-                proof: Proof::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0]),
+                tx_id: event.txn_id().clone(),
+                proof: event.proof().clone(),
             },
         }))
     }
@@ -87,11 +93,24 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
 
     // Wait for the contract to be deployed
     sleep(Duration::from_secs(5)).await;
+
     // Get the contract address dynamically
     let contract_address = get_contract_address(&query_client).await.unwrap();
 
+    let client: RwLock<Client> = RwLock::new(
+        ClientBuilder::builder()
+            .mnemonic_wallet(mnemonic.as_deref())
+            .grpc_addresses(addresses.clone())
+            .contract_address(&contract_address)
+            .build()
+            .try_into()
+            .unwrap(),
+    );
+
+    start_kms_config(&client).await;
+
     // Send decryption request to the blockchain in order to get events after
-    let txhash = send_decrypt_request(mnemonic.clone(), addresses.clone(), &contract_address).await;
+    let txhash = send_decrypt_request(&client).await;
 
     let query_client = Arc::new(query_client);
     wait_for_tx_processed(query_client.clone(), txhash.clone())
@@ -137,6 +156,44 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), 1);
 }
 
+async fn start_kms_config(client: &RwLock<Client>) {
+    let request = serde_json::json!({
+        "update_kms_core_conf": {
+            "conf": {
+                "threshold": {
+                    "parties": [{
+                       "party_id": HexVector(vec![1]),
+                       "public_key": HexVector(vec![1, 2, 3, 4, 5]),
+                       "address": "http://localhost:9090",
+                    },
+                    {
+                       "party_id": HexVector(vec![2]),
+                       "public_key": HexVector(vec![1, 2, 3, 4, 5]),
+                       "address": "http://localhost:9090",
+                    },
+                    {
+                       "party_id": HexVector(vec![3]),
+                       "public_key": HexVector(vec![1, 2, 3, 4, 5]),
+                       "address": "http://localhost:9090",
+                    },
+                    {
+                       "party_id": HexVector(vec![4]),
+                       "public_key": HexVector(vec![1, 2, 3, 4, 5]),
+                       "address": "http://localhost:9090",
+                    }
+                    ]
+                },
+            }
+        }
+    });
+    client
+        .write()
+        .await
+        .execute_contract(request.to_string().as_bytes(), 200_000u64)
+        .await
+        .unwrap();
+}
+
 #[retry(stop=(attempts(4)|duration(20)),wait=fixed(5))]
 async fn wait_for_tx_processed(
     query_client: Arc<QueryClient>,
@@ -158,8 +215,8 @@ async fn check_event(
     tx_sender: Sender<()>,
 ) {
     let json_msg = json!({
-        "transactions": {
-         "txn_id": event.txn_id,
+        "get_transaction": {
+         "txn_id": event.txn_id(),
         }
     });
     loop {
@@ -171,15 +228,11 @@ async fn check_event(
             .await
             .unwrap();
         let tx = serde_json::from_slice::<Transaction>(&resp).unwrap();
-        let transaction_response = query_client
-            .query_tx_by_block_and_index(tx.block_height, tx.transaction_index)
-            .await;
-
-        if let Ok(tx_resp) = transaction_response {
-            if tx_resp.code == 0 {
-                tx_sender.send(()).await.expect("Failed to send response");
-                break;
-            }
+        if tx.operations().iter().any(|x| {
+            <OperationValue as Into<KmsOperation>>::into(x.clone()) == KmsOperation::DecryptResponse
+        }) {
+            tx_sender.send(()).await.expect("Failed to send response");
+            break;
         }
     }
 }
@@ -241,21 +294,8 @@ async fn start_handler(
         .build()
 }
 
-async fn send_decrypt_request(
-    mnemonic: Option<String>,
-    addresses: Vec<&str>,
-    contract_address: &str,
-) -> String {
-    // Send decryption request to the blockchain
-    let mut client: Client = ClientBuilder::builder()
-        .mnemonic_wallet(mnemonic.as_deref())
-        .grpc_addresses(addresses)
-        .contract_address(contract_address)
-        .build()
-        .try_into()
-        .unwrap();
-
-    let operation = events::kms::KmsOperationAttribute::Decrypt(
+async fn send_decrypt_request(client: &RwLock<Client>) -> String {
+    let operation = events::kms::OperationValue::Decrypt(
         DecryptValues::builder()
             .version(CURRENT_FORMAT_VERSION)
             .servers_needed(2)
@@ -267,17 +307,24 @@ async fn send_decrypt_request(
     );
 
     let proof = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
-    let request = KmsEvent::builder()
+    let event = KmsEvent::builder()
         .txn_id(<Vec<u8> as Into<TransactionId>>::into(vec![1]))
-        .operation(operation)
+        .operation(KmsOperation::Decrypt)
         .proof(proof)
-        .build()
-        .to_json()
-        .unwrap()
-        .to_string();
+        .build();
+
+    let request = serde_json::to_vec(
+        &KmsEventMessage::builder()
+            .value(operation)
+            .event(event)
+            .build(),
+    )
+    .unwrap();
 
     let resp = client
-        .execute_contract(request.as_bytes(), 200_000u64)
+        .write()
+        .await
+        .execute_contract(request.as_slice(), 200_000u64)
         .await
         .unwrap();
 

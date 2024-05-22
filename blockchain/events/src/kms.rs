@@ -1,18 +1,109 @@
+use std::str::FromStr;
+
 use super::conversions::*;
-use crate::{attrs_to_optionals, field_to_attr};
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Attribute, Event};
-use serde::de::Error as _;
+use serde::ser::SerializeMap;
+use serde::Serialize;
 use serde_json::Value;
 use strum::EnumProperty;
-use strum_macros::{Display, EnumIter, EnumString};
+use strum_macros::{Display, EnumIs, EnumIter, EnumString};
 use typed_builder::TypedBuilder;
+
+#[cw_serde]
+#[derive(Eq, EnumString, Display, EnumIter, strum_macros::EnumProperty, EnumIs)]
+pub enum OperationValue {
+    #[serde(rename = "decrypt")]
+    Decrypt(DecryptValues),
+    #[serde(rename = "decrypt_response")]
+    DecryptResponse(DecryptResponseValues),
+    #[serde(rename = "reencrypt")]
+    Reencrypt(ReencryptValues),
+    #[serde(rename = "reencrypt_response")]
+    ReencryptResponse(ReencryptResponseValues),
+    #[serde(rename = "keygen")]
+    KeyGen(KeyGenValues),
+    #[serde(rename = "keygen_response")]
+    KeyGenResponse(KeyGenResponseValues),
+    #[serde(rename = "keygen_preproc")]
+    KeyGenPreproc(KeyGenPreprocValues),
+    #[serde(rename = "keygen_preproc_response")]
+    KeyGenPreprocResponse(KeyGenPreprocResponseValues),
+    #[serde(rename = "crs_gen")]
+    CrsGen(CrsGenValues),
+    #[serde(rename = "crs_gen_response")]
+    CrsGenResponse(CrsGenResponseValues),
+}
+
+impl OperationValue {
+    fn has_not_inner_value(&self) -> bool {
+        matches!(
+            self,
+            Self::CrsGen(_) | Self::KeyGenPreproc(_) | Self::KeyGenPreprocResponse(_)
+        )
+    }
+}
+
+impl From<OperationValue> for KmsOperation {
+    fn from(value: OperationValue) -> Self {
+        match value {
+            OperationValue::Decrypt(_) => KmsOperation::Decrypt,
+            OperationValue::DecryptResponse(_) => KmsOperation::DecryptResponse,
+            OperationValue::Reencrypt(_) => KmsOperation::Reencrypt,
+            OperationValue::ReencryptResponse(_) => KmsOperation::ReencryptResponse,
+            OperationValue::KeyGen(_) => KmsOperation::KeyGen,
+            OperationValue::KeyGenResponse(_) => KmsOperation::KeyGenResponse,
+            OperationValue::KeyGenPreproc(_) => KmsOperation::KeyGenPreproc,
+            OperationValue::KeyGenPreprocResponse(_) => KmsOperation::KeyGenPreprocResponse,
+            OperationValue::CrsGen(_) => KmsOperation::CrsGen,
+            OperationValue::CrsGenResponse(_) => KmsOperation::CrsGenResponse,
+        }
+    }
+}
+
+impl OperationValue {
+    pub fn into_kms_operation(&self) -> KmsOperation {
+        self.clone().into()
+    }
+
+    pub fn is_request(&self) -> bool {
+        self.into_kms_operation().is_request()
+    }
+
+    pub fn is_response(&self) -> bool {
+        self.into_kms_operation().is_response()
+    }
+}
 
 #[cw_serde]
 #[derive(Eq, TypedBuilder, Default)]
 pub struct Transaction {
-    pub block_height: u64,
-    pub transaction_index: u32,
+    block_height: u64,
+    transaction_index: u32,
+    #[builder(setter(into), default)]
+    operations: Vec<OperationValue>,
+}
+
+impl Transaction {
+    pub fn block_height(&self) -> u64 {
+        self.block_height
+    }
+
+    pub fn transaction_index(&self) -> u32 {
+        self.transaction_index
+    }
+
+    pub fn operations(&self) -> &Vec<OperationValue> {
+        &self.operations
+    }
+
+    pub fn add_operation(&mut self, operation: OperationValue) -> Result<(), anyhow::Error> {
+        if self.operations.iter().any(|op| op == &operation) {
+            return Err(anyhow::anyhow!("Operation already exists"));
+        }
+        self.operations.push(operation);
+        Ok(())
+    }
 }
 
 #[cw_serde]
@@ -90,42 +181,9 @@ impl DecryptValues {
     }
 }
 
-impl From<DecryptValues> for KmsOperationAttribute {
+impl From<DecryptValues> for OperationValue {
     fn from(value: DecryptValues) -> Self {
-        KmsOperationAttribute::Decrypt(value)
-    }
-}
-
-impl From<DecryptValues> for Vec<Attribute> {
-    fn from(value: DecryptValues) -> Self {
-        vec![
-            field_to_attr!(tostr; value, version),
-            field_to_attr!(tostr; value, servers_needed),
-            field_to_attr!(tohex; value, key_id),
-            field_to_attr!(tostr; value, fhe_type),
-            field_to_attr!(tohex; value, ciphertext),
-            field_to_attr!(tohex; value, randomness),
-        ]
-    }
-}
-
-impl TryFrom<Vec<Attribute>> for DecryptValues {
-    type Error = anyhow::Error;
-    fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        attrs_to_optionals!(
-            attributes;
-            same;
-            bytes ciphertext, randomness, key_id;
-            generics version, servers_needed, fhe_type
-        );
-        Ok(DecryptValues {
-            version,
-            servers_needed,
-            key_id,
-            fhe_type,
-            ciphertext,
-            randomness,
-        })
+        OperationValue::Decrypt(value)
     }
 }
 
@@ -224,61 +282,9 @@ impl ReencryptValues {
     }
 }
 
-impl From<ReencryptValues> for Vec<Attribute> {
+impl From<ReencryptValues> for OperationValue {
     fn from(value: ReencryptValues) -> Self {
-        vec![
-            field_to_attr!(tohex; value, signature),
-            field_to_attr!(tostr; value, version),
-            field_to_attr!(tostr; value, servers_needed),
-            field_to_attr!(tohex; value, verification_key),
-            field_to_attr!(tohex; value, randomness),
-            field_to_attr!(tohex; value, enc_key),
-            field_to_attr!(tostr; value, fhe_type),
-            field_to_attr!(tohex; value, key_id),
-            field_to_attr!(tohex; value, ciphertext),
-            field_to_attr!(tohex; value, ciphertext_digest),
-            field_to_attr!(same; value, eip712_name),
-            field_to_attr!(same; value, eip712_version),
-            field_to_attr!(tohex; value, eip712_chain_id),
-            field_to_attr!(same; value, eip712_verifying_contract),
-            field_to_attr!(tohex; value, eip712_salt),
-        ]
-    }
-}
-
-impl TryFrom<Vec<Attribute>> for ReencryptValues {
-    type Error = anyhow::Error;
-    fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        attrs_to_optionals!(
-            attributes;
-            same eip712_name, eip712_version, eip712_verifying_contract;
-            bytes signature, verification_key, randomness, ciphertext, ciphertext_digest, enc_key, eip712_chain_id, eip712_salt, key_id;
-            generics version, servers_needed, fhe_type
-        );
-
-        Ok(ReencryptValues {
-            signature,
-            version,
-            servers_needed,
-            verification_key,
-            randomness,
-            enc_key,
-            fhe_type,
-            key_id,
-            ciphertext,
-            ciphertext_digest,
-            eip712_name,
-            eip712_version,
-            eip712_chain_id,
-            eip712_verifying_contract,
-            eip712_salt,
-        })
-    }
-}
-
-impl From<ReencryptValues> for KmsOperationAttribute {
-    fn from(value: ReencryptValues) -> Self {
-        KmsOperationAttribute::Reencrypt(value)
+        OperationValue::Reencrypt(value)
     }
 }
 
@@ -304,32 +310,9 @@ impl DecryptResponseValues {
     }
 }
 
-impl From<DecryptResponseValues> for Vec<Attribute> {
+impl From<DecryptResponseValues> for OperationValue {
     fn from(value: DecryptResponseValues) -> Self {
-        vec![
-            field_to_attr!(tohex; value, signature),
-            field_to_attr!(tohex; value, payload),
-        ]
-    }
-}
-
-impl TryFrom<Vec<Attribute>> for DecryptResponseValues {
-    type Error = anyhow::Error;
-    fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        attrs_to_optionals!(
-            attributes;
-            same;
-            bytes signature, payload;
-            generics
-        );
-
-        Ok(DecryptResponseValues { signature, payload })
-    }
-}
-
-impl From<DecryptResponseValues> for KmsOperationAttribute {
-    fn from(value: DecryptResponseValues) -> Self {
-        KmsOperationAttribute::DecryptResponse(value)
+        OperationValue::DecryptResponse(value)
     }
 }
 
@@ -339,22 +322,9 @@ pub struct KeyGenPreprocResponseValues {
     // NOTE: there's no actual response except an "ok"
 }
 
-impl From<KeyGenPreprocResponseValues> for Vec<Attribute> {
-    fn from(_value: KeyGenPreprocResponseValues) -> Self {
-        vec![]
-    }
-}
-
-impl TryFrom<Vec<Attribute>> for KeyGenPreprocResponseValues {
-    type Error = anyhow::Error;
-    fn try_from(_attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        Ok(KeyGenPreprocResponseValues {})
-    }
-}
-
-impl From<KeyGenPreprocResponseValues> for KmsOperationAttribute {
-    fn from(_value: KeyGenPreprocResponseValues) -> Self {
-        KmsOperationAttribute::KeyGenPreprocResponse(KeyGenPreprocResponseValues {})
+impl From<KeyGenPreprocResponseValues> for OperationValue {
+    fn from(value: KeyGenPreprocResponseValues) -> Self {
+        OperationValue::KeyGenPreprocResponse(value)
     }
 }
 
@@ -373,41 +343,31 @@ pub struct KeyGenResponseValues {
     // we do not need SnS key
 }
 
-impl From<KeyGenResponseValues> for Vec<Attribute> {
-    fn from(value: KeyGenResponseValues) -> Self {
-        vec![
-            field_to_attr!(tohex; value, request_id),
-            field_to_attr!(tostr; value, public_key_digest),
-            field_to_attr!(tohex; value, public_key_signature),
-            field_to_attr!(tostr; value, server_key_digest),
-            field_to_attr!(tohex; value, server_key_signature),
-        ]
+impl KeyGenResponseValues {
+    pub fn request_id(&self) -> &HexVector {
+        &self.request_id
+    }
+
+    pub fn public_key_digest(&self) -> &str {
+        &self.public_key_digest
+    }
+
+    pub fn public_key_signature(&self) -> &HexVector {
+        &self.public_key_signature
+    }
+
+    pub fn server_key_digest(&self) -> &str {
+        &self.server_key_digest
+    }
+
+    pub fn server_key_signature(&self) -> &HexVector {
+        &self.server_key_signature
     }
 }
 
-impl TryFrom<Vec<Attribute>> for KeyGenResponseValues {
-    type Error = anyhow::Error;
-    fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        attrs_to_optionals!(
-            attributes;
-            same public_key_digest, server_key_digest;
-            bytes request_id, public_key_signature, server_key_signature;
-            generics
-        );
-
-        Ok(KeyGenResponseValues {
-            request_id,
-            public_key_digest,
-            public_key_signature,
-            server_key_digest,
-            server_key_signature,
-        })
-    }
-}
-
-impl From<KeyGenResponseValues> for KmsOperationAttribute {
+impl From<KeyGenResponseValues> for OperationValue {
     fn from(value: KeyGenResponseValues) -> Self {
-        KmsOperationAttribute::KeyGenResponse(value)
+        OperationValue::KeyGenResponse(value)
     }
 }
 
@@ -451,43 +411,9 @@ impl ReencryptResponseValues {
     }
 }
 
-impl From<ReencryptResponseValues> for Vec<Attribute> {
+impl From<ReencryptResponseValues> for OperationValue {
     fn from(value: ReencryptResponseValues) -> Self {
-        vec![
-            field_to_attr!(tostr; value, version),
-            field_to_attr!(tostr; value, servers_needed),
-            field_to_attr!(tohex; value, verification_key),
-            field_to_attr!(tohex; value, digest),
-            field_to_attr!(tostr; value, fhe_type),
-            field_to_attr!(tohex; value, signcrypted_ciphertext),
-        ]
-    }
-}
-
-impl TryFrom<Vec<Attribute>> for ReencryptResponseValues {
-    type Error = anyhow::Error;
-    fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        attrs_to_optionals!(
-            attributes;
-            same;
-            bytes verification_key, digest, signcrypted_ciphertext;
-            generics version, servers_needed, fhe_type
-        );
-
-        Ok(ReencryptResponseValues {
-            version,
-            servers_needed,
-            verification_key,
-            digest,
-            fhe_type,
-            signcrypted_ciphertext,
-        })
-    }
-}
-
-impl From<ReencryptResponseValues> for KmsOperationAttribute {
-    fn from(value: ReencryptResponseValues) -> Self {
-        KmsOperationAttribute::ReencryptResponse(value)
+        OperationValue::ReencryptResponse(value)
     }
 }
 
@@ -517,37 +443,9 @@ impl CrsGenResponseValues {
     }
 }
 
-impl From<CrsGenResponseValues> for Vec<Attribute> {
+impl From<CrsGenResponseValues> for OperationValue {
     fn from(value: CrsGenResponseValues) -> Self {
-        vec![
-            field_to_attr!(tostr; value, request_id),
-            field_to_attr!(tostr; value, digest),
-            field_to_attr!(tohex; value, signature),
-        ]
-    }
-}
-
-impl TryFrom<Vec<Attribute>> for CrsGenResponseValues {
-    type Error = anyhow::Error;
-    fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        attrs_to_optionals!(
-            attributes;
-            same request_id, digest;
-            bytes signature;
-            generics
-        );
-
-        Ok(CrsGenResponseValues {
-            request_id,
-            digest,
-            signature,
-        })
-    }
-}
-
-impl From<CrsGenResponseValues> for KmsOperationAttribute {
-    fn from(value: CrsGenResponseValues) -> Self {
-        KmsOperationAttribute::CrsGenResponse(value)
+        OperationValue::CrsGenResponse(value)
     }
 }
 
@@ -555,22 +453,9 @@ impl From<CrsGenResponseValues> for KmsOperationAttribute {
 #[derive(Eq, Default)]
 pub struct KeyGenPreprocValues {}
 
-impl From<KeyGenPreprocValues> for Vec<Attribute> {
-    fn from(_value: KeyGenPreprocValues) -> Self {
-        vec![]
-    }
-}
-
-impl TryFrom<Vec<Attribute>> for KeyGenPreprocValues {
-    type Error = anyhow::Error;
-    fn try_from(_attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        Ok(KeyGenPreprocValues {})
-    }
-}
-
-impl From<KeyGenPreprocValues> for KmsOperationAttribute {
-    fn from(_value: KeyGenPreprocValues) -> Self {
-        KmsOperationAttribute::KeyGenPreproc(KeyGenPreprocValues {})
+impl From<KeyGenPreprocValues> for OperationValue {
+    fn from(value: KeyGenPreprocValues) -> Self {
+        OperationValue::KeyGenPreproc(value)
     }
 }
 
@@ -588,28 +473,9 @@ impl KeyGenValues {
     }
 }
 
-impl From<KeyGenValues> for Vec<Attribute> {
+impl From<KeyGenValues> for OperationValue {
     fn from(value: KeyGenValues) -> Self {
-        vec![field_to_attr!(tohex; value, preproc_id)]
-    }
-}
-
-impl TryFrom<Vec<Attribute>> for KeyGenValues {
-    type Error = anyhow::Error;
-    fn try_from(attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        attrs_to_optionals!(
-            attributes;
-            same;
-            bytes preproc_id;
-            generics
-        );
-        Ok(KeyGenValues { preproc_id })
-    }
-}
-
-impl From<KeyGenValues> for KmsOperationAttribute {
-    fn from(value: KeyGenValues) -> Self {
-        KmsOperationAttribute::KeyGen(value)
+        OperationValue::KeyGen(value)
     }
 }
 
@@ -617,56 +483,43 @@ impl From<KeyGenValues> for KmsOperationAttribute {
 #[derive(Eq, Default)]
 pub struct CrsGenValues {}
 
-impl From<CrsGenValues> for Vec<Attribute> {
-    fn from(_value: CrsGenValues) -> Self {
-        vec![]
-    }
-}
-
-impl TryFrom<Vec<Attribute>> for CrsGenValues {
-    type Error = anyhow::Error;
-    fn try_from(_attributes: Vec<Attribute>) -> Result<Self, Self::Error> {
-        Ok(CrsGenValues {})
-    }
-}
-
-impl From<CrsGenValues> for KmsOperationAttribute {
-    fn from(_value: CrsGenValues) -> Self {
-        KmsOperationAttribute::CrsGen(CrsGenValues {})
+impl From<CrsGenValues> for OperationValue {
+    fn from(value: CrsGenValues) -> Self {
+        OperationValue::CrsGen(value)
     }
 }
 
 #[cw_serde]
-#[derive(Eq, EnumString, Display, EnumIter, strum_macros::EnumProperty)]
-pub enum KmsOperationAttribute {
+#[derive(Eq, EnumString, Display, EnumIter, strum_macros::EnumProperty, EnumIs)]
+pub enum KmsOperation {
     #[strum(serialize = "decrypt", props(request = "true"))]
-    Decrypt(DecryptValues),
+    Decrypt,
     #[strum(serialize = "decrypt_response", props(response = "true"))]
-    DecryptResponse(DecryptResponseValues),
+    DecryptResponse,
     #[strum(serialize = "reencrypt", props(request = "true"))]
-    Reencrypt(ReencryptValues),
+    Reencrypt,
     #[strum(serialize = "reencrypt_response", props(response = "true"))]
-    ReencryptResponse(ReencryptResponseValues),
+    ReencryptResponse,
     #[strum(serialize = "keygen_preproc", props(request = "true"))]
     #[serde(rename = "keygen_preproc")]
-    KeyGenPreproc(KeyGenPreprocValues),
+    KeyGenPreproc,
     #[strum(serialize = "keygen_preproc_response", props(response = "true"))]
     #[serde(rename = "keygen_preproc_response")]
-    KeyGenPreprocResponse(KeyGenPreprocResponseValues),
+    KeyGenPreprocResponse,
     #[strum(serialize = "keygen", props(request = "true"))]
     #[serde(rename = "keygen")]
-    KeyGen(KeyGenValues),
+    KeyGen,
     #[strum(serialize = "keygen_response", props(response = "true"))]
     #[serde(rename = "keygen_response")]
-    KeyGenResponse(KeyGenResponseValues),
+    KeyGenResponse,
     #[strum(serialize = "crs_gen", props(request = "true"))]
     #[serde(rename = "crs_gen")]
-    CrsGen(CrsGenValues),
+    CrsGen,
     #[strum(serialize = "crs_gen_response", props(response = "true"))]
-    CrsGenResponse(CrsGenResponseValues),
+    CrsGenResponse,
 }
 
-impl KmsOperationAttribute {
+impl KmsOperation {
     pub fn is_request(&self) -> bool {
         self.get_str("request").unwrap_or("false") == "true"
     }
@@ -676,40 +529,55 @@ impl KmsOperationAttribute {
     }
 }
 
-impl From<KmsOperationAttribute> for Vec<Attribute> {
-    fn from(value: KmsOperationAttribute) -> Self {
-        match value {
-            KmsOperationAttribute::Decrypt(values) => {
-                <DecryptValues as Into<Vec<Attribute>>>::into(values)
-            }
-            KmsOperationAttribute::DecryptResponse(values) => {
-                <DecryptResponseValues as Into<Vec<Attribute>>>::into(values)
-            }
-            KmsOperationAttribute::Reencrypt(values) => {
-                <ReencryptValues as Into<Vec<Attribute>>>::into(values)
-            }
-            KmsOperationAttribute::ReencryptResponse(values) => {
-                <ReencryptResponseValues as Into<Vec<Attribute>>>::into(values)
-            }
-            KmsOperationAttribute::KeyGenPreproc(values) => {
-                <KeyGenPreprocValues as Into<Vec<Attribute>>>::into(values)
-            }
-            KmsOperationAttribute::KeyGenPreprocResponse(values) => {
-                <KeyGenPreprocResponseValues as Into<Vec<Attribute>>>::into(values)
-            }
-            KmsOperationAttribute::KeyGen(values) => {
-                <KeyGenValues as Into<Vec<Attribute>>>::into(values)
-            }
-            KmsOperationAttribute::KeyGenResponse(values) => {
-                <KeyGenResponseValues as Into<Vec<Attribute>>>::into(values)
-            }
-            KmsOperationAttribute::CrsGen(values) => {
-                <CrsGenValues as Into<Vec<Attribute>>>::into(values)
-            }
-            KmsOperationAttribute::CrsGenResponse(values) => {
-                <CrsGenResponseValues as Into<Vec<Attribute>>>::into(values)
-            }
-        }
+#[derive(Eq, PartialEq, Clone, Debug, TypedBuilder)]
+pub struct KmsEventMessage {
+    event: KmsEvent,
+    #[builder(setter(into))]
+    value: OperationValue,
+}
+
+#[derive(Serialize)]
+struct InnerKmsMessage<'a> {
+    proof: &'a Proof,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    txn_id: Option<&'a TransactionId>,
+    #[serde(flatten, skip_serializing_if = "OperationValue::has_not_inner_value")]
+    value: &'a OperationValue,
+}
+
+impl Serialize for KmsEventMessage {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let txn_id = if self.event.operation().is_response() {
+            Some(self.event.txn_id())
+        } else {
+            None
+        };
+        let data = InnerKmsMessage {
+            proof: self.event.proof(),
+            txn_id,
+            value: self.value(),
+        };
+        let operation = Box::leak(self.event.operation().to_string().into_boxed_str());
+        let mut ser = serializer.serialize_map(None)?;
+        ser.serialize_entry(operation, &data)?;
+        ser.end()
+    }
+}
+
+impl KmsEventMessage {
+    pub fn event(&self) -> &KmsEvent {
+        &self.event
+    }
+
+    pub fn value(&self) -> &OperationValue {
+        &self.value
+    }
+
+    pub fn to_json(&self) -> Result<Value, serde_json::error::Error> {
+        serde_json::to_value(self)
     }
 }
 
@@ -804,62 +672,34 @@ impl From<Proof> for Attribute {
 #[derive(Eq, TypedBuilder)]
 pub struct KmsEvent {
     #[builder(setter(into))]
-    pub operation: KmsOperationAttribute,
+    operation: KmsOperation,
     #[builder(setter(into))]
-    pub txn_id: TransactionId,
+    txn_id: TransactionId,
     #[builder(setter(into))]
-    pub proof: Proof,
+    proof: Proof,
 }
 
 impl KmsEvent {
-    pub fn to_json(&self) -> Result<Value, serde_json::error::Error> {
-        let event_value = serde_json::to_value(self.operation.clone())?;
-        let event_type = self.operation.to_string();
-        let mut value = serde_json::json!({event_type.clone(): {}});
-        if let Some(obj) = event_value.as_object() {
-            if let Some(inner) = obj.get(event_type.as_str()) {
-                if let Some(inner_obj) = inner.as_object() {
-                    if !inner_obj.is_empty() {
-                        value = serde_json::json!({event_type.clone(): event_value});
-                    }
-                }
-            }
-        }
+    pub fn operation(&self) -> &KmsOperation {
+        &self.operation
+    }
 
-        if self.operation.is_response() {
-            value
-                .as_object_mut()
-                .ok_or(serde_json::Error::custom("Invalid operation"))?
-                .get_mut(event_type.as_str())
-                .ok_or(serde_json::Error::custom("Invalid operation"))?
-                .as_object_mut()
-                .ok_or(serde_json::Error::custom("Invalid operation"))?
-                .insert(
-                    "txn_id".to_string(),
-                    serde_json::to_value(self.txn_id.0.clone())?,
-                );
-        }
-        value
-            .as_object_mut()
-            .ok_or(serde_json::Error::custom("Invalid operation"))?
-            .get_mut(event_type.as_str())
-            .ok_or(serde_json::Error::custom("Invalid operation"))?
-            .as_object_mut()
-            .ok_or(serde_json::Error::custom("Invalid operation"))?
-            .insert(
-                "proof".to_string(),
-                serde_json::to_value(self.proof.0.clone())?,
-            );
-        Ok(value)
+    pub fn txn_id(&self) -> &TransactionId {
+        &self.txn_id
+    }
+
+    pub fn proof(&self) -> &Proof {
+        &self.proof
     }
 }
 
 impl From<KmsEvent> for Event {
     fn from(value: KmsEvent) -> Self {
-        let event_type = value.operation.to_string();
-        let mut attributes = <KmsOperationAttribute as Into<Vec<Attribute>>>::into(value.operation);
-        attributes.push(<TransactionId as Into<Attribute>>::into(value.txn_id));
-        attributes.push(<Proof as Into<Attribute>>::into(value.proof));
+        let event_type = value.operation().to_string();
+        let attributes = vec![
+            <TransactionId as Into<Attribute>>::into(value.txn_id),
+            <Proof as Into<Attribute>>::into(value.proof),
+        ];
         Event::new(event_type).add_attributes(attributes)
     }
 }
@@ -889,24 +729,12 @@ impl TryFrom<Event> for KmsEvent {
             .map(Into::into)
             .ok_or(anyhow::anyhow!("Missing proof attribute"))?;
         attributes.remove(pos_tx_id);
-        let operation = match event.ty.as_str() {
-            "wasm-decrypt" => {
-                DecryptValues::try_from(attributes.clone()).map(KmsOperationAttribute::Decrypt)?
-            }
-            "wasm-decrypt_response" => DecryptResponseValues::try_from(attributes.clone())
-                .map(KmsOperationAttribute::DecryptResponse)?,
-            "wasm-reencrypt" => ReencryptValues::try_from(attributes.clone())
-                .map(KmsOperationAttribute::Reencrypt)?,
-            "wasm-reencrypt_response" => ReencryptResponseValues::try_from(attributes.clone())
-                .map(KmsOperationAttribute::ReencryptResponse)?,
-            "wasm-keygen" => KmsOperationAttribute::KeyGen(KeyGenValues::default()),
-            "wasm-keygen_response" => KeyGenResponseValues::try_from(attributes.clone())
-                .map(KmsOperationAttribute::KeyGenResponse)?,
-            "wasm-crs_gen" => KmsOperationAttribute::CrsGen(CrsGenValues::default()),
-            "wasm-crs_gen_response" => CrsGenResponseValues::try_from(attributes.clone())
-                .map(KmsOperationAttribute::CrsGenResponse)?,
-            _ => return Err(anyhow::anyhow!("Invalid event type {:?}", event.ty)),
-        };
+        let operation = event
+            .ty
+            .as_str()
+            .strip_prefix("wasm-")
+            .ok_or(anyhow::anyhow!("Invalid event type"))?;
+        let operation = KmsOperation::from_str(operation)?;
         Ok(KmsEvent {
             operation,
             txn_id,
@@ -924,6 +752,7 @@ pub struct TransactionEvent {
 
 #[cfg(test)]
 mod tests {
+
     use quickcheck::{Arbitrary, Gen};
 
     use super::*;
@@ -1039,19 +868,17 @@ mod tests {
         }
     }
 
-    impl Arbitrary for KmsOperationAttribute {
-        fn arbitrary(g: &mut Gen) -> KmsOperationAttribute {
+    impl Arbitrary for KmsOperation {
+        fn arbitrary(g: &mut Gen) -> KmsOperation {
             match u8::arbitrary(g) % 8 {
-                0 => KmsOperationAttribute::Decrypt(DecryptValues::arbitrary(g)),
-                1 => KmsOperationAttribute::DecryptResponse(DecryptResponseValues::arbitrary(g)),
-                2 => KmsOperationAttribute::Reencrypt(ReencryptValues::arbitrary(g)),
-                3 => {
-                    KmsOperationAttribute::ReencryptResponse(ReencryptResponseValues::arbitrary(g))
-                }
-                4 => KmsOperationAttribute::KeyGen(KeyGenValues::default()),
-                5 => KmsOperationAttribute::KeyGenResponse(KeyGenResponseValues::arbitrary(g)),
-                6 => KmsOperationAttribute::CrsGen(CrsGenValues::default()),
-                _ => KmsOperationAttribute::CrsGenResponse(CrsGenResponseValues::arbitrary(g)),
+                0 => KmsOperation::Decrypt,
+                1 => KmsOperation::DecryptResponse,
+                2 => KmsOperation::Reencrypt,
+                3 => KmsOperation::ReencryptResponse,
+                4 => KmsOperation::KeyGen,
+                5 => KmsOperation::KeyGenResponse,
+                6 => KmsOperation::CrsGen,
+                _ => KmsOperation::CrsGenResponse,
             }
         }
     }
@@ -1071,7 +898,7 @@ mod tests {
     impl Arbitrary for KmsEvent {
         fn arbitrary(g: &mut Gen) -> KmsEvent {
             KmsEvent {
-                operation: KmsOperationAttribute::arbitrary(g),
+                operation: KmsOperation::arbitrary(g),
                 txn_id: TransactionId::arbitrary(g),
                 proof: Proof::arbitrary(g),
             }
@@ -1080,16 +907,8 @@ mod tests {
 
     #[test]
     fn test_create_kms_operation_event() {
-        let decrypt_values = DecryptValues::builder()
-            .version(1)
-            .servers_needed(2)
-            .key_id("key_id".as_bytes().to_vec())
-            .fhe_type(FheType::Ebool)
-            .ciphertext(vec![1, 2, 3])
-            .randomness(vec![4, 5, 6])
-            .build();
         let operation = KmsEvent::builder()
-            .operation(KmsOperationAttribute::Decrypt(decrypt_values.clone()))
+            .operation(KmsOperation::Decrypt)
             .txn_id(vec![1])
             .proof(vec![1, 2, 3])
             .build();
@@ -1097,40 +916,18 @@ mod tests {
         let event: Event = operation.into();
         let attributes = event.attributes;
 
-        assert_eq!(
-            event.ty,
-            KmsOperationAttribute::Decrypt(decrypt_values.clone()).to_string()
-        );
+        assert_eq!(event.ty, KmsOperation::Decrypt.to_string());
 
-        assert_eq!(attributes.len(), 8);
+        assert_eq!(attributes.len(), 2);
         let result = attributes.iter().find(move |a| {
             a.key == KmsEventAttributeKey::TransactionId.to_string()
                 && a.value == hex::encode(vec![1])
         });
         assert!(result.is_some());
-        let result = attributes
-            .iter()
-            .find(move |a| a.key == "version" && a.value == "1");
-        assert!(result.is_some());
-        let result = attributes
-            .iter()
-            .find(move |a| a.key == "servers_needed" && a.value == "2");
-        assert!(result.is_some());
-        let result = attributes
-            .iter()
-            .find(move |a| a.key == "key_id" && a.value == hex::encode("key_id".as_bytes()));
-        assert!(result.is_some());
-        let result = attributes
-            .iter()
-            .find(move |a| a.key == "fhe_type" && a.value == FheType::Ebool.to_string());
-        assert!(result.is_some());
-        let result = attributes
-            .iter()
-            .find(move |a| a.key == "ciphertext" && a.value == hex::encode(vec![1, 2, 3]));
-        assert!(result.is_some());
-        let result = attributes
-            .iter()
-            .find(move |a| a.key == "randomness" && a.value == hex::encode(vec![4, 5, 6]));
+
+        let result = attributes.iter().find(move |a| {
+            a.key == KmsEventAttributeKey::Proof.to_string() && a.value == hex::encode([1, 2, 3])
+        });
         assert!(result.is_some());
     }
 
@@ -1145,9 +942,14 @@ mod tests {
             .randomness(vec![4, 5, 6])
             .build();
         let operation = KmsEvent::builder()
-            .operation(KmsOperationAttribute::Decrypt(decrypt_values.clone()))
+            .operation(KmsOperation::Decrypt)
             .txn_id(vec![1])
             .proof(vec![1, 2, 3])
+            .build();
+
+        let operation = KmsEventMessage::builder()
+            .event(operation)
+            .value(decrypt_values)
             .build();
 
         let json = operation.to_json().unwrap();
@@ -1174,14 +976,18 @@ mod tests {
             .payload(vec![1, 2, 3])
             .build();
         let operation = KmsEvent::builder()
-            .operation(KmsOperationAttribute::DecryptResponse(
-                decrypt_response_values.clone(),
-            ))
+            .operation(KmsOperation::DecryptResponse)
             .txn_id(vec![1])
             .proof(vec![1, 2, 3])
             .build();
 
-        assert!(operation.operation.is_response());
+        assert!(operation.operation().is_response());
+
+        let operation = KmsEventMessage::builder()
+            .event(operation)
+            .value(decrypt_response_values)
+            .build();
+
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
             "decrypt_response": {
@@ -1216,9 +1022,14 @@ mod tests {
             .eip712_salt(vec![7])
             .build();
         let operation = KmsEvent::builder()
-            .operation(KmsOperationAttribute::Reencrypt(reencrypt_values.clone()))
+            .operation(KmsOperation::Reencrypt)
             .txn_id(vec![1])
             .proof(vec![1, 2, 3])
+            .build();
+
+        let operation = KmsEventMessage::builder()
+            .event(operation)
+            .value(reencrypt_values)
             .build();
 
         let json = operation.to_json().unwrap();
@@ -1258,14 +1069,17 @@ mod tests {
             .signcrypted_ciphertext(vec![3])
             .build();
         let operation = KmsEvent::builder()
-            .operation(KmsOperationAttribute::ReencryptResponse(
-                reencrypt_response_values.clone(),
-            ))
+            .operation(KmsOperation::ReencryptResponse)
             .txn_id(vec![1])
             .proof(vec![1, 2, 3])
             .build();
 
-        assert!(operation.operation.is_response());
+        assert!(operation.operation().is_response());
+
+        let operation = KmsEventMessage::builder()
+            .event(operation)
+            .value(reencrypt_response_values)
+            .build();
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
             "reencrypt_response": {
@@ -1287,9 +1101,14 @@ mod tests {
     #[test]
     fn test_keygen_event_to_json() {
         let operation = KmsEvent::builder()
-            .operation(KmsOperationAttribute::KeyGen(KeyGenValues::default()))
+            .operation(KmsOperation::KeyGen)
             .txn_id(vec![1])
             .proof(vec![1, 2, 3])
+            .build();
+
+        let operation = KmsEventMessage::builder()
+            .event(operation)
+            .value(KeyGenValues::default())
             .build();
 
         let json = operation.to_json().unwrap();
@@ -1314,14 +1133,16 @@ mod tests {
             .server_key_signature(vec![4, 5, 6])
             .build();
         let operation = KmsEvent::builder()
-            .operation(KmsOperationAttribute::KeyGenResponse(
-                keygen_response_values.clone(),
-            ))
+            .operation(KmsOperation::KeyGenResponse)
             .txn_id(vec![1])
             .proof(vec![1, 2, 3])
             .build();
 
-        assert!(operation.operation.is_response());
+        assert!(operation.operation().is_response());
+        let operation = KmsEventMessage::builder()
+            .event(operation)
+            .value(keygen_response_values)
+            .build();
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
             "keygen_response": {
@@ -1342,9 +1163,14 @@ mod tests {
     #[test]
     fn test_crs_gen_event_to_json() {
         let operation = KmsEvent::builder()
-            .operation(KmsOperationAttribute::CrsGen(CrsGenValues::default()))
+            .operation(KmsOperation::CrsGen)
             .txn_id(vec![1])
             .proof(vec![1, 2, 3])
+            .build();
+
+        let operation = KmsEventMessage::builder()
+            .event(operation)
+            .value(CrsGenValues::default())
             .build();
 
         let json = operation.to_json().unwrap();
@@ -1362,14 +1188,18 @@ mod tests {
             .signature(vec![1, 2, 3])
             .build();
         let operation = KmsEvent::builder()
-            .operation(KmsOperationAttribute::CrsGenResponse(
-                crs_gen_response_values.clone(),
-            ))
+            .operation(KmsOperation::CrsGenResponse)
             .txn_id(vec![1])
             .proof(vec![1, 2, 3])
             .build();
 
-        assert!(operation.operation.is_response());
+        assert!(operation.operation().is_response());
+
+        let operation = KmsEventMessage::builder()
+            .event(operation)
+            .value(crs_gen_response_values)
+            .build();
+
         let json = operation.to_json().unwrap();
         let json_str = serde_json::json!({
             "crs_gen_response": {

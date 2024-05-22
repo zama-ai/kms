@@ -1,6 +1,6 @@
 use crate::conf::ConnectorConfig;
 use crate::domain::blockchain::Blockchain;
-use crate::domain::kms::KmsOperation;
+use crate::domain::kms::Kms;
 use crate::infrastructure::blockchain::KmsBlockchain;
 use crate::infrastructure::coordinator::KmsCoordinator;
 use crate::infrastructure::metrics::{MetricType, Metrics, OpenTelemetryMetrics};
@@ -19,7 +19,7 @@ pub struct KmsConnectorEventHandler<B, K, O> {
 impl<B, K, O> SubscriptionHandler for KmsConnectorEventHandler<B, K, O>
 where
     B: Blockchain + Send + Sync,
-    K: KmsOperation + Send + Sync + Clone + 'static,
+    K: Kms + Send + Sync + Clone + 'static,
     O: Metrics + Send + Sync,
 {
     async fn on_message(
@@ -27,11 +27,25 @@ where
         message: TransactionEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
         tracing::info!("Received message: {:?}", message);
-        let result = self.kms.run(message.event).await.map_err(|e| {
-            self.observability
-                .increment(MetricType::TxError, 1, &[("error", &e.to_string())]);
-            e
-        })?;
+        let operation_value = self
+            .blockchain
+            .get_operation_value(&message.event)
+            .await
+            .map_err(|e| {
+                self.observability
+                    .increment(MetricType::TxError, 1, &[("error", &e.to_string())]);
+                e
+            })?;
+        tracing::info!("Running KMS operation with value: {:?}", operation_value);
+        let result = self
+            .kms
+            .run(message.event, operation_value)
+            .await
+            .map_err(|e| {
+                self.observability
+                    .increment(MetricType::TxError, 1, &[("error", &e.to_string())]);
+                e
+            })?;
         tracing::info!("Sending result to blockchain: {}", result.to_string());
         let tx_id = result.txn_id_hex();
         self.blockchain.send_result(result).await.map_err(|e| {
@@ -55,7 +69,7 @@ pub struct SyncHandler<B, K, O> {
 impl<B, K, O> SyncHandler<B, K, O>
 where
     B: Blockchain + Clone + 'static + Send + Sync,
-    K: KmsOperation + Clone + 'static + Send + Sync,
+    K: Kms + Clone + 'static + Send + Sync,
     O: Metrics + Clone + 'static + Send + Sync,
 {
     pub async fn new(blockchain: B, kms: K, metrics: O) -> anyhow::Result<Self> {
@@ -91,7 +105,7 @@ impl SyncHandler<KmsBlockchain, KmsCoordinator, OpenTelemetryMetrics> {
 impl<B, K, O> SyncHandler<B, K, O>
 where
     B: Blockchain + Send + Sync + Clone + 'static,
-    K: KmsOperation + Send + Sync + Clone + 'static,
+    K: Kms + Send + Sync + Clone + 'static,
     O: Metrics + Send + Sync + Clone + 'static,
 {
     pub async fn listen_for_events(self) -> anyhow::Result<()> {

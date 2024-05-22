@@ -1,6 +1,6 @@
 use super::metrics::{Metrics, OpenTelemetryMetrics};
 use super::{BlockchainService, GrpcBlockchainService, StorageService, TomlStorageServiceImpl};
-use crate::kms::{KmsEvent, KmsOperationAttribute, TransactionEvent};
+use crate::kms::{KmsEvent, KmsOperation, TransactionEvent};
 use async_trait::async_trait;
 use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
 use cosmwasm_std::Event;
@@ -194,6 +194,9 @@ where
                 );
                 let _guard = enter.enter();
                 let result = handler.on_message(result).await;
+                if let Err(e) = &result {
+                    tracing::error!("Error processing message: {:?}", e);
+                }
                 drop(_guard);
                 result
             };
@@ -227,9 +230,7 @@ where
     fn try_from(tx: &TxResponse) -> anyhow::Result<Vec<TransactionEvent>> {
         tx.events
             .iter()
-            .filter(|x| {
-                KmsOperationAttribute::iter().any(|attr| x.r#type == format!("wasm-{}", attr))
-            })
+            .filter(|x| KmsOperation::iter().any(|attr| x.r#type == format!("wasm-{}", attr)))
             .map(|x| Self::to_event(x))
             .map(<Event as TryInto<KmsEvent>>::try_into)
             .map(|e| {
@@ -245,7 +246,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kms::{DecryptValues, KmsEvent, KmsOperationAttribute};
+    use crate::kms::{KmsEvent, KmsOperation};
     use crate::subscription::blockchain::*;
     use crate::subscription::storage::MockStorageService;
     use cosmwasm_std::{Attribute, Event};
@@ -264,6 +265,7 @@ mod tests {
         impl SubscriptionHandler for NeverCalledSubscriptionHandler {
             async fn on_message(&self, _message: TransactionEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
         }
+
     }
 
     fn init_tracing() -> Result<(), Box<dyn Error + Sync + Send>> {
@@ -394,7 +396,7 @@ mod tests {
 
         let mut tx_response = TxResponse::default();
         let event = KmsEvent::builder()
-            .operation(KmsOperationAttribute::Decrypt(DecryptValues::default()))
+            .operation(KmsOperation::Decrypt)
             .txn_id(vec![1])
             .proof(vec![1, 2, 3])
             .build();
@@ -402,10 +404,7 @@ mod tests {
         tx_response
             .events
             .push(cosmos_proto::messages::tendermint::abci::Event {
-                r#type: format!(
-                    "wasm-{}",
-                    KmsOperationAttribute::Decrypt(DecryptValues::default())
-                ),
+                r#type: format!("wasm-{}", KmsOperation::Decrypt),
                 attributes: attrs
                     .iter()
                     .map(

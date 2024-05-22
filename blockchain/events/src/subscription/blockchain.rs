@@ -1,5 +1,6 @@
+use crate::kms::KmsOperation;
+
 use super::handler::{EventsMode, SubscriptionError};
-use crate::kms::KmsOperationAttribute;
 use async_trait::async_trait;
 use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
 use cosmos_proto::messages::cosmos::base::node::v1beta1::service_client::ServiceClient as BaseServiceClient;
@@ -60,7 +61,7 @@ impl<'a> GrpcBlockchainService<'a> {
         )
     }
 
-    fn filter_attributes(&self, attr: &KmsOperationAttribute) -> bool {
+    fn filter_attributes(&self, attr: &KmsOperation) -> bool {
         if let Some(mode) = self.mode {
             match mode {
                 EventsMode::Request => attr.is_request(),
@@ -73,7 +74,7 @@ impl<'a> GrpcBlockchainService<'a> {
 
     fn is_kms_request_operation(&self, tx: &TxResponse) -> bool {
         tx.events.iter().any(|event| {
-            KmsOperationAttribute::iter()
+            KmsOperation::iter()
                 .filter(|attr| self.filter_attributes(attr))
                 .any(|attr| event.r#type == format!("wasm-{}", attr))
         })

@@ -1,2 +1,4 @@
 pub mod contract;
-pub mod proof;
+mod events;
+mod proof;
+mod state;

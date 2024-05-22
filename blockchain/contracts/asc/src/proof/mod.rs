@@ -8,11 +8,6 @@ pub(crate) trait ProofStrategy {
     fn verify_response_proof(&self, proof: Proof) -> bool;
 }
 
-pub enum ProofType {
-    Debug,
-    Tendermint,
-}
-
 #[cw_serde]
 pub enum ContractProofType {
     Debug,

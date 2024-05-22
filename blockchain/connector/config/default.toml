@@ -18,6 +18,7 @@ amount = 100000
 [coordinator]
 parties = 3
 addresses = ["http://localhost:8080"]
+shares_needed = 2
 
 [tracing]
 service_name = "kms-asc-connector"

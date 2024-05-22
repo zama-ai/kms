@@ -1,5 +1,4 @@
 # KMS Blockchain
-
 ## Test accounts:
 
 alice:

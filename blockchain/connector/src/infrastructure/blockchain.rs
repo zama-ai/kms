@@ -2,8 +2,9 @@ use crate::conf::BlockchainConfig;
 use crate::domain::blockchain::{Blockchain, KmsOperationResponse};
 use crate::infrastructure::metrics::{MetricType, Metrics};
 use async_trait::async_trait;
-use events::kms::KmsEvent;
+use events::kms::{KmsEvent, KmsEventMessage, OperationValue};
 use kms_blockchain_client::client::{Client, ClientBuilder};
+use kms_blockchain_client::query_client::{QueryClient, QueryClientBuilder};
 use retrying::retry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -14,8 +15,8 @@ use super::metrics::OpenTelemetryMetrics;
 #[derive(Clone, TypedBuilder)]
 pub struct KmsBlockchain {
     client: Arc<Mutex<Client>>,
+    query_client: Arc<Mutex<QueryClient>>,
     config: BlockchainConfig,
-    // TODO should this be std::sync::Arc or the one from tokio?
     metrics: Arc<OpenTelemetryMetrics>,
 }
 
@@ -33,8 +34,15 @@ impl KmsBlockchain {
             .build()
             .try_into()
             .map_err(|e| anyhow::anyhow!("Error creating blockchain client {:?}", e))?;
+
+        let query_client: QueryClient = QueryClientBuilder::builder()
+            .grpc_addresses(config.grpc_addresses())
+            .build()
+            .try_into()
+            .map_err(|e| anyhow::anyhow!("Error creating blockchain query client {:?}", e))?;
         Ok(KmsBlockchain {
             client: Arc::new(Mutex::new(client)),
+            query_client: Arc::new(Mutex::new(query_client)),
             config,
             metrics: Arc::new(metrics),
         })
@@ -60,7 +68,8 @@ impl Blockchain for KmsBlockchain {
     #[tracing::instrument(skip(self, result), fields(tx_id = %result.txn_id_hex()))]
     async fn send_result(&self, result: KmsOperationResponse) -> anyhow::Result<()> {
         let mut client = self.client.lock().await;
-        let msg_str = <KmsOperationResponse as Into<KmsEvent>>::into(result)
+        let msg_str: KmsEventMessage = result.into();
+        let msg_str = msg_str
             .to_json()
             .map_err(|e| {
                 self.metrics.increment(
@@ -82,5 +91,26 @@ impl Blockchain for KmsBlockchain {
                 );
                 e
             })
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_operation_value(&self, event: &KmsEvent) -> anyhow::Result<OperationValue> {
+        let query_client = self.query_client.lock().await;
+        let query = serde_json::json!({
+            "get_operations_value": {
+                "event": event
+            }
+        });
+        let result = query_client
+            .query_contract(
+                self.config.contract.to_owned(),
+                query.to_string().as_bytes(),
+            )
+            .await
+            .map(|msg| serde_json::from_slice::<Vec<OperationValue>>(&msg))??;
+        result
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Operation value not found for tx_id: {:?}", event))
     }
 }

@@ -454,10 +454,11 @@ dependencies = [
  "ibc-clients",
  "schemars",
  "serde",
- "sha2 0.10.8",
+ "sha3",
  "sylvia",
  "sylvia-derive",
  "tendermint 0.36.0",
+ "test-context",
 ]
 
 [[package]]

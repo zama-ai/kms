@@ -83,7 +83,7 @@ impl BlockchainConfig {
 pub struct CoordinatorConfig {
     pub addresses: Vec<String>,
     pub parties: u64,
-    pub shared_needed: u64,
+    pub shares_needed: u64,
 }
 
 impl CoordinatorConfig {

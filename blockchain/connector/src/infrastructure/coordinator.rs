@@ -2,14 +2,14 @@ use super::metrics::OpenTelemetryMetrics;
 use crate::domain::blockchain::{
     BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse, ReencryptResponseVal,
 };
-use crate::domain::kms::KmsOperation;
+use crate::domain::kms::Kms;
 use crate::infrastructure::metrics::{MetricType, Metrics};
 use anyhow::anyhow;
 use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
     DecryptResponseValues, DecryptValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
-    KeyGenValues, KmsEvent, KmsOperationAttribute, Proof, ReencryptResponseValues, ReencryptValues,
+    KeyGenValues, KmsEvent, OperationValue, Proof, ReencryptResponseValues, ReencryptValues,
     TransactionId,
 };
 use events::HexVector;
@@ -70,16 +70,20 @@ pub enum KmsOperationRequest {
 }
 
 #[async_trait]
-impl KmsOperation for KmsCoordinator {
-    async fn run(&self, event: KmsEvent) -> anyhow::Result<KmsOperationResponse> {
-        let operation = self.create_kms_operation(event)?;
+impl Kms for KmsCoordinator {
+    async fn run(
+        &self,
+        event: KmsEvent,
+        operation_value: OperationValue,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        let operation = self.create_kms_operation(event, operation_value)?;
         operation.run_operation().await
     }
 }
 
 #[async_trait]
 #[enum_dispatch(KmsOperationRequest)]
-pub trait Kms {
+pub trait KmsEventHandler {
     async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse>;
 }
 
@@ -117,38 +121,38 @@ impl KmsCoordinator {
         Ok(KmsCoordinator {
             channel,
             n_parties: config.parties,
-            shares_needed: config.shared_needed,
+            shares_needed: config.shares_needed,
             metrics: Arc::new(metrics),
         })
     }
 
-    fn create_kms_operation(&self, event: KmsEvent) -> anyhow::Result<KmsOperationRequest> {
+    fn create_kms_operation(
+        &self,
+        event: KmsEvent,
+        operation_value: OperationValue,
+    ) -> anyhow::Result<KmsOperationRequest> {
         let operation_val = KmsOperationVal {
             kms_client: self.clone(),
-            tx_id: event.txn_id.clone(),
-            proof: event.proof.clone(),
+            tx_id: event.txn_id().clone(),
+            proof: event.proof().clone(),
         };
-        let request = match event.operation {
-            KmsOperationAttribute::Reencrypt(reencrypt) => {
-                KmsOperationRequest::Reencrypt(ReencryptVal {
-                    reencrypt,
-                    operation_val,
-                })
-            }
-            KmsOperationAttribute::Decrypt(decrypt) => KmsOperationRequest::Decrypt(DecryptVal {
+        let request = match operation_value {
+            OperationValue::Reencrypt(reencrypt) => KmsOperationRequest::Reencrypt(ReencryptVal {
+                reencrypt,
+                operation_val,
+            }),
+            OperationValue::Decrypt(decrypt) => KmsOperationRequest::Decrypt(DecryptVal {
                 decrypt,
                 operation_val,
             }),
-            KmsOperationAttribute::KeyGenPreproc(_keygen_preproc) => {
+            OperationValue::KeyGenPreproc(_keygen_preproc) => {
                 KmsOperationRequest::KeyGenPreproc(KeyGenPreprocVal { operation_val })
             }
-            KmsOperationAttribute::KeyGen(keygen) => KmsOperationRequest::KeyGen(KeyGenVal {
+            OperationValue::KeyGen(keygen) => KmsOperationRequest::KeyGen(KeyGenVal {
                 keygen,
                 operation_val,
             }),
-            KmsOperationAttribute::CrsGen(_) => {
-                KmsOperationRequest::CrsGen(CrsGenVal { operation_val })
-            }
+            OperationValue::CrsGen(_) => KmsOperationRequest::CrsGen(CrsGenVal { operation_val }),
             _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
         };
         Ok(request)
@@ -206,7 +210,7 @@ macro_rules! poller {
 }
 
 #[async_trait]
-impl Kms for DecryptVal {
+impl KmsEventHandler for DecryptVal {
     async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
@@ -338,7 +342,7 @@ impl TryFrom<i32> for WrappingFheType {
 }
 
 #[async_trait]
-impl Kms for ReencryptVal {
+impl KmsEventHandler for ReencryptVal {
     async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
@@ -458,7 +462,7 @@ impl Kms for ReencryptVal {
 }
 
 #[async_trait]
-impl Kms for KeyGenPreprocVal {
+impl KmsEventHandler for KeyGenPreprocVal {
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
@@ -549,7 +553,7 @@ impl Kms for KeyGenPreprocVal {
 }
 
 #[async_trait]
-impl Kms for KeyGenVal {
+impl KmsEventHandler for KeyGenVal {
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
@@ -641,7 +645,7 @@ impl Kms for KeyGenVal {
 }
 
 #[async_trait]
-impl Kms for CrsGenVal {
+impl KmsEventHandler for CrsGenVal {
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
@@ -714,7 +718,7 @@ impl Kms for CrsGenVal {
 mod test {
     use std::collections::{HashMap, HashSet};
 
-    use super::Kms as _;
+    use super::KmsEventHandler as _;
     use crate::{
         conf::CoordinatorConfig,
         domain::blockchain::KmsOperationResponse,
@@ -725,8 +729,8 @@ mod test {
     };
     use events::{
         kms::{
-            CrsGenValues, DecryptValues, KeyGenPreprocValues, KmsEvent, KmsOperationAttribute,
-            Proof, ReencryptValues, TransactionId,
+            CrsGenValues, DecryptValues, KeyGenPreprocValues, KmsEvent, OperationValue, Proof,
+            ReencryptValues, TransactionId,
         },
         HexVector,
     };
@@ -753,7 +757,7 @@ mod test {
 
     async fn generic_sunshine_test(
         slow: bool,
-        op: KmsOperationAttribute,
+        op: OperationValue,
     ) -> (Vec<KmsOperationResponse>, TransactionId, Vec<u32>) {
         let txn_id = TransactionId::from(vec![2u8; 20]);
         ensure_dir_exist();
@@ -805,7 +809,7 @@ mod test {
                 CoordinatorConfig {
                     addresses: vec![url],
                     parties: AMOUNT_PARTIES as u64,
-                    shared_needed: THRESHOLD as u64 + 1,
+                    shares_needed: THRESHOLD as u64 + 1,
                 }
             })
             .collect::<Vec<_>>();
@@ -822,11 +826,11 @@ mod test {
 
         // create events
         let events = vec![
-            KmsEvent {
-                operation: op,
-                txn_id: txn_id.clone(),
-                proof: Proof::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
-            };
+            KmsEvent::builder()
+                .operation(op.clone())
+                .txn_id(txn_id.clone())
+                .proof(Proof::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
+                .build();
             AMOUNT_PARTIES
         ];
 
@@ -835,7 +839,7 @@ mod test {
         assert_eq!(events.len(), clients.len());
         let mut tasks = JoinSet::new();
         for (i, (event, client)) in events.into_iter().zip(clients).enumerate() {
-            let op = client.create_kms_operation(event).unwrap();
+            let op = client.create_kms_operation(event, op.clone()).unwrap();
             tasks.spawn(async move { (i as u32 + 1, op.run_operation().await) });
         }
         let mut results = vec![];
@@ -859,7 +863,7 @@ mod test {
             read_element_async(TEST_THRESHOLD_CT_PATH.to_string())
                 .await
                 .unwrap();
-        let op = KmsOperationAttribute::Decrypt(
+        let op = OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
                 .servers_needed(THRESHOLD as u32 + 1)
@@ -933,7 +937,7 @@ mod test {
             .unwrap();
         let payload = kms_req.payload.clone().unwrap();
         let eip712 = kms_req.domain.clone().unwrap();
-        let op = KmsOperationAttribute::Reencrypt(
+        let op = OperationValue::Reencrypt(
             ReencryptValues::builder()
                 .signature(kms_req.signature.clone())
                 .version(payload.version)
@@ -1000,7 +1004,7 @@ mod test {
     }
 
     async fn preproc_sunshine(slow: bool) {
-        let op = KmsOperationAttribute::KeyGenPreproc(KeyGenPreprocValues {});
+        let op = OperationValue::KeyGenPreproc(KeyGenPreprocValues {});
         let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
@@ -1017,7 +1021,7 @@ mod test {
     }
 
     async fn crs_sunshine(slow: bool) {
-        let op = KmsOperationAttribute::CrsGen(CrsGenValues {});
+        let op = OperationValue::CrsGen(CrsGenValues {});
         let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
