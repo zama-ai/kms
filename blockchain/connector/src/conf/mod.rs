@@ -63,6 +63,83 @@ pub struct BlockchainConfig {
     pub signkey: SignKeyConfig,
 }
 
+/// Three timeouts that controls the polling logic
+/// to fetch results from the coordinator.
+/// All times are in seconds.
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+pub struct TimeoutTriple {
+    /// The time to wait before starting to poll.
+    pub initial_wait_time: u64,
+    /// The time to wait between polling.
+    pub retry_interval: u64,
+    /// How many times to poll before giving up.
+    pub max_poll_count: u64,
+}
+
+impl TimeoutTriple {
+    pub fn new(initial_wait_time: u64, retry_interval: u64, max_poll_count: u64) -> Self {
+        Self {
+            initial_wait_time,
+            retry_interval,
+            max_poll_count,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct TimeoutConfig {
+    pub channel_timeout: u64,
+    pub crs: TimeoutTriple,
+    pub keygen: TimeoutTriple,
+    pub preproc: TimeoutTriple,
+    pub decryption: TimeoutTriple,
+    pub reencryption: TimeoutTriple,
+}
+
+impl Default for TimeoutConfig {
+    fn default() -> Self {
+        Self {
+            channel_timeout: 60,
+            // 2 hours
+            crs: TimeoutTriple::new(60, 60, 120),
+            // 20 hours, wait 5 hours first, then poll for the next 15 hours
+            keygen: TimeoutTriple::new(18000, 15000, 150),
+            // 20 hours, wait 5 hours first, then poll for the next 15 hours
+            preproc: TimeoutTriple::new(18000, 15000, 150),
+            // 2 minutes
+            decryption: TimeoutTriple::new(10, 5, 24),
+            // 2 minutes
+            reencryption: TimeoutTriple::new(10, 5, 24),
+        }
+    }
+}
+
+impl TimeoutConfig {
+    /// These are the testing defaults, used for testing parameters.
+    pub fn testing_default() -> Self {
+        Self {
+            channel_timeout: 60,
+            crs: TimeoutTriple::new(1, 5, 50),
+            keygen: TimeoutTriple::new(1, 5, 50),
+            preproc: TimeoutTriple::new(1, 5, 50),
+            decryption: TimeoutTriple::new(1, 5, 50),
+            reencryption: TimeoutTriple::new(1, 5, 50),
+        }
+    }
+
+    /// These are the mocking/dummy defaults, used when the coordinator/core is a dummy.
+    pub fn mocking_default() -> Self {
+        Self {
+            channel_timeout: 60,
+            crs: TimeoutTriple::new(1, 1, 10),
+            keygen: TimeoutTriple::new(1, 1, 10),
+            preproc: TimeoutTriple::new(1, 1, 10),
+            decryption: TimeoutTriple::new(1, 1, 10),
+            reencryption: TimeoutTriple::new(1, 1, 10),
+        }
+    }
+}
+
 #[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
 pub struct ConnectorConfig {
     pub tick_interval_secs: u64,
@@ -82,8 +159,8 @@ impl BlockchainConfig {
 #[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
 pub struct CoordinatorConfig {
     pub addresses: Vec<String>,
-    pub parties: u64,
     pub shares_needed: u64,
+    pub timeout_config: TimeoutConfig,
 }
 
 impl CoordinatorConfig {
@@ -138,3 +215,39 @@ impl<'a> Settings<'a> {
 }
 
 pub mod telemetry;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coordinator_config() {
+        let conf: ConnectorConfig = Settings::builder()
+            .path(Some("config/default"))
+            .build()
+            .init_conf()
+            .unwrap();
+
+        assert_eq!(conf.mode, Some(EventsMode::Request));
+        assert_eq!(conf.tick_interval_secs, 3);
+        assert_eq!(conf.storage_path, "./temp/events.toml");
+
+        // coordinator configs
+        assert_eq!(conf.coordinator.shares_needed, 2);
+        assert_eq!(conf.coordinator.addresses, vec!["http://localhost:8080"]);
+        assert_eq!(conf.coordinator.timeout_config.channel_timeout, 60);
+        assert_eq!(
+            conf.coordinator.timeout_config.decryption,
+            TimeoutTriple {
+                initial_wait_time: 10,
+                retry_interval: 5,
+                max_poll_count: 24,
+            }
+        );
+
+        // blockchain configs
+        assert_eq!(conf.blockchain.addresses, vec!["http://localhost:9090"]);
+        assert_eq!(conf.blockchain.fee.amount, 100000);
+        assert_eq!(conf.blockchain.fee.denom, "ucosm");
+    }
+}

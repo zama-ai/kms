@@ -89,6 +89,8 @@ impl SyncHandler<KmsBlockchain, KmsCoordinator, OpenTelemetryMetrics> {
     pub async fn new_with_config(config: ConnectorConfig) -> anyhow::Result<Self> {
         let metrics = OpenTelemetryMetrics::new();
         let blockchain = KmsBlockchain::new(config.blockchain.clone(), metrics.clone()).await?;
+        // TODO the coordinator should read the addresses from the blockchain
+        // instead of the config
         let kms = KmsCoordinator::new(config.coordinator.clone(), metrics.clone()).await?;
         let handler = KmsConnectorEventHandler {
             blockchain,

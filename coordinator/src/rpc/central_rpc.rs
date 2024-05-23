@@ -654,9 +654,9 @@ pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), Status> 
 }
 
 /// Helper method which takes a [HashMap<PubDataType, FhePubKeyInfo>] and returns
-/// [HashMap<String, FhePubKeyInfo>] by applying the [ToString] function on [PubDataType] for each
-/// element in the map. The function is needed since protobuf does not support enums in maps.
-pub fn convert_key_response(
+/// [HashMap<String, FhePubKeyInfo>] by applying the [ToString] function on [PubDataType] for each element in the map.
+/// The function is needed since protobuf does not support enums in maps.
+pub(crate) fn convert_key_response(
     key_info_map: HashMap<PubDataType, FhePubKeyInfo>,
 ) -> HashMap<String, FhePubKeyInfo> {
     key_info_map

@@ -12,7 +12,7 @@ use crate::kms::{
     Empty, FhePubKeyInfo, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
     KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse, RequestId,
 };
-use crate::rpc::rpc_types::{Plaintext, CURRENT_FORMAT_VERSION};
+use crate::rpc::rpc_types::{Plaintext, PubDataType, CURRENT_FORMAT_VERSION};
 
 pub async fn setup_mock_kms(n: usize) -> HashMap<u32, JoinHandle<()>> {
     let mut out = HashMap::new();
@@ -65,9 +65,19 @@ impl CoordinatorEndpoint for MockThresholdKms {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
+        let dummy_info = FhePubKeyInfo {
+            key_handle: "12".to_string(),
+            signature: vec![3, 4],
+        };
+
+        let pk = PubDataType::PublicKey;
+        let sk = PubDataType::ServerKey;
         Ok(Response::new(KeyGenResult {
             request_id: Some(request.into_inner()),
-            key_results: HashMap::new(),
+            key_results: HashMap::from_iter(vec![
+                (pk.to_string(), dummy_info.clone()),
+                (sk.to_string(), dummy_info),
+            ]),
         }))
     }
 

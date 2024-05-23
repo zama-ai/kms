@@ -1,4 +1,5 @@
 use super::metrics::OpenTelemetryMetrics;
+use crate::conf::TimeoutConfig;
 use crate::domain::blockchain::{
     BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse, ReencryptResponseVal,
 };
@@ -28,8 +29,6 @@ use tokio::time::sleep;
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Response, Status};
 use typed_builder::TypedBuilder;
-
-const MAX_CRS_GEN_DURATION_PER_PARTY_SECS: u64 = 60;
 
 pub struct KmsOperationVal {
     pub kms_client: KmsCoordinator,
@@ -90,9 +89,9 @@ pub trait KmsEventHandler {
 #[derive(Clone, TypedBuilder)]
 pub struct KmsCoordinator {
     channel: Channel,
-    n_parties: u64,
     shares_needed: u64,
     metrics: Arc<OpenTelemetryMetrics>,
+    timeout_config: TimeoutConfig,
 }
 
 impl KmsCoordinator {
@@ -116,13 +115,13 @@ impl KmsCoordinator {
         let channel = Channel::balance_list(endpoints);
         tracing::info!(
             "Connecting to coordinator server {:?}",
-            config.coordinator_addresses()
+            config.coordinator_addresses(),
         );
         Ok(KmsCoordinator {
             channel,
-            n_parties: config.parties,
             shares_needed: config.shares_needed,
             metrics: Arc::new(metrics),
+            timeout_config: config.timeout_config.clone(),
         })
     }
 
@@ -165,11 +164,19 @@ enum PollerStatus<T> {
 }
 
 /// This is a macro that helps us simplify polling code.
+/// On a high level, [f_to_poll] is the async function that we are polling
+/// and [res_map] is a mapping from the output of f_to_poll to
+/// [Result<PollerStatus>]. These two inputs are split because rust does not
+/// currently support async closures.
 macro_rules! poller {
-    ($f_to_poll:expr,$res_map:expr,$retry_interval:expr,$total_duration:expr,$info:expr,$metrics:expr) => {
+    ($f_to_poll:expr,$res_map:expr,$timeout_triple:expr,$info:expr,$metrics:expr) => {
+        // first wait a bit because some requests are slow.
+        tokio::time::sleep(Duration::from_secs($timeout_triple.initial_wait_time)).await;
+
+        // start polling
         let mut cnt = 0u64;
         loop {
-            sleep(Duration::from_secs($retry_interval)).await;
+            sleep(Duration::from_secs($timeout_triple.retry_interval)).await;
             let resp = $f_to_poll.await;
             match $res_map(resp) {
                 Ok(PollerStatus::Done(res)) => {
@@ -177,21 +184,21 @@ macro_rules! poller {
                     return Ok(res);
                 }
                 Ok(PollerStatus::Poll) => {
-                    if cnt > $total_duration {
-                        let err_msg = "time out while trying to get response";
+                    if cnt > $timeout_triple.max_poll_count {
+                        let err_msg =
+                            format!("Time out after {cnt} tries while trying to get response");
                         $metrics.increment(
                             MetricType::CoordinatorResponseError,
                             1,
-                            &[("error", err_msg)],
+                            &[("error", &err_msg)],
                         );
                         return Err(anyhow!(err_msg));
                     } else {
                         cnt += 1;
                         tracing::info!(
-                            "Polling coordinator {}, tries: {cnt}, interval: {}, max duration: {}",
+                            "Polling coordinator {}, tries: {cnt}, timeout_triple: {:?}",
                             $info,
-                            $retry_interval,
-                            $total_duration
+                            $timeout_triple,
                         );
                     }
                 }
@@ -288,25 +295,17 @@ impl KmsEventHandler for DecryptVal {
             }
         };
 
-        // TODO: these timeouts are for testing,
-        // these need to be configured correctly for production!
-
-        // preprocessing is slow, so we wait for a bit before even trying
-        const INITIAL_WAITING_TIME: u64 = 1;
-        tokio::time::sleep(Duration::from_secs(INITIAL_WAITING_TIME)).await;
-
-        // NOTE: we can't use the poller macro to help us poll the result since
-        // the preproc endpoint is a bit different,
-        // it returns Ok(status), instead of an error
-        const RETRY_INTERVAL: u64 = 10;
-        const MAX_DUR: u64 = 600;
-
         // loop to get response
+        let timeout_triple = self
+            .operation_val
+            .kms_client
+            .timeout_config
+            .decryption
+            .clone();
         poller!(
             client.get_decrypt_result(tonic::Request::new(req_id.clone())),
             g,
-            RETRY_INTERVAL,
-            MAX_DUR,
+            timeout_triple,
             "(Decrypt)",
             metrics
         );
@@ -436,25 +435,19 @@ impl KmsEventHandler for ReencryptVal {
             }
         };
 
-        // TODO: these timeouts are for testing,
-        // these need to be configured correctly for production!
-
-        // preprocessing is slow, so we wait for a bit before even trying
-        const INITIAL_WAITING_TIME: u64 = 1;
-        tokio::time::sleep(Duration::from_secs(INITIAL_WAITING_TIME)).await;
-
-        // NOTE: we can't use the poller macro to help us poll the result since
-        // the preproc endpoint is a bit different,
-        // it returns Ok(status), instead of an error
-        const RETRY_INTERVAL: u64 = 10;
-        const MAX_DUR: u64 = 600;
+        // we wait for a bit before even trying
+        let timeout_triple = self
+            .operation_val
+            .kms_client
+            .timeout_config
+            .reencryption
+            .clone();
 
         // loop to get response
         poller!(
             client.get_reencrypt_result(tonic::Request::new(req_id.clone())),
             g,
-            RETRY_INTERVAL,
-            MAX_DUR,
+            timeout_triple,
             "(Reencrypt)",
             metrics
         );
@@ -527,25 +520,12 @@ impl KmsEventHandler for KeyGenPreprocVal {
             }
         };
 
-        // TODO: these timeouts are for testing,
-        // these need to be configured correctly for production!
-
-        // preprocessing is slow, so we wait for a bit before even trying
-        const INITIAL_WAITING_TIME: u64 = 1;
-        tokio::time::sleep(Duration::from_secs(INITIAL_WAITING_TIME)).await;
-
-        // NOTE: we can't use the poller macro to help us poll the result since
-        // the preproc endpoint is a bit different,
-        // it returns Ok(status), instead of an error
-        const RETRY_INTERVAL: u64 = 10;
-        const MAX_DUR: u64 = 600;
-
         // loop to get response
+        let timeout_triple = self.operation_val.kms_client.timeout_config.preproc.clone();
         poller!(
             client.get_preproc_status(tonic::Request::new(req.clone())),
             g,
-            RETRY_INTERVAL,
-            MAX_DUR,
+            timeout_triple,
             "(KeyGenPreproc)",
             metrics
         );
@@ -623,21 +603,12 @@ impl KmsEventHandler for KeyGenVal {
                 }
             };
 
-        // TODO: these timeouts are for testing,
-        // these need to be configured correctly for production!
-
-        // keygen is slow, so we wait for a bit before even trying
-        const INITIAL_WAITING_TIME: u64 = 1;
-        tokio::time::sleep(Duration::from_secs(INITIAL_WAITING_TIME)).await;
-
-        const RETRY_INTERVAL: u64 = 10;
-        const MAX_DUR: u64 = 600;
         // loop to get response
+        let timeout_triple = self.operation_val.kms_client.timeout_config.keygen.clone();
         poller!(
             client.get_key_gen_result(tonic::Request::new(req_id.clone())),
             g,
-            RETRY_INTERVAL,
-            MAX_DUR,
+            timeout_triple,
             "(KeyGen)",
             metrics
         );
@@ -700,14 +671,11 @@ impl KmsEventHandler for CrsGenVal {
                 }
             };
 
-        // loop to get response
-        const RETRY_INTERVAL: u64 = 10;
-        let max_dur = MAX_CRS_GEN_DURATION_PER_PARTY_SECS * self.operation_val.kms_client.n_parties;
+        let timeout_triple = self.operation_val.kms_client.timeout_config.crs.clone();
         poller!(
             client.get_crs_gen_result(tonic::Request::new(req_id.clone())),
             g,
-            RETRY_INTERVAL,
-            max_dur,
+            timeout_triple,
             "(CRS)",
             metrics
         );
@@ -720,7 +688,7 @@ mod test {
 
     use super::KmsEventHandler as _;
     use crate::{
-        conf::CoordinatorConfig,
+        conf::{CoordinatorConfig, TimeoutConfig},
         domain::blockchain::KmsOperationResponse,
         infrastructure::{
             coordinator::{KmsCoordinator, WrappingFheType},
@@ -729,8 +697,8 @@ mod test {
     };
     use events::{
         kms::{
-            CrsGenValues, DecryptValues, KeyGenPreprocValues, KmsEvent, OperationValue, Proof,
-            ReencryptValues, TransactionId,
+            CrsGenValues, DecryptValues, KeyGenPreprocValues, KeyGenValues, KmsEvent,
+            OperationValue, Proof, ReencryptValues, TransactionId,
         },
         HexVector,
     };
@@ -755,11 +723,7 @@ mod test {
     };
     use tokio::task::JoinSet;
 
-    async fn generic_sunshine_test(
-        slow: bool,
-        op: OperationValue,
-    ) -> (Vec<KmsOperationResponse>, TransactionId, Vec<u32>) {
-        let txn_id = TransactionId::from(vec![2u8; 20]);
+    async fn setup_keys() {
         ensure_dir_exist();
         ensure_threshold_keys_exist(
             TEST_PARAM_PATH,
@@ -772,6 +736,14 @@ mod test {
                 .await
                 .unwrap();
         ensure_ciphertext_exist(TEST_THRESHOLD_CT_PATH, &threshold_keys.fhe_pub);
+    }
+
+    /// Before running this function, ensure [setup_keys] is executed
+    async fn generic_sunshine_test(
+        slow: bool,
+        op: OperationValue,
+    ) -> (Vec<KmsOperationResponse>, TransactionId, Vec<u32>) {
+        let txn_id = TransactionId::from(vec![2u8; 20]);
 
         let coordinator_handles = if slow {
             let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
@@ -808,8 +780,12 @@ mod test {
                 let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
                 CoordinatorConfig {
                     addresses: vec![url],
-                    parties: AMOUNT_PARTIES as u64,
                     shares_needed: THRESHOLD as u64 + 1,
+                    timeout_config: if slow {
+                        TimeoutConfig::testing_default()
+                    } else {
+                        TimeoutConfig::mocking_default()
+                    },
                 }
             })
             .collect::<Vec<_>>();
@@ -859,6 +835,7 @@ mod test {
     }
 
     async fn ddec_sunshine(slow: bool) {
+        setup_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
             read_element_async(TEST_THRESHOLD_CT_PATH.to_string())
                 .await
@@ -901,6 +878,7 @@ mod test {
     }
 
     async fn reenc_sunshine(slow: bool) {
+        setup_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
             read_element_async(TEST_THRESHOLD_CT_PATH.to_string())
                 .await
@@ -1003,7 +981,38 @@ mod test {
         }
     }
 
+    async fn keygen_sunshine(slow: bool) {
+        setup_keys().await;
+        if slow {
+            panic!("slow/integration test is not supported since there's no preprocessing material")
+        }
+
+        let op = OperationValue::KeyGen(
+            KeyGenValues::builder()
+                .preproc_id(
+                    HexVector::from_hex("1111111111111111111111111111111111112222").unwrap(),
+                )
+                .build(),
+        );
+        let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
+        for result in results {
+            match result {
+                KmsOperationResponse::KeyGenResponse(resp) => {
+                    assert!(!resp.keygen_response.public_key_digest().is_empty());
+                    assert!(!resp.keygen_response.public_key_signature().0.is_empty());
+                    assert!(!resp.keygen_response.server_key_digest().is_empty());
+                    assert!(!resp.keygen_response.server_key_signature().0.is_empty());
+                    assert_eq!(resp.operation_val.tx_id, txn_id);
+                }
+                _ => {
+                    panic!("invalid response");
+                }
+            }
+        }
+    }
+
     async fn preproc_sunshine(slow: bool) {
+        setup_keys().await;
         let op = OperationValue::KeyGenPreproc(KeyGenPreprocValues {});
         let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
@@ -1021,6 +1030,7 @@ mod test {
     }
 
     async fn crs_sunshine(slow: bool) {
+        setup_keys().await;
         let op = OperationValue::CrsGen(CrsGenValues {});
         let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
@@ -1074,6 +1084,12 @@ mod test {
     #[serial_test::serial]
     async fn reenc_sunshine_mocked_coordinator() {
         reenc_sunshine(false).await
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn keygen_sunshine_mocked_coordinator() {
+        keygen_sunshine(false).await
     }
 
     #[tokio::test]

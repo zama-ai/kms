@@ -88,6 +88,8 @@ pub struct Client {
     client_pk: PublicSigKey,
     client_sk: Option<PrivateSigKey>,
     shares_needed: u32,
+    // we allow it because num_servers is used in only certain features
+    #[allow(dead_code)]
     num_servers: u32,
     params: NoiseFloodParameters,
 }
@@ -370,10 +372,6 @@ pub mod js_api {
         ciphertext_digest: Vec<u8>,
         domain: Eip712DomainMsg,
     ) -> Result<ReencryptionRequest, JsError> {
-        // `num_servers`` is only used in the "rust" client
-        // so we make a dummy assignment to avoid warning.
-        _ = client.num_servers;
-
         let mut randomness: Vec<u8> = Vec::with_capacity(RND_SIZE);
         client.rng.fill_bytes(&mut randomness);
         let payload = ReencryptionRequestPayload {
@@ -1974,7 +1972,8 @@ pub(crate) mod tests {
                 .spawn(async move { cur_client.crs_gen(tonic::Request::new(req_clone)).await });
         }
         let mut responses_gen = Vec::new();
-        while let Some(Ok(Ok(resp))) = tasks_gen.join_next().await {
+        while let Some(inner) = tasks_gen.join_next().await {
+            let resp = inner.unwrap().unwrap();
             responses_gen.push(resp.into_inner());
         }
         assert_eq!(responses_gen.len(), AMOUNT_PARTIES);
@@ -2360,8 +2359,8 @@ pub(crate) mod tests {
                 .spawn(async move { cur_client.decrypt(tonic::Request::new(req_clone)).await });
         }
         let mut req_response_vec = Vec::new();
-        while let Some(Ok(Ok(resp))) = req_tasks.join_next().await {
-            req_response_vec.push(resp.into_inner());
+        while let Some(inner) = req_tasks.join_next().await {
+            req_response_vec.push(inner.unwrap().unwrap().into_inner());
         }
         assert_eq!(req_response_vec.len(), AMOUNT_PARTIES);
 
@@ -2378,8 +2377,8 @@ pub(crate) mod tests {
             });
         }
         let mut resp_response_vec = Vec::new();
-        while let Some(Ok(Ok(resp))) = resp_tasks.join_next().await {
-            resp_response_vec.push(resp.into_inner());
+        while let Some(resp) = resp_tasks.join_next().await {
+            resp_response_vec.push(resp.unwrap().unwrap().into_inner());
         }
         let agg = AggregatedDecryptionResponse {
             responses: resp_response_vec,
@@ -2467,8 +2466,8 @@ pub(crate) mod tests {
                 .spawn(async move { cur_client.reencrypt(tonic::Request::new(req_clone)).await });
         }
         let mut req_response_vec = Vec::new();
-        while let Some(Ok(Ok(resp))) = req_tasks.join_next().await {
-            req_response_vec.push(resp.into_inner());
+        while let Some(resp) = req_tasks.join_next().await {
+            req_response_vec.push(resp.unwrap().unwrap().into_inner());
         }
         assert_eq!(req_response_vec.len(), AMOUNT_PARTIES);
 
@@ -2488,7 +2487,8 @@ pub(crate) mod tests {
             });
         }
         let mut response_map = HashMap::new();
-        while let Some(Ok(res)) = resp_tasks.join_next().await {
+        while let Some(res) = resp_tasks.join_next().await {
+            let res = res.unwrap();
             tracing::info!("Client got a response from {}", res.0);
             let (i, resp) = res;
             response_map.insert(i, resp.unwrap().into_inner());
@@ -2629,8 +2629,8 @@ pub(crate) mod tests {
             });
         }
         let mut responses = Vec::new();
-        while let Some(Ok(Ok(resp))) = tasks.join_next().await {
-            responses.push(resp.into_inner());
+        while let Some(resp) = tasks.join_next().await {
+            responses.push(resp.unwrap().unwrap().into_inner());
         }
 
         responses
@@ -2667,8 +2667,8 @@ pub(crate) mod tests {
         }
 
         let mut responses_gen = Vec::new();
-        while let Some(Ok(Ok(resp))) = tasks_gen.join_next().await {
-            responses_gen.push(resp.into_inner());
+        while let Some(resp) = tasks_gen.join_next().await {
+            responses_gen.push(resp.unwrap().unwrap().into_inner());
         }
         assert_eq!(responses_gen.len(), AMOUNT_PARTIES);
 
@@ -2760,8 +2760,8 @@ pub(crate) mod tests {
         }
 
         let mut responses_gen = Vec::new();
-        while let Some(Ok(resp)) = tasks_gen.join_next().await {
-            responses_gen.push(resp);
+        while let Some(resp) = tasks_gen.join_next().await {
+            responses_gen.push(resp.unwrap());
         }
         responses_gen
     }
@@ -2802,8 +2802,8 @@ pub(crate) mod tests {
         }
 
         let mut responses_gen = Vec::new();
-        while let Some(Ok(Ok(resp))) = tasks_gen.join_next().await {
-            responses_gen.push(resp.into_inner());
+        while let Some(resp) = tasks_gen.join_next().await {
+            responses_gen.push(resp.unwrap().unwrap().into_inner());
         }
         assert_eq!(responses_gen.len(), AMOUNT_PARTIES);
 
@@ -2854,8 +2854,8 @@ pub(crate) mod tests {
                 });
             }
             let mut responses = Vec::new();
-            while let Some(Ok(resp)) = tasks.join_next().await {
-                responses.push(resp);
+            while let Some(resp) = tasks.join_next().await {
+                responses.push(resp.unwrap());
             }
 
             finished = responses.into_iter().filter(|x| x.1.is_ok()).collect_vec();
