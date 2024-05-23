@@ -6,6 +6,7 @@ use crate::{
 use core::cell::RefCell;
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Response, StdError, StdResult, VerificationError};
+use cw_controllers::Admin;
 use events::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
     KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsEvent,
@@ -27,6 +28,8 @@ pub struct SequenceResponse {
 pub struct ConfigurationResponse {
     pub value: String,
 }
+
+pub(crate) const ADMIN: Admin = Admin::new("kms-conf-admin");
 
 pub struct KmsContract {
     pub(crate) storage: KmsContractStorage,
@@ -92,8 +95,9 @@ impl KmsContract {
     #[sv::msg(instantiate)]
     pub fn instantiate(
         &self,
-        _ctx: InstantiateCtx,
+        ctx: InstantiateCtx,
         proof_type: ContractProofType,
+        kms_core_conf: KmsCoreConf,
     ) -> StdResult<Response> {
         match proof_type {
             ContractProofType::Debug => {
@@ -103,6 +107,9 @@ impl KmsContract {
                 *self.proof_strategy.borrow_mut() = Box::new(DebugProofStrategy {})
             }
         }
+        self.storage
+            .update_core_conf(ctx.deps.storage, kms_core_conf)?;
+        ADMIN.set(ctx.deps, Some(ctx.info.sender.clone()))?;
         Ok(Response::default())
     }
 
@@ -113,6 +120,11 @@ impl KmsContract {
 
     #[sv::msg(exec)]
     pub fn update_kms_core_conf(&self, ctx: ExecCtx, conf: KmsCoreConf) -> StdResult<Response> {
+        ADMIN
+            .assert_admin(ctx.deps.as_ref(), &ctx.info.sender)
+            .map_err(|_| {
+                StdError::generic_err("Only the admin can update the KMS core configuration")
+            })?;
         self.storage.update_core_conf(ctx.deps.storage, conf)
     }
 
@@ -334,7 +346,6 @@ mod tests {
     use crate::proof::ContractProofType;
     use crate::state::KmsCoreConf;
     use crate::state::KmsCoreThresholdConf;
-    use cosmwasm_std::Addr;
     use cosmwasm_std::Event;
     use events::kms::CrsGenResponseValues;
     use events::kms::DecryptResponseValues;
@@ -354,28 +365,20 @@ mod tests {
     use sylvia::cw_multi_test::IntoAddr as _;
     use sylvia::multitest::App;
 
-    fn set_config(
-        contract: &sylvia::multitest::Proxy<'_, cw_multi_test::App, super::KmsContract>,
-        owner: &Addr,
-    ) {
-        let kms_core_conf = KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] });
-        contract
-            .update_kms_core_conf(kms_core_conf)
-            .call(owner)
-            .unwrap();
-    }
-
     #[test]
     fn test_instantiate() {
         let app = App::default();
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
         let contract = code_id
-            .instantiate(ContractProofType::Debug)
+            .instantiate(
+                ContractProofType::Debug,
+                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+            )
             .call(&owner)
             .unwrap();
         let value = contract.get_kms_core_conf();
-        assert!(value.is_err());
+        assert!(value.is_ok());
 
         let value = contract.get_transaction(TransactionId::default());
         assert!(value.is_err());
@@ -389,11 +392,12 @@ mod tests {
         let owner = "owner".into_addr();
 
         let contract = code_id
-            .instantiate(ContractProofType::Debug)
+            .instantiate(
+                ContractProofType::Debug,
+                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+            )
             .call(&owner)
             .unwrap();
-
-        set_config(&contract, &owner);
 
         let value = KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] });
 
@@ -414,11 +418,12 @@ mod tests {
         let proof: HexVector = vec![1, 2, 3].into();
 
         let contract = code_id
-            .instantiate(ContractProofType::Debug)
+            .instantiate(
+                ContractProofType::Debug,
+                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+            )
             .call(&owner)
             .unwrap();
-
-        set_config(&contract, &owner);
 
         let decrypt = DecryptValues::builder()
             .key_id(vec![1, 2, 3])
@@ -483,11 +488,12 @@ mod tests {
         let proof: HexVector = vec![1, 2, 3].into();
 
         let contract = code_id
-            .instantiate(ContractProofType::Debug)
+            .instantiate(
+                ContractProofType::Debug,
+                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+            )
             .call(&owner)
             .unwrap();
-
-        set_config(&contract, &owner);
 
         let response = contract.keygen_preproc(proof.clone()).call(&owner).unwrap();
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
@@ -526,11 +532,12 @@ mod tests {
         let proof: HexVector = vec![1, 2, 3].into();
 
         let contract = code_id
-            .instantiate(ContractProofType::Debug)
+            .instantiate(
+                ContractProofType::Debug,
+                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+            )
             .call(&owner)
             .unwrap();
-
-        set_config(&contract, &owner);
 
         let preproc_id = "preproc_id".as_bytes().to_vec().into();
         let keygen = KeyGenValues::builder().preproc_id(preproc_id).build();
@@ -580,11 +587,12 @@ mod tests {
         let proof: HexVector = vec![1, 2, 3].into();
 
         let contract = code_id
-            .instantiate(ContractProofType::Debug)
+            .instantiate(
+                ContractProofType::Debug,
+                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+            )
             .call(&owner)
             .unwrap();
-
-        set_config(&contract, &owner);
 
         let reencrypt = ReencryptValues::builder()
             .signature(vec![1])
@@ -644,11 +652,12 @@ mod tests {
         let proof: HexVector = vec![1, 2, 3].into();
 
         let contract = code_id
-            .instantiate(ContractProofType::Debug)
+            .instantiate(
+                ContractProofType::Debug,
+                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+            )
             .call(&owner)
             .unwrap();
-
-        set_config(&contract, &owner);
 
         let response = contract.crs_gen(proof.clone()).call(&owner).unwrap();
 
@@ -709,11 +718,12 @@ mod tests {
         let proof: HexVector = vec![1, 2, 3].into();
 
         let contract = code_id
-            .instantiate(ContractProofType::Debug)
+            .instantiate(
+                ContractProofType::Debug,
+                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+            )
             .call(&owner)
             .unwrap();
-
-        set_config(&contract, &owner);
 
         let decrypt = DecryptValues::builder()
             .key_id(vec![1, 2, 3])

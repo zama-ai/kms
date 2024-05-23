@@ -12,7 +12,7 @@ services:
       - "1317:1317"
       - "9090:9090"
     volumes:
-      - ./bootstrap.sh:/bootstrap.sh
+      - ../../scripts/bootstrap_asc.sh:/bootstrap.sh
     entrypoint: [ "/bootstrap.sh" ]
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"

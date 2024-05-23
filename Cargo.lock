@@ -447,6 +447,7 @@ dependencies = [
  "bincode",
  "cosmwasm-schema",
  "cosmwasm-std",
+ "cw-controllers",
  "cw-multi-test",
  "cw-storage-plus",
  "events",
@@ -2244,6 +2245,21 @@ dependencies = [
  "rand_core 0.6.4",
  "subtle-ng",
  "zeroize",
+]
+
+[[package]]
+name = "cw-controllers"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50c1804013d21060b994dea28a080f9eab78a3bcb6b617f05e7634b0600bf7b1"
+dependencies = [
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cw-storage-plus",
+ "cw-utils",
+ "schemars",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]

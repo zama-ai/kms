@@ -37,8 +37,7 @@ pub struct KmsCoreParty {
     pub party_id: HexVector,
     pub public_key: HexVector,
     pub address: String,
-    // TODO TLS certificate
-    // pub tls_certificate: Option<HexVector>,
+    pub tls_pub_key: Option<HexVector>,
 }
 
 pub struct KmsContractStorage {
