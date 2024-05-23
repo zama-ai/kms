@@ -33,13 +33,13 @@ pub static REENC_REQUEST_NAME: &str = "reenc_request";
 /// key generation. In practice this means the CRS and different types of public keys.
 /// Data of this type is supposed to be readable by anyone on the internet
 /// and stored on a medium that _may_ be suseptible to malicious modifications.
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 pub enum PubDataType {
     PublicKey,
     ServerKey,
     SnsKey,
     CRS,
-    VerfKey,
+    VerfKey, // Type for the servers verification keys
 }
 
 impl fmt::Display for PubDataType {
@@ -59,7 +59,7 @@ impl fmt::Display for PubDataType {
 /// signatures. Data of this type is supposed to only be readable, writable and modifiable by a
 /// single entity and stored on a medium that is not readable, writable or modifiable by any other
 /// entity (without detection).
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
 pub enum PrivDataType {
     SigningKey,
     FheKeyInfo,
@@ -608,18 +608,13 @@ impl fmt::Display for RequestId {
 }
 
 impl RequestId {
-    // TODO make proper new instead of deriving since the real implementaiton will be different !!!!
-    pub fn new<S>(value: &S, name: String) -> anyhow::Result<Self>
-    where
-        S: Serialize + fmt::Debug,
-    {
-        let mut hashed_payload = serialize_hash_element(value)?;
-        let mut hashed_name = serialize_hash_element(&name)?;
-        hashed_payload.append(&mut hashed_name);
-        let mut res_hash = serialize_hash_element(&hashed_payload)?;
+    /// Method for deterministically deriving a request ID from an abitrary string.
+    /// Is currently only used for testing purposes, since deriving is the responsibility of the smart contract.
+    pub(crate) fn derive(name: &str) -> anyhow::Result<Self> {
+        let mut hashed_name = serialize_hash_element(&name.to_string())?;
         // Truncate and convert to hex
-        res_hash.truncate(ID_LENGTH);
-        let res_hash = hex::encode(res_hash);
+        hashed_name.truncate(ID_LENGTH);
+        let res_hash = hex::encode(hashed_name);
         Ok(RequestId {
             request_id: res_hash,
         })
@@ -649,13 +644,20 @@ impl RequestId {
     }
 }
 
-impl From<RequestId> for u128 {
+impl From<RequestId> for String {
+    fn from(request_id: RequestId) -> Self {
+        request_id.request_id
+    }
+}
+
+impl TryFrom<RequestId> for u128 {
+    type Error = anyhow::Error;
+
     // Convert a RequestId to a u128 through truncation of the first bytes.
-    // May panic if RequestId passed is not valid
-    fn from(value: RequestId) -> Self {
-        let hex = hex::decode(value.to_string()).unwrap();
-        let hex_truncated: [u8; 16] = hex[4..20].try_into().unwrap();
-        u128::from_be_bytes(hex_truncated)
+    fn try_from(value: RequestId) -> Result<Self, Self::Error> {
+        let hex = hex::decode(value.to_string())?;
+        let hex_truncated: [u8; 16] = hex[4..20].try_into()?;
+        Ok(u128::from_be_bytes(hex_truncated))
     }
 }
 
@@ -789,7 +791,7 @@ pub(crate) mod tests {
             request_id: "0000000000000000000000000000000000000001".to_owned(),
         };
         assert!(request_id.is_valid());
-        let x: u128 = request_id.into();
+        let x: u128 = request_id.try_into().unwrap();
         assert_eq!(x, 1);
     }
 }

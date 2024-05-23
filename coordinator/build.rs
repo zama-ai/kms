@@ -60,13 +60,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("FhePubKeyInfo", EXTENDED_DERIVES)
         .type_attribute("CrsGenRequest", DERIVES)
         .type_attribute("CrsGenResult", DERIVES)
-        .compile(
-            &[
-                "proto/kms.proto",
-                "proto/connector.proto",
-                "proto/ddec_core.proto",
-            ],
-            &["proto"],
-        )?;
+        .compile(&["proto/kms.proto"], &["proto"])?;
     Ok(())
 }

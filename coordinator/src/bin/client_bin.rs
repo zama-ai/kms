@@ -1,10 +1,8 @@
 use kms_lib::client::Client;
-use kms_lib::consts::{DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_KEY_ID};
+use kms_lib::consts::DEFAULT_CENTRAL_KEY_ID;
 use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
-use kms_lib::kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType};
-use kms_lib::util::file_handling::read_element;
-use kms_lib::util::key_setup::CentralizedTestingKeys;
-use std::collections::{HashMap, HashSet};
+use kms_lib::kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse};
+use std::collections::HashMap;
 use std::env;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -48,11 +46,13 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 #[cfg(feature = "non-wasm")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    use aes_prng::AesRng;
-    use kms_lib::consts::ID_LENGTH;
-    use kms_lib::kms::RequestId;
-    use rand::{RngCore, SeedableRng};
+    use kms_lib::{
+        consts::{DEFAULT_DEC_ID, DEFAULT_PARAM_PATH, TEST_MSG},
+        storage::{FileStorage, StorageType},
+        util::key_setup::compute_cipher_from_storage,
+    };
 
+    // TODO ensure the keys exist
     let stdout_log = tracing_subscriber::fmt::layer().pretty();
     tracing_subscriber::registry()
         .with(stdout_log.with_filter(filter::LevelFilter::WARN))
@@ -69,31 +69,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         5,
         100
     )?;
-    let (ct, fhe_type): (Vec<u8>, FheType) = read_element(DEFAULT_CENTRAL_CT_PATH)?;
-    let central_keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH)?;
-    let mut internal_client = Client::new(
-        HashSet::from_iter(central_keys.server_keys.iter().cloned()),
-        central_keys.client_pk,
-        Some(central_keys.client_sk),
-        1,
-        1,
-        central_keys.params,
-    );
+    let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+    let client_storage = FileStorage::new(&StorageType::CLIENT.to_string());
+    let mut internal_client =
+        Client::new_client(client_storage, pub_storage, DEFAULT_PARAM_PATH, 1, 1)
+            .await
+            .unwrap();
+    let (ct, fhe_type) =
+        compute_cipher_from_storage(TEST_MSG, &DEFAULT_CENTRAL_KEY_ID.to_string()).await;
 
     // DECRYPTION REQUEST
-    let req_key_id = RequestId {
-        request_id: DEFAULT_KEY_ID.to_string(),
-    };
-    // Generate a random request ID, just for testing
-    let mut rng = AesRng::from_entropy();
-    let dec_req_id = {
-        let mut buf = [0u8; ID_LENGTH];
-        rng.fill_bytes(&mut buf);
-        RequestId {
-            request_id: hex::encode(buf),
-        }
-    };
-    let req = internal_client.decryption_request(ct.clone(), fhe_type, &dec_req_id, &req_key_id)?;
+    let req = internal_client.decryption_request(
+        ct.clone(),
+        fhe_type,
+        &DEFAULT_DEC_ID,
+        &DEFAULT_CENTRAL_KEY_ID,
+    )?;
     let response = kms_client.decrypt(tonic::Request::new(req.clone())).await?;
     tracing::debug!("DECRYPT RESPONSE={:?}", response);
     // Wait for the servers to complete the decryption
@@ -123,19 +114,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // REENCRYPTION REQUEST
-    let reenc_req_id = {
-        let mut buf = [0u8; ID_LENGTH];
-        rng.fill_bytes(&mut buf);
-        RequestId {
-            request_id: hex::encode(buf),
-        }
-    };
     let (req, enc_pk, enc_sk) = internal_client.reencryption_request(
         ct,
         &dummy_domain(),
         fhe_type,
-        &reenc_req_id,
-        &req_key_id,
+        &DEFAULT_DEC_ID,
+        &DEFAULT_CENTRAL_KEY_ID,
     )?;
     let response = kms_client
         .reencrypt(tonic::Request::new(req.clone()))

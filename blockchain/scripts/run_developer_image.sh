@@ -14,13 +14,6 @@ KMS_NETWORK_KEY_PATH=/config/temp
 # init node
 ./setup.sh
 
-# TODO make the key path parametrized
-# Needed for first version of KMS
-# Kms expect cks.bin at /config/temp because kms-server binary is located at /config
-mkdir -p $KMS_NETWORK_KEY_PATH
-cp $ETHERMINT_NETWORK_KEYS_PATH/cks $KMS_NETWORK_KEY_PATH/cks.bin
-
-
 # run kms
 ./kms-server &
 

@@ -51,12 +51,7 @@ WORKDIR /app/kms/coordinator
 # Copy the binaries from the base stage
 COPY --from=base /app/kms/coordinator/bin/ /app/kms/coordinator/bin/
 COPY --from=base /app/kms/coordinator/parameters/ /app/kms/coordinator/parameters/
-COPY --from=base /app/kms/coordinator/crs/ /app/kms/coordinator/crs/
 COPY --from=base /app/kms/coordinator/keys/ /app/kms/coordinator/keys/
-COPY --from=base /app/kms/coordinator/temp/default-central-keys.bin /app/kms/coordinator/temp/
-COPY --from=base /app/kms/coordinator/temp/pks.bin /app/kms/coordinator/temp/
-COPY --from=base /app/kms/coordinator/temp/sks.bin /app/kms/coordinator/temp/
-COPY --from=base /app/kms/coordinator/temp/cks.bin /app/kms/coordinator/temp/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/coordinator/bin/
 
 CMD ["kms-server"]

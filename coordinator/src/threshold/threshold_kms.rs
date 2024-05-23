@@ -13,11 +13,13 @@ use crate::rpc::central_rpc::{
     convert_key_response, retrieve_parameters, tonic_handle_potential_err, tonic_some_or_err,
     validate_decrypt_req, validate_reencrypt_req, validate_request_id,
 };
+use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::{
-    BaseKms, Plaintext, PrivDataType, PubDataType, RawDecryption, SigncryptionPayload,
-    CURRENT_FORMAT_VERSION,
+    BaseKms, Plaintext, PubDataType, RawDecryption, SigncryptionPayload, CURRENT_FORMAT_VERSION,
 };
-use crate::storage::{delete_request_id, read_all_data, store_request_id, PublicStorage};
+use crate::storage::lazy_store_at_request_id;
+use crate::storage::PublicStorage;
+use crate::storage::{delete_at_request_id, read_all_data, store_at_request_id};
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
@@ -558,7 +560,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             guarded_meta_store.insert_request(req_id, "CRS generation")?;
         }
 
-        let session_id = SessionId(req_id.clone().into());
+        let session_id = SessionId(req_id.clone().try_into()?);
         let mut session = self.prepare_ddec_data_from_sessionid(session_id)?;
         let meta_store = Arc::clone(&self.crs_meta_store);
         let public_storage = Arc::clone(&self.public_storage);
@@ -597,19 +599,20 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 };
 
                 let crs_meta_data = (info.key_handle, info.signature);
-                if store_request_id(
-                    &mut (*pub_storage),
+                if store_at_request_id(
+                    &mut (*priv_storage),
                     &owned_req_id,
-                    &pp,
-                    &PubDataType::CRS.to_string(),
+                    &crs_meta_data,
+                    &PrivDataType::CrsInfo.to_string(),
                 )
                 .await
                 .is_ok()
-                    && store_request_id(
-                        &mut (*priv_storage),
+                // Only store the CRS if no other server has already stored it
+                    && lazy_store_at_request_id(
+                        &mut (*pub_storage),
                         &owned_req_id,
-                        &crs_meta_data,
-                        &PrivDataType::CrsInfo.to_string(),
+                        &pp,
+                        &PubDataType::CRS.to_string(),
                     )
                     .await
                     .is_ok()
@@ -622,13 +625,13 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                     // Try to delete stored data to avoid anything dangling
                     // Ignore any failure to delete something. It might be because the data exist.
                     // In any case, we can't do much
-                    let _ = delete_request_id(
+                    let _ = delete_at_request_id(
                         &mut (*pub_storage),
                         &owned_req_id,
                         &PubDataType::CRS.to_string(),
                     )
                     .await;
-                    let _ = delete_request_id(
+                    let _ = delete_at_request_id(
                         &mut (*priv_storage),
                         &owned_req_id,
                         &PrivDataType::CrsInfo.to_string(),
@@ -662,7 +665,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         &self,
         request_id: &RequestId,
     ) -> anyhow::Result<SmallSession<ResiduePoly128>> {
-        self.prepare_ddec_data_from_sessionid(SessionId(request_id.clone().into()))
+        self.prepare_ddec_data_from_sessionid(SessionId(request_id.clone().try_into()?))
     }
 
     fn prepare_ddec_data_from_sessionid(
@@ -705,7 +708,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 .collect_vec()
         }
         //Derive a sequence of sessionId from request_id
-        let session_id: u128 = request_id.clone().into();
+        let session_id: u128 = request_id.clone().try_into()?;
         let own_identity = self.own_identity()?;
         let my_id = self.my_id;
         let base_sessions: Vec<_> = (session_id..session_id + self.num_sessions_preproc)
@@ -772,7 +775,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 
         //Create the base session necessary to run the DKG
         let mut base_session = {
-            let session_id = SessionId(req_id.clone().into());
+            let session_id = SessionId(req_id.clone().try_into()?);
             let own_identity = self.own_identity()?;
             let params = SessionParameters::new(
                 self.threshold,
@@ -858,16 +861,24 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 private_keys,
                 sns_key: sns_key.clone(),
             };
-            //Try to store public information
-            if store_request_id(
-                &mut (*pub_storage),
+            //Try to store the new data
+            if store_at_request_id(
+                &mut (*priv_storage),
                 &req_id,
-                &pub_key_set.public_key,
-                &PubDataType::PublicKey.to_string(),
+                &private_key_data,
+                &PrivDataType::FheKeyInfo.to_string(),
             )
             .await
             .is_ok()
-                && store_request_id(
+            // Only store the public keys if no other server has already stored them
+                && lazy_store_at_request_id(
+                    &mut (*pub_storage),
+                    &req_id,
+                    &pub_key_set.public_key,
+                    &PubDataType::PublicKey.to_string(),
+                ).await
+                .is_ok()
+                && lazy_store_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
                     &pub_key_set.server_key,
@@ -875,19 +886,11 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 )
                 .await
                 .is_ok()
-                && store_request_id(
+                && lazy_store_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
                     &sns_key,
                     &PubDataType::SnsKey.to_string(),
-                )
-                .await
-                .is_ok()
-                && store_request_id(
-                    &mut (*priv_storage),
-                    &req_id,
-                    &private_key_data,
-                    &PrivDataType::FheKeyInfo.to_string(),
                 )
                 .await
                 .is_ok()
@@ -906,25 +909,25 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 // Try to delete stored data to avoid anything dangling
                 // Ignore any failure to delete something. It might be because the data exist. In
                 // any case, we can't do much
-                let _ = delete_request_id(
+                let _ = delete_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
                     &PubDataType::PublicKey.to_string(),
                 )
                 .await;
-                let _ = delete_request_id(
+                let _ = delete_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
                     &PubDataType::ServerKey.to_string(),
                 )
                 .await;
-                let _ = delete_request_id(
+                let _ = delete_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
                     &PubDataType::SnsKey.to_string(),
                 )
                 .await;
-                let _ = delete_request_id(
+                let _ = delete_at_request_id(
                     &mut (*priv_storage),
                     &req_id,
                     &PrivDataType::FheKeyInfo.to_string(),
@@ -971,7 +974,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 
         //Retrieve the DKG parameters
         let params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params),
+            retrieve_parameters(inner.params).await,
             "Parameter choice is not recognized".to_string(),
         )?;
 
@@ -1022,7 +1025,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 
         //Retrieve the DKG parameters
         let params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params),
+            retrieve_parameters(inner.params).await,
             "Parameter choice is not recognized".to_string(),
         )?;
 
@@ -1146,7 +1149,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 
         //Retrieve kg params and preproc_id
         let params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params),
+            retrieve_parameters(inner.params).await,
             "Parameter choice is not recognized".to_string(),
         )?;
         let dkg_params = DKGParams::WithSnS(DKGParamsSnS {
@@ -1449,6 +1452,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         );
 
         let fhe_params = crate::rpc::central_rpc::retrieve_parameters(req_inner.params)
+            .await
             .map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::NotFound,

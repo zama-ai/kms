@@ -18,8 +18,8 @@ use anyhow::anyhow;
 use percent_encoding::percent_decode_str;
 use percent_encoding::utf8_percent_encode;
 use percent_encoding::NON_ALPHANUMERIC;
-use std::collections::HashMap;
 use std::error::Error;
+use std::{collections::HashMap, path::MAIN_SEPARATOR};
 use tendermint::merkle::proof::ProofOp;
 use tendermint::merkle::proof::ProofOps;
 
@@ -417,11 +417,13 @@ impl KeyPath {
 /// * A result containing a vector of keys (each as a vector of bytes), or an error if the path is invalid
 ///   or any segment cannot be properly decoded.
 fn key_path_to_keys(path: &str) -> Result<Vec<Vec<u8>>, Box<dyn Error>> {
-    if !path.starts_with('/') || path.is_empty() {
-        return Err("key path string must start with a forward slash '/'".into());
+    if !path.starts_with(MAIN_SEPARATOR) || path.is_empty() {
+        return Err(
+            format!("key path string must start with a forward slash '{MAIN_SEPARATOR}'").into(),
+        );
     }
 
-    let parts = path[1..].split('/').collect::<Vec<_>>();
+    let parts = path[1..].split(MAIN_SEPARATOR).collect::<Vec<_>>();
     let mut keys = Vec::with_capacity(parts.len());
 
     for (i, part) in parts.iter().enumerate() {

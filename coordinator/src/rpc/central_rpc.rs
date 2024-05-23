@@ -16,7 +16,7 @@ use crate::kms::{
     KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse, RequestId,
 };
 use crate::rpc::rpc_types::PubDataType;
-use crate::storage::{store_request_id, FileStorage, PublicStorage};
+use crate::storage::{store_at_request_id, FileStorage, PublicStorage};
 use crate::util::file_handling::read_as_json;
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
@@ -104,7 +104,7 @@ impl<
             ));
         }
         let params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params),
+            retrieve_parameters(inner.params).await,
             "Parameter choice is not recognized".to_string(),
         )?;
         let future_keys = tokio::spawn(async_generate_fhe_keys(params));
@@ -354,7 +354,7 @@ impl<
             ));
         }
         let params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params),
+            retrieve_parameters(inner.params).await,
             "Parameter choice is not recognized".to_string(),
         )?;
 
@@ -455,7 +455,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 crs_handles.insert(request_id.clone(), crs_info.clone());
                 {
                     let mut pub_storage = self.public_storage.lock().await;
-                    store_request_id(
+                    store_at_request_id(
                         &mut (*pub_storage),
                         &request_id,
                         &pp,
@@ -465,7 +465,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 }
                 {
                     let mut priv_storage = self.private_storage.lock().await;
-                    store_request_id(
+                    store_at_request_id(
                         &mut (*priv_storage),
                         &request_id,
                         &crs_info,
@@ -530,14 +530,14 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 key_handles.insert(request_id.clone(), new_key_info.clone());
                 {
                     let mut pub_storage = self.public_storage.lock().await;
-                    store_request_id(
+                    store_at_request_id(
                         &mut (*pub_storage),
                         &request_id,
                         &pub_keys.public_key,
                         &PubDataType::PublicKey.to_string(),
                     )
                     .await?;
-                    store_request_id(
+                    store_at_request_id(
                         &mut (*pub_storage),
                         &request_id,
                         &pub_keys.server_key,
@@ -547,7 +547,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 }
                 {
                     let mut priv_storage = self.private_storage.lock().await;
-                    let _ = &store_request_id(
+                    let _ = &store_at_request_id(
                         &mut (*priv_storage),
                         &request_id,
                         &new_key_info,
@@ -668,13 +668,13 @@ pub(crate) fn convert_key_response(
         .collect()
 }
 
-pub(crate) fn retrieve_parameters(param_choice: i32) -> anyhow::Result<NoiseFloodParameters> {
+pub(crate) async fn retrieve_parameters(param_choice: i32) -> anyhow::Result<NoiseFloodParameters> {
     let param_choice = ParamChoice::try_from(param_choice)?;
     let param_path = match param_choice {
         ParamChoice::Test => TEST_PARAM_PATH,
         ParamChoice::Default => DEFAULT_PARAM_PATH,
     };
-    let params: NoiseFloodParameters = read_as_json(param_path.to_owned())?;
+    let params: NoiseFloodParameters = read_as_json(param_path).await?;
     Ok(params)
 }
 

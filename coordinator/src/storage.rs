@@ -11,7 +11,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::{self};
 use std::path::{Path, PathBuf};
-use std::{env, fs};
+use std::{env, fs, path::MAIN_SEPARATOR};
 use url::Url;
 
 // TODO add a wrapper struct for both public and private storage.
@@ -50,7 +50,8 @@ pub trait PublicStorage: PublicStorageReader {
 }
 
 // Helper method for storing data based on a data type and request ID.
-pub async fn store_request_id<S: PublicStorage, Ser: Serialize + Send + Sync + ?Sized>(
+// An error will be returned if the data already exists.
+pub async fn store_at_request_id<S: PublicStorage, Ser: Serialize + Send + Sync + ?Sized>(
     storage: &mut S,
     request_id: &RequestId,
     data: &Ser,
@@ -65,8 +66,31 @@ pub async fn store_request_id<S: PublicStorage, Ser: Serialize + Send + Sync + ?
     })
 }
 
+// Helper method for storing data based on a data type and request ID.
+// Will not do anything if the data already exists, but will trace a warning if that is the case.
+pub async fn lazy_store_at_request_id<
+    S: PublicStorage,
+    Ser: serde::Serialize + Send + Sync + ?Sized,
+>(
+    storage: &mut S,
+    request_id: &RequestId,
+    data: &Ser,
+    data_type: &str,
+) -> anyhow::Result<()> {
+    let url = storage.compute_url(&request_id.to_string(), data_type)?;
+    if storage.data_exists(&url).await? {
+        tracing::warn!(
+            "Data with ID {} and type {} already exists!",
+            request_id,
+            data_type
+        );
+        return Ok(());
+    }
+    store_at_request_id(storage, request_id, data, data_type).await
+}
+
 // Helper method to remove data based on a data type and request ID.
-pub async fn delete_request_id<S: PublicStorage>(
+pub async fn delete_at_request_id<S: PublicStorage>(
     storage: &mut S,
     request_id: &RequestId,
     data_type: &str,
@@ -91,7 +115,7 @@ pub async fn read_request_id<S: PublicStorage, Ser: DeserializeOwned + Send>(
 }
 
 /// Helper method for reading all data of a specific type.
-pub async fn read_all_data<S: PublicStorage, Ser: DeserializeOwned + Serialize + Send>(
+pub async fn read_all_data<S: PublicStorageReader, Ser: DeserializeOwned + Serialize + Send>(
     storage: &S,
     data_type: &str,
 ) -> anyhow::Result<HashMap<RequestId, Ser>> {
@@ -99,9 +123,7 @@ pub async fn read_all_data<S: PublicStorage, Ser: DeserializeOwned + Serialize +
     let mut res = HashMap::with_capacity(url_map.len());
     for (data_ptr, url) in url_map.iter() {
         let data: Ser = storage.read_data(url).await?;
-        let req_id = RequestId {
-            request_id: data_ptr.to_owned(),
-        };
+        let req_id: RequestId = data_ptr.to_owned().try_into()?;
         if !req_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
                 "Request ID {} is not valid",
@@ -117,6 +139,7 @@ pub async fn read_all_data<S: PublicStorage, Ser: DeserializeOwned + Serialize +
 pub enum StorageType {
     PUB,
     PRIV,
+    CLIENT,
 }
 impl fmt::Display for StorageType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -137,7 +160,10 @@ impl FileStorage {
             "Could not get current directory".to_string(),
         )?;
 
-        let root_path = format!("{}/{}/{}/dev", cur_dir, KEY_PATH_PREFIX, self.extra_prefix);
+        let root_path = format!(
+            "{}{MAIN_SEPARATOR}{}{MAIN_SEPARATOR}{}{MAIN_SEPARATOR}dev",
+            cur_dir, KEY_PATH_PREFIX, self.extra_prefix
+        );
         Ok(PathBuf::from(root_path))
     }
 
@@ -151,13 +177,13 @@ impl FileStorage {
 #[tonic::async_trait]
 impl PublicStorageReader for FileStorage {
     fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
-        if data_id.contains('/') || data_type.contains('/') {
-            return Err(anyhow_error_and_log(
-                "Could not store data, data_id or data_type contains /",
-            ));
+        if data_id.contains(MAIN_SEPARATOR) || data_type.contains(MAIN_SEPARATOR) {
+            return Err(anyhow_error_and_log(format!(
+                "Could not store data, data_id or data_type contains {MAIN_SEPARATOR}",
+            )));
         }
         let mut path = self.root_dir()?;
-        let file = format!("{}/{}", data_type, data_id);
+        let file = format!("{}{MAIN_SEPARATOR}{}", data_type, data_id);
         path.push(file);
         let url = Url::from_file_path(path)
             .map_err(|_e| anyhow_error_and_log("Could not turn path into URL"))?;
@@ -172,7 +198,7 @@ impl PublicStorageReader for FileStorage {
     }
 
     async fn read_data<T: DeserializeOwned + Send>(&self, url: &Url) -> anyhow::Result<T> {
-        let res: T = read_element(url.path())?;
+        let res: T = read_element(url.path()).await?;
         Ok(res)
     }
 
@@ -230,16 +256,20 @@ impl PublicStorageReader for FileStorage {
 
 #[tonic::async_trait]
 impl PublicStorage for FileStorage {
-    /// Store data with a specific [url], overwritting any content that might already be there,
+    /// Store data with a specific [url], giving a warning if the data already exists and exits _without_ writing
     async fn store_data<T: Serialize + Send + Sync + ?Sized>(
         &mut self,
         data: &T,
         url: &Url,
     ) -> anyhow::Result<()> {
         let url_path = Path::new(url.path());
-        if url_path.try_exists().is_ok() {
+        if url_path.try_exists().is_ok_and(|res| res) {
             // If the path exists, then trace a warning
-            tracing::warn!("The path {} already exists", url.path());
+            tracing::warn!(
+                "The path {} already exists. Keeping the data without overwriting",
+                url.path()
+            );
+            return Ok(());
         }
         let root_dir = self.root_dir().map_err(|e| {
             tracing::warn!("Could not get root directory!");
@@ -253,7 +283,7 @@ impl PublicStorage for FileStorage {
             );
             e
         })?;
-        write_element(url.path().to_string(), &data).map_err(|e| {
+        write_element(url.path(), &data).await.map_err(|e| {
             tracing::warn!("Could not write to URL {}, error {}", url, e);
             e
         })?;
@@ -272,7 +302,9 @@ pub struct RamStorage {
     // Store Url to data_id, data_type, serialized data
     internal_storage: HashMap<Url, (String, String, Vec<u8>)>,
 }
+
 impl RamStorage {
+    // Aggregate with devstorage to make an objevt that loads from files but don't store
     pub fn new(storage_type: StorageType) -> Self {
         Self {
             extra_prefix: storage_type.to_string(),
@@ -284,7 +316,7 @@ impl RamStorage {
     pub async fn from_existing_keys(keys: &SoftwareKmsKeys) -> anyhow::Result<Self> {
         let mut res = Self::new(StorageType::PRIV);
         for (cur_req_id, cur_keys) in &keys.key_info {
-            store_request_id(
+            store_at_request_id(
                 &mut res,
                 cur_req_id,
                 &cur_keys,
@@ -318,11 +350,14 @@ impl PublicStorageReader for RamStorage {
     }
 
     fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
-        let url_string = format!("/{}/{}/{}", self.extra_prefix, data_id, data_type);
-        if data_id.contains('/') || data_type.contains('/') {
-            return Err(anyhow_error_and_log(
-                "Could not store data, data_id or data_type contains /",
-            ));
+        let url_string = format!(
+            "{MAIN_SEPARATOR}{}{MAIN_SEPARATOR}{}{MAIN_SEPARATOR}{}",
+            self.extra_prefix, data_id, data_type
+        );
+        if data_id.contains(MAIN_SEPARATOR) || data_type.contains(MAIN_SEPARATOR) {
+            return Err(anyhow_error_and_log(format!(
+                "Could not store data, data_id or data_type contains {MAIN_SEPARATOR}",
+            )));
         }
         let url = Url::from_file_path(url_string)
             .map_err(|_e| anyhow_error_and_log("Could not turn path into URL"))?;
@@ -354,7 +389,7 @@ impl PublicStorage for RamStorage {
         url: &Url,
     ) -> anyhow::Result<()> {
         let url_string = url.to_owned().to_string();
-        let components: Vec<&str> = url_string.split('/').collect();
+        let components: Vec<&str> = url_string.split(MAIN_SEPARATOR).collect();
         let data_id = components
             .get(components.len() - 2)
             .ok_or(anyhow_error_and_log("URL does not contain data id"))?
@@ -385,9 +420,8 @@ pub enum StorageVersion {
 
 #[cfg(test)]
 mod tests {
-    use crate::rpc::rpc_types::PubDataType;
-
     use super::*;
+    use crate::rpc::rpc_types::PubDataType;
 
     #[tokio::test]
     async fn threshold_dev_storage() {
@@ -408,7 +442,10 @@ mod tests {
         // make sure we can put it in storage1
         assert!(storage1.store_data(data, &url).await.is_ok());
         assert!(storage1.data_exists(&url).await.unwrap());
-        let wrong = Url::from_file_path("/some/wrong/path/file.txt").unwrap();
+        let wrong = Url::from_file_path(format!(
+            "{MAIN_SEPARATOR}some{MAIN_SEPARATOR}wrong{MAIN_SEPARATOR}path{MAIN_SEPARATOR}file.txt"
+        ))
+        .unwrap();
         assert!(!storage1.data_exists(&wrong).await.unwrap());
 
         let url2 = storage2

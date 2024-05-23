@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
-use kms_lib::consts::{
-    DEFAULT_CENTRAL_CRS_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CRS_ID, DEFAULT_KEY_ID,
-};
+use kms_lib::consts::DEFAULT_CENTRAL_KEY_ID;
+use kms_lib::consts::DEFAULT_CRS_ID;
+use kms_lib::consts::OTHER_CENTRAL_DEFAULT_ID;
 use kms_lib::cryptography::central_kms::SoftwareKmsKeys;
 use kms_lib::cryptography::der_types::{PrivateSigKey, PublicSigKey};
 use kms_lib::cryptography::nitro_enclave::gen_nitro_enclave_keys;
@@ -12,10 +12,15 @@ use kms_lib::util::aws::{
     build_aws_kms_client, build_s3_client, nitro_enclave_decrypt_app_key, s3_get_blob,
     EnclaveStorage,
 };
-use kms_lib::{write_default_crs_store, write_default_keys};
+use kms_lib::{
+    consts::DEFAULT_PARAM_PATH,
+    util::key_setup::{
+        ensure_central_crs_store_exists, ensure_central_keys_exist,
+        ensure_central_server_signing_keys_exist, ensure_dir_exist,
+    },
+};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::Path;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{filter, Layer};
@@ -67,8 +72,14 @@ enum Mode {
     },
 }
 
-// Starts a server where the first argument is the URL and following arguments are key handles of
-// existing keys.
+/// Starts a server where the first argument is the URL and following arguments are key handles of
+/// existing keys.
+///
+/// To run the server excute
+///```
+/// cargo run --bin kms-server <mode> <other arguments>
+///```
+/// where mode is either `dev`, `proxy` or `enclave`.
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let stdout_log = tracing_subscriber::fmt::layer().pretty();
@@ -92,18 +103,15 @@ async fn main() -> Result<(), anyhow::Error> {
 
     match args.mode {
         Mode::Dev => {
-            if !Path::new(DEFAULT_CENTRAL_KEYS_PATH).exists() {
-                tracing::info!(
-                    "Could not find default keys. Generating new keys with default parameters and ID \"{}\"...", (*DEFAULT_KEY_ID).clone()
-                );
-                write_default_keys(DEFAULT_CENTRAL_KEYS_PATH).await;
-            };
-            if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
-                tracing::info!(
-                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", (*DEFAULT_CRS_ID).clone()
-                );
-                write_default_crs_store().await;
-            };
+            ensure_dir_exist().await;
+            ensure_central_server_signing_keys_exist().await;
+            ensure_central_keys_exist(
+                DEFAULT_PARAM_PATH,
+                &DEFAULT_CENTRAL_KEY_ID,
+                &OTHER_CENTRAL_DEFAULT_ID,
+            )
+            .await;
+            ensure_central_crs_store_exists(DEFAULT_PARAM_PATH, &DEFAULT_CRS_ID).await;
 
             let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
             let priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
@@ -127,7 +135,7 @@ async fn main() -> Result<(), anyhow::Error> {
             let fhe_sk_blob = s3_get_blob(
                 &s3_client,
                 &blob_bucket,
-                format!("{}-private.bin", (*DEFAULT_KEY_ID).clone()).as_str(),
+                format!("{}-private.bin", (*DEFAULT_CENTRAL_KEY_ID).clone()).as_str(),
             )
             .await?;
             let sig_sk: PrivateSigKey =
@@ -142,17 +150,11 @@ async fn main() -> Result<(), anyhow::Error> {
 
             // start the KMS
             let _keys = SoftwareKmsKeys {
-                key_info: HashMap::from([((*DEFAULT_KEY_ID).clone(), fhe_sk)]),
+                key_info: HashMap::from([((*DEFAULT_CENTRAL_KEY_ID).clone(), fhe_sk)]),
                 sig_sk,
                 sig_pk,
             };
-            if !Path::new(DEFAULT_CENTRAL_CRS_PATH).exists() {
-                tracing::info!(
-                    "Could not find default CRS store. Generating new CRS store with default parameters and handle \"{}\"...", (*DEFAULT_CRS_ID).clone()
-                );
-                write_default_crs_store().await;
-            };
-
+            // TODO this should be glued together with Nitro properly after mergning #442
             let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
             let priv_storage = EnclaveStorage {
                 s3_client,

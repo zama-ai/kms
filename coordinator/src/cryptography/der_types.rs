@@ -1,6 +1,6 @@
 use super::signcryption::SIG_SIZE;
 use crypto_box::SecretKey;
-use k256::ecdsa::VerifyingKey;
+use k256::ecdsa::{SigningKey, VerifyingKey};
 use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -124,6 +124,13 @@ impl<'de> Deserialize<'de> for PublicSigKey {
 impl std::hash::Hash for PublicSigKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.pk.to_sec1_bytes().hash(state);
+    }
+}
+
+impl From<PrivateSigKey> for PublicSigKey {
+    fn from(value: PrivateSigKey) -> Self {
+        let pk = SigningKey::verifying_key(&value.sk).to_owned();
+        PublicSigKey { pk }
     }
 }
 

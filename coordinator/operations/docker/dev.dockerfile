@@ -51,12 +51,7 @@ RUN mkdir -p /app/kms/parameters
 ENV PATH="$PATH:/app/kms/bin"
 # Copy the binaries from the base stage
 COPY --from=base /app/kms/coordinator/bin/ /app/kms/bin/
-COPY --from=base /app/kms/temp/default-software-keys.bin /app/kms/temp/
-COPY --from=base /app/kms/temp/pks.bin /app/kms/temp/
-COPY --from=base /app/kms/temp/sks.bin /app/kms/temp/
-COPY --from=base /app/kms/temp/cks.bin /app/kms/temp/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
 COPY ./coordinator/parameters/default_params.json /app/kms/parameters/
 
 CMD ["kms-server", "dev"]
-

@@ -195,7 +195,7 @@ fn create_core_certs(
 }
 
 /// write the given certificate and keypair to the given path under the given name
-fn write_certs_and_keys(
+async fn write_certs_and_keys(
     root_dir: &std::path::Path,
     name: &str,
     cert: &Certificate,
@@ -212,23 +212,24 @@ fn write_certs_and_keys(
     match file_type {
         CertFileType::Der => {
             let cert_dir = root_dir.join(format!("cert_{name}.der"));
-            write_bytes(&cert_dir, cert.der())?;
+            write_bytes(&cert_dir, cert.der()).await?;
 
             let key_dir = root_dir.join(format!("key_{name}.der"));
-            write_bytes(&key_dir, keypair.serialized_der())?;
+            write_bytes(&key_dir, keypair.serialized_der()).await?;
         }
         CertFileType::Pem => {
             let cert_dir = root_dir.join(format!("cert_{name}.pem"));
-            write_bytes(&cert_dir, cert.pem())?;
+            write_bytes(&cert_dir, cert.pem()).await?;
 
             let key_dir = root_dir.join(format!("key_{name}.pem"));
-            write_bytes(&key_dir, keypair.serialize_pem())?;
+            write_bytes(&key_dir, keypair.serialize_pem()).await?;
         }
     };
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     // initialize tracing subscriber, so we get tracing logs to stdout
     tracing_subscriber::fmt::init();
 
@@ -264,7 +265,8 @@ fn main() -> anyhow::Result<()> {
             &coordinator_cert,
             &coordinator_keypair,
             args.output_file_type,
-        )?;
+        )
+        .await?;
 
         // only generate core certs, if specifically desired (currently not the default)
         if args.num_cores > 0 {
@@ -283,7 +285,8 @@ fn main() -> anyhow::Result<()> {
                     core_cert,
                     core_keypair,
                     args.output_file_type,
-                )?;
+                )
+                .await?;
             }
         }
 
@@ -298,7 +301,7 @@ fn main() -> anyhow::Result<()> {
                 .into_iter()
                 .flat_map(|cert| cert.der().to_vec())
                 .collect();
-            write_bytes(&cert_dir, buf)?;
+            write_bytes(&cert_dir, buf).await?;
         }
         CertFileType::Pem => {
             let cert_dir = args.output_dir.join("cert_combined.pem");
@@ -306,7 +309,7 @@ fn main() -> anyhow::Result<()> {
                 .into_iter()
                 .flat_map(|cert| cert.pem().as_bytes().to_vec())
                 .collect();
-            write_bytes(&cert_dir, buf)?;
+            write_bytes(&cert_dir, buf).await?;
         }
     }
 

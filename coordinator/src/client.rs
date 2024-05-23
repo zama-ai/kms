@@ -34,7 +34,11 @@ use wasm_bindgen::prelude::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
+        use strum::EnumIter;
+        use crate::storage::read_all_data;
+        use std::fmt;
         use tfhe::ServerKey;
+        use crate::storage::PublicStorage;
         use serde::de::DeserializeOwned;
         use distributed_decryption::execution::zk::ceremony::PublicParameter;
         use crate::rpc::rpc_types::{
@@ -49,6 +53,7 @@ cfg_if::cfg_if! {
         use crate::cryptography::{central_kms::compute_handle, der_types::Signature};
         use crate::kms::ParamChoice;
         use crate::cryptography::signcryption::serialize_hash_element;
+        use crate::util::file_handling::read_as_json;
     }
 }
 
@@ -112,6 +117,8 @@ pub struct TestingReencryptionTranscript {
     // response
     agg_resp: HashMap<u32, ReencryptionResponse>,
 }
+
+// TODO it would make sense to seperate the wasm specific stuff into a seperate file
 
 /// This module is dedicated to making an re-encryption request
 /// and reconstruction of the re-encryption results on a web client
@@ -423,8 +430,32 @@ pub mod js_api {
     }
 }
 
-// TODO client should be using a public storage for reading, hence it should be an argument
+/// Enum which represents the different kinds of public information that can be stored as part of key generation.
+/// In practice this means the CRS and different types of public keys.
+/// Data of this type is supposed to be readable by anyone on the internet
+/// and stored on a medium that _may_ be susceptible to malicious modifications.
+#[cfg(feature = "non-wasm")]
+#[derive(
+    Clone, Copy, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize, EnumIter,
+)]
+pub enum ClientDataType {
+    SigningKey, // Type of the client's signing key
+    VerfKey,    // Type for the servers verification keys
+}
+
+#[cfg(feature = "non-wasm")]
+impl fmt::Display for ClientDataType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ClientDataType::SigningKey => write!(f, "SigningKey"),
+            ClientDataType::VerfKey => write!(f, "VerfKey"),
+        }
+    }
+}
+
 impl Client {
+    /// Constructor method to be used for WASM and other situations where data cannot be directly loaded
+    /// from a [PublicStorage]
     pub fn new(
         server_pks: HashSet<PublicSigKey>,
         client_pk: PublicSigKey,
@@ -434,7 +465,7 @@ impl Client {
         params: NoiseFloodParameters,
     ) -> Self {
         Client {
-            rng: Box::new(AesRng::from_entropy()),
+            rng: Box::new(AesRng::from_entropy()), // todo should be argument
             server_pks,
             client_pk,
             client_sk,
@@ -442,6 +473,51 @@ impl Client {
             num_servers,
             params,
         }
+    }
+
+    /// Helper method to create a client based on a specific type of storage for loading the keys.
+    /// Observe that this method is decoupled from the [Client] to ensure wasm complience as wasm cannot handle
+    /// file reading or generic traits.
+    #[cfg(feature = "non-wasm")]
+    pub async fn new_client<ClientS: PublicStorage, PubS: PublicStorageReader>(
+        client_storage: ClientS,
+        pub_storage: PubS,
+        param_path: &str,
+        shares_needed: u32,
+        num_servers: u32,
+    ) -> anyhow::Result<Client> {
+        let pks: HashMap<RequestId, PublicSigKey> =
+            read_all_data(&pub_storage, &PubDataType::VerfKey.to_string()).await?;
+        let server_keys = pks.values().cloned().collect_vec();
+        let client_pk_map: HashMap<RequestId, PublicSigKey> =
+            read_all_data(&client_storage, &ClientDataType::VerfKey.to_string()).await?;
+        if client_pk_map.values().len() != 1 {
+            return Err(anyhow_error_and_log(format!(
+                "Client public key map should contain exactly one entry, but contained {} entries",
+                client_pk_map.values().len(),
+            )));
+        }
+        let client_pk = some_or_err(
+            client_pk_map.values().next().cloned(),
+            "Client public key map did not contain a key".to_string(),
+        )?;
+        let client_sk_map: HashMap<RequestId, PrivateSigKey> =
+            read_all_data(&client_storage, &ClientDataType::SigningKey.to_string()).await?;
+        if client_sk_map.values().len() != 1 {
+            return Err(anyhow_error_and_log(
+                "Client signing key map should only contain one entry",
+            ));
+        }
+        let client_sk = client_sk_map.values().next().cloned();
+        let params: NoiseFloodParameters = read_as_json(param_path).await?;
+        Ok(Client::new(
+            HashSet::from_iter(server_keys),
+            client_pk,
+            client_sk,
+            shares_needed,
+            num_servers,
+            params,
+        ))
     }
 
     /// Verify the signature received from the server on keys or other data objects.
@@ -662,8 +738,10 @@ impl Client {
                 honest_parties_count
             )))
         } else {
-            // pp_map must contain h so we unwrap here
-            Ok(pp_map.remove(&h).unwrap())
+            Ok(some_or_err(
+                pp_map.remove(&h),
+                "No public parameter found in the result map".to_string(),
+            )?)
         }
     }
 
@@ -1373,12 +1451,8 @@ pub mod test_tools {
     use crate::consts::{BASE_PORT, DEFAULT_PROT, DEFAULT_URL};
     use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
     use crate::rpc::central_rpc::server_handle;
-    use crate::storage::{
-        read_all_data, FileStorage, PublicStorage, RamStorage, StorageType, StorageVersion,
-    };
+    use crate::storage::{FileStorage, PublicStorage, RamStorage, StorageType, StorageVersion};
     use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
-    use crate::util::file_handling::read_element;
-    use crate::util::key_setup::CentralizedTestingKeys;
     use std::net::SocketAddr;
     use std::str::FromStr;
     use tokio::task::JoinHandle;
@@ -1482,7 +1556,7 @@ pub mod test_tools {
         server_handle
     }
 
-    pub(crate) async fn setup<
+    pub(crate) async fn setup_centralized<
         PubS: PublicStorage + Sync + Send + 'static,
         PrivS: PublicStorage + Sync + Send + 'static,
     >(
@@ -1504,39 +1578,26 @@ pub mod test_tools {
     /// server, client end-point connection (which is needed to communicate with the server) and
     /// an internal client (for constructing requests and validating responses).
     pub async fn centralized_handles(
-        centralized_key_path: &str, // TODO
         storage_version: StorageVersion,
+        param_path: &str,
     ) -> (JoinHandle<()>, CoordinatorEndpointClient<Channel>, Client) {
-        let ((kms_server, kms_client), pks) = match storage_version {
+        let (kms_server, kms_client) = match storage_version {
             StorageVersion::Dev => {
                 let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
                 let priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
-                let pks: HashMap<RequestId, PublicSigKey> =
-                    read_all_data(&pub_storage, &PubDataType::VerfKey.to_string())
-                        .await
-                        .unwrap();
-                (setup(pub_storage, priv_storage).await, pks)
+                setup_centralized(pub_storage, priv_storage).await
             }
             StorageVersion::Ram => {
                 let pub_storage = RamStorage::new(StorageType::PUB);
                 let priv_storage = RamStorage::new(StorageType::PRIV);
-                let pks: HashMap<RequestId, PublicSigKey> =
-                    read_all_data(&pub_storage, &PubDataType::VerfKey.to_string())
-                        .await
-                        .unwrap();
-                (setup(pub_storage, priv_storage).await, pks)
+                setup_centralized(pub_storage, priv_storage).await
             }
         };
-        let keys: CentralizedTestingKeys = read_element(centralized_key_path).unwrap();
-        let server_keys = pks.values().cloned().collect_vec();
-        let internal_client = Client::new(
-            HashSet::from_iter(server_keys),
-            keys.client_pk,
-            Some(keys.client_sk),
-            1,
-            1,
-            keys.params,
-        );
+        let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+        let client_storage = FileStorage::new(&StorageType::CLIENT.to_string());
+        let internal_client = Client::new_client(client_storage, pub_storage, param_path, 1, 1)
+            .await
+            .unwrap();
         (kms_server, kms_client, internal_client)
     }
 }
@@ -1544,46 +1605,50 @@ pub mod test_tools {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::Client;
-    use crate::client::num_blocks;
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
+    use crate::consts::TEST_CENTRAL_KEY_ID;
     use crate::consts::{
-        AMOUNT_PARTIES, TEST_CENTRAL_CT_PATH, TEST_CENTRAL_KEYS_PATH, TEST_DEC_ID, TEST_FHE_TYPE,
-        TEST_KEY_ID, TEST_MSG, TEST_PARAM_PATH, TEST_REENC_ID, TEST_THRESHOLD_CT_PATH,
-        TEST_THRESHOLD_KEYS_PATH, THRESHOLD,
+        AMOUNT_PARTIES, TEST_DEC_ID, TEST_FHE_TYPE, TEST_MSG, TEST_PARAM_PATH, TEST_REENC_ID,
+        THRESHOLD,
     };
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
-        DEFAULT_CENTRAL_CT_PATH, DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_KEY_ID,
-        DEFAULT_THRESHOLD_CT_PATH, DEFAULT_THRESHOLD_KEYS_PATH,
+        DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM_PATH,
+        DEFAULT_THRESHOLD_KEY_ID,
     };
     #[cfg(feature = "wasm_tests")]
     use crate::consts::{TEST_CENTRAL_WASM_TRANSCRIPT_PATH, TEST_THRESHOLD_WASM_TRANSCRIPT_PATH};
+    #[cfg(feature = "slow_tests")]
+    use crate::cryptography::central_kms::CentralizedTestingKeys;
     use crate::cryptography::central_kms::{compute_handle, BaseKmsStruct};
-    use crate::cryptography::der_types::{PublicSigKey, Signature};
+    use crate::cryptography::der_types::Signature;
     use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
     #[cfg(feature = "slow_tests")]
     use crate::kms::CrsGenResult;
     use crate::kms::{
-        AggregatedDecryptionResponse, AggregatedReencryptionResponse, Empty, FheType, ParamChoice,
-        RequestId,
+        AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType, ParamChoice,
     };
-    use crate::rpc::rpc_types::{BaseKms, PrivDataType, PubDataType};
-    use crate::storage::{
-        read_all_data, FileStorage, PublicStorage, PublicStorageReader, RamStorage, StorageType,
-        StorageVersion,
-    };
+    use crate::rpc::rpc_types::{BaseKms, PubDataType};
+    use crate::storage::PublicStorageReader;
+    use crate::storage::{FileStorage, RamStorage, StorageType, StorageVersion};
+    use crate::util::file_handling::read_element;
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
-    use crate::util::file_handling::{read_as_json, read_element, read_element_async};
-    use crate::util::key_setup::{FhePublicKey, ThresholdTestingKeys};
+    use crate::util::key_setup::purge;
+    use crate::util::key_setup::{compute_cipher_from_storage, FhePublicKey};
+    use crate::{
+        client::num_blocks,
+        kms::{Empty, RequestId},
+    };
+    use crate::{consts::TEST_THRESHOLD_KEY_ID, util::file_handling::read_as_json};
     use alloy_sol_types::Eip712Domain;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use distributed_decryption::execution::zk::ceremony::PublicParameter;
-    use itertools::Itertools;
     use serial_test::serial;
-    use std::collections::{HashMap, HashSet};
-    use strum::IntoEnumIterator;
+    use std::collections::HashMap;
+    #[cfg(feature = "slow_tests")]
+    use std::collections::HashSet;
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::Channel;
 
@@ -1593,29 +1658,21 @@ pub(crate) mod tests {
     /// client is returned (which is responsible for constructing requests and validating
     /// responses).
     async fn threshold_handles(
-        threshold_key_path: &str, // todo
         storage_version: StorageVersion,
+        param_path: &str,
     ) -> (
         HashMap<u32, JoinHandle<()>>,
         HashMap<u32, CoordinatorEndpointClient<Channel>>,
         Client,
     ) {
-        let ((kms_servers, kms_clients), pks) = match storage_version {
+        let (kms_servers, kms_clients) = match storage_version {
             StorageVersion::Dev => {
                 let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
                 let mut priv_storage = Vec::new();
                 for i in 1..=AMOUNT_PARTIES {
                     priv_storage.push(FileStorage::new(&format!("priv-p{i}")));
                 }
-                let pks: HashMap<RequestId, PublicSigKey> =
-                    read_all_data(&pub_storage, &PubDataType::VerfKey.to_string())
-                        .await
-                        .unwrap();
-                (
-                    super::test_tools::setup_threshold(THRESHOLD as u8, pub_storage, priv_storage)
-                        .await,
-                    pks,
-                )
+                super::test_tools::setup_threshold(THRESHOLD as u8, pub_storage, priv_storage).await
             }
             StorageVersion::Ram => {
                 let pub_storage = RamStorage::new(StorageType::PUB);
@@ -1623,97 +1680,49 @@ pub(crate) mod tests {
                 for _i in 1..=AMOUNT_PARTIES {
                     priv_storage.push(RamStorage::new(StorageType::PRIV));
                 }
-                let pks: HashMap<RequestId, PublicSigKey> =
-                    read_all_data(&pub_storage, &PubDataType::VerfKey.to_string())
-                        .await
-                        .unwrap();
-                (
-                    super::test_tools::setup_threshold(THRESHOLD as u8, pub_storage, priv_storage)
-                        .await,
-                    pks,
-                )
+                super::test_tools::setup_threshold(THRESHOLD as u8, pub_storage, priv_storage).await
             }
         };
-        let keys: ThresholdTestingKeys = read_element_async(format!("{threshold_key_path}-1.bin"))
-            .await
-            .unwrap();
-        let server_keys = pks.values().cloned().collect_vec();
-        let internal_client = Client::new(
-            HashSet::from_iter(server_keys),
-            keys.client_pk,
-            Some(keys.client_sk),
+        let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+        let client_storage = FileStorage::new(&StorageType::CLIENT.to_string());
+        let internal_client = Client::new_client(
+            client_storage,
+            pub_storage,
+            param_path,
             (THRESHOLD as u32) + 1,
             AMOUNT_PARTIES as u32,
-            keys.params.to_noiseflood_parameters(),
-        );
-
+        )
+        .await
+        .unwrap();
         (kms_servers, kms_clients, internal_client)
-    }
-
-    // Purge any kind of data, regardless of type, for a specific request ID
-    async fn purge(id: &str) {
-        let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
-        for cur_type in PubDataType::iter() {
-            let _ = pub_storage
-                .delete_data(&pub_storage.compute_url(id, &cur_type.to_string()).unwrap())
-                .await;
-        }
-
-        let mut priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
-        for cur_type in PrivDataType::iter() {
-            let _ = priv_storage
-                .delete_data(&priv_storage.compute_url(id, &cur_type.to_string()).unwrap())
-                .await;
-        }
-        for i in 1..=AMOUNT_PARTIES {
-            let mut threshold_priv = FileStorage::new(&format!("priv-p{i}"));
-            for cur_type in PrivDataType::iter() {
-                let _ = threshold_priv
-                    .delete_data(
-                        &threshold_priv
-                            .compute_url(id, &cur_type.to_string())
-                            .unwrap(),
-                    )
-                    .await;
-            }
-        }
     }
 
     #[tokio::test]
     #[serial]
     async fn test_key_gen_centralized() {
-        let request_id = RequestId {
-            request_id: "0000000000000000000000000000000000000099".to_string(),
-        };
+        let request_id = RequestId::derive("test_key_gen_centralized").unwrap();
         // Delete potentially old data
         purge(&request_id.to_string()).await;
-        key_gen_centralized(TEST_CENTRAL_KEYS_PATH, &request_id, Some(ParamChoice::Test)).await;
+        key_gen_centralized(TEST_PARAM_PATH, &request_id, Some(ParamChoice::Test)).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[serial]
     async fn default_key_gen_centralized() {
-        let request_id = RequestId {
-            request_id: "0000000000000000000000000000000000000099".to_string(),
-        };
+        let request_id = RequestId::derive("default_key_gen_centralized").unwrap();
         // Delete potentially old data
         purge(&request_id.to_string()).await;
-        key_gen_centralized(
-            DEFAULT_CENTRAL_KEYS_PATH,
-            &request_id,
-            Some(ParamChoice::Default),
-        )
-        .await;
+        key_gen_centralized(DEFAULT_PARAM_PATH, &request_id, Some(ParamChoice::Default)).await;
     }
 
     async fn key_gen_centralized(
-        centralized_key_path: &str,
+        param_path: &str,
         request_id: &RequestId,
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(centralized_key_path, StorageVersion::Dev).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
 
         let gen_req = internal_client
             .key_gen_request(request_id, None, params)
@@ -1757,43 +1766,33 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn default_crs_gen_centralized() {
-        let request_id = RequestId {
-            request_id: "0000000000000000000000000000000000000099".to_string(),
-        };
+        let request_id = RequestId::derive("default_crs_gen_centralized").unwrap();
         // Delete potentially old data
         purge(&request_id.to_string()).await;
-        crs_gen_centralized_client(
-            DEFAULT_CENTRAL_KEYS_PATH,
-            &request_id,
-            Some(ParamChoice::Default),
-        )
-        .await;
+        crs_gen_centralized_client(DEFAULT_PARAM_PATH, &request_id, Some(ParamChoice::Default))
+            .await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_crs_gen_centralized() {
-        let request_id = RequestId {
-            request_id: "0000000000000000000000000000000000000099".to_string(),
-        };
+        let request_id = RequestId::derive("test_crs_gen_centralized").unwrap();
         // Delete potentially old data
         purge(&request_id.to_string()).await;
-        crs_gen_centralized_manual(TEST_CENTRAL_KEYS_PATH, &request_id, Some(ParamChoice::Test))
-            .await;
+        crs_gen_centralized_manual(TEST_PARAM_PATH, &request_id, Some(ParamChoice::Test)).await;
 
         purge(&request_id.to_string()).await;
-        crs_gen_centralized_client(TEST_CENTRAL_KEYS_PATH, &request_id, Some(ParamChoice::Test))
-            .await;
+        crs_gen_centralized_client(TEST_PARAM_PATH, &request_id, Some(ParamChoice::Test)).await;
     }
 
     /// test centralized crs generation and do all the reading, processing and verification manually
     async fn crs_gen_centralized_manual(
-        centralized_key_path: &str,
+        param_path: &str,
         request_id: &RequestId,
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(centralized_key_path, StorageVersion::Dev).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
 
         let ceremony_req = internal_client.crs_gen_request(request_id, params).unwrap();
 
@@ -1807,11 +1806,8 @@ pub(crate) mod tests {
         assert_eq!(gen_response.into_inner(), Empty {});
 
         // Check that we can retrieve the CRS under that request id
-        let get_req = RequestId {
-            request_id: client_request_id.to_string(),
-        };
         let get_response = kms_client
-            .get_crs_gen_result(tonic::Request::new(get_req.clone()))
+            .get_crs_gen_result(tonic::Request::new(client_request_id.clone()))
             .await
             .unwrap();
 
@@ -1832,7 +1828,7 @@ pub(crate) mod tests {
         crs_path.replace_range(0..7, ""); // remove leading "file:/" from URI, so we can read the file
 
         // check that CRS signature is verified correctly
-        let crs_raw = read_element::<PublicParameter>(&crs_path).unwrap();
+        let crs_raw = read_element::<PublicParameter>(&crs_path).await.unwrap();
         let crs_serialized = bincode::serialize(&crs_raw).unwrap();
         let client_handle = compute_handle(&crs_serialized).unwrap();
         assert_eq!(&client_handle, &crs_info.key_handle);
@@ -1853,12 +1849,12 @@ pub(crate) mod tests {
 
     /// test centralized crs generation via client interface
     async fn crs_gen_centralized_client(
-        centralized_key_path: &str,
+        param_path: &str,
         request_id: &RequestId,
         params: Option<ParamChoice>,
     ) {
         let (kms_server, mut kms_client, internal_client) =
-            super::test_tools::centralized_handles(centralized_key_path, StorageVersion::Dev).await;
+            super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
         let gen_req = internal_client.crs_gen_request(request_id, params).unwrap();
 
         // response is currently empty
@@ -1887,6 +1883,7 @@ pub(crate) mod tests {
 
         // try to make a proof and check that it works
         let fhe_params = crate::rpc::central_rpc::retrieve_parameters(params.unwrap().into())
+            .await
             .unwrap()
             .ciphertext_parameters;
         let pp = crs.unwrap().try_into_tfhe_zk_pok_pp(&fhe_params).unwrap();
@@ -1921,12 +1918,10 @@ pub(crate) mod tests {
     async fn test_crs_gen_threshold() {
         // NOTE: the test parameter has 300 witness size
         // so we set this as a slow test
-        let request_id = RequestId {
-            request_id: "0000000000000000000000000000000000000088".to_string(),
-        };
+        let request_id = RequestId::derive("test_crs_gen_threshold").unwrap();
         // Ensure the test is idempotent
         purge(&request_id.to_string()).await;
-        crs_gen_threshold(TEST_THRESHOLD_KEYS_PATH, &request_id).await
+        crs_gen_threshold(&request_id).await
     }
 
     #[cfg(feature = "slow_tests")]
@@ -1957,9 +1952,9 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    async fn crs_gen_threshold(threshold_key_path: &str, req_id: &RequestId) {
+    async fn crs_gen_threshold(req_id: &RequestId) {
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(threshold_key_path, StorageVersion::Dev).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM_PATH).await;
         let req_gen = internal_client
             .crs_gen_request(req_id, Some(ParamChoice::Test))
             .unwrap();
@@ -2054,9 +2049,7 @@ pub(crate) mod tests {
             .is_err());
 
         // if the request_id is wrong, we get nothing
-        let bad_request_id = RequestId {
-            request_id: "0000000000000000000000000000000000000099".to_string(),
-        };
+        let bad_request_id = RequestId::derive("bad_request_id").unwrap();
         assert!(internal_client
             .process_distributed_crs_result(
                 &bad_request_id,
@@ -2126,44 +2119,25 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_decryption_central() {
-        decryption_centralized(
-            TEST_CENTRAL_KEYS_PATH,
-            TEST_CENTRAL_CT_PATH,
-            &TEST_KEY_ID.to_string(),
-        )
-        .await;
+        decryption_centralized(TEST_PARAM_PATH, &TEST_CENTRAL_KEY_ID.to_string()).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[serial]
     async fn default_decryption_centralized() {
-        decryption_centralized(
-            DEFAULT_CENTRAL_KEYS_PATH,
-            DEFAULT_CENTRAL_CT_PATH,
-            &DEFAULT_KEY_ID.to_string(),
-        )
-        .await;
+        decryption_centralized(DEFAULT_PARAM_PATH, &DEFAULT_CENTRAL_KEY_ID.to_string()).await;
     }
 
-    async fn decryption_centralized(centralized_key_path: &str, cipher_path: &str, key_id: &str) {
+    async fn decryption_centralized(param_path: &str, key_id: &str) {
         // TODO refactor with setup and teardown setting up servers that can be used to run tests in
         // parallel
         let (kms_server, mut kms_client, mut internal_client) =
-            super::test_tools::centralized_handles(centralized_key_path, StorageVersion::Dev).await;
-        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
-        let req_key_id = RequestId {
-            request_id: key_id.to_owned(),
-        };
+            super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
+        let (ct, fhe_type) = compute_cipher_from_storage(TEST_MSG, key_id).await;
+        let req_key_id = key_id.to_owned().try_into().unwrap();
         let req = internal_client
-            .decryption_request(
-                ct.clone(),
-                fhe_type,
-                &RequestId {
-                    request_id: TEST_DEC_ID.to_string(),
-                },
-                &req_key_id,
-            )
+            .decryption_request(ct.clone(), fhe_type, &TEST_DEC_ID, &req_key_id)
             .unwrap();
         let response = kms_client
             .decrypt(tonic::Request::new(req.clone()))
@@ -2198,26 +2172,14 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_reencryption_centralized() {
-        reencryption_centralized(
-            TEST_CENTRAL_KEYS_PATH,
-            TEST_CENTRAL_CT_PATH,
-            &TEST_KEY_ID.to_string(),
-            false,
-        )
-        .await;
+        reencryption_centralized(TEST_PARAM_PATH, &TEST_CENTRAL_KEY_ID.to_string(), false).await;
     }
 
     #[cfg(feature = "wasm_tests")]
     #[tokio::test]
     #[serial]
     async fn test_reencryption_centralized_and_write_transcript() {
-        reencryption_centralized(
-            TEST_CENTRAL_KEYS_PATH,
-            TEST_CENTRAL_CT_PATH,
-            &TEST_KEY_ID.to_string(),
-            true,
-        )
-        .await;
+        reencryption_centralized(TEST_PARAM_PATH, &TEST_CENTRAL_KEY_ID.to_string(), true).await;
     }
 
     #[cfg(feature = "slow_tests")]
@@ -2225,9 +2187,8 @@ pub(crate) mod tests {
     #[serial]
     async fn default_reencryption_centralized() {
         reencryption_centralized(
-            DEFAULT_CENTRAL_KEYS_PATH,
-            DEFAULT_CENTRAL_CT_PATH,
-            &DEFAULT_KEY_ID.to_string(),
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_CENTRAL_KEY_ID.to_string(),
             false,
         )
         .await;
@@ -2242,17 +2203,12 @@ pub(crate) mod tests {
         )
     }
 
-    async fn reencryption_centralized(
-        centralized_key_path: &str,
-        cipher_path: &str,
-        key_id: &str,
-        write_transcript: bool,
-    ) {
+    async fn reencryption_centralized(param_path: &str, key_id: &str, write_transcript: bool) {
         _ = write_transcript;
 
         let (kms_server, mut kms_client, mut internal_client) =
-            super::test_tools::centralized_handles(centralized_key_path, StorageVersion::Dev).await;
-        let (ct, fhe_type): (Vec<u8>, FheType) = read_element(cipher_path).unwrap();
+            super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
+        let (ct, fhe_type) = compute_cipher_from_storage(TEST_MSG, key_id).await;
         let request_id = &TEST_REENC_ID;
         let (req, enc_pk, enc_sk) = internal_client
             .reencryption_request(
@@ -2260,9 +2216,7 @@ pub(crate) mod tests {
                 &dummy_domain(),
                 fhe_type,
                 request_id,
-                &RequestId {
-                    request_id: key_id.to_string(),
-                },
+                &key_id.to_string().try_into().unwrap(),
             )
             .unwrap();
         let response = kms_client
@@ -2301,7 +2255,9 @@ pub(crate) mod tests {
                     eph_pk: enc_pk.clone(),
                     agg_resp: HashMap::from([(1, inner_response.clone())]),
                 };
-                write_element(TEST_CENTRAL_WASM_TRANSCRIPT_PATH.to_string(), &transcript).unwrap();
+                write_element(TEST_CENTRAL_WASM_TRANSCRIPT_PATH, &transcript)
+                    .await
+                    .unwrap();
             }
         }
 
@@ -2318,34 +2274,21 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_decryption_threshold() {
-        decryption_threshold(
-            TEST_THRESHOLD_KEYS_PATH,
-            TEST_THRESHOLD_CT_PATH,
-            &TEST_KEY_ID.to_string(),
-        )
-        .await;
+        decryption_threshold(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID.to_string()).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_decryption_threshold() {
-        decryption_threshold(
-            DEFAULT_THRESHOLD_KEYS_PATH,
-            DEFAULT_THRESHOLD_CT_PATH,
-            &DEFAULT_KEY_ID.to_string(),
-        )
-        .await;
+        decryption_threshold(DEFAULT_PARAM_PATH, &DEFAULT_THRESHOLD_KEY_ID.to_string()).await;
     }
 
-    async fn decryption_threshold(threshold_key_path: &str, cipher_path: &str, key_id: &str) {
+    async fn decryption_threshold(params: &str, key_id: &str) {
         let (kms_servers, kms_clients, mut internal_client) =
-            threshold_handles(threshold_key_path, StorageVersion::Dev).await;
-        let (ct, fhe_type): (Vec<u8>, FheType) =
-            read_element_async(cipher_path.to_string()).await.unwrap();
-        let key_id_req = RequestId {
-            request_id: key_id.to_owned(),
-        };
+            threshold_handles(StorageVersion::Dev, params).await;
+        let (ct, fhe_type) = compute_cipher_from_storage(TEST_MSG, key_id).await;
+        let key_id_req = key_id.to_string().try_into().unwrap();
 
         let request_id = &TEST_DEC_ID;
         let req = internal_client
@@ -2397,26 +2340,14 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_reencryption_threshold() {
-        reencryption_threshold(
-            TEST_THRESHOLD_KEYS_PATH,
-            TEST_THRESHOLD_CT_PATH,
-            &TEST_KEY_ID.to_string(),
-            false,
-        )
-        .await;
+        reencryption_threshold(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID.to_string(), false).await;
     }
 
     #[tokio::test]
     #[serial]
     #[cfg(feature = "wasm_tests")]
     async fn test_reencryption_threshold_and_write_transcript() {
-        reencryption_threshold(
-            TEST_THRESHOLD_KEYS_PATH,
-            TEST_THRESHOLD_CT_PATH,
-            &TEST_KEY_ID.to_string(),
-            true,
-        )
-        .await;
+        reencryption_threshold(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID.to_string(), true).await;
     }
 
     #[cfg(feature = "slow_tests")]
@@ -2424,26 +2355,19 @@ pub(crate) mod tests {
     #[serial]
     async fn default_reencryption_threshold() {
         reencryption_threshold(
-            DEFAULT_THRESHOLD_KEYS_PATH,
-            DEFAULT_THRESHOLD_CT_PATH,
-            &DEFAULT_KEY_ID.to_string(),
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
             false,
         )
         .await;
     }
 
-    async fn reencryption_threshold(
-        threshold_key_path: &str,
-        cipher_path: &str,
-        key_id: &str,
-        write_transcript: bool,
-    ) {
+    async fn reencryption_threshold(param: &str, key_id: &str, write_transcript: bool) {
         _ = write_transcript;
 
         let (kms_servers, kms_clients, mut internal_client) =
-            threshold_handles(threshold_key_path, StorageVersion::Dev).await;
-        let (ct, fhe_type): (Vec<u8>, FheType) =
-            read_element_async(cipher_path.to_string()).await.unwrap();
+            threshold_handles(StorageVersion::Dev, param).await;
+        let (ct, fhe_type) = compute_cipher_from_storage(TEST_MSG, key_id).await;
 
         let request_id = &TEST_REENC_ID;
         let (req, enc_pk, enc_sk) = internal_client
@@ -2452,9 +2376,7 @@ pub(crate) mod tests {
                 &dummy_domain(),
                 fhe_type,
                 request_id,
-                &RequestId {
-                    request_id: key_id.to_string(),
-                },
+                &key_id.to_string().try_into().unwrap(),
             )
             .unwrap();
         let mut req_tasks = JoinSet::new();
@@ -2507,7 +2429,8 @@ pub(crate) mod tests {
                     eph_pk: enc_pk.clone(),
                     agg_resp: response_map.clone(),
                 };
-                write_element(TEST_THRESHOLD_WASM_TRANSCRIPT_PATH.to_string(), &transcript)
+                write_element(TEST_THRESHOLD_WASM_TRANSCRIPT_PATH, &transcript)
+                    .await
                     .unwrap();
             }
         }
@@ -2531,10 +2454,8 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_largecipher() {
-        use crate::util::key_setup::CentralizedTestingKeys;
-
-        let keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH).unwrap();
-        let (kms_server, mut kms_client) = super::test_tools::setup(
+        let keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH).await.unwrap();
+        let (kms_server, mut kms_client) = super::test_tools::setup_centralized(
             RamStorage::new(StorageType::PUB),
             RamStorage::from_existing_keys(&keys.software_kms_keys)
                 .await
@@ -2559,9 +2480,7 @@ pub(crate) mod tests {
                 &dummy_domain(),
                 fhe_type,
                 request_id,
-                &RequestId {
-                    request_id: DEFAULT_KEY_ID.to_string(),
-                },
+                &DEFAULT_CENTRAL_KEY_ID,
             )
             .unwrap();
         let response = kms_client
@@ -2591,9 +2510,9 @@ pub(crate) mod tests {
         kms_server.abort();
     }
 
-    #[test]
-    fn num_blocks_sunshine() {
-        let params: NoiseFloodParameters = read_as_json(TEST_PARAM_PATH.to_owned()).unwrap();
+    #[tokio::test]
+    async fn num_blocks_sunshine() {
+        let params: NoiseFloodParameters = read_as_json(TEST_PARAM_PATH).await.unwrap();
         // 2 bits per block, using Euint8 as internal representation
         assert_eq!(num_blocks(FheType::Bool, params), 4);
         // 2 bits per block, using Euint8 as internal representation
@@ -2643,14 +2562,10 @@ pub(crate) mod tests {
         use crate::kms::{KeyGenPreprocRequest, KeyGenPreprocStatusEnum};
 
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(TEST_THRESHOLD_KEYS_PATH, StorageVersion::Dev).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM_PATH).await;
 
-        let request_id = RequestId {
-            request_id: "0000000000000000000000000000000000000001".to_string(),
-        };
-        let request_id_nok = RequestId {
-            request_id: "0000000000000000000000000000000000000002".to_string(),
-        };
+        let request_id = RequestId::derive("test_preproc").unwrap();
+        let request_id_nok = RequestId::derive("not ok").unwrap();
         let req_gen = internal_client
             .preproc_request(&request_id, Some(ParamChoice::Test))
             .unwrap();
@@ -2773,18 +2688,12 @@ pub(crate) mod tests {
         use crate::kms::KeyGenPreprocStatusEnum;
         use itertools::Itertools;
 
-        let request_id_preproc = "0000000000000000000000000000000000000011";
-        let req_preproc = RequestId {
-            request_id: request_id_preproc.to_string(),
-        };
-        let request_id_keygen = "0000000000000000000000000000000000000022";
-        let req_key = RequestId {
-            request_id: request_id_keygen.to_string(),
-        };
-        purge(request_id_keygen).await;
+        let req_preproc = RequestId::derive("test_dkg-preproc").unwrap();
+        let req_key = RequestId::derive("test_dkg-key").unwrap();
+        purge(&req_key.to_string()).await;
 
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(TEST_THRESHOLD_KEYS_PATH, StorageVersion::Dev).await;
+            threshold_handles(StorageVersion::Dev, TEST_PARAM_PATH).await;
 
         let preprocessing_req_data = internal_client
             .preproc_request(&req_preproc, Some(ParamChoice::Test))
@@ -2902,9 +2811,7 @@ pub(crate) mod tests {
         }
 
         //Try to request another kg with the same preproc but another request id
-        let other_key_gen_id = RequestId {
-            request_id: "0000000000000000000000000000000000000222".to_string(),
-        };
+        let other_key_gen_id = RequestId::derive("test_dkg other key id").unwrap();
         let keygen_req_data = internal_client
             .key_gen_request(
                 &other_key_gen_id,

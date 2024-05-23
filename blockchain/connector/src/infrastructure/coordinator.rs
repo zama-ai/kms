@@ -461,9 +461,7 @@ impl KmsEventHandler for KeyGenPreprocVal {
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
 
-        let req_id = RequestId {
-            request_id: self.operation_val.tx_id.to_hex(),
-        };
+        let req_id: RequestId = self.operation_val.tx_id.to_hex().try_into()?;
         let req = KeyGenPreprocRequest {
             config: Some(Config {}),
             params: ParamChoice::Test.into(), // TODO load from blockchain
@@ -539,13 +537,8 @@ impl KmsEventHandler for KeyGenVal {
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
 
-        let req_id = RequestId {
-            request_id: self.operation_val.tx_id.to_hex(),
-        };
-
-        let preproc_id = RequestId {
-            request_id: self.keygen.preproc_id().to_hex(),
-        };
+        let req_id: RequestId = self.operation_val.tx_id.to_hex().try_into()?;
+        let preproc_id = self.keygen.preproc_id().to_hex().try_into()?;
         let req = KeyGenRequest {
             config: Some(Config {}),
             // TODO load params from blockchain, timeout needs to be adjusted for this
@@ -622,9 +615,7 @@ impl KmsEventHandler for CrsGenVal {
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
 
-        let req_id = RequestId {
-            request_id: self.operation_val.tx_id.to_hex(),
-        };
+        let req_id: RequestId = self.operation_val.tx_id.to_hex().try_into()?;
         let req = CrsGenRequest {
             config: Some(Config {}),
             // TODO load params from blockchain, timeout needs to be adjusted for this
@@ -684,8 +675,6 @@ impl KmsEventHandler for CrsGenVal {
 
 #[cfg(test)]
 mod test {
-    use std::collections::{HashMap, HashSet};
-
     use super::KmsEventHandler as _;
     use crate::{
         conf::{CoordinatorConfig, TimeoutConfig},
@@ -695,47 +684,35 @@ mod test {
             metrics::OpenTelemetryMetrics,
         },
     };
+    use events::kms::{CrsGenValues, KeyGenPreprocValues, KmsEvent, TransactionId};
     use events::{
-        kms::{
-            CrsGenValues, DecryptValues, KeyGenPreprocValues, KeyGenValues, KmsEvent,
-            OperationValue, Proof, ReencryptValues, TransactionId,
-        },
+        kms::{DecryptValues, KeyGenValues, OperationValue, Proof, ReencryptValues},
         HexVector,
     };
     use kms_lib::{
         client::{test_tools, Client},
         consts::{
-            AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, TEST_KEY_ID, TEST_MSG,
-            TEST_PARAM_PATH, TEST_REENC_ID, TEST_THRESHOLD_CT_PATH, TEST_THRESHOLD_KEYS_PATH,
-            THRESHOLD,
+            AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, TEST_THRESHOLD_KEY_ID, THRESHOLD,
         },
-        kms::{AggregatedReencryptionResponse, DecryptionResponsePayload, ReencryptionResponse},
-        rpc::rpc_types::{Plaintext, PrivDataType, PubDataType, CURRENT_FORMAT_VERSION},
-        storage::{FileStorage, PublicStorage, PublicStorageReader, StorageType},
+        storage::{FileStorage, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
-        util::{
-            file_handling::read_element_async,
-            key_setup::{
-                ensure_ciphertext_exist, ensure_dir_exist, ensure_threshold_keys_exist,
-                ThresholdTestingKeys,
-            },
+        util::key_setup::{
+            compute_cipher_from_storage, ensure_client_keys_exist, ensure_dir_exist, purge,
         },
     };
+    use kms_lib::{
+        consts::{TEST_MSG, TEST_PARAM_PATH, TEST_REENC_ID},
+        kms::{AggregatedReencryptionResponse, DecryptionResponsePayload, ReencryptionResponse},
+        rpc::rpc_types::{Plaintext, CURRENT_FORMAT_VERSION},
+        util::key_setup::ensure_threshold_keys_exist,
+    };
+    use std::collections::HashMap;
     use tokio::task::JoinSet;
 
     async fn setup_keys() {
-        ensure_dir_exist();
-        ensure_threshold_keys_exist(
-            TEST_PARAM_PATH,
-            TEST_THRESHOLD_KEYS_PATH,
-            &TEST_KEY_ID.to_string(),
-        )
-        .await;
-        let threshold_keys: ThresholdTestingKeys =
-            read_element_async(format!("{TEST_THRESHOLD_KEYS_PATH}-1.bin"))
-                .await
-                .unwrap();
-        ensure_ciphertext_exist(TEST_THRESHOLD_CT_PATH, &threshold_keys.fhe_pub);
+        ensure_dir_exist().await;
+        ensure_threshold_keys_exist(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID.to_string()).await;
+        ensure_client_keys_exist().await;
     }
 
     /// Before running this function, ensure [setup_keys] is executed
@@ -744,28 +721,13 @@ mod test {
         op: OperationValue,
     ) -> (Vec<KmsOperationResponse>, TransactionId, Vec<u32>) {
         let txn_id = TransactionId::from(vec![2u8; 20]);
-
         let coordinator_handles = if slow {
-            let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
             // Delete potentially existing CRS
-            let _ = pub_storage
-                .delete_data(
-                    &pub_storage
-                        .compute_url(&txn_id.to_hex(), &PubDataType::CRS.to_string())
-                        .unwrap(),
-                )
-                .await;
+            purge(&txn_id.to_hex()).await;
+            let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
             let mut priv_storage = Vec::new();
             for i in 1..=AMOUNT_PARTIES {
                 let cur_priv = FileStorage::new(&format!("priv-p{i}"));
-                // Delete potentially existing CRS info
-                let _ = pub_storage
-                    .delete_data(
-                        &cur_priv
-                            .compute_url(&txn_id.to_hex(), &PrivDataType::CrsInfo.to_string())
-                            .unwrap(),
-                    )
-                    .await;
                 priv_storage.push(cur_priv);
             }
             test_tools::setup_threshold_no_client(THRESHOLD as u8, pub_storage, priv_storage).await
@@ -837,14 +799,12 @@ mod test {
     async fn ddec_sunshine(slow: bool) {
         setup_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            read_element_async(TEST_THRESHOLD_CT_PATH.to_string())
-                .await
-                .unwrap();
+            compute_cipher_from_storage(TEST_MSG, &TEST_THRESHOLD_KEY_ID.to_string()).await;
         let op = OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
                 .servers_needed(THRESHOLD as u32 + 1)
-                .key_id(HexVector::from_hex(&TEST_KEY_ID.request_id).unwrap())
+                .key_id(HexVector::from_hex(&TEST_THRESHOLD_KEY_ID.request_id).unwrap())
                 .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
                 .ciphertext(ct)
                 .randomness(vec![1, 2, 3])
@@ -880,24 +840,21 @@ mod test {
     async fn reenc_sunshine(slow: bool) {
         setup_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            read_element_async(TEST_THRESHOLD_CT_PATH.to_string())
-                .await
-                .unwrap();
+            compute_cipher_from_storage(TEST_MSG, &TEST_THRESHOLD_KEY_ID.to_string()).await;
 
         // we need a KMS client to simply the boilerplate
         // for setting up the request correctly
-        let testing_keys: ThresholdTestingKeys =
-            read_element_async(format!("{TEST_THRESHOLD_KEYS_PATH}-1.bin"))
-                .await
-                .unwrap();
-        let mut kms_client = Client::new(
-            HashSet::from_iter(testing_keys.server_keys),
-            testing_keys.client_pk,
-            Some(testing_keys.client_sk),
+        let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+        let client_storage = FileStorage::new(&StorageType::CLIENT.to_string());
+        let mut kms_client = Client::new_client(
+            client_storage,
+            pub_storage,
+            TEST_PARAM_PATH,
             THRESHOLD as u32 + 1,
             AMOUNT_PARTIES as u32,
-            testing_keys.params.to_noiseflood_parameters(),
-        );
+        )
+        .await
+        .unwrap();
 
         fn dummy_domain() -> alloy_sol_types::Eip712Domain {
             alloy_sol_types::eip712_domain!(
@@ -909,7 +866,7 @@ mod test {
         }
 
         let request_id = &TEST_REENC_ID;
-        let key_id = &TEST_KEY_ID;
+        let key_id = &TEST_THRESHOLD_KEY_ID;
         let (kms_req, enc_pk, enc_sk) = kms_client
             .reencryption_request(ct, &dummy_domain(), fhe_type, request_id, key_id)
             .unwrap();
