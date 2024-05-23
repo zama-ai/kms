@@ -44,7 +44,7 @@ echo ""
 
 [tasks.gen-test-certs]
 command = "cargo"
-args = ["run", "--manifest-path=../../coordinator/Cargo.toml", "--release", "--bin", "kms-gen-tls-certs", "--", "--coordinator-prefix", "p", "--coordinator-count", "${NUM_PARTIES}", "-n", "1", "-o", "test_certs"]
+args = ["run", "--manifest-path=../../coordinator/Cargo.toml", "--release", "--bin", "kms-gen-tls-certs", "--", "--coordinator-prefix", "p", "--coordinator-count", "${NUM_PARTIES}", "-o", "test_certs"]
 
 [tasks.choreo-with-dkg]
 condition = { env_set = ["DKG_PARAMS", "NUM_SESSIONS_PREPROC"] }

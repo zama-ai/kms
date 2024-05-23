@@ -32,24 +32,27 @@ struct Group {
 #[derive(Parser, Debug)]
 #[clap(name = "KMS TLS Certificate Generator")]
 #[clap(
-    about = "A CLI tool for generating TLS certificates for the KMS coordinator and cores. \
-The user need to provide a set of coordinator names using either the \
+    about = "A CLI tool for generating separate TLS certificates for the KMS coordinator and cores. \
+The user needs to provide a set of coordinator names using either the \
 --coordinator_names option, or the --coordinator_prefix and the \
 --coordinator_count options. The tool also allows the user to set \
 the number of cores, output directory and file format. Example usage:
 kms-gen-tls-certs --help # for all available options
 kms-gen-tls-certs --coordinator-prefix c --coordinator-count 4 -n 1 -o certs
-kms-gen-tls-certs --coordinator-names alice bob charlie dave -n 1 -o certs 
+kms-gen-tls-certs --coordinator-names alice bob charlie dave -n 1 -o certs
 
 Under the hood, the tool generates self-signed CA certificates for \
 each coordinator and <num_cores> core certificates for each \
 coordinator. The core certificates are signed by its corresponding coordinator.\
 The private key associated to each certificate can also be found in the output.\
 Finally, the combined coordinator certificate (cert_combined.{pem,der}) \
-is also a part of the output."
+is also a part of the output.
+
+Currently, the default is to use only a single coordinator certificate per logical party\
+and no separate core certificates."
 )]
 pub struct Cli {
-    // this group is needed to ensure the user only suplies the exact names or a prefix
+    // this group is needed to ensure the user only supplies the exact names or a prefix
     #[clap(flatten)]
     group: Group,
 
@@ -71,8 +74,8 @@ pub struct Cli {
     #[clap(
         short,
         long,
-        default_value = "1",
-        help = "the number of cores certificates to generate for each coordinator"
+        default_value = "0",
+        help = "the number of core certificates to generate for each coordinator. Can be set to 0 to only generate the coordinator certificates."
     )]
     num_cores: usize,
 
@@ -93,7 +96,10 @@ fn validate_coordinator_name(input: &str) -> bool {
 }
 
 /// create the keypair and self-signed certificate for the coordinator identified by the given name
-fn create_coordinator_cert(coordinator_name: &str) -> anyhow::Result<(KeyPair, Certificate)> {
+fn create_coordinator_cert(
+    coordinator_name: &str,
+    is_ca: &IsCa,
+) -> anyhow::Result<(KeyPair, Certificate)> {
     if !validate_coordinator_name(coordinator_name) {
         return Err(anyhow!(
             "Error: invalid coordinator name: {}",
@@ -114,9 +120,8 @@ fn create_coordinator_cert(coordinator_name: &str) -> anyhow::Result<(KeyPair, C
     distinguished_name.push(DnType::CommonName, coordinator_name);
     cp.distinguished_name = distinguished_name;
 
-    // set coordinator cert CA flag to true (only allow to sign core certs directly, without
-    // intermediate CAs)
-    cp.is_ca = IsCa::Ca(Constrained(1));
+    // set coordinator cert CA flag
+    cp.is_ca = is_ca.clone();
 
     // set coordinator cert Key Usage Purposes
     cp.key_usages = vec![
@@ -237,9 +242,21 @@ fn main() -> anyhow::Result<()> {
         HashSet::from_iter(args.group.coordinator_names.iter().cloned())
     };
 
+    // As default, we only use self-signed player certificates, so we must not set the CA flag.
+    // This is due to `webpki` that only exposes an `EndEntityCert` for verification, which cannot be a CA.
+    // This limitation can be worked around by using some other method for verifying a certs validity.
+    let mut is_ca = IsCa::NoCa;
+
+    // if we want to generate core certs, we need to set the CA flag to true
+    // we only allow to sign core certs directly, without intermediate CAs
+    if args.num_cores > 0 {
+        is_ca = IsCa::Ca(Constrained(1));
+    }
+
     let mut all_certs = vec![];
     for coordinator_name in coordinator_set {
-        let (coordinator_keypair, coordinator_cert) = create_coordinator_cert(&coordinator_name)?;
+        let (coordinator_keypair, coordinator_cert) =
+            create_coordinator_cert(&coordinator_name, &is_ca)?;
 
         write_certs_and_keys(
             &args.output_dir,
@@ -249,22 +266,25 @@ fn main() -> anyhow::Result<()> {
             args.output_file_type,
         )?;
 
-        let core_certs = create_core_certs(
-            &coordinator_name,
-            args.num_cores,
-            &coordinator_keypair,
-            &coordinator_cert,
-        )?;
-
-        // write all core keypairs and certificates to disk
-        for (core_id, (core_keypair, core_cert)) in core_certs.iter() {
-            write_certs_and_keys(
-                &args.output_dir,
-                format!("{}-core{}", coordinator_name, core_id).as_str(),
-                core_cert,
-                core_keypair,
-                args.output_file_type,
+        // only generate core certs, if specifically desired (currently not the default)
+        if args.num_cores > 0 {
+            let core_certs = create_core_certs(
+                &coordinator_name,
+                args.num_cores,
+                &coordinator_keypair,
+                &coordinator_cert,
             )?;
+
+            // write all core keypairs and certificates to disk
+            for (core_id, (core_keypair, core_cert)) in core_certs.iter() {
+                write_certs_and_keys(
+                    &args.output_dir,
+                    format!("{}-core{}", coordinator_name, core_id).as_str(),
+                    core_cert,
+                    core_keypair,
+                    args.output_file_type,
+                )?;
+            }
         }
 
         all_certs.push(coordinator_cert);
@@ -296,15 +316,12 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use crate::{create_coordinator_cert, create_core_certs, validate_coordinator_name};
-    use rcgen::Certificate;
+    use rcgen::{BasicConstraints::Constrained, Certificate, IsCa};
     use webpki::{EndEntityCert, ErrorExt, TlsClientTrustAnchors, TrustAnchor};
 
-    fn inner_verify(
-        core_cert: &Certificate,
-        coordinator_cert: &Certificate,
-    ) -> Result<(), ErrorExt> {
-        let ee = EndEntityCert::try_from(core_cert.der().as_ref()).unwrap();
-        let ta = [TrustAnchor::try_from_cert_der(coordinator_cert.der().as_ref()).unwrap()];
+    fn signed_verify(leaf_cert: &Certificate, ca_cert: &Certificate) -> Result<(), ErrorExt> {
+        let ee = EndEntityCert::try_from(leaf_cert.der().as_ref()).unwrap();
+        let ta = [TrustAnchor::try_from_cert_der(ca_cert.der().as_ref()).unwrap()];
         let tcta = TlsClientTrustAnchors(&ta);
         let wt = webpki::Time::try_from(std::time::SystemTime::now()).unwrap();
 
@@ -314,8 +331,9 @@ mod tests {
     #[test]
     fn test_cert_chain() {
         let coordinator_name = "coordinator.kms.zama.ai";
+        let is_ca = IsCa::Ca(Constrained(1));
         let (coordinator_keypair, coordinator_cert) =
-            create_coordinator_cert(coordinator_name).unwrap();
+            create_coordinator_cert(coordinator_name, &is_ca).unwrap();
 
         let core_certs =
             create_core_certs(coordinator_name, 2, &coordinator_keypair, &coordinator_cert)
@@ -328,21 +346,51 @@ mod tests {
 
         // create another coordinator cert, that did not sign the core certs for negative testing
         let (_coordinator_keypair_wrong, coordinator_cert_wrong) =
-            create_coordinator_cert(coordinator_name).unwrap();
+            create_coordinator_cert(coordinator_name, &is_ca).unwrap();
 
         // check all core certs
         for c in core_certs {
-            let verif = inner_verify(&c.1 .1, &coordinator_cert);
+            let verif = signed_verify(&c.1 .1, &coordinator_cert);
             // check that verification works for each core cert
             assert!(verif.is_ok(), "certificate validation failed!");
 
             // check that verification does not work for wrong coordinator cert
-            let verif = inner_verify(&c.1 .1, &coordinator_cert_wrong);
+            let verif = signed_verify(&c.1 .1, &coordinator_cert_wrong);
             assert!(
                 verif.is_err(),
                 "certificate validation succeeded, but was expected to fail!"
             );
         }
+    }
+
+    #[test]
+    fn test_ca_cert_selfsigned_verify() {
+        let coordinator_name = "p1.kms.zama.ai";
+        let is_ca = IsCa::NoCa;
+
+        let (_coordinator_keypair, coordinator_cert) =
+            create_coordinator_cert(coordinator_name, &is_ca).unwrap();
+
+        // check that we can import the coordinator cert into the trust store
+        let mut root_store = rustls::RootCertStore::empty();
+        let cc = (*coordinator_cert.der()).clone();
+        root_store.add(cc).unwrap();
+
+        // create another coordinator cert, that did not sign the core certs for negative testing
+        let (_coordinator_keypair_wrong, coordinator_cert_wrong) =
+            create_coordinator_cert(coordinator_name, &is_ca).unwrap();
+
+        let verif = signed_verify(&coordinator_cert, &coordinator_cert);
+
+        // check that verification works for self-signed each cert
+        assert!(verif.is_ok(), "certificate validation failed!");
+
+        // check that verification does not work for wrong coordinator cert
+        let verif = signed_verify(&coordinator_cert, &coordinator_cert_wrong);
+        assert!(
+            verif.is_err(),
+            "certificate validation succeeded, but was expected to fail!"
+        );
     }
 
     #[test]

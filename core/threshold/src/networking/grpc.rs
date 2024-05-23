@@ -399,41 +399,41 @@ fn extract_sender<T>(request: &tonic::Request<T>) -> Result<Option<String>, Stri
                     format!("failed to parse X509 certificate: {:?}", err.to_string())
                 })?;
 
-            // we find the common name of the issuer
+            // we find the common name of the issuer (currently: the party itself)
             // since we treat the certificate authority (issuer) as the identity
-            // at the moment it's written as p1:50000, but this is not a typical CN
-            let coordinator_cns: Vec<_> = cert
+            let ca_cns: Vec<_> = cert
                 .issuer()
                 .iter_common_name()
                 .map(|attr| attr.as_str().map_err(|err| err.to_string()))
                 .collect::<Result<_, _>>()?;
 
-            // we also need to check the CN of the certificate itself and verify
+            // we also need to check the CN of the certificate subject itself and verify
             // that is contains the right format. this is to prevent a malicious
-            // coordinator from signing a core that it down not own.
+            // party from signing a core that it does not own.
             let core_cns: Vec<_> = cert
                 .subject()
                 .iter_common_name()
                 .map(|attr| attr.as_str().map_err(|err| err.to_string()))
                 .collect::<Result<_, _>>()?;
 
-            match (coordinator_cns.first(), core_cns.first()) {
-                (Some(coordinator_cn), Some(core_cn)) => {
-                    let issuer_cn = coordinator_cn.to_string();
-                    // core_cn should have the format <core_name>.<coordinator_name>
-                    // and the <coordinator_name> component should match issuer_cn
-                    let subject_cn = core_cn.to_string();
-                    let v: Vec<_> = subject_cn.split('.').collect();
-                    if v.len() < 2 {
-                        return Err(format!("core CN has the wrong format: {:?}", v));
-                    }
-                    if v[1] != issuer_cn {
+            // check that we have exactly 1 issuer and 1 subject
+            if core_cns.len() != 1 || ca_cns.len() != 1 {
+                anyhow_error_and_log(format!(
+                    "The certificate does not have exactly 1 issuer and 1 subject: issuer CNs: ({:?}), subject CNs: ({:?}).",
+                    ca_cns.len(), core_cns.len()
+                ));
+            }
+
+            match (ca_cns.first(), core_cns.first()) {
+                (Some(issuer_cn), Some(subject_cn)) => {
+                    // the party certs are currently self-signed, so check that issuer and subject are identical
+                    if subject_cn != issuer_cn {
                         return Err(format!(
-                            "core CN ({}) does not match subject CN ({})",
-                            v[1], issuer_cn
+                            "issuer CN ({}) does not match subject CN ({})!",
+                            issuer_cn, subject_cn
                         ));
                     }
-                    Ok(Some(issuer_cn))
+                    Ok(Some(issuer_cn.to_string()))
                 }
                 _ => Err("certificate common name was empty".to_string()),
             }

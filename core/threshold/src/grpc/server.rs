@@ -87,7 +87,7 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
         .add_service(choreography);
 
     tracing::info!(
-        "Sucessfully created choreo server with party id {:?} on port {:?}.",
+        "Successfully created choreo server with party id {:?} on port {:?}.",
         settings.protocol().host(),
         settings.protocol().host().choreoport()
     );
@@ -114,7 +114,7 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
         core_router.serve(format!("0.0.0.0:{}", settings.protocol().host().port()).parse()?);
 
     tracing::info!(
-        "Sucessfully created core server with party id {:?} on port {:?}.",
+        "Successfully created core server with party id {:?} on port {:?}.",
         settings.protocol().host(),
         settings.protocol().host().port()
     );
