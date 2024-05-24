@@ -1546,7 +1546,7 @@ pub mod test_tools {
     }
 
     /// Setup a client and a server running with non-persistant storage.
-    async fn setup_no_client<
+    pub async fn setup_centralized_no_client<
         PubS: PublicStorage + Sync + Send + 'static,
         PrivS: PublicStorage + Sync + Send + 'static,
     >(
@@ -1573,7 +1573,7 @@ pub mod test_tools {
         JoinHandle<()>,
         CoordinatorEndpointClient<tonic::transport::Channel>,
     ) {
-        let server_handle = setup_no_client(pub_storage, priv_storage).await;
+        let server_handle = setup_centralized_no_client(pub_storage, priv_storage).await;
         let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
         let uri = Uri::from_str(&url).unwrap();
         let channel = Channel::builder(uri).connect().await.unwrap();

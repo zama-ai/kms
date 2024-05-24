@@ -93,7 +93,7 @@ impl KmsCoreSyncHandler<KmsBlockchain, KmsCoordinator, OpenTelemetryMetrics> {
         let blockchain = KmsBlockchain::new(config.blockchain.clone(), metrics.clone()).await?;
         // TODO the coordinator should read the addresses from the blockchain
         // instead of the config
-        let kms = KmsCoordinator::new(config.coordinator.clone(), metrics.clone()).await?;
+        let kms = KmsCoordinator::new(config.coordinator.clone(), metrics.clone())?;
         let handler = KmsCoreEventHandler {
             blockchain,
             kms,

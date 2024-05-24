@@ -95,7 +95,7 @@ pub struct KmsCoordinator {
 }
 
 impl KmsCoordinator {
-    pub(crate) async fn new(
+    pub(crate) fn new(
         config: crate::conf::CoordinatorConfig,
         metrics: OpenTelemetryMetrics,
     ) -> Result<Self, anyhow::Error> {
@@ -692,12 +692,14 @@ mod test {
     use kms_lib::{
         client::{test_tools, Client},
         consts::{
-            AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, TEST_THRESHOLD_KEY_ID, THRESHOLD,
+            AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID,
+            TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_KEY_ID, THRESHOLD,
         },
         storage::{FileStorage, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
         util::key_setup::{
-            compute_cipher_from_storage, ensure_client_keys_exist, ensure_dir_exist, purge,
+            compute_cipher_from_storage, ensure_central_keys_exist, ensure_client_keys_exist,
+            ensure_dir_exist, purge,
         },
     };
     use kms_lib::{
@@ -706,13 +708,151 @@ mod test {
         rpc::rpc_types::{Plaintext, CURRENT_FORMAT_VERSION},
         util::key_setup::ensure_threshold_keys_exist,
     };
+    use rand::RngCore;
     use std::collections::HashMap;
     use tokio::task::JoinSet;
 
-    async fn setup_keys() {
+    async fn setup_threshold_keys() {
         ensure_dir_exist().await;
         ensure_threshold_keys_exist(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID, true).await;
         ensure_client_keys_exist(true).await;
+    }
+
+    async fn setup_central_keys() {
+        ensure_dir_exist().await;
+        ensure_central_keys_exist(
+            TEST_PARAM_PATH,
+            &TEST_CENTRAL_KEY_ID,
+            &OTHER_CENTRAL_TEST_ID,
+            true,
+        )
+        .await;
+        ensure_client_keys_exist(true).await;
+    }
+
+    async fn generic_centralized_sunshine_test(
+        op: OperationValue,
+    ) -> (KmsOperationResponse, TransactionId) {
+        let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+        let priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
+        let join_handle = test_tools::setup_centralized_no_client(pub_storage, priv_storage).await;
+
+        let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
+        let config = CoordinatorConfig {
+            addresses: vec![url],
+            shares_needed: 1,
+            timeout_config: TimeoutConfig::mocking_default(),
+        };
+
+        let client = KmsCoordinator::new(config.clone(), OpenTelemetryMetrics::new()).unwrap();
+
+        let mut txn_buf = vec![0u8; 20];
+        rand::thread_rng().fill_bytes(&mut txn_buf);
+
+        let txn_id = TransactionId::from(txn_buf);
+        let event = KmsEvent::builder()
+            .operation(op.clone())
+            .txn_id(txn_id.clone())
+            .proof(Proof::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
+            .build();
+
+        let result = client
+            .create_kms_operation(event, op.clone())
+            .unwrap()
+            .run_operation()
+            .await
+            .unwrap();
+
+        join_handle.abort();
+        (result, txn_id)
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn ddec_centralized_sunshine() {
+        setup_central_keys().await;
+        let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
+            compute_cipher_from_storage(TEST_MSG, &TEST_CENTRAL_KEY_ID.to_string()).await;
+        let op = OperationValue::Decrypt(
+            DecryptValues::builder()
+                .version(CURRENT_FORMAT_VERSION)
+                .servers_needed(1)
+                .key_id(HexVector::from_hex(&TEST_CENTRAL_KEY_ID.request_id).unwrap())
+                .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
+                .ciphertext(ct)
+                .randomness(vec![1, 2, 3])
+                .build(),
+        );
+        let (result, txn_id) = generic_centralized_sunshine_test(op).await;
+        match result {
+            KmsOperationResponse::DecryptResponse(resp) => {
+                let payload: DecryptionResponsePayload = serde_asn1_der::from_bytes(
+                    <&HexVector as Into<Vec<u8>>>::into(resp.decrypt_response.payload()).as_slice(),
+                )
+                .unwrap();
+                assert_eq!(
+                    serde_asn1_der::from_bytes::<Plaintext>(&payload.plaintext)
+                        .unwrap()
+                        .as_u8(),
+                    TEST_MSG
+                );
+                assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
+                assert_eq!(resp.operation_val.tx_id, txn_id);
+            }
+            _ => {
+                panic!("invalid response");
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn keygen_sunshine_central() {
+        setup_central_keys().await;
+
+        // the preproc_id can just be some dummy value since
+        // the centralized case does not need it
+        let op = OperationValue::KeyGen(
+            KeyGenValues::builder()
+                .preproc_id(
+                    HexVector::from_hex("1111111111111111111111111111111111112222").unwrap(),
+                )
+                .build(),
+        );
+        let (result, txn_id) = generic_centralized_sunshine_test(op).await;
+        match result {
+            KmsOperationResponse::KeyGenResponse(resp) => {
+                assert!(!resp.keygen_response.public_key_digest().is_empty());
+                assert!(!resp.keygen_response.public_key_signature().0.is_empty());
+                assert!(!resp.keygen_response.server_key_digest().is_empty());
+                assert!(!resp.keygen_response.server_key_signature().0.is_empty());
+                assert_eq!(resp.operation_val.tx_id, txn_id);
+            }
+            _ => {
+                panic!("invalid response");
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn crs_sunshine_central() {
+        setup_central_keys().await;
+        let op = OperationValue::CrsGen(CrsGenValues {});
+        let (result, txn_id) = generic_centralized_sunshine_test(op).await;
+        match result {
+            KmsOperationResponse::CrsGenResponse(resp) => {
+                assert_eq!(resp.crs_gen_response.request_id(), txn_id.to_hex());
+                assert_eq!(resp.crs_gen_response.digest().len(), 40);
+                assert_eq!(
+                    <&HexVector as Into<Vec<u8>>>::into(resp.crs_gen_response.signature()).len(),
+                    72
+                );
+            }
+            _ => {
+                panic!("invalid response");
+            }
+        }
     }
 
     /// Before running this function, ensure [setup_keys] is executed
@@ -755,11 +895,7 @@ mod test {
         // create the clients
         let mut clients = vec![];
         for config in configs {
-            clients.push(
-                KmsCoordinator::new(config.clone(), OpenTelemetryMetrics::new())
-                    .await
-                    .unwrap(),
-            );
+            clients.push(KmsCoordinator::new(config.clone(), OpenTelemetryMetrics::new()).unwrap());
         }
 
         // create events
@@ -797,7 +933,7 @@ mod test {
     }
 
     async fn ddec_sunshine(slow: bool) {
-        setup_keys().await;
+        setup_threshold_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
             compute_cipher_from_storage(TEST_MSG, &TEST_THRESHOLD_KEY_ID.to_string()).await;
         let op = OperationValue::Decrypt(
@@ -838,7 +974,7 @@ mod test {
     }
 
     async fn reenc_sunshine(slow: bool) {
-        setup_keys().await;
+        setup_threshold_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
             compute_cipher_from_storage(TEST_MSG, &TEST_THRESHOLD_KEY_ID.to_string()).await;
 
@@ -939,7 +1075,7 @@ mod test {
     }
 
     async fn keygen_sunshine(slow: bool) {
-        setup_keys().await;
+        setup_threshold_keys().await;
         if slow {
             panic!("slow/integration test is not supported since there's no preprocessing material")
         }
@@ -969,7 +1105,7 @@ mod test {
     }
 
     async fn preproc_sunshine(slow: bool) {
-        setup_keys().await;
+        setup_threshold_keys().await;
         let op = OperationValue::KeyGenPreproc(KeyGenPreprocValues {});
         let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
@@ -987,7 +1123,7 @@ mod test {
     }
 
     async fn crs_sunshine(slow: bool) {
-        setup_keys().await;
+        setup_threshold_keys().await;
         let op = OperationValue::CrsGen(CrsGenValues {});
         let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);

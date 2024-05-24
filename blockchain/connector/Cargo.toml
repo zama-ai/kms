@@ -43,6 +43,7 @@ kms = { path = "../../coordinator" }
 serial_test = "3.1.1"
 test-context = "0.3.0"
 test-utilities = { path = "./utilities" }
+rand = "0.8.5"
 
 [features]
 slow_tests = []

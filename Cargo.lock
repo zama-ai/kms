@@ -4149,6 +4149,7 @@ dependencies = [
  "opentelemetry-stdout",
  "opentelemetry_sdk",
  "prometheus",
+ "rand",
  "retrying",
  "serde",
  "serde_asn1_der",
