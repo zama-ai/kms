@@ -111,12 +111,12 @@ impl<T> MetaStore<T> {
         status: HandlerStatus<T>,
     ) -> anyhow::Result<()> {
         if !self.exists(request_id) {
-            return Err(anyhow_error_and_log(
-                "The element with ID {request_id} does not exist",
-            ));
+            return Err(anyhow_error_and_log(format!(
+                "The element with ID {request_id} does not exist"
+            )));
         }
         if let HandlerStatus::Started = status {
-            return Err(anyhow_error_and_log("Cannot update the status of a request with ID {request_id} to Started since it is already in progress"));
+            return Err(anyhow_error_and_log(format!("Cannot update the status of a request with ID {request_id} to Started since it is already in progress")));
         }
         // Ignore the old status since we already checked if the element is there
         let _ = self.storage.insert(request_id.to_owned(), status);

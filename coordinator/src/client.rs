@@ -596,9 +596,9 @@ impl Client {
             None => ParamChoice::Default.into(),
         };
         if !request_id.is_valid() {
-            return Err(anyhow_error_and_log(
-                "The request id format is not valid {request_id}",
-            ));
+            return Err(anyhow_error_and_log(format!(
+                "The request id format is not valid {request_id}"
+            )));
         }
         Ok(CrsGenRequest {
             params: parsed_param,
@@ -619,9 +619,9 @@ impl Client {
         };
 
         if !request_id.is_valid() {
-            return Err(anyhow_error_and_log(
-                "The request id format is not valid {request_id}",
-            ));
+            return Err(anyhow_error_and_log(format!(
+                "The request id format is not valid {request_id}"
+            )));
         }
 
         Ok(KeyGenPreprocRequest {
@@ -656,9 +656,9 @@ impl Client {
         let mut pp_map = HashMap::new();
 
         if !request_id.is_valid() {
-            return Err(anyhow_error_and_log(
-                "The request id format is not valid {request_id}",
-            ));
+            return Err(anyhow_error_and_log(format!(
+                "The request id format is not valid {request_id}"
+            )));
         }
 
         for (result, storage) in results.into_iter().zip(storage_readers) {
@@ -758,9 +758,9 @@ impl Client {
         key_id: &RequestId,
     ) -> anyhow::Result<DecryptionRequest> {
         if !request_id.is_valid() {
-            return Err(anyhow_error_and_log(
-                "The request id format is not valid {request_id}",
-            ));
+            return Err(anyhow_error_and_log(format!(
+                "The request id format is not valid {request_id}"
+            )));
         }
 
         // Observe that this randomness can be reused across the servers since each server will have
@@ -796,9 +796,9 @@ impl Client {
         key_id: &RequestId,
     ) -> anyhow::Result<(ReencryptionRequest, PublicEncKey, PrivateEncKey)> {
         if !request_id.is_valid() {
-            return Err(anyhow_error_and_log(
-                "The request id format is not valid {request_id}",
-            ));
+            return Err(anyhow_error_and_log(format!(
+                "The request id format is not valid {request_id}"
+            )));
         }
 
         let ciphertext_digest = hash_element(&ciphertext);
