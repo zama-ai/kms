@@ -55,24 +55,6 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
-  deploy-coordinator:
-    uses: ./.github/workflows/common-deploy.yml
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-    needs:
-      - docker-coordinator
-      - docker-enclave-coordinator
-    with:
-      working-directory: "./coordinator"
-      image_name: ${{ needs.docker.outputs.image_name }}
-      eif_pcr0: ${{ needs.docker.outputs.eif_pcr0 }}
-      image_eif: ${{ needs.docker.outputs.image_eif }}
-    secrets:
-      AWS_ACCESS_KEY_ID_TERRAFORM: ${{ secrets.AWS_ACCESS_KEY_ID_TERRAFORM }}
-      AWS_SECRET_ACCESS_KEY_TERRAFORM: ${{ secrets.AWS_SECRET_ACCESS_KEY_TERRAFORM }}
-
-
   build-threshold:
     uses: ./.github/workflows/common-build-long-test.yml
     with:
@@ -100,19 +82,3 @@ jobs:
     secrets:
       CONCRETE_ACTIONS_TOKEN: ${{ secrets.CONCRETE_ACTIONS_TOKEN }}
       GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
-
-  deploy-threshold:
-    uses: ./.github/workflows/common-deploy.yml
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-    needs:
-      - docker-threshold
-    with:
-      image_name: ${{ needs.docker.outputs.image_name }}
-      working-directory: './core/threshold'
-    secrets:
-      AWS_ACCESS_KEY_ID_TERRAFORM: ${{ secrets.AWS_ACCESS_KEY_ID_TERRAFORM }}
-      AWS_SECRET_ACCESS_KEY_TERRAFORM: ${{ secrets.AWS_SECRET_ACCESS_KEY_TERRAFORM }}
-
-

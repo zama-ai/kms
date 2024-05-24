@@ -39,20 +39,3 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
-
-  deploy:
-    uses: ./.github/workflows/common-deploy.yml
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-    needs:
-      - docker
-    with:
-      working-directory: "./core/threshold"
-      image_name: ${{ needs.docker.outputs.image_name }}
-    secrets:
-      AWS_ACCESS_KEY_ID_TERRAFORM: ${{ secrets.AWS_ACCESS_KEY_ID_TERRAFORM }}
-      AWS_SECRET_ACCESS_KEY_TERRAFORM: ${{ secrets.AWS_SECRET_ACCESS_KEY_TERRAFORM }}
-
-
-
