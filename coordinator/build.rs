@@ -1,5 +1,6 @@
 const DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize)]";
-const EXTENDED_DERIVES: &str = "#[derive(serde::Deserialize, serde::Serialize, Hash, Eq)]";
+const EXTENDED_DERIVES: &str =
+    "#[derive(serde::Deserialize, serde::Serialize, Hash, Eq, Ord, PartialOrd)]";
 
 // Adding doc
 #[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]

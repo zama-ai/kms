@@ -1448,7 +1448,7 @@ pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
 #[cfg(feature = "non-wasm")]
 pub mod test_tools {
     use super::*;
-    use crate::consts::{BASE_PORT, DEFAULT_PROT, DEFAULT_URL};
+    use crate::consts::{BASE_PORT, DEC_CAPACITY, DEFAULT_PROT, DEFAULT_URL, MIN_DEC_CACHE};
     use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
     use crate::rpc::central_rpc::server_handle;
     use crate::storage::{FileStorage, PublicStorage, RamStorage, StorageType, StorageVersion};
@@ -1481,6 +1481,8 @@ pub mod test_tools {
                     base_port: BASE_PORT,
                     parties: amount,
                     threshold,
+                    dec_capacity: DEC_CAPACITY,
+                    min_dec_cache: MIN_DEC_CACHE,
                     my_id: i,
                     timeout_secs,
                     preproc_redis_conf: None,
@@ -2619,18 +2621,6 @@ pub(crate) mod tests {
         )
         .await;
 
-        //This request is not ok because the ParamChoice is not the same as the initial preproc
-        // request
-        let req_status_nok_params = internal_client
-            .preproc_request(&request_id, Some(ParamChoice::Default))
-            .unwrap();
-        test_preproc_status(
-            req_status_nok_params,
-            KeyGenPreprocStatusEnum::WrongRequest,
-            &kms_clients,
-        )
-        .await;
-
         //This request is not ok because no preproc was ever started for this session id
         let req_status_nok_sid = internal_client
             .preproc_request(&request_id_nok, Some(ParamChoice::Test))
@@ -2828,7 +2818,7 @@ pub(crate) mod tests {
             .unwrap();
         let responses = launch_dkg(keygen_req_data.clone(), &kms_clients).await;
         for response in responses {
-            assert!(response.unwrap_err().code() == tonic::Code::NotFound);
+            assert_eq!(response.unwrap_err().code(), tonic::Code::NotFound);
         }
 
         for kms_server in kms_servers {

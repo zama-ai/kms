@@ -4,6 +4,7 @@ package kms;
 // TODO seperate into threshold and central calls
 service CoordinatorEndpoint {
   rpc KeyGenPreproc(KeyGenPreprocRequest) returns (Empty);
+  // TODO to have common logic KeyGenPreprocRequest should only contain RequestId
   rpc GetPreprocStatus(KeyGenPreprocRequest) returns (KeyGenPreprocStatus);
   // Generate new keys asynchronously
   rpc KeyGen(KeyGenRequest) returns (Empty);

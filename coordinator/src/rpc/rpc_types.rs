@@ -228,7 +228,7 @@ impl RawDecryption {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 #[wasm_bindgen]
 pub struct Plaintext {
     // Observe that the clunky representation is needed due to the wasm binding, which does not

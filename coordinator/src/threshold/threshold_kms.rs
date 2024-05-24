@@ -56,7 +56,6 @@ use distributed_decryption::session_id::SessionId;
 use itertools::Itertools;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
@@ -67,6 +66,8 @@ use tokio::task::AbortHandle;
 use tokio::time::Instant;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
+
+use super::meta_store::{HandlerStatus, MetaStore};
 
 // Jump between the webserver being externally visible and the webserver used to execute DDec
 // TODO this should eventually be specified a bit better
@@ -79,6 +80,8 @@ pub struct ThresholdConfig {
     pub base_port: u16,
     pub parties: usize,
     pub threshold: u8,
+    pub dec_capacity: usize,
+    pub min_dec_cache: usize,
     pub my_id: usize,
     pub timeout_secs: u64,
     pub preproc_redis_conf: Option<RedisConf>,
@@ -124,6 +127,8 @@ pub async fn threshold_server_init<
     let mut kms = ThresholdKms::new(
         config.parties,
         config.threshold,
+        config.dec_capacity,
+        config.min_dec_cache,
         &config.url,
         config.base_port,
         config.my_id,
@@ -227,13 +232,6 @@ pub struct ThresholdKmsKeys {
     pub sig_pk: PublicSigKey,
 }
 
-// Meta store helper enum, that is used to keep the status of a request in a meta store
-enum HandlerStatus<T> {
-    Started,
-    Error(anyhow::Error),
-    Done(T),
-}
-
 // Servers needed, request digest, and resultant plaintext
 type DecMetaStore = (u32, Vec<u8>, Plaintext);
 // Servers needed, request digest, fhe type of encryption and resultant partial decryption
@@ -244,17 +242,7 @@ type DkgMetaStore = HashMap<PubDataType, FhePubKeyInfo>;
 // digest (the 160-bit hex-encoded value, computed using compute_info/handle) and the signature on
 // the handle
 type CrsMetaStore = (String, Vec<u8>);
-
-// Outer wrapper for a meta store. Purely syntactic sugar.
-type OuterMetaStore<T> = Arc<RwLock<HashMap<RequestId, HandlerStatus<T>>>>;
-
-type RequestIDBucketMap = HashMap<
-    RequestId,
-    (
-        DKGParams,
-        Option<Result<Box<dyn DKGPreprocessing<ResiduePoly128>>, anyhow::Error>>,
-    ),
->;
+type BucketMetaStore = Box<dyn DKGPreprocessing<ResiduePoly128>>;
 
 pub struct ThresholdKms<
     PubS: PublicStorage + Sync + Send + 'static,
@@ -271,17 +259,16 @@ pub struct ThresholdKms<
     abort_handle: AbortHandle,
     // TODO eventually add mode to allow for nlarge as well.
     prss_setup: Option<PRSSSetup<ResiduePoly128>>,
-    preproc_buckets: Arc<Mutex<RequestIDBucketMap>>,
+    preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
     num_sessions_preproc: u16,
     // NOTE: To avoid deadlocks the public_storage MUST ALWAYS be accessed BEFORE the private_storage when both are needed concurrently
     public_storage: Arc<Mutex<PubS>>,
     private_storage: Arc<Mutex<PrivS>>,
-    // TODO data is never deleted from these stores so the ram will fill up. This should be handled
-    crs_meta_store: OuterMetaStore<CrsMetaStore>,
-    dkg_pubinfo_meta_store: OuterMetaStore<DkgMetaStore>,
-    dec_meta_store: OuterMetaStore<DecMetaStore>,
-    reenc_meta_store: OuterMetaStore<ReencMetaStore>,
+    crs_meta_store: Arc<RwLock<MetaStore<CrsMetaStore>>>,
+    dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<DkgMetaStore>>>,
+    dec_meta_store: Arc<RwLock<MetaStore<DecMetaStore>>>,
+    reenc_meta_store: Arc<RwLock<MetaStore<ReencMetaStore>>>,
 }
 
 impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
@@ -291,6 +278,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
     pub async fn new(
         parties: usize,
         threshold: u8,
+        dec_capacity: usize,
+        min_dec_cache: usize,
         url: &str,
         base_port: u16,
         my_id: usize,
@@ -361,15 +350,15 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             networking_strategy,
             abort_handle: ddec_handle.abort_handle(),
             prss_setup: None,
-            preproc_buckets: Arc::new(Mutex::new(HashMap::default())),
+            preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
             preproc_factory: Arc::new(Mutex::new(preproc_factory)),
             num_sessions_preproc,
             public_storage: Arc::new(Mutex::new(public_storage)),
             private_storage: Arc::new(Mutex::new(private_storage)),
-            crs_meta_store: Arc::new(RwLock::new(cs_w_status)),
-            dkg_pubinfo_meta_store: Arc::new(RwLock::new(HashMap::new())),
-            dec_meta_store: Arc::new(RwLock::new(HashMap::new())),
-            reenc_meta_store: Arc::new(RwLock::new(HashMap::new())),
+            crs_meta_store: Arc::new(RwLock::new(MetaStore::new_from_map(cs_w_status))),
+            dkg_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+            dec_meta_store: Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache))),
+            reenc_meta_store: Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache))),
         })
     }
 
@@ -584,7 +573,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
     async fn inner_crs_gen(&self, req_id: &RequestId, witness_dim: usize) -> anyhow::Result<()> {
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
-            guarded_meta_store.insert_request(req_id, "CRS generation")?;
+            guarded_meta_store.insert(req_id)?;
         }
 
         let session_id = SessionId(req_id.clone().try_into()?);
@@ -617,10 +606,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 let (info, pp) = match res_info_pp {
                     Ok(info_pp) => info_pp,
                     Err(e) => {
-                        {
-                            let mut guarded_meta_store = meta_store.write().await;
-                            guarded_meta_store.insert(owned_req_id, HandlerStatus::Error(e));
-                        }
+                        let mut guarded_meta_store = meta_store.write().await;
+                        // We cannot do much if updating the storage fails at this point...
+                        let _ = guarded_meta_store
+                            .update(&owned_req_id, HandlerStatus::Error(e.to_string()));
                         return;
                     }
                 };
@@ -644,10 +633,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                     .await
                     .is_ok()
                 {
-                    {
-                        let mut guarded_meta_store = meta_store.write().await;
-                        guarded_meta_store.insert(owned_req_id, HandlerStatus::Done(crs_meta_data));
-                    }
+                    let mut guarded_meta_store = meta_store.write().await;
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_store
+                        .update(&owned_req_id, HandlerStatus::Done(crs_meta_data));
                 } else {
                     // Try to delete stored data to avoid anything dangling
                     // Ignore any failure to delete something. It might be because the data exist.
@@ -664,16 +653,17 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                         &PrivDataType::CrsInfo.to_string(),
                     )
                     .await;
-                    let err_msg = format!(
-                        "failed to store data to public storage for ID {}",
-                        owned_req_id
-                    );
                     {
                         let mut guarded_meta_store = meta_store.write().await;
-                        guarded_meta_store
-                            .insert(owned_req_id, HandlerStatus::Error(anyhow!(err_msg.clone())));
+                        // We cannot do much if updating the storage fails at this point...
+                        let _ = guarded_meta_store.update(
+                            &owned_req_id,
+                            HandlerStatus::Error(format!(
+                                "failed to store data to public storage for ID {}",
+                                owned_req_id
+                            )),
+                        );
                     }
-                    tracing::error!(err_msg);
                 }
             };
             let _ = f().await;
@@ -717,11 +707,16 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         Ok(session)
     }
 
-    fn launch_dkg_preproc(
+    async fn launch_dkg_preproc(
         &self,
         dkg_params: DKGParams,
         request_id: RequestId,
     ) -> anyhow::Result<()> {
+        {
+            let mut guarded_meta_store = self.preproc_buckets.write().await;
+            guarded_meta_store.insert(&request_id)?;
+        }
+
         fn create_sessions(
             base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
             prss_setup: PRSSSetup<ResiduePoly128>,
@@ -772,17 +767,14 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             let preproc_result = orchestrator
                 .orchestrate_small_session_dkg_processing(sessions)
                 .await;
-            let preproc_handle_result = match preproc_result {
-                Ok((_, preproc_handle)) => Ok(preproc_handle),
-                Err(e) => Err(e),
-            };
             //write the preproc handle to the bucket store
-            let mut bucket_store = bucket_store.lock().await;
-            bucket_store.insert(
-                request_id.clone(),
-                (dkg_params, Some(preproc_handle_result)),
-            );
-
+            let handle_update = match preproc_result {
+                Ok((_, preproc_handle)) => HandlerStatus::Done(preproc_handle),
+                Err(error) => HandlerStatus::Error(error.to_string()),
+            };
+            let mut guarded_meta_store = bucket_store.write().await;
+            // We cannot do much if updating the storage fails at this point...
+            let _ = guarded_meta_store.update(&request_id, handle_update);
             tracing::info!("Preproc Finished P[{my_id}]");
         });
         Ok(())
@@ -797,7 +789,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         //Update status
         {
             let mut guarded_meta_store = self.dkg_pubinfo_meta_store.write().await;
-            guarded_meta_store.insert_request(&req_id, "DKG")?;
+            guarded_meta_store.insert(&req_id)?;
         }
 
         //Create the base session necessary to run the DKG
@@ -835,7 +827,9 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 Err(e) => {
                     //If dkg errored out, update status
                     let mut guarded_meta_storage = meta_store.write().await;
-                    guarded_meta_storage.insert(req_id, HandlerStatus::Error(e));
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ =
+                        guarded_meta_storage.update(&req_id, HandlerStatus::Error(e.to_string()));
                     return;
                 }
             };
@@ -846,10 +840,9 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 None => {
                     //If sns key is missing, update status
                     let mut guarded_meta_storage = meta_store.write().await;
-                    guarded_meta_storage.insert(
-                        req_id,
-                        HandlerStatus::Error(anyhow_error_and_log("Missing SNS key")),
-                    );
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_storage
+                        .update(&req_id, HandlerStatus::Error("Missing SNS key".to_string()));
                     return;
                 }
             };
@@ -872,9 +865,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 _ => {
                     //If failed to compute some info, update status
                     let mut guarded_meta_storage = meta_store.write().await;
-                    guarded_meta_storage.insert(
-                        req_id,
-                        HandlerStatus::Error(anyhow_error_and_log("Failed to compute key info")),
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_storage.update(
+                        &req_id,
+                        HandlerStatus::Error("Failed to compute key info".to_string()),
                     );
                     return;
                 }
@@ -929,7 +923,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 //If everything succeeded, update state and store private key
                 {
                     let mut guarded_meta_storage = meta_store.write().await;
-                    guarded_meta_storage.insert(req_id.clone(), HandlerStatus::Done(info));
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_storage.update(&req_id, HandlerStatus::Done(info));
                 }
                 tracing::info!("Finished DKG for Request Id {req_id}.");
             } else {
@@ -963,11 +958,12 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 //If writing to public store failed, update status
                 {
                     let mut guarded_meta_storage = meta_store.write().await;
-                    guarded_meta_storage.insert(
-                        req_id,
-                        HandlerStatus::Error(anyhow_error_and_log(
-                            "Failed to write the public key to public store",
-                        )),
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_storage.update(
+                        &req_id,
+                        HandlerStatus::Error(
+                            "Failed to write the public key to public store".to_string(),
+                        ),
                     );
                 }
             }
@@ -1015,22 +1011,15 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         });
 
         //Ensure there's no entry in preproc buckets for that request_id
-        //If there is, put a None ther to signal this entry is being produced
         let entry_exists = {
-            let mut map = self.preproc_buckets.lock().await;
-            match map.entry(request_id.clone()) {
-                Entry::Vacant(entry) => {
-                    entry.insert((dkg_params, None));
-                    false
-                }
-                Entry::Occupied(_) => true,
-            }
+            let map = self.preproc_buckets.read().await;
+            map.exists(&request_id)
         };
 
         //If the entry did not exist before, start the preproc
         if !entry_exists {
             tracing::info!("Starting preproc generation for Request ID {}", request_id);
-            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, request_id.clone()), format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params))?;
+            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, request_id.clone()).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params))?;
         } else {
             tracing::warn!(
                 "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",
@@ -1049,60 +1038,28 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             inner.request_id.clone(),
             "Request ID is not set".to_string(),
         )?;
-
-        //Retrieve the DKG parameters
-        let params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params).await,
-            "Parameter choice is not recognized".to_string(),
-        )?;
-
-        let dkg_params = DKGParams::WithSnS(DKGParamsSnS {
-            regular_params: DKGParamsRegular {
-                sec: SEC_PAR,
-                ciphertext_parameters: params.ciphertext_parameters,
-                flag: true,
-            },
-            sns_params: params.sns_parameters,
-        });
-
         let response = {
-            let map = self.preproc_buckets.lock().await;
-            let entry = map.get(&request_id);
-
-            match entry {
+            let map = self.preproc_buckets.read().await;
+            match map.retrieve(&request_id) {
                 None => {
                     tracing::warn!(
                         "Requesting status for request id that does not exist {request_id}"
                     );
                     KeyGenPreprocStatusEnum::Missing
                 }
-                Some((_, Some(Err(e)))) => {
+                Some(HandlerStatus::Error(e)) => {
                     tracing::warn!(
                         "Error while generating keygen preproc for request id {request_id} : {e}"
                     );
                     KeyGenPreprocStatusEnum::Error
                 }
-                Some((params, None)) => {
-                    if dkg_params == *params {
-                        tracing::info!("Preproc for request id {request_id} is in progress.");
-                        KeyGenPreprocStatusEnum::InProgress
-                    } else {
-                        tracing::warn!(
-                            "Wrong parameters for get_preproc_status of request {request_id}"
-                        );
-                        KeyGenPreprocStatusEnum::WrongRequest
-                    }
+                Some(HandlerStatus::Started) => {
+                    tracing::info!("Preproc for request id {request_id} is in progress.");
+                    KeyGenPreprocStatusEnum::InProgress
                 }
-                Some((params, Some(Ok(_)))) => {
-                    if dkg_params == *params {
-                        tracing::info!("Preproc for request id {request_id} is finished.");
-                        KeyGenPreprocStatusEnum::Finished
-                    } else {
-                        tracing::warn!(
-                            "Wrong parameters for get_preproc_status of request {request_id}"
-                        );
-                        KeyGenPreprocStatusEnum::WrongRequest
-                    }
+                Some(HandlerStatus::Done(_)) => {
+                    tracing::info!("Preproc for request id {request_id} is finished.");
+                    KeyGenPreprocStatusEnum::Finished
                 }
             }
         };
@@ -1195,34 +1152,15 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 
         //separate scope to get mutex on preproc storage
         let preproc_entry = {
-            let mut map = self.preproc_buckets.lock().await;
-            map.remove(&preproc_id)
+            let mut map = self.preproc_buckets.write().await;
+            let preproc = map.delete(&preproc_id);
+            handle_res_mapping(preproc, &preproc_id, "Preprocessing")?
         };
-
-        match preproc_entry {
-            None => {
-                tracing::warn!("No preprocessing bucket found for preprocessing ID {preproc_id}");
-                return Err(tonic::Status::new(
-                    tonic::Code::NotFound,
-                    format!("No preprocessing bucket found for preprocessing ID {preproc_id}"),
-                ));
-            }
-            Some((rcved_params, preproc_handle)) => {
-                if rcved_params != dkg_params {
-                    return Err(tonic::Status::new(tonic::Code::InvalidArgument, format!("The preprocessing bucket found for preprocessing ID {preproc_id} does not match the requested KeyGen parameters")));
-                } else if let Some(Ok(preproc_handle)) = preproc_handle {
-                    tonic_handle_potential_err(
-                        self.launch_dkg(dkg_params, preproc_handle, request_id.clone())
-                            .await,
-                        format!("Error launching dkg for request ID {request_id}"),
-                    )?;
-                } else {
-                    //This can happen if the preprocessing is still ongoing or if the preprocessing
-                    // has crashed
-                    return Err(tonic::Status::new(tonic::Code::InvalidArgument, format!("The preprocessing bucket is not available for preprocessing ID {preproc_id}")));
-                }
-            }
-        }
+        tonic_handle_potential_err(
+            self.launch_dkg(dkg_params, preproc_entry, request_id.clone())
+                .await,
+            format!("Error launching dkg for request ID {request_id}"),
+        )?;
 
         //Always answer with Empty
         Ok(Response::new(Empty {}))
@@ -1235,10 +1173,14 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
         let guarded_meta_store = self.dkg_pubinfo_meta_store.read().await;
-        let res = guarded_meta_store.retrieve_result(&request_id, "DKG")?;
+        let res = handle_res_mapping(
+            guarded_meta_store.retrieve(&request_id).cloned(),
+            &request_id,
+            "DKG",
+        )?;
         Ok(Response::new(KeyGenResult {
             request_id: Some(request_id),
-            key_results: convert_key_response(res.clone()),
+            key_results: convert_key_response(res),
         }))
     }
 
@@ -1263,7 +1205,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         {
             let mut guarded_meta_store = self.reenc_meta_store.write().await;
             tonic_handle_potential_err(
-                guarded_meta_store.insert_request(&req_id, "Reencryption"),
+                guarded_meta_store.insert(&req_id),
                 "Could not insert reencryption request".to_string(),
             )?;
         }
@@ -1302,15 +1244,17 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             .await
             {
                 Ok(partial_dec) => {
-                    guarded_meta_store.insert(
-                        req_id,
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_store.update(
+                        &req_id,
                         HandlerStatus::Done((servers_needed, link, fhe_type, partial_dec)),
                     );
                 }
                 Result::Err(e) => {
-                    guarded_meta_store.insert(
-                        req_id,
-                        HandlerStatus::Error(anyhow!("Failed decryption: {e}")),
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_store.update(
+                        &req_id,
+                        HandlerStatus::Error(format!("Failed decryption: {e}")),
                     );
                 }
             }
@@ -1333,9 +1277,14 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 format!("The value {} is not a valid request ID!", request_id),
             ));
         }
+        // Retrieve the ReencMetaStore object
         let (servers_needed, link, fhe_type, signcrypted_ciphertext) = {
             let guarded_meta_store = self.reenc_meta_store.read().await;
-            guarded_meta_store.retrieve_result(&request_id, "Reencryption")?
+            handle_res_mapping(
+                guarded_meta_store.retrieve(&request_id).cloned(),
+                &request_id,
+                "Reencryption",
+            )?
         };
         let server_verf_key = tonic_handle_potential_err(
             serde_asn1_der::to_vec(&self.get_verf_key()),
@@ -1366,7 +1315,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         {
             let mut guarded_meta_store = self.dec_meta_store.write().await;
             tonic_handle_potential_err(
-                guarded_meta_store.insert_request(&req_id, "Decryption"),
+                guarded_meta_store.insert(&req_id),
                 "Could not insert decryption into meta store".to_string(),
             )?;
         }
@@ -1397,8 +1346,9 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 {
                     Ok(raw_decryption) => {
                         let plaintext = Plaintext::new(raw_decryption.0 as u128, fhe_type);
-                        guarded_meta_store.insert(
-                            req_id,
+                        // We cannot do much if updating the storage fails at this point...
+                        let _ = guarded_meta_store.update(
+                            &req_id,
                             HandlerStatus::Done((
                                 servers_needed,
                                 req_digest.clone(),
@@ -1407,9 +1357,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                         );
                     }
                     Result::Err(e) => {
-                        guarded_meta_store.insert(
-                            req_id,
-                            HandlerStatus::Error(anyhow!("Failed decryption: {e}")),
+                        // We cannot do much if updating the storage fails at this point...
+                        let _ = guarded_meta_store.update(
+                            &req_id,
+                            HandlerStatus::Error(format!("Failed decryption: {e}")),
                         );
                     }
                 }
@@ -1435,7 +1386,11 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         }
         let (servers_needed, req_digest, plaintext) = {
             let guarded_meta_store = self.dec_meta_store.read().await;
-            guarded_meta_store.retrieve_result(&request_id, "Decryption")?
+            handle_res_mapping(
+                guarded_meta_store.retrieve(&request_id).cloned(),
+                &request_id,
+                "Decryption",
+            )?
         };
         let decrypted_bytes = tonic_handle_potential_err(
             serde_asn1_der::to_vec(&plaintext),
@@ -1508,8 +1463,11 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
     ) -> Result<Response<CrsGenResult>, Status> {
         let request_id = request.into_inner();
         let guarded_meta_store = self.crs_meta_store.read().await;
-        let (digest, signature) =
-            guarded_meta_store.retrieve_result(&request_id, "CRS generation")?;
+        let (digest, signature) = handle_res_mapping(
+            guarded_meta_store.retrieve(&request_id).cloned(),
+            &request_id,
+            "CRS generation",
+        )?;
         Ok(Response::new(CrsGenResult {
             request_id: Some(request_id),
             crs_results: Some(FhePubKeyInfo {
@@ -1520,71 +1478,41 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
     }
 }
 
-/// Helper trait for handling internal stores for the threshold kms
-pub trait HandlerMap<T: Clone> {
-    /// Helper method for retrieving the result of a request from an appropriate meta store
-    /// [req_id] is the request ID to retrieve
-    /// [request_type] is a free-form string used only for error logging the origin of the failure
-    fn retrieve_result(&self, req_id: &RequestId, request_type: &str) -> Result<T, Status>;
-    /// Helper method for inserting a new request into an appropriate meta store
-    /// [req_id] is the request ID to insert
-    /// [request_type] is a free-form string used only for error logging the origin of the failure
-    fn insert_request(&mut self, req_id: &RequestId, request_type: &str) -> anyhow::Result<()>;
-}
-
-impl<T: Clone> HandlerMap<T> for HashMap<RequestId, HandlerStatus<T>> {
-    fn retrieve_result(&self, req_id: &RequestId, request_type: &str) -> Result<T, Status> {
-        match self.get(req_id) {
-            None => {
-                let msg = format!(
-                    "Could not retrieve {request_type} with request ID {} does not exist",
-                    req_id
-                );
-                tracing::warn!(msg);
-                Err(tonic::Status::new(tonic::Code::Unavailable, msg))
-            }
-            Some(HandlerStatus::Started) => {
-                let msg = format!(
+// TODO should we move this to meta_store.rs?
+/// Helper method for retrieving the result of a request from an appropriate meta store
+/// [req_id] is the request ID to retrieve
+/// [request_type] is a free-form string used only for error logging the origin of the failure
+fn handle_res_mapping<T>(
+    handle: Option<HandlerStatus<T>>,
+    req_id: &RequestId,
+    request_type: &str,
+) -> Result<T, Status> {
+    match handle {
+        None => {
+            let msg = format!(
+                "Could not retrieve {request_type} with request ID {}. It does not exist",
+                req_id
+            );
+            tracing::warn!(msg);
+            Err(tonic::Status::new(tonic::Code::NotFound, msg))
+        }
+        Some(HandlerStatus::Started) => {
+            let msg = format!(
                     "Could not retrieve {request_type} with request ID {} since it is not completed yet",
                     req_id
                 );
-                tracing::warn!(msg);
-                Err(tonic::Status::new(tonic::Code::Unavailable, msg))
-            }
-            Some(HandlerStatus::Error(e)) => {
-                let msg = format!(
+            tracing::warn!(msg);
+            Err(tonic::Status::new(tonic::Code::Unavailable, msg))
+        }
+        Some(HandlerStatus::Error(e)) => {
+            let msg = format!(
                     "Could not retrieve {request_type} with request ID {} since it finished with an error: {}",
                     req_id, e
                 );
-                tracing::warn!(msg);
-                Err(tonic::Status::new(tonic::Code::Unavailable, msg))
-            }
-            Some(HandlerStatus::Done(res)) => Ok(res.to_owned()),
+            tracing::warn!(msg);
+            Err(tonic::Status::new(tonic::Code::Unavailable, msg))
         }
-    }
-
-    fn insert_request(&mut self, req_id: &RequestId, request_type: &str) -> anyhow::Result<()> {
-        // do not generate a new Dec request if it already exists or it's already in progress
-        // also do not generate a new one if an error has occured
-        // let mut guarded_meta_store = self.dec_meta_store.lock().await;
-        match self.get(req_id) {
-            Some(HandlerStatus::Done(_)) => Err(anyhow_error_and_log(format!(
-                "{request_type} already done with request ID {}",
-                req_id
-            ))),
-            Some(HandlerStatus::Started) => Err(anyhow_error_and_log(format!(
-                "{request_type} already started with request ID {}",
-                req_id
-            ))),
-            Some(HandlerStatus::Error(e)) => Err(anyhow_error_and_log(format!(
-                "{request_type} request ID {} ended with error {}",
-                req_id, e
-            ))),
-            None => {
-                self.insert(req_id.clone(), HandlerStatus::Started);
-                Ok(())
-            }
-        }
+        Some(HandlerStatus::Done(res)) => Ok(res),
     }
 }
 

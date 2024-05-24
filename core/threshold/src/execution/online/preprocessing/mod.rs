@@ -1,5 +1,4 @@
 use self::redis::{redis_factory, CorrelatedRandomnessType, RedisConf};
-
 use super::triple::Triple;
 use crate::algebra::residue_poly::{ResiduePoly128, ResiduePoly64};
 use crate::execution::online::preprocessing::memory::memory_factory;
@@ -108,7 +107,7 @@ pub trait BitDecPreprocessing:
     ) -> anyhow::Result<()>;
 }
 
-/// Trait that a __store__ for correlated randomness related to the  
+/// Trait that a __store__ for correlated randomness related to the
 /// switch and squash distributed decryption needs to implement.
 ///
 /// Used in [`crate::execution::endpoints::decryption::run_decryption_noiseflood`]

@@ -22,6 +22,11 @@ pub const AMOUNT_PARTIES: usize = 4;
 pub const THRESHOLD: usize = 1;
 // TODO do we want to load this from a configuration?
 pub const SEC_PAR: u64 = 128;
+// TODO do we want to load this from a configuration?
+// The maximum amount of decryptions/reencryptions to be stored in RAM
+pub const DEC_CAPACITY: usize = 10000;
+// The minimum amount of completed decryptions/reencryptions to cache before old ones are evicted and new ones are allowed, if the store has reached its max capacity
+pub const MIN_DEC_CACHE: usize = 6000;
 pub const COMPRESSED: bool = true;
 
 pub const MINIMUM_SESSIONS_PREPROC: u16 = 2;
