@@ -8,15 +8,17 @@ use events::kms::TransactionEvent;
 use events::subscription::handler::{SubscriptionEventBuilder, SubscriptionHandler};
 use typed_builder::TypedBuilder;
 
+use super::SyncHandler;
+
 #[derive(Clone, TypedBuilder)]
-pub struct KmsConnectorEventHandler<B, K, O> {
+pub struct KmsCoreEventHandler<B, K, O> {
     blockchain: B,
     kms: K,
     observability: O,
 }
 
 #[async_trait::async_trait]
-impl<B, K, O> SubscriptionHandler for KmsConnectorEventHandler<B, K, O>
+impl<B, K, O> SubscriptionHandler for KmsCoreEventHandler<B, K, O>
 where
     B: Blockchain + Send + Sync,
     K: Kms + Send + Sync + Clone + 'static,
@@ -61,19 +63,19 @@ where
 }
 
 #[derive(Clone, TypedBuilder)]
-pub struct SyncHandler<B, K, O> {
-    kms_connector_handler: KmsConnectorEventHandler<B, K, O>,
+pub struct KmsCoreSyncHandler<B, K, O> {
+    kms_connector_handler: KmsCoreEventHandler<B, K, O>,
     config: ConnectorConfig,
 }
 
-impl<B, K, O> SyncHandler<B, K, O>
+impl<B, K, O> KmsCoreSyncHandler<B, K, O>
 where
     B: Blockchain + Clone + 'static + Send + Sync,
     K: Kms + Clone + 'static + Send + Sync,
     O: Metrics + Clone + 'static + Send + Sync,
 {
     pub async fn new(blockchain: B, kms: K, metrics: O) -> anyhow::Result<Self> {
-        let handler = KmsConnectorEventHandler {
+        let handler = KmsCoreEventHandler {
             blockchain,
             kms,
             observability: metrics,
@@ -85,14 +87,14 @@ where
     }
 }
 
-impl SyncHandler<KmsBlockchain, KmsCoordinator, OpenTelemetryMetrics> {
+impl KmsCoreSyncHandler<KmsBlockchain, KmsCoordinator, OpenTelemetryMetrics> {
     pub async fn new_with_config(config: ConnectorConfig) -> anyhow::Result<Self> {
         let metrics = OpenTelemetryMetrics::new();
         let blockchain = KmsBlockchain::new(config.blockchain.clone(), metrics.clone()).await?;
         // TODO the coordinator should read the addresses from the blockchain
         // instead of the config
         let kms = KmsCoordinator::new(config.coordinator.clone(), metrics.clone()).await?;
-        let handler = KmsConnectorEventHandler {
+        let handler = KmsCoreEventHandler {
             blockchain,
             kms,
             observability: metrics,
@@ -104,13 +106,14 @@ impl SyncHandler<KmsBlockchain, KmsCoordinator, OpenTelemetryMetrics> {
     }
 }
 
-impl<B, K, O> SyncHandler<B, K, O>
+#[async_trait::async_trait]
+impl<B, K, O> SyncHandler for KmsCoreSyncHandler<B, K, O>
 where
     B: Blockchain + Send + Sync + Clone + 'static,
     K: Kms + Send + Sync + Clone + 'static,
     O: Metrics + Send + Sync + Clone + 'static,
 {
-    pub async fn listen_for_events(self) -> anyhow::Result<()> {
+    async fn listen_for_events(self) -> anyhow::Result<()> {
         let grpc_addresses = self.config.blockchain.grpc_addresses();
 
         let subscription = SubscriptionEventBuilder::builder()

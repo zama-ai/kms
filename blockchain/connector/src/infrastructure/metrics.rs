@@ -16,6 +16,8 @@ pub enum MetricType {
     CoordinatorError,
     CoordinatorResponseSuccess,
     CoordinatorResponseError,
+    OracleSuccess,
+    OracleError,
 }
 
 #[derive(Clone, Default)]
@@ -70,6 +72,14 @@ impl OpenTelemetryMetrics {
                 "Count the number of failed coordinator responses (not including polling)",
             )
             .init();
+        let oracle_success = meter
+            .u64_observable_counter("oracle_success")
+            .with_description("Count the number of successful oracle requests")
+            .init();
+        let oracle_error = meter
+            .u64_observable_counter("oracle_error")
+            .with_description("Count the number of failed oracle requests")
+            .init();
         let counters = vec![
             (MetricType::TxProcessed, connector_txs_processed),
             (MetricType::TxError, connector_txs_error),
@@ -91,6 +101,8 @@ impl OpenTelemetryMetrics {
                 MetricType::CoordinatorResponseError,
                 coordinator_response_error,
             ),
+            (MetricType::OracleSuccess, oracle_success),
+            (MetricType::OracleError, oracle_error),
         ]
         .into_iter()
         .collect::<DashMap<MetricType, ObservableCounter<u64>>>();

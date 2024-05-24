@@ -85,14 +85,6 @@ services:
       - 4318:4318 # OTLP http receiver
       - 55679:55679 # zpages extension
 
-  smart-contract-explorer:
-    build:
-      context: blockchain/code-explorer
-    ports:
-      - "3000:3000"
-    depends_on:
-      - kms-full-node
-    profiles: [ "ui" ]
 
 volumes:
   validator-data:

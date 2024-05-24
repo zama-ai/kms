@@ -141,6 +141,11 @@ impl TimeoutConfig {
 }
 
 #[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
+pub struct OracleConfig {
+    pub addresses: Vec<String>,
+}
+
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
 pub struct ConnectorConfig {
     pub tick_interval_secs: u64,
     pub storage_path: String,
@@ -148,6 +153,7 @@ pub struct ConnectorConfig {
     pub tracing: Option<Tracing>,
     pub blockchain: BlockchainConfig,
     pub coordinator: CoordinatorConfig,
+    pub oracle: OracleConfig,
 }
 
 impl BlockchainConfig {

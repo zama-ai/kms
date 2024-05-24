@@ -3,11 +3,12 @@ use events::kms::{
     TransactionId,
 };
 use events::kms::{KmsOperation, OperationValue};
-use events::subscription::handler::EventsMode;
-use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder};
 use kms_blockchain_client::query_client::{QueryClient, QueryClientBuilder};
-use kms_blockchain_connector::application::sync_handler::{KmsConnectorEventHandler, SyncHandler};
+use kms_blockchain_connector::application::kms_core_sync::{
+    KmsCoreEventHandler, KmsCoreSyncHandler,
+};
+use kms_blockchain_connector::application::SyncHandler;
 use kms_blockchain_connector::conf::telemetry::init_tracing;
 use kms_blockchain_connector::conf::{
     BlockchainConfig, ConnectorConfig, ContractFee, SignKeyConfig, Tracing,
@@ -27,9 +28,10 @@ use std::time::Duration;
 use test_context::{test_context, AsyncTestContext};
 use test_utilities::context::DockerCompose;
 use tokio::fs;
-use tokio::sync::mpsc::{channel, Sender};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::{oneshot, RwLock};
 use tokio::time::sleep;
+
 struct DockerComposeContext {
     cmd: DockerCompose,
 }
@@ -107,8 +109,6 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
             .unwrap(),
     );
 
-    start_kms_config(&client).await;
-
     // Send decryption request to the blockchain in order to get events after
     let txhash = send_decrypt_request(&client).await;
 
@@ -119,9 +119,20 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
 
     let (tx, mut rc) = channel(1);
     // Start SyncHandler to listen events
-    let handler = start_handler(addresses.clone(), &contract_address, mnemonic, tx).await;
+    let handler = start_sync_handler(addresses.clone(), &contract_address, mnemonic, tx).await;
 
     // Wait for the event to be processed and send the response back to the blockchain
+    wait_for_event_response(handler, &contract_address, query_client, &mut rc).await;
+}
+
+async fn wait_for_event_response<T>(
+    handler: T,
+    contract_address: &str,
+    query_client: Arc<QueryClient>,
+    rc: &mut Receiver<KmsEvent>,
+) where
+    T: SyncHandler + Send + Sync + 'static,
+{
     let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut interval = tokio::time::interval(Duration::from_secs(1));
     let (timeout_tx, timeout_rx) = oneshot::channel();
@@ -154,44 +165,6 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     }
 
     assert_eq!(counter.load(std::sync::atomic::Ordering::Acquire), 1);
-}
-
-async fn start_kms_config(client: &RwLock<Client>) {
-    let request = serde_json::json!({
-        "update_kms_core_conf": {
-            "conf": {
-                "threshold": {
-                    "parties": [{
-                       "party_id": HexVector(vec![1]),
-                       "public_key": HexVector(vec![1, 2, 3, 4, 5]),
-                       "address": "http://localhost:9090",
-                    },
-                    {
-                       "party_id": HexVector(vec![2]),
-                       "public_key": HexVector(vec![1, 2, 3, 4, 5]),
-                       "address": "http://localhost:9090",
-                    },
-                    {
-                       "party_id": HexVector(vec![3]),
-                       "public_key": HexVector(vec![1, 2, 3, 4, 5]),
-                       "address": "http://localhost:9090",
-                    },
-                    {
-                       "party_id": HexVector(vec![4]),
-                       "public_key": HexVector(vec![1, 2, 3, 4, 5]),
-                       "address": "http://localhost:9090",
-                    }
-                    ]
-                },
-            }
-        }
-    });
-    client
-        .write()
-        .await
-        .execute_contract(request.to_string().as_bytes(), 200_000u64)
-        .await
-        .unwrap();
 }
 
 #[retry(stop=(attempts(4)|duration(20)),wait=fixed(5))]
@@ -247,12 +220,12 @@ async fn get_contract_address(client: &QueryClient) -> anyhow::Result<String> {
     }
 }
 
-async fn start_handler(
+async fn start_sync_handler(
     addresses: Vec<&str>,
     contract_address: &str,
     mnemonic: Option<String>,
     tx: Sender<KmsEvent>,
-) -> SyncHandler<KmsBlockchain, KmsMock, OpenTelemetryMetrics> {
+) -> KmsCoreSyncHandler<KmsBlockchain, KmsMock, OpenTelemetryMetrics> {
     let blockchain_config = BlockchainConfig {
         addresses: addresses
             .clone()
@@ -276,13 +249,12 @@ async fn start_handler(
     let connector_config = ConnectorConfig {
         tick_interval_secs: 1,
         storage_path: "tests/data/events.toml".to_string(),
-        mode: Some(EventsMode::Request),
         blockchain: blockchain_config,
         ..Default::default()
     };
-    SyncHandler::builder()
+    KmsCoreSyncHandler::builder()
         .kms_connector_handler(
-            KmsConnectorEventHandler::builder()
+            KmsCoreEventHandler::builder()
                 .blockchain(blockchain)
                 .kms(KmsMock {
                     channel: Arc::new(tx),
