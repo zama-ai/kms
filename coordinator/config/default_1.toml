@@ -1,0 +1,10 @@
+url = "127.0.0.1"
+base_port = 50000
+parties = 4
+threshold = 1
+my_id = 1
+timeout_secs = 360
+num_sessions_preproc = 2
+
+# [preproc_redis_conf]
+# host = "redis://127.0.0.1"

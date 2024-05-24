@@ -24,7 +24,7 @@ pub const THRESHOLD: usize = 1;
 pub const SEC_PAR: u64 = 128;
 pub const COMPRESSED: bool = true;
 
-pub const MINIMUM_SESSIONS_PREPROC: u128 = 2;
+pub const MINIMUM_SESSIONS_PREPROC: u16 = 2;
 
 lazy_static! {
     pub static ref TEST_CENTRAL_KEY_ID: RequestId =

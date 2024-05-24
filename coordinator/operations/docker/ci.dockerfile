@@ -24,7 +24,8 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
     cargo install --path . --root . --bin kms-server --bin kms-gen-keys
 RUN cargo test -F slow_tests --release
-# RUN /app/kms/coordinator/bin/kms-gen-keys /app/kms/coordinator/temp/default-central-keys.bin
+RUN rm -rf temp crs keys
+RUN /app/kms/coordinator/bin/kms-gen-keys centralized
 
 # Second stage builds the runtime image.
 # This stage will be the final image

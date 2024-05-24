@@ -85,7 +85,7 @@ pub async fn ensure_dir_exist() {
     fs::create_dir_all(KEY_PATH_PREFIX).await.unwrap();
 }
 
-pub async fn ensure_client_keys_exist() {
+pub async fn ensure_client_keys_exist(deterministic: bool) {
     let mut client_storage = FileStorage::new(&StorageType::CLIENT.to_string());
     let temp: HashMap<RequestId, PrivateSigKey> =
         read_all_data(&client_storage, &ClientDataType::SigningKey.to_string())
@@ -95,7 +95,11 @@ pub async fn ensure_client_keys_exist() {
         // If signing keys already exit, then do nothing
         return;
     }
-    let mut rng = AesRng::seed_from_u64(42);
+    let mut rng = if deterministic {
+        AesRng::seed_from_u64(42)
+    } else {
+        AesRng::from_entropy()
+    };
     let (client_pk, client_sk) = gen_sig_keys(&mut rng);
     // TODO is this how we want to compute the handles? Do we instead want to compute them from a static string
     // since we only ever expect there to be one?
@@ -117,7 +121,7 @@ pub async fn ensure_client_keys_exist() {
     .unwrap();
 }
 
-pub async fn ensure_central_server_signing_keys_exist() {
+pub async fn ensure_central_server_signing_keys_exist(deterministic: bool) {
     let mut priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
     let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
     let temp: HashMap<RequestId, PrivateSigKey> =
@@ -128,7 +132,11 @@ pub async fn ensure_central_server_signing_keys_exist() {
         // If signing keys already exit, then do nothing
         return;
     }
-    let mut rng = AesRng::seed_from_u64(1337);
+    let mut rng = if deterministic {
+        AesRng::seed_from_u64(1337)
+    } else {
+        AesRng::from_entropy()
+    };
     let (pk, sk) = gen_sig_keys(&mut rng);
     store_at_request_id(
         &mut pub_storage,
@@ -148,7 +156,7 @@ pub async fn ensure_central_server_signing_keys_exist() {
     .unwrap();
 }
 
-pub async fn ensure_threshold_server_signing_keys_exist() {
+pub async fn ensure_threshold_server_signing_keys_exist(deterministic: bool) {
     for i in 1..=AMOUNT_PARTIES {
         let mut priv_storage = FileStorage::new(&format!("priv-p{i}"));
         let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
@@ -160,7 +168,11 @@ pub async fn ensure_threshold_server_signing_keys_exist() {
             // If signing keys already exit, then do nothing
             return;
         }
-        let mut rng = AesRng::seed_from_u64(i as u64);
+        let mut rng = if deterministic {
+            AesRng::seed_from_u64(i as u64)
+        } else {
+            AesRng::from_entropy()
+        };
         let (pk, sk) = gen_sig_keys(&mut rng);
         store_at_request_id(
             &mut pub_storage,
@@ -181,16 +193,23 @@ pub async fn ensure_threshold_server_signing_keys_exist() {
     }
 }
 
-pub async fn ensure_threshold_keys_exist(param_path: &str, key_id: &str) {
+pub async fn ensure_threshold_keys_exist(
+    param_path: &str,
+    key_id: &RequestId,
+    deterministic: bool,
+) {
     // TODO generalize setup for multiple keys
-    let key_req_id = key_id.to_owned().try_into().unwrap();
-    let mut rng = AesRng::seed_from_u64(AMOUNT_PARTIES as u64);
-    ensure_threshold_server_signing_keys_exist().await;
+    let mut rng = if deterministic {
+        AesRng::seed_from_u64(AMOUNT_PARTIES as u64)
+    } else {
+        AesRng::from_entropy()
+    };
+    ensure_threshold_server_signing_keys_exist(deterministic).await;
     let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
     if pub_storage
         .data_exists(
             &pub_storage
-                .compute_url(key_id, &PubDataType::PublicKey.to_string())
+                .compute_url(&key_id.to_string(), &PubDataType::PublicKey.to_string())
                 .unwrap(),
         )
         .await
@@ -214,7 +233,7 @@ pub async fn ensure_threshold_keys_exist(param_path: &str, key_id: &str) {
     let sns_key = key_set.public_keys.sns_key.unwrap();
     store_at_request_id(
         &mut pub_storage,
-        &key_req_id,
+        key_id,
         &key_set.public_keys.public_key,
         &PubDataType::PublicKey.to_string(),
     )
@@ -222,7 +241,7 @@ pub async fn ensure_threshold_keys_exist(param_path: &str, key_id: &str) {
     .unwrap();
     store_at_request_id(
         &mut pub_storage,
-        &key_req_id,
+        key_id,
         &key_set.public_keys.server_key,
         &PubDataType::ServerKey.to_string(),
     )
@@ -237,7 +256,7 @@ pub async fn ensure_threshold_keys_exist(param_path: &str, key_id: &str) {
         let mut priv_storage = FileStorage::new(&format!("priv-p{i}"));
         store_at_request_id(
             &mut priv_storage,
-            &key_req_id,
+            key_id,
             &threshold_fhe_keys,
             &PrivDataType::FheKeyInfo.to_string(),
         )
@@ -246,8 +265,12 @@ pub async fn ensure_threshold_keys_exist(param_path: &str, key_id: &str) {
     }
 }
 
-pub async fn ensure_central_crs_store_exists(param_path: &str, crs_handle: &RequestId) {
-    ensure_central_server_signing_keys_exist().await;
+pub async fn ensure_central_crs_store_exists(
+    param_path: &str,
+    crs_handle: &RequestId,
+    deterministic: bool,
+) {
+    ensure_central_server_signing_keys_exist(deterministic).await;
     let mut priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
     let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
     if pub_storage
@@ -278,7 +301,11 @@ pub async fn ensure_central_crs_store_exists(param_path: &str, crs_handle: &Requ
         .to_owned();
 
     let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
-    let mut rng = AesRng::seed_from_u64(42);
+    let mut rng = if deterministic {
+        AesRng::seed_from_u64(42)
+    } else {
+        AesRng::from_entropy()
+    };
     let crs = gen_centralized_crs(&params, &mut rng).unwrap();
 
     let kms = BaseKmsStruct::new(sk);
@@ -306,10 +333,11 @@ pub async fn ensure_central_keys_exist(
     param_path: &str,
     key_id: &RequestId,
     other_key_id: &RequestId,
+    deterministic: bool,
 ) {
     println!("Generating new centralized multiple keys with ids {key_id} and {other_key_id}");
 
-    ensure_central_server_signing_keys_exist().await;
+    ensure_central_server_signing_keys_exist(deterministic).await;
     let mut priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
     let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
     if pub_storage
@@ -397,15 +425,16 @@ mod tests {
     #[ctor::ctor]
     async fn ensure_testing_material_exists() {
         ensure_dir_exist().await;
-        ensure_client_keys_exist().await;
+        ensure_client_keys_exist(true).await;
         ensure_central_keys_exist(
             TEST_PARAM_PATH,
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,
+            true,
         )
         .await;
-        ensure_central_crs_store_exists(TEST_PARAM_PATH, &TEST_CRS_ID).await;
-        ensure_threshold_keys_exist(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID.to_string()).await;
+        ensure_central_crs_store_exists(TEST_PARAM_PATH, &TEST_CRS_ID, true).await;
+        ensure_threshold_keys_exist(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID, true).await;
     }
 
     #[cfg(feature = "slow_tests")]
@@ -418,15 +447,15 @@ mod tests {
         };
 
         ensure_dir_exist().await;
-        ensure_client_keys_exist().await;
+        ensure_client_keys_exist(true).await;
         ensure_central_keys_exist(
             DEFAULT_PARAM_PATH,
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
+            true,
         )
         .await;
-        ensure_central_crs_store_exists(DEFAULT_PARAM_PATH, &DEFAULT_CRS_ID).await;
-        ensure_threshold_keys_exist(DEFAULT_PARAM_PATH, &DEFAULT_THRESHOLD_KEY_ID.to_string())
-            .await;
+        ensure_central_crs_store_exists(DEFAULT_PARAM_PATH, &DEFAULT_CRS_ID, true).await;
+        ensure_threshold_keys_exist(DEFAULT_PARAM_PATH, &DEFAULT_THRESHOLD_KEY_ID, true).await;
     }
 }

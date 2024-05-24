@@ -386,7 +386,7 @@ mod tests {
     use tracing_test::traced_test;
 
     /// Helper method for generating keys for digital signatures
-    pub fn signing_key_generation(
+    fn signing_key_generation(
         rng: &mut (impl CryptoRng + RngCore),
     ) -> (PublicSigKey, PrivateSigKey) {
         let sk = SigningKey::random(rng);

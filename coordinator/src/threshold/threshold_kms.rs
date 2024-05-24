@@ -73,30 +73,46 @@ use tonic::{Request, Response, Status};
 pub const PORT_JUMP: u16 = 100;
 pub const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ThresholdConfig {
+    pub url: String,
+    pub base_port: u16,
+    pub parties: usize,
+    pub threshold: u8,
+    pub my_id: usize,
+    pub timeout_secs: u64,
+    pub preproc_redis_conf: Option<RedisConf>,
+    pub num_sessions_preproc: Option<u16>,
+}
+
+impl ThresholdConfig {
+    pub fn init_config(fname: &str) -> anyhow::Result<ThresholdConfig> {
+        let config: ThresholdConfig = config::Config::builder()
+            .add_source(config::File::with_name(fname))
+            .add_source(config::Environment::with_prefix("KMS"))
+            .build()?
+            .try_deserialize()?;
+        Ok(config)
+    }
+}
+
 /// Initialize a threshold KMS server using the DDec initialization protocol.
 /// This MUST be done before the server is started.
-#[allow(clippy::too_many_arguments)]
 pub async fn threshold_server_init<
     PubS: PublicStorage + Sync + Send + 'static,
     PrivS: PublicStorage + Sync + Send + 'static,
 >(
-    url: String,
-    base_port: u16,
-    parties: usize,
-    threshold: u8,
-    my_id: usize,
-    preproc_redis_conf: Option<RedisConf>,
-    num_sessions_preproc: Option<u128>,
+    config: ThresholdConfig,
     public_storage: PubS,
     private_storage: PrivS,
 ) -> anyhow::Result<ThresholdKms<PubS, PrivS>> {
     //If no RedisConf is provided, we just use in-memory storage for the preprocessing buckets.
     //NOTE: This should probably only be allowed for testing
-    let factory = match preproc_redis_conf {
+    let factory = match config.preproc_redis_conf {
         None => create_memory_factory(),
-        Some(conf) => create_redis_factory(format!("PARTY_{my_id}"), &conf),
+        Some(conf) => create_redis_factory(format!("PARTY_{}", config.my_id), &conf),
     };
-    let num_sessions_preproc = if let Some(x) = num_sessions_preproc {
+    let num_sessions_preproc = if let Some(x) = config.num_sessions_preproc {
         if x < MINIMUM_SESSIONS_PREPROC {
             MINIMUM_SESSIONS_PREPROC
         } else {
@@ -106,20 +122,25 @@ pub async fn threshold_server_init<
         MINIMUM_SESSIONS_PREPROC
     };
     let mut kms = ThresholdKms::new(
-        parties,
-        threshold,
-        &url,
-        base_port,
-        my_id,
+        config.parties,
+        config.threshold,
+        &config.url,
+        config.base_port,
+        config.my_id,
         factory,
         num_sessions_preproc,
         public_storage,
         private_storage,
     )
     .await?;
-    tracing::info!("Initializing threshold KMS server for {my_id}...");
+
+    tracing::info!("Initializing threshold KMS server for {}...", config.my_id);
     kms.init().await?;
-    tracing::info!("Initialization done! Starting threshold KMS server for {my_id} ...");
+
+    tracing::info!(
+        "Initialization done! Starting threshold KMS server for {} ...",
+        config.my_id
+    );
     Ok(kms)
 }
 
@@ -132,9 +153,9 @@ pub async fn threshold_server_start<
     url: String,
     base_port: u16,
     timeout_secs: u64,
-    my_id: usize,
     kms_server: ThresholdKms<PubS, PrivS>,
 ) -> anyhow::Result<()> {
+    let my_id = kms_server.my_id;
     let port = base_port + (my_id as u16);
     let socket: std::net::SocketAddr = format!("{}:{}", url, port).parse()?;
     tracing::info!("Starting server {my_id}");
@@ -252,9 +273,8 @@ pub struct ThresholdKms<
     prss_setup: Option<PRSSSetup<ResiduePoly128>>,
     preproc_buckets: Arc<Mutex<RequestIDBucketMap>>,
     preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
-    num_sessions_preproc: u128,
-    // NOTE: To avoid deadlocks the public_storage MUST ALWAYS be accessed BEFORE the
-    // private_storage when both are needed concurrently
+    num_sessions_preproc: u16,
+    // NOTE: To avoid deadlocks the public_storage MUST ALWAYS be accessed BEFORE the private_storage when both are needed concurrently
     public_storage: Arc<Mutex<PubS>>,
     private_storage: Arc<Mutex<PrivS>>,
     // TODO data is never deleted from these stores so the ram will fill up. This should be handled
@@ -275,7 +295,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         base_port: u16,
         my_id: usize,
         preproc_factory: Box<dyn PreprocessorFactory>,
-        num_sessions_preproc: u128,
+        num_sessions_preproc: u16,
         public_storage: PubS,
         private_storage: PrivS,
     ) -> anyhow::Result<Self> {
@@ -317,6 +337,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         let mut server = Server::builder();
         let router = server.add_service(networking_server);
         let addr: SocketAddr = format!("{url}:{port}").parse()?;
+
+        tracing::info!("Starting ddec for {}.", own_identity);
         let ddec_handle = tokio::spawn(async move {
             match router.serve(addr).await {
                 Ok(handle) => Ok(handle),
@@ -368,6 +390,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng()?)?;
 
         // TODO does this work with base session? we have a catch 22 otherwise
+        tracing::info!("Starting PRSS for {}.", own_identity);
         self.prss_setup = Some(
             PRSSSetup::init_with_abort::<
                 RealAgreeRandomWithAbort,
@@ -385,6 +408,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             "Could not find my own identity in role assignments".to_string(),
         )?;
         Ok(id.to_owned())
+    }
+
+    pub fn my_id(&self) -> usize {
+        self.my_id
     }
 
     pub fn shutdown(&self) {
@@ -711,7 +738,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         let session_id: u128 = request_id.clone().try_into()?;
         let own_identity = self.own_identity()?;
         let my_id = self.my_id;
-        let base_sessions: Vec<_> = (session_id..session_id + self.num_sessions_preproc)
+        let base_sessions: Vec<_> = (session_id..session_id + self.num_sessions_preproc as u128)
             .map(|sid| {
                 let session_id = SessionId(sid);
                 let params = SessionParameters::new(
@@ -1559,4 +1586,15 @@ impl<T: Clone> HandlerMap<T> for HashMap<RequestId, HandlerStatus<T>> {
             }
         }
     }
+}
+
+#[test]
+fn test_threshold_config() {
+    let config = ThresholdConfig::init_config("config/default_1").unwrap();
+    assert_eq!(config.url, "127.0.0.1");
+    assert_eq!(config.base_port, 50000);
+    assert_eq!(config.parties, 4);
+    assert_eq!(config.threshold, 1);
+    assert_eq!(config.num_sessions_preproc, Some(2));
+    assert!(config.preproc_redis_conf.is_none());
 }

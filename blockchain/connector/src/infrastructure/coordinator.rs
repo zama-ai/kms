@@ -711,8 +711,8 @@ mod test {
 
     async fn setup_keys() {
         ensure_dir_exist().await;
-        ensure_threshold_keys_exist(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID.to_string()).await;
-        ensure_client_keys_exist().await;
+        ensure_threshold_keys_exist(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID, true).await;
+        ensure_client_keys_exist(true).await;
     }
 
     /// Before running this function, ensure [setup_keys] is executed

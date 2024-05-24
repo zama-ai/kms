@@ -1452,7 +1452,9 @@ pub mod test_tools {
     use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
     use crate::rpc::central_rpc::server_handle;
     use crate::storage::{FileStorage, PublicStorage, RamStorage, StorageType, StorageVersion};
-    use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
+    use crate::threshold::threshold_kms::{
+        threshold_server_init, threshold_server_start, ThresholdConfig,
+    };
     use std::net::SocketAddr;
     use std::str::FromStr;
     use tokio::task::JoinHandle;
@@ -1469,22 +1471,22 @@ pub mod test_tools {
         let mut handles = Vec::new();
         tracing::info!("Spawning servers...");
         let amount = priv_storage.len();
+        let timeout_secs = 360u64;
         for i in 1..=amount {
             let cur_pub_storage = pub_storage.clone();
             let cur_priv_storage = priv_storage[i - 1].to_owned();
             handles.push(tokio::spawn(async move {
-                let server = threshold_server_init(
-                    DEFAULT_URL.to_owned(),
-                    BASE_PORT,
-                    amount,
+                let config = ThresholdConfig {
+                    url: DEFAULT_URL.to_owned(),
+                    base_port: BASE_PORT,
+                    parties: amount,
                     threshold,
-                    i,
-                    None,
-                    None,
-                    cur_pub_storage,
-                    cur_priv_storage,
-                )
-                .await;
+                    my_id: i,
+                    timeout_secs,
+                    preproc_redis_conf: None,
+                    num_sessions_preproc: None,
+                };
+                let server = threshold_server_init(config, cur_pub_storage, cur_priv_storage).await;
                 (i, server)
             }));
         }
@@ -1501,10 +1503,15 @@ pub mod test_tools {
         tracing::info!("Servers initialized. Starting servers...");
         let mut server_handles = HashMap::new();
         for (i, cur_server) in servers {
+            assert_eq!(i, cur_server.my_id());
             let handle = tokio::spawn(async move {
-                let _ =
-                    threshold_server_start(DEFAULT_URL.to_owned(), BASE_PORT, 360, i, cur_server)
-                        .await;
+                let _ = threshold_server_start(
+                    DEFAULT_URL.to_owned(),
+                    BASE_PORT,
+                    timeout_secs,
+                    cur_server,
+                )
+                .await;
             });
             server_handles.insert(i as u32, handle);
         }

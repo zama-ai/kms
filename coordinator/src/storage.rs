@@ -122,7 +122,10 @@ pub async fn read_all_data<S: PublicStorageReader, Ser: DeserializeOwned + Seria
     let url_map = storage.all_urls(data_type).await?;
     let mut res = HashMap::with_capacity(url_map.len());
     for (data_ptr, url) in url_map.iter() {
-        let data: Ser = storage.read_data(url).await?;
+        let data: Ser = storage
+            .read_data(url)
+            .await
+            .map_err(|e| anyhow!("reading failed on url {url} with error {e}"))?;
         let req_id: RequestId = data_ptr.to_owned().try_into()?;
         if !req_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
