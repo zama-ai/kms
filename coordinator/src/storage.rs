@@ -66,29 +66,6 @@ pub async fn store_at_request_id<S: PublicStorage, Ser: Serialize + Send + Sync 
     })
 }
 
-// Helper method for storing data based on a data type and request ID.
-// Will not do anything if the data already exists, but will trace a warning if that is the case.
-pub async fn lazy_store_at_request_id<
-    S: PublicStorage,
-    Ser: serde::Serialize + Send + Sync + ?Sized,
->(
-    storage: &mut S,
-    request_id: &RequestId,
-    data: &Ser,
-    data_type: &str,
-) -> anyhow::Result<()> {
-    let url = storage.compute_url(&request_id.to_string(), data_type)?;
-    if storage.data_exists(&url).await? {
-        tracing::warn!(
-            "Data with ID {} and type {} already exists!",
-            request_id,
-            data_type
-        );
-        return Ok(());
-    }
-    store_at_request_id(storage, request_id, data, data_type).await
-}
-
 // Helper method to remove data based on a data type and request ID.
 pub async fn delete_at_request_id<S: PublicStorage>(
     storage: &mut S,
@@ -170,9 +147,15 @@ impl FileStorage {
         Ok(PathBuf::from(root_path))
     }
 
-    pub fn new(extra_prefix: &str) -> Self {
+    pub fn new_central(storage_type: StorageType) -> Self {
         Self {
-            extra_prefix: extra_prefix.to_owned(),
+            extra_prefix: storage_type.to_string(),
+        }
+    }
+
+    pub fn new_threshold(storage_type: StorageType, party_id: usize) -> Self {
+        Self {
+            extra_prefix: format!("{storage_type}-p{party_id}"),
         }
     }
 }
@@ -430,8 +413,12 @@ mod tests {
     async fn threshold_dev_storage() {
         let prefix1 = "p1";
         let prefix2 = "p2";
-        let mut storage1 = FileStorage::new(prefix1);
-        let storage2 = FileStorage::new(prefix2);
+        let mut storage1 = FileStorage {
+            extra_prefix: prefix1.to_string(),
+        };
+        let storage2 = FileStorage {
+            extra_prefix: prefix2.to_string(),
+        };
 
         // clear out storage
         let _ = fs::remove_dir_all(storage1.root_dir().unwrap());

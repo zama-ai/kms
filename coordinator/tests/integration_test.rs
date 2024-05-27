@@ -1,5 +1,5 @@
 use assert_cmd::{assert::OutputAssertExt, Command};
-use kms_lib::consts::{KEY_PATH_PREFIX, TMP_PATH_PREFIX};
+use kms_lib::consts::{AMOUNT_PARTIES, KEY_PATH_PREFIX, TMP_PATH_PREFIX};
 use kms_lib::storage::{FileStorage, StorageType};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -39,10 +39,16 @@ fn purge_file_storage(storage: &FileStorage) {
 }
 
 fn purge_all() {
-    let priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
-    let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+    let priv_storage = FileStorage::new_central(StorageType::PRIV);
+    let pub_storage = FileStorage::new_central(StorageType::PUB);
     purge_file_storage(&priv_storage);
     purge_file_storage(&pub_storage);
+    for i in 1..=AMOUNT_PARTIES {
+        let priv_storage = FileStorage::new_threshold(StorageType::PRIV, i);
+        let pub_storage = FileStorage::new_threshold(StorageType::PUB, i);
+        purge_file_storage(&priv_storage);
+        purge_file_storage(&pub_storage);
+    }
 
     let tmp_dir = PathBuf::from_str(TMP_PATH_PREFIX).unwrap();
     if tmp_dir.exists() {

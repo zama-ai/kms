@@ -31,6 +31,8 @@ use tokio::fs;
 pub type FhePublicKey = tfhe::CompactPublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
 
+// TODD The code here should be split s.t. that generation code stays in production and everything else goes to the test package
+
 pub fn compute_cipher(msg: u8, pk: &FhePublicKey) -> (Vec<u8>, FheType) {
     let ct = FheUint8::encrypt(msg, pk);
     let mut serialized_ct = Vec::new();
@@ -39,39 +41,55 @@ pub fn compute_cipher(msg: u8, pk: &FhePublicKey) -> (Vec<u8>, FheType) {
 }
 
 pub async fn compute_cipher_from_storage(msg: u8, key_id: &str) -> (Vec<u8>, FheType) {
-    let storage = FileStorage::new(&StorageType::PUB.to_string());
-    let pk = storage
-        .read_data(
-            &storage
-                .compute_url(key_id, &PubDataType::PublicKey.to_string())
-                .unwrap(),
-        )
-        .await
+    // Try first with centralized storage
+    let storage = FileStorage::new_central(StorageType::PUB);
+    let url = storage
+        .compute_url(key_id, &PubDataType::PublicKey.to_string())
         .unwrap();
+    let pk = if storage.data_exists(&url).await.unwrap() {
+        storage.read_data(&url).await.unwrap()
+    } else {
+        // Try with the threshold storage
+        let storage = FileStorage::new_threshold(StorageType::PUB, 1);
+        let url = storage
+            .compute_url(key_id, &PubDataType::PublicKey.to_string())
+            .unwrap();
+        storage.read_data(&url).await.unwrap()
+    };
     compute_cipher(msg, &pk)
 }
 
 // Purge any kind of data, regardless of type, for a specific request ID
 pub async fn purge(id: &str) {
-    let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+    let mut pub_storage = FileStorage::new_central(StorageType::PUB);
     for cur_type in PubDataType::iter() {
         let _ = pub_storage
             .delete_data(&pub_storage.compute_url(id, &cur_type.to_string()).unwrap())
             .await;
     }
 
-    let mut priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
+    let mut priv_storage = FileStorage::new_central(StorageType::PRIV);
     for cur_type in PrivDataType::iter() {
         let _ = priv_storage
             .delete_data(&priv_storage.compute_url(id, &cur_type.to_string()).unwrap())
             .await;
     }
     for i in 1..=AMOUNT_PARTIES {
-        let mut threshold_priv = FileStorage::new(&format!("priv-p{i}"));
+        let mut threshold_pub = FileStorage::new_threshold(StorageType::PUB, i);
+        let mut threshold_priv = FileStorage::new_threshold(StorageType::PRIV, i);
         for cur_type in PrivDataType::iter() {
             let _ = threshold_priv
                 .delete_data(
                     &threshold_priv
+                        .compute_url(id, &cur_type.to_string())
+                        .unwrap(),
+                )
+                .await;
+        }
+        for cur_type in PubDataType::iter() {
+            let _ = threshold_pub
+                .delete_data(
+                    &threshold_pub
                         .compute_url(id, &cur_type.to_string())
                         .unwrap(),
                 )
@@ -86,7 +104,7 @@ pub async fn ensure_dir_exist() {
 }
 
 pub async fn ensure_client_keys_exist(deterministic: bool) {
-    let mut client_storage = FileStorage::new(&StorageType::CLIENT.to_string());
+    let mut client_storage = FileStorage::new_central(StorageType::CLIENT);
     let temp: HashMap<RequestId, PrivateSigKey> =
         read_all_data(&client_storage, &ClientDataType::SigningKey.to_string())
             .await
@@ -122,8 +140,8 @@ pub async fn ensure_client_keys_exist(deterministic: bool) {
 }
 
 pub async fn ensure_central_server_signing_keys_exist(deterministic: bool) {
-    let mut priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
-    let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+    let mut priv_storage = FileStorage::new_central(StorageType::PRIV);
+    let mut pub_storage = FileStorage::new_central(StorageType::PUB);
     let temp: HashMap<RequestId, PrivateSigKey> =
         read_all_data(&priv_storage, &PrivDataType::SigningKey.to_string())
             .await
@@ -132,6 +150,7 @@ pub async fn ensure_central_server_signing_keys_exist(deterministic: bool) {
         // If signing keys already exit, then do nothing
         return;
     }
+    println!("Generating new centralized multiple keys");
     let mut rng = if deterministic {
         AesRng::seed_from_u64(1337)
     } else {
@@ -158,8 +177,8 @@ pub async fn ensure_central_server_signing_keys_exist(deterministic: bool) {
 
 pub async fn ensure_threshold_server_signing_keys_exist(deterministic: bool) {
     for i in 1..=AMOUNT_PARTIES {
-        let mut priv_storage = FileStorage::new(&format!("priv-p{i}"));
-        let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+        let mut priv_storage = FileStorage::new_threshold(StorageType::PRIV, i);
+        let mut pub_storage = FileStorage::new_threshold(StorageType::PUB, i);
         let temp: HashMap<RequestId, PrivateSigKey> =
             read_all_data(&priv_storage, &PrivDataType::SigningKey.to_string())
                 .await
@@ -205,7 +224,7 @@ pub async fn ensure_threshold_keys_exist(
         AesRng::from_entropy()
     };
     ensure_threshold_server_signing_keys_exist(deterministic).await;
-    let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+    let pub_storage = FileStorage::new_threshold(StorageType::PUB, 1);
     if pub_storage
         .data_exists(
             &pub_storage
@@ -231,29 +250,30 @@ pub async fn ensure_threshold_keys_exist(
     )
     .unwrap();
     let sns_key = key_set.public_keys.sns_key.unwrap();
-    store_at_request_id(
-        &mut pub_storage,
-        key_id,
-        &key_set.public_keys.public_key,
-        &PubDataType::PublicKey.to_string(),
-    )
-    .await
-    .unwrap();
-    store_at_request_id(
-        &mut pub_storage,
-        key_id,
-        &key_set.public_keys.server_key,
-        &PubDataType::ServerKey.to_string(),
-    )
-    .await
-    .unwrap();
     for i in 1..=AMOUNT_PARTIES {
         println!("Generating key for party {i}");
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: key_shares[i - 1].to_owned(),
             sns_key: sns_key.clone(),
         };
-        let mut priv_storage = FileStorage::new(&format!("priv-p{i}"));
+        let mut pub_storage = FileStorage::new_threshold(StorageType::PUB, i);
+        store_at_request_id(
+            &mut pub_storage,
+            key_id,
+            &key_set.public_keys.public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
+        store_at_request_id(
+            &mut pub_storage,
+            key_id,
+            &key_set.public_keys.server_key,
+            &PubDataType::ServerKey.to_string(),
+        )
+        .await
+        .unwrap();
+        let mut priv_storage = FileStorage::new_threshold(StorageType::PRIV, i);
         store_at_request_id(
             &mut priv_storage,
             key_id,
@@ -271,8 +291,8 @@ pub async fn ensure_central_crs_store_exists(
     deterministic: bool,
 ) {
     ensure_central_server_signing_keys_exist(deterministic).await;
-    let mut priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
-    let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+    let mut priv_storage = FileStorage::new_central(StorageType::PRIV);
+    let mut pub_storage = FileStorage::new_central(StorageType::PUB);
     if pub_storage
         .data_exists(
             &pub_storage
@@ -335,11 +355,9 @@ pub async fn ensure_central_keys_exist(
     other_key_id: &RequestId,
     deterministic: bool,
 ) {
-    println!("Generating new centralized multiple keys with ids {key_id} and {other_key_id}");
-
     ensure_central_server_signing_keys_exist(deterministic).await;
-    let mut priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
-    let mut pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+    let mut priv_storage = FileStorage::new_central(StorageType::PRIV);
+    let mut pub_storage = FileStorage::new_central(StorageType::PUB);
     if pub_storage
         .data_exists(
             &pub_storage

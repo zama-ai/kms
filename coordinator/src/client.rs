@@ -34,6 +34,7 @@ use wasm_bindgen::prelude::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
+        use anyhow::ensure;
         use strum::EnumIter;
         use crate::storage::read_all_data;
         use std::fmt;
@@ -481,13 +482,19 @@ impl Client {
     #[cfg(feature = "non-wasm")]
     pub async fn new_client<ClientS: PublicStorage, PubS: PublicStorageReader>(
         client_storage: ClientS,
-        pub_storage: PubS,
+        pub_storages: Vec<PubS>,
         param_path: &str,
         shares_needed: u32,
         num_servers: u32,
     ) -> anyhow::Result<Client> {
-        let pks: HashMap<RequestId, PublicSigKey> =
-            read_all_data(&pub_storage, &PubDataType::VerfKey.to_string()).await?;
+        let mut pks: HashMap<RequestId, PublicSigKey> = HashMap::new();
+        for cur_storage in pub_storages {
+            let cur_map = read_all_data(&cur_storage, &PubDataType::VerfKey.to_string()).await?;
+            for (cur_req_id, cur_pk) in cur_map {
+                // ensure that the inserted pk did not exist before / is not inserted twice
+                ensure!(pks.insert(cur_req_id, cur_pk) == None);
+            }
+        }
         let server_keys = pks.values().cloned().collect_vec();
         let client_pk_map: HashMap<RequestId, PublicSigKey> =
             read_all_data(&client_storage, &ClientDataType::VerfKey.to_string()).await?;
@@ -1465,7 +1472,7 @@ pub mod test_tools {
         PrivS: PublicStorage + Clone + Sync + Send + 'static,
     >(
         threshold: u8,
-        pub_storage: PubS,
+        pub_storage: Vec<PubS>,
         priv_storage: Vec<PrivS>,
     ) -> HashMap<u32, JoinHandle<()>> {
         let mut handles = Vec::new();
@@ -1473,7 +1480,7 @@ pub mod test_tools {
         let amount = priv_storage.len();
         let timeout_secs = 360u64;
         for i in 1..=amount {
-            let cur_pub_storage = pub_storage.clone();
+            let cur_pub_storage = pub_storage[i - 1].to_owned();
             let cur_priv_storage = priv_storage[i - 1].to_owned();
             handles.push(tokio::spawn(async move {
                 let config = ThresholdConfig {
@@ -1527,7 +1534,7 @@ pub mod test_tools {
         PrivS: PublicStorage + Clone + Sync + Send + 'static,
     >(
         threshold: u8,
-        pub_storage: PubS,
+        pub_storage: Vec<PubS>,
         priv_storage: Vec<PrivS>,
     ) -> (
         HashMap<u32, JoinHandle<()>>,
@@ -1592,8 +1599,8 @@ pub mod test_tools {
     ) -> (JoinHandle<()>, CoordinatorEndpointClient<Channel>, Client) {
         let (kms_server, kms_client) = match storage_version {
             StorageVersion::Dev => {
-                let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
-                let priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
+                let priv_storage = FileStorage::new_central(StorageType::PRIV);
+                let pub_storage = FileStorage::new_central(StorageType::PUB);
                 setup_centralized(pub_storage, priv_storage).await
             }
             StorageVersion::Ram => {
@@ -1602,8 +1609,8 @@ pub mod test_tools {
                 setup_centralized(pub_storage, priv_storage).await
             }
         };
-        let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
-        let client_storage = FileStorage::new(&StorageType::CLIENT.to_string());
+        let pub_storage = vec![FileStorage::new_central(StorageType::PUB)];
+        let client_storage = FileStorage::new_central(StorageType::CLIENT);
         let internal_client = Client::new_client(client_storage, pub_storage, param_path, 1, 1)
             .await
             .unwrap();
@@ -1676,24 +1683,29 @@ pub(crate) mod tests {
     ) {
         let (kms_servers, kms_clients) = match storage_version {
             StorageVersion::Dev => {
-                let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+                let mut pub_storage = Vec::new();
                 let mut priv_storage = Vec::new();
                 for i in 1..=AMOUNT_PARTIES {
-                    priv_storage.push(FileStorage::new(&format!("priv-p{i}")));
+                    priv_storage.push(FileStorage::new_threshold(StorageType::PRIV, i));
+                    pub_storage.push(FileStorage::new_threshold(StorageType::PUB, i));
                 }
                 super::test_tools::setup_threshold(THRESHOLD as u8, pub_storage, priv_storage).await
             }
             StorageVersion::Ram => {
-                let pub_storage = RamStorage::new(StorageType::PUB);
+                let mut pub_storage = Vec::new();
                 let mut priv_storage = Vec::new();
                 for _i in 1..=AMOUNT_PARTIES {
                     priv_storage.push(RamStorage::new(StorageType::PRIV));
+                    pub_storage.push(RamStorage::new(StorageType::PUB));
                 }
                 super::test_tools::setup_threshold(THRESHOLD as u8, pub_storage, priv_storage).await
             }
         };
-        let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
-        let client_storage = FileStorage::new(&StorageType::CLIENT.to_string());
+        let mut pub_storage = Vec::with_capacity(AMOUNT_PARTIES);
+        for i in 1..=AMOUNT_PARTIES {
+            pub_storage.push(FileStorage::new_threshold(StorageType::PUB, i));
+        }
+        let client_storage = FileStorage::new_central(StorageType::CLIENT);
         let internal_client = Client::new_client(
             client_storage,
             pub_storage,
@@ -1757,7 +1769,7 @@ pub(crate) mod tests {
         }
         let inner_resp = response.unwrap().into_inner();
 
-        let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+        let pub_storage = FileStorage::new_central(StorageType::PUB);
         let pk: Option<FhePublicKey> = internal_client
             .retrieve_key(&inner_resp, PubDataType::PublicKey, &pub_storage)
             .await
@@ -1827,7 +1839,7 @@ pub(crate) mod tests {
         assert_eq!(rvcd_req_id, client_request_id);
 
         let crs_info = resp.crs_results.unwrap();
-        let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+        let pub_storage = FileStorage::new_central(StorageType::PUB);
         let mut crs_path = pub_storage
             .compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())
             .unwrap()
@@ -1882,7 +1894,7 @@ pub(crate) mod tests {
                 .await;
         }
         let inner_resp = response.unwrap().into_inner();
-        let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+        let pub_storage = FileStorage::new_central(StorageType::PUB);
         let crs = internal_client
             .retrieve_crs(&inner_resp, &pub_storage)
             .await
@@ -1927,6 +1939,7 @@ pub(crate) mod tests {
     async fn test_crs_gen_threshold() {
         // NOTE: the test parameter has 300 witness size
         // so we set this as a slow test
+
         let request_id = RequestId::derive("test_crs_gen_threshold").unwrap();
         // Ensure the test is idempotent
         purge(&request_id.to_string()).await;
@@ -2029,7 +2042,12 @@ pub(crate) mod tests {
         // so that the client can read the CRS
         let (storage_readers, final_responses): (Vec<_>, Vec<_>) = joined_responses
             .into_iter()
-            .map(|(_j, res)| ({ FileStorage::new(&StorageType::PUB.to_string()) }, res))
+            .map(|(i, res)| {
+                (
+                    { FileStorage::new_threshold(StorageType::PUB, i as usize) },
+                    res,
+                )
+            })
             .unzip();
 
         let _pp = internal_client
@@ -2770,7 +2788,6 @@ pub(crate) mod tests {
             }
         }
 
-        let storage = FileStorage::new(&StorageType::PUB.to_string());
         let finished = finished
             .into_iter()
             .map(|x| x.1.unwrap().into_inner())
@@ -2779,6 +2796,7 @@ pub(crate) mod tests {
         let mut serialized_ref_pk = Vec::new();
         let mut serialized_ref_server_key = Vec::new();
         for (idx, kg_res) in finished.into_iter().enumerate() {
+            let storage = FileStorage::new_threshold(StorageType::PUB, idx + 1);
             let pk: Option<FhePublicKey> = internal_client
                 .retrieve_key(&kg_res, PubDataType::PublicKey, &storage)
                 .await

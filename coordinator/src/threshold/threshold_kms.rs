@@ -17,7 +17,6 @@ use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::{
     BaseKms, Plaintext, PubDataType, RawDecryption, SigncryptionPayload, CURRENT_FORMAT_VERSION,
 };
-use crate::storage::lazy_store_at_request_id;
 use crate::storage::PublicStorage;
 use crate::storage::{delete_at_request_id, read_all_data, store_at_request_id};
 use crate::{anyhow_error_and_log, some_or_err};
@@ -624,7 +623,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 .await
                 .is_ok()
                 // Only store the CRS if no other server has already stored it
-                    && lazy_store_at_request_id(
+                    && store_at_request_id(
                         &mut (*pub_storage),
                         &owned_req_id,
                         &pp,
@@ -892,14 +891,14 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             .await
             .is_ok()
             // Only store the public keys if no other server has already stored them
-                && lazy_store_at_request_id(
+                && store_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
                     &pub_key_set.public_key,
                     &PubDataType::PublicKey.to_string(),
                 ).await
                 .is_ok()
-                && lazy_store_at_request_id(
+                && store_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
                     &pub_key_set.server_key,
@@ -907,7 +906,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 )
                 .await
                 .is_ok()
-                && lazy_store_at_request_id(
+                && store_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
                     &sns_key,

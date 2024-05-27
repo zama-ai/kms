@@ -42,6 +42,7 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 }
 
 /// This client serves test purposes.
+/// Assuming a connection to a centralized server
 /// URL format is without protocol e.g.: 0.0.0.0:50051
 #[cfg(feature = "non-wasm")]
 #[tokio::main]
@@ -69,8 +70,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         5,
         100
     )?;
-    let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
-    let client_storage = FileStorage::new(&StorageType::CLIENT.to_string());
+    let pub_storage = vec![FileStorage::new_central(StorageType::PUB)];
+    let client_storage = FileStorage::new_central(StorageType::CLIENT);
     let mut internal_client =
         Client::new_client(client_storage, pub_storage, DEFAULT_PARAM_PATH, 1, 1)
             .await

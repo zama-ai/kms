@@ -139,16 +139,16 @@ async fn main() -> Result<(), anyhow::Error> {
         StorageMode::Dev { exec_mode } => match exec_mode {
             ExecutionMode::Threshold { config_file } => {
                 let config = ThresholdConfig::init_config(&config_file)?;
-                let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
-                let priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
+                let pub_storage = FileStorage::new_threshold(StorageType::PUB, config.my_id);
+                let priv_storage = FileStorage::new_threshold(StorageType::PRIV, config.my_id);
                 let server =
                     threshold_server_init(config.clone(), pub_storage, priv_storage).await?;
                 threshold_server_start(config.url, config.base_port, config.timeout_secs, server)
                     .await
             }
             ExecutionMode::Centralized { url } => {
-                let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
-                let priv_storage = FileStorage::new(&StorageType::PRIV.to_string());
+                let pub_storage = FileStorage::new_central(StorageType::PUB);
+                let priv_storage = FileStorage::new_central(StorageType::PRIV);
                 let socket = parse_url(&url)?;
                 kms_server_handle(socket, pub_storage, priv_storage).await
             }
@@ -209,7 +209,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         sig_pk,
                     };
                     // TODO this should be glued together with Nitro properly after mergning #442
-                    let pub_storage = FileStorage::new(&StorageType::PUB.to_string());
+                    let pub_storage = FileStorage::new_central(StorageType::PUB);
                     let priv_storage = EnclaveStorage {
                         s3_client,
                         aws_kms_client,
