@@ -20,22 +20,62 @@ use crate::storage::{store_at_request_id, FileStorage, PublicStorage};
 use crate::util::file_handling::read_as_json;
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+use serde::{Deserialize, Serialize};
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
+use url::Url;
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CentralizedConfig {
+    pub url: String,
+    pub param_file_map: HashMap<String, String>,
+}
+
+impl CentralizedConfig {
+    pub fn init_config(fname: &str) -> anyhow::Result<CentralizedConfig> {
+        let config: CentralizedConfig = config::Config::builder()
+            .add_source(config::File::with_name(fname))
+            .add_source(config::Environment::with_prefix("KMS_CENTRALIZED"))
+            .build()?
+            .try_deserialize()?;
+        Ok(config)
+    }
+
+    pub fn get_socket_addr(&self) -> anyhow::Result<SocketAddr> {
+        let url = Url::parse(&self.url)?;
+        if url.scheme() != "http" && url.scheme() != "https" && url.scheme() != "" {
+            return Err(anyhow::anyhow!(
+                "Invalid scheme in URL. Only http and https are supported."
+            ));
+        }
+        let host_str: &str = url
+            .host_str()
+            .ok_or(anyhow::anyhow!("Invalid host in URL."))?;
+        let port: u16 = url
+            .port_or_known_default()
+            .ok_or(anyhow::anyhow!("Invalid port in URL."))?;
+        let socket: SocketAddr = format!("{}:{}", host_str, port).parse()?;
+
+        Ok(socket)
+    }
+}
 
 pub async fn server_handle<
     PubS: PublicStorage + Sync + Send + 'static,
     PrivS: PublicStorage + Sync + Send + 'static,
 >(
-    socket: SocketAddr,
+    config: CentralizedConfig,
     public_storage: PubS,
     private_storage: PrivS,
 ) -> anyhow::Result<()> {
-    let kms = SoftwareKms::new(public_storage, private_storage).await?;
+    let socket = config.get_socket_addr()?;
+    let kms = SoftwareKms::new(config.param_file_map, public_storage, private_storage).await?;
     tracing::info!("Starting centralized KMS server ...");
 
     Server::builder()
@@ -104,7 +144,7 @@ impl<
             ));
         }
         let params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params).await,
+            retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
             "Parameter choice is not recognized".to_string(),
         )?;
         let future_keys = tokio::spawn(async_generate_fhe_keys(params));
@@ -354,7 +394,7 @@ impl<
             ));
         }
         let params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params).await,
+            retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
             "Parameter choice is not recognized".to_string(),
         )?;
 
@@ -524,7 +564,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 }
                 // Case 2: The key generation is finished, so we can now generate the key
                 // information
-                let (client_key, pub_keys) = key_gen_handle.await?;
+                let (client_key, pub_keys) = key_gen_handle.await??;
                 let new_key_info = KmsFheKeyHandles::new(self, client_key, &pub_keys)?;
                 // Insert the key information into the map of keys
                 key_handles.insert(request_id.clone(), new_key_info.clone());
@@ -668,14 +708,37 @@ pub(crate) fn convert_key_response(
         .collect()
 }
 
-pub(crate) async fn retrieve_parameters(param_choice: i32) -> anyhow::Result<NoiseFloodParameters> {
+pub(crate) fn default_param_file_map() -> HashMap<String, String> {
+    HashMap::from_iter(vec![
+        (
+            ParamChoice::as_str_name(&ParamChoice::Test).to_string(),
+            TEST_PARAM_PATH.to_string(),
+        ),
+        (
+            ParamChoice::as_str_name(&ParamChoice::Default).to_string(),
+            DEFAULT_PARAM_PATH.to_string(),
+        ),
+    ])
+}
+
+pub(crate) async fn retrieve_parameters(
+    param_choice: i32,
+    param_file_map: &HashMap<ParamChoice, String>,
+) -> anyhow::Result<NoiseFloodParameters> {
     let param_choice = ParamChoice::try_from(param_choice)?;
-    let param_path = match param_choice {
-        ParamChoice::Test => TEST_PARAM_PATH,
-        ParamChoice::Default => DEFAULT_PARAM_PATH,
-    };
+    let param_path = param_file_map
+        .get(&param_choice)
+        .ok_or(anyhow::anyhow!("parameter does not exist"))?;
     let params: NoiseFloodParameters = read_as_json(param_path).await?;
     Ok(params)
+}
+
+pub(crate) async fn retrieve_parameters_sync(
+    param_choice: i32,
+    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
+) -> anyhow::Result<NoiseFloodParameters> {
+    let guarded_map = param_file_map.read().await;
+    retrieve_parameters(param_choice, &guarded_map).await
 }
 
 /// Validates a reencryption request and returns ciphertext, FheType, request digest, client
@@ -859,4 +922,20 @@ pub fn tonic_handle_potential_err<T, E: ToString>(
         tracing::warn!(msg);
         tonic::Status::new(tonic::Code::Aborted, top_n_chars(msg))
     })
+}
+
+#[test]
+fn test_centralized_config() {
+    let config = CentralizedConfig::init_config("config/default_centralized").unwrap();
+    assert_eq!(config.url, "http://127.0.0.1:50051");
+    assert_eq!(config.param_file_map.len(), 2);
+    println!("{:?}", config.param_file_map.keys().collect::<Vec<_>>());
+    assert_eq!(
+        config.param_file_map.get("test").unwrap(),
+        "parameters/small_test_params.json"
+    );
+    assert_eq!(
+        config.param_file_map.get("default").unwrap(),
+        "parameters/default_params.json"
+    );
 }

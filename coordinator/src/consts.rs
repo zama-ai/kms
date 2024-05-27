@@ -8,6 +8,8 @@ pub const KEY_PATH_PREFIX: &str = "keys";
 pub const TMP_PATH_PREFIX: &str = "temp";
 
 pub const DEFAULT_PARAM_PATH: &str = "parameters/default_params.json";
+
+#[cfg(test)]
 pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 
 // TODO Test should be in a test module, however I have spend an hour trying to refactor this

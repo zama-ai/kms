@@ -6,11 +6,11 @@ use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEn
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FhePubKeyInfo, FheType, KeyGenPreprocRequest, KeyGenPreprocStatus,
-    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ReencryptionRequest,
+    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ParamChoice, ReencryptionRequest,
     ReencryptionResponse, RequestId,
 };
 use crate::rpc::central_rpc::{
-    convert_key_response, retrieve_parameters, tonic_handle_potential_err, tonic_some_or_err,
+    convert_key_response, retrieve_parameters_sync, tonic_handle_potential_err, tonic_some_or_err,
     validate_decrypt_req, validate_reencrypt_req, validate_request_id,
 };
 use crate::rpc::rpc_types::PrivDataType;
@@ -85,13 +85,14 @@ pub struct ThresholdConfig {
     pub timeout_secs: u64,
     pub preproc_redis_conf: Option<RedisConf>,
     pub num_sessions_preproc: Option<u16>,
+    pub param_file_map: HashMap<String, String>,
 }
 
 impl ThresholdConfig {
     pub fn init_config(fname: &str) -> anyhow::Result<ThresholdConfig> {
         let config: ThresholdConfig = config::Config::builder()
             .add_source(config::File::with_name(fname))
-            .add_source(config::Environment::with_prefix("KMS"))
+            .add_source(config::Environment::with_prefix("KMS_THRESHOLD"))
             .build()?
             .try_deserialize()?;
         Ok(config)
@@ -135,6 +136,7 @@ pub async fn threshold_server_init<
         num_sessions_preproc,
         public_storage,
         private_storage,
+        config.param_file_map,
     )
     .await?;
 
@@ -268,6 +270,8 @@ pub struct ThresholdKms<
     dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<DkgMetaStore>>>,
     dec_meta_store: Arc<RwLock<MetaStore<DecMetaStore>>>,
     reenc_meta_store: Arc<RwLock<MetaStore<ReencMetaStore>>>,
+    // Map storing the identity of parameters and the parameter file paths
+    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
 }
 
 impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
@@ -286,6 +290,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         num_sessions_preproc: u16,
         public_storage: PubS,
         private_storage: PrivS,
+        param_file_map: HashMap<String, String>,
     ) -> anyhow::Result<Self> {
         let sks: HashMap<RequestId, PrivateSigKey> =
             read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
@@ -337,6 +342,12 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             }
         });
 
+        let param_file_map = Arc::new(RwLock::new(HashMap::from_iter(
+            param_file_map
+                .into_iter()
+                .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
+        )));
+
         let networking_strategy: NetworkingStrategy =
             Box::new(move |session_id, roles| networking_manager.make_session(session_id, roles));
         let base_kms = BaseKmsStruct::new(sk);
@@ -358,6 +369,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             dkg_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
             dec_meta_store: Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache))),
             reenc_meta_store: Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache))),
+            param_file_map,
         })
     }
 
@@ -996,7 +1008,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 
         //Retrieve the DKG parameters
         let params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params).await,
+            retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
             "Parameter choice is not recognized".to_string(),
         )?;
 
@@ -1132,7 +1144,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 
         //Retrieve kg params and preproc_id
         let params = tonic_handle_potential_err(
-            retrieve_parameters(inner.params).await,
+            retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
             "Parameter choice is not recognized".to_string(),
         )?;
         let dkg_params = DKGParams::WithSnS(DKGParamsSnS {
@@ -1432,15 +1444,18 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             req_inner.request_id
         );
 
-        let fhe_params = crate::rpc::central_rpc::retrieve_parameters(req_inner.params)
-            .await
-            .map_err(|e| {
-                tonic::Status::new(
-                    tonic::Code::NotFound,
-                    format!("Can not retrieve fhe parameters with error {e}"),
-                )
-            })?
-            .ciphertext_parameters;
+        let fhe_params = crate::rpc::central_rpc::retrieve_parameters_sync(
+            req_inner.params,
+            self.param_file_map.clone(),
+        )
+        .await
+        .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::NotFound,
+                format!("Can not retrieve fhe parameters with error {e}"),
+            )
+        })?
+        .ciphertext_parameters;
         let witness_dim = tonic_handle_potential_err(
             compute_witness_dim(&fhe_params),
             "witness dimension computation failed".to_string(),
@@ -1523,5 +1538,14 @@ fn test_threshold_config() {
     assert_eq!(config.parties, 4);
     assert_eq!(config.threshold, 1);
     assert_eq!(config.num_sessions_preproc, Some(2));
+    assert_eq!(config.param_file_map.len(), 2);
+    assert_eq!(
+        config.param_file_map.get("test").unwrap(),
+        "parameters/small_test_params.json"
+    );
+    assert_eq!(
+        config.param_file_map.get("default").unwrap(),
+        "parameters/default_params.json"
+    );
     assert!(config.preproc_redis_conf.is_none());
 }

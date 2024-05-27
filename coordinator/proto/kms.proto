@@ -90,9 +90,12 @@ message FhePubKeyInfo {
   bytes signature = 2;
 }
 
+// Keeping the fields in lowercase is important because
+// it needs to match what the config reads out of the toml config files,
+// e.g., in default_centralized.toml.
 enum ParamChoice {
-  Test = 0;
-  Default = 1;
+  test = 0;
+  default = 1;
 }
 
 message CrsGenRequest {

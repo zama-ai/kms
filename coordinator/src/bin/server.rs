@@ -3,7 +3,7 @@ use kms_lib::consts::DEFAULT_CENTRAL_KEY_ID;
 use kms_lib::cryptography::central_kms::SoftwareKmsKeys;
 use kms_lib::cryptography::der_types::{PrivateSigKey, PublicSigKey};
 use kms_lib::cryptography::nitro_enclave::gen_nitro_enclave_keys;
-use kms_lib::rpc::central_rpc::server_handle as kms_server_handle;
+use kms_lib::rpc::central_rpc::{server_handle as kms_server_handle, CentralizedConfig};
 use kms_lib::rpc::central_rpc_proxy::server_handle as kms_proxy_server_handle;
 use kms_lib::storage::{FileStorage, StorageType};
 use kms_lib::threshold::threshold_kms::{
@@ -14,11 +14,9 @@ use kms_lib::util::aws::{
     EnclaveStorage,
 };
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{filter, Layer};
-use url::Url;
 
 pub const SIG_SK_BLOB_KEY: &str = "private_sig_key";
 pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
@@ -89,29 +87,11 @@ enum ExecutionMode {
     Centralized {
         #[clap(
             long,
-            default_value = "http://0.0.0.0:50051",
-            help = "Server URL with a protocol (either http or https)."
+            default_value = "config/default_centralized.toml",
+            help = "path to the configuration file"
         )]
-        url: String,
+        config_file: String,
     },
-}
-
-fn parse_url(s: &str) -> anyhow::Result<SocketAddr> {
-    let url = Url::parse(s)?;
-    if url.scheme() != "http" && url.scheme() != "https" && url.scheme() != "" {
-        return Err(anyhow::anyhow!(
-            "Invalid scheme in URL. Only http and https are supported."
-        ));
-    }
-    let host_str: &str = url
-        .host_str()
-        .ok_or(anyhow::anyhow!("Invalid host in URL."))?;
-    let port: u16 = url
-        .port_or_known_default()
-        .ok_or(anyhow::anyhow!("Invalid port in URL."))?;
-    let socket: SocketAddr = format!("{}:{}", host_str, port).parse()?;
-
-    Ok(socket)
 }
 
 /// Starts a KMS server.
@@ -146,11 +126,11 @@ async fn main() -> Result<(), anyhow::Error> {
                 threshold_server_start(config.url, config.base_port, config.timeout_secs, server)
                     .await
             }
-            ExecutionMode::Centralized { url } => {
+            ExecutionMode::Centralized { config_file } => {
+                let config = CentralizedConfig::init_config(&config_file)?;
                 let pub_storage = FileStorage::new_central(StorageType::PUB);
                 let priv_storage = FileStorage::new_central(StorageType::PRIV);
-                let socket = parse_url(&url)?;
-                kms_server_handle(socket, pub_storage, priv_storage).await
+                kms_server_handle(config, pub_storage, priv_storage).await
             }
         },
         StorageMode::Proxy {
@@ -160,9 +140,9 @@ async fn main() -> Result<(), anyhow::Error> {
             ExecutionMode::Threshold { .. } => {
                 unimplemented!("this mode is not implemented")
             }
-            ExecutionMode::Centralized { url } => {
-                let socket = parse_url(&url)?;
-                kms_proxy_server_handle(socket, &enclave_vsock).await
+            ExecutionMode::Centralized { config_file } => {
+                let config = CentralizedConfig::init_config(&config_file)?;
+                kms_proxy_server_handle(config, &enclave_vsock).await
             }
         },
         StorageMode::Enclave {
@@ -177,7 +157,8 @@ async fn main() -> Result<(), anyhow::Error> {
                 ExecutionMode::Threshold { .. } => {
                     unimplemented!("this mode is not implemented")
                 }
-                ExecutionMode::Centralized { url } => {
+                ExecutionMode::Centralized { config_file } => {
+                    let config = CentralizedConfig::init_config(&config_file)?;
                     // set up AWS API
                     let s3_client = build_s3_client(aws_region.clone(), aws_s3_proxy).await;
                     let aws_kms_client = build_aws_kms_client(aws_region, aws_kms_proxy).await;
@@ -217,8 +198,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         root_key_id,
                         enclave_keys,
                     };
-                    let socket = parse_url(&url)?;
-                    kms_server_handle(socket, pub_storage, priv_storage).await
+                    kms_server_handle(config, pub_storage, priv_storage).await
                 }
             }
         }

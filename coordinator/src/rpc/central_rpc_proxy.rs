@@ -7,17 +7,19 @@ use crate::kms::{
 };
 use backoff::future::retry;
 use backoff::ExponentialBackoff;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tonic::transport::{Channel, Server};
 use tonic::{Request, Response, Status};
 
+use super::central_rpc::CentralizedConfig;
+
 pub struct KmsProxy {
     kms_client: Arc<Mutex<CoordinatorEndpointClient<Channel>>>,
 }
 
-pub async fn server_handle(server_socket: SocketAddr, client_uri: &str) -> anyhow::Result<()> {
+pub async fn server_handle(config: CentralizedConfig, client_uri: &str) -> anyhow::Result<()> {
+    let server_socket = config.get_socket_addr()?;
     tracing::info!(
         "Starting KMS proxy on {} for {} ...",
         server_socket.to_string(),

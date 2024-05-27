@@ -1457,12 +1457,11 @@ pub mod test_tools {
     use super::*;
     use crate::consts::{BASE_PORT, DEC_CAPACITY, DEFAULT_PROT, DEFAULT_URL, MIN_DEC_CACHE};
     use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
-    use crate::rpc::central_rpc::server_handle;
+    use crate::rpc::central_rpc::{default_param_file_map, server_handle, CentralizedConfig};
     use crate::storage::{FileStorage, PublicStorage, RamStorage, StorageType, StorageVersion};
     use crate::threshold::threshold_kms::{
         threshold_server_init, threshold_server_start, ThresholdConfig,
     };
-    use std::net::SocketAddr;
     use std::str::FromStr;
     use tokio::task::JoinHandle;
     use tonic::transport::{Channel, Uri};
@@ -1494,6 +1493,7 @@ pub mod test_tools {
                     timeout_secs,
                     preproc_redis_conf: None,
                     num_sessions_preproc: None,
+                    param_file_map: default_param_file_map(),
                 };
                 let server = threshold_server_init(config, cur_pub_storage, cur_priv_storage).await;
                 (i, server)
@@ -1563,9 +1563,12 @@ pub mod test_tools {
         priv_storage: PrivS,
     ) -> JoinHandle<()> {
         let server_handle = tokio::spawn(async move {
-            let url = format!("{DEFAULT_URL}:{}", BASE_PORT + 1);
-            let add = SocketAddr::from_str(url.as_str()).unwrap();
-            let _ = server_handle(add, pub_storage, priv_storage).await;
+            let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
+            let config = CentralizedConfig {
+                url,
+                param_file_map: default_param_file_map(),
+            };
+            let _ = server_handle(config, pub_storage, priv_storage).await;
         });
         // We have to wait for the server to start since it will keep running in the background
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -1645,6 +1648,7 @@ pub(crate) mod tests {
     use crate::kms::{
         AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType, ParamChoice,
     };
+    use crate::rpc::central_rpc::default_param_file_map;
     use crate::rpc::rpc_types::{BaseKms, PubDataType};
     use crate::storage::PublicStorageReader;
     use crate::storage::{FileStorage, RamStorage, StorageType, StorageVersion};
@@ -1827,12 +1831,18 @@ pub(crate) mod tests {
         assert_eq!(gen_response.into_inner(), Empty {});
 
         // Check that we can retrieve the CRS under that request id
-        let get_response = kms_client
+        let mut get_response = kms_client
             .get_crs_gen_result(tonic::Request::new(client_request_id.clone()))
-            .await
-            .unwrap();
+            .await;
+        while get_response.is_err() {
+            // Sleep to give the server some time to complete CRS generation
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            get_response = kms_client
+                .get_crs_gen_result(tonic::Request::new(request_id.clone()))
+                .await;
+        }
 
-        let resp = get_response.into_inner();
+        let resp = get_response.unwrap().into_inner();
         let rvcd_req_id = resp.request_id.unwrap();
 
         // // check that the received request id matches the one we sent in the request
@@ -1903,10 +1913,16 @@ pub(crate) mod tests {
         kms_server.abort();
 
         // try to make a proof and check that it works
-        let fhe_params = crate::rpc::central_rpc::retrieve_parameters(params.unwrap().into())
-            .await
-            .unwrap()
-            .ciphertext_parameters;
+        let param_file_map = HashMap::from_iter(
+            default_param_file_map()
+                .into_iter()
+                .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
+        );
+        let fhe_params =
+            crate::rpc::central_rpc::retrieve_parameters(params.unwrap().into(), &param_file_map)
+                .await
+                .unwrap()
+                .ciphertext_parameters;
         let pp = crs.unwrap().try_into_tfhe_zk_pok_pp(&fhe_params).unwrap();
         let cks = tfhe::shortint::ClientKey::new(fhe_params);
         let pk = tfhe::shortint::CompactPublicKey::new(&cks);

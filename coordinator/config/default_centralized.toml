@@ -1,10 +1,4 @@
-url = "127.0.0.1"
-base_port = 50000
-parties = 4
-threshold = 1
-my_id = 2
-timeout_secs = 360
-num_sessions_preproc = 2
+url = "http://127.0.0.1:50051"
 
 # The keys must match the keys of the ParamChoice type, in kms.proto.
 # Using Test or "Test" does not seem to capitalize the key
@@ -12,6 +6,3 @@ num_sessions_preproc = 2
 [param_file_map]
 test =  "parameters/small_test_params.json" 
 default = "parameters/default_params.json"
-
-# [preproc_redis_conf]
-# host = "redis://127.0.0.1"

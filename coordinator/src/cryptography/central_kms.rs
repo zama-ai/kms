@@ -4,10 +4,9 @@ use super::signcryption::{
     signcrypt, RND_SIZE,
 };
 use crate::consts::ID_LENGTH;
-use crate::consts::TEST_CENTRAL_KEY_ID;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
-use crate::kms::{FhePubKeyInfo, FheType};
+use crate::kms::{FhePubKeyInfo, FheType, ParamChoice};
 use crate::rpc::rpc_types::{
     BaseKms, Kms, Plaintext, PrivDataType, PubDataType, RawDecryption, SigncryptionPayload,
 };
@@ -41,7 +40,7 @@ use tfhe::{
 };
 #[cfg(feature = "non-wasm")]
 use tfhe_zk_pok::curve_api::bls12_446 as curve;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 #[cfg(feature = "non-wasm")]
 use tokio::task::JoinHandle;
 
@@ -60,31 +59,15 @@ pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSi
 }
 
 #[cfg(feature = "non-wasm")]
-pub fn gen_default_kms_keys<R: CryptoRng + RngCore>(
-    params: NoiseFloodParameters,
-    rng: &mut R,
-    key_handle: Option<RequestId>,
-) -> (SoftwareKmsKeys, FhePubKeySet) {
-    let (client_key, fhe_pub_keys) = generate_fhe_keys(params);
-    let (server_pk, server_sk) = gen_sig_keys(rng);
-    let kms = BaseKmsStruct::new(server_sk.clone());
-    let key_info = KmsFheKeyHandles::new(&kms, client_key, &fhe_pub_keys).unwrap();
-    let handle = key_handle.unwrap_or((*TEST_CENTRAL_KEY_ID).clone());
-    (
-        SoftwareKmsKeys {
-            key_info: HashMap::from([(handle, key_info)]),
-            sig_sk: server_sk,
-            sig_pk: server_pk,
-        },
-        fhe_pub_keys,
-    )
-}
-
-#[cfg(feature = "non-wasm")]
 pub async fn async_generate_fhe_keys(
     params: NoiseFloodParameters,
-) -> (FhePrivateKey, FhePubKeySet) {
-    generate_fhe_keys(params)
+) -> anyhow::Result<(FhePrivateKey, FhePubKeySet)> {
+    let (send, recv) = tokio::sync::oneshot::channel();
+    rayon::spawn(move || {
+        let out = generate_fhe_keys(params);
+        let _ = send.send(out);
+    });
+    recv.await.map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 
 #[cfg(feature = "non-wasm")]
@@ -92,7 +75,12 @@ pub async fn async_generate_crs(
     rng: AesRng,
     params: NoiseFloodParameters,
 ) -> anyhow::Result<PublicParameter> {
-    gen_centralized_crs(&params, rng)
+    let (send, recv) = tokio::sync::oneshot::channel();
+    rayon::spawn(move || {
+        let out = gen_centralized_crs(&params, rng);
+        let _ = send.send(out);
+    });
+    recv.await?
 }
 
 #[cfg(feature = "non-wasm")]
@@ -271,7 +259,7 @@ impl KmsFheKeyHandles {
 
 // Values that needs to be stored temporarely as part of an async key generation call.
 #[cfg(feature = "non-wasm")]
-type KeyGenCallValues = (ClientKey, FhePubKeySet);
+type KeyGenCallValues = anyhow::Result<(ClientKey, FhePubKeySet)>;
 #[cfg(feature = "non-wasm")]
 type CrsGenValues = anyhow::Result<PublicParameter>;
 
@@ -309,6 +297,8 @@ pub struct SoftwareKms<PubS: PublicStorage, PrivS: PublicStorage> {
     pub crs_handles: Arc<Mutex<CrsInfoHashMap>>,
     // Map storing ongoing CRS generation requests.
     pub crs_gen_map: CompMap<CrsGenValues>,
+    // Map storing the identity of parameters and the parameter file paths
+    pub(crate) param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
 }
 
 /// Perform asynchronous decryption and serialize the result using asn1
@@ -512,7 +502,11 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
     SoftwareKms<PubS, PrivS>
 {
-    pub async fn new(public_storage: PubS, private_storage: PrivS) -> anyhow::Result<Self> {
+    pub async fn new(
+        param_file_map: HashMap<String, String>,
+        public_storage: PubS,
+        private_storage: PrivS,
+    ) -> anyhow::Result<Self> {
         let sks: HashMap<RequestId, PrivateSigKey> =
             read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
         let sk = some_or_err(
@@ -528,6 +522,12 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
         let cs: CrsInfoHashMap =
             read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+
+        let param_file_map = Arc::new(RwLock::new(HashMap::from_iter(
+            param_file_map
+                .into_iter()
+                .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
+        )));
         Ok(SoftwareKms {
             base_kms: BaseKmsStruct::new(sk),
             public_storage: Arc::new(Mutex::new(public_storage)),
@@ -538,6 +538,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             reenc_map: Arc::new(Mutex::new(HashMap::new())),
             crs_handles: Arc::new(Mutex::new(cs)),
             crs_gen_map: Arc::new(Mutex::new(HashMap::new())),
+            param_file_map,
         })
     }
 }
@@ -602,6 +603,7 @@ mod tests {
     use crate::cryptography::request::ephemeral_key_generation;
     use crate::cryptography::signcryption::decrypt_signcryption;
     use crate::kms::{FheType, RequestId};
+    use crate::rpc::central_rpc::default_param_file_map;
     use crate::rpc::rpc_types::{Kms, Plaintext};
     use crate::storage::{FileStorage, RamStorage, StorageType};
     use crate::util::file_handling::read_element;
@@ -774,6 +776,7 @@ mod tests {
             compute_cipher(msg, &keys.pub_fhe_keys.get(key_id).unwrap().public_key);
         let kms = {
             let inner = SoftwareKms::new(
+                default_param_file_map(),
                 RamStorage::new(StorageType::PUB),
                 RamStorage::from_existing_keys(&keys.software_kms_keys)
                     .await
@@ -920,6 +923,7 @@ mod tests {
             compute_cipher(msg, &keys.pub_fhe_keys.get(key_handle).unwrap().public_key);
         let kms = {
             let mut inner = SoftwareKms::new(
+                default_param_file_map(),
                 RamStorage::new(StorageType::PUB),
                 RamStorage::from_existing_keys(&keys.software_kms_keys)
                     .await
@@ -1013,6 +1017,7 @@ mod tests {
         let keys: CentralizedTestingKeys = read_element(kms_key_path).await.unwrap();
         let kms = {
             SoftwareKms::new(
+                default_param_file_map(),
                 RamStorage::new(StorageType::PUB),
                 RamStorage::from_existing_keys(&keys.software_kms_keys)
                     .await
