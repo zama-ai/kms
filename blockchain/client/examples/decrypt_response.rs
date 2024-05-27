@@ -1,6 +1,6 @@
 use clap::Parser;
-use kms_blockchain_client::client::{Client, ClientBuilder};
-use serde_json::json;
+use events::kms::{DecryptResponseValues, KmsMessage, OperationValue};
+use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
 
 #[derive(Debug, Parser)]
 struct Params {
@@ -32,18 +32,24 @@ async fn main() {
     let txn_id = hex::decode(params.txn_id).unwrap();
     let plaintext = vec![6, 7, 8, 9, 10];
 
-    let msg = json!({
-        "decrypt_response": {
-            "txn_id": txn_id,
-            "plaintext": plaintext,
-        }
-    })
-    .to_string();
+    let operation_response = OperationValue::DecryptResponse(
+        DecryptResponseValues::builder()
+            .signature(vec![1, 2, 3])
+            .payload(plaintext.clone())
+            .build(),
+    );
+    let msg = KmsMessage::builder()
+        .proof(vec![1, 2, 3])
+        .txn_id(Some(txn_id.into()))
+        .value(operation_response)
+        .build();
+
+    let request = ExecuteContractRequest::builder()
+        .message(msg)
+        .gas_limit(100_000u64)
+        .build();
 
     // send the decrypted response to the contract
-    let response = client
-        .execute_contract(msg.as_bytes(), 100_000u64)
-        .await
-        .unwrap();
+    let response = client.execute_contract(request).await.unwrap();
     tracing::info!("Response: {:?}", response);
 }

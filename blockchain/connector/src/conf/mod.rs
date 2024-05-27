@@ -2,7 +2,6 @@ use std::env;
 use std::str::FromStr;
 
 use config::{Config, ConfigError, File};
-use events::subscription::handler::EventsMode;
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, Display, EnumString};
 use typed_builder::TypedBuilder;
@@ -149,7 +148,6 @@ pub struct OracleConfig {
 pub struct ConnectorConfig {
     pub tick_interval_secs: u64,
     pub storage_path: String,
-    pub mode: Option<EventsMode>,
     pub tracing: Option<Tracing>,
     pub blockchain: BlockchainConfig,
     pub coordinator: CoordinatorConfig,
@@ -234,7 +232,6 @@ mod tests {
             .init_conf()
             .unwrap();
 
-        assert_eq!(conf.mode, Some(EventsMode::Request));
         assert_eq!(conf.tick_interval_secs, 3);
         assert_eq!(conf.storage_path, "./temp/events.toml");
 

@@ -44,4 +44,7 @@ pub enum Error {
 
     #[error("Signature Error: {0}")]
     SignatureError(#[from] k256::ecdsa::Error),
+
+    #[error("Error converting request message to json bytes: {0}")]
+    ExecuteContractRequestError(String),
 }

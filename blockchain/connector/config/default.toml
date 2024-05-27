@@ -1,6 +1,5 @@
 tick_interval_secs = 3
 storage_path = "./temp/events.toml"
-mode = "request"
 
 [oracle]
 addresses = ["http://localhost:26657"]

@@ -2,9 +2,11 @@ use crate::conf::BlockchainConfig;
 use crate::domain::blockchain::{Blockchain, KmsOperationResponse};
 use crate::infrastructure::metrics::{MetricType, Metrics};
 use async_trait::async_trait;
-use events::kms::{KmsEvent, KmsEventMessage, OperationValue};
-use kms_blockchain_client::client::{Client, ClientBuilder};
-use kms_blockchain_client::query_client::{QueryClient, QueryClientBuilder};
+use events::kms::{KmsEvent, KmsMessage, OperationValue};
+use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
+use kms_blockchain_client::query_client::{
+    ContractQuery, OperationQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
+};
 use retrying::retry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -52,11 +54,10 @@ impl KmsBlockchain {
     async fn call_execute_contract(
         &self,
         client: &mut Client,
-        msg: &[u8],
-        amount_fee: u64,
+        request: &ExecuteContractRequest,
     ) -> anyhow::Result<()> {
         client
-            .execute_contract(msg, amount_fee)
+            .execute_contract(request.clone())
             .await
             .map(|_| ())
             .map_err(|e| e.into())
@@ -68,20 +69,13 @@ impl Blockchain for KmsBlockchain {
     #[tracing::instrument(skip(self, result), fields(tx_id = %result.txn_id_hex()))]
     async fn send_result(&self, result: KmsOperationResponse) -> anyhow::Result<()> {
         let mut client = self.client.lock().await;
-        let msg_str: KmsEventMessage = result.into();
-        let msg_str = msg_str
-            .to_json()
-            .map_err(|e| {
-                self.metrics.increment(
-                    MetricType::BlockchainError,
-                    1,
-                    &[("error", &e.to_string())],
-                );
-                e
-            })?
-            .to_string();
-        tracing::info!("Sending result to contract: {:?}", msg_str);
-        self.call_execute_contract(&mut client, msg_str.as_bytes(), self.config.fee.amount)
+        let msg_str: KmsMessage = result.into();
+        let request = ExecuteContractRequest::builder()
+            .message(msg_str)
+            .gas_limit(self.config.fee.amount)
+            .build();
+        tracing::info!("Sending result to contract: {:?}", request);
+        self.call_execute_contract(&mut client, &request)
             .await
             .map_err(|e| {
                 self.metrics.increment(
@@ -96,16 +90,14 @@ impl Blockchain for KmsBlockchain {
     #[tracing::instrument(skip(self))]
     async fn get_operation_value(&self, event: &KmsEvent) -> anyhow::Result<OperationValue> {
         let query_client = self.query_client.lock().await;
-        let query = serde_json::json!({
-            "get_operations_value": {
-                "event": event
-            }
-        });
+        let request = QueryContractRequest::builder()
+            .contract_address(self.config.contract.to_owned())
+            .query(ContractQuery::GetOperationsValue(
+                OperationQuery::builder().event(event.clone()).build(),
+            ))
+            .build();
         let result = query_client
-            .query_contract(
-                self.config.contract.to_owned(),
-                query.to_string().as_bytes(),
-            )
+            .query_contract(request)
             .await
             .map(|msg| serde_json::from_slice::<Vec<OperationValue>>(&msg))??;
         result

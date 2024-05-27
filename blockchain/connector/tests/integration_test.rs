@@ -1,10 +1,11 @@
 use events::kms::{
-    DecryptResponseValues, DecryptValues, FheType, KmsEvent, KmsEventMessage, Transaction,
-    TransactionId,
+    DecryptResponseValues, DecryptValues, FheType, KmsEvent, KmsMessage, Transaction,
 };
 use events::kms::{KmsOperation, OperationValue};
-use kms_blockchain_client::client::{Client, ClientBuilder};
-use kms_blockchain_client::query_client::{QueryClient, QueryClientBuilder};
+use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
+use kms_blockchain_client::query_client::{
+    ContractQuery, QueryClient, QueryClientBuilder, QueryContractRequest, TransactionQuery,
+};
 use kms_blockchain_connector::application::kms_core_sync::{
     KmsCoreEventHandler, KmsCoreSyncHandler,
 };
@@ -21,7 +22,6 @@ use kms_blockchain_connector::infrastructure::blockchain::KmsBlockchain;
 use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
 use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
 use retrying::retry;
-use serde_json::json;
 use std::env::set_var;
 use std::sync::Arc;
 use std::time::Duration;
@@ -187,19 +187,16 @@ async fn check_event(
     query_client: Arc<QueryClient>,
     tx_sender: Sender<()>,
 ) {
-    let json_msg = json!({
-        "get_transaction": {
-         "txn_id": event.txn_id(),
-        }
-    });
+    let request = QueryContractRequest::builder()
+        .contract_address(contract_address)
+        .query(ContractQuery::GetTransaction(
+            TransactionQuery::builder()
+                .txn_id(event.txn_id().clone())
+                .build(),
+        ))
+        .build();
     loop {
-        let resp = query_client
-            .query_contract(
-                contract_address.to_string(),
-                json_msg.to_string().as_bytes(),
-            )
-            .await
-            .unwrap();
+        let resp = query_client.query_contract(request.clone()).await.unwrap();
         let tx = serde_json::from_slice::<Transaction>(&resp).unwrap();
         if tx.operations().iter().any(|x| {
             <OperationValue as Into<KmsOperation>>::into(x.clone()) == KmsOperation::DecryptResponse
@@ -279,24 +276,16 @@ async fn send_decrypt_request(client: &RwLock<Client>) -> String {
     );
 
     let proof = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
-    let event = KmsEvent::builder()
-        .txn_id(<Vec<u8> as Into<TransactionId>>::into(vec![1]))
-        .operation(KmsOperation::Decrypt)
-        .proof(proof)
-        .build();
 
-    let request = serde_json::to_vec(
-        &KmsEventMessage::builder()
-            .value(operation)
-            .event(event)
-            .build(),
-    )
-    .unwrap();
+    let request = ExecuteContractRequest::builder()
+        .message(KmsMessage::builder().value(operation).proof(proof).build())
+        .gas_limit(200_000u64)
+        .build();
 
     let resp = client
         .write()
         .await
-        .execute_contract(request.as_slice(), 200_000u64)
+        .execute_contract(request)
         .await
         .unwrap();
 

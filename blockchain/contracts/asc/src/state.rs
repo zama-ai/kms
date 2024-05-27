@@ -96,8 +96,8 @@ impl KmsContractStorage {
             .collect::<Vec<OperationValue>>();
         if result.is_empty() {
             return Err(StdError::not_found(format!(
-                "Operation not found for txn_id: {} and operation: {}",
-                event.txn_id().to_hex(),
+                "Operation not found for txn_id: {:?} and operation: {}",
+                event.txn_id(),
                 event.operation()
             )));
         }

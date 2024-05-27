@@ -11,6 +11,7 @@ bip32 = "0.5.1"
 cosmos-proto = { path = "../cosmos-proto" }
 deep_space = "2.24.1"
 ecdsa = { version = "0.16.9", features = ["alloc"] }
+events = { path = "../events" }
 hex = "0.4.3"
 hmac = "0.12.1"
 k256 = { version = "0.13.3" }
@@ -20,6 +21,8 @@ secp256k1 = "0.29.0"
 serde = "1.0.198"
 serde_json = "1.0.116"
 sha2 = "0.10.8"
+strum = { version = "0.26", features = ["derive"] }
+strum_macros = "0.26"
 subtle-encoding = { version = "0.5.1" }
 tendermint = { version = "0.36.0", features = ["secp256k1"] }
 thiserror = "1.0.59"

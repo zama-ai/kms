@@ -19,6 +19,7 @@ use cosmos_proto::messages::cosmos::tx::v1beta1::{
     AuthInfo, BroadcastTxRequest, Fee, ModeInfo, SignDoc, SignerInfo, TxBody, TxRaw,
 };
 use cosmos_proto::messages::cosmwasm::wasm::v1::MsgExecuteContract;
+use events::kms::KmsMessage;
 use prost_types::Any;
 use std::str;
 use std::str::FromStr;
@@ -36,6 +37,12 @@ const ACCOUNT_PREFIX: &str = "wasm";
 
 /// Denomination for transaction fees and balances.
 const DENOM: &str = "ucosm";
+
+#[derive(TypedBuilder, Clone, Debug)]
+pub struct ExecuteContractRequest {
+    message: KmsMessage,
+    gas_limit: u64,
+}
 
 #[derive(TypedBuilder)]
 pub struct ClientBuilder<'a> {
@@ -196,15 +203,22 @@ impl Client {
     ///
     /// # Returns
     /// A `Result` containing either the transaction response from the blockchain or an error.
-    #[tracing::instrument(skip(self, msg_payload))]
+    #[tracing::instrument(skip(self, request))]
     pub async fn execute_contract(
         &mut self,
-        msg_payload: &[u8],
-        gas_limit: u64,
+        request: ExecuteContractRequest,
     ) -> Result<TxResponse, Error> {
         self.init_lazy_query_account().await?;
 
-        let tx_bytes = self.prepare_msg(msg_payload, gas_limit).await?;
+        let msg_payload = request
+            .message
+            .to_json()
+            .map(|msg| msg.to_string().as_bytes().to_vec())
+            .map_err(|e| Error::ExecuteContractRequestError(e.to_string()))?;
+
+        let gas_limit = request.gas_limit;
+
+        let tx_bytes = self.prepare_msg(&msg_payload, gas_limit).await?;
 
         let broadcast = BroadcastTxRequest { tx_bytes, mode: 2 };
 

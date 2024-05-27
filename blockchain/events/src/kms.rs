@@ -14,23 +14,33 @@ use typed_builder::TypedBuilder;
 #[derive(Eq, EnumString, Display, EnumIter, strum_macros::EnumProperty, EnumIs)]
 pub enum OperationValue {
     #[serde(rename = "decrypt")]
+    #[strum(serialize = "decrypt")]
     Decrypt(DecryptValues),
+    #[strum(serialize = "decrypt_response")]
     #[serde(rename = "decrypt_response")]
     DecryptResponse(DecryptResponseValues),
+    #[strum(serialize = "reencrypt")]
     #[serde(rename = "reencrypt")]
     Reencrypt(ReencryptValues),
+    #[strum(serialize = "reencrypt_response")]
     #[serde(rename = "reencrypt_response")]
     ReencryptResponse(ReencryptResponseValues),
+    #[strum(serialize = "keygen")]
     #[serde(rename = "keygen")]
     KeyGen(KeyGenValues),
+    #[strum(serialize = "keygen_response")]
     #[serde(rename = "keygen_response")]
     KeyGenResponse(KeyGenResponseValues),
+    #[strum(serialize = "keygen_preproc")]
     #[serde(rename = "keygen_preproc")]
     KeyGenPreproc(KeyGenPreprocValues),
+    #[strum(serialize = "keygen_preproc_response")]
     #[serde(rename = "keygen_preproc_response")]
     KeyGenPreprocResponse(KeyGenPreprocResponseValues),
+    #[strum(serialize = "crs_gen")]
     #[serde(rename = "crs_gen")]
     CrsGen(CrsGenValues),
+    #[strum(serialize = "crs_gen_response")]
     #[serde(rename = "crs_gen_response")]
     CrsGenResponse(CrsGenResponseValues),
 }
@@ -490,8 +500,9 @@ impl From<CrsGenValues> for OperationValue {
 }
 
 #[cw_serde]
-#[derive(Eq, EnumString, Display, EnumIter, strum_macros::EnumProperty, EnumIs)]
+#[derive(Eq, EnumString, Display, EnumIter, strum_macros::EnumProperty, EnumIs, Default)]
 pub enum KmsOperation {
+    #[default]
     #[strum(serialize = "decrypt", props(request = "true"))]
     Decrypt,
     #[strum(serialize = "decrypt_response", props(response = "true"))]
@@ -530,8 +541,11 @@ impl KmsOperation {
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, TypedBuilder)]
-pub struct KmsEventMessage {
-    event: KmsEvent,
+pub struct KmsMessage {
+    #[builder(setter(into), default = None)]
+    txn_id: Option<TransactionId>,
+    #[builder(setter(into))]
+    proof: Proof,
     #[builder(setter(into))]
     value: OperationValue,
 }
@@ -545,31 +559,30 @@ struct InnerKmsMessage<'a> {
     value: &'a OperationValue,
 }
 
-impl Serialize for KmsEventMessage {
+impl Serialize for KmsMessage {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        let txn_id = if self.event.operation().is_response() {
-            Some(self.event.txn_id())
-        } else {
-            None
-        };
         let data = InnerKmsMessage {
-            proof: self.event.proof(),
-            txn_id,
+            proof: &self.proof,
+            txn_id: self.txn_id.as_ref(),
             value: self.value(),
         };
-        let operation = Box::leak(self.event.operation().to_string().into_boxed_str());
+        let operation = Box::leak(self.value.to_string().into_boxed_str());
         let mut ser = serializer.serialize_map(None)?;
         ser.serialize_entry(operation, &data)?;
         ser.end()
     }
 }
 
-impl KmsEventMessage {
-    pub fn event(&self) -> &KmsEvent {
-        &self.event
+impl KmsMessage {
+    pub fn txn_id(&self) -> Option<&TransactionId> {
+        self.txn_id.as_ref()
+    }
+
+    pub fn proof(&self) -> &Proof {
+        &self.proof
     }
 
     pub fn value(&self) -> &OperationValue {
@@ -669,7 +682,7 @@ impl From<Proof> for Attribute {
 }
 
 #[cw_serde]
-#[derive(Eq, TypedBuilder)]
+#[derive(Eq, TypedBuilder, Default)]
 pub struct KmsEvent {
     #[builder(setter(into))]
     operation: KmsOperation,
@@ -712,7 +725,7 @@ impl TryFrom<Event> for KmsEvent {
             .iter()
             .position(|a| a.key == "txn_id")
             .ok_or(anyhow::anyhow!("Missing txn_id attribute"))?;
-        let txn_id = attributes
+        let txn_id: TransactionId = attributes
             .get(pos_tx_id)
             .map(|a| hex::decode(a.value.as_str()))
             .transpose()?
@@ -941,18 +954,12 @@ mod tests {
             .ciphertext(vec![1, 2, 3])
             .randomness(vec![4, 5, 6])
             .build();
-        let operation = KmsEvent::builder()
-            .operation(KmsOperation::Decrypt)
-            .txn_id(vec![1])
+        let message = KmsMessage::builder()
             .proof(vec![1, 2, 3])
-            .build();
-
-        let operation = KmsEventMessage::builder()
-            .event(operation)
             .value(decrypt_values)
             .build();
 
-        let json = operation.to_json().unwrap();
+        let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
             "decrypt": {
                 "decrypt":{
@@ -975,20 +982,13 @@ mod tests {
             .signature(vec![4, 5, 6])
             .payload(vec![1, 2, 3])
             .build();
-        let operation = KmsEvent::builder()
-            .operation(KmsOperation::DecryptResponse)
-            .txn_id(vec![1])
+        let message = KmsMessage::builder()
+            .txn_id(Some(vec![1].into()))
             .proof(vec![1, 2, 3])
-            .build();
-
-        assert!(operation.operation().is_response());
-
-        let operation = KmsEventMessage::builder()
-            .event(operation)
             .value(decrypt_response_values)
             .build();
 
-        let json = operation.to_json().unwrap();
+        let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
             "decrypt_response": {
                 "decrypt_response": {
@@ -1021,18 +1021,12 @@ mod tests {
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![7])
             .build();
-        let operation = KmsEvent::builder()
-            .operation(KmsOperation::Reencrypt)
-            .txn_id(vec![1])
+        let message = KmsMessage::builder()
             .proof(vec![1, 2, 3])
-            .build();
-
-        let operation = KmsEventMessage::builder()
-            .event(operation)
             .value(reencrypt_values)
             .build();
 
-        let json = operation.to_json().unwrap();
+        let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
             "reencrypt": {
                 "reencrypt": {
@@ -1068,19 +1062,12 @@ mod tests {
             .fhe_type(FheType::Ebool)
             .signcrypted_ciphertext(vec![3])
             .build();
-        let operation = KmsEvent::builder()
-            .operation(KmsOperation::ReencryptResponse)
-            .txn_id(vec![1])
+        let message = KmsMessage::builder()
+            .txn_id(Some(vec![1].into()))
             .proof(vec![1, 2, 3])
-            .build();
-
-        assert!(operation.operation().is_response());
-
-        let operation = KmsEventMessage::builder()
-            .event(operation)
             .value(reencrypt_response_values)
             .build();
-        let json = operation.to_json().unwrap();
+        let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
             "reencrypt_response": {
                 "reencrypt_response": {
@@ -1100,18 +1087,12 @@ mod tests {
 
     #[test]
     fn test_keygen_event_to_json() {
-        let operation = KmsEvent::builder()
-            .operation(KmsOperation::KeyGen)
-            .txn_id(vec![1])
+        let message = KmsMessage::builder()
             .proof(vec![1, 2, 3])
-            .build();
-
-        let operation = KmsEventMessage::builder()
-            .event(operation)
             .value(KeyGenValues::default())
             .build();
 
-        let json = operation.to_json().unwrap();
+        let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
             "keygen": {
                 "keygen": {
@@ -1132,18 +1113,12 @@ mod tests {
             .server_key_digest("def".to_string())
             .server_key_signature(vec![4, 5, 6])
             .build();
-        let operation = KmsEvent::builder()
-            .operation(KmsOperation::KeyGenResponse)
-            .txn_id(vec![1])
+        let message = KmsMessage::builder()
+            .txn_id(Some(vec![1].into()))
             .proof(vec![1, 2, 3])
-            .build();
-
-        assert!(operation.operation().is_response());
-        let operation = KmsEventMessage::builder()
-            .event(operation)
             .value(keygen_response_values)
             .build();
-        let json = operation.to_json().unwrap();
+        let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
             "keygen_response": {
                 "keygen_response": {
@@ -1162,18 +1137,12 @@ mod tests {
 
     #[test]
     fn test_crs_gen_event_to_json() {
-        let operation = KmsEvent::builder()
-            .operation(KmsOperation::CrsGen)
-            .txn_id(vec![1])
+        let message = KmsMessage::builder()
             .proof(vec![1, 2, 3])
-            .build();
-
-        let operation = KmsEventMessage::builder()
-            .event(operation)
             .value(CrsGenValues::default())
             .build();
 
-        let json = operation.to_json().unwrap();
+        let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
             "crs_gen": { "proof": hex::encode([1, 2, 3]) }
         });
@@ -1187,20 +1156,14 @@ mod tests {
             .digest("123456".to_string())
             .signature(vec![1, 2, 3])
             .build();
-        let operation = KmsEvent::builder()
-            .operation(KmsOperation::CrsGenResponse)
-            .txn_id(vec![1])
+
+        let message = KmsMessage::builder()
+            .txn_id(Some(vec![1].into()))
             .proof(vec![1, 2, 3])
-            .build();
-
-        assert!(operation.operation().is_response());
-
-        let operation = KmsEventMessage::builder()
-            .event(operation)
             .value(crs_gen_response_values)
             .build();
 
-        let json = operation.to_json().unwrap();
+        let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
             "crs_gen_response": {
                 "crs_gen_response": {

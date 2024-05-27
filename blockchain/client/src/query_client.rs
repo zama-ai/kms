@@ -6,8 +6,11 @@ use cosmos_proto::messages::cosmwasm::wasm::v1::query_client::QueryClient as Was
 use cosmos_proto::messages::cosmwasm::wasm::v1::{
     QueryContractsByCodeRequest, QueryContractsByCodeResponse, QuerySmartContractStateRequest,
 };
+use events::kms::{KmsEvent, TransactionId};
+use serde::Serialize;
 use std::str;
 use std::time::Duration;
+use strum_macros::EnumString;
 use tonic::transport::{Channel, Endpoint};
 use typed_builder::TypedBuilder;
 
@@ -43,6 +46,32 @@ pub struct QueryClient {
     client: Channel,
 }
 
+#[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
+pub struct OperationQuery {
+    pub event: KmsEvent,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Default, TypedBuilder)]
+pub struct TransactionQuery {
+    pub txn_id: TransactionId,
+}
+
+#[derive(Debug, EnumString, Serialize, Clone, PartialEq)]
+pub enum ContractQuery {
+    #[strum(serialize = "get_operations_value")]
+    #[serde(rename = "get_operations_value")]
+    GetOperationsValue(OperationQuery),
+    #[strum(serialize = "get_transaction")]
+    #[serde(rename = "get_transaction")]
+    GetTransaction(TransactionQuery),
+}
+
+#[derive(TypedBuilder, Clone)]
+pub struct QueryContractRequest {
+    contract_address: String,
+    query: ContractQuery,
+}
+
 impl QueryClient {
     pub fn builder<'a>() -> QueryClientBuilderBuilder<'a> {
         QueryClientBuilder::builder()
@@ -50,19 +79,18 @@ impl QueryClient {
 
     /// Queries the contract state on the blockchain.
     /// # Arguments
-    /// * `query_data` - The query data to be sent to the contract.
+    /// * `request` - The query data to be sent to the contract.
     /// # Returns
     /// A `Result` containing the response from the contract or an error.
-    #[tracing::instrument(skip(self, query_data))]
-    pub async fn query_contract(
-        &self,
-        contract_address: String,
-        query_data: &[u8],
-    ) -> Result<Vec<u8>, Error> {
+    #[tracing::instrument(skip(self, request))]
+    pub async fn query_contract(&self, request: QueryContractRequest) -> Result<Vec<u8>, Error> {
         let mut query = WasmQueryClient::new(self.client.clone());
         let request = QuerySmartContractStateRequest {
-            address: contract_address,
-            query_data: query_data.to_vec(),
+            address: request.contract_address,
+            query_data: serde_json::json!(request.query)
+                .to_string()
+                .as_bytes()
+                .to_vec(),
         };
         let result = query
             .smart_contract_state(request)

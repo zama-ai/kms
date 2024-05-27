@@ -1,8 +1,7 @@
 use async_trait::async_trait;
 use events::kms::{
     CrsGenResponseValues, DecryptResponseValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
-    KmsEvent, KmsEventMessage, KmsOperation, OperationValue, Proof, ReencryptResponseValues,
-    TransactionId,
+    KmsEvent, KmsMessage, OperationValue, Proof, ReencryptResponseValues, TransactionId,
 };
 use strum_macros::{Display, EnumString};
 
@@ -67,58 +66,33 @@ impl KmsOperationResponse {
     }
 }
 
-impl From<KmsOperationResponse> for KmsEventMessage {
+impl From<KmsOperationResponse> for KmsMessage {
     fn from(value: KmsOperationResponse) -> Self {
         match value {
-            KmsOperationResponse::DecryptResponse(val) => KmsEventMessage::builder()
+            KmsOperationResponse::DecryptResponse(val) => KmsMessage::builder()
                 .value(val.decrypt_response)
-                .event(
-                    KmsEvent::builder()
-                        .operation(KmsOperation::DecryptResponse)
-                        .txn_id(val.operation_val.tx_id)
-                        .proof(val.operation_val.proof)
-                        .build(),
-                )
+                .txn_id(val.operation_val.tx_id)
+                .proof(val.operation_val.proof)
                 .build(),
-            KmsOperationResponse::ReencryptResponse(val) => KmsEventMessage::builder()
+            KmsOperationResponse::ReencryptResponse(val) => KmsMessage::builder()
                 .value(val.reencrypt_response)
-                .event(
-                    KmsEvent::builder()
-                        .operation(KmsOperation::ReencryptResponse)
-                        .txn_id(val.operation_val.tx_id)
-                        .proof(val.operation_val.proof)
-                        .build(),
-                )
+                .txn_id(val.operation_val.tx_id)
+                .proof(val.operation_val.proof)
                 .build(),
-            KmsOperationResponse::KeyGenPreprocResponse(val) => KmsEventMessage::builder()
+            KmsOperationResponse::KeyGenPreprocResponse(val) => KmsMessage::builder()
                 .value(val.keygen_preproc_response)
-                .event(
-                    KmsEvent::builder()
-                        .operation(KmsOperation::KeyGenPreprocResponse)
-                        .txn_id(val.operation_val.tx_id)
-                        .proof(val.operation_val.proof)
-                        .build(),
-                )
+                .txn_id(val.operation_val.tx_id)
+                .proof(val.operation_val.proof)
                 .build(),
-            KmsOperationResponse::KeyGenResponse(val) => KmsEventMessage::builder()
+            KmsOperationResponse::KeyGenResponse(val) => KmsMessage::builder()
                 .value(val.keygen_response)
-                .event(
-                    KmsEvent::builder()
-                        .operation(KmsOperation::KeyGenResponse)
-                        .txn_id(val.operation_val.tx_id)
-                        .proof(val.operation_val.proof)
-                        .build(),
-                )
+                .txn_id(val.operation_val.tx_id)
+                .proof(val.operation_val.proof)
                 .build(),
-            KmsOperationResponse::CrsGenResponse(val) => KmsEventMessage::builder()
+            KmsOperationResponse::CrsGenResponse(val) => KmsMessage::builder()
                 .value(val.crs_gen_response)
-                .event(
-                    KmsEvent::builder()
-                        .operation(KmsOperation::CrsGenResponse)
-                        .txn_id(val.operation_val.tx_id)
-                        .proof(val.operation_val.proof)
-                        .build(),
-                )
+                .txn_id(val.operation_val.tx_id)
+                .proof(val.operation_val.proof)
                 .build(),
         }
     }

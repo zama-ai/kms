@@ -5,7 +5,7 @@ use crate::infrastructure::blockchain::KmsBlockchain;
 use crate::infrastructure::coordinator::KmsCoordinator;
 use crate::infrastructure::metrics::{MetricType, Metrics, OpenTelemetryMetrics};
 use events::kms::TransactionEvent;
-use events::subscription::handler::{SubscriptionEventBuilder, SubscriptionHandler};
+use events::subscription::handler::{EventsMode, SubscriptionEventBuilder, SubscriptionHandler};
 use typed_builder::TypedBuilder;
 
 use super::SyncHandler;
@@ -121,7 +121,7 @@ where
             .tick_time_in_sec(self.config.tick_interval_secs)
             .grpc_addresses(&grpc_addresses)
             .storage_path(&self.config.storage_path)
-            .filter_events_mode(self.config.mode)
+            .filter_events_mode(EventsMode::Request)
             .build()
             .subscription()
             .await?;

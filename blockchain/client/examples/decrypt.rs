@@ -1,5 +1,5 @@
-use kms_blockchain_client::client::{Client, ClientBuilder};
-use serde_json::json;
+use events::kms::{DecryptValues, FheType, KmsMessage, OperationValue};
+use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
 
 #[tokio::main]
 async fn main() {
@@ -22,19 +22,28 @@ async fn main() {
 
     // Decrypt the ciphertext
     let ciphertext = vec![1, 2, 3, 4, 5];
-    let fhe_type = "euint8";
 
-    let msg_payload = json!({
-      "decrypt": {
-        "ciphertext": ciphertext,
-        "fhe_type": fhe_type.to_string()
-      }
-    })
-    .to_string();
+    let operation_response = OperationValue::Decrypt(
+        DecryptValues::builder()
+            .ciphertext(ciphertext.clone())
+            .fhe_type(FheType::Euint8)
+            .version(1)
+            .servers_needed(1)
+            .key_id(vec![1, 2, 3])
+            .randomness(vec![1, 2, 3])
+            .build(),
+    );
 
-    let response = client
-        .execute_contract(msg_payload.as_bytes(), 100_000u64)
-        .await
-        .unwrap();
+    let msg = KmsMessage::builder()
+        .proof(vec![1, 2, 3])
+        .value(operation_response)
+        .build();
+
+    let request = ExecuteContractRequest::builder()
+        .message(msg)
+        .gas_limit(100_000u64)
+        .build();
+
+    let response = client.execute_contract(request).await.unwrap();
     tracing::info!("Response: {:?}", response);
 }
