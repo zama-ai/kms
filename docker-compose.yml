@@ -46,7 +46,7 @@ services:
       - "1317:1317"
       - "9090:9090"
     volumes:
-      - blockchain/scripts/bootstrap_asc.sh:/bootstrap.sh
+      - ./blockchain/scripts/bootstrap_asc.sh:/bootstrap.sh
     entrypoint: [ "/bootstrap.sh" ]
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"

@@ -1662,6 +1662,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap-stdin"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc126d12a0930c94c3548581294d5f19360ac02e408600b4d7619d7234e8b505"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "clap_builder"
 version = "4.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6730,6 +6739,26 @@ name = "simdutf8"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27f6278552951f1f2b8cf9da965d10969b2efdea95a6ec47987ab46edfe263a"
+
+[[package]]
+name = "simulator"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "clap-stdin",
+ "config",
+ "cosmos-proto",
+ "cosmwasm-std",
+ "events",
+ "kms-blockchain-client",
+ "serde",
+ "serde_json",
+ "strum",
+ "strum_macros",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "slab"

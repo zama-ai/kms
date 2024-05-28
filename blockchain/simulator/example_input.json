@@ -1,0 +1,10 @@
+{
+  "decrypt": {
+    "version": 1,
+    "ciphertext": "010101",
+    "randomness": "010101",
+    "key_id": "010101",
+    "servers_needed": 1,
+    "fhe_type": "euint32"
+  }
+}

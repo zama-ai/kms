@@ -172,11 +172,15 @@ async fn wait_for_tx_processed(
     query_client: Arc<QueryClient>,
     txhash: String,
 ) -> anyhow::Result<()> {
-    query_client
+    let r = query_client
         .query_tx(txhash.clone())
         .await
-        .map(|_| ())
-        .map_err(|e| anyhow::anyhow!("Transaction error {:?}", e))
+        .map_err(|e| anyhow::anyhow!("Transaction error {:?}", e))?;
+    if r.is_none() {
+        Err(anyhow::anyhow!("Transaction not found"))
+    } else {
+        Ok(())
+    }
 }
 
 /// Check the event status in the blockchain to verify if it was processed and

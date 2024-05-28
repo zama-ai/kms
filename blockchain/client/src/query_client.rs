@@ -103,7 +103,7 @@ impl QueryClient {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn query_tx(&self, tx_hash: String) -> Result<TxResponse, Error> {
+    pub async fn query_tx(&self, tx_hash: String) -> Result<Option<TxResponse>, Error> {
         let mut query = ServiceClient::new(self.client.clone());
         let req = GetTxRequest {
             hash: tx_hash.clone(),
@@ -111,12 +111,22 @@ impl QueryClient {
         let result = query
             .get_tx(req)
             .await
-            .map(|response| response.into_inner().tx_response)?;
+            .map(|response| Ok(response.into_inner().tx_response))
+            .unwrap_or_else(|e| {
+                if e.code() == tonic::Code::NotFound {
+                    Ok(None)
+                } else {
+                    Err(Error::QueryError(format!(
+                        "Error querying transaction {:?}",
+                        e
+                    )))
+                }
+            })?;
 
         if let Some(response) = result {
             if response.code == 0 {
                 tracing::info!("Query Tx executed successfully {:?}", response);
-                Ok(response)
+                Ok(Some(response))
             } else {
                 Err(Error::QueryError(format!(
                     "Transaction found for {:?} with error code {:?} and message {:?}",
@@ -126,10 +136,8 @@ impl QueryClient {
                 )))
             }
         } else {
-            Err(Error::QueryError(format!(
-                "Transaction not found for {:?}",
-                tx_hash
-            )))
+            tracing::info!("Transaction not found for {:?}", tx_hash.clone());
+            Ok(None)
         }
     }
 

@@ -2,14 +2,15 @@
 resolver = "2"
 
 members = [
-    "coordinator",
-    "core/threshold",
     "blockchain/client",
     "blockchain/connector",
+    "blockchain/contracts/asc",
     "blockchain/cosmos-proto",
     "blockchain/events",
     "blockchain/proofs",
-    "blockchain/contracts/asc",
+    "blockchain/simulator",
+    "coordinator",
+    "core/threshold",
 ]
 
 [profile.dev.package."*"]
