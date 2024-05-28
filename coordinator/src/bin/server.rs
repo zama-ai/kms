@@ -118,9 +118,20 @@ async fn main() -> Result<(), anyhow::Error> {
     match args.mode {
         StorageMode::Dev { exec_mode } => match exec_mode {
             ExecutionMode::Threshold { config_file } => {
-                let config = ThresholdConfig::init_config(&config_file)?;
-                let pub_storage = FileStorage::new_threshold(StorageType::PUB, config.my_id);
-                let priv_storage = FileStorage::new_threshold(StorageType::PRIV, config.my_id);
+                let full_config = ThresholdConfig::init_config(&config_file)?;
+                let pub_storage = FileStorage::new_threshold(
+                    full_config.public_storage_path(),
+                    StorageType::PUB,
+                    full_config.rest.my_id,
+                )
+                .unwrap();
+                let priv_storage = FileStorage::new_threshold(
+                    full_config.private_storage_path(),
+                    StorageType::PRIV,
+                    full_config.rest.my_id,
+                )
+                .unwrap();
+                let config = full_config.rest;
                 let server =
                     threshold_server_init(config.clone(), pub_storage, priv_storage).await?;
                 threshold_server_start(config.url, config.base_port, config.timeout_secs, server)
@@ -128,9 +139,13 @@ async fn main() -> Result<(), anyhow::Error> {
             }
             ExecutionMode::Centralized { config_file } => {
                 let config = CentralizedConfig::init_config(&config_file)?;
-                let pub_storage = FileStorage::new_central(StorageType::PUB);
-                let priv_storage = FileStorage::new_central(StorageType::PRIV);
-                kms_server_handle(config, pub_storage, priv_storage).await
+                let pub_storage =
+                    FileStorage::new_centralized(config.public_storage_path(), StorageType::PUB)
+                        .unwrap();
+                let priv_storage =
+                    FileStorage::new_centralized(config.private_storage_path(), StorageType::PRIV)
+                        .unwrap();
+                kms_server_handle(config.into(), pub_storage, priv_storage).await
             }
         },
         StorageMode::Proxy {
@@ -142,7 +157,7 @@ async fn main() -> Result<(), anyhow::Error> {
             }
             ExecutionMode::Centralized { config_file } => {
                 let config = CentralizedConfig::init_config(&config_file)?;
-                kms_proxy_server_handle(config, &enclave_vsock).await
+                kms_proxy_server_handle(config.into(), &enclave_vsock).await
             }
         },
         StorageMode::Enclave {
@@ -190,7 +205,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         sig_pk,
                     };
                     // TODO this should be glued together with Nitro properly after mergning #442
-                    let pub_storage = FileStorage::new_central(StorageType::PUB);
+                    let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
                     let priv_storage = EnclaveStorage {
                         s3_client,
                         aws_kms_client,
@@ -198,7 +213,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         root_key_id,
                         enclave_keys,
                     };
-                    kms_server_handle(config, pub_storage, priv_storage).await
+                    kms_server_handle(config.into(), pub_storage, priv_storage).await
                 }
             }
         }

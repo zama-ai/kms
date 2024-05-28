@@ -1,7 +1,6 @@
 use crate::consts::KEY_PATH_PREFIX;
 use crate::cryptography::central_kms::{compute_handle, SoftwareKmsKeys};
 use crate::kms::RequestId;
-use crate::rpc::central_rpc::tonic_some_or_err;
 use crate::rpc::rpc_types::PrivDataType;
 use crate::util::file_handling::{read_element, write_element};
 use crate::{anyhow_error_and_log, some_or_err};
@@ -129,34 +128,66 @@ impl fmt::Display for StorageType {
 
 #[derive(Default, Clone)]
 pub struct FileStorage {
-    extra_prefix: String,
+    path: PathBuf,
 }
 
 impl FileStorage {
-    pub fn root_dir(&self) -> anyhow::Result<PathBuf> {
-        let raw_dir = env::current_dir()?;
-        let cur_dir = tonic_some_or_err(
-            raw_dir.to_str(),
-            "Could not get current directory".to_string(),
-        )?;
-
-        let root_path = format!(
-            "{}{MAIN_SEPARATOR}{}{MAIN_SEPARATOR}{}{MAIN_SEPARATOR}dev",
-            cur_dir, KEY_PATH_PREFIX, self.extra_prefix
-        );
-        Ok(PathBuf::from(root_path))
+    /// current_dir/keys/extra_prefix
+    pub fn root_dir(&self) -> &Path {
+        self.path.as_path()
     }
 
-    pub fn new_central(storage_type: StorageType) -> Self {
-        Self {
-            extra_prefix: storage_type.to_string(),
-        }
+    fn default_path_with_prefix(extra_prefix: &str) -> anyhow::Result<PathBuf> {
+        let cur = env::current_dir()?;
+        let path = cur.join(KEY_PATH_PREFIX).join(extra_prefix);
+        // ensure the directory exists
+        fs::create_dir_all(&path)?;
+        Ok(path)
     }
 
-    pub fn new_threshold(storage_type: StorageType, party_id: usize) -> Self {
-        Self {
-            extra_prefix: format!("{storage_type}-p{party_id}"),
-        }
+    /// Create a new directory for centralized storage.
+    ///
+    /// If [optional_path] is None, set the storage directory to be
+    /// {current_dir}/keys/{storage_type}
+    /// Otherwise, set the storage directory to be
+    /// {path}/{storage_type}
+    /// All missing paths are created during this process.
+    pub fn new_centralized(
+        optional_path: Option<&Path>,
+        storage_type: StorageType,
+    ) -> anyhow::Result<Self> {
+        let path = match optional_path {
+            Some(path) => {
+                let path = path.join(storage_type.to_string());
+                fs::create_dir_all(&path)?;
+                path.canonicalize()?
+            }
+            None => Self::default_path_with_prefix(&storage_type.to_string())?,
+        };
+        Ok(Self { path })
+    }
+
+    /// Create a new directory for threshold storage.
+    ///
+    /// If [optional_path] is None, set the storage directory to be
+    /// {current_dir}/keys/{storage_type}-p{party_id}
+    /// Otherwise, set the storage directory to be
+    /// {path}/{storage_type}-p{party_id}
+    /// All missing paths are created during this process.
+    pub fn new_threshold(
+        optional_path: Option<&Path>,
+        storage_type: StorageType,
+        party_id: usize,
+    ) -> anyhow::Result<Self> {
+        let path = match optional_path {
+            Some(path) => {
+                let path = path.join(format!("{storage_type}-p{party_id}"));
+                fs::create_dir_all(&path)?;
+                path.canonicalize()?
+            }
+            None => Self::default_path_with_prefix(&format!("{storage_type}-p{party_id}"))?,
+        };
+        Ok(Self { path })
     }
 }
 
@@ -168,9 +199,8 @@ impl PublicStorageReader for FileStorage {
                 "Could not store data, data_id or data_type contains {MAIN_SEPARATOR}",
             )));
         }
-        let mut path = self.root_dir()?;
-        let file = format!("{}{MAIN_SEPARATOR}{}", data_type, data_id);
-        path.push(file);
+        let root_path = self.root_dir();
+        let path = root_path.join(data_type).join(data_id);
         let url = Url::from_file_path(path)
             .map_err(|_e| anyhow_error_and_log("Could not turn path into URL"))?;
         Ok(url)
@@ -191,30 +221,23 @@ impl PublicStorageReader for FileStorage {
     /// Return all elements stored of a specific type as a hashmap of the `data_ptr` as key and the
     /// `url` as value.
     async fn all_urls(&self, data_type: &str) -> anyhow::Result<HashMap<String, Url>> {
-        let mut res = HashMap::new();
-        let mut root = self.root_dir()?;
-        root.push(data_type);
-        let path = some_or_err(
-            root.to_str(),
-            "Could not convert path to string".to_string(),
-        )?;
-        if !Path::new(path).try_exists()? {
+        let root = self.root_dir();
+        let path = root.join(data_type);
+        if !path.try_exists()? {
             // If the path does not exist, then return an empty hashmap.
             tracing::info!(
                 "The path {} does not exist, returning an empty map of URLs",
-                path
+                path.display(),
             );
-            return Ok(res);
+            return Ok(HashMap::new());
         }
-        let files = fs::read_dir(path)
+
+        let mut res = HashMap::new();
+        let mut files = tokio::fs::read_dir(path)
+            .await
             .map_err(|e| anyhow!("Could not read directory due to error {}!", e))?;
-        for cur_file in files {
-            let cur_path = cur_file?.path();
-            let cur_file_str = some_or_err(
-                cur_path.to_str(),
-                "Could not convert path to string".to_string(),
-            )?
-            .to_string();
+        while let Some(cur_file) = files.next_entry().await? {
+            let cur_path = cur_file.path();
             let data_ptr = some_or_err(
                 some_or_err(
                     cur_path.file_name(),
@@ -228,7 +251,7 @@ impl PublicStorageReader for FileStorage {
                 // Ignore hidden files
                 continue;
             }
-            let url = Url::from_file_path(cur_file_str)
+            let url = Url::from_file_path(cur_path)
                 .map_err(|_| anyhow!("Could not convert path to URL"))?;
             res.insert(data_ptr, url);
         }
@@ -236,7 +259,10 @@ impl PublicStorageReader for FileStorage {
     }
 
     fn info(&self) -> String {
-        format!("file storage with root_path \'{:?}\'", self.root_dir().ok())
+        format!(
+            "file storage with root_path \'{}\'",
+            self.root_dir().display()
+        )
     }
 }
 
@@ -257,18 +283,16 @@ impl PublicStorage for FileStorage {
             );
             return Ok(());
         }
-        let root_dir = self.root_dir().map_err(|e| {
-            tracing::warn!("Could not get root directory!");
-            e
-        })?;
-        fs::create_dir_all(root_dir.clone()).map_err(|e| {
-            tracing::warn!(
-                "Could not create directory {}, error {}",
-                root_dir.display(),
+        tokio::fs::create_dir_all(self.root_dir())
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    "Could not create directory {}, error {}",
+                    self.root_dir().display(),
+                    e
+                );
                 e
-            );
-            e
-        })?;
+            })?;
         write_element(url.path(), &data).await.map_err(|e| {
             tracing::warn!("Could not write to URL {}, error {}", url, e);
             e
@@ -278,7 +302,7 @@ impl PublicStorage for FileStorage {
 
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
         let url_path = Path::new(url.path());
-        Ok(fs::remove_file(url_path)?)
+        Ok(tokio::fs::remove_file(url_path).await?)
     }
 }
 
@@ -411,18 +435,38 @@ mod tests {
 
     #[tokio::test]
     async fn threshold_dev_storage() {
-        let prefix1 = "p1";
-        let prefix2 = "p2";
+        let path1 = tempfile::tempdir().unwrap();
+        let path2 = tempfile::tempdir().unwrap();
         let mut storage1 = FileStorage {
-            extra_prefix: prefix1.to_string(),
+            path: path1.into_path(),
         };
         let storage2 = FileStorage {
-            extra_prefix: prefix2.to_string(),
+            path: path2.into_path(),
         };
 
         // clear out storage
-        let _ = fs::remove_dir_all(storage1.root_dir().unwrap());
-        let _ = fs::remove_dir_all(storage2.root_dir().unwrap());
+        let _ = fs::remove_dir_all(storage1.root_dir());
+        let _ = fs::remove_dir_all(storage2.root_dir());
+
+        // urls should be empty
+        for data_type in [
+            PubDataType::PublicKey,
+            PubDataType::ServerKey,
+            PubDataType::SnsKey,
+            PubDataType::CRS,
+            PubDataType::VerfKey,
+        ] {
+            assert!(storage1
+                .all_urls(&data_type.to_string())
+                .await
+                .unwrap()
+                .is_empty());
+            assert!(storage2
+                .all_urls(&data_type.to_string())
+                .await
+                .unwrap()
+                .is_empty());
+        }
 
         let data = "data";
         let url = storage1
@@ -443,5 +487,48 @@ mod tests {
             .unwrap();
         // check that URLs are different on storage1 and storage2
         assert!(url != url2);
+    }
+
+    async fn file_storage_with_path(threshold: bool) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut storage = if threshold {
+            FileStorage::new_threshold(Some(path), StorageType::PUB, 1).unwrap()
+        } else {
+            FileStorage::new_centralized(Some(path), StorageType::PUB).unwrap()
+        };
+
+        let data = vec![1, 2, 3];
+        let data_id = "ID";
+        let url = storage
+            .compute_url(data_id, &PubDataType::CRS.to_string())
+            .unwrap();
+        storage.store_data(&data, &url).await.unwrap();
+
+        // manually check that the file actually exists
+        let data_path = if threshold {
+            path.join(format!("{}-p1", StorageType::PUB))
+                .join(PubDataType::CRS.to_string())
+                .join(data_id)
+        } else {
+            path.join(StorageType::PUB.to_string())
+                .join(PubDataType::CRS.to_string())
+                .join(data_id)
+        };
+        assert!(data_path.exists());
+
+        // drop the tempdir and it should disappear
+        drop(temp_dir);
+        assert!(!data_path.exists());
+    }
+
+    #[tokio::test]
+    async fn threshold_file_storage_with_path() {
+        file_storage_with_path(true).await
+    }
+
+    #[tokio::test]
+    async fn centralized_file_storage_with_path() {
+        file_storage_with_path(false).await
     }
 }

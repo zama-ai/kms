@@ -1,5 +1,5 @@
 use assert_cmd::{assert::OutputAssertExt, Command};
-use kms_lib::consts::{AMOUNT_PARTIES, KEY_PATH_PREFIX, TMP_PATH_PREFIX};
+use kms_lib::consts::{AMOUNT_PARTIES, KEY_PATH_PREFIX};
 use kms_lib::storage::{FileStorage, StorageType};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -32,27 +32,22 @@ fn kill_process(process_name: &str) {
 }
 
 fn purge_file_storage(storage: &FileStorage) {
-    let dir = storage.root_dir().unwrap();
+    let dir = storage.root_dir();
     if dir.exists() {
         fs::remove_dir_all(dir).unwrap();
     }
 }
 
 fn purge_all() {
-    let priv_storage = FileStorage::new_central(StorageType::PRIV);
-    let pub_storage = FileStorage::new_central(StorageType::PUB);
+    let priv_storage = FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
+    let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
     purge_file_storage(&priv_storage);
     purge_file_storage(&pub_storage);
     for i in 1..=AMOUNT_PARTIES {
-        let priv_storage = FileStorage::new_threshold(StorageType::PRIV, i);
-        let pub_storage = FileStorage::new_threshold(StorageType::PUB, i);
+        let priv_storage = FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap();
+        let pub_storage = FileStorage::new_threshold(None, StorageType::PUB, i).unwrap();
         purge_file_storage(&priv_storage);
         purge_file_storage(&pub_storage);
-    }
-
-    let tmp_dir = PathBuf::from_str(TMP_PATH_PREFIX).unwrap();
-    if tmp_dir.exists() {
-        fs::remove_dir_all(tmp_dir).unwrap();
     }
 
     let key_dir = PathBuf::from_str(KEY_PATH_PREFIX).unwrap();
@@ -63,6 +58,10 @@ fn purge_all() {
 
 #[cfg(test)]
 mod kms_gen_keys_binary_test {
+    use std::fs::read_dir;
+
+    use tempfile::tempdir;
+
     use super::*;
 
     #[test]
@@ -94,21 +93,10 @@ mod kms_gen_keys_binary_test {
             .success();
     }
 
-    #[test]
-    fn gen_key() {
+    fn gen_key(arg: &str) {
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
-            .arg("centralized")
-            .arg("--param-path")
-            .arg("parameters/small_test_params.json")
-            .output()
-            .unwrap()
-            .assert()
-            .success();
-
-        Command::cargo_bin(KMS_GEN_KEYS)
-            .unwrap()
-            .arg("threshold")
+            .arg(arg)
             .arg("--param-path")
             .arg("parameters/small_test_params.json")
             .output()
@@ -116,12 +104,57 @@ mod kms_gen_keys_binary_test {
             .assert()
             .success();
     }
+
+    #[test]
+    fn gen_key_centralized() {
+        gen_key("centralized")
+    }
+
+    #[test]
+    fn gen_key_threshold() {
+        gen_key("threshold")
+    }
+
+    fn gen_key_tempdir(arg: &str) {
+        let temp_dir_priv = tempdir().unwrap();
+        let temp_dir_pub = tempdir().unwrap();
+        Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg(arg)
+            .arg("--param-path")
+            .arg("parameters/small_test_params.json")
+            .arg("--priv-path")
+            .arg(temp_dir_priv.path())
+            .arg("--pub-path")
+            .arg(temp_dir_pub.path())
+            .output()
+            .unwrap()
+            .assert()
+            .success();
+
+        // NOTE, it's important to take the reference here otherwise
+        // the tempdir value will be dropped and the destructor would be called
+        let mut dir_priv = read_dir(&temp_dir_priv).unwrap();
+        let mut dir_pub = read_dir(&temp_dir_pub).unwrap();
+
+        // unwrap should succeed because the directory should not be empty
+        _ = dir_priv.next().unwrap();
+        _ = dir_pub.next().unwrap();
+    }
+
+    #[test]
+    fn gen_key_tempdir_centralized() {
+        gen_key_tempdir("centralized")
+    }
+
+    #[test]
+    fn gen_key_tempdir_threshold() {
+        gen_key_tempdir("threshold")
+    }
 }
 
 #[cfg(test)]
 mod kms_server_binary_test {
-    use std::{path::PathBuf, str::FromStr};
-
     use super::*;
 
     fn kill_kms_server() {
@@ -213,11 +246,6 @@ mod kms_server_binary_test {
         // We need to manually delete the storage every time
         // since it might affect other tests (in other modules).
         purge_all();
-
-        let tmp_dir = PathBuf::from_str(TMP_PATH_PREFIX).unwrap();
-        if tmp_dir.exists() {
-            fs::remove_dir_all(tmp_dir).unwrap();
-        }
     }
 
     #[test]

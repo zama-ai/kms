@@ -1452,15 +1452,21 @@ pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
     }
 }
 
+// TODO this module should be behind cfg(test) normally
+// but we need it in other places such as the connector
+// and cfg(test) is not compiled by tests in other crates.
+// Consider putting this behind a test-specific crate.
 #[cfg(feature = "non-wasm")]
 pub mod test_tools {
     use super::*;
     use crate::consts::{BASE_PORT, DEC_CAPACITY, DEFAULT_PROT, DEFAULT_URL, MIN_DEC_CACHE};
     use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
-    use crate::rpc::central_rpc::{default_param_file_map, server_handle, CentralizedConfig};
+    use crate::rpc::central_rpc::{
+        default_param_file_map, server_handle, CentralizedConfigNoStorage,
+    };
     use crate::storage::{FileStorage, PublicStorage, RamStorage, StorageType, StorageVersion};
     use crate::threshold::threshold_kms::{
-        threshold_server_init, threshold_server_start, ThresholdConfig,
+        threshold_server_init, threshold_server_start, ThresholdConfigNoStorage,
     };
     use std::str::FromStr;
     use tokio::task::JoinHandle;
@@ -1482,7 +1488,7 @@ pub mod test_tools {
             let cur_pub_storage = pub_storage[i - 1].to_owned();
             let cur_priv_storage = priv_storage[i - 1].to_owned();
             handles.push(tokio::spawn(async move {
-                let config = ThresholdConfig {
+                let config = ThresholdConfigNoStorage {
                     url: DEFAULT_URL.to_owned(),
                     base_port: BASE_PORT,
                     parties: amount,
@@ -1564,7 +1570,7 @@ pub mod test_tools {
     ) -> JoinHandle<()> {
         let server_handle = tokio::spawn(async move {
             let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
-            let config = CentralizedConfig {
+            let config = CentralizedConfigNoStorage {
                 url,
                 param_file_map: default_param_file_map(),
             };
@@ -1602,8 +1608,8 @@ pub mod test_tools {
     ) -> (JoinHandle<()>, CoordinatorEndpointClient<Channel>, Client) {
         let (kms_server, kms_client) = match storage_version {
             StorageVersion::Dev => {
-                let priv_storage = FileStorage::new_central(StorageType::PRIV);
-                let pub_storage = FileStorage::new_central(StorageType::PUB);
+                let priv_storage = FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
+                let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
                 setup_centralized(pub_storage, priv_storage).await
             }
             StorageVersion::Ram => {
@@ -1612,8 +1618,8 @@ pub mod test_tools {
                 setup_centralized(pub_storage, priv_storage).await
             }
         };
-        let pub_storage = vec![FileStorage::new_central(StorageType::PUB)];
-        let client_storage = FileStorage::new_central(StorageType::CLIENT);
+        let pub_storage = vec![FileStorage::new_centralized(None, StorageType::PUB).unwrap()];
+        let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
         let internal_client = Client::new_client(client_storage, pub_storage, param_path, 1, 1)
             .await
             .unwrap();
@@ -1690,8 +1696,10 @@ pub(crate) mod tests {
                 let mut pub_storage = Vec::new();
                 let mut priv_storage = Vec::new();
                 for i in 1..=AMOUNT_PARTIES {
-                    priv_storage.push(FileStorage::new_threshold(StorageType::PRIV, i));
-                    pub_storage.push(FileStorage::new_threshold(StorageType::PUB, i));
+                    priv_storage
+                        .push(FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap());
+                    pub_storage
+                        .push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
                 }
                 super::test_tools::setup_threshold(THRESHOLD as u8, pub_storage, priv_storage).await
             }
@@ -1707,9 +1715,9 @@ pub(crate) mod tests {
         };
         let mut pub_storage = Vec::with_capacity(AMOUNT_PARTIES);
         for i in 1..=AMOUNT_PARTIES {
-            pub_storage.push(FileStorage::new_threshold(StorageType::PUB, i));
+            pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
         }
-        let client_storage = FileStorage::new_central(StorageType::CLIENT);
+        let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
         let internal_client = Client::new_client(
             client_storage,
             pub_storage,
@@ -1727,7 +1735,7 @@ pub(crate) mod tests {
     async fn test_key_gen_centralized() {
         let request_id = RequestId::derive("test_key_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(&request_id.to_string()).await;
+        purge(None, None, &request_id.to_string()).await;
         key_gen_centralized(TEST_PARAM_PATH, &request_id, Some(ParamChoice::Test)).await;
     }
 
@@ -1737,7 +1745,7 @@ pub(crate) mod tests {
     async fn default_key_gen_centralized() {
         let request_id = RequestId::derive("default_key_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(&request_id.to_string()).await;
+        purge(None, None, &request_id.to_string()).await;
         key_gen_centralized(DEFAULT_PARAM_PATH, &request_id, Some(ParamChoice::Default)).await;
     }
 
@@ -1773,7 +1781,7 @@ pub(crate) mod tests {
         }
         let inner_resp = response.unwrap().into_inner();
 
-        let pub_storage = FileStorage::new_central(StorageType::PUB);
+        let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
         let pk: Option<FhePublicKey> = internal_client
             .retrieve_key(&inner_resp, PubDataType::PublicKey, &pub_storage)
             .await
@@ -1793,7 +1801,7 @@ pub(crate) mod tests {
     async fn default_crs_gen_centralized() {
         let request_id = RequestId::derive("default_crs_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(&request_id.to_string()).await;
+        purge(None, None, &request_id.to_string()).await;
         crs_gen_centralized_client(DEFAULT_PARAM_PATH, &request_id, Some(ParamChoice::Default))
             .await;
     }
@@ -1803,10 +1811,10 @@ pub(crate) mod tests {
     async fn test_crs_gen_centralized() {
         let request_id = RequestId::derive("test_crs_gen_centralized").unwrap();
         // Delete potentially old data
-        purge(&request_id.to_string()).await;
+        purge(None, None, &request_id.to_string()).await;
         crs_gen_centralized_manual(TEST_PARAM_PATH, &request_id, Some(ParamChoice::Test)).await;
 
-        purge(&request_id.to_string()).await;
+        purge(None, None, &request_id.to_string()).await;
         crs_gen_centralized_client(TEST_PARAM_PATH, &request_id, Some(ParamChoice::Test)).await;
     }
 
@@ -1849,7 +1857,7 @@ pub(crate) mod tests {
         assert_eq!(rvcd_req_id, client_request_id);
 
         let crs_info = resp.crs_results.unwrap();
-        let pub_storage = FileStorage::new_central(StorageType::PUB);
+        let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
         let mut crs_path = pub_storage
             .compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())
             .unwrap()
@@ -1904,7 +1912,7 @@ pub(crate) mod tests {
                 .await;
         }
         let inner_resp = response.unwrap().into_inner();
-        let pub_storage = FileStorage::new_central(StorageType::PUB);
+        let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
         let crs = internal_client
             .retrieve_crs(&inner_resp, &pub_storage)
             .await
@@ -1958,7 +1966,7 @@ pub(crate) mod tests {
 
         let request_id = RequestId::derive("test_crs_gen_threshold").unwrap();
         // Ensure the test is idempotent
-        purge(&request_id.to_string()).await;
+        purge(None, None, &request_id.to_string()).await;
         crs_gen_threshold(&request_id).await
     }
 
@@ -2060,7 +2068,7 @@ pub(crate) mod tests {
             .into_iter()
             .map(|(i, res)| {
                 (
-                    { FileStorage::new_threshold(StorageType::PUB, i as usize) },
+                    { FileStorage::new_threshold(None, StorageType::PUB, i as usize).unwrap() },
                     res,
                 )
             })
@@ -2177,7 +2185,7 @@ pub(crate) mod tests {
         // parallel
         let (kms_server, mut kms_client, mut internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
-        let (ct, fhe_type) = compute_cipher_from_storage(TEST_MSG, key_id).await;
+        let (ct, fhe_type) = compute_cipher_from_storage(None, TEST_MSG, key_id).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
         let req = internal_client
             .decryption_request(ct.clone(), fhe_type, &TEST_DEC_ID, &req_key_id)
@@ -2251,7 +2259,7 @@ pub(crate) mod tests {
 
         let (kms_server, mut kms_client, mut internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
-        let (ct, fhe_type) = compute_cipher_from_storage(TEST_MSG, key_id).await;
+        let (ct, fhe_type) = compute_cipher_from_storage(None, TEST_MSG, key_id).await;
         let request_id = &TEST_REENC_ID;
         let (req, enc_pk, enc_sk) = internal_client
             .reencryption_request(
@@ -2330,7 +2338,7 @@ pub(crate) mod tests {
     async fn decryption_threshold(params: &str, key_id: &str) {
         let (kms_servers, kms_clients, mut internal_client) =
             threshold_handles(StorageVersion::Dev, params).await;
-        let (ct, fhe_type) = compute_cipher_from_storage(TEST_MSG, key_id).await;
+        let (ct, fhe_type) = compute_cipher_from_storage(None, TEST_MSG, key_id).await;
         let key_id_req = key_id.to_string().try_into().unwrap();
 
         let request_id = &TEST_DEC_ID;
@@ -2410,7 +2418,7 @@ pub(crate) mod tests {
 
         let (kms_servers, kms_clients, mut internal_client) =
             threshold_handles(StorageVersion::Dev, param).await;
-        let (ct, fhe_type) = compute_cipher_from_storage(TEST_MSG, key_id).await;
+        let (ct, fhe_type) = compute_cipher_from_storage(None, TEST_MSG, key_id).await;
 
         let request_id = &TEST_REENC_ID;
         let (req, enc_pk, enc_sk) = internal_client
@@ -2721,7 +2729,7 @@ pub(crate) mod tests {
 
         let req_preproc = RequestId::derive("test_dkg-preproc").unwrap();
         let req_key = RequestId::derive("test_dkg-key").unwrap();
-        purge(&req_key.to_string()).await;
+        purge(None, None, &req_key.to_string()).await;
 
         let (kms_servers, kms_clients, internal_client) =
             threshold_handles(StorageVersion::Dev, TEST_PARAM_PATH).await;
@@ -2812,7 +2820,7 @@ pub(crate) mod tests {
         let mut serialized_ref_pk = Vec::new();
         let mut serialized_ref_server_key = Vec::new();
         for (idx, kg_res) in finished.into_iter().enumerate() {
-            let storage = FileStorage::new_threshold(StorageType::PUB, idx + 1);
+            let storage = FileStorage::new_threshold(None, StorageType::PUB, idx + 1).unwrap();
             let pk: Option<FhePublicKey> = internal_client
                 .retrieve_key(&kg_res, PubDataType::PublicKey, &storage)
                 .await

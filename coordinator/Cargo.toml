@@ -20,10 +20,6 @@ path = "src/bin/gen-tls-certs.rs"
 name = "kms-server"
 path = "src/bin/server.rs"
 
-[[bin]] # Bin to run the gRPC client
-name = "kms-client"
-path = "src/bin/client_bin.rs"
-
 [dependencies]
 aes = "0.8.4"
 aes-prng = "~0.2"
@@ -89,6 +85,7 @@ tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "083c06814464cf8f
 ctor = "~0.2"
 assert_cmd = "2.0.14"
 sysinfo = "0.30.12"
+tempfile = "3.10.1"
 
 [build-dependencies]
 tonic-build = "0.10"

@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use clap::{Parser, Subcommand};
 use kms_lib::{
     consts::{
@@ -5,7 +7,7 @@ use kms_lib::{
     },
     util::key_setup::{
         ensure_central_crs_store_exists, ensure_central_keys_exist,
-        ensure_central_server_signing_keys_exist, ensure_dir_exist, ensure_threshold_keys_exist,
+        ensure_central_server_signing_keys_exist, ensure_threshold_keys_exist,
         ensure_threshold_server_signing_keys_exist,
     },
 };
@@ -15,9 +17,10 @@ use tracing_subscriber::{filter, layer::SubscriberExt, Layer};
 #[derive(Parser)]
 #[clap(name = "Zama KMS Key Material Generator")]
 #[clap(about = "A CLI tool for generating key materials. \
-    In the centralized mode, it will generate FHE keys and signing keys. \
-    In the threshold mode, it will only generate signing keys, \
-    the threshold key shares must be generated using a distributed protocol.")]
+    In the centralized mode, it will generate FHE keys, signing keys and the CRS. \
+    In the threshold mode, it will generate FHE key shares and the signing keys, \
+    the FHE key shares should be used for testing only. \
+    Use the threshold protocols to generate secure FHE key shares.")]
 struct Args {
     #[clap(subcommand)]
     mode: Mode,
@@ -27,21 +30,39 @@ struct Args {
 enum Mode {
     /// Generate centralized FHE keys, signing keys and the CRS.
     Centralized {
-        /// Path to the parameters file
+        /// Path to the parameters file.
         #[clap(long, default_value = "parameters/default_params.json")]
         param_path: String,
+        /// Optional parameter for the private storage path,
+        /// only use this argument when using file-based storage.
+        #[clap(long, default_value = None)]
+        priv_path: Option<String>,
+        /// Optional parameter for the public storage path,
+        /// only use this argument when using file-based storage.
+        #[clap(long, default_value = None)]
+        pub_path: Option<String>,
         /// Whether to generate keys deterministically,
         /// only use this option for testing.
         /// The determinism is not guaranteed to be the same between releases.
         #[clap(long, default_value_t = false)]
         deterministic: bool,
     },
-    /// Generate shares of FHE keys, signing keys and the CRS.
-    /// This option should only be used for testing.
+
+    /// Generate shares of FHE key shares and signing keys.
+    /// The FHE key shares should only be used for testing.
+    /// At the moment it's only limited to 4 parties.
     Threshold {
         /// Path to the parameters file
         #[clap(long, default_value = "parameters/default_params.json")]
         param_path: String,
+        /// Optional parameter for the private storage path,
+        /// only use this argument when using file-based storage.
+        #[clap(long, default_value = None)]
+        priv_path: Option<String>,
+        /// Optional parameter for the public storage path,
+        /// only use this argument when using file-based storage.
+        #[clap(long, default_value = None)]
+        pub_path: Option<String>,
         /// Whether to generate keys deterministically,
         /// only use this option for testing.
         /// The determinism is not guaranteed to be the same between releases.
@@ -61,18 +82,30 @@ async fn main() {
     match args.mode {
         Mode::Centralized {
             param_path,
+            priv_path,
+            pub_path,
             deterministic,
         } => {
-            ensure_dir_exist().await;
-            ensure_central_server_signing_keys_exist(deterministic).await;
+            let pub_path = pub_path.as_ref().map(Path::new);
+            let priv_path = priv_path.as_ref().map(Path::new);
+            ensure_central_server_signing_keys_exist(priv_path, pub_path, deterministic).await;
             ensure_central_keys_exist(
+                priv_path,
+                pub_path,
                 &param_path,
                 &DEFAULT_CENTRAL_KEY_ID,
                 &OTHER_CENTRAL_DEFAULT_ID,
                 deterministic,
             )
             .await;
-            ensure_central_crs_store_exists(&param_path, &DEFAULT_CRS_ID, deterministic).await;
+            ensure_central_crs_store_exists(
+                priv_path,
+                pub_path,
+                &param_path,
+                &DEFAULT_CRS_ID,
+                deterministic,
+            )
+            .await;
 
             println!(
                 "Default centralized keys written based on parameters stored in {}",
@@ -81,15 +114,21 @@ async fn main() {
         }
         Mode::Threshold {
             param_path,
+            priv_path,
+            pub_path,
             deterministic,
         } => {
-            ensure_dir_exist().await;
-            ensure_threshold_server_signing_keys_exist(deterministic).await;
-            ensure_threshold_keys_exist(&param_path, &DEFAULT_THRESHOLD_KEY_ID, deterministic)
-                .await;
-            // The CRS store is the same in both cases.
-            ensure_central_crs_store_exists(&param_path, &DEFAULT_CRS_ID, deterministic).await;
-
+            let pub_path = pub_path.as_ref().map(Path::new);
+            let priv_path = priv_path.as_ref().map(Path::new);
+            ensure_threshold_server_signing_keys_exist(priv_path, pub_path, deterministic).await;
+            ensure_threshold_keys_exist(
+                priv_path,
+                pub_path,
+                &param_path,
+                &DEFAULT_THRESHOLD_KEY_ID,
+                deterministic,
+            )
+            .await;
             println!(
                 "Default threshold keys written based on parameters stored in {}",
                 param_path

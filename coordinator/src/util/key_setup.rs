@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::consts::{KEY_PATH_PREFIX, TMP_PATH_PREFIX};
 use crate::cryptography::central_kms::{
     compute_handle, compute_info, gen_centralized_crs, gen_sig_keys, generate_fhe_keys,
     BaseKmsStruct, KmsFheKeyHandles,
@@ -13,7 +15,7 @@ use crate::threshold::threshold_kms::ThresholdFheKeys;
 use crate::util::file_handling::read_as_json;
 use crate::{
     client::ClientDataType,
-    consts::{AMOUNT_PARTIES, KEY_PATH_PREFIX, THRESHOLD, TMP_PATH_PREFIX},
+    consts::{AMOUNT_PARTIES, THRESHOLD},
 };
 use aes_prng::AesRng;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
@@ -23,10 +25,10 @@ use distributed_decryption::execution::tfhe_internals::test_feature::{
 use itertools::Itertools;
 use rand::SeedableRng;
 use std::collections::HashMap;
+use std::path::Path;
 use strum::IntoEnumIterator;
 use tfhe::prelude::*;
 use tfhe::FheUint8;
-use tokio::fs;
 
 pub type FhePublicKey = tfhe::CompactPublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
@@ -40,9 +42,14 @@ pub fn compute_cipher(msg: u8, pk: &FhePublicKey) -> (Vec<u8>, FheType) {
     (serialized_ct, FheType::Euint8)
 }
 
-pub async fn compute_cipher_from_storage(msg: u8, key_id: &str) -> (Vec<u8>, FheType) {
+/// This function should be used for testing only and it can panic.
+pub async fn compute_cipher_from_storage(
+    pub_path: Option<&Path>,
+    msg: u8,
+    key_id: &str,
+) -> (Vec<u8>, FheType) {
     // Try first with centralized storage
-    let storage = FileStorage::new_central(StorageType::PUB);
+    let storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
     let url = storage
         .compute_url(key_id, &PubDataType::PublicKey.to_string())
         .unwrap();
@@ -50,7 +57,7 @@ pub async fn compute_cipher_from_storage(msg: u8, key_id: &str) -> (Vec<u8>, Fhe
         storage.read_data(&url).await.unwrap()
     } else {
         // Try with the threshold storage
-        let storage = FileStorage::new_threshold(StorageType::PUB, 1);
+        let storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
         let url = storage
             .compute_url(key_id, &PubDataType::PublicKey.to_string())
             .unwrap();
@@ -59,24 +66,27 @@ pub async fn compute_cipher_from_storage(msg: u8, key_id: &str) -> (Vec<u8>, Fhe
     compute_cipher(msg, &pk)
 }
 
-// Purge any kind of data, regardless of type, for a specific request ID
-pub async fn purge(id: &str) {
-    let mut pub_storage = FileStorage::new_central(StorageType::PUB);
+/// Purge any kind of data, regardless of type, for a specific request ID.
+///
+/// This function should be used for testing only and it can panic.
+pub async fn purge(pub_path: Option<&Path>, priv_path: Option<&Path>, id: &str) {
+    let mut pub_storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
     for cur_type in PubDataType::iter() {
         let _ = pub_storage
             .delete_data(&pub_storage.compute_url(id, &cur_type.to_string()).unwrap())
             .await;
     }
 
-    let mut priv_storage = FileStorage::new_central(StorageType::PRIV);
+    let mut priv_storage = FileStorage::new_centralized(priv_path, StorageType::PRIV).unwrap();
     for cur_type in PrivDataType::iter() {
         let _ = priv_storage
             .delete_data(&priv_storage.compute_url(id, &cur_type.to_string()).unwrap())
             .await;
     }
     for i in 1..=AMOUNT_PARTIES {
-        let mut threshold_pub = FileStorage::new_threshold(StorageType::PUB, i);
-        let mut threshold_priv = FileStorage::new_threshold(StorageType::PRIV, i);
+        let mut threshold_pub = FileStorage::new_threshold(pub_path, StorageType::PUB, i).unwrap();
+        let mut threshold_priv =
+            FileStorage::new_threshold(priv_path, StorageType::PRIV, i).unwrap();
         for cur_type in PrivDataType::iter() {
             let _ = threshold_priv
                 .delete_data(
@@ -98,13 +108,15 @@ pub async fn purge(id: &str) {
     }
 }
 
+#[cfg(test)]
 pub async fn ensure_dir_exist() {
-    fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();
-    fs::create_dir_all(KEY_PATH_PREFIX).await.unwrap();
+    tokio::fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();
+    tokio::fs::create_dir_all(KEY_PATH_PREFIX).await.unwrap();
 }
 
-pub async fn ensure_client_keys_exist(deterministic: bool) {
-    let mut client_storage = FileStorage::new_central(StorageType::CLIENT);
+pub async fn ensure_client_keys_exist(optional_path: Option<&Path>, deterministic: bool) {
+    let mut client_storage =
+        FileStorage::new_centralized(optional_path, StorageType::CLIENT).unwrap();
     let temp: HashMap<RequestId, PrivateSigKey> =
         read_all_data(&client_storage, &ClientDataType::SigningKey.to_string())
             .await
@@ -139,9 +151,13 @@ pub async fn ensure_client_keys_exist(deterministic: bool) {
     .unwrap();
 }
 
-pub async fn ensure_central_server_signing_keys_exist(deterministic: bool) {
-    let mut priv_storage = FileStorage::new_central(StorageType::PRIV);
-    let mut pub_storage = FileStorage::new_central(StorageType::PUB);
+pub async fn ensure_central_server_signing_keys_exist(
+    priv_path: Option<&Path>,
+    pub_path: Option<&Path>,
+    deterministic: bool,
+) {
+    let mut priv_storage = FileStorage::new_centralized(priv_path, StorageType::PRIV).unwrap();
+    let mut pub_storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
     let temp: HashMap<RequestId, PrivateSigKey> =
         read_all_data(&priv_storage, &PrivDataType::SigningKey.to_string())
             .await
@@ -175,10 +191,14 @@ pub async fn ensure_central_server_signing_keys_exist(deterministic: bool) {
     .unwrap();
 }
 
-pub async fn ensure_threshold_server_signing_keys_exist(deterministic: bool) {
+pub async fn ensure_threshold_server_signing_keys_exist(
+    priv_path: Option<&Path>,
+    pub_path: Option<&Path>,
+    deterministic: bool,
+) {
     for i in 1..=AMOUNT_PARTIES {
-        let mut priv_storage = FileStorage::new_threshold(StorageType::PRIV, i);
-        let mut pub_storage = FileStorage::new_threshold(StorageType::PUB, i);
+        let mut priv_storage = FileStorage::new_threshold(priv_path, StorageType::PRIV, i).unwrap();
+        let mut pub_storage = FileStorage::new_threshold(pub_path, StorageType::PUB, i).unwrap();
         let temp: HashMap<RequestId, PrivateSigKey> =
             read_all_data(&priv_storage, &PrivDataType::SigningKey.to_string())
                 .await
@@ -212,7 +232,10 @@ pub async fn ensure_threshold_server_signing_keys_exist(deterministic: bool) {
     }
 }
 
+/// NOTE: this is insecure!
 pub async fn ensure_threshold_keys_exist(
+    priv_path: Option<&Path>,
+    pub_path: Option<&Path>,
     param_path: &str,
     key_id: &RequestId,
     deterministic: bool,
@@ -223,8 +246,8 @@ pub async fn ensure_threshold_keys_exist(
     } else {
         AesRng::from_entropy()
     };
-    ensure_threshold_server_signing_keys_exist(deterministic).await;
-    let pub_storage = FileStorage::new_threshold(StorageType::PUB, 1);
+    ensure_threshold_server_signing_keys_exist(priv_path, pub_path, deterministic).await;
+    let pub_storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
     if pub_storage
         .data_exists(
             &pub_storage
@@ -256,7 +279,7 @@ pub async fn ensure_threshold_keys_exist(
             private_keys: key_shares[i - 1].to_owned(),
             sns_key: sns_key.clone(),
         };
-        let mut pub_storage = FileStorage::new_threshold(StorageType::PUB, i);
+        let mut pub_storage = FileStorage::new_threshold(pub_path, StorageType::PUB, i).unwrap();
         store_at_request_id(
             &mut pub_storage,
             key_id,
@@ -273,7 +296,7 @@ pub async fn ensure_threshold_keys_exist(
         )
         .await
         .unwrap();
-        let mut priv_storage = FileStorage::new_threshold(StorageType::PRIV, i);
+        let mut priv_storage = FileStorage::new_threshold(priv_path, StorageType::PRIV, i).unwrap();
         store_at_request_id(
             &mut priv_storage,
             key_id,
@@ -286,13 +309,33 @@ pub async fn ensure_threshold_keys_exist(
 }
 
 pub async fn ensure_central_crs_store_exists(
+    priv_path: Option<&Path>,
+    pub_path: Option<&Path>,
     param_path: &str,
     crs_handle: &RequestId,
     deterministic: bool,
 ) {
-    ensure_central_server_signing_keys_exist(deterministic).await;
-    let mut priv_storage = FileStorage::new_central(StorageType::PRIV);
-    let mut pub_storage = FileStorage::new_central(StorageType::PUB);
+    let mut priv_storage = FileStorage::new_centralized(priv_path, StorageType::PRIV).unwrap();
+    let mut pub_storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
+    ensure_crs_store_exists(
+        &mut priv_storage,
+        &mut pub_storage,
+        param_path,
+        crs_handle,
+        deterministic,
+    )
+    .await
+}
+
+async fn ensure_crs_store_exists<S>(
+    priv_storage: &mut S,
+    pub_storage: &mut S,
+    param_path: &str,
+    crs_handle: &RequestId,
+    deterministic: bool,
+) where
+    S: PublicStorage,
+{
     if pub_storage
         .data_exists(
             &pub_storage
@@ -304,9 +347,9 @@ pub async fn ensure_central_crs_store_exists(
     {
         return;
     }
-    println!("Generating new centralized CRS store",);
+    println!("Generating new CRS store",);
     let sk_map: HashMap<RequestId, PrivateSigKey> =
-        read_all_data(&priv_storage, &PrivDataType::SigningKey.to_string())
+        read_all_data(priv_storage, &PrivDataType::SigningKey.to_string())
             .await
             .unwrap();
     if sk_map.values().cloned().collect_vec().len() != 1 {
@@ -332,32 +375,29 @@ pub async fn ensure_central_crs_store_exists(
     let crs_info = compute_info(&kms, &crs).unwrap();
 
     store_at_request_id(
-        &mut priv_storage,
+        priv_storage,
         crs_handle,
         &crs_info,
         &PrivDataType::CrsInfo.to_string(),
     )
     .await
     .unwrap();
-    store_at_request_id(
-        &mut pub_storage,
-        crs_handle,
-        &crs,
-        &PubDataType::CRS.to_string(),
-    )
-    .await
-    .unwrap();
+    store_at_request_id(pub_storage, crs_handle, &crs, &PubDataType::CRS.to_string())
+        .await
+        .unwrap();
 }
 
 pub async fn ensure_central_keys_exist(
+    priv_path: Option<&Path>,
+    pub_path: Option<&Path>,
     param_path: &str,
     key_id: &RequestId,
     other_key_id: &RequestId,
     deterministic: bool,
 ) {
-    ensure_central_server_signing_keys_exist(deterministic).await;
-    let mut priv_storage = FileStorage::new_central(StorageType::PRIV);
-    let mut pub_storage = FileStorage::new_central(StorageType::PUB);
+    ensure_central_server_signing_keys_exist(priv_path, pub_path, deterministic).await;
+    let mut priv_storage = FileStorage::new_centralized(priv_path, StorageType::PRIV).unwrap();
+    let mut pub_storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
     if pub_storage
         .data_exists(
             &pub_storage
@@ -443,16 +483,19 @@ mod tests {
     #[ctor::ctor]
     async fn ensure_testing_material_exists() {
         ensure_dir_exist().await;
-        ensure_client_keys_exist(true).await;
+        ensure_client_keys_exist(None, true).await;
         ensure_central_keys_exist(
+            None,
+            None,
             TEST_PARAM_PATH,
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,
             true,
         )
         .await;
-        ensure_central_crs_store_exists(TEST_PARAM_PATH, &TEST_CRS_ID, true).await;
-        ensure_threshold_keys_exist(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID, true).await;
+        ensure_central_crs_store_exists(None, None, TEST_PARAM_PATH, &TEST_CRS_ID, true).await;
+        ensure_threshold_keys_exist(None, None, TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID, true)
+            .await;
     }
 
     #[cfg(feature = "slow_tests")]
@@ -465,15 +508,25 @@ mod tests {
         };
 
         ensure_dir_exist().await;
-        ensure_client_keys_exist(true).await;
+        ensure_client_keys_exist(None, true).await;
         ensure_central_keys_exist(
+            None,
+            None,
             DEFAULT_PARAM_PATH,
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
             true,
         )
         .await;
-        ensure_central_crs_store_exists(DEFAULT_PARAM_PATH, &DEFAULT_CRS_ID, true).await;
-        ensure_threshold_keys_exist(DEFAULT_PARAM_PATH, &DEFAULT_THRESHOLD_KEY_ID, true).await;
+        ensure_central_crs_store_exists(None, None, DEFAULT_PARAM_PATH, &DEFAULT_CRS_ID, true)
+            .await;
+        ensure_threshold_keys_exist(
+            None,
+            None,
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_THRESHOLD_KEY_ID,
+            true,
+        )
+        .await;
     }
 }

@@ -6,9 +6,11 @@ my_id = 2
 timeout_secs = 360
 num_sessions_preproc = 2
 
+# The two settings below are optional and are only used for file storage
+public_storage_path = "keys"
+private_storage_path = "keys"
+
 # The keys must match the keys of the ParamChoice type, in kms.proto.
-# Using Test or "Test" does not seem to capitalize the key
-# when loaded into a HashMap.
 [param_file_map]
 test =  "parameters/small_test_params.json" 
 default = "parameters/default_params.json"

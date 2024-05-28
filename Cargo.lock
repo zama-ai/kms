@@ -4093,6 +4093,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "sysinfo",
+ "tempfile",
  "tfhe",
  "tfhe-zk-pok",
  "tokio",

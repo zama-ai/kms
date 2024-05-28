@@ -58,6 +58,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use tfhe::{FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
@@ -75,6 +76,14 @@ pub const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ThresholdConfig {
+    pub public_storage_path: Option<String>,
+    pub private_storage_path: Option<String>,
+    #[serde(flatten)]
+    pub rest: ThresholdConfigNoStorage,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ThresholdConfigNoStorage {
     pub url: String,
     pub base_port: u16,
     pub parties: usize,
@@ -88,6 +97,12 @@ pub struct ThresholdConfig {
     pub param_file_map: HashMap<String, String>,
 }
 
+impl From<ThresholdConfig> for ThresholdConfigNoStorage {
+    fn from(value: ThresholdConfig) -> Self {
+        value.rest
+    }
+}
+
 impl ThresholdConfig {
     pub fn init_config(fname: &str) -> anyhow::Result<ThresholdConfig> {
         let config: ThresholdConfig = config::Config::builder()
@@ -97,6 +112,14 @@ impl ThresholdConfig {
             .try_deserialize()?;
         Ok(config)
     }
+
+    pub fn private_storage_path(&self) -> Option<&Path> {
+        self.private_storage_path.as_ref().map(Path::new)
+    }
+
+    pub fn public_storage_path(&self) -> Option<&Path> {
+        self.public_storage_path.as_ref().map(Path::new)
+    }
 }
 
 /// Initialize a threshold KMS server using the DDec initialization protocol.
@@ -105,7 +128,7 @@ pub async fn threshold_server_init<
     PubS: PublicStorage + Sync + Send + 'static,
     PrivS: PublicStorage + Sync + Send + 'static,
 >(
-    config: ThresholdConfig,
+    config: ThresholdConfigNoStorage,
     public_storage: PubS,
     private_storage: PrivS,
 ) -> anyhow::Result<ThresholdKms<PubS, PrivS>> {
@@ -1533,19 +1556,21 @@ fn handle_res_mapping<T>(
 #[test]
 fn test_threshold_config() {
     let config = ThresholdConfig::init_config("config/default_1").unwrap();
-    assert_eq!(config.url, "127.0.0.1");
-    assert_eq!(config.base_port, 50000);
-    assert_eq!(config.parties, 4);
-    assert_eq!(config.threshold, 1);
-    assert_eq!(config.num_sessions_preproc, Some(2));
-    assert_eq!(config.param_file_map.len(), 2);
+    assert_eq!(config.rest.url, "127.0.0.1");
+    assert_eq!(config.rest.base_port, 50000);
+    assert_eq!(config.rest.parties, 4);
+    assert_eq!(config.rest.threshold, 1);
+    assert_eq!(config.rest.num_sessions_preproc, Some(2));
+    assert_eq!(config.rest.param_file_map.len(), 2);
     assert_eq!(
-        config.param_file_map.get("test").unwrap(),
+        config.rest.param_file_map.get("test").unwrap(),
         "parameters/small_test_params.json"
     );
     assert_eq!(
-        config.param_file_map.get("default").unwrap(),
+        config.rest.param_file_map.get("default").unwrap(),
         "parameters/default_params.json"
     );
-    assert!(config.preproc_redis_conf.is_none());
+    assert!(config.rest.preproc_redis_conf.is_none());
+    assert_eq!(config.private_storage_path.unwrap(), "keys");
+    assert_eq!(config.public_storage_path.unwrap(), "keys");
 }

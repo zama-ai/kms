@@ -698,8 +698,7 @@ mod test {
         storage::{FileStorage, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
         util::key_setup::{
-            compute_cipher_from_storage, ensure_central_keys_exist, ensure_client_keys_exist,
-            ensure_dir_exist, purge,
+            compute_cipher_from_storage, ensure_central_keys_exist, ensure_client_keys_exist, purge,
         },
     };
     use kms_lib::{
@@ -713,28 +712,29 @@ mod test {
     use tokio::task::JoinSet;
 
     async fn setup_threshold_keys() {
-        ensure_dir_exist().await;
-        ensure_threshold_keys_exist(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID, true).await;
-        ensure_client_keys_exist(true).await;
+        ensure_threshold_keys_exist(None, None, TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID, true)
+            .await;
+        ensure_client_keys_exist(None, true).await;
     }
 
     async fn setup_central_keys() {
-        ensure_dir_exist().await;
         ensure_central_keys_exist(
+            None,
+            None,
             TEST_PARAM_PATH,
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,
             true,
         )
         .await;
-        ensure_client_keys_exist(true).await;
+        ensure_client_keys_exist(None, true).await;
     }
 
     async fn generic_centralized_sunshine_test(
         op: OperationValue,
     ) -> (KmsOperationResponse, TransactionId) {
-        let pub_storage = FileStorage::new_central(StorageType::PUB);
-        let priv_storage = FileStorage::new_central(StorageType::PRIV);
+        let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
+        let priv_storage = FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
         let join_handle = test_tools::setup_centralized_no_client(pub_storage, priv_storage).await;
 
         let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
@@ -772,7 +772,7 @@ mod test {
     async fn ddec_centralized_sunshine() {
         setup_central_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            compute_cipher_from_storage(TEST_MSG, &TEST_CENTRAL_KEY_ID.to_string()).await;
+            compute_cipher_from_storage(None, TEST_MSG, &TEST_CENTRAL_KEY_ID.to_string()).await;
         let op = OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
@@ -863,13 +863,13 @@ mod test {
         let txn_id = TransactionId::from(vec![2u8; 20]);
         let coordinator_handles = if slow {
             // Delete potentially existing CRS
-            purge(&txn_id.to_hex()).await;
+            purge(None, None, &txn_id.to_hex()).await;
             let mut pub_storage = Vec::new();
             let mut priv_storage = Vec::new();
             for i in 1..=AMOUNT_PARTIES {
-                let cur_pub = FileStorage::new_threshold(StorageType::PUB, i);
+                let cur_pub = FileStorage::new_threshold(None, StorageType::PUB, i).unwrap();
                 pub_storage.push(cur_pub);
-                let cur_priv = FileStorage::new_threshold(StorageType::PRIV, i);
+                let cur_priv = FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap();
                 priv_storage.push(cur_priv);
             }
             test_tools::setup_threshold_no_client(THRESHOLD as u8, pub_storage, priv_storage).await
@@ -937,7 +937,7 @@ mod test {
     async fn ddec_sunshine(slow: bool) {
         setup_threshold_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            compute_cipher_from_storage(TEST_MSG, &TEST_THRESHOLD_KEY_ID.to_string()).await;
+            compute_cipher_from_storage(None, TEST_MSG, &TEST_THRESHOLD_KEY_ID.to_string()).await;
         let op = OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
@@ -978,15 +978,15 @@ mod test {
     async fn reenc_sunshine(slow: bool) {
         setup_threshold_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            compute_cipher_from_storage(TEST_MSG, &TEST_THRESHOLD_KEY_ID.to_string()).await;
+            compute_cipher_from_storage(None, TEST_MSG, &TEST_THRESHOLD_KEY_ID.to_string()).await;
 
         // we need a KMS client to simply the boilerplate
         // for setting up the request correctly
         let mut pub_storage = Vec::with_capacity(AMOUNT_PARTIES);
         for i in 1..=AMOUNT_PARTIES {
-            pub_storage.push(FileStorage::new_threshold(StorageType::PUB, i));
+            pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
         }
-        let client_storage = FileStorage::new_central(StorageType::CLIENT);
+        let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
         let mut kms_client = Client::new_client(
             client_storage,
             pub_storage,

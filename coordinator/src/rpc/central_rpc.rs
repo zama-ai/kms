@@ -25,6 +25,7 @@ use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::transport::Server;
@@ -33,8 +34,10 @@ use url::Url;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CentralizedConfig {
-    pub url: String,
-    pub param_file_map: HashMap<String, String>,
+    pub public_storage_path: Option<String>,
+    pub private_storage_path: Option<String>,
+    #[serde(flatten)]
+    pub rest: CentralizedConfigNoStorage,
 }
 
 impl CentralizedConfig {
@@ -47,6 +50,28 @@ impl CentralizedConfig {
         Ok(config)
     }
 
+    pub fn private_storage_path(&self) -> Option<&Path> {
+        self.private_storage_path.as_ref().map(Path::new)
+    }
+
+    pub fn public_storage_path(&self) -> Option<&Path> {
+        self.public_storage_path.as_ref().map(Path::new)
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CentralizedConfigNoStorage {
+    pub url: String,
+    pub param_file_map: HashMap<String, String>,
+}
+
+impl From<CentralizedConfig> for CentralizedConfigNoStorage {
+    fn from(value: CentralizedConfig) -> Self {
+        value.rest
+    }
+}
+
+impl CentralizedConfigNoStorage {
     pub fn get_socket_addr(&self) -> anyhow::Result<SocketAddr> {
         let url = Url::parse(&self.url)?;
         if url.scheme() != "http" && url.scheme() != "https" && url.scheme() != "" {
@@ -70,7 +95,7 @@ pub async fn server_handle<
     PubS: PublicStorage + Sync + Send + 'static,
     PrivS: PublicStorage + Sync + Send + 'static,
 >(
-    config: CentralizedConfig,
+    config: CentralizedConfigNoStorage,
     public_storage: PubS,
     private_storage: PrivS,
 ) -> anyhow::Result<()> {
@@ -927,15 +952,16 @@ pub fn tonic_handle_potential_err<T, E: ToString>(
 #[test]
 fn test_centralized_config() {
     let config = CentralizedConfig::init_config("config/default_centralized").unwrap();
-    assert_eq!(config.url, "http://127.0.0.1:50051");
-    assert_eq!(config.param_file_map.len(), 2);
-    println!("{:?}", config.param_file_map.keys().collect::<Vec<_>>());
+    assert_eq!(config.rest.url, "http://127.0.0.1:50051");
+    assert_eq!(config.rest.param_file_map.len(), 2);
     assert_eq!(
-        config.param_file_map.get("test").unwrap(),
+        config.rest.param_file_map.get("test").unwrap(),
         "parameters/small_test_params.json"
     );
     assert_eq!(
-        config.param_file_map.get("default").unwrap(),
+        config.rest.param_file_map.get("default").unwrap(),
         "parameters/default_params.json"
     );
+    assert_eq!(config.private_storage_path.unwrap(), "keys");
+    assert_eq!(config.public_storage_path.unwrap(), "keys");
 }

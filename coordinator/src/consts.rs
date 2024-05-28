@@ -3,12 +3,11 @@ use lazy_static::lazy_static;
 
 // The amount of bytes in an ID (key handle, request ID etc.)
 pub const ID_LENGTH: usize = 20;
-
 pub const KEY_PATH_PREFIX: &str = "keys";
-pub const TMP_PATH_PREFIX: &str = "temp";
-
 pub const DEFAULT_PARAM_PATH: &str = "parameters/default_params.json";
 
+#[cfg(test)]
+pub const TMP_PATH_PREFIX: &str = "temp";
 #[cfg(test)]
 pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 
@@ -17,7 +16,6 @@ pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 pub const BASE_PORT: u16 = 50050;
 pub const DEFAULT_URL: &str = "127.0.0.1";
 pub const DEFAULT_PROT: &str = "http";
-pub const DEFAULT_TIMEOUT: u64 = 60;
 pub const TEST_MSG: u8 = 42;
 pub const TEST_FHE_TYPE: FheType = FheType::Euint8;
 pub const AMOUNT_PARTIES: usize = 4;
@@ -53,9 +51,13 @@ lazy_static! {
 }
 
 pub const TEST_PARAM_PATH: &str = "parameters/small_test_params.json";
-// These ones should be removed or more to relevant positions in client or central kms
-pub const TEST_CENTRAL_KEYS_PATH: &str = "temp/test-central-keys.bin";
-pub const TEST_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/test-central-wasm-transcript.bin";
-pub const TEST_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/test-threshold-wasm-transcript.bin";
 
-pub const TEST_SEC_PAR: u64 = 40;
+cfg_if::cfg_if! {
+    if #[cfg(test)] {
+        // These ones should be removed or more to relevant positions in client or central kms
+        pub const TEST_CENTRAL_KEYS_PATH: &str = "temp/test-central-keys.bin";
+        pub const TEST_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/test-central-wasm-transcript.bin";
+        pub const TEST_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/test-threshold-wasm-transcript.bin";
+        pub const TEST_SEC_PAR: u64 = 40;
+    }
+}

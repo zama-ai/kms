@@ -12,13 +12,16 @@ use tokio::sync::Mutex;
 use tonic::transport::{Channel, Server};
 use tonic::{Request, Response, Status};
 
-use super::central_rpc::CentralizedConfig;
+use super::central_rpc::CentralizedConfigNoStorage;
 
 pub struct KmsProxy {
     kms_client: Arc<Mutex<CoordinatorEndpointClient<Channel>>>,
 }
 
-pub async fn server_handle(config: CentralizedConfig, client_uri: &str) -> anyhow::Result<()> {
+pub async fn server_handle(
+    config: CentralizedConfigNoStorage,
+    client_uri: &str,
+) -> anyhow::Result<()> {
     let server_socket = config.get_socket_addr()?;
     tracing::info!(
         "Starting KMS proxy on {} for {} ...",

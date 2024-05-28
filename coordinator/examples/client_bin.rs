@@ -70,14 +70,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         5,
         100
     )?;
-    let pub_storage = vec![FileStorage::new_central(StorageType::PUB)];
-    let client_storage = FileStorage::new_central(StorageType::CLIENT);
+    let pub_storage = vec![FileStorage::new_centralized(None, StorageType::PUB).unwrap()];
+    let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
     let mut internal_client =
         Client::new_client(client_storage, pub_storage, DEFAULT_PARAM_PATH, 1, 1)
             .await
             .unwrap();
     let (ct, fhe_type) =
-        compute_cipher_from_storage(TEST_MSG, &DEFAULT_CENTRAL_KEY_ID.to_string()).await;
+        compute_cipher_from_storage(None, TEST_MSG, &DEFAULT_CENTRAL_KEY_ID.to_string()).await;
 
     // DECRYPTION REQUEST
     let req = internal_client.decryption_request(
