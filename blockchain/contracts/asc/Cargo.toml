@@ -18,7 +18,7 @@ cw-controllers = "2.0.0"
 cw-storage-plus = "2.0.0"
 events = { path = "../../events" }
 hex = "0.4.3"
-ibc-clients = "0.52.0"
+ibc-clients = "0.53.0"
 schemars = "0.8.16"
 serde = "1.0.197"
 sha3 = "0.10.8"

@@ -6,6 +6,7 @@
 //! The wrappers employ base64 encoding for binary data to ensure the serialized format is text-based and
 //! easily transmittable.
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tendermint::merkle::proof::ProofOp;
 use tendermint::merkle::proof::ProofOps;
@@ -45,8 +46,8 @@ impl From<ProofOp> for WrappedProofOp {
     fn from(proof_op: ProofOp) -> Self {
         WrappedProofOp {
             field_type: proof_op.field_type,
-            key: base64::encode(proof_op.key).into(),
-            data: base64::encode(proof_op.data).into(),
+            key: STANDARD.encode(proof_op.key).into(),
+            data: STANDARD.encode(proof_op.data).into(),
         }
     }
 }
@@ -59,8 +60,8 @@ impl From<WrappedProofOp> for ProofOp {
     fn from(inter_op: WrappedProofOp) -> Self {
         ProofOp {
             field_type: inter_op.field_type,
-            key: base64::decode(inter_op.key).unwrap(),
-            data: base64::decode(inter_op.data).unwrap(),
+            key: STANDARD.decode(inter_op.key).unwrap(),
+            data: STANDARD.decode(inter_op.data).unwrap(),
         }
     }
 }
