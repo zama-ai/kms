@@ -151,11 +151,13 @@ pub async fn ensure_client_keys_exist(optional_path: Option<&Path>, deterministi
     .unwrap();
 }
 
+/// Ensure that the central server signing keys exist.
+/// If they already exist, then return false, otherwise create them and return true.
 pub async fn ensure_central_server_signing_keys_exist(
     priv_path: Option<&Path>,
     pub_path: Option<&Path>,
     deterministic: bool,
-) {
+) -> bool {
     let mut priv_storage = FileStorage::new_centralized(priv_path, StorageType::PRIV).unwrap();
     let mut pub_storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
     let temp: HashMap<RequestId, PrivateSigKey> =
@@ -164,7 +166,7 @@ pub async fn ensure_central_server_signing_keys_exist(
             .unwrap();
     if !temp.is_empty() {
         // If signing keys already exit, then do nothing
-        return;
+        return false;
     }
     println!("Generating new centralized multiple keys");
     let mut rng = if deterministic {
@@ -189,6 +191,7 @@ pub async fn ensure_central_server_signing_keys_exist(
     )
     .await
     .unwrap();
+    true
 }
 
 pub async fn ensure_threshold_server_signing_keys_exist(
@@ -308,13 +311,15 @@ pub async fn ensure_threshold_keys_exist(
     }
 }
 
+/// Ensure that the central server crs exist.
+/// If they already exist, then return false, otherwise create them and return true.
 pub async fn ensure_central_crs_store_exists(
     priv_path: Option<&Path>,
     pub_path: Option<&Path>,
     param_path: &str,
     crs_handle: &RequestId,
     deterministic: bool,
-) {
+) -> bool {
     let mut priv_storage = FileStorage::new_centralized(priv_path, StorageType::PRIV).unwrap();
     let mut pub_storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
     ensure_crs_store_exists(
@@ -327,13 +332,16 @@ pub async fn ensure_central_crs_store_exists(
     .await
 }
 
+/// Ensure that the central server crs exist.
+/// If they already exist, then return false, otherwise create them and return true.
 async fn ensure_crs_store_exists<S>(
     priv_storage: &mut S,
     pub_storage: &mut S,
     param_path: &str,
     crs_handle: &RequestId,
     deterministic: bool,
-) where
+) -> bool
+where
     S: PublicStorage,
 {
     if pub_storage
@@ -345,7 +353,7 @@ async fn ensure_crs_store_exists<S>(
         .await
         .unwrap()
     {
-        return;
+        return false;
     }
     println!("Generating new CRS store",);
     let sk_map: HashMap<RequestId, PrivateSigKey> =
@@ -385,8 +393,11 @@ async fn ensure_crs_store_exists<S>(
     store_at_request_id(pub_storage, crs_handle, &crs, &PubDataType::CRS.to_string())
         .await
         .unwrap();
+    true
 }
 
+/// Ensure that the central server fhe keys exist.
+/// If they already exist, then return false, otherwise create them and return true.
 pub async fn ensure_central_keys_exist(
     priv_path: Option<&Path>,
     pub_path: Option<&Path>,
@@ -394,7 +405,7 @@ pub async fn ensure_central_keys_exist(
     key_id: &RequestId,
     other_key_id: &RequestId,
     deterministic: bool,
-) {
+) -> bool {
     ensure_central_server_signing_keys_exist(priv_path, pub_path, deterministic).await;
     let mut priv_storage = FileStorage::new_centralized(priv_path, StorageType::PRIV).unwrap();
     let mut pub_storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
@@ -407,7 +418,7 @@ pub async fn ensure_central_keys_exist(
         .await
         .unwrap()
     {
-        return;
+        return false;
     }
     let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
     let sk_map: HashMap<RequestId, PrivateSigKey> =
@@ -466,6 +477,7 @@ pub async fn ensure_central_keys_exist(
         .await
         .unwrap();
     }
+    true
 }
 
 #[cfg(test)]

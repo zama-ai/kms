@@ -22,6 +22,27 @@ pub const SIG_SK_BLOB_KEY: &str = "private_sig_key";
 pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
 
 #[derive(Parser)]
+#[clap(name = "KMS server")]
+#[clap(
+    about = "We support three different storage modes, `dev`, `proxy` or `enclave`. \
+    For each storage mode, we support two types of execution modes, `centralized` or `threshold`. \
+    Not every combination is supported. \
+    Namely, the `threshold` mode only works when the storage mode is `dev`. \
+    See the help page for additional details (`kms-server --help`). \n
+    For example, use the following to run a threshold KMS node with the default configuration \
+    (from `coordinator/config/default_1.toml`): \n
+    ./kms-server dev centralized \n
+    or using cargo from the `coordinator` directory: \n
+    cargo run --bin kms-server dev centralized \n
+    Oberserve that some optional arugments may be added. More specifically for both the centralized and threshold \
+    execution modes, the configuration file used can be specified with the `--config-file` argument. \
+    E.g.\n
+    ./kms-server dev centralized --config-file config/default_centralized.toml \n
+    If no configuration file is specified, the default configuration will be used \
+    (e.g. config/default_centralized.toml for the centralize case). \n
+    Note that key material MUST exist when starting the server and be stored in the path specified by the configuration file. \n
+    Please consult the `kms-gen-keys` binary for details on generating key material."
+)]
 struct KmsArgs {
     #[clap(subcommand)]
     mode: StorageMode,
@@ -29,8 +50,8 @@ struct KmsArgs {
 
 #[derive(Clone, Subcommand)]
 enum StorageMode {
-    /// Start the KMS in the centralized mode.
-    /// This mode does not use the Nitro secure enclave to protect private keys
+    /// Start the KMS in the development mode.
+    /// This mode does not use the Nitro secure enclave to protect private keys, but instead relies on the local file system.
     Dev {
         /// Select one of the two execution modes between threshold and centralized.
         #[clap(subcommand)]
@@ -100,13 +121,27 @@ enum ExecutionMode {
 /// Not every combination is supported.
 /// Namely, the `threshold` mode only worked when the storage mode is `dev`.
 /// See the help page for additional details.
-/// For example, use the following to run a threshold KMS node:
+/// For example, use the following to run a threshold KMS node with the default configuration
+/// (from `coordinator/config/default_1.toml`):
 /// ```
-/// kms-server dev threshold
+/// ./kms-server dev centralized
+/// ```
+/// or using cargo from the `coordinator` directory:
+/// ```
+/// cargo run --bin kms-server dev centralized
 /// ```
 ///
-/// Note that for some modes, key materials must be generated beforehand.
-/// Please consult the `kms-gen-keys` binary for details.
+/// Oberserve that some optional arugments may be added. More specifically for both the centralized and threshold
+/// execution modes, the configuration file used can be specified with the `--config-file` argument.
+/// E.g.
+/// ```
+/// cargo run --bin kms-server dev centralized --config-file config/default_centralized.toml
+/// ```
+/// If no configuration file is specified, the default configuration will be used
+/// (e.g. config/default_centralized.toml for the centralize case).
+///
+/// Note that key material MUST exist when starting the server and be stored in the path specified by the configuration file.
+/// Please consult the `kms-gen-keys` binary for details on generating key material.
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let stdout_log = tracing_subscriber::fmt::layer().pretty();

@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::fmt::{self};
 use std::path::{Path, PathBuf};
 use std::{env, fs, path::MAIN_SEPARATOR};
+use strum::EnumIter;
 use url::Url;
 
 // TODO add a wrapper struct for both public and private storage.
@@ -114,7 +115,7 @@ pub async fn read_all_data<S: PublicStorageReader, Ser: DeserializeOwned + Seria
     Ok(res)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EnumIter)]
 pub enum StorageType {
     PUB,
     PRIV,
@@ -188,6 +189,44 @@ impl FileStorage {
             None => Self::default_path_with_prefix(&format!("{storage_type}-p{party_id}"))?,
         };
         Ok(Self { path })
+    }
+
+    /// Delete everything stored in the file storage system at the given path for a centralized system's storage.
+    pub fn purge_centralized(
+        optional_path: Option<&Path>,
+        storage_type: StorageType,
+    ) -> anyhow::Result<()> {
+        match optional_path {
+            Some(path) => {
+                let path = path.join(storage_type.to_string());
+                fs::create_dir_all(path)?;
+            }
+            None => {
+                let default_path = Self::default_path_with_prefix(&storage_type.to_string())?;
+                fs::remove_dir_all(default_path)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Delete everything stored in the file storage system at the given path for a threshold system's storage.
+    pub fn purge_threshold(
+        optional_path: Option<&Path>,
+        storage_type: StorageType,
+        party_id: usize,
+    ) -> anyhow::Result<()> {
+        match optional_path {
+            Some(path) => {
+                let path = path.join(format!("{storage_type}-p{party_id}"));
+                fs::remove_dir_all(path)?;
+            }
+            None => {
+                let default_path =
+                    Self::default_path_with_prefix(&format!("{storage_type}-p{party_id}"))?;
+                fs::remove_dir_all(default_path)?;
+            }
+        }
+        Ok(())
     }
 }
 

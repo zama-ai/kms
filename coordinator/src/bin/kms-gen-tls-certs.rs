@@ -36,19 +36,18 @@ struct Group {
 The user needs to provide a set of coordinator names using either the \
 --coordinator_names option, or the --coordinator_prefix and the \
 --coordinator_count options. The tool also allows the user to set \
-the number of cores, output directory and file format. Example usage:
-kms-gen-tls-certs --help # for all available options
-kms-gen-tls-certs --coordinator-prefix c --coordinator-count 4 -n 1 -o certs
-kms-gen-tls-certs --coordinator-names alice bob charlie dave -n 1 -o certs
+the number of cores, output directory and file format. Example usage:\n
+./kms-gen-tls-certs --help # for all available options \n
+./kms-gen-tls-certs --coordinator-prefix c --coordinator-count 4 -n 1 -o certs \n
+./kms-gen-tls-certs --coordinator-names alice bob charlie dave -n 1 -o certs \n
 
 Under the hood, the tool generates self-signed CA certificates for \
 each coordinator and <num_cores> core certificates for each \
-coordinator. The core certificates are signed by its corresponding coordinator.\
-The private key associated to each certificate can also be found in the output.\
+coordinator. The core certificates are signed by its corresponding coordinator. \
+The private key associated to each certificate can also be found in the output. \
 Finally, the combined coordinator certificate (cert_combined.{pem,der}) \
-is also a part of the output.
-
-Currently, the default is to use only a single coordinator certificate per logical party\
+is also a part of the output. \n
+Currently, the default is to use only a single coordinator certificate per logical party \
 and no separate core certificates."
 )]
 pub struct Cli {
@@ -228,6 +227,7 @@ async fn write_certs_and_keys(
     Ok(())
 }
 
+/// Execute TLS certificate generation.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // initialize tracing subscriber, so we get tracing logs to stdout

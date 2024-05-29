@@ -10,15 +10,15 @@ crate-type = ["lib", "cdylib"]
 
 [[bin]] # Bin to generate keys
 name = "kms-gen-keys"
-path = "src/bin/gen.rs"
+path = "src/bin/kms-gen-keys.rs"
 
 [[bin]] # Bin to generate TLS certificates for coordinator and cores
 name = "kms-gen-tls-certs"
-path = "src/bin/gen-tls-certs.rs"
+path = "src/bin/kms-gen-tls-certs.rs"
 
 [[bin]] # Bin to run the gRPC server
 name = "kms-server"
-path = "src/bin/server.rs"
+path = "src/bin/kms-server.rs"
 
 [dependencies]
 aes = "0.8.4"
