@@ -1,7 +1,7 @@
 use crate::anyhow_error_and_log;
 use crate::cryptography::nitro_enclave::{
     decrypt_ciphertext_for_recipient, decrypt_on_data_key, encrypt_on_data_key,
-    nitro_enclave_get_random, NitroEnclaveKeys,
+    nitro_enclave_get_random, NitroEnclaveKeys, APP_BLOB_NONCE_SIZE,
 };
 use crate::storage::{PublicStorage, PublicStorageReader};
 use anyhow::ensure;
@@ -162,6 +162,7 @@ pub struct AppKeyBlob {
     pub data_key_blob: Vec<u8>,
     pub ciphertext: Vec<u8>,
     pub iv: Vec<u8>,
+    pub auth_tag: Vec<u8>,
 }
 
 /// Given the address of a vsock-to-TCP proxy, constructs an S3 client for use inside of a Nitro
@@ -245,12 +246,12 @@ async fn aws_kms_decrypt_blob(
     aws_kms_client: &AmazonKMSClient,
     nitro_enclave_keys: &NitroEnclaveKeys,
     root_key_id: &String,
-    blob_bytes: Vec<u8>,
+    blob_bytes: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
     let decrypt_response = aws_kms_client
         .decrypt()
         .key_id(root_key_id)
-        .ciphertext_blob(Blob::new(blob_bytes))
+        .ciphertext_blob(Blob::new(blob_bytes.to_owned()))
         .recipient(
             KMSRecipientInfo::builder()
                 .key_encryption_algorithm(KeyEncryptionMechanism::RsaesOaepSha256)
@@ -314,14 +315,16 @@ pub async fn nitro_enclave_encrypt_app_key<T: Serialize + ?Sized>(
         &nitro_enclave_keys.enclave_sk,
     )?;
 
-    let iv = nitro_enclave_get_random(32)?;
+    let iv = nitro_enclave_get_random(APP_BLOB_NONCE_SIZE)?;
 
     // encrypt the blob on the data key
+    let auth_tag = encrypt_on_data_key(&mut blob_bytes, &data_key, &iv)?;
     Ok(AppKeyBlob {
         root_key_id: root_key_id.to_string(),
         data_key_blob: gen_data_key_response.ciphertext_blob.unwrap().into_inner(),
-        ciphertext: encrypt_on_data_key(blob_bytes, data_key, &iv),
+        ciphertext: blob_bytes,
         iv,
+        auth_tag,
     })
 }
 
@@ -330,15 +333,22 @@ pub async fn nitro_enclave_encrypt_app_key<T: Serialize + ?Sized>(
 pub async fn nitro_enclave_decrypt_app_key<T: DeserializeOwned + Serialize>(
     aws_kms_client: &AmazonKMSClient,
     nitro_enclave_keys: &NitroEnclaveKeys,
-    app_key_blob: AppKeyBlob,
+    app_key_blob: &mut AppKeyBlob,
 ) -> anyhow::Result<T> {
     let data_key = aws_kms_decrypt_blob(
         aws_kms_client,
         nitro_enclave_keys,
         &app_key_blob.root_key_id,
-        app_key_blob.data_key_blob,
+        &app_key_blob.data_key_blob,
     )
     .await?;
-    let plaintext = decrypt_on_data_key(app_key_blob.ciphertext, data_key, app_key_blob.iv)?;
-    Ok(bincode::deserialize_from(plaintext.as_slice())?)
+    decrypt_on_data_key(
+        &mut app_key_blob.ciphertext,
+        &data_key,
+        &app_key_blob.iv,
+        &app_key_blob.auth_tag,
+    )?;
+    Ok(bincode::deserialize_from(
+        app_key_blob.ciphertext.as_slice(),
+    )?)
 }

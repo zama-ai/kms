@@ -216,7 +216,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
                     // fetch key blobs
                     tracing::info!("Fetching the FHE keys");
-                    let fhe_sk_blob = s3_get_blob(
+                    let mut fhe_sk_blob = s3_get_blob(
                         &s3_client,
                         &blob_bucket,
                         format!("{}-private.bin", (*DEFAULT_CENTRAL_KEY_ID).clone()).as_str(),
@@ -229,9 +229,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
                     // decrypt the encrypted FHE private key
                     tracing::info!("Decrypting the FHE private key");
-                    let fhe_sk =
-                        nitro_enclave_decrypt_app_key(&aws_kms_client, &enclave_keys, fhe_sk_blob)
-                            .await?;
+                    let fhe_sk = nitro_enclave_decrypt_app_key(
+                        &aws_kms_client,
+                        &enclave_keys,
+                        &mut fhe_sk_blob,
+                    )
+                    .await?;
 
                     // start the KMS
                     let _keys = SoftwareKmsKeys {

@@ -1,6 +1,7 @@
 use crate::anyhow_error_and_log;
 use aes::cipher::block_padding::Pkcs7;
-use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use aes::cipher::{BlockDecryptMut, KeyIvInit};
+use aes_gcm_siv::{AeadInPlace, Aes256GcmSiv, KeyInit, Nonce};
 use anyhow::{bail, ensure};
 #[cfg(feature = "non-wasm")]
 use aws_nitro_enclaves_nsm_api::api::{Request as NSMRequest, Response as NSMResponse};
@@ -32,6 +33,8 @@ pub struct NitroEnclaveKeys {
 const ENCLAVE_SK_SIZE: usize = 2048;
 #[cfg(feature = "non-wasm")]
 const ATTESTATION_NONCE_SIZE: usize = 8;
+// AES256-GCM-SIV uses 96 bit nonces
+pub const APP_BLOB_NONCE_SIZE: usize = 12;
 
 #[cfg(feature = "non-wasm")]
 pub fn gen_nitro_enclave_keys() -> anyhow::Result<NitroEnclaveKeys> {
@@ -150,20 +153,29 @@ pub fn decrypt_ciphertext_for_recipient(
     Ok(plaintext)
 }
 
-/// Given a symmetric key and an initialization vector, encrypt some bytes.
-pub fn encrypt_on_data_key(plaintext: Vec<u8>, key: Vec<u8>, iv: &Vec<u8>) -> Vec<u8> {
-    cbc::Encryptor::<aes::Aes256>::new(key.as_slice().into(), iv.as_slice().into())
-        .encrypt_padded_vec_mut::<Pkcs7>(plaintext.as_slice())
+/// Given a symmetric key and an initialization vector, encrypt some bytes in place and return the AES-GCM authentication tag.
+pub fn encrypt_on_data_key(plaintext: &mut [u8], key: &[u8], iv: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let cipher = Aes256GcmSiv::new_from_slice(key)
+        .map_err(|_| anyhow_error_and_log("Invalid data key length: must be 256 bits"))?;
+    let nonce = Nonce::from_slice(iv);
+    let auth_tag = cipher
+        .encrypt_in_place_detached(nonce, b"", plaintext)
+        .map_err(|e| anyhow_error_and_log(format!("{}", e)))?;
+    Ok(auth_tag.to_vec())
 }
 
-/// Given a symmetric key and an initialization vector, decrypt some bytes.
+/// Given a symmetric key, an initialization vector and an AES-GCM authentication tag, decrypt some bytes in place.
 pub fn decrypt_on_data_key(
-    ciphertext: Vec<u8>,
-    key: Vec<u8>,
-    iv: Vec<u8>,
-) -> anyhow::Result<Vec<u8>> {
-    let plaintext = cbc::Decryptor::<aes::Aes256>::new(key.as_slice().into(), iv.as_slice().into())
-        .decrypt_padded_vec_mut::<Pkcs7>(ciphertext.as_slice())
+    ciphertext: &mut [u8],
+    key: &[u8],
+    iv: &[u8],
+    auth_tag: &Vec<u8>,
+) -> anyhow::Result<()> {
+    let cipher = Aes256GcmSiv::new_from_slice(key)
+        .map_err(|_| anyhow_error_and_log("Invalid data key length: must be 256 bits"))?;
+    let nonce = Nonce::from_slice(iv);
+    cipher
+        .decrypt_in_place_detached(nonce, b"", ciphertext, auth_tag.as_slice().into())
         .map_err(|e| anyhow_error_and_log(format!("{}", e)))?;
-    Ok(plaintext)
+    Ok(())
 }
