@@ -2,13 +2,6 @@ use super::rpc_types::{
     protobuf_to_alloy_domain, BaseKms, DecryptionRequestSerializable, PrivDataType,
     CURRENT_FORMAT_VERSION,
 };
-use crate::consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH};
-use crate::cryptography::central_kms::{
-    async_decrypt, async_generate_crs, async_generate_fhe_keys, async_reencrypt, compute_info,
-    BaseKmsStruct, CompMap, KmsFheKeyHandles, SoftwareKms,
-};
-use crate::cryptography::der_types::{PublicEncKey, PublicSigKey};
-use crate::cryptography::signcryption::ReencryptSol;
 use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
@@ -16,9 +9,25 @@ use crate::kms::{
     KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse, RequestId,
 };
 use crate::rpc::rpc_types::PubDataType;
-use crate::storage::{store_at_request_id, FileStorage, PublicStorage};
+use crate::storage::{store_at_request_id, PublicStorage};
 use crate::util::file_handling::read_as_json;
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
+use crate::{
+    consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH},
+    cryptography::central_kms::handle_potential_err,
+};
+use crate::{
+    cryptography::central_kms::{
+        async_decrypt, async_generate_crs, async_generate_fhe_keys, async_reencrypt, BaseKmsStruct,
+        SoftwareKms,
+    },
+    threshold::meta_store::HandlerStatus,
+};
+use crate::{
+    cryptography::der_types::{PublicEncKey, PublicSigKey},
+    threshold::meta_store::handle_res_mapping,
+};
+use crate::{cryptography::signcryption::ReencryptSol, storage::delete_at_request_id};
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use serde::{Deserialize, Serialize};
 use serde_asn1_der::{from_bytes, to_vec};
@@ -144,37 +153,132 @@ impl<
             "No request ID present in request".to_string(),
         )?;
         validate_request_id(&request_id)?;
-        {
-            let key_handles = self.key_handles.lock().await;
-            if key_handles.contains_key(&request_id) {
-                tracing::warn!(
-                    "Keys with request ID {} already exist!",
-                    request_id.to_string()
-                );
-                return Err(tonic::Status::new(
-                    tonic::Code::AlreadyExists,
-                    format!("Keys with request ID {} already exist!", request_id),
-                ));
-            }
-        }
-
-        let mut key_gen_map = self.key_gen_map.lock().await;
-        if key_gen_map.contains_key(&request_id) {
-            return Err(tonic::Status::new(
-                tonic::Code::AlreadyExists,
-                format!(
-                    "A key generation request with request ID {} is already being processed!",
-                    request_id
-                ),
-            ));
-        }
         let params = tonic_handle_potential_err(
             retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
             "Parameter choice is not recognized".to_string(),
         )?;
-        let future_keys = tokio::spawn(async_generate_fhe_keys(params));
+        {
+            let mut guarded_meta_store = self.key_meta_map.write().await;
+            // Insert [HandlerStatus::Started] into the meta store. Note that this will fail if the request ID is already in the meta store
+            tonic_handle_potential_err(
+                guarded_meta_store.insert(&request_id),
+                "Could not insert key generation into meta store".to_string(),
+            )?;
+        }
 
-        key_gen_map.insert(request_id, future_keys);
+        let public_storage = Arc::clone(&self.public_storage);
+        let private_storage = Arc::clone(&self.private_storage);
+        let meta_store = Arc::clone(&self.key_meta_map);
+        let fhe_keys = Arc::clone(&self.fhe_keys);
+        let sk = Arc::clone(&self.base_kms.sig_key);
+
+        let _handle = tokio::spawn(async move {
+            {
+                {
+                    // Check if the key already exists
+                    let key_handles = fhe_keys.read().await;
+                    if key_handles.contains_key(&request_id) {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Error(format!(
+                                "Failed key generation: Key with ID {request_id} already exists!"
+                            )),
+                        );
+                        return;
+                    }
+                }
+                let (fhe_key_set, key_info) = match async_generate_fhe_keys(&sk, params).await {
+                    Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
+                    Err(_e) => {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Error(format!(
+                                "Failed key generation: Key with ID {request_id}!"
+                            )),
+                        );
+                        return;
+                    }
+                };
+
+                let mut pub_storage = public_storage.lock().await;
+                let mut priv_storage = private_storage.lock().await;
+                //Try to store the new data
+                if store_at_request_id(
+                    &mut (*priv_storage),
+                    &request_id,
+                    &key_info,
+                    &PrivDataType::FheKeyInfo.to_string(),
+                )
+                .await
+                .is_ok()
+                    && store_at_request_id(
+                        &mut (*pub_storage),
+                        &request_id,
+                        &fhe_key_set.public_key,
+                        &PubDataType::PublicKey.to_string(),
+                    )
+                    .await
+                    .is_ok()
+                    && store_at_request_id(
+                        &mut (*pub_storage),
+                        &request_id,
+                        &fhe_key_set.server_key,
+                        &PubDataType::ServerKey.to_string(),
+                    )
+                    .await
+                    .is_ok()
+                {
+                    {
+                        let mut fhe_key_map = fhe_keys.write().await;
+                        // If something is already in the map, then there is a bug as we already checked for the key not existing
+                        fhe_key_map.insert(request_id.clone(), key_info.clone());
+                    };
+                    {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store
+                            .update(&request_id, HandlerStatus::Done(key_info.public_key_info));
+                    }
+                } else {
+                    tracing::error!("Could not store all the key data from request ID {request_id}. Deleting any dangling data.");
+                    // Try to delete stored data to avoid anything dangling
+                    // Ignore any failure to delete something since it might be because the data did not get created
+                    // In any case, we can't do much.
+                    let _ = delete_at_request_id(
+                        &mut (*pub_storage),
+                        &request_id,
+                        &PubDataType::PublicKey.to_string(),
+                    )
+                    .await;
+                    let _ = delete_at_request_id(
+                        &mut (*pub_storage),
+                        &request_id,
+                        &PubDataType::ServerKey.to_string(),
+                    )
+                    .await;
+                    let _ = delete_at_request_id(
+                        &mut (*pub_storage),
+                        &request_id,
+                        &PubDataType::SnsKey.to_string(),
+                    )
+                    .await;
+                    let _ = delete_at_request_id(
+                        &mut (*priv_storage),
+                        &request_id,
+                        &PrivDataType::FheKeyInfo.to_string(),
+                    )
+                    .await;
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Error(format!(
+                                "Failed key generation: Key with ID {request_id}, could not insert result persistant storage!"
+                            )),
+                        );
+                }
+            }
+        });
 
         Ok(Response::new(Empty {}))
     }
@@ -186,25 +290,13 @@ impl<
     ) -> Result<Response<KeyGenResult>, Status> {
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
-        let pub_key_handles = match self.check_key_generation_process(request_id.clone()).await {
-            Ok(result) => match result {
-                Some(handles) => handles,
-                None => {
-                    return Err(tonic::Status::new(
-                        tonic::Code::Unavailable,
-                        format!(
-                            "The keys with request ID {} have not been generated yet, but are in progress!",
-                            request_id
-                        ),
-                    ));
-                }
-            },
-            Err(_) => {
-                return Err(tonic::Status::new(
-                    tonic::Code::NotFound,
-                    format!("Could not generate key with request ID {}!", request_id),
-                ));
-            }
+        let pub_key_handles = {
+            let guarded_meta_store = self.key_meta_map.read().await;
+            handle_res_mapping(
+                guarded_meta_store.retrieve(&request_id).cloned(),
+                &request_id,
+                "Key generation",
+            )?
         };
         Ok(Response::new(KeyGenResult {
             request_id: Some(request_id),
@@ -230,45 +322,65 @@ impl<
             validate_reencrypt_req(&inner).await,
             format!("Invalid key in request {:?}", inner),
         )?;
-        let mut reenc_map = self.reenc_map.lock().await;
-        if reenc_map.get(&request_id).is_some() {
-            return Err(tonic::Status::new(
-                tonic::Code::AlreadyExists,
-                format!(
-                    "A reencryption request with request ID {} is already being processed!",
-                    request_id
-                ),
-            ));
+        {
+            let mut guarded_meta_store = self.reenc_meta_map.write().await;
+            tonic_handle_potential_err(
+                guarded_meta_store.insert(&request_id),
+                "Could not insert reencryption into meta store".to_string(),
+            )?;
         }
-        let key_info = self.key_handles.lock().await;
-        let client_key = tonic_some_or_err(
-            key_info.get(&key_id),
-            format!("The request ID {} does not exist", key_id),
-        )?
-        .client_key
-        .clone();
+
+        let meta_store = Arc::clone(&self.reenc_meta_map);
+        let fhe_keys = Arc::clone(&self.fhe_keys);
+        let sig_key = Arc::clone(&self.base_kms.sig_key);
         let mut rng = tonic_handle_potential_err(
             self.base_kms.new_rng(),
             "Could not get handle on RNG".to_string(),
         )?;
-        let sig_key = self.base_kms.sig_key.clone();
-        let future_reenc = tokio::spawn(async move {
-            (
-                (servers_needed, fhe_type, link.clone()),
-                async_reencrypt::<PubS, PrivS>(
-                    &client_key,
-                    &sig_key,
-                    &mut rng,
-                    &ciphertext,
-                    fhe_type,
-                    &link,
-                    &client_enc_key,
-                    &client_verf_key,
-                )
-                .await,
+
+        // we do not need to hold the handle,
+        // the result of the computation is tracked by the reenc_meta_store
+        let _handle = tokio::spawn(async move {
+            let mut guarded_meta_store = meta_store.write().await;
+            let fhe_keys_rlock = fhe_keys.read().await;
+            let keys = match fhe_keys_rlock.get(&key_id) {
+                Some(keys) => keys,
+                None => {
+                    let _ = guarded_meta_store.update(
+                        &request_id,
+                        HandlerStatus::Error(format!(
+                            "Failed reencryption: Key with ID {key_id} does not exist!"
+                        )),
+                    );
+                    return;
+                }
+            };
+            match async_reencrypt::<PubS, PrivS>(
+                &keys.client_key,
+                &sig_key,
+                &mut rng,
+                &ciphertext,
+                fhe_type,
+                &link,
+                &client_enc_key,
+                &client_verf_key,
             )
+            .await
+            {
+                Ok(raw_decryption) => {
+                    let _ = guarded_meta_store.update(
+                        &request_id,
+                        HandlerStatus::Done((servers_needed, fhe_type, link, raw_decryption)),
+                    );
+                }
+                Result::Err(e) => {
+                    let _ = guarded_meta_store.update(
+                        &request_id,
+                        HandlerStatus::Error(format!("Failed reencryption: {e}")),
+                    );
+                }
+            }
         });
-        reenc_map.insert(request_id, future_reenc);
         Ok(Response::new(Empty {}))
     }
 
@@ -279,12 +391,14 @@ impl<
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
 
-        let ((servers_needed, fhe_type, req_digest), partial_dec) =
-            SoftwareKms::<FileStorage, FileStorage>::process_decryption(
-                &self.reenc_map,
-                request_id.clone(),
-            )
-            .await?;
+        let (servers_needed, fhe_type, req_digest, partial_dec) = {
+            let guarded_meta_store = self.reenc_meta_map.read().await;
+            handle_res_mapping(
+                guarded_meta_store.retrieve(&request_id).cloned(),
+                &request_id,
+                "Reencryption",
+            )?
+        };
 
         let server_verf_key = tonic_handle_potential_err(
             to_vec(&self.get_verf_key()),
@@ -312,31 +426,52 @@ impl<
                 validate_decrypt_req(&inner),
                 format!("Invalid key in request {:?}", inner),
             )?;
-        let mut decrypt_map = self.decrypt_map.lock().await;
-        if decrypt_map.get(&request_id).is_some() {
-            return Err(tonic::Status::new(
-                tonic::Code::AlreadyExists,
-                format!(
-                    "A decryption request with request ID {} is already being processed!",
-                    request_id
-                ),
-            ));
-        }
-        let key_info = self.key_handles.lock().await;
-        let client_key = tonic_some_or_err(
-            key_info.get(&key_id),
-            format!("The request ID {} does not exist", key_id),
-        )?
-        .client_key
-        .clone();
-        let future_plaintext = tokio::spawn(async move {
-            (
-                req_digest,
-                async_decrypt::<PubS, PrivS>(&client_key, &ciphertext, fhe_type).await,
-            )
-        });
 
-        decrypt_map.insert(request_id, future_plaintext);
+        {
+            let mut guarded_meta_store = self.dec_meta_store.write().await;
+            tonic_handle_potential_err(
+                guarded_meta_store.insert(&request_id),
+                "Could not insert decryption into meta store".to_string(),
+            )?;
+        }
+
+        let meta_store = Arc::clone(&self.dec_meta_store);
+        let fhe_keys = Arc::clone(&self.fhe_keys);
+
+        // we do not need to hold the handle,
+        // the result of the computation is tracked by the dec_meta_store
+        let _handle = tokio::spawn(async move {
+            let fhe_keys_rlock = fhe_keys.read().await;
+            let keys = match fhe_keys_rlock.get(&key_id) {
+                Some(keys) => keys,
+                None => {
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(
+                        &request_id,
+                        HandlerStatus::Error(format!(
+                            "Failed decryption: Key with ID {key_id} does not exist!"
+                        )),
+                    );
+                    return;
+                }
+            };
+            match async_decrypt::<PubS, PrivS>(&keys.client_key, &ciphertext, fhe_type).await {
+                Ok(raw_decryption) => {
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(
+                        &request_id,
+                        HandlerStatus::Done((req_digest.clone(), raw_decryption)),
+                    );
+                }
+                Result::Err(e) => {
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(
+                        &request_id,
+                        HandlerStatus::Error(format!("Failed decryption: {e}")),
+                    );
+                }
+            }
+        });
         Ok(Response::new(Empty {}))
     }
 
@@ -346,12 +481,14 @@ impl<
     ) -> Result<Response<DecryptionResponse>, Status> {
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
-        let (req_digest, plaintext) = SoftwareKms::<FileStorage, FileStorage>::process_decryption(
-            &self.decrypt_map,
-            request_id.clone(),
-        )
-        .await?;
-
+        let (req_digest, plaintext) = {
+            let guarded_meta_store = self.dec_meta_store.read().await;
+            handle_res_mapping(
+                guarded_meta_store.retrieve(&request_id).cloned(),
+                &request_id,
+                "Decryption",
+            )?
+        };
         let server_verf_key = tonic_handle_potential_err(
             to_vec(&self.get_verf_key()),
             "Could not serialize server verification key".to_string(),
@@ -382,55 +519,97 @@ impl<
     /// starts the centralized CRS generation
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
-        let request_id = tonic_some_ref_or_err(
-            inner.request_id.as_ref(),
-            "Request ID is not set".to_string(),
-        )?;
-        // ensure the request ID is valid
-        if !request_id.is_valid() {
-            tracing::warn!("Request ID {} is not valid!", request_id.to_string());
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("Request ID {} is not valid!", request_id),
-            ));
-        }
-        // ensure that the CRS under that handle does not exist yet
-        {
-            let crs_handles = self.crs_handles.lock().await;
-            if crs_handles.contains_key(request_id) {
-                tracing::warn!(
-                    "CRS with request ID {} already exist!",
-                    request_id.to_string()
-                );
-                return Err(tonic::Status::new(
-                    tonic::Code::AlreadyExists,
-                    format!("CRS with request ID {} already exist!", request_id),
-                ));
-            }
-        }
-        let mut crs_gen_map = self.crs_gen_map.lock().await;
-        if crs_gen_map.get(request_id).is_some() {
-            return Err(tonic::Status::new(
-                tonic::Code::AlreadyExists,
-                format!(
-                    "A CRS generation request with request ID {} is already being processed!",
-                    request_id
-                ),
-            ));
-        }
+        let request_id = tonic_some_or_err(inner.request_id, "Request ID is not set".to_string())?;
+        validate_request_id(&request_id)?;
         let params = tonic_handle_potential_err(
             retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
             "Parameter choice is not recognized".to_string(),
         )?;
+        {
+            let mut guarded_meta_store = self.crs_meta_map.write().await;
+            tonic_handle_potential_err(
+                guarded_meta_store.insert(&request_id),
+                "Could not insert CRS generation into meta store".to_string(),
+            )?;
+        }
 
+        let public_storage = Arc::clone(&self.public_storage);
+        let private_storage = Arc::clone(&self.private_storage);
+        let meta_store = Arc::clone(&self.crs_meta_map);
+        let sk = Arc::clone(&self.base_kms.sig_key);
         let rng = tonic_handle_potential_err(
             self.base_kms.new_rng(),
             "Could not generate RNG for CRS generation".to_string(),
         )?;
 
-        let future_crs = tokio::spawn(async_generate_crs(rng, params));
-        crs_gen_map.insert(request_id.clone(), future_crs);
-
+        let _handle = tokio::spawn(async move {
+            {
+                let (pp, crs_info) = match async_generate_crs(&sk, rng, params).await {
+                    Ok((pp, crs_info)) => (pp, crs_info),
+                    Err(_) => {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Error(format!(
+                                "Failed CRS generation for CRS with ID {request_id}!"
+                            )),
+                        );
+                        return;
+                    }
+                };
+                let mut pub_storage = public_storage.lock().await;
+                let mut priv_storage = private_storage.lock().await;
+                //Try to store the new data
+                if store_at_request_id(
+                    &mut (*priv_storage),
+                    &request_id,
+                    &crs_info,
+                    &PrivDataType::CrsInfo.to_string(),
+                )
+                .await
+                .is_ok()
+                    && store_at_request_id(
+                        &mut (*pub_storage),
+                        &request_id,
+                        &pp,
+                        &PubDataType::CRS.to_string(),
+                    )
+                    .await
+                    .is_ok()
+                {
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(&request_id, HandlerStatus::Done(crs_info));
+                } else {
+                    tracing::error!("Could not store all the CRS data from request ID {request_id}. Deleting any dangling data.");
+                    // Try to delete stored data to avoid anything dangling
+                    // Ignore any failure to delete something since it might be because the data did not get created
+                    // In any case, we can't do much.
+                    let _ = delete_at_request_id(
+                        &mut (*pub_storage),
+                        &request_id,
+                        &PubDataType::CRS.to_string(),
+                    )
+                    .await;
+                    let _ = delete_at_request_id(
+                        &mut (*priv_storage),
+                        &request_id,
+                        &PrivDataType::CrsInfo.to_string(),
+                    )
+                    .await;
+                    {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        // We cannot do much if updating the storage fails at this point...
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Error(format!(
+                                "Failed to store CRS data to public storage for ID {}",
+                                request_id
+                            )),
+                        );
+                    }
+                }
+            }
+        });
         Ok(Response::new(Empty {}))
     }
 
@@ -440,266 +619,20 @@ impl<
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         let request_id = request.into_inner();
-        if !request_id.is_valid() {
-            tracing::warn!(
-                "The value {} is not a valid request ID!",
-                request_id.to_string()
-            );
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("The value {} is not a valid request ID!", request_id),
-            ));
-        }
-
-        let crs_info = match self.check_crs_generation_process(request_id.clone()).await {
-            Ok(result) => match result {
-                Some(handles) => handles,
-                None => {
-                    return Err(tonic::Status::new(
-                        tonic::Code::Unavailable,
-                        format!(
-                            "The CRS with request ID {} has not been generated yet, but is in progress!",
-                            request_id
-                        ),
-                    ));
-                }
-            },
-            Err(_) => {
-                return Err(tonic::Status::new(
-                    tonic::Code::NotFound,
-                    format!("Could not generate CRS with request ID {}!", request_id),
-                ));
-            }
+        validate_request_id(&request_id)?;
+        let crs_info = {
+            let guarded_meta_store = self.crs_meta_map.read().await;
+            handle_res_mapping(
+                guarded_meta_store.retrieve(&request_id).cloned(),
+                &request_id,
+                "CRS",
+            )?
         };
 
         Ok(Response::new(CrsGenResult {
             request_id: Some(request_id),
             crs_results: Some(crs_info),
         }))
-    }
-}
-
-impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
-    SoftwareKms<PubS, PrivS>
-{
-    /// check if CRS for a given request ID have been generated
-    ///
-    /// TODO: this could be merged to some degree with [check_key_generation_process]
-    async fn check_crs_generation_process(
-        &self,
-        request_id: RequestId,
-    ) -> anyhow::Result<Option<FhePubKeyInfo>> {
-        // Lock both maps since otherwise we might end up in a race condition where the handle is
-        // removed from crs_gen_map but the result of the task is not stored, hence a
-        // malicious repeated call for generation could cause two processes with the
-        // same request_ID to occur. Thus leading to unexpected and incorrect behaviour.
-        let mut crs_handles = self.crs_handles.lock().await;
-        let mut crs_gen_map = self.crs_gen_map.lock().await;
-        let crs_gen_handle = crs_gen_map.remove(&request_id);
-        // Handle the four different cases:
-        // 1. Request ID exists and is being generated but is not finished yet
-        // 2. Request ID exists and generation has finished, but not been processed yet
-        // 3. Request ID exists, generation has finished and the generated keys have allready been
-        //    processed
-        // 4. Request ID does not exist
-        // TODO add tests for each fo these cases
-        match crs_gen_handle {
-            Some(crs_gen_handle) => {
-                if !crs_gen_handle.is_finished() {
-                    // Case 1: The request ID is currently generating but not finished yet
-                    // Reinsert the handle into the genration map
-                    crs_gen_map.insert(request_id, crs_gen_handle);
-                    return Ok(None);
-                }
-
-                // Case 2: The key generation is finished, so we can now generate the key
-                // information
-                let pp = crs_gen_handle.await??;
-                let crs_info = compute_info(self, &pp)?;
-                // Insert the key information into the map of keys
-                crs_handles.insert(request_id.clone(), crs_info.clone());
-                {
-                    let mut pub_storage = self.public_storage.lock().await;
-                    store_at_request_id(
-                        &mut (*pub_storage),
-                        &request_id,
-                        &pp,
-                        &PubDataType::CRS.to_string(),
-                    )
-                    .await?;
-                }
-                {
-                    let mut priv_storage = self.private_storage.lock().await;
-                    store_at_request_id(
-                        &mut (*priv_storage),
-                        &request_id,
-                        &crs_info,
-                        &PrivDataType::CrsInfo.to_string(),
-                    )
-                    .await?;
-                }
-                Ok(Some(crs_info))
-            }
-            None => {
-                match crs_handles.get(&request_id) {
-                    Some(handles) => {
-                        // Case 3: Request is not in crs generation map, so check if it is already
-                        // done
-                        Ok(Some(handles.clone()))
-                    }
-                    None => {
-                        // Case 4: The request ID is completely unknown!
-                        Err(anyhow_error_and_log(format!(
-                            "The keys with request ID {} were not found!",
-                            request_id
-                        )))
-                    }
-                }
-            }
-        }
-    }
-
-    /// check if the key for a given request ID have been generated
-    ///
-    /// TODO: this could be merged to some degree with [check_crs_generation_process]
-    async fn check_key_generation_process(
-        &self,
-        request_id: RequestId,
-    ) -> anyhow::Result<Option<HashMap<PubDataType, FhePubKeyInfo>>> {
-        // Lock both maps since otherwise we might end up in a race condition where the handle is
-        // removed from key_gen_map but the result of the task is not stored, hence a
-        // malicious repeated call for generation could cause two processes with the
-        // same request_ID to occur. Thus leading to unexpected and incorrect behaviour.
-        let mut key_handles = self.key_handles.lock().await;
-        let mut key_gen_map = self.key_gen_map.lock().await;
-        let key_gen_handle = key_gen_map.remove(&request_id);
-        // Handle the four different cases:
-        // 1. Request ID exists and is being generated but is not finished yet
-        // 2. Request ID exists and generation has finished, but not been processed yet
-        // 3. Request ID exists, generation has finished and the generated keys have allready been
-        //    processed
-        // 4. Request ID does not exist
-        // TODO add tests for each fo these cases
-        match key_gen_handle {
-            Some(key_gen_handle) => {
-                if !key_gen_handle.is_finished() {
-                    // Case 1: The request ID is currently generating but not finished yet
-                    key_gen_map.insert(request_id, key_gen_handle);
-                    return Ok(None);
-                }
-                // Case 2: The key generation is finished, so we can now generate the key
-                // information
-                let (client_key, pub_keys) = key_gen_handle.await??;
-                let new_key_info = KmsFheKeyHandles::new(self, client_key, &pub_keys)?;
-                // Insert the key information into the map of keys
-                key_handles.insert(request_id.clone(), new_key_info.clone());
-                {
-                    let mut pub_storage = self.public_storage.lock().await;
-                    store_at_request_id(
-                        &mut (*pub_storage),
-                        &request_id,
-                        &pub_keys.public_key,
-                        &PubDataType::PublicKey.to_string(),
-                    )
-                    .await?;
-                    store_at_request_id(
-                        &mut (*pub_storage),
-                        &request_id,
-                        &pub_keys.server_key,
-                        &PubDataType::ServerKey.to_string(),
-                    )
-                    .await?;
-                }
-                {
-                    let mut priv_storage = self.private_storage.lock().await;
-                    let _ = &store_at_request_id(
-                        &mut (*priv_storage),
-                        &request_id,
-                        &new_key_info,
-                        &PrivDataType::FheKeyInfo.to_string(),
-                    )
-                    .await?;
-                }
-                Ok(Some(new_key_info.public_key_info))
-            }
-            None => {
-                match key_handles.get(&request_id) {
-                    Some(handles) => {
-                        // Case 3: Request is not in key generation map, so check if it is already
-                        // done
-                        Ok(Some(handles.public_key_info.clone()))
-                    }
-                    None => {
-                        // Case 4: The request ID is completely unknown!
-                        Err(anyhow_error_and_log(format!(
-                            "The keys with request ID {} were not found!",
-                            request_id
-                        )))
-                    }
-                }
-            }
-        }
-    }
-
-    /// Process a request for getting the decryption or reencryption.
-    /// Takes as input a map of decryption or reencryption processes and checks whether they are
-    /// done. If they are done, it returns the result and removes them from the map, otherwise
-    /// it returns an informative tonic error.
-    async fn process_decryption<Aux>(
-        handle_map: &CompMap<(Aux, anyhow::Result<Vec<u8>>)>,
-        request_id: RequestId,
-    ) -> Result<(Aux, Vec<u8>), Status> {
-        // We remove the handle and thus must remember to reinsert it again if it is not fully
-        // processed
-        let mut unwrapped_handle_map = handle_map.lock().await;
-        let handle = unwrapped_handle_map.remove(&request_id);
-
-        // Handle decryption based on the 3 possible cases:
-        // Case 1: The request ID is currently being processed but not finished yet
-        // Case 2: The request ID is finished and the result is available
-        // Case 3: The request ID does not exist (either it is already completed or never existed)
-        let (aux, decryption) = match handle {
-            Some(inner_handle) => {
-                if !inner_handle.is_finished() {
-                    // Case 1: The request ID is currently being processed but not finished yet
-                    // Reinsert the handle
-                    unwrapped_handle_map.insert(request_id.clone(), inner_handle);
-                    return Err(tonic::Status::new(
-                        tonic::Code::Unavailable,
-                        format!(
-                            "The decryption of request with ID {} has not been generated yet, but is in progress!",
-                            request_id
-                        ),
-                    ));
-                }
-                // Case 2: The request is finished
-                match inner_handle.await {
-                    // Everything is OK so we return the result
-                    // TODO related to issue https://github.com/zama-ai/kms-core/issues/462 : we need at some point to consider caching
-                    Ok((aux, Ok(result))) => (aux, result),
-                    // Something went wrong with the decryption so we return an error
-                    _ => {
-                        tracing::error!("Could not decrypt ciphertext for request {request_id}!");
-                        return Err(tonic::Status::new(
-                            tonic::Code::Internal,
-                            "Could not decrypt ciphertext!",
-                        ));
-                    }
-                }
-            }
-            // Case 3: The request ID is not in the map. Either it has never been started or already
-            // returned.
-            None => {
-                return Err(tonic::Status::new(
-                    tonic::Code::NotFound,
-                    format!(
-                        "Decryption request with ID {} either never existed or no longer exists!",
-                        request_id
-                    ),
-                ));
-            }
-        };
-        Ok((aux, decryption))
     }
 }
 
@@ -808,7 +741,7 @@ pub async fn validate_reencrypt_req(
     let pk_sol = ReencryptSol {
         pub_enc_key: payload.enc_key.clone(),
     };
-    let client_verf_key: PublicSigKey = tonic_handle_potential_err(
+    let client_verf_key: PublicSigKey = handle_potential_err(
         from_bytes(&payload.verification_key),
         format!("Invalid verification key in request {:?}", req),
     )?;

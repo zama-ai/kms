@@ -11,8 +11,9 @@ public_storage_path = "keys"
 private_storage_path = "keys"
 
 # The keys must match the keys of the ParamChoice type, in kms.proto.
+# More specifically, names must all be lower-case; e.g. "test" or "default"
 [param_file_map]
-test =  "parameters/small_test_params.json" 
+test =  "parameters/small_test_params.json"
 default = "parameters/default_params.json"
 
 # [preproc_redis_conf]

@@ -13,9 +13,14 @@ use crate::rpc::rpc_types::{
 use crate::storage::read_all_data;
 #[cfg(feature = "non-wasm")]
 use crate::storage::PublicStorage;
+use crate::threshold::meta_store::MetaStore;
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
 use crate::{anyhow_error_and_log, some_or_err};
+use crate::{
+    consts::{DEC_CAPACITY, MIN_DEC_CACHE},
+    threshold::meta_store::HandlerStatus,
+};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use der::zeroize::Zeroize;
@@ -41,10 +46,8 @@ use tfhe::{
 #[cfg(feature = "non-wasm")]
 use tfhe_zk_pok::curve_api::bls12_446 as curve;
 use tokio::sync::{Mutex, RwLock};
-#[cfg(feature = "non-wasm")]
-use tokio::task::JoinHandle;
 
-fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> anyhow::Result<T> {
+pub(crate) fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> anyhow::Result<T> {
     resp.map_err(|_| {
         tracing::warn!(error);
         anyhow::Error::msg(format!("Invalid request: \"{}\"", error))
@@ -60,40 +63,56 @@ pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSi
 
 #[cfg(feature = "non-wasm")]
 pub async fn async_generate_fhe_keys(
+    sk: &PrivateSigKey,
     params: NoiseFloodParameters,
-) -> anyhow::Result<(FhePrivateKey, FhePubKeySet)> {
+) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let (send, recv) = tokio::sync::oneshot::channel();
+    let sk_copy = sk.to_owned();
     rayon::spawn(move || {
-        let out = generate_fhe_keys(params);
+        let out = generate_fhe_keys(&sk_copy, params);
         let _ = send.send(out);
     });
-    recv.await.map_err(|e| anyhow::anyhow!(e.to_string()))
+    recv.await.map_err(|e| anyhow::anyhow!(e.to_string()))?
 }
 
 #[cfg(feature = "non-wasm")]
 pub async fn async_generate_crs(
+    sk: &PrivateSigKey,
     rng: AesRng,
     params: NoiseFloodParameters,
-) -> anyhow::Result<PublicParameter> {
+) -> anyhow::Result<(PublicParameter, FhePubKeyInfo)> {
     let (send, recv) = tokio::sync::oneshot::channel();
+    let sk_copy = sk.to_owned();
     rayon::spawn(move || {
-        let out = gen_centralized_crs(&params, rng);
+        let out = gen_centralized_crs(&sk_copy, &params, rng);
         let _ = send.send(out);
     });
     recv.await?
 }
 
 #[cfg(feature = "non-wasm")]
-pub fn generate_fhe_keys(params: NoiseFloodParameters) -> (FhePrivateKey, FhePubKeySet) {
-    let client_key = generate_client_fhe_key(params);
-    let server_key = client_key.generate_server_key();
-    let public_key = FhePublicKey::new(&client_key);
-    let pks = FhePubKeySet {
-        public_key,
-        server_key,
-        sns_key: None,
+pub fn generate_fhe_keys(
+    sk: &PrivateSigKey,
+    params: NoiseFloodParameters,
+) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
+    let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
+        let client_key = generate_client_fhe_key(params);
+        let server_key = client_key.generate_server_key();
+        let public_key = FhePublicKey::new(&client_key);
+        let pks = FhePubKeySet {
+            public_key,
+            server_key,
+            sns_key: None,
+        };
+        let handles = KmsFheKeyHandles::new(sk, client_key, &pks)?;
+        Ok((pks, handles))
     };
-    (client_key, pks)
+    match panic::catch_unwind(f) {
+        Ok(x) => x,
+        Err(_) => Err(anyhow_error_and_log(
+            "FHE key generation panicked!".to_string(),
+        )),
+    }
 }
 
 #[cfg(feature = "non-wasm")]
@@ -106,9 +125,10 @@ pub fn generate_client_fhe_key(params: NoiseFloodParameters) -> ClientKey {
 /// compute the CRS in the centralized KMS.
 #[cfg(feature = "non-wasm")]
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
+    sk: &PrivateSigKey,
     params: &NoiseFloodParameters,
     mut rng: R,
-) -> anyhow::Result<PublicParameter> {
+) -> anyhow::Result<(PublicParameter, FhePubKeyInfo)> {
     use distributed_decryption::execution::zk::ceremony::compute_witness_dim;
     let witness_dim = compute_witness_dim(&params.ciphertext_parameters)?;
     tracing::info!("Generating CRS with witness dimension {}.", witness_dim);
@@ -120,7 +140,8 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     tau.zeroize();
     r.zeroize();
 
-    Ok(pproof.new_pp)
+    let crs_info = compute_info(sk, &pproof.new_pp)?;
+    Ok((pproof.new_pp, crs_info))
 }
 
 #[derive(Clone)]
@@ -210,7 +231,7 @@ pub struct SoftwareKmsKeys {
     pub sig_pk: PublicSigKey,
 }
 
-// TODO should be in test package
+#[cfg(test)]
 #[derive(Serialize, Deserialize)]
 pub struct CentralizedTestingKeys {
     pub params: NoiseFloodParameters,
@@ -233,22 +254,22 @@ pub struct KmsFheKeyHandles {
 
 #[cfg(feature = "non-wasm")]
 impl KmsFheKeyHandles {
-    pub fn new<K: BaseKms>(
-        kms: &K,
+    pub fn new(
+        sig_key: &PrivateSigKey,
         client_key: FhePrivateKey,
         public_keys: &FhePubKeySet,
     ) -> anyhow::Result<Self> {
         let mut public_key_info = HashMap::new();
         public_key_info.insert(
             PubDataType::PublicKey,
-            compute_info(kms, &public_keys.public_key)?,
+            compute_info(sig_key, &public_keys.public_key)?,
         );
         public_key_info.insert(
             PubDataType::ServerKey,
-            compute_info(kms, &public_keys.server_key)?,
+            compute_info(sig_key, &public_keys.server_key)?,
         );
         if let Some(sns) = &public_keys.sns_key {
-            public_key_info.insert(PubDataType::SnsKey, compute_info(kms, sns)?);
+            public_key_info.insert(PubDataType::SnsKey, compute_info(sig_key, sns)?);
         }
         Ok(KmsFheKeyHandles {
             client_key,
@@ -257,25 +278,23 @@ impl KmsFheKeyHandles {
     }
 }
 
-// Values that needs to be stored temporarely as part of an async key generation call.
+// Values that need to be stored temporarily as part of an async key generation call.
 #[cfg(feature = "non-wasm")]
-type KeyGenCallValues = anyhow::Result<(ClientKey, FhePubKeySet)>;
-#[cfg(feature = "non-wasm")]
-type CrsGenValues = anyhow::Result<PublicParameter>;
+type KeyGenCallValues = HashMap<PubDataType, FhePubKeyInfo>;
 
-// Values that needs to be stored temporarely as part of an async decryption call.
+// Values that need to be stored temporarily as part of an async decryption call.
 // Represents the digest of the request and the result of the decryption.
 #[cfg(feature = "non-wasm")]
-pub type DecCallValues = (Vec<u8>, anyhow::Result<Vec<u8>>);
+pub type DecCallValues = (Vec<u8>, Vec<u8>);
 
-// Values that needs to be stored temporarely as part of an async reencryption call.
-// Represents the server_needed, FHE type, the digest of the request and the result of the
-// reencryption.
+// Values that need to be stored temporarily as part of an async reencryption call.
+// Represents the server_needed, FHE type, the digest of the request and the partial decryption.
 #[cfg(feature = "non-wasm")]
-pub type ReencCallValues = ((u32, FheType, Vec<u8>), anyhow::Result<Vec<u8>>);
+pub type ReencCallValues = (u32, FheType, Vec<u8>, Vec<u8>);
 
-pub type CompMap<A> = Arc<Mutex<HashMap<RequestId, JoinHandle<A>>>>;
 /// Software based KMS where keys are stored in a local file
+/// Observe that the order of write access MUST be as follows to avoid dead locks:
+/// PublicStorage -> PrivateStorage -> FheKeys/XXX_meta_map
 #[cfg(feature = "non-wasm")]
 pub struct SoftwareKms<PubS: PublicStorage, PrivS: PublicStorage> {
     pub(crate) base_kms: BaseKmsStruct,
@@ -286,19 +305,17 @@ pub struct SoftwareKms<PubS: PublicStorage, PrivS: PublicStorage> {
     // owner and where any modification will be detected.
     pub(crate) private_storage: Arc<Mutex<PrivS>>,
     // Map storing the already generated FHE keys.
-    pub key_handles: Arc<Mutex<KeysInfoHashMap>>,
+    pub(crate) fhe_keys: Arc<RwLock<KeysInfoHashMap>>,
     // Map storing ongoing key generation requests.
-    pub key_gen_map: CompMap<KeyGenCallValues>,
+    pub(crate) key_meta_map: Arc<RwLock<MetaStore<KeyGenCallValues>>>,
     // Map storing ongoing decryption requests.
-    pub decrypt_map: CompMap<DecCallValues>,
+    pub(crate) dec_meta_store: Arc<RwLock<MetaStore<DecCallValues>>>,
     // Map storing ongoing reencryption requests.
-    pub reenc_map: CompMap<ReencCallValues>,
-    // Map storing the already generated CRS keys.
-    pub crs_handles: Arc<Mutex<CrsInfoHashMap>>,
+    pub(crate) reenc_meta_map: Arc<RwLock<MetaStore<ReencCallValues>>>,
     // Map storing ongoing CRS generation requests.
-    pub crs_gen_map: CompMap<CrsGenValues>,
+    pub(crate) crs_meta_map: Arc<RwLock<MetaStore<FhePubKeyInfo>>>,
     // Map storing the identity of parameters and the parameter file paths
-    pub(crate) param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
+    pub(crate) param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>, // TODO this should be loaded once during boot
 }
 
 /// Perform asynchronous decryption and serialize the result using asn1
@@ -520,8 +537,21 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         .to_owned();
         let key_info: KeysInfoHashMap =
             read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+        let key_info_w_status = key_info
+            .iter()
+            .map(|(id, info)| {
+                (
+                    id.to_owned(),
+                    HandlerStatus::Done(info.public_key_info.to_owned()),
+                )
+            })
+            .collect();
         let cs: CrsInfoHashMap =
             read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+        let cs_w_status: HashMap<RequestId, HandlerStatus<FhePubKeyInfo>> = cs
+            .iter()
+            .map(|(id, crs)| (id.to_owned(), HandlerStatus::Done(crs.to_owned())))
+            .collect();
 
         let param_file_map = Arc::new(RwLock::new(HashMap::from_iter(
             param_file_map
@@ -532,12 +562,11 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             base_kms: BaseKmsStruct::new(sk),
             public_storage: Arc::new(Mutex::new(public_storage)),
             private_storage: Arc::new(Mutex::new(private_storage)),
-            key_handles: Arc::new(Mutex::new(key_info)),
-            key_gen_map: Arc::new(Mutex::new(HashMap::new())),
-            decrypt_map: Arc::new(Mutex::new(HashMap::new())),
-            reenc_map: Arc::new(Mutex::new(HashMap::new())),
-            crs_handles: Arc::new(Mutex::new(cs)),
-            crs_gen_map: Arc::new(Mutex::new(HashMap::new())),
+            fhe_keys: Arc::new(RwLock::new(key_info)),
+            key_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(key_info_w_status))),
+            dec_meta_store: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
+            reenc_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
+            crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(cs_w_status))),
             param_file_map,
         })
     }
@@ -546,25 +575,11 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 /// Computes the public into on a serializable `element`.
 /// More specifically, computes the unique handle of the `element` and signs this handle using the
 /// `kms`.
-pub fn compute_info<K: BaseKms, S: Serialize>(
-    kms: &K,
-    element: &S,
-) -> anyhow::Result<FhePubKeyInfo> {
-    // TODO hack serialize using serde because of issues with asn1 and public key serialization
-    let ser = bincode::serialize(element)?;
-    let handle = compute_handle(&ser)?;
-    let signature = kms.sign(&handle)?;
-
-    Ok(FhePubKeyInfo {
-        key_handle: handle,
-        signature: bincode::serialize(&signature)?,
-    })
-}
-
-pub(crate) fn compute_info_from_key<S: Serialize>(
+pub(crate) fn compute_info<S: Serialize>(
     sk: &PrivateSigKey,
     element: &S,
 ) -> anyhow::Result<FhePubKeyInfo> {
+    // TODO hack serialize using serde because of issues with asn1 and public key serialization
     let ser = bincode::serialize(element)?;
     let handle = compute_handle(&ser)?;
     let signature = sign(&handle, sk)?;
@@ -589,6 +604,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{KmsFheKeyHandles, PublicStorage};
+    use crate::consts::TEST_MSG;
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM_PATH,
@@ -608,7 +624,6 @@ mod tests {
     use crate::storage::{FileStorage, RamStorage, StorageType};
     use crate::util::file_handling::read_element;
     use crate::util::key_setup::compute_cipher;
-    use crate::{consts::TEST_MSG, cryptography::central_kms::BaseKmsStruct};
     use aes_prng::AesRng;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use rand::{RngCore, SeedableRng};
@@ -666,16 +681,12 @@ mod tests {
 
         let mut rng = AesRng::seed_from_u64(100);
         let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
-        let (client_key, pub_fhe_keys) = generate_fhe_keys(params);
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        let kms = BaseKmsStruct::new(sig_sk.clone());
-        let key_info = KmsFheKeyHandles::new(&kms, client_key, &pub_fhe_keys).unwrap();
+        let (pub_fhe_keys, key_info) = generate_fhe_keys(&sig_sk, params).unwrap();
         let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
-        let (other_client_key, other_pub_fhe_keys) = generate_fhe_keys(params);
-        let kms = BaseKmsStruct::new(sig_sk.clone());
-        let other_key_info =
-            KmsFheKeyHandles::new(&kms, other_client_key, &other_pub_fhe_keys).unwrap();
+        let (other_pub_fhe_keys, other_key_info) = generate_fhe_keys(&sig_sk, params).unwrap();
+
         // Insert a key with another handle to setup a KMS with multiple keys
         key_info_map.insert(other_key_id.to_string().try_into().unwrap(), other_key_info);
         let pub_fhe_map = HashMap::from([
@@ -785,17 +796,12 @@ mod tests {
             .await
             .unwrap();
             if sim_type == SimulationType::BadFheKey {
-                set_wrong_client_key(&inner, key_id, keys.params);
+                set_wrong_client_key(&inner, key_id, keys.params).await;
             }
             inner
         };
         let raw_plaintext = SoftwareKms::<FileStorage, FileStorage>::decrypt(
-            &kms.key_handles
-                .try_lock()
-                .unwrap()
-                .get(key_id)
-                .unwrap()
-                .client_key,
+            &kms.fhe_keys.read().await.get(key_id).unwrap().client_key,
             &ct,
             fhe_type,
         );
@@ -875,7 +881,7 @@ mod tests {
         simulate_reencrypt(SimulationType::NoError, kms_key_path, key_handle).await
     }
 
-    fn set_wrong_client_key<
+    async fn set_wrong_client_key<
         PubS: PublicStorage + Sync + Send + 'static,
         PrivS: PublicStorage + Sync + Send + 'static,
     >(
@@ -886,8 +892,8 @@ mod tests {
         let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
         let config = ConfigBuilder::with_custom_parameters(pbs_params, None);
         let wrong_client_key = tfhe::ClientKey::generate(config);
-        let mut key_info = inner.key_handles.try_lock().unwrap();
-        let x = key_info.get_mut(key_handle).unwrap();
+        let mut key_info = inner.fhe_keys.write().await;
+        let x: &mut KmsFheKeyHandles = key_info.get_mut(key_handle).unwrap();
         let wrong_handles = KmsFheKeyHandles {
             client_key: wrong_client_key,
             public_key_info: x.public_key_info.clone(),
@@ -934,7 +940,7 @@ mod tests {
             // TODO this should be updated since things might fail with probability 1/256
             // if the key sampled randomly gives the message chosen (since it is only 8 bit)
             if sim_type == SimulationType::BadFheKey {
-                set_wrong_client_key(&inner, key_handle, keys.params);
+                set_wrong_client_key(&inner, key_handle, keys.params).await;
             }
             if sim_type == SimulationType::BadSigKey {
                 set_wrong_sig_key(&mut inner, &mut rng);
@@ -953,9 +959,9 @@ mod tests {
         };
         let mut rng = kms.base_kms.new_rng().unwrap();
         let raw_cipher = SoftwareKms::<FileStorage, FileStorage>::reencrypt(
-            &kms.key_handles
-                .try_lock()
-                .unwrap()
+            &kms.fhe_keys
+                .read()
+                .await
                 .get(key_handle)
                 .unwrap()
                 .client_key,
@@ -1028,8 +1034,8 @@ mod tests {
         };
 
         let value = "bonjour".to_string();
-        let expected = super::compute_info(&kms.base_kms, &value).unwrap();
-        let actual = super::compute_info_from_key(&kms.base_kms.sig_key, &value).unwrap();
+        let expected = super::compute_info(&kms.base_kms.sig_key, &value).unwrap();
+        let actual = super::compute_info(&kms.base_kms.sig_key, &value).unwrap();
         assert_eq!(expected, actual);
     }
 }

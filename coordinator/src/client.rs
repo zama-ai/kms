@@ -380,7 +380,7 @@ pub mod js_api {
         ciphertext_digest: Vec<u8>,
         domain: Eip712DomainMsg,
     ) -> Result<ReencryptionRequest, JsError> {
-        let mut randomness: Vec<u8> = Vec::with_capacity(RND_SIZE);
+        let mut randomness: Vec<u8> = vec![0; RND_SIZE];
         client.rng.fill_bytes(&mut randomness);
         let payload = ReencryptionRequestPayload {
             version: CURRENT_FORMAT_VERSION,
@@ -774,7 +774,7 @@ impl Client {
         // a unique PK that is included in their response, hence it will still be validated
         // that each request contains a unique message to be signed hence ensuring CCA
         // security. TODO this argument should be validated
-        let mut randomness: Vec<u8> = Vec::with_capacity(RND_SIZE);
+        let mut randomness: Vec<u8> = vec![0; RND_SIZE];
         self.rng.fill_bytes(&mut randomness);
         let serialized_req = DecryptionRequestSerializable {
             version: CURRENT_FORMAT_VERSION,
@@ -810,7 +810,7 @@ impl Client {
 
         let ciphertext_digest = hash_element(&ciphertext);
         let (enc_pk, enc_sk) = encryption_key_generation(&mut self.rng);
-        let mut randomness = Vec::with_capacity(RND_SIZE);
+        let mut randomness = vec![0; RND_SIZE];
         self.rng.fill_bytes(&mut randomness);
         let sig_payload = ReencryptionRequestPayload {
             version: CURRENT_FORMAT_VERSION,
@@ -1837,7 +1837,7 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!(gen_response.into_inner(), Empty {});
-
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         // Check that we can retrieve the CRS under that request id
         let mut get_response = kms_client
             .get_crs_gen_result(tonic::Request::new(client_request_id.clone()))
@@ -2513,7 +2513,7 @@ pub(crate) mod tests {
                 .unwrap(),
         )
         .await;
-        let ct = Vec::from([1_u8; 1000000]);
+        let ct = Vec::from([1_u8; 100000]);
         let fhe_type = FheType::Euint32;
         let mut internal_client = Client::new(
             HashSet::from_iter(keys.server_keys.iter().cloned()),
@@ -2523,7 +2523,6 @@ pub(crate) mod tests {
             1,
             keys.params,
         );
-
         let request_id = &TEST_REENC_ID;
         let (req, _enc_pk, _enc_sk) = internal_client
             .reencryption_request(
@@ -2557,7 +2556,8 @@ pub(crate) mod tests {
             .err()
             .unwrap()
             .message()
-            .contains("Could not decrypt ciphertext!"));
+            .contains("finished with an error"));
+        tracing::info!("aborting");
         kms_server.abort();
     }
 

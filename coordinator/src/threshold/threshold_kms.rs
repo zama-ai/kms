@@ -1,5 +1,6 @@
+use super::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, SEC_PAR};
-use crate::cryptography::central_kms::{compute_info_from_key, BaseKmsStruct};
+use crate::cryptography::central_kms::{compute_info, BaseKmsStruct};
 use crate::cryptography::der_types::{self, PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::cryptography::signcryption::signcrypt;
 use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer};
@@ -23,7 +24,6 @@ use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
-use distributed_decryption::algebra::base_ring::Z64;
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
 use distributed_decryption::choreography::NetworkingStrategy;
 use distributed_decryption::execution::endpoints::decryption::{
@@ -52,6 +52,7 @@ use distributed_decryption::execution::zk::ceremony::{
 };
 use distributed_decryption::networking::grpc::GrpcNetworkingManager;
 use distributed_decryption::session_id::SessionId;
+use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -66,8 +67,6 @@ use tokio::task::AbortHandle;
 use tokio::time::Instant;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
-
-use super::meta_store::{HandlerStatus, MetaStore};
 
 // Jump between the webserver being externally visible and the webserver used to execute DDec
 // TODO this should eventually be specified a bit better
@@ -94,7 +93,7 @@ pub struct ThresholdConfigNoStorage {
     pub timeout_secs: u64,
     pub preproc_redis_conf: Option<RedisConf>,
     pub num_sessions_preproc: Option<u16>,
-    pub param_file_map: HashMap<String, String>,
+    pub param_file_map: HashMap<String, String>, // TODO parameters should be loaded once during boot
 }
 
 impl From<ThresholdConfig> for ThresholdConfigNoStorage {
@@ -247,6 +246,7 @@ impl FheType {
 pub struct ThresholdFheKeys {
     pub private_keys: PrivateKeySet,
     pub sns_key: SwitchAndSquashKey,
+    pub pk_meta_data: DkgMetaStore,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -325,6 +325,15 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         .to_owned();
         let key_info: HashMap<RequestId, ThresholdFheKeys> =
             read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+        let key_info_w_status = key_info
+            .iter()
+            .map(|(id, info)| {
+                (
+                    id.to_owned(),
+                    HandlerStatus::Done(info.pk_meta_data.to_owned()),
+                )
+            })
+            .collect();
         let cs: HashMap<RequestId, CrsMetaStore> =
             read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
         let cs_w_status: HashMap<RequestId, HandlerStatus<CrsMetaStore>> = cs
@@ -389,7 +398,9 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             public_storage: Arc::new(Mutex::new(public_storage)),
             private_storage: Arc::new(Mutex::new(private_storage)),
             crs_meta_store: Arc::new(RwLock::new(MetaStore::new_from_map(cs_w_status))),
-            dkg_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_unlimited())),
+            dkg_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_from_map(
+                key_info_w_status,
+            ))),
             dec_meta_store: Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache))),
             reenc_meta_store: Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache))),
             param_file_map,
@@ -630,7 +641,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 .execute::<Z64, _, _>(&mut session, witness_dim)
                 .await;
             let res_info_pp =
-                res_pp.and_then(|pp| compute_info_from_key(&sig_key, &pp).map(|info| (info, pp)));
+                res_pp.and_then(|pp| compute_info(&sig_key, &pp).map(|info| (info, pp)));
             let f = || async {
                 // we take these two locks at the same time in case there are races
                 // on return, the two locks should be dropped in the correct order also
@@ -672,9 +683,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                     let _ = guarded_meta_store
                         .update(&owned_req_id, HandlerStatus::Done(crs_meta_data));
                 } else {
+                    tracing::error!("Could not store all the CRS data from request ID {owned_req_id}. Deleting any dangling data.");
                     // Try to delete stored data to avoid anything dangling
-                    // Ignore any failure to delete something. It might be because the data exist.
-                    // In any case, we can't do much
+                    // Ignore any failure to delete something since it might be because the data did not get created
+                    // In any case, we can't do much.
                     let _ = delete_at_request_id(
                         &mut (*pub_storage),
                         &owned_req_id,
@@ -882,22 +894,9 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             };
 
             //Compute all the info required for storing
-            let pub_key_info = compute_info_from_key(&sig_key, &pub_key_set.public_key);
-            let serv_key_info = compute_info_from_key(&sig_key, &pub_key_set.server_key);
-            let sns_key_info = compute_info_from_key(&sig_key, &sns_key);
-            //Make sure we did manage to compute the info
-            let info = match (pub_key_info, serv_key_info, sns_key_info) {
-                (Ok(pub_key_info), Ok(serv_key_info), Ok(sns_key_info)) => {
-                    let mut info = HashMap::new();
-                    info.insert(PubDataType::PublicKey, pub_key_info);
-                    info.insert(PubDataType::ServerKey, serv_key_info);
-                    //Do we really have to do it also for sns key ?
-                    //afaict central does it, but then not used in store_public_keys
-                    info.insert(PubDataType::SnsKey, sns_key_info);
-                    info
-                }
-                _ => {
-                    //If failed to compute some info, update status
+            let info = match compute_all_info(&sig_key, &pub_key_set) {
+                Ok(info) => info,
+                Err(_) => {
                     let mut guarded_meta_storage = meta_store.write().await;
                     // We cannot do much if updating the storage fails at this point...
                     let _ = guarded_meta_storage.update(
@@ -914,7 +913,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 
             let private_key_data = ThresholdFheKeys {
                 private_keys,
-                sns_key: sns_key.clone(),
+                sns_key,
+                pk_meta_data: info.clone(),
             };
             //Try to store the new data
             if store_at_request_id(
@@ -944,7 +944,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 && store_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
-                    &sns_key,
+                    &private_key_data.sns_key,
                     &PubDataType::SnsKey.to_string(),
                 )
                 .await
@@ -962,9 +962,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 }
                 tracing::info!("Finished DKG for Request Id {req_id}.");
             } else {
+                tracing::error!("Could not store all the key data from request ID {req_id}. Deleting any dangling data.");
                 // Try to delete stored data to avoid anything dangling
-                // Ignore any failure to delete something. It might be because the data exist. In
-                // any case, we can't do much
+                // Ignore any failure to delete something since it might be because the data did not get created
+                // In any case, we can't do much.
                 let _ = delete_at_request_id(
                     &mut (*pub_storage),
                     &req_id,
@@ -1004,6 +1005,31 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         });
         Ok(())
     }
+}
+
+/// Compute all the info of a [FhePubKeySet] and return the result as as [DkgMetaStore]
+pub(crate) fn compute_all_info(
+    sig_key: &PrivateSigKey,
+    fhe_key_set: &FhePubKeySet,
+) -> anyhow::Result<DkgMetaStore> {
+    //Compute all the info required for storing
+    let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key);
+    let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key);
+
+    //Make sure we did manage to compute the info
+    Ok(match (pub_key_info, serv_key_info) {
+        (Ok(pub_key_info), Ok(serv_key_info)) => {
+            let mut info = HashMap::new();
+            info.insert(PubDataType::PublicKey, pub_key_info);
+            info.insert(PubDataType::ServerKey, serv_key_info);
+            info
+        }
+        _ => {
+            return Err(anyhow_error_and_log(
+                "Could not compute info on some public key element",
+            ));
+        }
+    })
 }
 
 #[tonic::async_trait]
@@ -1512,44 +1538,6 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                 signature,
             }),
         }))
-    }
-}
-
-// TODO should we move this to meta_store.rs?
-/// Helper method for retrieving the result of a request from an appropriate meta store
-/// [req_id] is the request ID to retrieve
-/// [request_type] is a free-form string used only for error logging the origin of the failure
-fn handle_res_mapping<T>(
-    handle: Option<HandlerStatus<T>>,
-    req_id: &RequestId,
-    request_type: &str,
-) -> Result<T, Status> {
-    match handle {
-        None => {
-            let msg = format!(
-                "Could not retrieve {request_type} with request ID {}. It does not exist",
-                req_id
-            );
-            tracing::warn!(msg);
-            Err(tonic::Status::new(tonic::Code::NotFound, msg))
-        }
-        Some(HandlerStatus::Started) => {
-            let msg = format!(
-                    "Could not retrieve {request_type} with request ID {} since it is not completed yet",
-                    req_id
-                );
-            tracing::warn!(msg);
-            Err(tonic::Status::new(tonic::Code::Unavailable, msg))
-        }
-        Some(HandlerStatus::Error(e)) => {
-            let msg = format!(
-                    "Could not retrieve {request_type} with request ID {} since it finished with an error: {}",
-                    req_id, e
-                );
-            tracing::warn!(msg);
-            Err(tonic::Status::new(tonic::Code::Unavailable, msg))
-        }
-        Some(HandlerStatus::Done(res)) => Ok(res),
     }
 }
 

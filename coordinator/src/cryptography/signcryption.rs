@@ -340,7 +340,7 @@ where
             return Err(anyhow_error_and_warn_log(format!(
                 "Could not encode message due to error: {:?}",
                 e
-            )))
+            )));
         }
     };
     Ok(hash_element(&to_hash))

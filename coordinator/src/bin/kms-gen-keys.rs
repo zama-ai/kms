@@ -9,7 +9,6 @@ use kms_lib::{
     util::key_setup::{
         ensure_central_crs_store_exists, ensure_central_keys_exist,
         ensure_central_server_signing_keys_exist, ensure_threshold_keys_exist,
-        ensure_threshold_server_signing_keys_exist,
     },
 };
 use strum::IntoEnumIterator;
@@ -106,7 +105,6 @@ async fn main() {
         .with(stdout_log.with_filter(filter::LevelFilter::INFO))
         .init();
     let args = Args::parse();
-
     match args.mode {
         Mode::Centralized {
             param_path,
@@ -164,7 +162,6 @@ async fn main() {
         } => {
             let pub_path = pub_path.as_ref().map(Path::new);
             let priv_path = priv_path.as_ref().map(Path::new);
-            ensure_threshold_server_signing_keys_exist(priv_path, pub_path, deterministic).await;
             ensure_threshold_keys_exist(
                 priv_path,
                 pub_path,

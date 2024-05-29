@@ -94,6 +94,7 @@ mod kms_gen_keys_binary_test {
     }
 
     fn gen_key(arg: &str) {
+        purge_all();
         Command::cargo_bin(KMS_GEN_KEYS)
             .unwrap()
             .arg(arg)
@@ -106,11 +107,13 @@ mod kms_gen_keys_binary_test {
     }
 
     #[test]
+    #[serial_test::serial]
     fn gen_key_centralized() {
         gen_key("centralized")
     }
 
     #[test]
+    #[serial_test::serial]
     fn gen_key_threshold() {
         gen_key("threshold")
     }

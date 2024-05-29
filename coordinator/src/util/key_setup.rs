@@ -1,8 +1,7 @@
 #[cfg(test)]
 use crate::consts::{KEY_PATH_PREFIX, TMP_PATH_PREFIX};
 use crate::cryptography::central_kms::{
-    compute_handle, compute_info, gen_centralized_crs, gen_sig_keys, generate_fhe_keys,
-    BaseKmsStruct, KmsFheKeyHandles,
+    compute_handle, gen_centralized_crs, gen_sig_keys, generate_fhe_keys,
 };
 use crate::cryptography::der_types::PrivateSigKey;
 use crate::kms::{FheType, RequestId};
@@ -11,6 +10,7 @@ use crate::rpc::rpc_types::PubDataType;
 use crate::storage::PublicStorage;
 use crate::storage::{read_all_data, PublicStorageReader};
 use crate::storage::{store_at_request_id, FileStorage, StorageType};
+use crate::threshold::threshold_kms::compute_all_info;
 use crate::threshold::threshold_kms::ThresholdFheKeys;
 use crate::util::file_handling::read_as_json;
 use crate::{
@@ -198,7 +198,8 @@ pub async fn ensure_threshold_server_signing_keys_exist(
     priv_path: Option<&Path>,
     pub_path: Option<&Path>,
     deterministic: bool,
-) {
+) -> Vec<HashMap<RequestId, PrivateSigKey>> {
+    let mut signing_keys = Vec::with_capacity(AMOUNT_PARTIES);
     for i in 1..=AMOUNT_PARTIES {
         let mut priv_storage = FileStorage::new_threshold(priv_path, StorageType::PRIV, i).unwrap();
         let mut pub_storage = FileStorage::new_threshold(pub_path, StorageType::PUB, i).unwrap();
@@ -208,7 +209,8 @@ pub async fn ensure_threshold_server_signing_keys_exist(
                 .unwrap();
         if !temp.is_empty() {
             // If signing keys already exit, then do nothing
-            return;
+            signing_keys.push(temp);
+            continue;
         }
         let mut rng = if deterministic {
             AesRng::seed_from_u64(i as u64)
@@ -216,9 +218,10 @@ pub async fn ensure_threshold_server_signing_keys_exist(
             AesRng::from_entropy()
         };
         let (pk, sk) = gen_sig_keys(&mut rng);
+        let handle = compute_handle(&sk).unwrap().try_into().unwrap();
         store_at_request_id(
             &mut pub_storage,
-            &compute_handle(&sk).unwrap().try_into().unwrap(),
+            &handle,
             &pk,
             &PubDataType::VerfKey.to_string(),
         )
@@ -226,13 +229,15 @@ pub async fn ensure_threshold_server_signing_keys_exist(
         .unwrap();
         store_at_request_id(
             &mut priv_storage,
-            &compute_handle(&sk).unwrap().try_into().unwrap(),
+            &handle,
             &sk,
             &PrivDataType::SigningKey.to_string(),
         )
         .await
         .unwrap();
+        signing_keys.push(HashMap::from([(handle, sk)]));
     }
+    signing_keys
 }
 
 /// NOTE: this is insecure!
@@ -249,7 +254,8 @@ pub async fn ensure_threshold_keys_exist(
     } else {
         AesRng::from_entropy()
     };
-    ensure_threshold_server_signing_keys_exist(priv_path, pub_path, deterministic).await;
+    let signing_keys =
+        ensure_threshold_server_signing_keys_exist(priv_path, pub_path, deterministic).await;
     let pub_storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
     if pub_storage
         .data_exists(
@@ -275,12 +281,22 @@ pub async fn ensure_threshold_keys_exist(
         THRESHOLD,
     )
     .unwrap();
-    let sns_key = key_set.public_keys.sns_key.unwrap();
+    let sns_key = key_set.public_keys.sns_key.to_owned().unwrap();
     for i in 1..=AMOUNT_PARTIES {
         println!("Generating key for party {i}");
+        // Get first signing key
+        let sk = signing_keys[i - 1]
+            .values()
+            .collect_vec()
+            .first()
+            .unwrap()
+            .to_owned()
+            .to_owned();
+        let info = compute_all_info(&sk, &key_set.public_keys).unwrap();
         let threshold_fhe_keys = ThresholdFheKeys {
             private_keys: key_shares[i - 1].to_owned(),
             sns_key: sns_key.clone(),
+            pk_meta_data: info,
         };
         let mut pub_storage = FileStorage::new_threshold(pub_path, StorageType::PUB, i).unwrap();
         store_at_request_id(
@@ -377,10 +393,7 @@ where
     } else {
         AesRng::from_entropy()
     };
-    let crs = gen_centralized_crs(&params, &mut rng).unwrap();
-
-    let kms = BaseKmsStruct::new(sk);
-    let crs_info = compute_info(&kms, &crs).unwrap();
+    let (pp, crs_info) = gen_centralized_crs(&sk, &params, &mut rng).unwrap();
 
     store_at_request_id(
         priv_storage,
@@ -390,7 +403,7 @@ where
     )
     .await
     .unwrap();
-    store_at_request_id(pub_storage, crs_handle, &crs, &PubDataType::CRS.to_string())
+    store_at_request_id(pub_storage, crs_handle, &pp, &PubDataType::CRS.to_string())
         .await
         .unwrap();
     true
@@ -436,11 +449,8 @@ pub async fn ensure_central_keys_exist(
         .unwrap()
         .to_owned();
 
-    let kms = BaseKmsStruct::new(sk.clone());
-    let (client_key_1, fhe_pub_keys_1) = generate_fhe_keys(params);
-    let key_info_1 = KmsFheKeyHandles::new(&kms, client_key_1, &fhe_pub_keys_1).unwrap();
-    let (client_key_2, fhe_pub_keys_2) = generate_fhe_keys(params);
-    let key_info_2 = KmsFheKeyHandles::new(&kms, client_key_2, &fhe_pub_keys_2).unwrap();
+    let (fhe_pub_keys_1, key_info_1) = generate_fhe_keys(&sk, params).unwrap();
+    let (fhe_pub_keys_2, key_info_2) = generate_fhe_keys(&sk, params).unwrap();
     let priv_fhe_map = HashMap::from([
         (key_id.clone(), key_info_1),
         (other_key_id.clone(), key_info_2),

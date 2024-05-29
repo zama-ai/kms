@@ -1,5 +1,6 @@
 use crate::{anyhow_error_and_log, kms::RequestId, some_or_err};
 use std::collections::{HashMap, VecDeque};
+use tonic::Status;
 
 // Meta store helper enum, that is used to keep the status of a request in a meta store
 #[derive(Clone, PartialEq, Eq)]
@@ -152,6 +153,43 @@ impl<T> MetaStore<T> {
             }
             None => None,
         }
+    }
+}
+
+/// Helper method for retrieving the result of a request from an appropriate meta store
+/// [req_id] is the request ID to retrieve
+/// [request_type] is a free-form string used only for error logging the origin of the failure
+pub(crate) fn handle_res_mapping<T>(
+    handle: Option<HandlerStatus<T>>,
+    req_id: &RequestId,
+    request_type: &str,
+) -> Result<T, Status> {
+    match handle {
+        None => {
+            let msg = format!(
+                "Could not retrieve {request_type} with request ID {}. It does not exist",
+                req_id
+            );
+            tracing::warn!(msg);
+            Err(tonic::Status::new(tonic::Code::NotFound, msg))
+        }
+        Some(HandlerStatus::Started) => {
+            let msg = format!(
+                    "Could not retrieve {request_type} with request ID {} since it is not completed yet",
+                    req_id
+                );
+            tracing::warn!(msg);
+            Err(tonic::Status::new(tonic::Code::Unavailable, msg))
+        }
+        Some(HandlerStatus::Error(e)) => {
+            let msg = format!(
+                    "Could not retrieve {request_type} with request ID {} since it finished with an error: {}",
+                    req_id, e
+                );
+            tracing::warn!(msg);
+            Err(tonic::Status::new(tonic::Code::Internal, msg))
+        }
+        Some(HandlerStatus::Done(res)) => Ok(res),
     }
 }
 
