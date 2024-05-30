@@ -10,6 +10,8 @@ pub const TAG_BYTES: usize = 128 / 8;
 pub struct SessionId(pub u128);
 
 impl SessionId {
+    /// NOTE: this function is deprecated since the session IDs
+    /// are always derived from request IDs.
     pub fn new(ciphertext: &Ciphertext64) -> anyhow::Result<SessionId> {
         let serialized_ct = bincode::serialize(ciphertext)?;
 

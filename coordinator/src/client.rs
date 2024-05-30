@@ -1515,7 +1515,8 @@ pub mod test_tools {
                     param_file_map: default_param_file_map(),
                 };
                 let server =
-                    threshold_server_init(config.clone(), cur_pub_storage, cur_priv_storage).await;
+                    threshold_server_init(config.clone(), cur_pub_storage, cur_priv_storage, true)
+                        .await;
                 (i, server, config)
             }));
         }

@@ -168,7 +168,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 .unwrap();
                 let config = full_config.rest;
                 let server =
-                    threshold_server_init(config.clone(), pub_storage, priv_storage).await?;
+                    threshold_server_init(config.clone(), pub_storage, priv_storage, false).await?;
                 threshold_server_start(
                     config.listen_address_client,
                     config.listen_port_client,

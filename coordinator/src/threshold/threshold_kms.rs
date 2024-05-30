@@ -6,7 +6,7 @@ use crate::cryptography::signcryption::signcrypt;
 use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, FhePubKeyInfo, FheType, KeyGenPreprocRequest, KeyGenPreprocStatus,
+    Empty, FhePubKeyInfo, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
     KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ParamChoice, ReencryptionRequest,
     ReencryptionResponse, RequestId,
 };
@@ -139,6 +139,18 @@ impl ThresholdConfig {
 
 /// Initialize a threshold KMS server using the DDec initialization protocol.
 /// This MUST be done before the server is started.
+///
+/// # Arguments
+///
+/// * `config` - Threshold configuration.
+///
+/// * `public_storage` - Abstract public storage.
+///
+/// * `private_storage` - Abstract private storage for storing sensitive information.
+///
+/// * `run_prss` - If this is true, a setup protocol will be executed in this funciton.
+/// Otherwise, the setup must be done out of band by calling the init
+/// GRPC endpoint, or using the kms-init binary.
 pub async fn threshold_server_init<
     PubS: PublicStorage + Sync + Send + 'static,
     PrivS: PublicStorage + Sync + Send + 'static,
@@ -146,6 +158,7 @@ pub async fn threshold_server_init<
     config: ThresholdConfigNoStorage,
     public_storage: PubS,
     private_storage: PrivS,
+    run_prss: bool,
 ) -> anyhow::Result<ThresholdKms<PubS, PrivS>> {
     //If no RedisConf is provided, we just use in-memory storage for the preprocessing buckets.
     //NOTE: This should probably only be allowed for testing
@@ -162,7 +175,7 @@ pub async fn threshold_server_init<
     } else {
         MINIMUM_SESSIONS_PREPROC
     };
-    let mut kms = ThresholdKms::new(
+    let kms = ThresholdKms::new(
         config.threshold,
         config.dec_capacity,
         config.min_dec_cache,
@@ -178,8 +191,19 @@ pub async fn threshold_server_init<
     )
     .await?;
 
-    tracing::info!("Initializing threshold KMS server for {}...", config.my_id);
-    kms.init().await?;
+    if run_prss {
+        tracing::info!(
+            "Initializing threshold KMS server with PRSS for {}",
+            config.my_id
+        );
+        kms.init_prss().await?;
+    } else {
+        tracing::info!(
+            "Not initializing threshold KMS server with PRSS for {}, \
+                remember to call the init GRPC endpoint",
+            config.my_id
+        );
+    }
 
     tracing::info!(
         "Initialization done! Starting threshold KMS server for {} ...",
@@ -299,7 +323,7 @@ pub struct ThresholdKms<
     networking_strategy: NetworkingStrategy,
     abort_handle: AbortHandle,
     // TODO eventually add mode to allow for nlarge as well.
-    prss_setup: Option<PRSSSetup<ResiduePoly128>>,
+    prss_setup: Arc<Mutex<Option<PRSSSetup<ResiduePoly128>>>>,
     preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
     num_sessions_preproc: u16,
@@ -407,7 +431,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             role_assignments,
             networking_strategy,
             abort_handle: ddec_handle.abort_handle(),
-            prss_setup: None,
+            prss_setup: Arc::new(Mutex::new(None)),
             preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
             preproc_factory: Arc::new(Mutex::new(preproc_factory)),
             num_sessions_preproc,
@@ -424,7 +448,11 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
     }
 
     /// Initializes a threshold KMS server by executing the PRSS setup.
-    pub async fn init(&mut self) -> anyhow::Result<()> {
+    pub async fn init_prss(&self) -> anyhow::Result<()> {
+        if self.prss_setup.lock().await.is_some() {
+            return Err(anyhow!("PRSS state already exists"));
+        }
+
         let own_identity = self.own_identity()?;
         // Assume we only have one epoch and start with session 1
         let session_id = SessionId(1);
@@ -441,14 +469,15 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 
         // TODO does this work with base session? we have a catch 22 otherwise
         tracing::info!("Starting PRSS for identity {}.", own_identity);
-        self.prss_setup = Some(
-            PRSSSetup::init_with_abort::<
-                RealAgreeRandomWithAbort,
-                AesRng,
-                BaseSessionStruct<AesRng, SessionParameters>,
-            >(&mut base_session)
-            .await?,
-        );
+        let res: PRSSSetup<ResiduePoly128> = PRSSSetup::init_with_abort::<
+            RealAgreeRandomWithAbort,
+            AesRng,
+            BaseSessionStruct<AesRng, SessionParameters>,
+        >(&mut base_session)
+        .await?;
+
+        let mut guarded_prss_setup = self.prss_setup.lock().await;
+        *guarded_prss_setup = Some(res);
         Ok(())
     }
 
@@ -638,7 +667,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         }
 
         let session_id = SessionId(req_id.clone().try_into()?);
-        let mut session = self.prepare_ddec_data_from_sessionid(session_id)?;
+        let mut session = self.prepare_ddec_data_from_sessionid(session_id).await?;
         let meta_store = Arc::clone(&self.crs_meta_store);
         let public_storage = Arc::clone(&self.public_storage);
         let private_storage = Arc::clone(&self.private_storage);
@@ -740,14 +769,15 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         Ok(())
     }
 
-    fn prepare_ddec_data_from_requestid(
+    async fn prepare_ddec_data_from_requestid(
         &self,
         request_id: &RequestId,
     ) -> anyhow::Result<SmallSession<ResiduePoly128>> {
         self.prepare_ddec_data_from_sessionid(SessionId(request_id.clone().try_into()?))
+            .await
     }
 
-    fn prepare_ddec_data_from_sessionid(
+    async fn prepare_ddec_data_from_sessionid(
         &self,
         session_id: SessionId,
     ) -> anyhow::Result<SmallSession<ResiduePoly128>> {
@@ -759,8 +789,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             own_identity.clone(),
             self.role_assignments.clone(),
         )?;
-        let prss_setup =
-            tonic_some_or_err(self.prss_setup.clone(), "No PRSS setup exists".to_string())?;
+        let prss_setup = tonic_some_or_err(
+            self.prss_setup.lock().await.clone(),
+            "No PRSS setup exists".to_string(),
+        )?;
         let prss_state = prss_setup.new_prss_session_state(session_id);
         let session = SmallSession {
             base_session: BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng()?)?,
@@ -814,8 +846,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         let factory = Arc::clone(&self.preproc_factory);
         let bucket_store = Arc::clone(&self.preproc_buckets);
 
-        let prss_setup =
-            tonic_some_or_err(self.prss_setup.clone(), "No PRSS setup exists".to_string())?;
+        let prss_setup = tonic_some_or_err(
+            (*self.prss_setup.lock().await).clone(),
+            "No PRSS setup exists".to_string(),
+        )?;
         //NOTE: For now we just discard the handle, we can check status with get_preproc_status
         // endpoint
         let _handle = tokio::spawn(async move {
@@ -1052,6 +1086,17 @@ pub(crate) fn compute_all_info(
 impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
     CoordinatorEndpoint for ThresholdKms<PubS, PrivS>
 {
+    async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+        // NOTE: request is not needed because our config is empty at the moment
+        self.init_prss().await.map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                format!("PRSS initialization failed with error {}", e),
+            )
+        })?;
+        Ok(Response::new(Empty {}))
+    }
+
     async fn key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
@@ -1287,7 +1332,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         }
 
         let mut session = tonic_handle_potential_err(
-            self.prepare_ddec_data_from_requestid(&req_id),
+            self.prepare_ddec_data_from_requestid(&req_id).await,
             "Could not prepare ddec data".to_string(),
         )?;
         let mut protocol = Small::new(session.clone());
@@ -1397,7 +1442,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         }
 
         let mut session = tonic_handle_potential_err(
-            self.prepare_ddec_data_from_requestid(&req_id),
+            self.prepare_ddec_data_from_requestid(&req_id).await,
             "Could not prepare ddec data for reencryption".to_string(),
         )?;
         let mut protocol = Small::new(session.clone());

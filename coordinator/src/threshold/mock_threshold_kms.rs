@@ -9,8 +9,9 @@ use crate::consts::{BASE_PORT, DEFAULT_URL, TEST_MSG};
 use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, FhePubKeyInfo, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
-    KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse, RequestId,
+    Empty, FhePubKeyInfo, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
+    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ReencryptionRequest,
+    ReencryptionResponse, RequestId,
 };
 use crate::rpc::rpc_types::{Plaintext, PubDataType, CURRENT_FORMAT_VERSION};
 
@@ -41,6 +42,10 @@ pub struct MockThresholdKms {}
 
 #[tonic::async_trait]
 impl CoordinatorEndpoint for MockThresholdKms {
+    async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+        Ok(Response::new(Empty {}))
+    }
+
     async fn key_gen_preproc(
         &self,
         _request: Request<KeyGenPreprocRequest>,

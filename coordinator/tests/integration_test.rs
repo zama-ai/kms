@@ -8,6 +8,7 @@ use sysinfo::System;
 
 const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
+const KMS_INIT: &str = "kms-init";
 
 /// Kill processes based on the executable name.
 /// Note that tests using this function should run in serial mode
@@ -53,6 +54,34 @@ fn purge_all() {
     let key_dir = PathBuf::from_str(KEY_PATH_PREFIX).unwrap();
     if key_dir.exists() {
         fs::remove_dir_all(key_dir).unwrap();
+    }
+}
+#[cfg(test)]
+mod kms_init_binary_test {
+    use super::*;
+
+    #[test]
+    fn help() {
+        Command::cargo_bin(KMS_INIT)
+            .unwrap()
+            .arg("--help")
+            .output()
+            .unwrap()
+            .assert()
+            .success();
+    }
+
+    #[test]
+    fn init() {
+        let buf = Command::cargo_bin(KMS_INIT)
+            .unwrap()
+            .arg("-a")
+            .arg("http://127.0.0.1:55555")
+            .output()
+            .unwrap()
+            .stderr;
+        let s = String::from_utf8(buf).expect("invalid utf-8");
+        assert!(s.contains("Connection refused"));
     }
 }
 

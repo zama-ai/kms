@@ -329,6 +329,7 @@ impl Gnetworking for NetworkingImpl {
         let tag = bincode::deserialize::<Tag>(&request.tag).map_err(|_e| {
             tonic::Status::new(tonic::Code::Aborted, "failed to parse value".to_string())
         })?;
+        tracing::debug!("tag is {:?}", tag);
 
         if let Some(sender) = tls_sender {
             // tag.sender may have the form hostname:port
@@ -376,10 +377,9 @@ impl Gnetworking for NetworkingImpl {
                 .await;
             Ok(tonic::Response::new(SendValueResponse::default()))
         } else {
-            Err(tonic::Status::new(
-                tonic::Code::NotFound,
-                format!("unknown session id {:?} for party", tag.session_id),
-            ))
+            let msg = format!("unknown session id {:?} for party", tag.session_id);
+            tracing::error!(msg);
+            Err(tonic::Status::new(tonic::Code::NotFound, msg))
         }
     }
 }
@@ -442,7 +442,7 @@ fn extract_sender<T>(request: &tonic::Request<T>) -> Result<Option<String>, Stri
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 struct Tag {
     session_id: SessionId,
     sender: Identity,

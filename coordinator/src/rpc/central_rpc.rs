@@ -5,8 +5,8 @@ use super::rpc_types::{
 use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, FhePubKeyInfo, FheType, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest,
-    KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse, RequestId,
+    Empty, FhePubKeyInfo, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
+    KeyGenRequest, KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse, RequestId,
 };
 use crate::rpc::rpc_types::PubDataType;
 use crate::storage::{store_at_request_id, PublicStorage};
@@ -125,6 +125,13 @@ impl<
         PrivS: PublicStorage + std::marker::Sync + std::marker::Send + 'static,
     > CoordinatorEndpoint for SoftwareKms<PubS, PrivS>
 {
+    async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+        tonic_some_or_err(
+            None,
+            "Requesting init on centralized kms is not suported".to_string(),
+        )
+    }
+
     async fn key_gen_preproc(
         &self,
         _request: Request<KeyGenPreprocRequest>,
