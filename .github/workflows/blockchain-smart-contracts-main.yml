@@ -5,6 +5,7 @@ on:
     branches: ['main']
     paths:
       - 'blockchain/contracts/**'
+      - 'blockchain/events/**'
       - '.github/workflows/blockchain-smart-contracts-main.yml'
 
 jobs:
