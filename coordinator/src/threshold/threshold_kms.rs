@@ -68,10 +68,7 @@ use tokio::time::Instant;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
-// Jump between the webserver being externally visible and the webserver used to execute DDec
-// TODO this should eventually be specified a bit better
-pub const PORT_JUMP: u16 = 100;
-pub const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
+const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ThresholdConfig {
@@ -83,17 +80,36 @@ pub struct ThresholdConfig {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ThresholdConfigNoStorage {
-    pub url: String,
-    pub base_port: u16,
-    pub parties: usize,
+    pub listen_address_client: String,
+    pub listen_port_client: u16,
+    pub listen_address_core: String,
+    pub listen_port_core: u16,
     pub threshold: u8,
+    pub my_id: usize,
     pub dec_capacity: usize,
     pub min_dec_cache: usize,
-    pub my_id: usize,
     pub timeout_secs: u64,
     pub preproc_redis_conf: Option<RedisConf>,
     pub num_sessions_preproc: Option<u16>,
+    pub peer_confs: Vec<PeerConf>,
     pub param_file_map: HashMap<String, String>, // TODO parameters should be loaded once during boot
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PeerConf {
+    pub party_id: usize,
+    pub address: String,
+    pub port: u16,
+}
+
+impl PeerConf {
+    /// Validity of the output is not guaranteed.
+    pub fn into_role_identity(&self) -> (Role, Identity) {
+        (
+            Role::indexed_by_one(self.party_id),
+            Identity(format!("{}:{}", self.address, self.port)),
+        )
+    }
 }
 
 impl From<ThresholdConfig> for ThresholdConfigNoStorage {
@@ -147,15 +163,15 @@ pub async fn threshold_server_init<
         MINIMUM_SESSIONS_PREPROC
     };
     let mut kms = ThresholdKms::new(
-        config.parties,
         config.threshold,
         config.dec_capacity,
         config.min_dec_cache,
-        &config.url,
-        config.base_port,
+        &config.listen_address_core,
+        config.listen_port_core,
         config.my_id,
         factory,
         num_sessions_preproc,
+        config.peer_confs,
         public_storage,
         private_storage,
         config.param_file_map,
@@ -172,21 +188,22 @@ pub async fn threshold_server_init<
     Ok(kms)
 }
 
-/// Starts threshold KMS server. Its port will be `base_port`+`my_id``.
-/// This MUST be done after the server has been initialized.
+/// Starts threshold KMS server.
+///
+/// This function must be called after the server has been initialized.
+/// The server accepts requests from clients (not the other cores).
 pub async fn threshold_server_start<
     PubS: PublicStorage + Sync + Send + 'static,
     PrivS: PublicStorage + Sync + Send + 'static,
 >(
-    url: String,
-    base_port: u16,
+    listen_address: String,
+    listen_port: u16,
     timeout_secs: u64,
     kms_server: ThresholdKms<PubS, PrivS>,
 ) -> anyhow::Result<()> {
     let my_id = kms_server.my_id;
-    let port = base_port + (my_id as u16);
-    let socket: std::net::SocketAddr = format!("{}:{}", url, port).parse()?;
-    tracing::info!("Starting server {my_id}");
+    let socket: std::net::SocketAddr = format!("{}:{}", listen_address, listen_port).parse()?;
+    tracing::info!("Starting threshold KMS server {my_id} on socket {socket}");
     Server::builder()
         .timeout(tokio::time::Duration::from_secs(timeout_secs))
         .add_service(CoordinatorEndpointServer::new(kms_server))
@@ -302,15 +319,15 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
-        parties: usize,
         threshold: u8,
         dec_capacity: usize,
         min_dec_cache: usize,
-        url: &str,
-        base_port: u16,
+        listen_address: &str,
+        listen_port: u16,
         my_id: usize,
         preproc_factory: Box<dyn PreprocessorFactory>,
         num_sessions_preproc: u16,
+        peer_configs: Vec<PeerConf>,
         public_storage: PubS,
         private_storage: PrivS,
         param_file_map: HashMap<String, String>,
@@ -341,29 +358,28 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             .map(|(id, crs)| (id.to_owned(), HandlerStatus::Done(crs.to_owned())))
             .collect();
 
-        let role_assignment: RoleAssignment = (1..=parties)
-            .map(|party_id| {
-                let port = base_port + PORT_JUMP + (party_id as u16);
-                let role = Role::indexed_by_one(party_id);
-                let uri = &format!("{url}:{port}");
-                let identity = Identity::from(uri);
-                (role, identity)
-            })
+        let role_assignments: RoleAssignment = peer_configs
+            .into_iter()
+            .map(|peer_config| peer_config.into_role_identity())
             .collect();
         let own_identity = tonic_some_or_err(
-            role_assignment.get(&Role::indexed_by_one(my_id)),
+            role_assignments.get(&Role::indexed_by_one(my_id)),
             "Could not find my own identity".to_string(),
         )?;
 
         // TODO setup TLS
         let networking_manager = GrpcNetworkingManager::new(own_identity.to_owned(), None);
         let networking_server = networking_manager.new_server();
-        let port = base_port + PORT_JUMP + (my_id as u16);
+
         let mut server = Server::builder();
         let router = server.add_service(networking_server);
-        let addr: SocketAddr = format!("{url}:{port}").parse()?;
+        let addr: SocketAddr = format!("{listen_address}:{listen_port}").parse()?;
 
-        tracing::info!("Starting ddec for {}.", own_identity);
+        tracing::info!(
+            "Starting core-to-core server for identity {} on address {}.",
+            own_identity,
+            addr
+        );
         let ddec_handle = tokio::spawn(async move {
             match router.serve(addr).await {
                 Ok(handle) => Ok(handle),
@@ -388,7 +404,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             base_kms,
             threshold,
             my_id,
-            role_assignments: role_assignment,
+            role_assignments,
             networking_strategy,
             abort_handle: ddec_handle.abort_handle(),
             prss_setup: None,
@@ -424,7 +440,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng()?)?;
 
         // TODO does this work with base session? we have a catch 22 otherwise
-        tracing::info!("Starting PRSS for {}.", own_identity);
+        tracing::info!("Starting PRSS for identity {}.", own_identity);
         self.prss_setup = Some(
             PRSSSetup::init_with_abort::<
                 RealAgreeRandomWithAbort,
@@ -1544,9 +1560,10 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 #[test]
 fn test_threshold_config() {
     let config = ThresholdConfig::init_config("config/default_1").unwrap();
-    assert_eq!(config.rest.url, "127.0.0.1");
-    assert_eq!(config.rest.base_port, 50000);
-    assert_eq!(config.rest.parties, 4);
+    assert_eq!(config.rest.listen_address_client, "127.0.0.1");
+    assert_eq!(config.rest.listen_port_client, 50100);
+    assert_eq!(config.rest.listen_address_core, "127.0.0.1");
+    assert_eq!(config.rest.listen_port_core, 50001);
     assert_eq!(config.rest.threshold, 1);
     assert_eq!(config.rest.num_sessions_preproc, Some(2));
     assert_eq!(config.rest.param_file_map.len(), 2);
@@ -1554,6 +1571,21 @@ fn test_threshold_config() {
         config.rest.param_file_map.get("test").unwrap(),
         "parameters/small_test_params.json"
     );
+
+    assert_eq!(config.rest.peer_confs.len(), 4);
+    assert_eq!(config.rest.peer_confs[0].address, "127.0.0.1");
+    assert_eq!(config.rest.peer_confs[0].port, 50001);
+    assert_eq!(config.rest.peer_confs[0].party_id, 1);
+    assert_eq!(config.rest.peer_confs[1].address, "127.0.0.1");
+    assert_eq!(config.rest.peer_confs[1].port, 50002);
+    assert_eq!(config.rest.peer_confs[1].party_id, 2);
+    assert_eq!(config.rest.peer_confs[2].address, "127.0.0.1");
+    assert_eq!(config.rest.peer_confs[2].port, 50003);
+    assert_eq!(config.rest.peer_confs[2].party_id, 3);
+    assert_eq!(config.rest.peer_confs[3].address, "127.0.0.1");
+    assert_eq!(config.rest.peer_confs[3].port, 50004);
+    assert_eq!(config.rest.peer_confs[3].party_id, 4);
+
     assert_eq!(
         config.rest.param_file_map.get("default").unwrap(),
         "parameters/default_params.json"

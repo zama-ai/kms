@@ -1,14 +1,47 @@
-url = "127.0.0.1"
-base_port = 50000
-parties = 4
-threshold = 1
+# The address and port that tcp listener binds on.
+listen_address_client = "127.0.0.1"
+listen_port_client = 50300
+
+# The address and port that tcp listener binds on to
+# communicate with the other cores.
+listen_address_core = "127.0.0.1"
+listen_port_core = 50003
+
 my_id = 3
+
+# Threshold is the number of corruptions that the protocol handles.
+threshold = 1
+dec_capacity = 10000
+min_dec_cache = 6000
 timeout_secs = 360
 num_sessions_preproc = 2
 
-# The two settings below are optional and are only used for file storage
+# The two settings below are optional and are only used for file storage.
+# The paths can be the same for the different storage types and for diffrent parties.
 public_storage_path = "keys"
 private_storage_path = "keys"
+
+# The number of peer_confs dictates the total number of parties.
+# This list should be the same for all parties.
+[[peer_confs]]
+party_id = 1
+address = "127.0.0.1"
+port = 50001
+
+[[peer_confs]]
+party_id = 2
+address = "127.0.0.1"
+port = 50002
+
+[[peer_confs]]
+party_id = 3
+address = "127.0.0.1"
+port = 50003
+
+[[peer_confs]]
+party_id = 4
+address = "127.0.0.1"
+port = 50004
 
 # The keys must match the keys of the ParamChoice type, in kms.proto.
 # More specifically, names must all be lower-case; e.g. "test" or "default"

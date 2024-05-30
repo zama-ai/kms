@@ -169,8 +169,13 @@ async fn main() -> Result<(), anyhow::Error> {
                 let config = full_config.rest;
                 let server =
                     threshold_server_init(config.clone(), pub_storage, priv_storage).await?;
-                threshold_server_start(config.url, config.base_port, config.timeout_secs, server)
-                    .await
+                threshold_server_start(
+                    config.listen_address_client,
+                    config.listen_port_client,
+                    config.timeout_secs,
+                    server,
+                )
+                .await
             }
             ExecutionMode::Centralized { config_file } => {
                 let config = CentralizedConfig::init_config(&config_file)?;

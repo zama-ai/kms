@@ -68,7 +68,6 @@ tonic = { version = "0.11", optional = true }
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread"], optional = true }
 tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "083c06814464cf8f517af2c2aade1d8133ffe29b", features = ["boolean", "shortint", "integer", "zk-pok-experimental"] }
 tracing = { version = "0.1.40", features = ["log"] }
-tracing-test = "0.2.4"
 tracing-subscriber = "0.3.18"
 url = "2.5.0"
 webpki = { version = "0.22", features = ["std"], optional = true }
@@ -87,6 +86,7 @@ ctor = "0.2.8"
 assert_cmd = "2.0.14"
 sysinfo = "0.30.12"
 tempfile = "3.10.1"
+tracing-test = "0.2.4"
 
 [build-dependencies]
 tonic-build = "0.10"

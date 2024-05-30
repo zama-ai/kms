@@ -1466,11 +1466,21 @@ pub mod test_tools {
     };
     use crate::storage::{FileStorage, PublicStorage, RamStorage, StorageType, StorageVersion};
     use crate::threshold::threshold_kms::{
-        threshold_server_init, threshold_server_start, ThresholdConfigNoStorage,
+        threshold_server_init, threshold_server_start, PeerConf, ThresholdConfigNoStorage,
     };
     use std::str::FromStr;
     use tokio::task::JoinHandle;
     use tonic::transport::{Channel, Uri};
+
+    fn default_peer_configs(n: usize) -> Vec<PeerConf> {
+        (1..=n)
+            .map(|i| PeerConf {
+                party_id: i,
+                address: "127.0.0.1".to_string(),
+                port: BASE_PORT + i as u16,
+            })
+            .collect_vec()
+    }
 
     pub async fn setup_threshold_no_client<
         PubS: PublicStorage + Clone + Sync + Send + 'static,
@@ -1487,11 +1497,13 @@ pub mod test_tools {
         for i in 1..=amount {
             let cur_pub_storage = pub_storage[i - 1].to_owned();
             let cur_priv_storage = priv_storage[i - 1].to_owned();
+            let peer_configs = default_peer_configs(amount);
             handles.push(tokio::spawn(async move {
                 let config = ThresholdConfigNoStorage {
-                    url: DEFAULT_URL.to_owned(),
-                    base_port: BASE_PORT,
-                    parties: amount,
+                    listen_address_client: DEFAULT_URL.to_owned(),
+                    listen_port_client: BASE_PORT + i as u16 * 100,
+                    listen_address_core: peer_configs[i - 1].address.clone(),
+                    listen_port_core: peer_configs[i - 1].port,
                     threshold,
                     dec_capacity: DEC_CAPACITY,
                     min_dec_cache: MIN_DEC_CACHE,
@@ -1499,30 +1511,32 @@ pub mod test_tools {
                     timeout_secs,
                     preproc_redis_conf: None,
                     num_sessions_preproc: None,
+                    peer_confs: peer_configs,
                     param_file_map: default_param_file_map(),
                 };
-                let server = threshold_server_init(config, cur_pub_storage, cur_priv_storage).await;
-                (i, server)
+                let server =
+                    threshold_server_init(config.clone(), cur_pub_storage, cur_priv_storage).await;
+                (i, server, config)
             }));
         }
         // Wait for the server to start
         tracing::info!("Client waiting for server");
         let mut servers = Vec::with_capacity(amount);
         for cur_handle in handles {
-            let (i, kms_server_res) = cur_handle.await.unwrap();
+            let (i, kms_server_res, config) = cur_handle.await.unwrap();
             match kms_server_res {
-                Ok(kms_server) => servers.push((i, kms_server)),
+                Ok(kms_server) => servers.push((i, kms_server, config)),
                 Err(e) => tracing::warn!("Failed to start server {i} with error {:?}", e),
             }
         }
         tracing::info!("Servers initialized. Starting servers...");
         let mut server_handles = HashMap::new();
-        for (i, cur_server) in servers {
+        for (i, cur_server, config) in servers {
             assert_eq!(i, cur_server.my_id());
             let handle = tokio::spawn(async move {
                 let _ = threshold_server_start(
-                    DEFAULT_URL.to_owned(),
-                    BASE_PORT,
+                    config.listen_address_client,
+                    config.listen_port_client,
                     timeout_secs,
                     cur_server,
                 )
@@ -1550,7 +1564,8 @@ pub mod test_tools {
         let server_handles = setup_threshold_no_client(threshold, pub_storage, priv_storage).await;
         let mut client_handles = HashMap::new();
         for i in 1..=amount {
-            let port = BASE_PORT + i as u16;
+            // NOTE: calculation of port must match what's done in [setup_threshold_no_client]
+            let port = BASE_PORT + i as u16 * 100;
             let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
             let uri = Uri::from_str(&url).unwrap();
             let channel = Channel::builder(uri).connect().await.unwrap();
@@ -2322,6 +2337,7 @@ pub(crate) mod tests {
         kms_server.abort();
     }
 
+    #[tracing_test::traced_test]
     #[tokio::test]
     #[serial]
     async fn test_decryption_threshold() {

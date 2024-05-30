@@ -52,6 +52,7 @@ impl GrpcNetworkingManager {
         .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
     }
 
+    /// Owner should be the external address
     pub fn new(owner: Identity, cert_bundle: Option<CertificatePaths>) -> Self {
         GrpcNetworkingManager {
             channels: Default::default(),
