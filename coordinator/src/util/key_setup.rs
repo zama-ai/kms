@@ -168,7 +168,6 @@ pub async fn ensure_central_server_signing_keys_exist(
         // If signing keys already exit, then do nothing
         return false;
     }
-    println!("Generating new centralized multiple keys");
     let mut rng = if deterministic {
         AesRng::seed_from_u64(1337)
     } else {
@@ -433,6 +432,7 @@ pub async fn ensure_central_keys_exist(
     {
         return false;
     }
+    println!("Generating new centralized multiple keys. The default key has handle {key_id}");
     let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
     let sk_map: HashMap<RequestId, PrivateSigKey> =
         read_all_data(&priv_storage, &PrivDataType::SigningKey.to_string())

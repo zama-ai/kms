@@ -78,6 +78,9 @@ enum Mode {
         /// The determinism is not guaranteed to be the same between releases.
         #[clap(long, default_value_t = false)]
         deterministic: bool,
+        /// Whether to overwrite the existing keys,
+        #[clap(long, default_value_t = false)]
+        overwrite: bool,
     },
 }
 
@@ -135,7 +138,10 @@ async fn main() {
             )
             .await
             {
-                tracing::warn!("FHE keys already exist, skipping generation");
+                tracing::warn!(
+                    "FHE keys with default ID {} already exist, skipping generation",
+                    DEFAULT_CENTRAL_KEY_ID.to_string()
+                );
             }
             if !ensure_central_crs_store_exists(
                 priv_path,
@@ -146,7 +152,10 @@ async fn main() {
             )
             .await
             {
-                tracing::warn!("CRS already exist, skipping generation");
+                tracing::warn!(
+                    "CRS with default ID {} already exist, skipping generation",
+                    DEFAULT_CRS_ID.to_string()
+                );
             }
 
             tracing::info!(
@@ -159,9 +168,17 @@ async fn main() {
             priv_path,
             pub_path,
             deterministic,
+            overwrite,
         } => {
             let pub_path = pub_path.as_ref().map(Path::new);
             let priv_path = priv_path.as_ref().map(Path::new);
+            if overwrite {
+                // Remove any existing keys
+                for storage in StorageType::iter() {
+                    FileStorage::purge_centralized(pub_path, storage).unwrap();
+                    FileStorage::purge_centralized(priv_path, storage).unwrap();
+                }
+            }
             ensure_threshold_keys_exist(
                 priv_path,
                 pub_path,
