@@ -1,7 +1,7 @@
 use crate::anyhow_error_and_log;
 use crate::cryptography::nitro_enclave::{
     decrypt_ciphertext_for_recipient, decrypt_on_data_key, encrypt_on_data_key,
-    nitro_enclave_get_random, NitroEnclaveKeys, APP_BLOB_NONCE_SIZE,
+    gen_nitro_enclave_keys, nitro_enclave_get_random, NitroEnclaveKeys, APP_BLOB_NONCE_SIZE,
 };
 use crate::storage::{PublicStorage, PublicStorageReader};
 use anyhow::ensure;
@@ -20,27 +20,23 @@ use url::Url;
 
 const PREALLOCATED_BLOB_SIZE: usize = 32768;
 
-/// Keeps together everything needed for running a chain of trust for working with application
-/// secret keys (such as FHE private keys). The root key encrypt data keys which encrypt application
-/// keys. The root key is stored in AWS KMS and never leaves it. Encrypted application keys
-/// (together with the corresponding data keys) are stored on S3. Enclave keys permit secure
-/// decryption of data keys by AWS KMS.
-pub struct EnclaveStorage {
+pub struct S3Storage {
     pub s3_client: S3Client,
-    pub aws_kms_client: AmazonKMSClient,
     pub blob_bucket: String,
-    pub root_key_id: String,
-    pub enclave_keys: NitroEnclaveKeys,
+}
+
+impl S3Storage {
+    pub async fn new(aws_region: String, aws_s3_proxy: String, blob_bucket: String) -> Self {
+        let s3_client = build_s3_client(aws_region, aws_s3_proxy).await;
+        S3Storage {
+            s3_client,
+            blob_bucket,
+        }
+    }
 }
 
 #[tonic::async_trait]
-impl PublicStorageReader for EnclaveStorage {
-    fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
-        Ok(Url::parse(
-            format!("s3://{}/{}/{}.key", self.blob_bucket, data_type, data_id).as_str(),
-        )?)
-    }
-
+impl PublicStorageReader for S3Storage {
     async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
         let s3_bucket = url
             .host_str()
@@ -79,6 +75,12 @@ impl PublicStorageReader for EnclaveStorage {
         s3_get_blob(&self.s3_client, &bucket, &key).await
     }
 
+    fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
+        Ok(Url::parse(
+            format!("s3://{}/{}/{}.key", self.blob_bucket, data_type, data_id).as_str(),
+        )?)
+    }
+
     async fn all_urls(&self, data_type: &str) -> anyhow::Result<HashMap<String, Url>> {
         let mut urls = HashMap::new();
         let result = self
@@ -106,7 +108,7 @@ impl PublicStorageReader for EnclaveStorage {
 }
 
 #[tonic::async_trait]
-impl PublicStorage for EnclaveStorage {
+impl PublicStorage for S3Storage {
     /// If one reads "public" not as in "public key" but as in "not a secret", it makes sense to
     /// implement storage of encrypted private keys in the `PublicStorage` trait. Encrypted secrets
     /// can be published, if the root key stays secret.
@@ -124,15 +126,7 @@ impl PublicStorage for EnclaveStorage {
         let bucket = url.host().unwrap().to_string();
         let key = url.path().to_string();
 
-        let encrypted_data = nitro_enclave_encrypt_app_key(
-            &self.aws_kms_client,
-            &self.enclave_keys,
-            &self.root_key_id,
-            data,
-        )
-        .await?;
-
-        s3_put_blob(&self.s3_client, &bucket, &key, &encrypted_data).await
+        s3_put_blob(&self.s3_client, &bucket, &key, data).await
     }
 
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
@@ -152,6 +146,93 @@ impl PublicStorage for EnclaveStorage {
             .send()
             .await;
         Ok(())
+    }
+}
+
+/// Keeps together everything needed for running a chain of trust for working with application
+/// secret keys (such as FHE private keys). The root key encrypt data keys which encrypt application
+/// keys. The root key is stored in AWS KMS and never leaves it. Encrypted application keys
+/// (together with the corresponding data keys) are stored on S3. Enclave keys permit secure
+/// decryption of data keys by AWS KMS.
+pub struct EnclaveS3Storage {
+    pub s3_storage: S3Storage,
+    pub aws_kms_client: AmazonKMSClient,
+    pub root_key_id: String,
+    pub enclave_keys: NitroEnclaveKeys,
+}
+
+impl EnclaveS3Storage {
+    pub async fn new(
+        aws_region: String,
+        aws_s3_proxy: String,
+        aws_kms_proxy: String,
+        blob_bucket: String,
+        root_key_id: String,
+    ) -> anyhow::Result<Self> {
+        let s3_storage = S3Storage::new(aws_region.clone(), aws_s3_proxy, blob_bucket).await;
+        let aws_kms_client = build_aws_kms_client(aws_region, aws_kms_proxy).await;
+        let enclave_keys = gen_nitro_enclave_keys()?;
+        Ok(EnclaveS3Storage {
+            s3_storage,
+            aws_kms_client,
+            root_key_id,
+            enclave_keys,
+        })
+    }
+}
+
+#[tonic::async_trait]
+impl PublicStorageReader for EnclaveS3Storage {
+    fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
+        self.s3_storage.compute_url(data_id, data_type)
+    }
+
+    async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
+        self.s3_storage.data_exists(url).await
+    }
+
+    async fn read_data<T: DeserializeOwned + Send>(&self, url: &Url) -> anyhow::Result<T> {
+        let mut encrypted_data = self.s3_storage.read_data(url).await?;
+        nitro_enclave_decrypt_app_key(
+            &self.aws_kms_client,
+            &self.enclave_keys,
+            &mut encrypted_data,
+        )
+        .await
+    }
+
+    async fn all_urls(&self, data_type: &str) -> anyhow::Result<HashMap<String, Url>> {
+        self.s3_storage.all_urls(data_type).await
+    }
+
+    fn info(&self) -> String {
+        self.s3_storage.info()
+    }
+}
+
+#[tonic::async_trait]
+impl PublicStorage for EnclaveS3Storage {
+    /// If one reads "public" not as in "public key" but as in "not a secret", it makes sense to
+    /// implement storage of encrypted private keys in the `PublicStorage` trait. Encrypted secrets
+    /// can be published, if the root key stays secret.
+    async fn store_data<T: Serialize + Send + Sync + ?Sized>(
+        &mut self,
+        data: &T,
+        url: &Url,
+    ) -> anyhow::Result<()> {
+        let encrypted_data = nitro_enclave_encrypt_app_key(
+            &self.aws_kms_client,
+            &self.enclave_keys,
+            &self.root_key_id,
+            data,
+        )
+        .await?;
+
+        self.s3_storage.store_data(&encrypted_data, url).await
+    }
+
+    async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
+        self.s3_storage.delete_data(url).await
     }
 }
 
@@ -202,7 +283,7 @@ async fn s3_get_blob_bytes(
     Ok(blob_bytes)
 }
 
-pub async fn s3_put_blob<T: Serialize>(
+pub async fn s3_put_blob<T: Serialize + ?Sized>(
     s3_client: &S3Client,
     bucket: &str,
     key: &str,
@@ -330,7 +411,7 @@ pub async fn nitro_enclave_encrypt_app_key<T: Serialize + ?Sized>(
 
 /// Requests the AWS KMS to decrypt a data key using a root key (managed by AWS KMS) and uses that
 /// data key to decrypt an application key (such as an FHE private key).
-pub async fn nitro_enclave_decrypt_app_key<T: DeserializeOwned + Serialize>(
+pub async fn nitro_enclave_decrypt_app_key<T: DeserializeOwned>(
     aws_kms_client: &AmazonKMSClient,
     nitro_enclave_keys: &NitroEnclaveKeys,
     app_key_blob: &mut AppKeyBlob,
