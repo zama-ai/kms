@@ -541,7 +541,7 @@ where
 ///If the [`DKGParams::o_flag`] is set in the params, then the sharing domain must be [`ResiduePoly128`] but the domain of
 ///all non-overlined key material is still [`u64`].
 /// Note that there is some redundancy of information because we also explicitly ask the [`BaseRing`] as trait parameter
-#[instrument(skip(session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(name="TFHE.Threshold-KeyGen", skip(session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn distributed_keygen<
     Z: BaseRing,
     R: Rng + CryptoRng,

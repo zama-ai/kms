@@ -1,9 +1,9 @@
-use std::time::{Duration, Instant};
-
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
+use tracing::instrument;
 
 use super::basics::PrivateBgvKeySet;
+use super::dkg::BGVShareSecretKey;
 use crate::algebra::poly::Poly;
 use crate::algebra::structure_traits::ZConsts;
 use crate::algebra::structure_traits::{One, Zero};
@@ -17,7 +17,6 @@ use crate::experimental::{
     algebra::levels::{LevelEll, LevelOne},
     algebra::ntt::{Const, NTTConstants},
     bgv::basics::BGVCiphertext,
-    bgv::dkg::BGVShareSecretKey,
 };
 use crate::{
     algebra::structure_traits::FromU128,
@@ -32,7 +31,6 @@ use crate::{
         bgv::basics::modulus_switch,
     },
 };
-use std::collections::HashMap;
 
 fn partial_decrypt<N: Const + NTTConstants<LevelOne>>(
     c0: &RqElement<LevelOne, N>,
@@ -60,6 +58,7 @@ fn partial_decrypt<N: Const + NTTConstants<LevelOne>>(
         .collect_vec()
 }
 // run decryption with noise flooding
+#[instrument(name = "BGV.Threshold-Dec", skip_all,fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 pub(crate) async fn noise_flood_decryption<
     N: Clone + Const + NTTConstants<LevelOne>,
     R: Rng + CryptoRng,
@@ -68,8 +67,7 @@ pub(crate) async fn noise_flood_decryption<
     session: &mut S,
     keyshares: &PrivateBgvKeySet,
     ciphertext: &BGVCiphertext<LevelEll, N>,
-) -> anyhow::Result<(HashMap<String, Vec<u32>>, Duration)> {
-    let execution_start_timer = Instant::now();
+) -> anyhow::Result<Vec<u32>> {
     let own_role = session.my_role()?;
     let prss_state = session.prss_as_mut();
 
@@ -112,11 +110,7 @@ pub(crate) async fn noise_flood_decryption<
         })
         .collect();
 
-    let mut results = HashMap::with_capacity(1);
-    results.insert(format!("{}", session.session_id()), supported_ptxt);
-    let execution_stop_timer = Instant::now();
-    let elapsed_time = execution_stop_timer.duration_since(execution_start_timer);
-    Ok((results, elapsed_time))
+    Ok(supported_ptxt)
 }
 
 pub fn keygen_shares<R: Rng + CryptoRng>(
@@ -287,7 +281,6 @@ mod tests {
             .into_iter()
             .collect_vec();
         let m = results.first().unwrap().1.clone();
-        let sid = format!("{}", session_id);
-        assert_eq!(*m.0.get(&sid).unwrap(), plaintext_vec);
+        assert_eq!(m, plaintext_vec);
     }
 }

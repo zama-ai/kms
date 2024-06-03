@@ -11,6 +11,7 @@ use crate::{
 };
 use aes_prng::AesRng;
 use async_trait::async_trait;
+use clap::ValueEnum;
 use derive_more::Display;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
@@ -21,7 +22,7 @@ use std::{
 
 pub type NetworkingImpl = Arc<dyn Networking + Send + Sync>;
 
-#[derive(Clone, Serialize, Deserialize, Display, Debug)]
+#[derive(Clone, Serialize, Deserialize, Display, Debug, ValueEnum)]
 pub enum DecryptionMode {
     /// nSmall Noise Flooding
     PRSSDecrypt,

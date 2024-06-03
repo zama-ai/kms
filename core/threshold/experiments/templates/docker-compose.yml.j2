@@ -2,26 +2,27 @@ version: '3'
 services:
 {% for i in range(n_parties) %}
   p{{ i+1 }}:
-    image: ddec:latest
+    image: {{protocol}}-core:latest
     cap_add:
       - NET_ADMIN
     command:
       - "moby"
     environment:
+      - RUST_BACKTRACE=1
       - RUN_MODE=dev
       - RUST_LOG=distributed_decryption=debug,moby=info
       - NO_COLOR=true
-      - DDEC_PROTOCOL_HOST_ADDRESS=p{{ i+1 }}
-      - DDEC_PROTOCOL_HOST_PORT=50000
-      - DDEC_PROTOCOL_HOST_ID={{ i+1 }}
-      - DDEC_PROTOCOL_HOST_CHOREOPORT=60000
-      - DDEC_TRACING_SERVICENAME=moby-party-{{ i+1 }}
-      - DDEC_TRACING_ENDPOINT=http://otel-collector:4317
-      - DDEC_REDIS_HOST=redis://redis-p{{ i+1 }}:6379
-      - DDEC_CERTPATHS_CERT=/app/ddec/certs/cert_p{{ i+1 }}.pem
-      - DDEC_CERTPATHS_KEY=/app/ddec/certs/key_p{{ i+1 }}.pem
-      - DDEC_CERTPATHS_CALIST={% for j in range(n_parties) %}/app/ddec/certs/cert_p{{ j+1 }}.pem,{% endfor %}
-      - DDEC_CHOREO_USE_TLS=false
+      - DDEC-PROTOCOL-HOST-ADDRESS=p{{ i+1 }}
+      - DDEC-PROTOCOL-HOST-PORT=50000
+      - DDEC-PROTOCOL-HOST-ID={{ i+1 }}
+      - DDEC-PROTOCOL-HOST-CHOREOPORT=60000
+      - DDEC-TRACING-SERVICE_NAME=moby-party-{{ i+1 }}
+      - DDEC-TRACING-ENDPOINT=http://otel-collector:4317
+      - DDEC-REDIS-HOST=redis://redis-p{{ i+1 }}:6379
+      - DDEC-CERTPATHS-CERT=/app/ddec/certs/cert_p{{ i+1 }}.pem
+      - DDEC-CERTPATHS-KEY=/app/ddec/certs/key_p{{ i+1 }}.pem
+      - DDEC-CERTPATHS-CALIST={% for j in range(n_parties) %}/app/ddec/certs/cert_p{{ j+1 }}.pem,{% endfor %}
+      - DDEC-CHOREO_USE_TLS=false
     volumes:
       - ../parameters:/app/ddec/parameters
       - ../test_certs:/app/ddec/certs
@@ -29,7 +30,7 @@ services:
       - {{ 50000 + i+1 }}:50000
       - {{ 60000 + i+1 }}:60000
     healthcheck:
-      test: "grpc-health-probe --addr=localhost:50000"
+      test: "grpc-health-probe -tls -tls-ca-cert /app/ddec/certs/cert_p{{ i+1 }}.pem -tls-client-cert /app/ddec/certs/cert_p{{ i+1 }}.pem -tls-client-key /app/ddec/certs/key_p{{ i+1 }}.pem --addr=localhost:50000"
       interval: 5s
       timeout: 5s
       retries: 20

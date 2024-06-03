@@ -1,6 +1,7 @@
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use tonic::async_trait;
+use tracing::instrument;
 
 use crate::{
     algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, ZConsts},
@@ -44,6 +45,7 @@ pub struct RealBitGenOdd {}
 
 #[async_trait]
 impl BitGenOdd for RealBitGenOdd {
+    #[instrument(name="MPC.GenBits",skip(amount, preproc, session), fields(session_id = ?session.session_id(), own_identity= ?session.own_identity(), batch_size=?amount))]
     async fn gen_bits_odd<
         Z: Ring + RingEmbed + Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
         Rnd: Rng + CryptoRng,

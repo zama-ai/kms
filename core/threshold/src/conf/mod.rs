@@ -58,14 +58,14 @@ impl From<&Party> for Identity {
 pub struct Tracing {
     //service_name did not work well with the config builder env variable
     //as _ was reconginzed as a special character for field of a struct
-    servicename: String,
+    service_name: String,
     endpoint: String,
 }
 
 impl Tracing {
     /// Returns the service name.
     pub fn service_name(&self) -> &str {
-        &self.servicename
+        &self.service_name
     }
 
     /// Returns the endpoint.
@@ -109,18 +109,16 @@ impl<'a> Settings<'a> {
     ///
     /// Returns an error if the configuration cannot be created or deserialized.
     pub fn init_conf<'de, T: Deserialize<'de>>(&self) -> Result<T, ConfigError> {
-        let mut s = Config::builder()
-            .add_source(File::with_name("config/default").required(cfg!(not(test))))
-            .add_source(File::with_name("config/ddec").required(false))
-            .add_source(File::with_name(&format!("config/ddec_{}", *ENVIRONMENT)).required(false))
-            .add_source(File::with_name("/etc/config/ddec.toml").required(false));
+        let mut s = Config::builder();
 
+        //Build settings from path
         if let Some(path) = self.path {
             s = s.add_source(File::with_name(path).required(false))
         };
 
+        //Or from environmnent variable
         let s = s
-            .add_source(config::Environment::default().prefix("DDEC").separator("_"))
+            .add_source(config::Environment::default().prefix("DDEC").separator("-"))
             .build()?;
 
         let settings: T = s.try_deserialize()?;

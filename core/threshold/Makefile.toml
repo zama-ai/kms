@@ -1,28 +1,64 @@
 [config]
 unstable_features = ["CTRL_C_HANDLING"]
 
-[tasks.docker-image]
+###Generic commands to be used for local deployment with docker
+#Build the image for TFHE parties, with testing feature to allow centralized DKG
+#NOTE(Titouan): I believe testing feature doesn't have any real impact on performances, it's mostly to avoid having testing code silently spill 
+#into production.
+[tasks.tfhe-docker-image]
 command = "docker"
-args = ["build", "-f", "operations/docker/local.dockerfile", "--ssh", "default", "-t", "ddec", "."]
+args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features testing", "-t", "tfhe-core", "."]
 
-[tasks.experimental-docker-image]
+#Build the image for BGV parties (with centralized DKG available)
+[tasks.bgv-docker-image]
 command = "docker"
-args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features experimental", "--ssh", "default", "-t", "ddec", "."]
+args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features testing,experimental", "-t", "bgv-core", "."]
 
-[tasks.generate-experiment]
+#Generate the certificate for TLS communication of the parties
+[tasks.gen-test-certs]
 command = "cargo"
-args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-s", "${PROTOCOL}", "-o", "${EXPERIMENT_NAME}", "-m", "${NUM_MESSAGES}", "-e", "${EPOCH_ID}"]
+args = ["run", "--manifest-path=../../coordinator/Cargo.toml", "--release", "--bin", "kms-gen-tls-certs", "--", "--coordinator-prefix", "p", "--coordinator-count", "${NUM_PARTIES}", "-o", "test_certs"]
 
+#Generate the toml config file for the choreographer for a cluster of parties accessible from localhost
+[tasks.gen-local-choreo]
+command = "cargo"
+args = ["run", "--bin", "gen-experiment", "--release", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-o", "local-cluster", "choreographer"]
+
+#Generate the yml config file for the dockerized parties
+[tasks.tfhe-gen-local-cluster]
+command = "cargo"
+args = ["run", "--bin", "gen-experiment", "--release", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-o", "tfhe-local-cluster", "-f", "temp", "parties", "--protocol", "tfhe"]
+
+#Generate the yml config file for the dockerized parties
+[tasks.bgv-gen-local-cluster]
+command = "cargo"
+args = ["run", "--bin", "gen-experiment", "--release", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-o", "bgv-local-cluster", "-f", "temp", "parties", "--protocol", "bgv"]
+
+#Generate docker-compose file for the TFHE parties as well as the toml config file for the choreogrpaher for a local deployment
+[tasks.tfhe-gen-experiment]
+command = "cargo"
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-o", "${EXPERIMENT_NAME}", "all", "--protocol", "tfhe" ]
+
+#Generate docker-compose file for the BGV parties as well as the toml config file for the choreogrpaher for a local deployment
+[tasks.bgv-gen-experiment]
+command = "cargo"
+args = ["run", "--bin", "gen-experiment", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-o", "${EXPERIMENT_NAME}" , "all", "--protocol", "bgv"]
+
+
+#Bring parties alive based on provided yml file
 [tasks.start-parties]
 command = "docker"
-args = ["compose", "--progress=quiet", "-f", "temp/${EXPERIMENT_NAME}.yml", "up", "--wait", "--quiet-pull"]
+args = ["compose", "--progress=quiet", "-f", "temp/${EXPERIMENT_NAME}.yml", "up", "--quiet-pull"]
 
+#Stop all parties
 [tasks.stop-parties]
 script = '''
 docker compose -f temp/${EXPERIMENT_NAME}.yml logs > temp/${EXPERIMENT_NAME}.log
 docker compose --progress=quiet -f temp/${EXPERIMENT_NAME}.yml down
 '''
 
+
+###One liner for benching everything
 [tasks.experiment-name]
 script = '''
 echo ""
@@ -33,164 +69,81 @@ echo "= Experiment: ${EXPERIMENT_NAME}                        "
 echo "=                                                       "
 echo "= Parties: ${NUM_PARTIES}                               "
 echo "= Threshold: ${THRESHOLD}                               "
-echo "= Messages: ${NUM_MESSAGES}                             "
-echo "= Protocol: ${PROTOCOL}                                 "
-echo "= Epoch: ${EPOCH_ID}                                 "
 echo "=                                                       ="
 echo "========================================================="
 echo ""
 echo ""
 '''
 
-[tasks.gen-test-certs]
-command = "cargo"
-args = ["run", "--manifest-path=../../coordinator/Cargo.toml", "--release", "--bin", "kms-gen-tls-certs", "--", "--coordinator-prefix", "p", "--coordinator-count", "${NUM_PARTIES}", "-o", "test_certs"]
+#Shut down the parties and do some file management
+[tasks.shutdown]
+script = '''
+mkdir -p temp/stats
+docker stats --no-stream > temp/stats/${EXPERIMENT_NAME}_$(date +%Y_%m_%d-%H:%M:%S).log
+docker compose -f temp/${EXPERIMENT_NAME}.yml logs > temp/${EXPERIMENT_NAME}.log
+docker compose --progress=quiet -f temp/${EXPERIMENT_NAME}.yml down
+mkdir -p temp/telemetry/archived
+mv temp/telemetry/export.json temp/telemetry/archived/trace_${EXPERIMENT_NAME}_$(date +%Y_%m_%d-%H:%M:%S).json
+'''
 
-[tasks.choreo-with-dkg]
-condition = { env_set = ["DKG_PARAMS", "NUM_SESSIONS_PREPROC"] }
-command = "cargo"
-args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "--dkg-params", "${DKG_PARAMS}", "--num-sessions-preproc", "${NUM_SESSIONS_PREPROC}", "${CHOREO_COMMAND}" ]
+[tasks.setup]
+script = '''
+mkdir -p temp/telemetry
+echo "" > temp/telemetry/export.json
+chmod o+w temp/telemetry/export.json
+'''
 
-[tasks.choreo-without-dkg]
-condition = { env_not_set = ["DKG_PARAMS", "NUM_SESSIONS_PREPROC"] }
-command = "cargo"
-args = ["run", "--bin", "mobygo", "--release", "--features", "choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "${CHOREO_COMMAND}" ]
+#Bring parties alive based on provided yml file, waiting for health check to pass
+[tasks.start-parties-healthy]
+command = "docker"
+args = ["compose", "--progress=quiet", "-f", "temp/${EXPERIMENT_NAME}.yml", "up", "--quiet-pull", "--wait"]
 
-[tasks.experimental-choreo]
-condition = { env_not_set = ["DKG_PARAMS", "NUM_SESSIONS_PREPROC"] }
-command = "cargo"
-args = ["run", "--bin", "stairwayctl", "--release", "--features", "experimental,choreographer", "--", "-c", "temp/${EXPERIMENT_NAME}.toml", "${CHOREO_COMMAND}" ]
+#Run the full test suite for tfhe with real dkg
+[tasks.tfhe-test-real-dkg]
+command = "sh"
+args = ["test_scripts/tfhe_test_script_real_dkg.sh", "temp/${EXPERIMENT_NAME}.toml"]
 
-[tasks.choreo]
-env = { "RUN_MODE" = "choreo", "RUST_LOG" = "info", "RUST_BACKTRACE" = "1"}
-run_task = { name = ["choreo-with-dkg", "choreo-without-dkg"] }
+#Run the full test suite for tfhe with centralized dkg
+[tasks.tfhe-test-fake-dkg]
+command = "sh"
+args = ["test_scripts/tfhe_test_script_fake_dkg.sh", "temp/${EXPERIMENT_NAME}.toml"]
 
-[tasks.choreo-init]
-env = { "CHOREO_COMMAND" = "init"}
-run_task = { name = ["choreo"] }
+#Run the full test suite for tfhe with real dkg
+[tasks.bgv-test-real-dkg]
+command = "sh"
+args = ["test_scripts/bgv_test_script_real_dkg.sh", "temp/${EXPERIMENT_NAME}.toml"]
 
-[tasks.experimental-choreo-init]
-env = { "CHOREO_COMMAND" = "init"}
-run_task = { name = ["experimental-choreo"] }
-
-[tasks.choreo-start-crs]
-env = { "CHOREO_COMMAND" = "start-crs-ceremony"}
-run_task = { name = ["choreo"] }
-
-[tasks.choreo-retrieve-crs]
-env = { "CHOREO_COMMAND" = "retrieve-crs"}
-run_task = { name = ["choreo"] }
-
-[tasks.choreo-decrypt]
-env = { "CHOREO_COMMAND" = "decrypt"}
-run_task = { name = ["choreo"] }
-
-[tasks.experimental-choreo-decrypt]
-env = { "CHOREO_COMMAND" = "decrypt"}
-run_task = { name = ["experimental-choreo"] }
-
-[tasks.choreo-results]
-env = { "CHOREO_COMMAND" = "results"}
-run_task = { name = ["choreo"] }
-
-[tasks.experimental-choreo-results]
-env = { "CHOREO_COMMAND" = "results"}
-run_task = { name = ["experimental-choreo"] }
+#Run the full test suite for tfhe with centralized dkg
+[tasks.bgv-test-fake-dkg]
+command = "sh"
+args = ["test_scripts/bgv_test_script_fake_dkg.sh", "temp/${EXPERIMENT_NAME}.toml"]
 
 
-[tasks.gen-local-choreo]
-command = "cargo"
-args = ["run", "--bin", "gen-experiment", "--release", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-m", "${PROTOCOL}", "-o", "local-cluster", "-e", "${NUM_MESSAGES}", "experiment"]
 
-[tasks.local-choreo-init]
-env = { "CHOREO_COMMAND" = "init", EXPERIMENT_NAME = "local-cluster" }
-run_task = { name = ["choreo"] }
-dependencies = ["gen-local-choreo"]
+##For TFHE we set NUM_PARTIES to 5 to be able to test both small and large sessions
+[tasks.tfhe-bench-fake-dkg]
+env = {"NUM_PARTIES" = "5", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-fake-dkg-bench"}
+run_task = { name = ["setup", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-fake-dkg"], fork = true, cleanup_task = "shutdown" }
 
-[tasks.local-choreo-decrypt]
-env = { "CHOREO_COMMAND" = "decrypt", EXPERIMENT_NAME = "local-cluster" }
-run_task = { name = ["choreo"] }
-dependencies = ["gen-local-choreo"]
+[tasks.tfhe-bench-real-dkg]
+env = {"NUM_PARTIES" = "5", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-real-dkg-bench"}
+run_task = { name = ["setup", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-real-dkg"], fork = true, cleanup_task = "shutdown" }
 
-[tasks.local-choreo-results]
-env = { "CHOREO_COMMAND" = "results", EXPERIMENT_NAME = "local-cluster" }
-run_task = { name = ["choreo"] }
-dependencies = ["gen-local-choreo"]
+##For BGV we set NUM_PARTIES to 4 as we only need small sessions
+[tasks.bgv-bench-fake-dkg]
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv-fake-dkg-bench"}
+run_task = { name = ["setup", "bgv-gen-experiment", "experiment-name", "start-parties-healthy", "bgv-test-fake-dkg"], fork = true, cleanup_task = "shutdown" }
 
-[tasks.gen-local-choreo-dkg]
-command = "cargo"
-args = ["run", "--bin", "gen-experiment", "--release", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-t", "${THRESHOLD}", "-f", "temp", "-m", "0", "-o", "local-cluster", "-e", "0", "experiment"]
+[tasks.bgv-bench-real-dkg]
+env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv-real-dkg-bench"}
+run_task = { name = ["setup", "bgv-gen-experiment", "experiment-name", "start-parties-healthy", "bgv-test-real-dkg"], fork = true, cleanup_task = "shutdown" }
 
-[tasks.local-choreo-preprocessing]
-env = { "CHOREO_COMMAND" = "preprocessing", "DKG_PARAMS" = "${DKG_PARAMS}", "NUM_SESSIONS_PREPROC" = "${NUM_SESSIONS_PREPROC}", EXPERIMENT_NAME = "local-cluster" }
-run_task = { name = ["choreo"] }
-dependencies = ["gen-local-choreo-dkg"]
 
-[tasks.sleep]
-command = "sleep"
-args = ["2"]
-
-[tasks.grpc-bench]
-run_task = { name = ["generate-experiment", "experiment-name", "start-parties", "choreo-init", "choreo-decrypt", "sleep", "choreo-results"], fork = true, cleanup_task = "stop-parties" }
-
+###Commands used by the CI
+#Build the docker image based on bench.dockerfile (which has the testing feature for centralized dkg)
 [tasks.docker-image-ci]
 command = "docker"
-args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "operations/docker/bench.dockerfile", "-t", "ddec", "."]
-
-[tasks.gen-local-cluster]
-command = "cargo"
-args = ["run", "--bin", "gen-experiment", "--release", "--features", "templating", "--", "-n", "${NUM_PARTIES}", "-o", "local-cluster", "-f", "temp", "cluster"]
-
-[tasks.run-local-cluster]
-command = "docker"
-args = ["compose", "-f", "temp/local-cluster.yml", "up", "--quiet-pull"]
-dependencies = ["gen-local-cluster"]
+args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "operations/docker/bench.dockerfile", "-t", "tfhe-core", "."]
 
 [tasks.ci-test]
-run_task = { name = ["docker-image-ci", "grpc-bench-4-1-10-prss"] }
-
-[tasks.grpc-bench-4-1-1-prss]
-env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "1", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg1_prss" }
-run_task = { name = ["grpc-bench"] }
-description = "4 parties, 1 threshold, 1 messages, PRSS"
-
-[tasks.grpc-bench-4-1-10-prss]
-env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg10_prss" }
-run_task = { name = ["grpc-bench"] }
-description = "4 parties, 1 threshold, 10 messages, PRSS"
-
-[tasks.grpc-bench-4-1-30-prss]
-env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "30", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg30_prss" }
-run_task = { name = ["grpc-bench"] }
-description = "4 parties, 1 threshold, 30 messages, PRSS"
-
-[tasks.grpc-bench-10-2-20-prss]
-env = { "NUM_PARTIES" = "10", "THRESHOLD" = "2", "NUM_MESSAGES" = "20", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p10_t2_msg20_prss" }
-run_task = { name = ["grpc-bench"] }
-description = "10 parties, 2 threshold, 20 messages, PRSS"
-
-[tasks.grpc-bench-16-5-40-prss]
-env = { "NUM_PARTIES" = "16", "THRESHOLD" = "5", "NUM_MESSAGES" = "40", "EPOCH_ID" = "1", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p16_t5_msg40_prss" }
-run_task = { name = ["grpc-bench"] }
-description = "16 parties, 5 threshold, 40 messages, PRSS"
-
-[tasks.grpc-bench-5-1-10-large]
-env = { "NUM_PARTIES" = "5", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "EPOCH_ID" = "1", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p5_t1_msg10_large" }
-run_task = { name = ["grpc-bench"] }
-description = "5 parties, 1 threshold, 10 messages, LargeDecryption"
-
-[tasks.grpc-bench-10-2-20-large]
-env = { "NUM_PARTIES" = "10", "THRESHOLD" = "2", "NUM_MESSAGES" = "20", "EPOCH_ID" = "1", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p10_t2_msg20_large" }
-run_task = { name = ["grpc-bench"] }
-description = "10 parties, 2 threshold, 20 messages, LargeDecryption"
-
-[tasks.grpc-bench-100-10-40-large]
-env = { "NUM_PARTIES" = "100", "THRESHOLD" = "10", "NUM_MESSAGES" = "40", "EPOCH_ID" = "1", "PROTOCOL" = "2", EXPERIMENT_NAME = "bench-p100_t10_msg40_large" }
-run_task = { name = ["grpc-bench"] }
-description = "100 parties, 10 threshold, 40 messages, LargeDecryption"
-
-[tasks.run-grpc-prss-benchmarks]
-run_task = { name = ["docker-image", "grpc-bench-4-1-10-prss", "grpc-bench-10-2-20-prss", "grpc-bench-16-5-40-prss"] }
-
-[tasks.run-grpc-large-benchmarks]
-run_task = { name = ["docker-image", "grpc-bench-5-1-10-large", "grpc-bench-10-2-20-large", "grpc-bench-100-10-40-large"] }
+run_task = { name = ["docker-image-ci", "grpc-bench"] }

@@ -112,7 +112,7 @@ pub trait BitDecPreprocessing:
 ///
 /// Used in [`crate::execution::endpoints::decryption::run_decryption_noiseflood`]
 #[async_trait]
-pub trait NoiseFloodPreprocessing: Send {
+pub trait NoiseFloodPreprocessing: Send + Sync {
     fn append_masks(&mut self, masks: Vec<ResiduePoly128>);
     fn next_mask(&mut self) -> anyhow::Result<ResiduePoly128>;
     fn next_mask_vec(&mut self, amount: usize) -> anyhow::Result<Vec<ResiduePoly128>>;

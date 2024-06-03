@@ -1,14 +1,11 @@
-storage_folder = "temp"
-session_file = "{{ experiment_name }}.bin"
-params_file = "parameters/small_test_params.json"
-decrypt_mode = "{{ decrypt_mode }}"
-number_messages = {{ number_messages }}
-witness_dim = {{ witness_dim }}
-epoch_id = {{ epoch_id }}
 # Note: The outcommented lines are kept as an example of how to enable TLS on the mobygo side
 # cert_file = "test_certs/cert_p1.pem"
 # key_file = "test_certs/key_p1.pem"
 # ca_file = "test_certs/cert_combined.pem"
+
+[tracing]
+service_name = "choreographer"
+endpoint = "http://localhost:4317"
 
 [threshold_topology]
 threshold = {{ threshold }}

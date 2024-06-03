@@ -82,13 +82,41 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
             return Ok(());
         }
 
+        let single_sharing_span = info_span!(
+            "SingleSharing.Next",
+            session_id = ?session.session_id(),
+            own_identity = ?session.own_identity(),
+            batch_size = 2 * self.triple_batch_size
+        );
+
+        let double_sharing_span = info_span!("DoubleSharing.Next",
+            session_id = ?session.session_id(),
+                own_identity = ?session.own_identity(),
+                batch_size =  self.triple_batch_size
+        );
+
         let mut vec_share_x = Vec::with_capacity(self.triple_batch_size);
         let mut vec_share_y = Vec::with_capacity(self.triple_batch_size);
         let mut vec_double_share_v = Vec::with_capacity(self.triple_batch_size);
         for _ in 0..self.triple_batch_size {
-            vec_share_x.push(self.single_sharing_handle.next(session).await?);
-            vec_share_y.push(self.single_sharing_handle.next(session).await?);
-            vec_double_share_v.push(self.double_sharing_handle.next(session).await?);
+            vec_share_x.push(
+                self.single_sharing_handle
+                    .next(session)
+                    .instrument(single_sharing_span.clone())
+                    .await?,
+            );
+            vec_share_y.push(
+                self.single_sharing_handle
+                    .next(session)
+                    .instrument(single_sharing_span.clone())
+                    .await?,
+            );
+            vec_double_share_v.push(
+                self.double_sharing_handle
+                    .next(session)
+                    .instrument(double_sharing_span.clone())
+                    .await?,
+            );
         }
 
         let network_vec_share_d = vec_share_x
@@ -138,12 +166,21 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<()> {
+        let single_sharing_span = info_span!(
+            "SingleSharing.Next",
+            session_id = ?session.session_id(),
+            own_identity = ?session.own_identity(),
+            batch_size = self.random_batch_size
+        );
         let my_role = session.my_role()?;
         let mut res = Vec::with_capacity(self.random_batch_size);
         for _ in 0..self.random_batch_size {
             res.push(Share::new(
                 my_role,
-                self.single_sharing_handle.next(session).await?,
+                self.single_sharing_handle
+                    .next(session)
+                    .instrument(single_sharing_span.clone())
+                    .await?,
             ));
         }
         self.elements.append_randoms(res);

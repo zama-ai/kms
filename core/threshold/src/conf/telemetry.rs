@@ -26,51 +26,31 @@ use super::{Mode, Tracing, ENVIRONMENT};
 
 impl From<Tracing> for Tracer {
     fn from(settings: Tracing) -> Self {
-        match *ENVIRONMENT {
-            Mode::Production | Mode::Development | Mode::Stage => {
-                let batch_config = opentelemetry_sdk::trace::BatchConfigBuilder::default()
-                    .with_max_queue_size(TRACER_MAX_QUEUE_SIZE)
-                    .with_scheduled_delay(*TRACER_SCHEDULED_DELAY)
-                    .with_max_export_batch_size(TRACER_MAX_EXPORT_BATCH_SIZE)
-                    .with_max_concurrent_exports(TRACER_MAX_CONCURRENT_EXPORTS)
-                    .build();
+        let batch_config = opentelemetry_sdk::trace::BatchConfigBuilder::default()
+            .with_max_queue_size(TRACER_MAX_QUEUE_SIZE)
+            .with_scheduled_delay(*TRACER_SCHEDULED_DELAY)
+            .with_max_export_batch_size(TRACER_MAX_EXPORT_BATCH_SIZE)
+            .with_max_concurrent_exports(TRACER_MAX_CONCURRENT_EXPORTS)
+            .build();
 
-                opentelemetry_otlp::new_pipeline()
-                    .tracing()
-                    .with_exporter(
-                        opentelemetry_otlp::new_exporter()
-                            .tonic()
-                            .with_endpoint(settings.endpoint()),
-                    )
-                    .with_trace_config(opentelemetry_sdk::trace::config().with_resource(
-                        Resource::new(vec![KeyValue::new(
-                            opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-                            settings.service_name().to_string(),
-                        )]),
-                    ))
-                    .with_batch_config(batch_config)
-                    .install_batch(Tokio)
-                    .expect("Failed to install OpenTelemetry tracer.")
-            }
-            Mode::Choreographer => {
-                opentelemetry_otlp::new_pipeline()
-                    .tracing()
-                    .with_exporter(
-                        opentelemetry_otlp::new_exporter()
-                            .tonic()
-                            .with_endpoint("http://localhost:4317"),
-                    )
-                    .with_trace_config(opentelemetry_sdk::trace::config().with_resource(
-                        Resource::new(vec![KeyValue::new(
-                            opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-                            "choreographer",
-                        )]),
-                    ))
-                    .install_batch(Tokio)
-                    .expect("Failed to install OpenTelemetry tracer.")
-            }
-            _ => stdout_pipeline(),
-        }
+        opentelemetry_otlp::new_pipeline()
+            .tracing()
+            .with_exporter(
+                opentelemetry_otlp::new_exporter()
+                    .tonic()
+                    .with_endpoint(settings.endpoint()),
+            )
+            .with_trace_config(
+                opentelemetry_sdk::trace::config().with_resource(Resource::new(vec![
+                    KeyValue::new(
+                        opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+                        settings.service_name().to_string(),
+                    ),
+                ])),
+            )
+            .with_batch_config(batch_config)
+            .install_batch(Tokio)
+            .expect("Failed to install OpenTelemetry tracer.")
     }
 }
 

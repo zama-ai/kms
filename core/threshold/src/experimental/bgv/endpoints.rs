@@ -88,8 +88,7 @@ pub fn threshold_decrypt(
                 .await
                 .unwrap();
 
-            let sid = format!("{}", session.base_session.session_id());
-            (identity, out.0.get(&sid).unwrap().clone())
+            (identity, out)
         });
     }
     let results = rt.block_on(async {

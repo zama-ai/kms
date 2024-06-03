@@ -1739,7 +1739,7 @@ dependencies = [
 [[package]]
 name = "concrete-csprng"
 version = "0.4.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=083c06814464cf8f517af2c2aade1d8133ffe29b#083c06814464cf8f517af2c2aade1d8133ffe29b"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=0f9314fabed36188d6b43c6436e49c220cbe9c75#0f9314fabed36188d6b43c6436e49c220cbe9c75"
 dependencies = [
  "aes",
  "libc",
@@ -2587,6 +2587,7 @@ dependencies = [
  "serde",
  "serde_asn1_der",
  "serde_json",
+ "serial_test",
  "sha3",
  "signature 2.2.0",
  "strum",
@@ -7408,8 +7409,8 @@ version = "0.1.0"
 
 [[package]]
 name = "tfhe"
-version = "0.6.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=083c06814464cf8f517af2c2aade1d8133ffe29b#083c06814464cf8f517af2c2aade1d8133ffe29b"
+version = "0.6.1"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=0f9314fabed36188d6b43c6436e49c220cbe9c75#0f9314fabed36188d6b43c6436e49c220cbe9c75"
 dependencies = [
  "aligned-vec",
  "bincode",
@@ -7429,7 +7430,7 @@ dependencies = [
 [[package]]
 name = "tfhe-zk-pok"
 version = "0.1.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=083c06814464cf8f517af2c2aade1d8133ffe29b#083c06814464cf8f517af2c2aade1d8133ffe29b"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=0f9314fabed36188d6b43c6436e49c220cbe9c75#0f9314fabed36188d6b43c6436e49c220cbe9c75"
 dependencies = [
  "ark-bls12-381",
  "ark-ec",

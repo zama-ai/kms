@@ -5,9 +5,6 @@ cfg_if::cfg_if! {
         /// log_2 of parameter Bd, computed from values in the paper
         pub(crate) const LOG_BD: u32 = 74;
 
-        /// the party ID of the party doing the reconstruction
-        pub(crate) const INPUT_PARTY_ID: usize = 1;
-
         /// maximum number of PRSS party sets (n choose t) before the precomputation aborts
         pub(crate) const PRSS_SIZE_MAX: usize = 8192;
 

@@ -1,8 +1,14 @@
+use super::BitDecPreprocessing;
 use super::BitPreprocessing;
 use super::DKGPreprocessing;
 use super::NoiseBounds;
+use super::NoiseFloodPreprocessing;
+use crate::algebra::residue_poly::ResiduePoly128;
+use crate::algebra::residue_poly::ResiduePoly64;
 use crate::algebra::structure_traits::ErrorCorrect;
 use crate::algebra::structure_traits::RingEmbed;
+use crate::execution::constants::LOG_BD;
+use crate::execution::constants::STATSEC;
 use crate::execution::online::preprocessing::BasePreprocessing;
 use crate::execution::online::preprocessing::RandomPreprocessing;
 use crate::execution::online::preprocessing::TriplePreprocessing;
@@ -14,6 +20,7 @@ use crate::execution::runtime::session::SmallSession;
 use crate::execution::sharing::shamir::RevealOp;
 use crate::execution::sharing::shamir::ShamirSharings;
 use crate::execution::tfhe_internals::parameters::DKGParams;
+use crate::execution::tfhe_internals::parameters::TUniformBound;
 use crate::{
     algebra::poly::Poly,
     algebra::structure_traits::Ring,
@@ -226,6 +233,82 @@ where
 
     fn bits_len(&self) -> usize {
         unimplemented!("We do not store anything in dummy preprocessing");
+    }
+}
+
+#[async_trait]
+impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> BitDecPreprocessing
+    for DummyPreprocessing<ResiduePoly64, Rnd, Ses>
+{
+    async fn fill_from_base_preproc(
+        &mut self,
+        _preprocessing: &mut dyn BasePreprocessing<ResiduePoly64>,
+        _session: &mut BaseSession,
+        _num_ctxts: usize,
+    ) -> anyhow::Result<()> {
+        unimplemented!("We do not implement filling for DummyPreprocessing")
+    }
+}
+
+#[async_trait]
+impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> NoiseFloodPreprocessing
+    for DummyPreprocessing<ResiduePoly128, Rnd, Ses>
+{
+    fn append_masks(&mut self, _masks: Vec<ResiduePoly128>) {
+        unimplemented!("We do not implement filling for DummyPreprocessing")
+    }
+    fn next_mask(&mut self) -> anyhow::Result<ResiduePoly128> {
+        Ok(self.next_mask_vec(1)?.pop().unwrap())
+    }
+
+    fn next_mask_vec(&mut self, amount: usize) -> anyhow::Result<Vec<ResiduePoly128>> {
+        let bound_d = (STATSEC + LOG_BD) as usize;
+        let mut u_randoms: Vec<_> =
+            RealSecretDistributions::t_uniform(2 * amount, TUniformBound(bound_d), self)?
+                .into_iter()
+                .map(|elem| elem.value())
+                .collect();
+
+        (0..amount)
+            .map(|_| {
+                let (a, b) = (u_randoms.pop(), u_randoms.pop());
+                match (a, b) {
+                    (Some(a), Some(b)) => Ok(a + b),
+                    _ => Err(anyhow_error_and_log(
+                        "Not enough t_uniform generated".to_string(),
+                    )),
+                }
+            })
+            .collect()
+    }
+
+    /// Fill the masks directly from the [`crate::execution::small_execution::prss::PRSSState`] available from [`SmallSession`]
+    fn fill_from_small_session(
+        &mut self,
+        _session: &mut SmallSession<ResiduePoly128>,
+        _amount: usize,
+    ) -> anyhow::Result<()> {
+        unimplemented!("We do not implement filling for DummyPreprocessing")
+    }
+
+    /// Fill the masks by first generating bits via triples and randomness provided by [`BasePreprocessing`]
+    async fn fill_from_base_preproc(
+        &mut self,
+        _preprocessing: &mut dyn BasePreprocessing<ResiduePoly128>,
+        _session: &mut BaseSession,
+        _num_ctxts: usize,
+    ) -> anyhow::Result<()> {
+        unimplemented!("We do not implement filling for DummyPreprocessing")
+    }
+
+    /// Fill the masks directly from available bits provided by [`BitPreprocessing`],
+    /// using [`crate::execution::online::secret_distributions::SecretDistributions`]
+    fn fill_from_bits_preproc(
+        &mut self,
+        _bit_preproc: &mut dyn BitPreprocessing<ResiduePoly128>,
+        _num_ctxts: usize,
+    ) -> anyhow::Result<()> {
+        unimplemented!("We do not implement filling for DummyPreprocessing")
     }
 }
 

@@ -547,6 +547,7 @@ async fn open_bit_composed_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
 #[instrument(
     name = "TFHE.Threshold-Dec-1",
     skip(session, preprocessing, keyshares, ciphertext)
+    fields(batch_size=?ciphertext.len())
 )]
 pub async fn run_decryption_noiseflood<
     R: Rng + CryptoRng,
@@ -573,7 +574,8 @@ pub async fn run_decryption_noiseflood<
 // run decryption with bit-decomposition
 #[instrument(
     name = "TFHE.Threshold-Dec-2",
-    skip(session, prep, keyshares, ciphertext)
+    skip(session, prep, keyshares, ciphertext),
+    fields(batch_size=?ciphertext.blocks().len())
 )]
 pub async fn run_decryption_bitdec<
     P: BitDecPreprocessing + Send + ?Sized,

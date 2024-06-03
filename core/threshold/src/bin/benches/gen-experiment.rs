@@ -1,16 +1,39 @@
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use minijinja::{context, path_loader, Environment};
+use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 use std::fs::File;
 use std::io::Write;
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    #[clap(name = "cluster")]
-    Cluster,
-    #[clap(name = "experiment")]
-    Experiment,
+    #[clap(name = "parties")]
+    Parties(ProtocolArg),
+    #[clap(name = "choreographer")]
+    Choreographer,
     #[clap(name = "all")]
-    All,
+    All(ProtocolArg),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ValueEnum)]
+pub enum Protocol {
+    BGV,
+    TFHE,
+}
+
+impl Display for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Protocol::BGV => write!(f, "bgv"),
+            Protocol::TFHE => write!(f, "tfhe"),
+        }
+    }
+}
+
+#[derive(Clone, Args, Debug)]
+pub struct ProtocolArg {
+    #[clap(long, value_enum)]
+    protocol: Protocol,
 }
 
 #[derive(Parser, Debug)]
@@ -22,17 +45,8 @@ pub struct Cli {
     #[clap(short, default_value = "1")]
     threshold: u8,
 
-    #[clap(short = 'm', long, default_value = "5")]
-    number_messages: usize,
-
     #[clap(short = 'w', long, default_value = "10")]
     witness_dim: u32,
-
-    #[clap(short = 'e', long, default_value = "1")]
-    epoch_id: u32,
-
-    #[clap(short = 's', long, default_value = "1")]
-    decrypt_setup_mode: u8,
 
     #[clap(short = 'o', long, default_value = "experiment")]
     experiment_name: String,
@@ -60,33 +74,31 @@ fn main() {
     let conf_template = env.get_template("conf.toml.j2").unwrap();
     let docker_template = env.get_template("docker-compose.yml.j2").unwrap();
     let mut templates = vec![];
-    let command = args.command.unwrap_or(Command::All);
-    match command {
-        Command::Cluster => {
+    let command = args.command.unwrap_or(Command::All(ProtocolArg {
+        protocol: Protocol::TFHE,
+    }));
+    let protocol = match command {
+        Command::Parties(protocol) => {
             templates.push(("yml", docker_template));
+            protocol.protocol.to_string()
         }
-        Command::Experiment => {
+        Command::Choreographer => {
             templates.push(("toml", conf_template));
+            "".to_string()
         }
-        Command::All => {
+        Command::All(protocol) => {
             templates.push(("toml", conf_template));
             templates.push(("yml", docker_template));
+            protocol.protocol.to_string()
         }
-    }
-    let decrypt_mode = match args.decrypt_setup_mode {
-        1 => "PRSSDecrypt",
-        2 => "LargeDecrypt",
-        _ => panic!("Invalid decrypt setup mode"),
     };
 
     let context = context!(
         n_parties => args.n_parties,
         threshold => args.threshold,
-        number_messages => args.number_messages,
         experiment_name => args.experiment_name,
         witness_dim => args.witness_dim,
-        epoch_id => args.epoch_id,
-        decrypt_mode => decrypt_mode,
+        protocol => protocol,
     );
     templates.iter().for_each(|(ty, template)| {
         let output = template.render(context.clone()).unwrap();

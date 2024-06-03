@@ -560,7 +560,15 @@ where
     ) -> anyhow::Result<Self> {
         let n = session.num_parties();
         let t = session.threshold() as usize;
-        let c = num_integer::binomial(n, t).div_ceil(n - t);
+        let binom_nt = num_integer::binomial(n, t);
+
+        if binom_nt > PRSS_SIZE_MAX {
+            return Err(anyhow_error_and_log(
+                "PRSS set size is too large!".to_string(),
+            ));
+        }
+
+        let c = binom_nt.div_ceil(n - t);
         let party_id = session.my_role()?.one_based();
         // create all the subsets A that contain the party id
         let party_sets: Vec<Vec<usize>> = create_sets(n, t).into_iter().collect();

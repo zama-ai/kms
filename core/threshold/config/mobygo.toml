@@ -1,0 +1,17 @@
+[tracing]
+service_name = "choreographer"
+endpoint = "http://localhost:4317"
+
+[threshold_topology]
+threshold = 1
+peers = [
+    
+    { physical_address = "localhost", logical_address = "p1", physical_port = 50001, logical_port = 50000, choreo_physical_port = 60001, choreo_logical_port = 60000, id = 1, use_tls = true },
+    
+    { physical_address = "localhost", logical_address = "p2", physical_port = 50002, logical_port = 50000, choreo_physical_port = 60002, choreo_logical_port = 60000, id = 2, use_tls = true },
+    
+    { physical_address = "localhost", logical_address = "p3", physical_port = 50003, logical_port = 50000, choreo_physical_port = 60003, choreo_logical_port = 60000, id = 3, use_tls = true },
+    
+    { physical_address = "localhost", logical_address = "p4", physical_port = 50004, logical_port = 50000, choreo_physical_port = 60004, choreo_logical_port = 60000, id = 4, use_tls = true },
+    
+]

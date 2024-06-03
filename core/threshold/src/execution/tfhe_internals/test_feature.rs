@@ -35,7 +35,6 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        constants::INPUT_PARTY_ID,
         endpoints::keygen::{FhePubKeySet, PrivateKeySet},
         random::{secret_rng_from_seed, seed_from_rng},
         runtime::{party::Role, session::BaseSessionHandles},
@@ -51,6 +50,9 @@ use super::{
     },
     switch_and_squash::{from_expanded_msg, SwitchAndSquashKey},
 };
+
+/// the party ID of the party doing the reconstruction
+pub(crate) const INPUT_PARTY_ID: usize = 1;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct KeySet {

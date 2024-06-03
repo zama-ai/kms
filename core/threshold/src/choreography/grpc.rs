@@ -7,62 +7,64 @@ pub mod gen {
 
 use self::gen::choreography_server::{Choreography, ChoreographyServer};
 use self::gen::{
-    CrsCeremonyRequest, CrsCeremonyResponse, CrsRequest, CrsResponse, DecryptionResponse,
-    KeygenRequest, KeygenResponse, PreprocRequest, PreprocResponse, PubkeyRequest, PubkeyResponse,
-    RetrieveResultsRequest, RetrieveResultsResponse,
+    CrsGenResultRequest, CrsGenResultResponse, PreprocDecryptRequest, PreprocDecryptResponse,
+    PreprocKeyGenRequest, PreprocKeyGenResponse, PrssInitRequest, PrssInitResponse,
+    StatusCheckRequest, StatusCheckResponse, ThresholdDecryptRequest, ThresholdDecryptResponse,
+    ThresholdDecryptResultRequest, ThresholdDecryptResultResponse, ThresholdKeyGenRequest,
+    ThresholdKeyGenResponse, ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
 };
+
 use crate::algebra::base_ring::Z64;
 use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
 use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed};
-use crate::choreography::NetworkingStrategy;
-use crate::execution::endpoints::decryption::decrypt_using_noiseflooding;
+use crate::choreography::{
+    requests::{
+        CrsGenParams, PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, SessionType,
+        Status, ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
+    },
+    NetworkingStrategy,
+};
+use crate::execution::endpoints::decryption::{
+    init_prep_bitdec_large, init_prep_bitdec_small, run_decryption_bitdec,
+    run_decryption_noiseflood, ProtocolDecryption,
+};
 use crate::execution::endpoints::decryption::{Large, Small};
 use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::endpoints::keygen::{
     distributed_keygen_z128, distributed_keygen_z64, PrivateKeySet,
 };
 use crate::execution::large_execution::vss::RealVss;
+use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
-use crate::execution::online::preprocessing::PreprocessorFactory;
+use crate::execution::online::preprocessing::{
+    BitDecPreprocessing, DKGPreprocessing, NoiseFloodPreprocessing, PreprocessorFactory,
+};
 use crate::execution::runtime::party::{Identity, Role};
 use crate::execution::runtime::session::BaseSession;
+use crate::execution::runtime::session::SmallSession;
 use crate::execution::runtime::session::{BaseSessionStruct, ParameterHandles};
 use crate::execution::runtime::session::{DecryptionMode, LargeSession, SessionParameters};
 use crate::execution::tfhe_internals::parameters::DKGParams;
-use crate::execution::tfhe_internals::parameters::{Ciphertext64, NoiseFloodParameters};
-use crate::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
+use crate::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use crate::execution::zk::ceremony::{Ceremony, PublicParameter, RealCeremony};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
-use crate::{
-    choreography::grpc::gen::DecryptionRequest, execution::runtime::session::SmallSession,
-};
 use crate::{execution::small_execution::prss::PRSSSetup, session_id::SessionId};
 use aes_prng::AesRng;
-use async_cell::sync::AsyncCell;
 use async_trait::async_trait;
-use dashmap::mapref::entry::Entry;
+use clap::ValueEnum;
 use dashmap::DashMap;
+use gen::{CrsGenRequest, CrsGenResponse};
 use itertools::Itertools;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
-use tfhe::CompactPublicKey;
+use tokio::task::JoinHandle;
 use tracing::{instrument, Instrument};
 
-///Used to store results of decryption
-#[derive(Serialize, Deserialize, PartialEq, Clone, Debug)]
-pub struct ComputationOutputs {
-    pub outputs: HashMap<String, Z64>,
-    pub elapsed_time: Option<Duration>,
-}
-
-#[derive(Clone, PartialEq, Eq, Hash)]
-enum SupportedRing {
-    //NOTE: For now we never deal with ResiduePoly64 option
-    #[allow(dead_code)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, ValueEnum, Serialize, Deserialize)]
+pub enum SupportedRing {
     ResiduePoly64,
     ResiduePoly128,
 }
@@ -70,38 +72,60 @@ enum SupportedRing {
 #[derive(Clone)]
 enum SupportedPRSSSetup {
     //NOTE: For now we never deal with ResiduePoly64 option
-    #[allow(dead_code)]
-    ResiduePoly64(Option<PRSSSetup<ResiduePoly64>>),
-    ResiduePoly128(Option<PRSSSetup<ResiduePoly128>>),
+    ResiduePoly64(PRSSSetup<ResiduePoly64>),
+    ResiduePoly128(PRSSSetup<ResiduePoly128>),
 }
 
-/// Structure that holds data from the one-time (per-epoch) init phase
-#[derive(Clone)]
-struct InitInfo {
-    pub secret_key_share: PrivateKeySet,
-    pub prss_setup: HashMap<SupportedRing, SupportedPRSSSetup>,
+impl SupportedPRSSSetup {
+    fn get_poly64(&self) -> Result<PRSSSetup<ResiduePoly64>, tonic::Status> {
+        match self {
+            SupportedPRSSSetup::ResiduePoly64(res) => Ok(res.clone()),
+            _ => Err(tonic::Status::new(
+                tonic::Code::Aborted,
+                "Can not retrieve PRSS init for poly64, make sure you init it first",
+            )),
+        }
+    }
+
+    fn get_poly128(&self) -> Result<PRSSSetup<ResiduePoly128>, tonic::Status> {
+        match self {
+            SupportedPRSSSetup::ResiduePoly128(res) => Ok(res.clone()),
+            _ => Err(tonic::Status::new(
+                tonic::Code::Aborted,
+                "Can not retrieve PRSS init for poly128, make sure you init it first",
+            )),
+        }
+    }
 }
-type ResultStores = DashMap<SessionId, Arc<AsyncCell<ComputationOutputs>>>;
-type InitStore = DashMap<SessionId, Arc<AsyncCell<InitInfo>>>;
-type CrsStore = DashMap<SessionId, Arc<AsyncCell<(PublicParameter, Duration)>>>;
+
+type DKGPreprocRegularStore =
+    DashMap<SessionId, (DKGParams, Box<dyn DKGPreprocessing<ResiduePoly64>>)>;
+type DKGPreprocSnsStore =
+    DashMap<SessionId, (DKGParams, Box<dyn DKGPreprocessing<ResiduePoly128>>)>;
+type KeyStore = DashMap<SessionId, Arc<(FhePubKeySet, PrivateKeySet)>>;
+type DDecPreprocNFStore = DashMap<SessionId, Box<dyn NoiseFloodPreprocessing>>;
+type DDecPreprocBitDecStore = DashMap<SessionId, Box<dyn BitDecPreprocessing>>;
+type DDecResultStore = DashMap<SessionId, Vec<Z64>>;
+type CrsStore = DashMap<SessionId, PublicParameter>;
+type StatusStore = DashMap<SessionId, JoinHandle<()>>;
 
 #[derive(Default)]
-
 struct GrpcDataStores {
-    init_store: Arc<InitStore>,
-    sns_key_store: Arc<Mutex<Option<SwitchAndSquashKey>>>,
-    pubkey_store: Arc<Mutex<Option<CompactPublicKey>>>,
+    prss_setup: Arc<DashMap<SupportedRing, SupportedPRSSSetup>>,
+    dkg_preproc_store_regular: Arc<DKGPreprocRegularStore>,
+    dkg_preproc_store_sns: Arc<DKGPreprocSnsStore>,
+    key_store: Arc<KeyStore>,
+    ddec_preproc_store_nf: Arc<DDecPreprocNFStore>,
+    ddec_preproc_store_bd: Arc<DDecPreprocBitDecStore>,
+    ddec_result_store: Arc<DDecResultStore>,
     crs_store: Arc<CrsStore>,
-    init_epoch_id: AsyncCell<SessionId>,
-    crs_epoch_id: AsyncCell<SessionId>,
-    result_stores: Arc<ResultStores>,
+    status_store: Arc<StatusStore>,
 }
 
 pub struct GrpcChoreography {
     own_identity: Identity,
     networking_strategy: NetworkingStrategy,
     factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
-    num_sessions_created: Arc<Mutex<usize>>,
     data: GrpcDataStores,
 }
 
@@ -111,11 +135,11 @@ impl GrpcChoreography {
         networking_strategy: NetworkingStrategy,
         factory: Box<dyn PreprocessorFactory>,
     ) -> Self {
+        tracing::debug!("Starting Party with identity: {own_identity}");
         GrpcChoreography {
             own_identity,
             networking_strategy,
             factory: Arc::new(Mutex::new(factory)),
-            num_sessions_created: Arc::new(Mutex::new(0)),
             data: GrpcDataStores::default(),
         }
     }
@@ -129,46 +153,146 @@ impl GrpcChoreography {
 
 #[async_trait]
 impl Choreography for GrpcChoreography {
-    #[instrument(name = "DKG-ENDPOINT", skip(self, request))]
-    async fn preproc(
+    #[instrument(name = "PRSS-INIT", skip_all)]
+    async fn prss_init(
         &self,
-        request: tonic::Request<PreprocRequest>,
-    ) -> Result<tonic::Response<PreprocResponse>, tonic::Status> {
+        request: tonic::Request<PrssInitRequest>,
+    ) -> Result<tonic::Response<PrssInitResponse>, tonic::Status> {
         let request = request.into_inner();
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                "threshold must be at most 255".to_string(),
+                "Threshold must be at most 255".to_string(),
             )
         })?;
 
         let role_assignments: HashMap<Role, Identity> =
-            bincode::deserialize(&request.role_assignment).map_err(|_e| {
+            bincode::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    "failed to parse role assignment".to_string(),
+                    format!("Failed to parse role assignment: {:?}", e),
                 )
             })?;
 
-        let params: DKGParams = bincode::deserialize(&request.params).map_err(|_e| {
+        let prss_params: PrssInitParams = bincode::deserialize(&request.params).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                "failed to parse dkg params".to_string(),
+                format!("Failed to parse prss params: {:?}", e),
             )
         })?;
 
-        let num_sessions: u8 = request.num_sessions.try_into().map_err(|_e| {
-            tonic::Status::new(tonic::Code::Aborted, "nb_sessions must be at most 255")
+        let session_id = prss_params.session_id;
+        let ring = prss_params.ring;
+
+        let params = SessionParameters::new(
+            threshold,
+            session_id,
+            self.own_identity.clone(),
+            role_assignments.clone(),
+        )
+        .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Failed to create a base session parameters: {:?}", e),
+            )
         })?;
 
-        async fn create_sessions<Z: ErrorCorrect + Invert + RingEmbed>(
-            mut base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
-        ) -> Vec<SmallSession<Z>> {
-            let prss_setup =
-                PRSSSetup::<Z>::robust_init(&mut base_sessions[0], &RealVss::default())
+        let networking = (self.networking_strategy)(session_id, role_assignments);
+
+        //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
+        let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
+            .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Failed to create Base Session: {:?}", e),
+            )
+        })?;
+
+        let store = self.data.prss_setup.clone();
+        match ring {
+            SupportedRing::ResiduePoly128 => {
+                let my_future = || async move {
+                    let prss_setup = PRSSSetup::<ResiduePoly128>::robust_init(
+                        &mut base_session,
+                        &RealVss::default(),
+                    )
                     .await
                     .unwrap();
+                    store.insert(
+                        SupportedRing::ResiduePoly128,
+                        SupportedPRSSSetup::ResiduePoly128(prss_setup),
+                    );
+                    tracing::info!("PRSS Setup for ResiduePoly128 Done.");
+                };
+                self.data.status_store.insert(
+                    session_id,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+            SupportedRing::ResiduePoly64 => {
+                let my_future = || async move {
+                    let prss_setup = PRSSSetup::<ResiduePoly64>::robust_init(
+                        &mut base_session,
+                        &RealVss::default(),
+                    )
+                    .await
+                    .unwrap();
+                    store.insert(
+                        SupportedRing::ResiduePoly64,
+                        SupportedPRSSSetup::ResiduePoly64(prss_setup),
+                    );
+                    tracing::info!("PRSS Setup for ResiduePoly64 Done.");
+                };
+                self.data.status_store.insert(
+                    session_id,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+        }
+
+        Ok(tonic::Response::new(PrssInitResponse {}))
+    }
+
+    #[instrument(name = "DKG-PREPROC", skip_all)]
+    async fn preproc_key_gen(
+        &self,
+        request: tonic::Request<PreprocKeyGenRequest>,
+    ) -> Result<tonic::Response<PreprocKeyGenResponse>, tonic::Status> {
+        let request = request.into_inner();
+
+        let threshold: u8 = request.threshold.try_into().map_err(|_e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                "Threshold must be at most 255".to_string(),
+            )
+        })?;
+
+        let role_assignments: HashMap<Role, Identity> =
+            bincode::deserialize(&request.role_assignment).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse role assignment: {:?}", e),
+                )
+            })?;
+
+        let preproc_params: PreprocKeyGenParams =
+            bincode::deserialize(&request.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse Preproc KeyGen params: {:?}", e),
+                )
+            })?;
+
+        let start_sid = preproc_params.session_id;
+        let num_sessions = preproc_params.num_sessions;
+        let dkg_params = preproc_params.dkg_params;
+        let session_type = preproc_params.session_type;
+
+        fn create_small_sessions<Z: ErrorCorrect + Invert + RingEmbed>(
+            base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
+            prss_setup: &PRSSSetup<Z>,
+        ) -> Vec<SmallSession<Z>> {
             base_sessions
                 .into_iter()
                 .map(|base_session| {
@@ -178,17 +302,20 @@ impl Choreography for GrpcChoreography {
                 .collect_vec()
         }
 
+        fn create_large_sessions(
+            base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
+        ) -> Vec<LargeSession> {
+            base_sessions
+                .into_iter()
+                .map(LargeSession::new)
+                .collect_vec()
+        }
+
         let own_identity = self.own_identity.clone();
         let factory = self.factory.clone();
-        let start_session = {
-            let mut start_session_lock = self.num_sessions_created.try_lock().unwrap();
-            let start_session = *start_session_lock;
-            *start_session_lock += num_sessions as usize;
-            start_session
-        };
-        let base_sessions = (start_session..start_session + num_sessions as usize)
+        let base_sessions = (start_sid.0..start_sid.0 + num_sessions as u128)
             .map(|session_id| {
-                let session_id = SessionId(session_id as u128);
+                let session_id = SessionId(session_id);
                 let params = SessionParameters::new(
                     threshold,
                     session_id,
@@ -201,17 +328,30 @@ impl Choreography for GrpcChoreography {
             })
             .collect_vec();
 
-        match params {
-            DKGParams::WithoutSnS(_) => {
+        match (dkg_params, session_type) {
+            (DKGParams::WithoutSnS(_), SessionType::Small) => {
+                let prss_setup = self
+                    .data
+                    .prss_setup
+                    .get(&SupportedRing::ResiduePoly64)
+                    .ok_or_else(|| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            "Failed to retrieve prss_setup, try init it first".to_string(),
+                        )
+                    })?
+                    .get_poly64()?;
+                let result_store = self.data.dkg_preproc_store_regular.clone();
                 let my_future = || async move {
-                    let sessions = create_sessions(base_sessions).await;
+                    let sessions = create_small_sessions(base_sessions, &prss_setup);
 
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
-                        PreprocessingOrchestrator::<ResiduePoly64>::new(factory, params).unwrap()
+                        PreprocessingOrchestrator::<ResiduePoly64>::new(factory, dkg_params)
+                            .unwrap()
                     };
-                    let (mut sessions, mut preproc) = {
+                    let (_sessions, preproc) = {
                         //let _enter = tracing::info_span!("orchestrate").entered();
                         orchestrator
                             .orchestrate_small_session_dkg_processing(sessions)
@@ -219,574 +359,867 @@ impl Choreography for GrpcChoreography {
                             .await
                             .unwrap()
                     };
-
-                    //TODO: We dont do anything with the keys,
-                    //At some point this should replace the keygen endpoint,
-                    //but probably best to sync with kms ppl
-
-                    distributed_keygen_z64(&mut sessions[0], preproc.as_mut(), params)
-                        .await
-                        .unwrap()
+                    result_store.insert(start_sid, (dkg_params, preproc));
                 };
-                tokio::spawn(my_future().instrument(tracing::Span::current()));
+                self.data.status_store.insert(
+                    start_sid,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
             }
-            DKGParams::WithSnS(_) => {
+            (DKGParams::WithoutSnS(_), SessionType::Large) => {
+                let result_store = self.data.dkg_preproc_store_regular.clone();
                 let my_future = || async move {
-                    let sessions = create_sessions(base_sessions).await;
+                    let sessions = create_large_sessions(base_sessions);
+
                     let orchestrator = {
                         let mut factory_guard = factory.try_lock().unwrap();
                         let factory = factory_guard.as_mut();
-                        PreprocessingOrchestrator::<ResiduePoly128>::new(factory, params).unwrap()
+                        PreprocessingOrchestrator::<ResiduePoly64>::new(factory, dkg_params)
+                            .unwrap()
                     };
-                    let (mut sessions, mut preproc) = {
+                    let (_sessions, preproc) = {
+                        //let _enter = tracing::info_span!("orchestrate").entered();
+                        orchestrator
+                            .orchestrate_large_session_dkg_processing(sessions)
+                            .instrument(tracing::info_span!("orchestrate"))
+                            .await
+                            .unwrap()
+                    };
+                    result_store.insert(start_sid, (dkg_params, preproc));
+                };
+                self.data.status_store.insert(
+                    start_sid,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+            (DKGParams::WithSnS(_), SessionType::Small) => {
+                let prss_setup = self
+                    .data
+                    .prss_setup
+                    .get(&SupportedRing::ResiduePoly128)
+                    .ok_or_else(|| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            "Failed to retrieve prss_setup, try init it first".to_string(),
+                        )
+                    })?
+                    .get_poly128()?;
+                let result_store = self.data.dkg_preproc_store_sns.clone();
+                let my_future = || async move {
+                    let sessions = create_small_sessions(base_sessions, &prss_setup);
+                    let orchestrator = {
+                        let mut factory_guard = factory.try_lock().unwrap();
+                        let factory = factory_guard.as_mut();
+                        PreprocessingOrchestrator::<ResiduePoly128>::new(factory, dkg_params)
+                            .unwrap()
+                    };
+                    let (_sessions, preproc) = {
                         orchestrator
                             .orchestrate_small_session_dkg_processing(sessions)
                             .await
                             .unwrap()
                     };
-                    //TODO: We dont do anything with the keys,
-                    //At some point this should replace the keygen endpoint,
-                    //but probably best to sync with kms ppl
-                    distributed_keygen_z128(&mut sessions[0], preproc.as_mut(), params)
-                        .await
-                        .unwrap()
+                    result_store.insert(start_sid, (dkg_params, preproc));
                 };
-                tokio::spawn(my_future().instrument(tracing::Span::current()));
-            }
-        }
-        Ok(tonic::Response::new(PreprocResponse {}))
-    }
-
-    ///NOTE: For now we only do threshold decrypt with Ctxt lifting, but we may want to propose both options
-    /// (that's why we have setup_store contain a map for both options)
-    #[instrument(name = "DDEC ENDPOINT", skip(self, request))]
-    async fn threshold_decrypt(
-        &self,
-        request: tonic::Request<DecryptionRequest>,
-    ) -> Result<tonic::Response<DecryptionResponse>, tonic::Status> {
-        let request = request.into_inner();
-
-        let ct = bincode::deserialize::<Ciphertext64>(&request.ciphertext).map_err(|_e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                "failed to parse ciphertext".to_string(),
-            )
-        })?;
-
-        //Useless for now, need to integrate large threshold decrypt to grpc
-        let mode = bincode::deserialize(&request.mode).map_err(|_e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                "failed to parse decryption mode".to_string(),
-            )
-        })?;
-
-        let threshold: u8 = request.threshold.try_into().map_err(|_e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                "threshold must be at most 255".to_string(),
-            )
-        })?;
-
-        let role_assignments: HashMap<Role, Identity> =
-            bincode::deserialize(&request.role_assignment).map_err(|_e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    "failed to parse role assignment".to_string(),
-                )
-            })?;
-
-        let session_id = SessionId::new(&ct).map_err(|_e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                "failed to construct session ID".to_string(),
-            )
-        })?;
-        let init_epoch_id = &self.data.init_epoch_id.try_get();
-
-        match (self.data.result_stores.entry(session_id), init_epoch_id) {
-            (Entry::Occupied(_), _) => Err(tonic::Status::new(
-                tonic::Code::Aborted,
-                "session id exists already or inconsistent metric and result map".to_string(),
-            )),
-            (Entry::Vacant(_), None) => Err(tonic::Status::new(
-                tonic::Code::Aborted,
-                "No key share ID set!".to_string(),
-            )),
-            (Entry::Vacant(result_stores_entry), Some(se_id)) => {
-                tracing::debug!("I've launched a new decryption");
-
-                let setup_info = self
-                    .data
-                    .init_store
-                    .get(se_id)
-                    .map(|ksarc| ksarc.value().clone())
-                    .ok_or_else(|| {
-                        tonic::Status::new(
-                            tonic::Code::Internal,
-                            "failed to retrieve setup info".to_string(),
-                        )
-                    })?;
-                let setup_info = setup_info.get().await;
-
-                let result_cell = AsyncCell::shared();
-                result_stores_entry.insert(result_cell);
-
-                let own_identity = self.own_identity.clone();
-                let networking = (self.networking_strategy)(session_id, role_assignments.clone());
-                tracing::debug!(
-                    "Register session_id {:?} in this party: {:?}",
-                    session_id,
-                    own_identity
+                self.data.status_store.insert(
+                    start_sid,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
                 );
-
-                let result_stores = Arc::clone(&self.data.result_stores);
-                let pks = Arc::clone(&self.data.sns_key_store);
-                let ck = match pks.lock().unwrap().clone() {
-                    Some(pks) => pks,
-                    None => {
-                        return Err(tonic::Status::new(
-                            tonic::Code::Aborted,
-                            "No public key available for decryption".to_string(),
-                        ))
-                    }
-                };
-                let params = SessionParameters::new(
-                    threshold,
-                    session_id,
-                    own_identity.clone(),
-                    role_assignments,
-                )
-                .unwrap();
-                let base_session =
-                    BaseSessionStruct::new(params, Arc::clone(&networking), AesRng::from_entropy())
-                        .unwrap();
-                let current_span = tracing::Span::current();
-                match mode {
-                    DecryptionMode::PRSSDecrypt => {
-                        let prss_setup =
-                            match setup_info.prss_setup.get(&SupportedRing::ResiduePoly128) {
-                                Some(SupportedPRSSSetup::ResiduePoly128(v)) => v.clone(),
-                                _ => None,
-                            };
-                        let mut session = SmallSession::new_from_prss_state(
-                            base_session,
-                            prss_setup.unwrap().new_prss_session_state(session_id)
-                        )
-                        .map_err(|e| {
-                            tonic::Status::new(
-                                tonic::Code::Aborted,
-                                format!("could not make a valid session with current parameters. Failed with error \"{:?}\"", e).to_string(),
-                            )
-                        })?;
-
-                        tokio::spawn(
-                            async move {
-                                let mut protocol = Small::new(session.clone());
-                                let (results, elapsed_time) = decrypt_using_noiseflooding(
-                                    &mut session,
-                                    &mut protocol,
-                                    &ck,
-                                    ct,
-                                    &setup_info.secret_key_share,
-                                    mode,
-                                    own_identity,
-                                )
-                                .await
-                                .unwrap();
-                                result_stores
-                                    .get(&session_id)
-                                    .map(|res| {
-                                        res.set(ComputationOutputs {
-                                            outputs: results,
-                                            elapsed_time: Some(elapsed_time),
-                                        });
-                                    })
-                                    .expect("session disappeared unexpectedly");
-                            }
-                            .instrument(current_span),
-                        );
-                    }
-                    DecryptionMode::LargeDecrypt => {
-                        let mut session = LargeSession::new(base_session);
-                        tokio::spawn(
-                            async move {
-                                let mut protocol = Large::new(session.clone());
-                                let (results, elapsed_time) = decrypt_using_noiseflooding(
-                                    &mut session,
-                                    &mut protocol,
-                                    &ck,
-                                    ct,
-                                    &setup_info.secret_key_share,
-                                    mode,
-                                    own_identity,
-                                )
-                                .await
-                                .unwrap();
-                                result_stores
-                                    .get(&session_id)
-                                    .map(|res| {
-                                        res.set(ComputationOutputs {
-                                            outputs: results,
-                                            elapsed_time: Some(elapsed_time),
-                                        });
-                                    })
-                                    .expect("session disappeared unexpectedly");
-                            }
-                            .instrument(current_span),
-                        );
-                    }
-                    DecryptionMode::BitDecSmallDecrypt => todo!(),
-                    DecryptionMode::BitDecLargeDecrypt => todo!(),
-                }
-
-                let serialized_session_id = bincode::serialize(&session_id).map_err(|_e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        "Could not serialize session id".to_string(),
-                    )
-                })?;
-                Ok(tonic::Response::new(DecryptionResponse {
-                    session_id: serialized_session_id,
-                }))
             }
-        }
-    }
-
-    #[instrument(skip(self, request))]
-    async fn retrieve_results(
-        &self,
-        request: tonic::Request<RetrieveResultsRequest>,
-    ) -> Result<tonic::Response<RetrieveResultsResponse>, tonic::Status> {
-        let request = request.into_inner();
-
-        let session_id = bincode::deserialize::<SessionId>(&request.session_id).map_err(|_e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                "failed to parse session id".to_string(),
-            )
-        })?;
-
-        tracing::info!("Retrieving results for session {:?}", session_id);
-
-        let session_range = request.session_range;
-
-        let mut results: Vec<ComputationOutputs> = Vec::with_capacity(session_range as usize);
-
-        for i in 0..session_range {
-            match self
-                .data
-                .result_stores
-                .get(&SessionId::from(session_id.0 + i as u128))
-            {
-                Some(res) => {
-                    let res = res.value().get().await;
-                    results.push(res);
-                }
-                None => {
-                    return Err(tonic::Status::new(
-                        tonic::Code::NotFound,
-                        format!("unknown session id {:?} for choreographer", session_id.0),
-                    ))
-                }
-            }
-        }
-
-        tracing::debug!("Results retrieved for session {:?}", session_id);
-        let values = bincode::serialize(&results).expect("failed to serialize results");
-        Ok(tonic::Response::new(RetrieveResultsResponse { values }))
-    }
-
-    ///Note: For now assumes keygen works with PRSS128, but we don't really have a protocol yet so...
-    #[instrument(skip(self, request))]
-    async fn keygen(
-        &self,
-        request: tonic::Request<KeygenRequest>,
-    ) -> Result<tonic::Response<KeygenResponse>, tonic::Status> {
-        let request = request.into_inner();
-
-        let epoch_id = bincode::deserialize::<SessionId>(&request.epoch_id).map_err(|_e| {
-            tonic::Status::new(tonic::Code::Aborted, "failed to parse epoch id".to_string())
-        })?;
-
-        let threshold: u8 = request.threshold.try_into().map_err(|_e| {
-            tonic::Status::new(
-                tonic::Code::Aborted,
-                "threshold must be at most 255".to_string(),
-            )
-        })?;
-
-        let dkg_params: NoiseFloodParameters =
-            bincode::deserialize(&request.params).map_err(|_e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    "failed to parse parameters".to_string(),
-                )
-            })?;
-
-        let role_assignments: HashMap<Role, Identity> =
-            bincode::deserialize(&request.role_assignment).map_err(|_e| {
-                tonic::Status::new(
-                    tonic::Code::Aborted,
-                    "failed to parse role assignment".to_string(),
-                )
-            })?;
-
-        match self.data.init_store.entry(epoch_id) {
-            Entry::Occupied(_) => Err(tonic::Status::new(
-                tonic::Code::Aborted,
-                "key epoch exists already or inconsistent metric and result map".to_string(),
-            )),
-            Entry::Vacant(keyshare_store_entry) => {
-                tracing::debug!("I've launched a new keygen");
-
-                // we have a new public key - store the current epoch ID
-                self.data.init_epoch_id.set(epoch_id);
-
-                let result_cell = AsyncCell::shared();
-                keyshare_store_entry.insert(result_cell);
-
-                let own_identity = self.own_identity.clone();
-                let networking = (self.networking_strategy)(epoch_id, role_assignments.clone());
-
-                tracing::debug!("own identity: {:?}", own_identity);
-                let session_params =
-                    SessionParameters::new(threshold, epoch_id, own_identity, role_assignments)
-                    .map_err(|e| {
-                        tonic::Status::new(
-                            tonic::Code::Aborted,
-                            format!("could not make a valid session parameters with current parameters. Failed with error \"{:?}\"", e).to_string(),
-                        )
-                    })?;
-                let mut base_session =
-                    BaseSessionStruct::new(session_params, Arc::clone(&networking), AesRng::from_entropy())
-                    .map_err(|e| {
-                    tonic::Status::new(
-                        tonic::Code::Aborted,
-                        format!("could not make a valid base session with current parameters. Failed with error \"{:?}\"", e).to_string(),
-                    )
-                })?;
-
-                let init_store = Arc::clone(&self.data.init_store);
-                let sns_keys = Arc::clone(&self.data.sns_key_store);
-                let pks = Arc::clone(&self.data.pubkey_store);
-
-                tokio::spawn(async move {
-                    let prss_setup = PRSSSetup::<ResiduePoly128>::robust_init(
-                        &mut base_session,
-                        &RealVss::default(),
-                    )
-                    .await
-                    .unwrap();
-                    let (pub_keys, priv_keys) =
-                        local_initialize_key_material(&mut base_session, dkg_params)
+            (DKGParams::WithSnS(_), SessionType::Large) => {
+                let result_store = self.data.dkg_preproc_store_sns.clone();
+                let my_future = || async move {
+                    let sessions = create_large_sessions(base_sessions);
+                    let orchestrator = {
+                        let mut factory_guard = factory.try_lock().unwrap();
+                        let factory = factory_guard.as_mut();
+                        PreprocessingOrchestrator::<ResiduePoly128>::new(factory, dkg_params)
+                            .unwrap()
+                    };
+                    let (_sessions, preproc) = {
+                        orchestrator
+                            .orchestrate_large_session_dkg_processing(sessions)
                             .await
-                            .unwrap();
-
-                    let mut map_setup = HashMap::new();
-                    map_setup.insert(
-                        SupportedRing::ResiduePoly128,
-                        SupportedPRSSSetup::ResiduePoly128(Some(prss_setup)),
-                    );
-
-                    init_store
-                        .get(&epoch_id)
-                        .map(|setup_result_cell| {
-                            setup_result_cell.set(InitInfo {
-                                secret_key_share: priv_keys,
-                                prss_setup: map_setup,
-                            });
-                        })
-                        .expect("Epoch key store disappeared unexpectedly");
-
-                    // store the public key
-                    *pks.lock().unwrap() = Some(pub_keys.public_key);
-                    *sns_keys.lock().unwrap() = pub_keys.sns_key;
-                    tracing::debug!("Key material stored.");
-                });
-
-                Ok(tonic::Response::new(KeygenResponse {}))
+                            .unwrap()
+                    };
+                    result_store.insert(start_sid, (dkg_params, preproc));
+                };
+                self.data.status_store.insert(
+                    start_sid,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
             }
         }
-    }
-
-    #[instrument(skip(self, request))]
-    async fn retrieve_pubkey(
-        &self,
-        request: tonic::Request<PubkeyRequest>,
-    ) -> Result<tonic::Response<PubkeyResponse>, tonic::Status> {
-        tracing::debug!("Retrieving pubkey...");
-        let request = request.into_inner();
-
-        let epoch_id = bincode::deserialize::<SessionId>(&request.epoch_id).map_err(|_e| {
-            tonic::Status::new(tonic::Code::Aborted, "Failed to parse epoch id".to_string())
-        })?;
-
-        let comp = self
-            .data
-            .init_store
-            .get(&epoch_id)
-            .map(|res| res.value().clone())
-            .ok_or_else(|| {
-                tonic::Status::new(
-                    tonic::Code::NotFound,
-                    format!("Pubkey not found for epoch id {}.", epoch_id),
-                )
-            })?;
-        // make sure that key was generated completely
-        comp.get().await;
-
-        let pks = Arc::clone(&self.data.pubkey_store);
-        let pkl = pks.lock().unwrap().clone().ok_or_else(|| {
+        let sid_serialized = bincode::serialize(&start_sid).map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                "No public key available for decryption".to_string(),
+                format!("Error serializing session ID {e}"),
             )
         })?;
-
-        let pk_serialized = bincode::serialize(&pkl).expect("failed to serialize pubkey");
-        tracing::debug!("Pubkey successfully retrieved.");
-
-        Ok(tonic::Response::new(PubkeyResponse {
-            pubkey: pk_serialized,
+        Ok(tonic::Response::new(PreprocKeyGenResponse {
+            request_id: sid_serialized,
         }))
     }
 
-    #[instrument(name = "CRS ENDPONT", skip(self, request))]
-    async fn crs_ceremony(
+    #[instrument(name = "DKG", skip_all)]
+    async fn threshold_key_gen(
         &self,
-        request: tonic::Request<CrsCeremonyRequest>,
-    ) -> Result<tonic::Response<CrsCeremonyResponse>, tonic::Status> {
+        request: tonic::Request<ThresholdKeyGenRequest>,
+    ) -> Result<tonic::Response<ThresholdKeyGenResponse>, tonic::Status> {
         let request = request.into_inner();
-
-        let epoch_id = bincode::deserialize::<SessionId>(&request.epoch_id).map_err(|_e| {
-            tonic::Status::new(tonic::Code::Aborted, "failed to parse epoch id".to_string())
-        })?;
 
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
-                "threshold must be at most 255".to_string(),
+                "Threshold must be at most 255".to_string(),
             )
         })?;
 
         let role_assignments: HashMap<Role, Identity> =
-            bincode::deserialize(&request.role_assignment).map_err(|_e| {
+            bincode::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
                     tonic::Code::Aborted,
-                    "failed to parse role assignment".to_string(),
+                    format!("Failed to parse role assignment: {:?}", e),
                 )
             })?;
 
-        match self.data.crs_store.entry(epoch_id) {
-            Entry::Occupied(_) => Err(tonic::Status::new(
+        let kg_params: ThresholdKeyGenParams =
+            bincode::deserialize(&request.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse Threshold KeyGen params: {:?}", e),
+                )
+            })?;
+
+        let session_id = kg_params.session_id;
+        let dkg_params = kg_params.dkg_params;
+        let preproc_sid = kg_params.session_id_preproc;
+
+        let params = SessionParameters::new(
+            threshold,
+            session_id,
+            self.own_identity.clone(),
+            role_assignments.clone(),
+        )
+        .map_err(|e| {
+            tonic::Status::new(
                 tonic::Code::Aborted,
-                "crs epoch exists already or inconsistent metric and result map".to_string(),
-            )),
-            Entry::Vacant(keyshare_store_entry) => {
-                tracing::debug!("I've launched a new CRS ceremony");
+                format!("Failed to create a base session parameters: {:?}", e),
+            )
+        })?;
 
-                // we have a new epoch - store the current epoch ID
-                self.data.crs_epoch_id.set(epoch_id);
+        let networking = (self.networking_strategy)(session_id, role_assignments);
 
-                let result_cell = AsyncCell::shared();
-                keyshare_store_entry.insert(result_cell);
+        //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
+        let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
+            .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Failed to create Base Session: {:?}", e),
+            )
+        })?;
 
-                let own_identity = self.own_identity.clone();
-                let networking = (self.networking_strategy)(epoch_id, role_assignments.clone());
-
-                let session_params =
-                    SessionParameters::new(threshold, epoch_id, own_identity, role_assignments)
-                    .map_err(|e| {
+        let key_store = self.data.key_store.clone();
+        match (dkg_params, preproc_sid) {
+            (DKGParams::WithoutSnS(_), Some(id)) => {
+                let (_, (params, mut preproc)) =
+                    self.data.dkg_preproc_store_regular.remove(&id).ok_or_else(|| {
                         tonic::Status::new(
                             tonic::Code::Aborted,
-                            format!("could not make a valid session parameters with current parameters. Failed with error \"{:?}\"", e).to_string(),
+                            format!("Failed to retrieve preprocessing for id {id}, make sure to call preprocessing first"),
                         )
                     })?;
-                let mut base_session =
-                    BaseSessionStruct::new(session_params, Arc::clone(&networking), AesRng::from_entropy())
-                    .map_err(|e| {
+                if params != dkg_params {
+                    self.data
+                        .dkg_preproc_store_regular
+                        .insert(id, (params, preproc));
+                    return Err(tonic::Status::new(tonic::Code::Aborted,format!("The preprocessing stored under id {id} does not match the parameters request for key gen.")));
+                }
+
+                let my_future = || async move {
+                    let keys =
+                        distributed_keygen_z64(&mut base_session, preproc.as_mut(), dkg_params)
+                            .await
+                            .unwrap();
+                    key_store.insert(session_id, Arc::new(keys));
+                };
+                self.data.status_store.insert(
+                    session_id,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+            (DKGParams::WithoutSnS(_), None) => {
+                let mut preproc =
+                    DummyPreprocessing::new(session_id.0 as u64, base_session.clone());
+                let my_future = || async move {
+                    let keys = distributed_keygen_z64(&mut base_session, &mut preproc, dkg_params)
+                        .await
+                        .unwrap();
+                    key_store.insert(session_id, Arc::new(keys));
+                };
+                self.data.status_store.insert(
+                    session_id,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+            (DKGParams::WithSnS(_), Some(id)) => {
+                let (_, (params, mut preproc)) =
+                    self.data.dkg_preproc_store_sns.remove(&id).ok_or_else(|| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to retrieve preprocessing for id {id}, make sure to call preprocessing first"),
+                        )
+                    })?;
+                if params != dkg_params {
+                    self.data
+                        .dkg_preproc_store_sns
+                        .insert(id, (params, preproc));
+                    return Err(tonic::Status::new(tonic::Code::Aborted,format!("The preprocessing stored under id {id} does not match the parameters request for key gen.")));
+                }
+
+                let my_future = || async move {
+                    let keys =
+                        distributed_keygen_z128(&mut base_session, preproc.as_mut(), dkg_params)
+                            .await
+                            .unwrap();
+                    key_store.insert(session_id, Arc::new(keys));
+                };
+                self.data.status_store.insert(
+                    session_id,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+            (DKGParams::WithSnS(_), None) => {
+                let mut preproc =
+                    DummyPreprocessing::new(session_id.0 as u64, base_session.clone());
+                let my_future = || async move {
+                    let keys = distributed_keygen_z128(&mut base_session, &mut preproc, dkg_params)
+                        .await
+                        .unwrap();
+                    key_store.insert(session_id, Arc::new(keys));
+                };
+                self.data.status_store.insert(
+                    session_id,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+        }
+        let sid_serialized = bincode::serialize(&session_id).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Error serializing session ID {e}"),
+            )
+        })?;
+        Ok(tonic::Response::new(ThresholdKeyGenResponse {
+            request_id: sid_serialized,
+        }))
+    }
+
+    #[instrument(name = "DKG-RESULT", skip_all)]
+    async fn threshold_key_gen_result(
+        &self,
+        request: tonic::Request<ThresholdKeyGenResultRequest>,
+    ) -> Result<tonic::Response<ThresholdKeyGenResultResponse>, tonic::Status> {
+        let request = request.into_inner();
+
+        let kg_result_params: ThresholdKeyGenResultParams = bincode::deserialize(&request.params)
+            .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Failed to parse Threshold KeyGen Result params: {:?}", e),
+            )
+        })?;
+
+        let session_id = kg_result_params.session_id;
+        let dkg_params = kg_result_params.dkg_params;
+
+        if let Some(dkg_params) = dkg_params {
+            if let DKGParams::WithSnS(dkg_params) = dkg_params {
+                let role_assignments: HashMap<Role, Identity> =
+                    bincode::deserialize(&request.role_assignment).map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to parse role assignment: {:?}", e),
+                        )
+                    })?;
+                let params = SessionParameters::new(
+                    0,
+                    session_id,
+                    self.own_identity.clone(),
+                    role_assignments.clone(),
+                )
+                .map_err(|e| {
                     tonic::Status::new(
                         tonic::Code::Aborted,
-                        format!("could not make a valid base session with current parameters. Failed with error \"{:?}\"", e).to_string(),
+                        format!("Failed to create a base session parameters: {:?}", e),
                     )
                 })?;
 
-                let crs_store = Arc::clone(&self.data.crs_store);
-                let current_span = tracing::Span::current();
-                tokio::spawn(
-                    async move {
-                        let crs_start_timer = Instant::now();
+                let networking = (self.networking_strategy)(session_id, role_assignments);
 
-                        let real_ceremony = RealCeremony::default();
-                        let pp = real_ceremony
-                            .execute::<Z64, _, _>(&mut base_session, request.witness_dim as usize)
-                            .await
-                            .unwrap();
-
-                        let crs_stop_timer = Instant::now();
-                        let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
-                        tracing::info!(
-                            "CRS stored. CRS ceremony time was {:?} ms",
-                            (elapsed_time).as_millis()
-                        );
-
-                        // store the CRS
-                        crs_store
-                            .get(&epoch_id)
-                            .map(|result_cell| {
-                                result_cell.set((pp, elapsed_time));
-                            })
-                            .expect("session disappeared unexpectedly");
-                    }
-                    .instrument(current_span),
-                );
-
-                Ok(tonic::Response::new(CrsCeremonyResponse {}))
+                //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
+                let mut base_session =
+                    BaseSessionStruct::new(params, networking, AesRng::from_entropy()).map_err(
+                        |e| {
+                            tonic::Status::new(
+                                tonic::Code::Aborted,
+                                format!("Failed to create Base Session: {:?}", e),
+                            )
+                        },
+                    )?;
+                let keys = local_initialize_key_material(
+                    &mut base_session,
+                    dkg_params.to_noiseflood_parameters(),
+                )
+                .await
+                .map_err(|e| {
+                    tonic::Status::new(
+                        tonic::Code::Aborted,
+                        format!("Failed to do centralised key generation {:?}", e),
+                    )
+                })?;
+                self.data
+                    .key_store
+                    .insert(session_id, Arc::new(keys.clone()));
+                return Ok(tonic::Response::new(ThresholdKeyGenResultResponse {
+                    pub_keyset: bincode::serialize(&keys.0).map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to serialize pubkey: {:?}", e),
+                        )
+                    })?,
+                }));
+            } else {
+                return Err(tonic::Status::new(tonic::Code::Aborted,"Centralised key generation is only available for parameters with Switch and Squash. Please retry".to_string()));
+            }
+        } else {
+            let keys = self.data.key_store.get(&session_id);
+            if let Some(keys) = keys {
+                return Ok(tonic::Response::new(ThresholdKeyGenResultResponse {
+                    pub_keyset: bincode::serialize(&keys.0).map_err(|e| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Failed to serialize pubkey: {:?}", e),
+                        )
+                    })?,
+                }));
+            } else {
+                return Err(tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("No key stored for session id {session_id}."),
+                ));
             }
         }
     }
 
-    async fn retrieve_crs(
+    #[instrument(name = "DDEC-PREPROC", skip_all)]
+    async fn preproc_decrypt(
         &self,
-        request: tonic::Request<CrsRequest>,
-    ) -> Result<tonic::Response<CrsResponse>, tonic::Status> {
-        tracing::debug!("Retrieving CRS...");
+        request: tonic::Request<PreprocDecryptRequest>,
+    ) -> Result<tonic::Response<PreprocDecryptResponse>, tonic::Status> {
         let request = request.into_inner();
 
-        let epoch_id = bincode::deserialize::<SessionId>(&request.epoch_id).map_err(|_e| {
-            tonic::Status::new(tonic::Code::Aborted, "Failed to parse epoch id".to_string())
+        let threshold: u8 = request.threshold.try_into().map_err(|_e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                "Threshold must be at most 255".to_string(),
+            )
         })?;
 
-        let crs = self
-            .data
-            .crs_store
-            .get(&epoch_id)
-            .map(|res| res.value().clone())
-            .ok_or_else(|| {
+        let role_assignments: HashMap<Role, Identity> =
+            bincode::deserialize(&request.role_assignment).map_err(|e| {
                 tonic::Status::new(
-                    tonic::Code::NotFound,
-                    format!("CRS not found for epoch id {epoch_id}."),
+                    tonic::Code::Aborted,
+                    format!("Failed to parse role assignment: {:?}", e),
                 )
             })?;
 
-        // wait a bit for the crs to be generated
-        // but timeout after a second since this process may take a long time
-        let (pp, dur) = tokio::time::timeout(Duration::from_secs(1), crs.get())
-            .await
+        let preproc_params: PreprocDecryptParams =
+            bincode::deserialize(&request.params).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse Preproc Decrypt params: {:?}", e),
+                )
+            })?;
+
+        let session_id = preproc_params.session_id;
+        let num_blocks = preproc_params.num_blocks as usize;
+        let decryption_mode = preproc_params.decryption_mode;
+
+        let params = SessionParameters::new(
+            threshold,
+            session_id,
+            self.own_identity.clone(),
+            role_assignments.clone(),
+        )
+        .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Failed to create a base session parameters: {:?}", e),
+            )
+        })?;
+
+        let networking = (self.networking_strategy)(session_id, role_assignments);
+
+        //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
+        let base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
             .map_err(|e| {
                 tonic::Status::new(
-                    tonic::Code::NotFound,
-                    format!("CRS not ready yet for epoch id {epoch_id} ({e})"),
+                    tonic::Code::Aborted,
+                    format!("Failed to create Base Session: {:?}", e),
                 )
             })?;
 
-        let crs_ser = bincode::serialize(&pp).expect("failed to serialize CRS");
-        tracing::debug!("CRS successfully retrieved.");
+        match decryption_mode {
+            DecryptionMode::BitDecLargeDecrypt => {
+                let mut large_session = LargeSession::new(base_session);
+                let store = self.data.ddec_preproc_store_bd.clone();
+                let my_future = || async move {
+                    let preproc = init_prep_bitdec_large(&mut large_session, num_blocks).await;
+                    store.insert(session_id, preproc);
+                };
+                self.data.status_store.insert(
+                    session_id,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+            DecryptionMode::BitDecSmallDecrypt => {
+                let prss_state = self
+                    .data
+                    .prss_setup
+                    .get(&SupportedRing::ResiduePoly64)
+                    .ok_or_else(|| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            "Failed to retrieve prss_setup, try init it first".to_string(),
+                        )
+                    })?
+                    .get_poly64()?
+                    .new_prss_session_state(session_id);
+                let mut small_session =
+                    SmallSession::new_from_prss_state(base_session, prss_state).unwrap();
+                let store = self.data.ddec_preproc_store_bd.clone();
+                let my_future = || async move {
+                    let preproc = init_prep_bitdec_small(&mut small_session, num_blocks).await;
+                    store.insert(session_id, preproc);
+                };
+                self.data.status_store.insert(
+                    session_id,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+            DecryptionMode::PRSSDecrypt => {
+                let prss_state = self
+                    .data
+                    .prss_setup
+                    .get(&SupportedRing::ResiduePoly128)
+                    .ok_or_else(|| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            "Failed to retrieve prss_setup, try init it first".to_string(),
+                        )
+                    })?
+                    .get_poly128()?
+                    .new_prss_session_state(session_id);
+                let mut small_session = Small::new(
+                    SmallSession::new_from_prss_state(base_session, prss_state).unwrap(),
+                );
+                let store = self.data.ddec_preproc_store_nf.clone();
+                let my_future = || async move {
+                    let preproc = small_session.init_prep_noiseflooding(num_blocks).await;
+                    store.insert(session_id, preproc);
+                };
+                self.data.status_store.insert(
+                    session_id,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+            DecryptionMode::LargeDecrypt => {
+                let mut large_session = Large::new(LargeSession::new(base_session));
+                let store = self.data.ddec_preproc_store_nf.clone();
+                let my_future = || async move {
+                    let preproc = large_session.init_prep_noiseflooding(num_blocks).await;
+                    store.insert(session_id, preproc);
+                };
+                self.data.status_store.insert(
+                    session_id,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+        }
 
-        Ok(tonic::Response::new(CrsResponse {
-            crs: crs_ser,
-            duration_secs: dur.as_secs_f32(),
+        let sid_serialized = bincode::serialize(&session_id).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Error serializing session ID {e}"),
+            )
+        })?;
+        Ok(tonic::Response::new(PreprocDecryptResponse {
+            request_id: sid_serialized,
+        }))
+    }
+
+    #[instrument(name = "DDEC", skip_all)]
+    async fn threshold_decrypt(
+        &self,
+        request: tonic::Request<ThresholdDecryptRequest>,
+    ) -> Result<tonic::Response<ThresholdDecryptResponse>, tonic::Status> {
+        let request = request.into_inner();
+
+        let threshold: u8 = request.threshold.try_into().map_err(|_e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                "Threshold must be at most 255".to_string(),
+            )
+        })?;
+
+        let role_assignments: HashMap<Role, Identity> =
+            bincode::deserialize(&request.role_assignment).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse role assignment: {:?}", e),
+                )
+            })?;
+
+        let decrypt_params: ThresholdDecryptParams = bincode::deserialize(&request.params)
+            .map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse Preproc Decrypt params: {:?}", e),
+                )
+            })?;
+
+        let session_id = decrypt_params.session_id;
+        let decryption_mode = decrypt_params.decryption_mode;
+        let key_sid = decrypt_params.key_sid;
+        let preproc_sid = decrypt_params.preproc_sid;
+        let ctxts = decrypt_params.ctxts;
+
+        let key_ref = self
+            .data
+            .key_store
+            .get(&key_sid)
+            .ok_or_else(|| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Can not find key that correspond to session ID {key_sid}"),
+                )
+            })?
+            .clone();
+
+        let params = SessionParameters::new(
+            threshold,
+            session_id,
+            self.own_identity.clone(),
+            role_assignments.clone(),
+        )
+        .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Failed to create a base session parameters: {:?}", e),
+            )
+        })?;
+
+        let networking = (self.networking_strategy)(session_id, role_assignments);
+
+        //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
+        let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
+            .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Failed to create Base Session: {:?}", e),
+            )
+        })?;
+
+        let res_store = self.data.ddec_result_store.clone();
+        match decryption_mode {
+            DecryptionMode::BitDecLargeDecrypt | DecryptionMode::BitDecSmallDecrypt => {
+                let mut preprocessing = if let Some(preproc_sid) = preproc_sid {
+                    self.data.ddec_preproc_store_bd.remove(&preproc_sid).ok_or_else(|| {
+                        tonic::Status::new(
+                            tonic::Code::Aborted,
+                            format!("Can not find BitDec preproc that corresponds to session ID {preproc_sid}"),
+                        )
+                    })?.1
+                } else {
+                    Box::new(DummyPreprocessing::new(
+                        session_id.0 as u64,
+                        base_session.clone(),
+                    ))
+                };
+                let mut res = Vec::new();
+                let my_future = || async move {
+                    for ctxt in ctxts.into_iter() {
+                        res.push(
+                            run_decryption_bitdec(
+                                &mut base_session,
+                                preprocessing.as_mut(),
+                                &key_ref.1,
+                                ctxt,
+                            )
+                            .await
+                            .map_err(|e| {
+                                tonic::Status::new(
+                                    tonic::Code::Aborted,
+                                    format!("Error while running bitdec ddec {e}"),
+                                )
+                            })
+                            .unwrap(),
+                        )
+                    }
+                    res_store.insert(session_id, res);
+                };
+                self.data.status_store.insert(
+                    session_id,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+            DecryptionMode::PRSSDecrypt | DecryptionMode::LargeDecrypt => {
+                if key_ref.0.sns_key.is_none() {
+                    return Err(tonic::Status::new(tonic::Code::Aborted,format!("Asked for NoiseFlood decrypt but there is no Switch and Squash key for key at session ID {key_sid}")));
+                }
+                let mut preprocessing = if let Some(preproc_sid) = preproc_sid {
+                    self.data.ddec_preproc_store_nf.remove(&preproc_sid).ok_or_else(|| {
+                        tonic::Status::new(tonic::Code::Aborted,format!("Can not find NoiseFlood preproc that corresponds to session ID {preproc_sid}"))
+                    })?.1
+                } else {
+                    Box::new(DummyPreprocessing::new(
+                        session_id.0 as u64,
+                        base_session.clone(),
+                    ))
+                };
+                let my_future = || async move {
+                    let mut res = Vec::new();
+                    for ctxt in ctxts.into_iter() {
+                        let ct_large = if let Some(sns_key) = &key_ref.0.sns_key {
+                            sns_key.to_large_ciphertext(&ctxt).unwrap()
+                        } else {
+                            panic!("Missing key (it was there just before)")
+                        };
+                        res.push(
+                            run_decryption_noiseflood(
+                                &mut base_session,
+                                preprocessing.as_mut(),
+                                &key_ref.1,
+                                ct_large,
+                            )
+                            .await
+                            .map_err(|e| {
+                                tonic::Status::new(
+                                    tonic::Code::Aborted,
+                                    format!("Error while running noiseflood ddec {e}"),
+                                )
+                            })
+                            .unwrap(),
+                        )
+                    }
+                    res_store.insert(session_id, res);
+                };
+                self.data.status_store.insert(
+                    session_id,
+                    tokio::spawn(my_future().instrument(tracing::Span::current())),
+                );
+            }
+        }
+
+        let sid_serialized = bincode::serialize(&session_id).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Error serializing session ID {e}"),
+            )
+        })?;
+        Ok(tonic::Response::new(ThresholdDecryptResponse {
+            request_id: sid_serialized,
+        }))
+    }
+
+    #[instrument(name = "DDEC-RESULT", skip_all)]
+    async fn threshold_decrypt_result(
+        &self,
+        request: tonic::Request<ThresholdDecryptResultRequest>,
+    ) -> Result<tonic::Response<ThresholdDecryptResultResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let session_id = bincode::deserialize(&request.request_id).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Error deserializing session_id: {e}"),
+            )
+        })?;
+
+        let res = self
+            .data
+            .ddec_result_store
+            .get(&session_id)
+            .ok_or_else(|| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("No result found for session ID {session_id}"),
+                )
+            })?
+            .clone();
+
+        let res_serialized = bincode::serialize(&res).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Error serializing answer {e}"),
+            )
+        })?;
+
+        Ok(tonic::Response::new(ThresholdDecryptResultResponse {
+            plaintext: res_serialized,
+        }))
+    }
+
+    #[instrument(name = "CRS-GEN", skip_all)]
+    async fn crs_gen(
+        &self,
+        request: tonic::Request<CrsGenRequest>,
+    ) -> Result<tonic::Response<CrsGenResponse>, tonic::Status> {
+        let request = request.into_inner();
+
+        let threshold: u8 = request.threshold.try_into().map_err(|_e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                "Threshold must be at most 255".to_string(),
+            )
+        })?;
+
+        let role_assignments: HashMap<Role, Identity> =
+            bincode::deserialize(&request.role_assignment).map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("Failed to parse role assignment: {:?}", e),
+                )
+            })?;
+
+        let crs_params: CrsGenParams = bincode::deserialize(&request.params).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Failed to parse Preproc Decrypt params: {:?}", e),
+            )
+        })?;
+
+        let session_id = crs_params.session_id;
+        let witness_dim = crs_params.witness_dim;
+
+        let params = SessionParameters::new(
+            threshold,
+            session_id,
+            self.own_identity.clone(),
+            role_assignments.clone(),
+        )
+        .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Failed to create a base session parameters: {:?}", e),
+            )
+        })?;
+
+        let networking = (self.networking_strategy)(session_id, role_assignments);
+
+        let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
+            .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Failed to create Base Session: {:?}", e),
+            )
+        })?;
+
+        let crs_store = self.data.crs_store.clone();
+        let my_future = || async move {
+            let real_ceremony = RealCeremony::default();
+            let pp = real_ceremony
+                .execute::<Z64, _, _>(&mut base_session, witness_dim as usize)
+                .await
+                .unwrap();
+            crs_store.insert(session_id, pp);
+        };
+
+        self.data.status_store.insert(
+            session_id,
+            tokio::spawn(my_future().instrument(tracing::Span::current())),
+        );
+
+        let sid_serialized = bincode::serialize(&session_id).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Error serializing session ID {e}"),
+            )
+        })?;
+        Ok(tonic::Response::new(CrsGenResponse {
+            request_id: sid_serialized,
+        }))
+    }
+
+    #[instrument(name = "CRS-RESULT", skip_all)]
+    async fn crs_gen_result(
+        &self,
+        request: tonic::Request<CrsGenResultRequest>,
+    ) -> Result<tonic::Response<CrsGenResultResponse>, tonic::Status> {
+        let request = request.into_inner();
+
+        let session_id: SessionId = bincode::deserialize(&request.request_id).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Error deserializing session_id: {e}"),
+            )
+        })?;
+
+        let res = self
+            .data
+            .crs_store
+            .get(&session_id)
+            .ok_or_else(|| {
+                tonic::Status::new(
+                    tonic::Code::Aborted,
+                    format!("No result found for session ID {session_id}"),
+                )
+            })?
+            .clone();
+
+        let res_serialized = bincode::serialize(&res).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Error serializing answer {e}"),
+            )
+        })?;
+
+        Ok(tonic::Response::new(CrsGenResultResponse {
+            crs: res_serialized,
+        }))
+    }
+
+    async fn status_check(
+        &self,
+        request: tonic::Request<StatusCheckRequest>,
+    ) -> Result<tonic::Response<StatusCheckResponse>, tonic::Status> {
+        let request = request.into_inner();
+        let sid: SessionId = bincode::deserialize(&request.request_id).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Error deserializing session_id: {e}"),
+            )
+        })?;
+
+        let status = if let Some(handle) = self.data.status_store.get(&sid) {
+            if handle.is_finished() {
+                Status::Finished
+            } else {
+                Status::Ongoing
+            }
+        } else {
+            Status::Missing
+        };
+
+        let status_serialized = bincode::serialize(&status).map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Aborted,
+                format!("Error serializing answer {e}"),
+            )
+        })?;
+
+        Ok(tonic::Response::new(StatusCheckResponse {
+            status: status_serialized,
         }))
     }
 }
@@ -796,6 +1229,8 @@ async fn local_initialize_key_material(
     session: &mut BaseSession,
     params: NoiseFloodParameters,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
+    let _tracing_subscribe =
+        tracing::subscriber::set_default(tracing::subscriber::NoSubscriber::new());
     crate::execution::tfhe_internals::test_feature::initialize_key_material(session, params).await
 }
 
@@ -804,5 +1239,5 @@ async fn local_initialize_key_material(
     _session: &mut BaseSession,
     _params: NoiseFloodParameters,
 ) -> anyhow::Result<(FhePubKeySet, PrivateKeySet)> {
-    todo!()
+    panic!("Require the testing feature on the moby cluster to perform a local intialization of the keys")
 }

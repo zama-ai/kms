@@ -6,7 +6,6 @@ use tonic::transport::Uri;
 
 use crate::choreography::choreographer::NetworkTopology;
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
-use crate::execution::runtime::session::DecryptionMode;
 
 use super::Tracing;
 
@@ -103,34 +102,9 @@ impl ThresholdTopology {
 #[derive(Deserialize, Serialize, Clone)]
 pub struct ChoreoConf {
     pub threshold_topology: ThresholdTopology,
-    pub number_messages: Option<usize>,
-    storage_folder: String,
-    session_file: String,
-    pub params_file: String,
-    pub decrypt_mode: DecryptionMode,
-    epoch_id: Option<usize>,
-    pub witness_dim: Option<u32>,
     pub tracing: Option<Tracing>,
 
     pub cert_file: Option<String>,
     pub key_file: Option<String>,
     pub ca_file: Option<String>,
-}
-
-impl ChoreoConf {
-    pub fn epoch(&self) -> u128 {
-        self.epoch_id.unwrap_or(1) as u128
-    }
-
-    pub fn pub_key_file(&self) -> String {
-        format!("{}/pk.bin", self.storage_folder)
-    }
-
-    pub fn crs_file(&self) -> String {
-        format!("{}/crs_{}.bin", self.storage_folder, self.epoch())
-    }
-
-    pub fn session_file_path(&self) -> String {
-        format!("{}/{}", self.storage_folder, self.session_file)
-    }
 }

@@ -1,7 +1,4 @@
-# distributed-decryption
-[![Rust](https://github.com/zama-ai/distributed-decryption/actions/workflows/rust.yml/badge.svg)](https://github.com/zama-ai/distributed-decryption/actions/workflows/rust.yml)
-
-
+# Core threshold protocols 
 ## Profiling
 
 To profile various protocols, see the `benches/` folder.
@@ -24,50 +21,121 @@ cargo flamegraph --root --bench prep -- triple_generation/n=5_t=1_batch=1000
 ```
 
 
-## Building Docker image
-
-Building **distributed-decryption** Docker image requires some additional setup, because in latest version of the project there is a dependency to a private Github project. This will require to have the correct **SSH** credentials configured either locally or remotely in the case we are running this on CI/CD phase.
-
-### Local Building
-
-In order to build docker image locally you should have `ssh-agent` running and with your ssh private key added to the authentication agent.
-
-1. Run `ssh-agent`
-
-```bash
-# if you're using C-shell commands
-> eval $(ssh-agent -c)
-# if you're using Bourne shell commands
-> eval $(ssh-agent -s)
-```
-
-2. Add your key to the authentication agent. Lets supposed that your private key is under `~/.ssh/my_key`
-
-```bash
-> ssh-add ~/.ssh/my_key
-> ssh-add -l
-```
-
-> NOTE: You can add this lines of codes to your shell interpreter like zsh, bash, fish, etc. in order to not need to run these steps on each new session.
-
-3. Now you are ready to build docker image with the following command:
-
-```bash
-> docker build --ssh default -t ddec .
-```
-
-### CI/CD Building
+## CI/CD Building
 
 Check documentation [here](./doc/ci.md)
 
-## Simulating Docker Network Setting
+
+## Benchmarks with real network
+Benchmarking with a real network requires to set up said network inside a docker compose orchestrator. This prevents integrating this kind of benchmarks with `Criterion` inside `cargo bench` running command.
+
+In order to bypass this limitation we have automated this `gRPC` benchmarks using `cargo-make` utility. 
+
+### Prerequisites for running benchmarks
+
+- Install [cargo-make](https://github.com/sagiegurari/cargo-make?tab=readme-ov-file#installation).
+
+### Generate experiment
+To create configuration files, we use a binary located in `src/bin/benches/gen-experiment.rs`.
+This binary dynamically creates a new experiment setup on the fly. An experiment is composed of a `.yml` file that describes the parties (and telemetry) configuration, and a `.toml` configuration file for the choreographer (`mobygo` or `stairwayctl`) with the network topology of the parties. See `cargo run --bin gen-experiment --features="templating" -- --help`.
+
+### Parties
+The MPC parties are run by executing the mobygo binary from `src/bin/moby/mobygo.rs`.
+We use the same mobygo source file for both `BGV` and `TFHE`, the difference is set via feature flags:
+- For TFHE, compile mobygo with either no feature or **--features testing** (to allow for centralised key generation)
+- For BGV, compile mobygo with **--features experimental,testing**.
+
+We thus have two possible docker images which we can be build, one for `TFHE` and one for `BGV`.
+
+TFHE image can be built via
+```sh
+cargo make tfhe-docker-image 
+```
+
+BGV image can be built via
+```sh
+cargo make bgv-docker-image 
+```
+
+### Choreographer
+To interact with the MPC parties, we use a choreographer called `moby` from `src/bin/moby/moby.rs` for `TFHE`, and `stairwayctl` from `src/experimental/bin/stairwayctl.rs` for `BGV`.
+
+In both cases, the choreographer allows to :
+- Initiate the PRSSs
+- Create preprocessing (for Distributed Key Generation in both cases and Distributed Decryption for `TFHE`)
+- Initiate Distributed Key Generation 
+- Initiate Distributed Decryption
+- Initiate CRS Ceremony (for `TFHE` only)
+- Retrieve results for the above
+- Check status of a task
+
+For a list of the available commands, run: 
+```sh
+./moby --help 
+```
+
+And for information on a specific command, run:
+```sh
+./moby command --help 
+```
+
+(Works also with `stairwayctl`)
+
+### Pre-defined commands 
+With `cargo make` we have pre-defined commands to run experiments for both `TFHE` and `BGV`. 
+
+NOTE: Commands prefixed with `tfhe-` can be replaced by `bgv-`to execute experiment for `BGV` instead of `TFHE`
+
+First generate the certificates, say for 5 MPC parties:
+```sh
+cargo make --env NUM_PARTIES=5 gen-test-certs 
+```
+
+Then create the `.yml` and `.toml` files for the experiment:
+```sh
+cargo make --env NUM_PARTIES=5 --env THRESHOLD=1 --env EXPERIMENT_NAME=my_experiment tfhe-gen-experiment 
+```
+
+Finally, run the parties:
+```sh
+cargo make --env EXPERIMENT_NAME=my_experiment start-parties 
+```
+
+It is now possible to interact with the cluster of parties with the `mobygo` choreographer by using the generated `.toml` file:
+```sh
+./mobygo -c temp/my_experiment.toml my-command 
+```
+
+Once done, we can shut down the parties with:
+```sh
+cargo make --env EXPERIMENT_NAME=my_experiment stop-parties 
+```
+
+
+We also provide one-liner benches, which can be run directly after the certificate generations.
+
+Either with a *fake* centralised key generation
+```sh
+cargo make tfhe-bench-fake-dkg 
+```
+Or with a real key generation (which takes much longer)
+```sh
+cargo make tfhe-bench-real-dkg 
+```
+
+These benchmarks run the scripts located in the `test_scripts` folder.
+
+**NOTE**: The docker container also runs telemetry tools, therefore when running experiments, all telemetry data are exported to [jaeger](http://localhost:16686) as well as locally exported in an opentelemetry json file in `temp/telemetry`.
+
+
+### Simulating Docker Network Setting
 
 To simulate a certain network connection on all containers run the following (replace `wan.sh` with the desired network below):
 ```sh
 # configure network on all running containers
 ./operations/docker/scripts/runinallcontainers.sh ./operations/docker/scripts/wan.sh
 # verify that ping latency has changed as desired
-docker exec distributed-decryption-p1-1 ping distributed-decryption-p2-1
+docker exec tfhe-core-p1-1 ping tfhe-core--p2-1
 ```
 
 The following networks are simulated using `tc`:
@@ -81,104 +149,7 @@ The following networks are simulated using `tc`:
 
 Note that ping RTT will be 2x the latency from the table, when the network config is set on all nodes.
 
-## Networking (gRPC) Benchmarks
-gRPC Benchmarking requires to setup a whole network inside a docker compose orchestrator. This disable the possibility to integrate this kind of benchmarks with `Criterion` inside `cargo bench` running command.
-
-In order to bypass this limitation we have automate this `gRPC` benchmarks using `cargo-make` utility. This implies the following new components to easily spawn different benchmarks configurations:
-
-- `src/bin/benches/gen-experiment.rs`: This new binary allows us to dynamically create a new experiment setup on the fly. A new experiment will contain `docker-compose.yml` file based on some command line parameters with the setup of the network topology (parties) plus the configuration file `conf.toml` for `mobygo` command in order to know how to execute that experiment. See `cargo run --bin gen-experiment --features="templating" -- --help`.
-- `cargo-make`: With cargo make we are orchestrating all the command line chain in order to
-  1. Run `cargo run --bin gen-experiment ...` to generate the desired experiment with the desired amount of parties
-  2. Start docker compose generated in step 1.
-  3. Run `cargo run --bin mobygo ... ` choreographer in order to **init, decrypt and gather results** based on the desired configuration.
-  4. Finally stop docker compose started in step 2.
-
-### Prerequisites for running benchmarks
-
-- Install [cargo-make](https://github.com/sagiegurari/cargo-make?tab=readme-ov-file#installation).
-
-### Configuration files
-Depending on the experiment, command line parameters injected to choreographer can be set using configuration file. Inside `Makefile.toml` file, it can be seen how those experiments are generated.
-
-```toml
-[tasks.grpc-bench-4-1-10-prss]
-env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "PROTOCOL" = "1", EXPERIMENT_NAME = "bench-p4_t1_msg10_prss" }
-run_task = { name = ["grpc-bench"] }
-description = "4 parties, 1 threshold, 10 messages, PRSS"
-```
-
-Therefore if you want to create a new experiment just copy and paste this task, rename it and change the environment variables values to the desired experiment setup.
-
-
-### Run all benchmarks
-
-```bash
-> cargo make run-grpc-benchmarks
-```
-
-### New configuration
-If you want to write a new configuration to test a specific parameter set, just do the following:
-
-1. Create a new task inside `Makefile.toml`. You can be based on any of the existing experiment
-
-```toml
-[tasks.my-task-name]
-env = { "NUM_PARTIES" = "4", "THRESHOLD" = "1", "NUM_MESSAGES" = "10", "PROTOCOL" = "1", EXPERIMENT_NAME = "my-experiment-name" }
-run_task = { name = ["grpc-bench"] }
-description = "my experiment description"
-```
-
-2. Now just run the experiment.
-
-```bash
-> cargo make my-task-name
-```
-
-> NOTE: Perhaps you need to rebuild the docker image used by the experiment. You can do it just running `cargo make docker-image`
-
-
-## Running Locally on Cluster Mode (Cargo Make)
-
-There are two possible scenarios in which we want to run a cluster in local mode:
-
-1. Run a Cluster in local mode just to be accessible from `curl` commands or other programs
-2. Run a Cluster in local mode and after that execute a test using `mobygo` as a client.
-
-Lets analyze how to run using utilities on `Makefile.toml` file in both scenarios.
-
-### Run Local Cluster only
-
-1. First you need to build the docker image with the current version of the code. If you have done that already, you can skip this step.
-
-```bash
-> cargo make docker-image
-```
-
-2. Run a Local Cluster in foreground mode. You can kill this with `Ctrl-C`
-
-```bash
-> cargo make --env NUM_PARTIES=5 run-local-cluster
-```
-
-You can change the `NUM_PARTIES` variables to run more or less parties.
-
-
-### Run Local Cluster and Test with `mobygo`
-
-This is the same as before in step 1 and 2 but afterwards you should run the following in another terminal.
-
-```bash
-> cargo make --env NUM_PARTIES=4 --env THRESHOLD=1 --env PROTOCOL=1 --env NUM_MESSAGES=10 local-choreo-XXXX
-```
-
-where **XXX** could be `init | decrypt | results` depending on the command you want. [See here](./Makefile.toml?plain=1#L46)
-
-**Considerations**
-
-$$\texttt{local-choreo-XXXX(NUM\\_PARTIES)} >= \texttt{run-local-cluster(NUM\\_PARTIES)}$$
-
-$$\texttt{NUM\\_PARTIES} >> \texttt{THRESHOLD}$$
-
+# IS THE SECTION BELOW DEPRECATED ?
 ## AWS Benchmarks
 
 Here is how to reproduce the benchmarks for the distributed decryption paper.
@@ -207,40 +178,3 @@ Change directory to the desired setting, e.g.: `cd distributed-decryption/experi
 10. Assume you have collected benchmark results in a file called `results.txt`, you can copy it from docker to the AWS machine using:
 `sudo docker cp f2667e5f5665:usr/src/ddec/results.txt .`
 Otherwise the results will be gone when you stop the containers.
-
-## Setup TLS for local testing
-The commands below assume that [`cargo make`](https://github.com/sagiegurari/cargo-make)
-and docker is installed, and the working directory is `core/threshold`.
-
-1. Generate your certificates, e.g., with 4 parties
-```
-cargo make --env NUM_PARTIES=4 gen-test-certs
-```
-
-2. Generate the cluster configuration, this command will output `temp/local-cluster.yml`, please check the certificate paths are configured correctly.
-```
-cargo make --env NUM_PARTIES=4 gen-local-cluster
-```
-
-3. Generate the experiment configuration (output `temp/local-cluster.toml`). The core-to-mobygo communication does not use TLS by default.
-```
-cargo make --env NUM_PARTIES=4 --env THRESHOLD=1 --env PROTOCOL=1 --env NUM_MESSAGES=10 gen-local-choreo
-```
-
-3. Build and start the cluster
-```
-cargo make docker-image
-cargo make --env NUM_PARTIES=4 run-local-cluster
-```
-
-4. Run some commands to test
-```
-cargo make --env EXPERIMENT_NAME=local-cluster choreo-start-crs
-# wait some time
-cargo make --env EXPERIMENT_NAME=local-cluster choreo-retrieve-crs
-```
-
-5. Stop the parties
-```
-cargo make --env EXPERIMENT_NAME=local-cluster stop-parties
-```

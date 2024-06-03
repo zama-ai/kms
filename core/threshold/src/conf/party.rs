@@ -141,6 +141,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[serial_test::parallel]
     fn test_party_conf_with_real_file() {
         let party_conf: PartyConf = Settings::builder()
             .path("src/tests/config/ddec_test")
@@ -187,7 +188,9 @@ mod tests {
             ]
         );
     }
+
     #[test]
+    #[serial_test::parallel]
     fn test_party_conf_no_peers() {
         let party_conf: PartyConf = Settings::builder()
             .path("src/tests/config/ddec_no_peers")
@@ -211,6 +214,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::parallel]
     fn test_party_conf_error_conf() {
         let r = Settings::builder()
             .path("src/tests/config/error_conf")
@@ -219,26 +223,39 @@ mod tests {
         assert!(r.is_err());
     }
 
+    //Can't run this test in parallel with others as env variable take precedence over config files
     #[test]
+    #[serial_test::serial]
     fn test_party_conf_with_env() {
         use std::env;
-        env::set_var("DDEC_CERTPATHS_CERT", "/path/to/cert");
-        env::set_var("DDEC_CERTPATHS_KEY", "/path/to/key");
-        env::set_var("DDEC_CERTPATHS_CALIST", "/path/one,/path/two");
-        env::set_var("DDEC_CHOREO_USE_TLS", "true");
-        env::set_var("DDEC_TRACING_SERVICENAME", "moby-p3");
-        env::set_var("DDEC_TRACING_ENDPOINT", "moby-p3-endpoint");
-        let party_conf: PartyConf = Settings::builder()
-            .path("src/tests/config/ddec_test")
-            .build()
-            .init_conf()
-            .unwrap();
+        env::set_var("DDEC-PROTOCOL-HOST-ADDRESS", "p3");
+        env::set_var("DDEC-PROTOCOL-HOST-PORT", "50000");
+        env::set_var("DDEC-PROTOCOL-HOST-ID", "3");
+        env::set_var("DDEC-PROTOCOL-HOST-CHOREOPORT", "60000");
+        env::set_var("DDEC-CERTPATHS-CERT", "/path/to/cert");
+        env::set_var("DDEC-CERTPATHS-KEY", "/path/to/key");
+        env::set_var("DDEC-CERTPATHS-CALIST", "/path/one,/path/two");
+        env::set_var("DDEC-CHOREO_USE_TLS", "true");
+        env::set_var("DDEC-TRACING-SERVICE_NAME", "moby-p3");
+        env::set_var("DDEC-TRACING-ENDPOINT", "moby-p3-endpoint");
+        let party_conf: PartyConf = Settings::builder().build().init_conf().unwrap();
 
         let bundle = party_conf.certpaths.unwrap();
         assert_eq!(bundle.cert, "/path/to/cert");
         assert_eq!(bundle.key, "/path/to/key");
         assert_eq!(bundle.calist, "/path/one,/path/two");
         assert!(party_conf.choreo_use_tls);
-        assert_eq!(party_conf.tracing.unwrap().servicename, "moby-p3");
+        assert_eq!(party_conf.tracing.unwrap().service_name, "moby-p3");
+
+        env::remove_var("DDEC-PROTOCOL-HOST-ADDRESS");
+        env::remove_var("DDEC-PROTOCOL-HOST-PORT");
+        env::remove_var("DDEC-PROTOCOL-HOST-ID");
+        env::remove_var("DDEC-PROTOCOL-HOST-CHOREOPORT");
+        env::remove_var("DDEC-CERTPATHS-CERT");
+        env::remove_var("DDEC-CERTPATHS-KEY");
+        env::remove_var("DDEC-CERTPATHS-CALIST");
+        env::remove_var("DDEC-CHOREO_USE_TLS");
+        env::remove_var("DDEC-TRACING-SERVICE_NAME");
+        env::remove_var("DDEC-TRACING-ENDPOINT");
     }
 }

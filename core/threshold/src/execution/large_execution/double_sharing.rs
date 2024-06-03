@@ -86,8 +86,7 @@ impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, S: LocalDoubleShare> 
         Ok(())
     }
 
-    //Note, this may be called too often, might need to put telemetry where its used in a batched way
-    #[instrument(name="DoubleSharing.Next",skip(self,session),fields(session_id = ?session.session_id(),own_identity=?session.own_identity()))]
+    //NOTE: This is instrumented by the caller function to use the same span for all calls
     async fn next<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         &mut self,
         session: &mut L,

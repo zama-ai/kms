@@ -1,22 +1,21 @@
 use crate::choreography::grpc::gen::{
-    DecryptionRequest, KeygenRequest, PubkeyRequest, RetrieveResultsRequest,
+    PreprocKeyGenRequest, PrssInitRequest, ThresholdDecryptRequest, ThresholdDecryptResultRequest,
+    ThresholdKeyGenRequest, ThresholdKeyGenResultRequest,
 };
-use crate::execution::constants::INPUT_PARTY_ID;
 use crate::execution::runtime::party::Role;
-use crate::experimental::bgv::basics::PublicBgvKeySet;
-use crate::experimental::choreography::grpc::ComputationOutputs;
-use crate::{
-    choreography::choreographer::ChoreoRuntime,
-    execution::runtime::session::DecryptionMode,
-    experimental::{
-        algebra::{levels::LevelEll, ntt::N65536},
-        bgv::basics::BGVCiphertext,
-    },
-    session_id::SessionId,
-};
+use crate::experimental::algebra::levels::{LevelEll, LevelKsw};
+use crate::experimental::algebra::ntt::N65536;
+use crate::experimental::bgv::basics::{BGVCiphertext, PublicKey};
+use crate::{choreography::choreographer::ChoreoRuntime, session_id::SessionId};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::task::JoinSet;
+use tracing::{instrument, Instrument};
+
+use super::requests::{
+    PreprocKeyGenParams, PrssInitParams, SupportedRing, ThresholdDecryptParams,
+    ThresholdKeyGenParams, ThresholdKeyGenResultParams,
+};
 
 #[derive(Debug)]
 pub struct GrpcOutputs {
@@ -25,127 +24,232 @@ pub struct GrpcOutputs {
 }
 
 impl ChoreoRuntime {
-    pub async fn local_bgv_keygen(
+    #[instrument(name = "PRSS-INIT Request (BGV)", skip(self, session_id), fields(sid = ?session_id))]
+    pub async fn bgv_inititate_prss_init(
         &self,
+        session_id: SessionId,
+        ring: SupportedRing,
         threshold: u32,
-    ) -> Result<PublicBgvKeySet, Box<dyn std::error::Error>> {
-        let epoch_id = bincode::serialize(&SessionId(0))?;
-        tracing::debug!("role assignemnts: {:?}", self.role_assignments);
-        let role_assignment = bincode::serialize(&self.role_assignments)?;
-        let params = bincode::serialize(&None::<u8>)?;
-
-        for channel in self.channels.values() {
-            let mut client = self.new_client(channel.clone());
-            let request = KeygenRequest {
-                epoch_id: epoch_id.clone(),
-                role_assignment: role_assignment.clone(),
-                threshold,
-                params: params.clone(),
-            };
-            tracing::debug!("launching BGV keygen to {:?}", channel);
-            let _ = client.keygen(request).await?;
-        }
-        for (role, channel) in self.channels.iter() {
-            if role.one_based() == INPUT_PARTY_ID {
-                let mut client = self.new_client(channel.clone());
-                let request = PubkeyRequest { epoch_id };
-                tracing::debug!("launching pubkey request");
-                let response = client.retrieve_pubkey(request).await?;
-                let pk = bincode::deserialize::<PublicBgvKeySet>(&response.get_ref().pubkey)?;
-                return Ok(pk);
-            }
-        }
-
-        Err("No Public Key generated!".into())
-    }
-
-    pub async fn experimental_threshold_decrypt(
-        &self,
-        mode: &DecryptionMode,
-        threshold: u32,
-        ct: &BGVCiphertext<LevelEll, N65536>,
-    ) -> anyhow::Result<SessionId> {
-        let mode_s = bincode::serialize(mode)?;
-        let role_assignment = bincode::serialize(&self.role_assignments)?;
-        let ciphertext = bincode::serialize(ct)?;
-        self.spawn_bgv_threshold_decrypt(&mode_s, &role_assignment, threshold, &ciphertext)
-            .await?;
-        SessionId::from_bgv_ct(ct)
-    }
-
-    async fn spawn_bgv_threshold_decrypt(
-        &self,
-        mode: &[u8],
-        role_assignment: &[u8],
-        threshold: u32,
-        ciphertext: &[u8],
     ) -> anyhow::Result<()> {
+        let role_assignment = bincode::serialize(&self.role_assignments)?;
+
+        let prss_params = bincode::serialize(&PrssInitParams { session_id, ring })?;
+
         let mut join_set = JoinSet::new();
         self.channels.values().for_each(|channel| {
             let mut client = self.new_client(channel.clone());
 
-            let request = DecryptionRequest {
-                mode: mode.to_vec(),
+            let request = PrssInitRequest {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
-                ciphertext: ciphertext.to_vec(),
+                params: prss_params.to_vec(),
             };
 
-            tracing::debug!("launching the decryption with proto to {:?}", channel);
-            join_set.spawn(async move { client.threshold_decrypt(request).await });
+            join_set.spawn(
+                async move { client.prss_init(request).await }.instrument(tracing::Span::current()),
+            );
         });
         while let Some(response) = join_set.join_next().await {
             response??;
         }
+
         Ok(())
     }
 
-    pub async fn experimental_retrieve_results(
+    #[instrument(name = "DKG-Preproc Request (BGV)", skip(self, session_id), fields(sid = ?session_id))]
+    pub async fn bgv_initiate_preproc_keygen(
         &self,
-        session_id: &SessionId,
-        session_range: u32,
-    ) -> Result<GrpcOutputs, Box<dyn std::error::Error>> {
-        let session_id = bincode::serialize(&session_id)?;
+        session_id: SessionId,
+        threshold: u32,
+    ) -> anyhow::Result<SessionId> {
+        let role_assignment = bincode::serialize(&self.role_assignments)?;
+        let preproc_kg_params = bincode::serialize(&PreprocKeyGenParams { session_id })?;
 
-        let mut combined_outputs = HashMap::new();
-        let mut combined_stats = HashMap::new();
-
-        for (role, channel) in self.channels.iter() {
-            tracing::info!("Init retrieving results from {:?}", role);
+        let mut join_set = JoinSet::new();
+        self.channels.values().for_each(|channel| {
             let mut client = self.new_client(channel.clone());
-
-            let request = RetrieveResultsRequest {
-                session_id: session_id.clone(),
-                session_range,
+            let request = PreprocKeyGenRequest {
+                role_assignment: role_assignment.to_vec(),
+                threshold,
+                params: preproc_kg_params.to_vec(),
             };
-            let resp = client.retrieve_results(request).await?;
 
-            let computation_output =
-                bincode::deserialize::<ComputationOutputs>(&resp.get_ref().values)?;
-            // only party 1 reconstructs at them moment, so ignore other outputs (they would override party 1 outputs)
-            if role.one_based() == INPUT_PARTY_ID {
-                combined_outputs.extend(computation_output.outputs);
-            }
+            join_set.spawn(
+                async move { client.preproc_key_gen(request).await }
+                    .instrument(tracing::Span::current()),
+            );
+        });
 
-            if let Some(time) = computation_output.elapsed_time {
-                combined_stats
-                    .entry(*role)
-                    .or_insert_with(Vec::new)
-                    .push(time);
-            }
-            tracing::info!("Retrieved results from {:?}", role);
+        let mut responses: Vec<SessionId> = Vec::new();
+        while let Some(response) = join_set.join_next().await {
+            responses.push(bincode::deserialize(&(response??.into_inner().request_id)).unwrap());
         }
 
-        if combined_stats.is_empty() {
-            Ok(GrpcOutputs {
-                outputs: combined_outputs,
-                elapsed_times: None,
-            })
-        } else {
-            Ok(GrpcOutputs {
-                outputs: combined_outputs,
-                elapsed_times: Some(combined_stats),
-            })
+        let ref_response = responses.first().unwrap();
+        for response in responses.iter() {
+            assert_eq!(response, ref_response);
         }
+
+        Ok(*ref_response)
+    }
+
+    #[instrument(name = "DKG Request (BGV)", skip(self, session_id), fields(sid = ?session_id, preproc_sid = ?session_id_preproc))]
+    pub async fn bgv_initiate_threshold_keygen(
+        &self,
+        session_id: SessionId,
+        session_id_preproc: Option<SessionId>,
+        threshold: u32,
+    ) -> anyhow::Result<SessionId> {
+        let role_assignment = bincode::serialize(&self.role_assignments)?;
+        let threshold_keygen_params = bincode::serialize(&ThresholdKeyGenParams {
+            session_id,
+            session_id_preproc,
+        })?;
+
+        let mut join_set = JoinSet::new();
+        self.channels.values().for_each(|channel| {
+            let mut client = self.new_client(channel.clone());
+            let request = ThresholdKeyGenRequest {
+                role_assignment: role_assignment.to_vec(),
+                threshold,
+                params: threshold_keygen_params.to_vec(),
+            };
+
+            join_set.spawn(
+                async move { client.threshold_key_gen(request).await }
+                    .instrument(tracing::Span::current()),
+            );
+        });
+
+        let mut responses: Vec<SessionId> = Vec::new();
+        while let Some(response) = join_set.join_next().await {
+            responses.push(bincode::deserialize(&(response??.into_inner().request_id)).unwrap());
+        }
+
+        let ref_response = responses.first().unwrap();
+        for response in responses.iter() {
+            assert_eq!(response, ref_response);
+        }
+
+        Ok(*ref_response)
+    }
+
+    ///NOTE: If dkg_params.is_some(), we will actually generate a new set of keys and stored it under session_id,
+    ///otherwise we try and retrieve existing keys
+    #[instrument(name = "DKG-Result Request (BGV)", skip(self, session_id), fields(sid = ?session_id))]
+    pub async fn bgv_initiate_threshold_keygen_result(
+        &self,
+        session_id: SessionId,
+        gen_params: Option<bool>,
+    ) -> anyhow::Result<PublicKey<LevelEll, LevelKsw, N65536>> {
+        let role_assignment = bincode::serialize(&self.role_assignments)?;
+
+        let threshold_keygen_result_params = bincode::serialize(&ThresholdKeyGenResultParams {
+            session_id,
+            gen_params: gen_params.map_or_else(|| false, |v| v),
+        })?;
+
+        let mut join_set = JoinSet::new();
+        self.channels.values().for_each(|channel| {
+            let mut client = self.new_client(channel.clone());
+            let request = ThresholdKeyGenResultRequest {
+                role_assignment: role_assignment.to_vec(),
+                params: threshold_keygen_result_params.to_vec(),
+            };
+            join_set.spawn(
+                async move { client.threshold_key_gen_result(request).await }
+                    .instrument(tracing::Span::current()),
+            );
+        });
+
+        let mut responses = Vec::new();
+        while let Some(response) = join_set.join_next().await {
+            let response = response??.into_inner();
+            responses.push(response.pub_keyset);
+        }
+
+        //NOTE: Cant really assert here as keys dont implement eq trait, and cant assert eq on serialized data
+        //let ref_response = responses.first().unwrap();
+        //for response in responses.iter() {
+        //    assert_eq!(response, ref_response);
+        //}
+        let pub_key = responses.pop().unwrap();
+        let pub_key = bincode::deserialize(&pub_key)?;
+        Ok(pub_key)
+    }
+
+    #[instrument(name = "DDec Request (BGV)", skip(self, session_id, ctxts), fields(num_ctxts = ?ctxts.len(), sid= ?session_id))]
+    pub async fn bgv_initiate_threshold_decrypt(
+        &self,
+        session_id: SessionId,
+        key_sid: SessionId,
+        ctxts: Vec<BGVCiphertext<LevelEll, N65536>>,
+        threshold: u32,
+    ) -> anyhow::Result<SessionId> {
+        let role_assignment = bincode::serialize(&self.role_assignments)?;
+        let threshold_decrypt_params = bincode::serialize(&ThresholdDecryptParams {
+            session_id,
+            key_sid,
+            ctxts,
+        })?;
+
+        let mut join_set = JoinSet::new();
+        self.channels.values().for_each(|channel| {
+            let mut client = self.new_client(channel.clone());
+            let request = ThresholdDecryptRequest {
+                role_assignment: role_assignment.to_vec(),
+                threshold,
+                params: threshold_decrypt_params.to_vec(),
+            };
+
+            join_set.spawn(
+                async move { client.threshold_decrypt(request).await }
+                    .instrument(tracing::Span::current()),
+            );
+        });
+
+        let mut responses: Vec<SessionId> = Vec::new();
+        while let Some(response) = join_set.join_next().await {
+            responses.push(bincode::deserialize(&(response??.into_inner().request_id)).unwrap());
+        }
+
+        let ref_response = responses.first().unwrap();
+        for response in responses.iter() {
+            assert_eq!(ref_response, response)
+        }
+
+        Ok(*ref_response)
+    }
+
+    #[instrument(name = "DDec-Result Request (BGV)", skip(self, session_id), fields(sid= ?session_id))]
+    pub async fn bgv_initiate_threshold_decrypt_result(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<Vec<Vec<u32>>> {
+        let mut join_set = JoinSet::new();
+        let serialized_sid = bincode::serialize(&session_id)?;
+        self.channels.values().for_each(|channel| {
+            let mut client = self.new_client(channel.clone());
+            let request = ThresholdDecryptResultRequest {
+                request_id: serialized_sid.to_vec(),
+            };
+
+            join_set.spawn(
+                async move { client.threshold_decrypt_result(request).await }
+                    .instrument(tracing::Span::current()),
+            );
+        });
+
+        let mut responses: Vec<Vec<Vec<u32>>> = Vec::new();
+        while let Some(response) = join_set.join_next().await {
+            responses.push(bincode::deserialize(&(response??.into_inner().plaintext))?);
+        }
+
+        let ref_response = responses.first().unwrap();
+        for response in responses.iter() {
+            assert_eq!(ref_response, response)
+        }
+
+        Ok(ref_response.clone())
     }
 }
