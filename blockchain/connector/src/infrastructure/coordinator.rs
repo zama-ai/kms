@@ -111,10 +111,10 @@ impl KmsCoordinator {
             .collect::<Result<Vec<Endpoint>, _>>()
             .map_err(|e| anyhow::anyhow!("Error connecting to coordinator {:?}", e))?;
 
-        // TODO should we have a configurable timeout?
-        let endpoints = endpoints
-            .into_iter()
-            .map(|e| e.timeout(Duration::from_secs(60)).clone());
+        let endpoints = endpoints.into_iter().map(|e| {
+            e.timeout(Duration::from_secs(config.timeout_config.channel_timeout))
+                .clone()
+        });
         let channel = Channel::balance_list(endpoints);
         tracing::info!(
             "Connecting to coordinator server {:?}",
@@ -456,15 +456,23 @@ impl KmsEventHandler for KeyGenPreprocVal {
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        _config_contract: Option<KmsCoreConf>,
+        config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
+        let param_choice_str = config_contract
+            .ok_or(anyhow!("config contract missing"))?
+            .param_choice_string();
+        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or(anyhow!(
+            "invalid parameter choice string in prep: {}",
+            param_choice_str
+        ))?;
+
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
 
         let req_id: RequestId = self.operation_val.tx_id.to_hex().try_into()?;
         let req = KeyGenPreprocRequest {
             config: Some(Config {}),
-            params: ParamChoice::Test.into(), // TODO load from blockchain
+            params: param_choice.into(),
             request_id: Some(req_id.clone()),
         };
 
@@ -535,8 +543,16 @@ impl KmsEventHandler for KeyGenVal {
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        _config_contract: Option<KmsCoreConf>,
+        config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
+        let param_choice_str = config_contract
+            .ok_or(anyhow!("config contract missing"))?
+            .param_choice_string();
+        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or(anyhow!(
+            "invalid parameter choice string in keygen: {}",
+            param_choice_str
+        ))?;
+
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
 
@@ -544,8 +560,7 @@ impl KmsEventHandler for KeyGenVal {
         let preproc_id = self.keygen.preproc_id().to_hex().try_into()?;
         let req = KeyGenRequest {
             config: Some(Config {}),
-            // TODO load params from blockchain, timeout needs to be adjusted for this
-            params: ParamChoice::Test.into(),
+            params: param_choice.into(),
             preproc_id: Some(preproc_id),
             request_id: Some(req_id.clone()),
         };
@@ -616,16 +631,23 @@ impl KmsEventHandler for CrsGenVal {
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
-        _config_contract: Option<KmsCoreConf>,
+        config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
+        let param_choice_str = config_contract
+            .ok_or(anyhow!("config contract missing"))?
+            .param_choice_string();
+        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or(anyhow!(
+            "invalid parameter choice string in crsgen: {}",
+            param_choice_str
+        ))?;
+
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
 
         let req_id: RequestId = self.operation_val.tx_id.to_hex().try_into()?;
         let req = CrsGenRequest {
             config: Some(Config {}),
-            // TODO load params from blockchain, timeout needs to be adjusted for this
-            params: ParamChoice::Test.into(),
+            params: param_choice.into(),
             request_id: Some(req_id.clone()),
         };
 
@@ -691,8 +713,8 @@ mod test {
         },
     };
     use events::kms::{
-        CrsGenValues, KeyGenPreprocValues, KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf,
-        KmsEvent, TransactionId,
+        CrsGenValues, FheParameter, KeyGenPreprocValues, KmsCoreConf, KmsCoreParty,
+        KmsCoreThresholdConf, KmsEvent, TransactionId,
     };
     use events::{
         kms::{DecryptValues, KeyGenValues, OperationValue, Proof, ReencryptValues},
@@ -764,7 +786,7 @@ mod test {
             .proof(Proof::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
             .build();
 
-        let conf = KmsCoreConf::Centralized;
+        let conf = KmsCoreConf::Centralized(FheParameter::Test);
 
         let result = client
             .create_kms_operation(event, op.clone())
@@ -926,6 +948,7 @@ mod test {
             let conf = KmsCoreConf::Threshold(KmsCoreThresholdConf {
                 parties: vec![KmsCoreParty::default(); AMOUNT_PARTIES],
                 shares_needed: THRESHOLD + 1,
+                param_choice: FheParameter::Test,
             });
             let op = client.create_kms_operation(event, op.clone()).unwrap();
             tasks.spawn(async move { (i as u32 + 1, op.run_operation(Some(conf)).await) });

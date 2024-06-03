@@ -349,6 +349,7 @@ mod tests {
     use events::kms::CrsGenResponseValues;
     use events::kms::DecryptResponseValues;
     use events::kms::DecryptValues;
+    use events::kms::FheParameter;
     use events::kms::FheType;
     use events::kms::KeyGenPreprocResponseValues;
     use events::kms::KeyGenPreprocValues;
@@ -377,6 +378,7 @@ mod tests {
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
                     shares_needed: 1,
+                    param_choice: FheParameter::Test,
                 }),
             )
             .call(&owner)
@@ -401,6 +403,7 @@ mod tests {
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
                     shares_needed: 1,
+                    param_choice: FheParameter::Test,
                 }),
             )
             .call(&owner)
@@ -409,6 +412,7 @@ mod tests {
         let value = KmsCoreConf::Threshold(KmsCoreThresholdConf {
             parties: vec![],
             shares_needed: 1,
+            param_choice: FheParameter::Test,
         });
 
         contract
@@ -433,6 +437,7 @@ mod tests {
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
                     shares_needed: 1,
+                    param_choice: FheParameter::Test,
                 }),
             )
             .call(&owner)
@@ -505,6 +510,7 @@ mod tests {
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
                     shares_needed: 1,
+                    param_choice: FheParameter::Test,
                 }),
             )
             .call(&owner)
@@ -552,6 +558,7 @@ mod tests {
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
                     shares_needed: 1,
+                    param_choice: FheParameter::Test,
                 }),
             )
             .call(&owner)
@@ -610,6 +617,7 @@ mod tests {
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
                     shares_needed: 1,
+                    param_choice: FheParameter::Test,
                 }),
             )
             .call(&owner)
@@ -677,6 +685,7 @@ mod tests {
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
                     shares_needed: 1,
+                    param_choice: FheParameter::Test,
                 }),
             )
             .call(&owner)
@@ -746,6 +755,7 @@ mod tests {
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
                     shares_needed: 1,
+                    param_choice: FheParameter::Test,
                 }),
             )
             .call(&owner)

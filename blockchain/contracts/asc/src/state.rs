@@ -112,7 +112,7 @@ mod tests {
         BlockInfo, ContractInfo, DepsMut, Empty, Env, MessageInfo, QuerierWrapper, TransactionInfo,
     };
     use cw_multi_test::IntoAddr;
-    use events::kms::{DecryptValues, KmsCoreThresholdConf, TransactionId};
+    use events::kms::{DecryptValues, FheParameter, KmsCoreThresholdConf, TransactionId};
 
     #[test]
     fn test_core_conf() {
@@ -121,6 +121,7 @@ mod tests {
         let core_conf = KmsCoreConf::Threshold(KmsCoreThresholdConf {
             parties: vec![],
             shares_needed: 1,
+            param_choice: FheParameter::Test,
         });
         storage
             .update_core_conf(dyn_store, core_conf.clone())

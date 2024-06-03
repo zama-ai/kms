@@ -12,14 +12,27 @@ use typed_builder::TypedBuilder;
 
 #[cw_serde]
 pub enum KmsCoreConf {
-    Centralized,
+    Centralized(FheParameter),
     Threshold(KmsCoreThresholdConf),
+}
+
+/// This type needs to match the protobuf type
+/// called [ParamChoice].
+#[cw_serde]
+#[derive(Copy, Default, EnumString, Eq, Display, EnumIter)]
+pub enum FheParameter {
+    #[default]
+    #[strum(serialize = "default")]
+    Default,
+    #[strum(serialize = "test")]
+    Test,
 }
 
 #[cw_serde]
 pub struct KmsCoreThresholdConf {
     pub parties: Vec<KmsCoreParty>,
     pub shares_needed: usize,
+    pub param_choice: FheParameter,
 }
 
 impl KmsCoreThresholdConf {
@@ -33,13 +46,28 @@ impl KmsCoreThresholdConf {
 }
 
 impl KmsCoreConf {
+    pub fn param_choice_string(&self) -> String {
+        let param = match self {
+            KmsCoreConf::Centralized(param_choice) => param_choice,
+            KmsCoreConf::Threshold(inner) => &inner.param_choice,
+        };
+        // Our string representation is defined by the serialized json,
+        // but the json encoding surrounds the string with double quotes,
+        // so we need to extract the inner string so this result can be
+        // processed by other functions, e.g., turned into a [ParamChoice].
+        serde_json::json!(param)
+            .to_string()
+            .trim_matches('\"')
+            .to_string()
+    }
+
     /// The number of shares (or responses in general)
     /// that are needed to process the result from KMS core.
     ///
     /// In the centralized setting, [shares_needed] is always 1.
     pub fn shares_needed(&self) -> usize {
         match self {
-            KmsCoreConf::Centralized => 1,
+            KmsCoreConf::Centralized(_) => 1,
             KmsCoreConf::Threshold(x) => x.shares_needed,
         }
     }
@@ -51,7 +79,7 @@ impl KmsCoreConf {
     /// are needed to reconstruct.
     pub fn shares_needed_is_ok(&self) -> bool {
         match self {
-            KmsCoreConf::Centralized => true,
+            KmsCoreConf::Centralized(_) => true,
             KmsCoreConf::Threshold(x) => x.shares_needed_is_ok(),
         }
     }
@@ -117,7 +145,14 @@ impl OperationValue {
     /// Later we may add the role assignment (for the threshold setup)
     /// into the configuration contract and this method needs to be updated.
     pub fn needs_kms_config(&self) -> bool {
-        matches!(self, Self::Decrypt(_) | Self::Reencrypt(_))
+        matches!(
+            self,
+            Self::Decrypt(_)
+                | Self::Reencrypt(_)
+                | Self::CrsGen(_)
+                | Self::KeyGenPreproc(_)
+                | Self::KeyGen(_)
+        )
     }
 }
 
@@ -824,6 +859,7 @@ pub struct TransactionEvent {
 mod tests {
 
     use quickcheck::{Arbitrary, Gen};
+    use strum::IntoEnumIterator;
 
     use super::*;
 
@@ -832,35 +868,41 @@ mod tests {
         let core_conf = KmsCoreThresholdConf {
             parties: vec![],
             shares_needed: 1,
+            param_choice: FheParameter::Test,
         };
         assert_eq!(core_conf.calculate_threshold(), 0);
         let core_conf = KmsCoreThresholdConf {
             parties: vec![KmsCoreParty::default()],
             shares_needed: 1,
+            param_choice: FheParameter::Test,
         };
         assert_eq!(core_conf.calculate_threshold(), 0);
 
         let core_conf = KmsCoreThresholdConf {
             parties: vec![KmsCoreParty::default(); 3],
             shares_needed: 1,
+            param_choice: FheParameter::Test,
         };
         assert_eq!(core_conf.calculate_threshold(), 0);
 
         let core_conf = KmsCoreThresholdConf {
             parties: vec![KmsCoreParty::default(); 4],
             shares_needed: 1,
+            param_choice: FheParameter::Test,
         };
         assert_eq!(core_conf.calculate_threshold(), 1);
 
         let core_conf = KmsCoreThresholdConf {
             parties: vec![KmsCoreParty::default(); 5],
             shares_needed: 1,
+            param_choice: FheParameter::Test,
         };
         assert_eq!(core_conf.calculate_threshold(), 1);
 
         let core_conf = KmsCoreThresholdConf {
             parties: vec![KmsCoreParty::default(); 6],
             shares_needed: 1,
+            param_choice: FheParameter::Test,
         };
 
         assert_eq!(core_conf.calculate_threshold(), 1);
@@ -868,6 +910,7 @@ mod tests {
         let core_conf = KmsCoreThresholdConf {
             parties: vec![KmsCoreParty::default(); 7],
             shares_needed: 1,
+            param_choice: FheParameter::Test,
         };
 
         assert_eq!(core_conf.calculate_threshold(), 2);
@@ -1291,5 +1334,22 @@ mod tests {
             .collect::<Result<Vec<KmsEvent>, _>>();
         let kms_event = kms_event.unwrap();
         kms_event == xs
+    }
+
+    #[test]
+    fn param_choice_serialization() {
+        // make sure these strings match what's in the protobuf [ParamChoice]
+        for choice in FheParameter::iter() {
+            match choice {
+                FheParameter::Default => {
+                    let conf = KmsCoreConf::Centralized(choice);
+                    assert_eq!(conf.param_choice_string(), "default");
+                }
+                FheParameter::Test => {
+                    let conf = KmsCoreConf::Centralized(choice);
+                    assert_eq!(conf.param_choice_string(), "test");
+                }
+            }
+        }
     }
 }
