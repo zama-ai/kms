@@ -163,7 +163,6 @@ impl BlockchainConfig {
 #[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
 pub struct CoordinatorConfig {
     pub addresses: Vec<String>,
-    pub shares_needed: u64,
     pub timeout_config: TimeoutConfig,
 }
 
@@ -236,7 +235,6 @@ mod tests {
         assert_eq!(conf.storage_path, "./temp/events.toml");
 
         // coordinator configs
-        assert_eq!(conf.coordinator.shares_needed, 2);
         assert_eq!(conf.coordinator.addresses, vec!["http://localhost:8080"]);
         assert_eq!(conf.coordinator.timeout_config.channel_timeout, 60);
         assert_eq!(

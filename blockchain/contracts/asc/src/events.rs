@@ -1,7 +1,6 @@
 use crate::contract::KmsContract;
-use crate::state::KmsCoreConf;
 use cosmwasm_std::{Response, StdResult};
-use events::kms::{KmsEvent, OperationValue, Transaction};
+use events::kms::{KmsCoreConf, KmsEvent, OperationValue, Transaction};
 use events::HexVector;
 use sylvia::types::ExecCtx;
 
@@ -63,7 +62,7 @@ trait EmitEventVerifier {
     where
         F: FnMut(&&OperationValue) -> bool,
     {
-        self.reach(tx, core_conf.calculate_threshold() + 1, check_type)
+        self.reach(tx, core_conf.shares_needed(), check_type)
     }
 }
 

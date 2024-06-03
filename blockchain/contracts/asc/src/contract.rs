@@ -1,7 +1,7 @@
 use crate::events::EventEmitStrategy as _;
 use crate::{
     proof::{ContractProofType, DebugProofStrategy, ProofStrategy},
-    state::{KmsContractStorage, KmsCoreConf},
+    state::KmsContractStorage,
 };
 use core::cell::RefCell;
 use cosmwasm_schema::cw_serde;
@@ -9,8 +9,9 @@ use cosmwasm_std::{Response, StdError, StdResult, VerificationError};
 use cw_controllers::Admin;
 use events::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
-    KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues, KmsEvent,
-    OperationValue, ReencryptResponseValues, ReencryptValues, Transaction, TransactionId,
+    KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
+    KmsCoreConf, KmsEvent, OperationValue, ReencryptResponseValues, ReencryptValues, Transaction,
+    TransactionId,
 };
 use events::HexVector;
 use sha3::{Digest, Sha3_256};
@@ -39,7 +40,7 @@ pub struct KmsContract {
 impl Default for KmsContract {
     fn default() -> Self {
         Self {
-            storage: KmsContractStorage::new(),
+            storage: KmsContractStorage::default(),
             proof_strategy: RefCell::new(Box::new(DebugProofStrategy {})),
         }
     }
@@ -344,8 +345,6 @@ mod tests {
     use crate::contract::sv::mt::CodeId;
     use crate::contract::KmsContract;
     use crate::proof::ContractProofType;
-    use crate::state::KmsCoreConf;
-    use crate::state::KmsCoreThresholdConf;
     use cosmwasm_std::Event;
     use events::kms::CrsGenResponseValues;
     use events::kms::DecryptResponseValues;
@@ -355,6 +354,8 @@ mod tests {
     use events::kms::KeyGenPreprocValues;
     use events::kms::KeyGenResponseValues;
     use events::kms::KeyGenValues;
+    use events::kms::KmsCoreConf;
+    use events::kms::KmsCoreThresholdConf;
     use events::kms::KmsEvent;
     use events::kms::KmsOperation;
     use events::kms::OperationValue;
@@ -373,7 +374,10 @@ mod tests {
         let contract = code_id
             .instantiate(
                 ContractProofType::Debug,
-                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![],
+                    shares_needed: 1,
+                }),
             )
             .call(&owner)
             .unwrap();
@@ -394,12 +398,18 @@ mod tests {
         let contract = code_id
             .instantiate(
                 ContractProofType::Debug,
-                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![],
+                    shares_needed: 1,
+                }),
             )
             .call(&owner)
             .unwrap();
 
-        let value = KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] });
+        let value = KmsCoreConf::Threshold(KmsCoreThresholdConf {
+            parties: vec![],
+            shares_needed: 1,
+        });
 
         contract
             .update_kms_core_conf(value.clone())
@@ -420,7 +430,10 @@ mod tests {
         let contract = code_id
             .instantiate(
                 ContractProofType::Debug,
-                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![],
+                    shares_needed: 1,
+                }),
             )
             .call(&owner)
             .unwrap();
@@ -428,7 +441,6 @@ mod tests {
         let decrypt = DecryptValues::builder()
             .key_id(vec![1, 2, 3])
             .version(1)
-            .servers_needed(2)
             .ciphertext(vec![2, 3, 4])
             .randomness(vec![3, 4, 5])
             .fhe_type(FheType::Euint8)
@@ -490,7 +502,10 @@ mod tests {
         let contract = code_id
             .instantiate(
                 ContractProofType::Debug,
-                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![],
+                    shares_needed: 1,
+                }),
             )
             .call(&owner)
             .unwrap();
@@ -534,7 +549,10 @@ mod tests {
         let contract = code_id
             .instantiate(
                 ContractProofType::Debug,
-                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![],
+                    shares_needed: 1,
+                }),
             )
             .call(&owner)
             .unwrap();
@@ -589,7 +607,10 @@ mod tests {
         let contract = code_id
             .instantiate(
                 ContractProofType::Debug,
-                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![],
+                    shares_needed: 1,
+                }),
             )
             .call(&owner)
             .unwrap();
@@ -597,7 +618,6 @@ mod tests {
         let reencrypt = ReencryptValues::builder()
             .signature(vec![1])
             .version(1)
-            .servers_needed(2)
             .verification_key(vec![2])
             .randomness(vec![3])
             .enc_key(vec![4])
@@ -654,7 +674,10 @@ mod tests {
         let contract = code_id
             .instantiate(
                 ContractProofType::Debug,
-                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![],
+                    shares_needed: 1,
+                }),
             )
             .call(&owner)
             .unwrap();
@@ -720,7 +743,10 @@ mod tests {
         let contract = code_id
             .instantiate(
                 ContractProofType::Debug,
-                KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] }),
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![],
+                    shares_needed: 1,
+                }),
             )
             .call(&owner)
             .unwrap();
@@ -728,7 +754,6 @@ mod tests {
         let decrypt = DecryptValues::builder()
             .key_id(vec![1, 2, 3])
             .version(1)
-            .servers_needed(2)
             .ciphertext(vec![2, 3, 4])
             .randomness(vec![3, 4, 5])
             .fhe_type(FheType::Euint8)

@@ -1,5 +1,5 @@
 use events::kms::{
-    DecryptResponseValues, DecryptValues, FheType, KmsEvent, KmsMessage, Transaction,
+    DecryptResponseValues, DecryptValues, FheType, KmsCoreConf, KmsEvent, KmsMessage, Transaction,
 };
 use events::kms::{KmsOperation, OperationValue};
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
@@ -61,6 +61,7 @@ impl Kms for KmsMock {
         &self,
         event: KmsEvent,
         _operation_value: OperationValue,
+        _config: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         self.channel.send(event.clone()).await?;
         Ok(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
@@ -271,7 +272,6 @@ async fn send_decrypt_request(client: &RwLock<Client>) -> String {
     let operation = events::kms::OperationValue::Decrypt(
         DecryptValues::builder()
             .version(CURRENT_FORMAT_VERSION)
-            .servers_needed(2)
             .key_id("kid".as_bytes().to_vec())
             .ciphertext(vec![1, 2, 3, 4, 5])
             .randomness(vec![6, 7, 8, 9, 0])

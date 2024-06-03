@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use events::kms::{
     CrsGenResponseValues, DecryptResponseValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
-    KmsEvent, KmsMessage, OperationValue, Proof, ReencryptResponseValues, TransactionId,
+    KmsCoreConf, KmsEvent, KmsMessage, OperationValue, Proof, ReencryptResponseValues,
+    TransactionId,
 };
 use strum_macros::{Display, EnumString};
 
@@ -100,6 +101,17 @@ impl From<KmsOperationResponse> for KmsMessage {
 
 #[async_trait]
 pub trait Blockchain {
+    /// Execute a smart contract with the result of a KMS operation.
     async fn send_result(&self, result: KmsOperationResponse) -> anyhow::Result<()>;
+
+    /// Make a query (read only) request to the KMS blockchain
+    /// to fetch the operation value that corresponds to a specific event.
     async fn get_operation_value(&self, event: &KmsEvent) -> anyhow::Result<OperationValue>;
+
+    /// Fetch the configuration contract from the KMS blockchain.
+    ///
+    /// Note that this method may be called automatically by the
+    /// [SubscriptionHandler], which is an extra round-trip,
+    /// since some KMS operations needs this information.
+    async fn get_config_contract(&self) -> anyhow::Result<KmsCoreConf>;
 }

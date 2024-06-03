@@ -39,9 +39,14 @@ where
                 e
             })?;
         tracing::info!("Running KMS operation with value: {:?}", operation_value);
+        let config_contract = if operation_value.needs_kms_config() {
+            Some(self.blockchain.get_config_contract().await?)
+        } else {
+            None
+        };
         let result = self
             .kms
-            .run(message.event, operation_value)
+            .run(message.event, operation_value, config_contract)
             .await
             .map_err(|e| {
                 self.observability

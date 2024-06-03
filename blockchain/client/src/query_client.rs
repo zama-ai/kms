@@ -64,6 +64,9 @@ pub enum ContractQuery {
     #[strum(serialize = "get_transaction")]
     #[serde(rename = "get_transaction")]
     GetTransaction(TransactionQuery),
+    #[strum(serialize = "get_kms_core_conf")]
+    #[serde(rename = "get_kms_core_conf")]
+    GetKmsCoreConf {},
 }
 
 #[derive(TypedBuilder, Clone)]
@@ -78,8 +81,10 @@ impl QueryClient {
     }
 
     /// Queries the contract state on the blockchain.
+    ///
     /// # Arguments
     /// * `request` - The query data to be sent to the contract.
+    ///
     /// # Returns
     /// A `Result` containing the response from the contract or an error.
     #[tracing::instrument(skip(self, request))]
@@ -190,4 +195,11 @@ impl QueryClient {
 
         Ok(result)
     }
+}
+
+#[test]
+fn test_get_kms_core_conf_serialization() {
+    let obj = ContractQuery::GetKmsCoreConf {};
+    let ser = serde_json::json!(obj).to_string();
+    assert_eq!(ser, "{\"get_kms_core_conf\":{}}");
 }

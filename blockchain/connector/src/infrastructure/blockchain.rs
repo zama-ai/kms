@@ -2,7 +2,7 @@ use crate::conf::BlockchainConfig;
 use crate::domain::blockchain::{Blockchain, KmsOperationResponse};
 use crate::infrastructure::metrics::{MetricType, Metrics};
 use async_trait::async_trait;
-use events::kms::{KmsEvent, KmsMessage, OperationValue};
+use events::kms::{KmsCoreConf, KmsEvent, KmsMessage, OperationValue};
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
 use kms_blockchain_client::query_client::{
     ContractQuery, OperationQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
@@ -104,5 +104,19 @@ impl Blockchain for KmsBlockchain {
             .first()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("Operation value not found for tx_id: {:?}", event))
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_config_contract(&self) -> anyhow::Result<KmsCoreConf> {
+        let query_client = self.query_client.lock().await;
+        let request = QueryContractRequest::builder()
+            .contract_address(self.config.contract.to_owned())
+            .query(ContractQuery::GetKmsCoreConf {})
+            .build();
+        let result = query_client
+            .query_contract(request)
+            .await
+            .map(|msg| serde_json::from_slice::<KmsCoreConf>(&msg))??;
+        Ok(result)
     }
 }

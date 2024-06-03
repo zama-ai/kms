@@ -323,7 +323,7 @@ pub struct ThresholdKms<
     networking_strategy: NetworkingStrategy,
     abort_handle: AbortHandle,
     // TODO eventually add mode to allow for nlarge as well.
-    prss_setup: Arc<Mutex<Option<PRSSSetup<ResiduePoly128>>>>,
+    prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePoly128>>>>,
     preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
     preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
     num_sessions_preproc: u16,
@@ -431,7 +431,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             role_assignments,
             networking_strategy,
             abort_handle: ddec_handle.abort_handle(),
-            prss_setup: Arc::new(Mutex::new(None)),
+            prss_setup: Arc::new(RwLock::new(None)),
             preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
             preproc_factory: Arc::new(Mutex::new(preproc_factory)),
             num_sessions_preproc,
@@ -449,8 +449,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 
     /// Initializes a threshold KMS server by executing the PRSS setup.
     pub async fn init_prss(&self) -> anyhow::Result<()> {
-        if self.prss_setup.lock().await.is_some() {
-            return Err(anyhow!("PRSS state already exists"));
+        if self.prss_setup.read().await.is_some() {
+            return Err(anyhow_error_and_log("PRSS state already exists"));
         }
 
         let own_identity = self.own_identity()?;
@@ -476,7 +476,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         >(&mut base_session)
         .await?;
 
-        let mut guarded_prss_setup = self.prss_setup.lock().await;
+        let mut guarded_prss_setup = self.prss_setup.write().await;
         *guarded_prss_setup = Some(res);
         Ok(())
     }
@@ -790,7 +790,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             self.role_assignments.clone(),
         )?;
         let prss_setup = tonic_some_or_err(
-            self.prss_setup.lock().await.clone(),
+            self.prss_setup.read().await.clone(),
             "No PRSS setup exists".to_string(),
         )?;
         let prss_state = prss_setup.new_prss_session_state(session_id);
@@ -847,7 +847,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         let bucket_store = Arc::clone(&self.preproc_buckets);
 
         let prss_setup = tonic_some_or_err(
-            (*self.prss_setup.lock().await).clone(),
+            (*self.prss_setup.read().await).clone(),
             "No PRSS setup exists".to_string(),
         )?;
         //NOTE: For now we just discard the handle, we can check status with get_preproc_status

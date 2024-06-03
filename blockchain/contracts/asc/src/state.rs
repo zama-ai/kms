@@ -1,58 +1,25 @@
-use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Response, StdError, StdResult, Storage};
 use cw_storage_plus::{Item, Map};
-use events::kms::{KmsEvent, KmsOperation, OperationValue, Transaction, TransactionId};
-use events::HexVector;
+use events::kms::{
+    KmsCoreConf, KmsEvent, KmsOperation, OperationValue, Transaction, TransactionId,
+};
 use sylvia::types::ExecCtx;
-
-#[cw_serde]
-pub enum KmsCoreConf {
-    Centralized,
-    Threshold(KmsCoreThresholdConf),
-}
-
-#[cw_serde]
-pub struct KmsCoreThresholdConf {
-    pub parties: Vec<KmsCoreParty>,
-}
-
-impl KmsCoreThresholdConf {
-    pub fn calculate_threshold(&self) -> usize {
-        (self.parties.len().saturating_sub(1) as u8 / 3) as usize
-    }
-}
-
-impl KmsCoreConf {
-    pub fn calculate_threshold(&self) -> usize {
-        match self {
-            KmsCoreConf::Centralized => 0,
-            KmsCoreConf::Threshold(conf) => conf.calculate_threshold(),
-        }
-    }
-}
-
-#[cw_serde]
-#[derive(Default)]
-pub struct KmsCoreParty {
-    pub party_id: HexVector,
-    pub public_key: HexVector,
-    pub address: String,
-    pub tls_pub_key: Option<HexVector>,
-}
 
 pub struct KmsContractStorage {
     core_conf: Item<KmsCoreConf>,
     transactions: Map<Vec<u8>, Transaction>,
 }
 
-impl KmsContractStorage {
-    pub fn new() -> Self {
+impl Default for KmsContractStorage {
+    fn default() -> Self {
         Self {
             core_conf: Item::new("core_conf"),
             transactions: Map::new("transactions"),
         }
     }
+}
 
+impl KmsContractStorage {
     pub fn load_core_conf(&self, storage: &dyn Storage) -> StdResult<KmsCoreConf> {
         self.core_conf.load(storage)
     }
@@ -145,56 +112,16 @@ mod tests {
         BlockInfo, ContractInfo, DepsMut, Empty, Env, MessageInfo, QuerierWrapper, TransactionInfo,
     };
     use cw_multi_test::IntoAddr;
-    use events::kms::{DecryptValues, TransactionId};
-
-    #[test]
-    fn test_calculate_threshold_centralized() {
-        let core_conf = KmsCoreConf::Centralized;
-        assert_eq!(core_conf.calculate_threshold(), 0);
-    }
-
-    #[test]
-    fn test_calculate_threshold() {
-        let core_conf = KmsCoreThresholdConf { parties: vec![] };
-        assert_eq!(core_conf.calculate_threshold(), 0);
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![KmsCoreParty::default()],
-        };
-        assert_eq!(core_conf.calculate_threshold(), 0);
-
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![KmsCoreParty::default(); 3],
-        };
-        assert_eq!(core_conf.calculate_threshold(), 0);
-
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![KmsCoreParty::default(); 4],
-        };
-        assert_eq!(core_conf.calculate_threshold(), 1);
-
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![KmsCoreParty::default(); 5],
-        };
-        assert_eq!(core_conf.calculate_threshold(), 1);
-
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![KmsCoreParty::default(); 6],
-        };
-
-        assert_eq!(core_conf.calculate_threshold(), 1);
-
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![KmsCoreParty::default(); 7],
-        };
-
-        assert_eq!(core_conf.calculate_threshold(), 2);
-    }
+    use events::kms::{DecryptValues, KmsCoreThresholdConf, TransactionId};
 
     #[test]
     fn test_core_conf() {
         let dyn_store = &mut MockStorage::new();
-        let storage = KmsContractStorage::new();
-        let core_conf = KmsCoreConf::Threshold(KmsCoreThresholdConf { parties: vec![] });
+        let storage = KmsContractStorage::default();
+        let core_conf = KmsCoreConf::Threshold(KmsCoreThresholdConf {
+            parties: vec![],
+            shares_needed: 1,
+        });
         storage
             .update_core_conf(dyn_store, core_conf.clone())
             .unwrap();
@@ -204,7 +131,7 @@ mod tests {
     #[test]
     fn test_transaction() {
         let dyn_storage = &mut MockStorage::new();
-        let storage = KmsContractStorage::new();
+        let storage = KmsContractStorage::default();
         let mock_queries = MockQuerier::<Empty>::new(&[]);
         let mut ctx = ExecCtx {
             env: Env {

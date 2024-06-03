@@ -11,6 +11,62 @@ use strum_macros::{Display, EnumIs, EnumIter, EnumString};
 use typed_builder::TypedBuilder;
 
 #[cw_serde]
+pub enum KmsCoreConf {
+    Centralized,
+    Threshold(KmsCoreThresholdConf),
+}
+
+#[cw_serde]
+pub struct KmsCoreThresholdConf {
+    pub parties: Vec<KmsCoreParty>,
+    pub shares_needed: usize,
+}
+
+impl KmsCoreThresholdConf {
+    fn calculate_threshold(&self) -> usize {
+        (self.parties.len().saturating_sub(1) as u8 / 3) as usize
+    }
+
+    fn shares_needed_is_ok(&self) -> bool {
+        self.shares_needed > self.calculate_threshold()
+    }
+}
+
+impl KmsCoreConf {
+    /// The number of shares (or responses in general)
+    /// that are needed to process the result from KMS core.
+    ///
+    /// In the centralized setting, [shares_needed] is always 1.
+    pub fn shares_needed(&self) -> usize {
+        match self {
+            KmsCoreConf::Centralized => 1,
+            KmsCoreConf::Threshold(x) => x.shares_needed,
+        }
+    }
+
+    /// Check whether [shares_needed] is configured correctly.
+    ///
+    /// At the moment we're under the optimistic assumption,
+    /// where there are no corruption, so only t+1 shares
+    /// are needed to reconstruct.
+    pub fn shares_needed_is_ok(&self) -> bool {
+        match self {
+            KmsCoreConf::Centralized => true,
+            KmsCoreConf::Threshold(x) => x.shares_needed_is_ok(),
+        }
+    }
+}
+
+#[cw_serde]
+#[derive(Default)]
+pub struct KmsCoreParty {
+    pub party_id: HexVector,
+    pub public_key: HexVector,
+    pub address: String,
+    pub tls_pub_key: Option<HexVector>,
+}
+
+#[cw_serde]
 #[derive(Eq, EnumString, Display, EnumIter, strum_macros::EnumProperty, EnumIs)]
 pub enum OperationValue {
     #[serde(rename = "decrypt")]
@@ -46,11 +102,22 @@ pub enum OperationValue {
 }
 
 impl OperationValue {
-    fn has_not_inner_value(&self) -> bool {
+    fn has_no_inner_value(&self) -> bool {
         matches!(
             self,
             Self::CrsGen(_) | Self::KeyGenPreproc(_) | Self::KeyGenPreprocResponse(_)
         )
+    }
+
+    /// Returns true if this operation needs information
+    /// from the configuration smart contract to operate.
+    ///
+    /// At the moment only decrypt and reencrypt needs
+    /// the `shares_needed` attribute from the configuration contract.
+    /// Later we may add the role assignment (for the threshold setup)
+    /// into the configuration contract and this method needs to be updated.
+    pub fn needs_kms_config(&self) -> bool {
+        matches!(self, Self::Decrypt(_) | Self::Reencrypt(_))
     }
 }
 
@@ -153,7 +220,6 @@ pub enum KmsEventAttributeKey {
 #[derive(Eq, TypedBuilder, Default)]
 pub struct DecryptValues {
     version: u32,
-    servers_needed: u32,
     /// key_id refers to the key that should be used for decryption
     /// created at key generation.
     #[builder(setter(into))]
@@ -168,10 +234,6 @@ pub struct DecryptValues {
 impl DecryptValues {
     pub fn version(&self) -> u32 {
         self.version
-    }
-
-    pub fn servers_needed(&self) -> u32 {
-        self.servers_needed
     }
 
     pub fn key_id(&self) -> &HexVector {
@@ -205,7 +267,6 @@ pub struct ReencryptValues {
 
     // payload
     version: u32,
-    servers_needed: u32,
     #[builder(setter(into))]
     verification_key: HexVector,
     #[builder(setter(into))]
@@ -237,10 +298,6 @@ impl ReencryptValues {
 
     pub fn version(&self) -> u32 {
         self.version
-    }
-
-    pub fn servers_needed(&self) -> u32 {
-        self.servers_needed
     }
 
     pub fn verification_key(&self) -> &HexVector {
@@ -555,7 +612,7 @@ struct InnerKmsMessage<'a> {
     proof: &'a Proof,
     #[serde(skip_serializing_if = "Option::is_none")]
     txn_id: Option<&'a TransactionId>,
-    #[serde(flatten, skip_serializing_if = "OperationValue::has_not_inner_value")]
+    #[serde(flatten, skip_serializing_if = "OperationValue::has_no_inner_value")]
     value: &'a OperationValue,
 }
 
@@ -770,6 +827,52 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn test_calculate_threshold() {
+        let core_conf = KmsCoreThresholdConf {
+            parties: vec![],
+            shares_needed: 1,
+        };
+        assert_eq!(core_conf.calculate_threshold(), 0);
+        let core_conf = KmsCoreThresholdConf {
+            parties: vec![KmsCoreParty::default()],
+            shares_needed: 1,
+        };
+        assert_eq!(core_conf.calculate_threshold(), 0);
+
+        let core_conf = KmsCoreThresholdConf {
+            parties: vec![KmsCoreParty::default(); 3],
+            shares_needed: 1,
+        };
+        assert_eq!(core_conf.calculate_threshold(), 0);
+
+        let core_conf = KmsCoreThresholdConf {
+            parties: vec![KmsCoreParty::default(); 4],
+            shares_needed: 1,
+        };
+        assert_eq!(core_conf.calculate_threshold(), 1);
+
+        let core_conf = KmsCoreThresholdConf {
+            parties: vec![KmsCoreParty::default(); 5],
+            shares_needed: 1,
+        };
+        assert_eq!(core_conf.calculate_threshold(), 1);
+
+        let core_conf = KmsCoreThresholdConf {
+            parties: vec![KmsCoreParty::default(); 6],
+            shares_needed: 1,
+        };
+
+        assert_eq!(core_conf.calculate_threshold(), 1);
+
+        let core_conf = KmsCoreThresholdConf {
+            parties: vec![KmsCoreParty::default(); 7],
+            shares_needed: 1,
+        };
+
+        assert_eq!(core_conf.calculate_threshold(), 2);
+    }
+
     impl Arbitrary for FheType {
         fn arbitrary(g: &mut Gen) -> FheType {
             match u8::arbitrary(g) % 8 {
@@ -804,7 +907,6 @@ mod tests {
         fn arbitrary(g: &mut Gen) -> DecryptValues {
             DecryptValues {
                 version: u32::arbitrary(g),
-                servers_needed: u32::arbitrary(g),
                 key_id: HexVector::arbitrary(g),
                 fhe_type: FheType::arbitrary(g),
                 ciphertext: HexVector::arbitrary(g),
@@ -818,7 +920,6 @@ mod tests {
             ReencryptValues {
                 signature: HexVector::arbitrary(g),
                 version: u32::arbitrary(g),
-                servers_needed: u32::arbitrary(g),
                 verification_key: HexVector::arbitrary(g),
                 randomness: HexVector::arbitrary(g),
                 enc_key: HexVector::arbitrary(g),
@@ -948,7 +1049,6 @@ mod tests {
     fn test_decrypt_event_to_json() {
         let decrypt_values = DecryptValues::builder()
             .version(1)
-            .servers_needed(2)
             .key_id("mykeyid".as_bytes().to_vec())
             .fhe_type(FheType::Ebool)
             .ciphertext(vec![1, 2, 3])
@@ -964,7 +1064,6 @@ mod tests {
             "decrypt": {
                 "decrypt":{
                     "version": 1,
-                    "servers_needed": 2,
                     "key_id": hex::encode("mykeyid".as_bytes()),
                     "fhe_type": "ebool",
                     "ciphertext": hex::encode([1, 2, 3]),
@@ -1007,7 +1106,6 @@ mod tests {
         let reencrypt_values = ReencryptValues::builder()
             .signature(vec![1])
             .version(1)
-            .servers_needed(2)
             .verification_key(vec![2])
             .randomness(vec![3])
             .enc_key(vec![4])
@@ -1032,7 +1130,6 @@ mod tests {
                 "reencrypt": {
                     "signature": hex::encode([1]),
                     "version": 1,
-                    "servers_needed": 2,
                     "verification_key": hex::encode(vec![2]),
                     "randomness": hex::encode(vec![3]),
                     "enc_key": hex::encode(vec![4]),

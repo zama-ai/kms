@@ -18,7 +18,6 @@ denom = "ucosm"
 amount = 100000
 
 [coordinator]
-shares_needed = 2
 addresses = ["http://localhost:8080"]
 
 [coordinator.timeout_config]

@@ -18,7 +18,7 @@ echo $PASSWORD | wasmd tx wasm upload /app/asc.wasm --from validator --chain-id 
 
 # Deploy the KMS smart contract, wait for the full node to start up first
 sleep 1
-echo $PASSWORD | wasmd tx wasm instantiate 1 '{"proof_type": "debug", "kms_core_conf": { "threshold": { "parties": [] }  }}' --label "configuration_0" --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 -y --no-admin
+echo $PASSWORD | wasmd tx wasm instantiate 1 '{"proof_type": "debug", "kms_core_conf": { "threshold": { "parties": [], "shares_needed": 1 }  }}' --label "configuration_0" --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 -y --no-admin
 
 # keep the container running
 tail -f /dev/null

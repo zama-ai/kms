@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
     DecryptResponseValues, DecryptValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
-    KeyGenValues, KmsEvent, OperationValue, Proof, ReencryptResponseValues, ReencryptValues,
-    TransactionId,
+    KeyGenValues, KmsCoreConf, KmsEvent, OperationValue, Proof, ReencryptResponseValues,
+    ReencryptValues, TransactionId,
 };
 use events::HexVector;
 use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
@@ -74,22 +74,25 @@ impl Kms for KmsCoordinator {
         &self,
         event: KmsEvent,
         operation_value: OperationValue,
+        config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let operation = self.create_kms_operation(event, operation_value)?;
-        operation.run_operation().await
+        operation.run_operation(config_contract).await
     }
 }
 
 #[async_trait]
 #[enum_dispatch(KmsOperationRequest)]
 pub trait KmsEventHandler {
-    async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse>;
+    async fn run_operation(
+        &self,
+        config_contract: Option<KmsCoreConf>,
+    ) -> anyhow::Result<KmsOperationResponse>;
 }
 
 #[derive(Clone, TypedBuilder)]
 pub struct KmsCoordinator {
     channel: Channel,
-    shares_needed: u64,
     metrics: Arc<OpenTelemetryMetrics>,
     timeout_config: TimeoutConfig,
 }
@@ -119,7 +122,6 @@ impl KmsCoordinator {
         );
         Ok(KmsCoordinator {
             channel,
-            shares_needed: config.shares_needed,
             metrics: Arc::new(metrics),
             timeout_config: config.timeout_config.clone(),
         })
@@ -218,17 +220,12 @@ macro_rules! poller {
 
 #[async_trait]
 impl KmsEventHandler for DecryptVal {
-    async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
+    async fn run_operation(
+        &self,
+        config_contract: Option<KmsCoreConf>,
+    ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
-
-        if self.operation_val.kms_client.shares_needed as u32 != self.decrypt.servers_needed() {
-            return Err(anyhow!(
-                "shares_needed not supported: supported={}, requested={}",
-                self.operation_val.kms_client.shares_needed,
-                self.decrypt.servers_needed()
-            ));
-        }
 
         if CURRENT_FORMAT_VERSION != self.decrypt.version() {
             return Err(anyhow!(
@@ -242,7 +239,9 @@ impl KmsEventHandler for DecryptVal {
             request_id: self.operation_val.tx_id.to_hex(),
         };
         let version = self.decrypt.version();
-        let servers_needed = self.decrypt.servers_needed();
+        let servers_needed = config_contract
+            .ok_or(anyhow!("config contract missing"))?
+            .shares_needed() as u32;
         let key_id = self.decrypt.key_id().to_hex();
         let fhe_type = self.decrypt.fhe_type() as i32;
         let ciphertext = self.decrypt.ciphertext().into();
@@ -342,21 +341,16 @@ impl TryFrom<i32> for WrappingFheType {
 
 #[async_trait]
 impl KmsEventHandler for ReencryptVal {
-    async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
+    async fn run_operation(
+        &self,
+        config_contract: Option<KmsCoreConf>,
+    ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
 
         let req_id = RequestId {
             request_id: self.operation_val.tx_id.to_hex(),
         };
-
-        if self.operation_val.kms_client.shares_needed as u32 != self.reencrypt.servers_needed() {
-            return Err(anyhow!(
-                "shares_needed not supported: supported={}, requested={}",
-                self.operation_val.kms_client.shares_needed,
-                self.reencrypt.servers_needed()
-            ));
-        }
 
         if CURRENT_FORMAT_VERSION != self.reencrypt.version() {
             return Err(anyhow!(
@@ -367,11 +361,14 @@ impl KmsEventHandler for ReencryptVal {
         }
 
         let reencrypt = &self.reencrypt;
+        let servers_needed = config_contract
+            .ok_or(anyhow!("config contract is missing"))?
+            .shares_needed() as u32;
         let req = ReencryptionRequest {
             signature: self.reencrypt.signature().into(),
             payload: Some(ReencryptionRequestPayload {
                 version: reencrypt.version(),
-                servers_needed: reencrypt.servers_needed(),
+                servers_needed,
                 verification_key: reencrypt.verification_key().into(),
                 randomness: reencrypt.randomness().into(),
                 enc_key: reencrypt.enc_key().into(),
@@ -457,7 +454,10 @@ impl KmsEventHandler for ReencryptVal {
 #[async_trait]
 impl KmsEventHandler for KeyGenPreprocVal {
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
-    async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
+    async fn run_operation(
+        &self,
+        _config_contract: Option<KmsCoreConf>,
+    ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
 
@@ -533,7 +533,10 @@ impl KmsEventHandler for KeyGenPreprocVal {
 #[async_trait]
 impl KmsEventHandler for KeyGenVal {
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
-    async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
+    async fn run_operation(
+        &self,
+        _config_contract: Option<KmsCoreConf>,
+    ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
 
@@ -611,7 +614,10 @@ impl KmsEventHandler for KeyGenVal {
 #[async_trait]
 impl KmsEventHandler for CrsGenVal {
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
-    async fn run_operation(&self) -> anyhow::Result<KmsOperationResponse> {
+    async fn run_operation(
+        &self,
+        _config_contract: Option<KmsCoreConf>,
+    ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
 
@@ -684,7 +690,10 @@ mod test {
             metrics::OpenTelemetryMetrics,
         },
     };
-    use events::kms::{CrsGenValues, KeyGenPreprocValues, KmsEvent, TransactionId};
+    use events::kms::{
+        CrsGenValues, KeyGenPreprocValues, KmsCoreConf, KmsCoreParty, KmsCoreThresholdConf,
+        KmsEvent, TransactionId,
+    };
     use events::{
         kms::{DecryptValues, KeyGenValues, OperationValue, Proof, ReencryptValues},
         HexVector,
@@ -740,7 +749,6 @@ mod test {
         let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
         let config = CoordinatorConfig {
             addresses: vec![url],
-            shares_needed: 1,
             timeout_config: TimeoutConfig::mocking_default(),
         };
 
@@ -756,10 +764,12 @@ mod test {
             .proof(Proof::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
             .build();
 
+        let conf = KmsCoreConf::Centralized;
+
         let result = client
             .create_kms_operation(event, op.clone())
             .unwrap()
-            .run_operation()
+            .run_operation(Some(conf))
             .await
             .unwrap();
 
@@ -776,7 +786,6 @@ mod test {
         let op = OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
-                .servers_needed(1)
                 .key_id(HexVector::from_hex(&TEST_CENTRAL_KEY_ID.request_id).unwrap())
                 .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
                 .ciphertext(ct)
@@ -884,7 +893,6 @@ mod test {
                 let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
                 CoordinatorConfig {
                     addresses: vec![url],
-                    shares_needed: THRESHOLD as u64 + 1,
                     timeout_config: if slow {
                         TimeoutConfig::testing_default()
                     } else {
@@ -915,8 +923,12 @@ mod test {
         assert_eq!(events.len(), clients.len());
         let mut tasks = JoinSet::new();
         for (i, (event, client)) in events.into_iter().zip(clients).enumerate() {
+            let conf = KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                parties: vec![KmsCoreParty::default(); AMOUNT_PARTIES],
+                shares_needed: THRESHOLD + 1,
+            });
             let op = client.create_kms_operation(event, op.clone()).unwrap();
-            tasks.spawn(async move { (i as u32 + 1, op.run_operation().await) });
+            tasks.spawn(async move { (i as u32 + 1, op.run_operation(Some(conf)).await) });
         }
         let mut results = vec![];
         let mut ids = vec![];
@@ -941,7 +953,6 @@ mod test {
         let op = OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
-                .servers_needed(THRESHOLD as u32 + 1)
                 .key_id(HexVector::from_hex(&TEST_THRESHOLD_KEY_ID.request_id).unwrap())
                 .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
                 .ciphertext(ct)
@@ -1017,7 +1028,6 @@ mod test {
             ReencryptValues::builder()
                 .signature(kms_req.signature.clone())
                 .version(payload.version)
-                .servers_needed(payload.servers_needed)
                 .verification_key(payload.verification_key)
                 .randomness(payload.randomness)
                 .enc_key(payload.enc_key)

@@ -329,7 +329,6 @@ impl Gnetworking for NetworkingImpl {
         let tag = bincode::deserialize::<Tag>(&request.tag).map_err(|_e| {
             tonic::Status::new(tonic::Code::Aborted, "failed to parse value".to_string())
         })?;
-        tracing::debug!("tag is {:?}", tag);
 
         if let Some(sender) = tls_sender {
             // tag.sender may have the form hostname:port
@@ -351,6 +350,7 @@ impl Gnetworking for NetworkingImpl {
                 ));
             }
         }
+        tracing::debug!("passed sender verification, tag is {:?}", tag);
 
         if self.message_queues.contains_key(&tag.session_id) {
             let tx = self
