@@ -1,10 +1,10 @@
-use std::ops::Mul;
-
-use crypto_bigint::{NonZero, U1536};
-use itertools::Itertools;
-use rand::{CryptoRng, Rng};
-use tracing::instrument;
-
+use super::{basics::PrivateBgvKeySet, dkg_preproc::BGVDkgPreprocessing};
+use crate::experimental::{
+    algebra::cyclotomic::RqElement,
+    algebra::levels::{CryptoModulus, GenericModulus, LevelEll, LevelKsw, LevelOne, ScalingFactor},
+    algebra::ntt::{hadamard_product, ntt_inv, ntt_iter2, Const, NTTConstants},
+    bgv::basics::PublicKey,
+};
 use crate::{
     algebra::structure_traits::FromU128,
     execution::{
@@ -13,15 +13,11 @@ use crate::{
         sharing::share::Share,
     },
 };
-
-use crate::experimental::{
-    algebra::cyclotomic::RqElement,
-    algebra::levels::{CryptoModulus, GenericModulus, LevelEll, LevelKsw, LevelOne, ScalingFactor},
-    algebra::ntt::{hadamard_product, ntt_inv, ntt_iter2, Const, NTTConstants},
-    bgv::basics::PublicKey,
-};
-
-use super::{basics::PrivateBgvKeySet, dkg_preproc::BGVDkgPreprocessing};
+use crypto_bigint::{NonZero, U1536};
+use itertools::Itertools;
+use rand::{CryptoRng, Rng};
+use std::ops::Mul;
+use tracing::instrument;
 
 #[derive(Clone)]
 pub struct BGVShareSecretKey {
@@ -53,7 +49,6 @@ pub async fn bgv_distributed_keygen<
 >(
     session: &mut S,
     preprocessing: &mut P,
-    new_hope_bound: usize,
     plaintext_mod: u64,
 ) -> anyhow::Result<(PublicKey<LevelEll, LevelKsw, N>, PrivateBgvKeySet)>
 where
@@ -93,7 +88,7 @@ where
     ntt_iter2(&mut pk_a_mod_q_ntt, N::VALUE, N::THETA);
 
     //Sample e_pk noise
-    let e_pk = preprocessing.next_noise_vec(N::VALUE, new_hope_bound)?;
+    let e_pk = preprocessing.next_noise_vec(N::VALUE)?;
     let e_pk_times_p = RqElement::<_, N>::from(e_pk.iter().map(|x| x.value() * p).collect_vec());
 
     //compute pk_b, manually do ntt as we already have sk in ntt domain
@@ -103,7 +98,7 @@ where
     let pk_b = RqElement::<_, N>::from(pk_b) + e_pk_times_p;
 
     //Sample e'_pk noise
-    let e_pk_prime = preprocessing.next_noise_vec(N::VALUE, new_hope_bound)?;
+    let e_pk_prime = preprocessing.next_noise_vec(N::VALUE)?;
     let e_pk_prime_times_p = e_pk_prime.iter().map(|x| x * p).collect_vec();
 
     //Compute sk odot sk in the polynomial ring via NTT
@@ -186,6 +181,7 @@ mod tests {
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
 
+    use super::{bgv_distributed_keygen, BGVDkgPreprocessing};
     use crate::{
         algebra::structure_traits::{One, ZConsts, Zero},
         execution::{
@@ -207,13 +203,10 @@ mod tests {
         tests::helper::tests_and_benches::execute_protocol_small,
     };
 
-    use super::{bgv_distributed_keygen, BGVDkgPreprocessing};
-
     #[allow(clippy::type_complexity)]
     fn test_dkg(
         results: &mut Vec<(PublicKey<LevelEll, LevelKsw, N65536>, Vec<LevelOne>)>,
         plaintext_mod: u64,
-        new_hope_bound: usize,
     ) {
         //Turn sk into proper type
         let (pk, sk_ntt) = results.pop().unwrap();
@@ -244,14 +237,7 @@ mod tests {
         let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
             .map(|_| (rng.next_u64() % plaintext_mod) as u32)
             .collect();
-        let ct = bgv_enc(
-            &mut rng,
-            &plaintext_vec,
-            &pk.a,
-            &pk.b,
-            new_hope_bound,
-            plaintext_mod,
-        );
+        let ct = bgv_enc(&mut rng, &plaintext_vec, &pk.a, &pk.b, plaintext_mod);
         let plaintext = bgv_dec(&ct, sk_correct_type, &PLAINTEXT_MODULUS);
         assert_eq!(plaintext, plaintext_vec);
     }
@@ -260,8 +246,6 @@ mod tests {
     fn test_dkg_dummy_preproc() {
         let parties = 5;
         let threshold = 1;
-        let new_hope_bound = 1;
-
         let mut task = |mut session: SmallSession<LevelKsw>| async move {
             let mut prep = DummyPreprocessing::<LevelKsw, AesRng, SmallSession<LevelKsw>>::new(
                 0,
@@ -271,7 +255,6 @@ mod tests {
             let (pk, sk) = bgv_distributed_keygen::<N65536, _, _, _>(
                 &mut session,
                 &mut prep,
-                new_hope_bound,
                 PLAINTEXT_MODULUS.get().0,
             )
             .await
@@ -283,15 +266,13 @@ mod tests {
         };
 
         let mut results = execute_protocol_small(parties, threshold, None, &mut task);
-        test_dkg(&mut results, PLAINTEXT_MODULUS.get().0, new_hope_bound);
+        test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);
     }
 
     #[test]
     fn test_dkg_with_offline() {
         let parties = 5;
         let threshold = 1;
-        let new_hope_bound = 1;
-
         let mut task = |mut session: SmallSession<LevelKsw>| async move {
             let mut dummy_preproc =
                 DummyPreprocessing::<LevelKsw, AesRng, SmallSession<LevelKsw>>::new(
@@ -301,19 +282,13 @@ mod tests {
 
             let mut bgv_preproc = InMemoryBGVDkgPreprocessing::default();
             bgv_preproc
-                .fill_from_base_preproc(
-                    N65536::VALUE,
-                    new_hope_bound,
-                    &mut session,
-                    &mut dummy_preproc,
-                )
+                .fill_from_base_preproc(N65536::VALUE, &mut session, &mut dummy_preproc)
                 .await
                 .unwrap();
 
             let (pk, sk) = bgv_distributed_keygen::<N65536, _, _, _>(
                 &mut session,
                 &mut bgv_preproc,
-                new_hope_bound,
                 PLAINTEXT_MODULUS.get().0,
             )
             .await
@@ -326,6 +301,6 @@ mod tests {
 
         let mut results = execute_protocol_small(parties, threshold, None, &mut task);
 
-        test_dkg(&mut results, PLAINTEXT_MODULUS.get().0, new_hope_bound);
+        test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);
     }
 }

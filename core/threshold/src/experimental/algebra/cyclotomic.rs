@@ -127,11 +127,9 @@ impl From<RingElement<Limb>> for RingElement<IntQ> {
     }
 }
 
-impl NewHopeSampler for TernaryElement {
-    fn new_hope_sample<R: Rng + CryptoRng>(rng: &mut R, bound: usize, degree: usize) -> Self {
-        let data: Vec<TernaryEntry> = (0..degree)
-            .map(|_| approximate_gaussian(rng, bound))
-            .collect();
+impl NewHopeTernarySampler for TernaryElement {
+    fn new_hope_ternary_sample<R: Rng + CryptoRng>(rng: &mut R, degree: usize) -> Self {
+        let data: Vec<TernaryEntry> = (0..degree).map(|_| approximate_gaussian(rng)).collect();
         TernaryElement { data }
     }
 }
@@ -149,17 +147,17 @@ where
         }
     }
 }
-pub trait NewHopeSampler {
-    fn new_hope_sample<R: Rng + CryptoRng>(rng: &mut R, bound: usize, degree: usize) -> Self;
+pub trait NewHopeTernarySampler {
+    fn new_hope_ternary_sample<R: Rng + CryptoRng>(rng: &mut R, degree: usize) -> Self;
 }
 
-impl<T, N> NewHopeSampler for RqElement<T, N>
+impl<T, N> NewHopeTernarySampler for RqElement<T, N>
 where
     T: ZConsts + One + Zero,
     RqElement<T, N>: From<TernaryElement>,
 {
-    fn new_hope_sample<R: Rng + CryptoRng>(rng: &mut R, bound: usize, degree: usize) -> Self {
-        let ternary = TernaryElement::new_hope_sample(rng, bound, degree);
+    fn new_hope_ternary_sample<R: Rng + CryptoRng>(rng: &mut R, degree: usize) -> Self {
+        let ternary = TernaryElement::new_hope_ternary_sample(rng, degree);
         RqElement::<T, N>::from(ternary)
     }
 }
@@ -458,6 +456,13 @@ impl Add<RingElement<IntQ>> for RingElement<IntQ> {
             .zip(rhs.data)
             .map(|(x, y)| *x + y)
             .collect();
+        RingElement { data }
+    }
+}
+
+impl RingElement<IntQ> {
+    pub fn round(&self, rhs: &IntQ) -> RingElement<IntQ> {
+        let data = self.data.iter().map(|x| x.round(rhs)).collect();
         RingElement { data }
     }
 }

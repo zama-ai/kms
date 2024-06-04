@@ -5,6 +5,9 @@ pub mod algebra {
     pub mod levels;
     pub mod ntt;
 }
+pub mod bfv {
+    pub mod basics;
+}
 pub mod bgv {
     pub mod basics;
     pub mod ddec;

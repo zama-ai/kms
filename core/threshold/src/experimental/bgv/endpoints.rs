@@ -15,7 +15,7 @@ use crate::experimental::algebra::ntt::N65536;
 use crate::experimental::bgv::dkg::NttForm;
 use crate::experimental::bgv::runtime::BGVTestRuntime;
 use crate::experimental::{
-    algebra::levels::LevelOne, bgv::basics::BGVCiphertext, bgv::ddec::noise_flood_decryption,
+    algebra::levels::LevelOne, bgv::basics::LevelledCiphertext, bgv::ddec::noise_flood_decryption,
 };
 use crate::session_id::{SessionId, TAG_BYTES};
 use aes_prng::AesRng;
@@ -27,7 +27,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 impl SessionId {
-    pub fn from_bgv_ct(ciphertext: &BGVCiphertext<LevelEll, N65536>) -> anyhow::Result<SessionId> {
+    pub fn from_bgv_ct(
+        ciphertext: &LevelledCiphertext<LevelEll, N65536>,
+    ) -> anyhow::Result<SessionId> {
         let serialized_ct = bincode::serialize(ciphertext)?;
 
         // hash the serialized ct data into a 128-bit (TAG_BYTES) digest and convert to u128
@@ -56,7 +58,7 @@ pub(crate) async fn setup_small_session(
 pub fn threshold_decrypt(
     runtime: &BGVTestRuntime,
     private_keys: &[NttForm<LevelOne>],
-    ct: &BGVCiphertext<LevelEll, N65536>,
+    ct: &LevelledCiphertext<LevelEll, N65536>,
 ) -> anyhow::Result<HashMap<Identity, Vec<u32>>> {
     let session_id = SessionId::from_bgv_ct(ct)?;
 

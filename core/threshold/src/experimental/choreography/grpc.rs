@@ -15,13 +15,13 @@ use crate::execution::large_execution::vss::RealVss;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::PreprocessorFactory;
 use crate::execution::runtime::party::{Identity, Role};
+use crate::execution::runtime::session::ParameterHandles;
 use crate::execution::runtime::session::SessionParameters;
+use crate::execution::runtime::session::SmallSession;
 use crate::execution::runtime::session::{BaseSession, BaseSessionStruct};
-use crate::execution::runtime::session::{ParameterHandles, SmallSession};
 use crate::execution::small_execution::agree_random::RealAgreeRandom;
 use crate::execution::small_execution::offline::SmallPreprocessing;
 use crate::execution::small_execution::prss::PRSSSetup;
-use crate::execution::tfhe_internals::test_feature::INPUT_PARTY_ID;
 use crate::experimental::algebra::levels::{LevelEll, LevelKsw, LevelOne};
 use crate::experimental::algebra::ntt::{Const, N65536};
 use crate::experimental::bgv::basics::{PrivateBgvKeySet, PublicBgvKeySet, PublicKey};
@@ -31,6 +31,7 @@ use crate::experimental::bgv::dkg_preproc::{BGVDkgPreprocessing, InMemoryBGVDkgP
 use crate::experimental::bgv::utils::transfer_secret_key;
 use crate::experimental::bgv::utils::{gen_key_set, transfer_pub_key};
 use crate::experimental::choreography::requests::{PreprocKeyGenParams, ThresholdDecryptParams};
+use crate::experimental::constants::INPUT_PARTY_ID;
 use crate::experimental::constants::PLAINTEXT_MODULUS;
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::session_id::SessionId;
@@ -138,6 +139,7 @@ impl Choreography for ExperimentalGrpcChoreography {
     ) -> Result<tonic::Response<PrssInitResponse>, tonic::Status> {
         let request = request.into_inner();
 
+        //Useless for now, need to integrate large threshold decrypt to grpc
         let threshold: u8 = request.threshold.try_into().map_err(|_e| {
             tonic::Status::new(
                 tonic::Code::Aborted,
@@ -303,7 +305,7 @@ impl Choreography for ExperimentalGrpcChoreography {
         let store = self.data.dkg_preproc_store.clone();
         let my_future = || async move {
             //TODO: Double check new hope bound + make it a constant maybe ?
-            let batch = InMemoryBGVDkgPreprocessing::num_required_triples_randoms(N65536::VALUE, 1);
+            let batch = InMemoryBGVDkgPreprocessing::num_required_triples_randoms(N65536::VALUE);
 
             let mut small_preproc =
                 SmallPreprocessing::<_, RealAgreeRandom>::init(&mut small_session, batch)
@@ -311,7 +313,7 @@ impl Choreography for ExperimentalGrpcChoreography {
                     .unwrap();
             let mut preproc = InMemoryBGVDkgPreprocessing::default();
             preproc
-                .fill_from_base_preproc(N65536::VALUE, 1, &mut small_session, &mut small_preproc)
+                .fill_from_base_preproc(N65536::VALUE, &mut small_session, &mut small_preproc)
                 .await
                 .unwrap();
             store.insert(session_id, preproc);
@@ -401,7 +403,6 @@ impl Choreography for ExperimentalGrpcChoreography {
                 let keys = bgv_distributed_keygen::<N65536, _, _, _>(
                     &mut base_session,
                     &mut preproc,
-                    1,
                     PLAINTEXT_MODULUS.get().0,
                 )
                 .await
@@ -436,7 +437,6 @@ impl Choreography for ExperimentalGrpcChoreography {
                 let keys = bgv_distributed_keygen::<N65536, _, _, _>(
                     &mut small_session,
                     &mut preproc,
-                    1,
                     PLAINTEXT_MODULUS.get().0,
                 )
                 .await
@@ -777,7 +777,6 @@ async fn local_initialize_key_material(
     } else {
         None
     };
-
     let passed_pk = transfer_pub_key(
         session,
         keyset.clone().map(|ks| ks.0),

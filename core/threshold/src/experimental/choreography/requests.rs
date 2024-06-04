@@ -1,13 +1,7 @@
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    experimental::{
-        algebra::{levels::LevelEll, ntt::N65536},
-        bgv::basics::BGVCiphertext,
-    },
-    session_id::SessionId,
-};
+use crate::{experimental::bgv::basics::LevelEllCiphertext, session_id::SessionId};
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum SupportedRing {
@@ -42,5 +36,5 @@ pub struct ThresholdKeyGenResultParams {
 pub struct ThresholdDecryptParams {
     pub session_id: SessionId,
     pub key_sid: SessionId,
-    pub ctxts: Vec<BGVCiphertext<LevelEll, N65536>>,
+    pub ctxts: Vec<LevelEllCiphertext>,
 }

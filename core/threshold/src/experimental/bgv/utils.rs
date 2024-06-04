@@ -24,12 +24,8 @@ use tokio::time::timeout_at;
 pub(crate) fn gen_key_set() -> (PublicBgvKeySet, SecretKey) {
     let mut rng = AesRng::seed_from_u64(0);
 
-    let new_hope_bound = 1;
-    let (pk, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
-        &mut rng,
-        new_hope_bound,
-        PLAINTEXT_MODULUS.get().0,
-    );
+    let (pk, sk) =
+        keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, PLAINTEXT_MODULUS.get().0);
 
     (pk, sk)
 }

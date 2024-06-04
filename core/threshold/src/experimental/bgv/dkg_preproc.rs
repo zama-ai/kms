@@ -19,6 +19,7 @@ use crate::{
     },
     experimental::{
         algebra::levels::LevelKsw,
+        constants::NEW_HOPE_BOUND,
         gen_bits_odd::{BitGenOdd, RealBitGenOdd},
     },
 };
@@ -28,7 +29,6 @@ impl BGVDkgPreprocessing for DummyPreprocessing<LevelKsw, AesRng, SmallSession<L
     async fn fill_from_base_preproc(
         &mut self,
         _poly_size: usize,
-        _new_hope_bound: usize,
         _session: &mut SmallSession<LevelKsw>,
         _preprocessing: &mut dyn BasePreprocessing<LevelKsw>,
     ) -> anyhow::Result<()> {
@@ -39,19 +39,15 @@ impl BGVDkgPreprocessing for DummyPreprocessing<LevelKsw, AesRng, SmallSession<L
         RealSecretDistributions::newhope(amount, 1, self)
     }
 
-    fn next_noise_vec(
-        &mut self,
-        amount: usize,
-        new_hope_bound: usize,
-    ) -> anyhow::Result<Vec<Share<LevelKsw>>> {
-        RealSecretDistributions::newhope(amount, new_hope_bound, self)
+    fn next_noise_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<LevelKsw>>> {
+        RealSecretDistributions::newhope(amount, NEW_HOPE_BOUND, self)
     }
 }
 
 #[async_trait]
 pub trait BGVDkgPreprocessing: BasePreprocessing<LevelKsw> {
-    fn num_required_triples_randoms(poly_size: usize, new_hope_bound: usize) -> BatchParams {
-        let num_bits = 2 * poly_size + 2 * 2 * poly_size * new_hope_bound;
+    fn num_required_triples_randoms(poly_size: usize) -> BatchParams {
+        let num_bits = 2 * poly_size + 2 * 2 * poly_size * NEW_HOPE_BOUND;
         let triples = num_bits + poly_size;
         let randoms = num_bits + 2 * poly_size;
         BatchParams { triples, randoms }
@@ -60,16 +56,11 @@ pub trait BGVDkgPreprocessing: BasePreprocessing<LevelKsw> {
     async fn fill_from_base_preproc(
         &mut self,
         poly_size: usize,
-        new_hope_bound: usize,
         session: &mut SmallSession<LevelKsw>,
         preprocessing: &mut dyn BasePreprocessing<LevelKsw>,
     ) -> anyhow::Result<()>;
     fn next_ternary_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<LevelKsw>>>;
-    fn next_noise_vec(
-        &mut self,
-        amount: usize,
-        new_hope_bound: usize,
-    ) -> anyhow::Result<Vec<Share<LevelKsw>>>;
+    fn next_noise_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<LevelKsw>>>;
 }
 
 #[derive(Default)]
@@ -77,7 +68,6 @@ pub struct InMemoryBGVDkgPreprocessing {
     in_memory_base: InMemoryBasePreprocessing<LevelKsw>,
     available_ternary: Vec<Share<LevelKsw>>,
     available_noise: Vec<Share<LevelKsw>>,
-    new_hope_bound: usize,
 }
 
 impl TriplePreprocessing<LevelKsw> for InMemoryBGVDkgPreprocessing {
@@ -113,14 +103,13 @@ impl BGVDkgPreprocessing for InMemoryBGVDkgPreprocessing {
     async fn fill_from_base_preproc(
         &mut self,
         poly_size: usize,
-        new_hope_bound: usize,
         session: &mut SmallSession<LevelKsw>,
         preprocessing: &mut dyn BasePreprocessing<LevelKsw>,
     ) -> anyhow::Result<()> {
         //NewHope(N,B) takes 2 * N * B bits, and we have:
         // - Newhope(N,1) for the secret key
         // - 2*NewHope(N,B) for the noise
-        let num_bits_needed = 2 * poly_size + 2 * 2 * poly_size * new_hope_bound;
+        let num_bits_needed = 2 * poly_size + 2 * 2 * poly_size * NEW_HOPE_BOUND;
 
         let mut bit_preproc = InMemoryBitPreprocessing::default();
         bit_preproc.append_bits(
@@ -131,8 +120,7 @@ impl BGVDkgPreprocessing for InMemoryBGVDkgPreprocessing {
         self.available_ternary = ternary_vec;
 
         let noise_vec =
-            RealSecretDistributions::newhope(2 * poly_size, new_hope_bound, &mut bit_preproc)?;
-        self.new_hope_bound = new_hope_bound;
+            RealSecretDistributions::newhope(2 * poly_size, NEW_HOPE_BOUND, &mut bit_preproc)?;
         self.available_noise = noise_vec;
 
         self.in_memory_base
@@ -155,15 +143,7 @@ impl BGVDkgPreprocessing for InMemoryBGVDkgPreprocessing {
         }
     }
 
-    fn next_noise_vec(
-        &mut self,
-        amount: usize,
-        new_hope_bound: usize,
-    ) -> anyhow::Result<Vec<Share<LevelKsw>>> {
-        assert_eq!(
-            new_hope_bound, self.new_hope_bound,
-            "new_hope distribution available in preprocessing does not match the one in online"
-        );
+    fn next_noise_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Share<LevelKsw>>> {
         if self.available_noise.len() >= amount {
             Ok(self.available_noise.drain(0..amount).collect())
         } else {

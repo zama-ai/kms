@@ -5,7 +5,7 @@ use crate::choreography::grpc::gen::{
 use crate::execution::runtime::party::Role;
 use crate::experimental::algebra::levels::{LevelEll, LevelKsw};
 use crate::experimental::algebra::ntt::N65536;
-use crate::experimental::bgv::basics::{BGVCiphertext, PublicKey};
+use crate::experimental::bgv::basics::{LevelEllCiphertext, PublicKey};
 use crate::{choreography::choreographer::ChoreoRuntime, session_id::SessionId};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -183,7 +183,7 @@ impl ChoreoRuntime {
         &self,
         session_id: SessionId,
         key_sid: SessionId,
-        ctxts: Vec<BGVCiphertext<LevelEll, N65536>>,
+        ctxts: Vec<LevelEllCiphertext>,
         threshold: u32,
     ) -> anyhow::Result<SessionId> {
         let role_assignment = bincode::serialize(&self.role_assignments)?;

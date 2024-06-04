@@ -1,6 +1,6 @@
 use crate::algebra::structure_traits::{Ring, ZConsts};
 use crate::execution::sharing::share::Share;
-use crate::experimental::algebra::cyclotomic::NewHopeSampler;
+use crate::experimental::algebra::cyclotomic::NewHopeTernarySampler;
 use crate::experimental::algebra::cyclotomic::RingElement;
 use crate::experimental::algebra::cyclotomic::RqElement;
 use crate::experimental::algebra::cyclotomic::TernaryElement;
@@ -17,7 +17,7 @@ use crypto_bigint::{Limb, NonZero};
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use std::ops::{Add, Div, Mul, Sub};
+use std::ops::{Add, Mul, Sub};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PublicKey<QMod, QRMod, N> {
@@ -28,8 +28,8 @@ pub struct PublicKey<QMod, QRMod, N> {
 }
 
 pub type PublicBgvKeySet = PublicKey<LevelEll, LevelKsw, N65536>;
-pub type LevelOneBgvCiphertext = BGVCiphertext<LevelOne, N65536>;
-pub type LevelEllBgvCiphertext = BGVCiphertext<LevelEll, N65536>;
+pub type PlaintextVec = Vec<u32>;
+pub type LevelEllCiphertext = LevelledCiphertext<LevelEll, N65536>;
 
 #[derive(Debug, Clone)]
 pub struct SecretKey {
@@ -70,7 +70,6 @@ impl PrivateBgvKeySet {
 
 pub fn keygen<R, ModQ, ModQR, N>(
     rng: &mut R,
-    new_hope_bound: usize,
     plaintext_mod: u64,
 ) -> (PublicKey<ModQ, ModQR, N>, SecretKey)
 where
@@ -93,12 +92,12 @@ where
 {
     let degree = N::VALUE;
 
-    let sk = TernaryElement::new_hope_sample(rng, 1, degree);
+    let sk = TernaryElement::new_hope_ternary_sample(rng, degree);
     let sk_mod_q = RqElement::<ModQ, N>::from(sk.clone());
     let sk_mod_qr = RqElement::<ModQR, N>::from(sk.clone());
 
     let a_mod_q = RqElement::<ModQ, N>::sample_random(rng);
-    let e = TernaryElement::new_hope_sample(rng, new_hope_bound, degree);
+    let e = TernaryElement::new_hope_ternary_sample(rng, degree);
     let p_mod_q = ModQ::from_u128(plaintext_mod as u128);
     let p_times_e_mod_q = RqElement::<ModQ, N>::from(e) * &p_mod_q;
     let b_mod_q = a_mod_q.clone() * sk_mod_q.clone() + p_times_e_mod_q;
@@ -106,7 +105,7 @@ where
     let r_times_sk_mod_qr = sk_mod_qr.clone() * &ModQR::FACTOR;
 
     let a_prime_mod_qr = RqElement::<ModQR, N>::sample_random(rng);
-    let e_prime = TernaryElement::new_hope_sample(rng, new_hope_bound, degree);
+    let e_prime = TernaryElement::new_hope_ternary_sample(rng, degree);
     let p_mod_qr = ModQR::from_u128(plaintext_mod as u128);
     let p_times_e_prime_mod_qr = RqElement::<ModQR, N>::from(e_prime) * &p_mod_qr;
     let b_prime_mod_qr = a_prime_mod_qr.clone() * sk_mod_qr.clone() + p_times_e_prime_mod_qr
@@ -124,32 +123,27 @@ where
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct BGVCiphertext<T, N> {
+pub struct LevelledCiphertext<T, N> {
     pub c0: RqElement<T, N>,
     pub c1: RqElement<T, N>,
-    pub level: usize,
 }
 
-impl<T, N> BGVCiphertext<T, N> {
-    fn get_c0(&self) -> &RqElement<T, N> {
+impl<T, N> LevelledCiphertext<T, N> {
+    pub fn get_c0(&self) -> &RqElement<T, N> {
         &self.c0
     }
 
-    fn get_c1(&self) -> &RqElement<T, N> {
+    pub fn get_c1(&self) -> &RqElement<T, N> {
         &self.c1
     }
 }
-
-pub type PlaintextVec = Vec<u32>;
-pub type EllCiphertextVec = BGVCiphertext<LevelEll, N65536>;
 
 pub fn bgv_pk_encrypt<R: Rng + CryptoRng>(
     rng: &mut R,
     m: &PlaintextVec,
     pk: &PublicBgvKeySet,
-) -> EllCiphertextVec {
-    let new_hope_bound = 1;
-    bgv_enc::<R, LevelEll, N65536>(rng, m, &pk.a, &pk.b, new_hope_bound, PLAINTEXT_MODULUS.0)
+) -> LevelEllCiphertext {
+    bgv_enc::<R, LevelEll, N65536>(rng, m, &pk.a, &pk.b, PLAINTEXT_MODULUS.0)
 }
 
 pub fn bgv_enc<R: Rng + CryptoRng, ModQ, N>(
@@ -157,9 +151,8 @@ pub fn bgv_enc<R: Rng + CryptoRng, ModQ, N>(
     m: &PlaintextVec,
     pk_a: &RqElement<ModQ, N>,
     pk_b: &RqElement<ModQ, N>,
-    new_hope_bound: usize,
     plaintext_mod: u64,
-) -> BGVCiphertext<ModQ, N>
+) -> LevelledCiphertext<ModQ, N>
 where
     N: Clone + Const,
     N: NTTConstants<ModQ>,
@@ -171,9 +164,9 @@ where
 {
     let n = N::VALUE;
 
-    let v = RqElement::<ModQ, N>::new_hope_sample(rng, 1, n);
-    let e0 = RqElement::<ModQ, N>::new_hope_sample(rng, new_hope_bound, n);
-    let e1 = RqElement::<ModQ, N>::new_hope_sample(rng, new_hope_bound, n);
+    let v = RqElement::<ModQ, N>::new_hope_ternary_sample(rng, n);
+    let e0 = RqElement::<ModQ, N>::new_hope_ternary_sample(rng, n);
+    let e1 = RqElement::<ModQ, N>::new_hope_ternary_sample(rng, n);
 
     let p_mod_q = ModQ::from_u128(plaintext_mod as u128);
 
@@ -188,11 +181,11 @@ where
 
     let c1 = pk_a * &v + e1 * &p_mod_q;
 
-    BGVCiphertext { c0, c1, level: 15 }
+    LevelledCiphertext { c0, c1 }
 }
 
 pub fn bgv_dec<ModQ, N>(
-    ct: &BGVCiphertext<ModQ, N>,
+    ct: &LevelledCiphertext<ModQ, N>,
     sk: SecretKey,
     p_mod: &NonZero<Limb>,
 ) -> PlaintextVec
@@ -223,11 +216,11 @@ where
 }
 
 pub fn modulus_switch<NewQ, ModQ, N>(
-    ct: &BGVCiphertext<ModQ, N>,
+    ct: &LevelledCiphertext<ModQ, N>,
     q: NewQ,
     big_q: ModQ,
     plaintext_mod: NonZero<Limb>,
-) -> BGVCiphertext<NewQ, N>
+) -> LevelledCiphertext<NewQ, N>
 where
     IntQ: From<ModQ>,
     IntQ: PositiveConv<ModQ>,
@@ -252,8 +245,8 @@ where
     let aq = a_int * q_int;
     let bq = b_int * q_int;
 
-    let a_bar = &aq.div(&big_q_int);
-    let b_bar = &bq.div(&big_q_int);
+    let a_bar = &aq.round(&big_q_int);
+    let b_bar = &bq.round(&big_q_int);
 
     let d_a = aq - (a_bar * &big_q_int);
     let d_b = bq - (b_bar * &big_q_int);
@@ -267,10 +260,9 @@ where
     let a_prime = f_a.mod_reduction();
     let b_prime = f_b.mod_reduction();
 
-    BGVCiphertext {
+    LevelledCiphertext {
         c0: RqElement::<NewQ, N>::from(b_prime),
         c1: RqElement::<NewQ, N>::from(a_prime),
-        level: 1,
     }
 }
 
@@ -289,12 +281,8 @@ mod tests {
     #[test]
     fn test_bgv_keygen() {
         let mut rng = AesRng::seed_from_u64(0);
-        let new_hope_bound = 1;
-        let (pk, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
-            &mut rng,
-            new_hope_bound,
-            PLAINTEXT_MODULUS.get().0,
-        );
+        let (pk, sk) =
+            keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, PLAINTEXT_MODULUS.get().0);
 
         let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
             .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
@@ -304,7 +292,6 @@ mod tests {
             &plaintext_vec,
             &pk.a,
             &pk.b,
-            1,
             PLAINTEXT_MODULUS.get().0,
         );
         let plaintext = bgv_dec(&ct, sk, &PLAINTEXT_MODULUS);
@@ -314,12 +301,8 @@ mod tests {
     #[test]
     fn test_bgv_keygen_q1() {
         let mut rng = AesRng::seed_from_u64(0);
-        let new_hope_bound = 1;
-        let (pk, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
-            &mut rng,
-            new_hope_bound,
-            PLAINTEXT_MODULUS.get().0,
-        );
+        let (pk, sk) =
+            keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, PLAINTEXT_MODULUS.get().0);
 
         let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
             .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
@@ -329,7 +312,6 @@ mod tests {
             &plaintext_vec,
             &pk.a,
             &pk.b,
-            1,
             PLAINTEXT_MODULUS.get().0,
         );
         let plaintext = bgv_dec(&ct, sk, &PLAINTEXT_MODULUS);
@@ -339,12 +321,8 @@ mod tests {
     #[test]
     fn test_big_mod_switch() {
         let mut rng = AesRng::seed_from_u64(0);
-        let new_hope_bound = 1;
-        let (pk, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
-            &mut rng,
-            new_hope_bound,
-            PLAINTEXT_MODULUS.get().0,
-        );
+        let (pk, sk) =
+            keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, PLAINTEXT_MODULUS.get().0);
 
         let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
             .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
@@ -354,7 +332,6 @@ mod tests {
             &plaintext_vec,
             &pk.a,
             &pk.b,
-            new_hope_bound,
             PLAINTEXT_MODULUS.get().0,
         );
         let plaintext = bgv_dec(&ct, sk.clone(), &PLAINTEXT_MODULUS);

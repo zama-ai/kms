@@ -16,7 +16,7 @@ use crate::experimental::{
     algebra::cyclotomic::{RingElement, RqElement},
     algebra::levels::{LevelEll, LevelOne},
     algebra::ntt::{Const, NTTConstants},
-    bgv::basics::BGVCiphertext,
+    bgv::basics::LevelledCiphertext,
 };
 use crate::{
     algebra::structure_traits::FromU128,
@@ -66,7 +66,7 @@ pub(crate) async fn noise_flood_decryption<
 >(
     session: &mut S,
     keyshares: &PrivateBgvKeySet,
-    ciphertext: &BGVCiphertext<LevelEll, N>,
+    ciphertext: &LevelledCiphertext<LevelEll, N>,
 ) -> anyhow::Result<Vec<u32>> {
     let own_role = session.my_role()?;
     let prss_state = session.prss_as_mut();
@@ -180,12 +180,8 @@ mod tests {
     fn test_sharings_sk() {
         let mut rng = AesRng::seed_from_u64(0);
 
-        let new_hope_bound = 1;
-        let (_, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
-            &mut rng,
-            new_hope_bound,
-            PLAINTEXT_MODULUS.get().0,
-        );
+        let (_, sk) =
+            keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, PLAINTEXT_MODULUS.get().0);
 
         let num_parties = 5;
         let threshold = 1;
@@ -208,12 +204,8 @@ mod tests {
     fn test_ddec_dummy() {
         let mut rng = AesRng::seed_from_u64(0);
 
-        let new_hope_bound = 1;
-        let (pk, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
-            &mut rng,
-            new_hope_bound,
-            PLAINTEXT_MODULUS.get().0,
-        );
+        let (pk, sk) =
+            keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, PLAINTEXT_MODULUS.get().0);
 
         let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
             .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
@@ -223,7 +215,6 @@ mod tests {
             &plaintext_vec,
             &pk.a,
             &pk.b,
-            new_hope_bound,
             PLAINTEXT_MODULUS.get().0,
         );
         let ct = Arc::new(ct);

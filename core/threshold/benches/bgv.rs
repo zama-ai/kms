@@ -21,12 +21,8 @@ use rand::SeedableRng;
 
 fn bench_modswitch(c: &mut Criterion) {
     let mut rng = AesRng::seed_from_u64(0);
-    let new_hope_bound = 1;
-    let (pk, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
-        &mut rng,
-        new_hope_bound,
-        PLAINTEXT_MODULUS.get().0,
-    );
+    let (pk, sk) =
+        keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, PLAINTEXT_MODULUS.get().0);
 
     let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
         .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
@@ -36,7 +32,6 @@ fn bench_modswitch(c: &mut Criterion) {
         &plaintext_vec,
         &pk.a,
         &pk.b,
-        1,
         PLAINTEXT_MODULUS.get().0,
     );
 
@@ -80,12 +75,8 @@ impl std::fmt::Display for ThresholdConfig {
 fn bench_bgv_ddec(c: &mut Criterion) {
     let mut rng = AesRng::seed_from_u64(0);
 
-    let new_hope_bound = 1;
-    let (pk, sk) = keygen::<AesRng, LevelEll, LevelKsw, N65536>(
-        &mut rng,
-        new_hope_bound,
-        PLAINTEXT_MODULUS.get().0,
-    );
+    let (pk, sk) =
+        keygen::<AesRng, LevelEll, LevelKsw, N65536>(&mut rng, PLAINTEXT_MODULUS.get().0);
 
     let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
         .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
@@ -102,7 +93,6 @@ fn bench_bgv_ddec(c: &mut Criterion) {
             &plaintext_vec,
             &pk.a,
             &pk.b,
-            new_hope_bound,
             PLAINTEXT_MODULUS.get().0,
         );
         let keyshares = keygen_shares(&mut rng, &sk, config.n, config.t);
@@ -125,9 +115,32 @@ fn bench_bgv_ddec(c: &mut Criterion) {
     }
 }
 
+fn bench_bfv_to_bgv(c: &mut Criterion) {
+    let mut rng = AesRng::seed_from_u64(0);
+    let (pk, _) = distributed_decryption::experimental::bfv::basics::keygen::<AesRng>(&mut rng);
+
+    let plaintext_vec: Vec<u32> = (0..N65536::VALUE)
+        .map(|_| (rng.next_u64() % PLAINTEXT_MODULUS.get().0) as u32)
+        .collect();
+    let ct = distributed_decryption::experimental::bfv::basics::bfv_enc(
+        &mut rng,
+        &plaintext_vec,
+        &pk.a,
+        &pk.b,
+    );
+
+    let mut group = c.benchmark_group("bfv-to-bgv");
+    group.sample_size(10);
+    group.bench_function("conversion", |b| {
+        b.iter(|| {
+            let _ = distributed_decryption::experimental::bfv::basics::bfv_to_bgv(ct.clone());
+        });
+    });
+}
+
 criterion_group! {
     name = bgv;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = bench_modswitch, bench_bgv_ddec
+    targets = bench_modswitch, bench_bgv_ddec, bench_bfv_to_bgv,
 }
 criterion_main!(bgv);
