@@ -61,7 +61,9 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use tfhe::{FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
+use tfhe::integer::ciphertext::BaseRadixCiphertext;
+use tfhe::integer::IntegerCiphertext;
+use tfhe::{FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
@@ -244,9 +246,9 @@ impl FheType {
     ) -> anyhow::Result<Ciphertext64> {
         let radix_ct = match self {
             FheType::Bool => {
-                let hl_ct: FheUint8 = bincode::deserialize(serialized_high_level)?;
-                let (radix_ct, _id) = hl_ct.into_raw_parts();
-                radix_ct
+                let hl_ct: FheBool = bincode::deserialize(serialized_high_level)?;
+                let radix_ct = hl_ct.into_raw_parts();
+                BaseRadixCiphertext::from_blocks(vec![radix_ct])
             }
             FheType::Euint4 => {
                 let hl_ct: FheUint4 = bincode::deserialize(serialized_high_level)?;
