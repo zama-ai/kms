@@ -56,6 +56,8 @@ pub struct ClientBuilder<'a> {
     chain_id: Option<&'a str>,
     #[builder(default = None, setter(strip_option))]
     coin_denom: Option<&'a str>,
+    #[builder(default = 0.01)]
+    gas_price: f64,
 }
 
 impl TryFrom<ClientBuilder<'_>> for Client {
@@ -70,7 +72,10 @@ impl TryFrom<ClientBuilder<'_>> for Client {
                 Error::PrivateKeyMissing("No private key provided for wallet".to_string())
             })?;
 
-        tracing::info!("Wallet private key initialized successfully");
+        tracing::info!(
+            "Wallet private key initialized successfully {:?}",
+            sender_key.public_key().account_id(ACCOUNT_PREFIX)?
+        );
 
         if value.grpc_addresses.is_empty() {
             return Err(Error::GrpcClientCreateError(
@@ -98,6 +103,8 @@ impl TryFrom<ClientBuilder<'_>> for Client {
 
         let contract_address = AccountId::from_str(value.contract_address)?;
 
+        let gas_price = value.gas_price;
+
         Ok(Client {
             client,
             sender_key,
@@ -105,6 +112,7 @@ impl TryFrom<ClientBuilder<'_>> for Client {
             coin_denom,
             contract_address,
             client_state: None,
+            gas_price,
         })
     }
 }
@@ -122,6 +130,7 @@ pub struct Client {
     client_state: Option<ClientState>,
     coin_denom: String,
     chain_id: String,
+    gas_price: f64,
 }
 
 impl Client {
@@ -218,18 +227,20 @@ impl Client {
 
         let gas_limit = request.gas_limit;
 
-        let tx_bytes = self.prepare_msg(&msg_payload, gas_limit).await?;
+        let gas_price = self.gas_price;
 
-        let broadcast = BroadcastTxRequest { tx_bytes, mode: 2 };
+        let tx_bytes = self.prepare_msg(&msg_payload, gas_limit, gas_price).await?;
 
         let mut tx_client = ServiceClient::new(self.client.clone());
+
+        let broadcast = BroadcastTxRequest { tx_bytes, mode: 2 };
 
         tracing::info!("Broadcasting transaction to blockchain for excuting contract",);
 
         let result = tx_client
             .broadcast_tx(broadcast)
             .await
-            .map(|response| response.into_inner())?;
+            .map(|r| r.into_inner())?;
 
         if let Some(ref tx) = result.tx_response {
             if tx.code != 0 {
@@ -248,7 +259,12 @@ impl Client {
     }
 
     /// Prepares a transaction message for execution on the blockchain.
-    async fn prepare_msg(&self, msg_payload: &[u8], gas_limit: u64) -> Result<Vec<u8>, Error> {
+    async fn prepare_msg(
+        &self,
+        msg_payload: &[u8],
+        gas_limit: u64,
+        gas_price: f64,
+    ) -> Result<Vec<u8>, Error> {
         let sender_public_key = self.sender_key.public_key();
         let sender_account_id = sender_public_key.account_id(ACCOUNT_PREFIX)?;
 
@@ -256,6 +272,10 @@ impl Client {
             sender: sender_account_id.to_string(),
             contract: self.contract_address.to_string(),
             msg: msg_payload.to_vec(),
+            //funds: vec![Coin {
+            //    denom: self.coin_denom.clone(),
+            //    amount: gas_limit.to_string(),
+            //}],
             funds: vec![],
         };
 
@@ -263,16 +283,20 @@ impl Client {
 
         let tx_body = TxBody {
             messages: vec![message],
-            memo: "".to_string(),
+            memo: String::new(),
             timeout_height: 0,
             extension_options: vec![],
             non_critical_extension_options: vec![],
         };
 
+        let body_bytes = tx_body.to_bytes()?;
+
+        let fee_amount = (gas_price * gas_limit as f64).ceil();
+
         let fee = Fee {
             amount: vec![Coin {
                 denom: self.coin_denom.clone(),
-                amount: gas_limit.to_string(),
+                amount: fee_amount.to_string(),
             }],
             gas_limit,
             payer: "".to_string(),
@@ -286,8 +310,6 @@ impl Client {
             }),
             sequence: self.get_sequence_number()?,
         };
-
-        let body_bytes = tx_body.to_bytes()?;
 
         #[allow(deprecated)]
         let auth_info = AuthInfo {
@@ -315,6 +337,7 @@ impl Client {
         };
 
         let tx_bytes_raw = tx_raw.to_bytes()?;
+        tracing::info!("Body Raw bytes length: {:?}", tx_bytes_raw.len());
 
         tracing::info!(
             "TxRaw to be broadcasted: {:?}",

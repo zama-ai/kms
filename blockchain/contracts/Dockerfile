@@ -9,5 +9,6 @@ RUN mkdir -p /app/optimized
 RUN wasm-opt -Os --signext-lowering "/app/contracts/target/wasm32-unknown-unknown/release/asc.wasm" -o "/app/optimized/asc.wasm"
 
 FROM cosmwasm/wasmd:v0.51.0 as runtime
+RUN apk add jq
 COPY --from=compiler /app/optimized/asc.wasm /app/asc.wasm
 CMD ["/bin/bash"]

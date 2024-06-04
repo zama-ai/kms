@@ -11,7 +11,8 @@ async fn main() {
         .init();
     // Alice's mnemonic; ensure you use a secure way to handle the real mnemonic!
     // let alice_mnemonic_phrase = "bachelor similar spirit copper rely carbon web hobby conduct wrap conduct wire shine parrot erosion divert crucial balance lock reason price ignore educate open";
-    let bob_mnemonic_phrase = "feel wife neither never floor volume express actor initial year throw hawk pink gaze deny prevent helmet clump hurt hour river behind employ ribbon";
+    let bob_mnemonic_phrase = "whisper stereo great helmet during hollow nominee skate frown daughter donor pool ozone few find risk cigar practice essay sketch rhythm novel dumb host";
+
     let mut client: Client = ClientBuilder::builder()
         .mnemonic_wallet(Some(bob_mnemonic_phrase))
         .grpc_addresses(vec!["http://localhost:9090"])

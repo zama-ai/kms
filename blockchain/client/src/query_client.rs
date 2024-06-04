@@ -7,6 +7,7 @@ use cosmos_proto::messages::cosmwasm::wasm::v1::{
     QueryContractsByCodeRequest, QueryContractsByCodeResponse, QuerySmartContractStateRequest,
 };
 use events::kms::{KmsEvent, TransactionId};
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::str;
 use std::time::Duration;
@@ -88,7 +89,10 @@ impl QueryClient {
     /// # Returns
     /// A `Result` containing the response from the contract or an error.
     #[tracing::instrument(skip(self, request))]
-    pub async fn query_contract(&self, request: QueryContractRequest) -> Result<Vec<u8>, Error> {
+    pub async fn query_contract<T: DeserializeOwned>(
+        &self,
+        request: QueryContractRequest,
+    ) -> Result<T, Error> {
         let mut query = WasmQueryClient::new(self.client.clone());
         let request = QuerySmartContractStateRequest {
             address: request.contract_address,
@@ -104,7 +108,11 @@ impl QueryClient {
 
         tracing::info!("Query executed successfully {:?}", result.len());
 
-        Ok(result)
+        let result_type = serde_json::from_slice(&result).map_err(|e| {
+            Error::QueryError(format!("Error deserializing query response {:?}", e))
+        })?;
+
+        Ok(result_type)
     }
 
     #[tracing::instrument(skip(self))]

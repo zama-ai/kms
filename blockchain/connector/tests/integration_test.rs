@@ -84,7 +84,7 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
         .map(|_| ())
         .unwrap_or_else(|| set_var("RUST_LOG", "error"));
     init_tracing(Some(Tracing::default())).unwrap();
-    let mnemonic = Some("feel wife neither never floor volume express actor initial year throw hawk pink gaze deny prevent helmet clump hurt hour river behind employ ribbon".to_string());
+    let mnemonic = Some("whisper stereo great helmet during hollow nominee skate frown daughter donor pool ozone few find risk cigar practice essay sketch rhythm novel dumb host".to_string());
     let addresses = vec!["http://localhost:9090"];
 
     // Initialize the query client for checking the blockchain state
@@ -201,8 +201,7 @@ async fn check_event(
         ))
         .build();
     loop {
-        let resp = query_client.query_contract(request.clone()).await.unwrap();
-        let tx = serde_json::from_slice::<Transaction>(&resp).unwrap();
+        let tx: Transaction = query_client.query_contract(request.clone()).await.unwrap();
         if tx.operations().iter().any(|x| {
             <OperationValue as Into<KmsOperation>>::into(x.clone()) == KmsOperation::DecryptResponse
         }) {
@@ -283,15 +282,12 @@ async fn send_decrypt_request(client: &RwLock<Client>) -> String {
 
     let request = ExecuteContractRequest::builder()
         .message(KmsMessage::builder().value(operation).proof(proof).build())
-        .gas_limit(200_000u64)
+        .gas_limit(200000u64)
         .build();
 
-    let resp = client
-        .write()
-        .await
-        .execute_contract(request)
-        .await
-        .unwrap();
+    let resp = client.write().await.execute_contract(request).await;
 
-    resp.txhash
+    tracing::info!("Transaction: {:?}", resp);
+
+    resp.unwrap().txhash
 }

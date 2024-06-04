@@ -465,6 +465,7 @@ dependencies = [
  "cw-controllers",
  "cw-multi-test",
  "cw-storage-plus",
+ "cw-utils",
  "events",
  "hex",
  "ibc-clients",

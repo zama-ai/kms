@@ -16,6 +16,7 @@ cosmwasm-schema = "2.0.2"
 cosmwasm-std = { version = "2.0.2", features = ["staking"] }
 cw-controllers = "2.0.0"
 cw-storage-plus = "2.0.0"
+cw-utils = "2.0.0"
 events = { path = "../../events" }
 hex = "0.4.3"
 ibc-clients = "0.53.0"

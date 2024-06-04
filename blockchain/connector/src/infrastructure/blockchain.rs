@@ -96,10 +96,7 @@ impl Blockchain for KmsBlockchain {
                 OperationQuery::builder().event(event.clone()).build(),
             ))
             .build();
-        let result = query_client
-            .query_contract(request)
-            .await
-            .map(|msg| serde_json::from_slice::<Vec<OperationValue>>(&msg))??;
+        let result: Vec<OperationValue> = query_client.query_contract(request).await?;
         result
             .first()
             .cloned()
@@ -113,10 +110,7 @@ impl Blockchain for KmsBlockchain {
             .contract_address(self.config.contract.to_owned())
             .query(ContractQuery::GetKmsCoreConf {})
             .build();
-        let result = query_client
-            .query_contract(request)
-            .await
-            .map(|msg| serde_json::from_slice::<KmsCoreConf>(&msg))??;
+        let result = query_client.query_contract(request).await?;
         Ok(result)
     }
 }

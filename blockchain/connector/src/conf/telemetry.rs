@@ -68,8 +68,10 @@ fn stdout_pipeline(settings: Tracing) -> Tracer {
 
 fn fmt_layer<S>() -> Layer<S> {
     match *ENVIRONMENT {
-        Mode::Production | Mode::Development | Mode::Stage => layer(),
-        _ => layer().with_span_events(FmtSpan::CLOSE),
+        Mode::Production | Mode::Development | Mode::Stage => {
+            layer().with_span_events(FmtSpan::CLOSE)
+        }
+        _ => layer(),
     }
 }
 

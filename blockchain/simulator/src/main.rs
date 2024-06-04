@@ -120,9 +120,7 @@ async fn query_contract(
         .contract_address(sim_config.contract)
         .query(query_req)
         .build();
-    let response = query_client.query_contract(request).await?;
-
-    let value = serde_json::from_slice::<OperationValue>(&response)?;
+    let value: Vec<OperationValue> = query_client.query_contract(request).await?;
 
     tracing::info!("Value: {:?}", value);
 
