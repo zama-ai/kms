@@ -1,0 +1,34 @@
+###This is an example config file for Party 1
+#Whether or not to use TLS for communication with choreographer
+choreo_use_tls = false
+
+#Description of the party
+[protocol.host]
+#Network address of the party
+address = "localhost"
+#Port for MPC protocol communication
+port = 50000
+#ID of the party within the MPC protocol
+id = 1
+#Port for communication with the choreographer
+choreoport = 60000
+
+
+#Parameters related to otel tracing
+[tracing]
+#Service name to use in otel spans
+service_name = "moby"
+#Address of the otel exporter
+endpoint = "http://localhost:4317"
+
+#Address of the redis server the party uses for storing preprocessing data
+[redis]
+host = "redis://127.0.0.1"
+
+[certpaths]
+#Path to the party's certificate for TLS
+cert = "test_certs/cert_p1.pem"
+#Path to the party's key for TLS
+key = "test_certs/key_p1.pem"
+#Path to all the parties' TLS certificate
+calist = "test_certs/cert_p1.pem,test_certs/cert_p2.pem,test_certs/cert_p3.pem,test_certs/cert_p4.pem,test_certs/cert_p5.pem"

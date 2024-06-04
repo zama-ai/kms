@@ -105,21 +105,26 @@ fn mode() -> Mode {
 impl<'a> Settings<'a> {
     /// Creates a new instance of `Settings`.
     ///
+    /// Looking from env variable prefixed by DDEC, with separator -
+    /// and then provided file path.
+    ///
+    /// Conf by file takes priority over env variable.
     /// # Errors
     ///
     /// Returns an error if the configuration cannot be created or deserialized.
     pub fn init_conf<'de, T: Deserialize<'de>>(&self) -> Result<T, ConfigError> {
-        let mut s = Config::builder();
+        let s = Config::builder();
 
-        //Build settings from path
-        if let Some(path) = self.path {
-            s = s.add_source(File::with_name(path).required(false))
+        //From environmnent variable
+        let s = s.add_source(config::Environment::default().prefix("DDEC").separator("-"));
+
+        //or from File
+        let s = if let Some(path) = self.path {
+            s.add_source(File::with_name(path).required(false))
+                .build()?
+        } else {
+            s.build()?
         };
-
-        //Or from environmnent variable
-        let s = s
-            .add_source(config::Environment::default().prefix("DDEC").separator("-"))
-            .build()?;
 
         let settings: T = s.try_deserialize()?;
 

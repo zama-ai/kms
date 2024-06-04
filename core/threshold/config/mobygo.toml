@@ -1,9 +1,15 @@
+#Parameters related to otel tracing
 [tracing]
+#Service name to use in otel spans
 service_name = "choreographer"
+#Address of the otel exporter
 endpoint = "http://localhost:4317"
 
+#Parameters related to the network topology
 [threshold_topology]
+#Maximum number of corrupted parties
 threshold = 1
+#Information on the parties
 peers = [
     
     { physical_address = "localhost", logical_address = "p1", physical_port = 50001, logical_port = 50000, choreo_physical_port = 60001, choreo_logical_port = 60000, id = 1, use_tls = true },

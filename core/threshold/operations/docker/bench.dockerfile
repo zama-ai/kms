@@ -50,6 +50,5 @@ ENV PATH="$PATH:/app/ddec/bin"
 # Copy the binaries from the base stage
 COPY --from=base /app/ddec/bin/ /app/ddec/bin/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/ddec/bin/grpc-health-probe
-COPY ./config/default.toml /app/ddec/config/default.toml
 
 EXPOSE 50000
