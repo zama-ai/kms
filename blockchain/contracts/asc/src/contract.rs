@@ -73,7 +73,7 @@ impl KmsContract {
         hasher.update(transaction_index.to_string().len().to_be_bytes());
         hasher.update(transaction_index.to_string());
         let result = hasher.finalize();
-        result[..].to_vec()
+        result[..20].to_vec()
     }
 
     fn process_transaction<T>(

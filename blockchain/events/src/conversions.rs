@@ -1,19 +1,24 @@
+use std::ops::Deref;
+
 use cosmwasm_schema::schemars;
 use cosmwasm_schema::schemars::JsonSchema;
-use serde::{Serialize, Serializer};
+use secrecy::DebugSecret;
+use serde::{Deserialize, Serialize, Serializer};
 
 #[derive(Eq, PartialEq, Default, Clone, Debug, JsonSchema)]
 pub struct HexVector(pub Vec<u8>);
 
-impl From<&HexVector> for Vec<u8> {
-    fn from(value: &HexVector) -> Self {
-        value.0.clone()
+impl Deref for HexVector {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
-impl From<HexVector> for Vec<u8> {
-    fn from(value: HexVector) -> Self {
-        value.0
+impl From<&HexVector> for Vec<u8> {
+    fn from(value: &HexVector) -> Self {
+        value.0.clone()
     }
 }
 
@@ -51,3 +56,28 @@ impl<'de> serde::Deserialize<'de> for HexVector {
         HexVector::from_hex(&s).map_err(serde::de::Error::custom)
     }
 }
+
+#[derive(Eq, PartialEq, Default, Clone, Debug, JsonSchema, Deserialize, Serialize)]
+pub struct RedactedHexVector(HexVector);
+
+impl Deref for RedactedHexVector {
+    type Target = HexVector;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<HexVector> for RedactedHexVector {
+    fn from(value: HexVector) -> Self {
+        RedactedHexVector(value)
+    }
+}
+
+impl From<Vec<u8>> for RedactedHexVector {
+    fn from(value: Vec<u8>) -> Self {
+        RedactedHexVector(HexVector(value))
+    }
+}
+
+impl DebugSecret for RedactedHexVector {}

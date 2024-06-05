@@ -1,11 +1,11 @@
-use std::str::FromStr;
-
 use super::conversions::*;
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Attribute, Event};
 use serde::ser::SerializeMap;
 use serde::Serialize;
 use serde_json::Value;
+use std::ops::Deref;
+use std::str::FromStr;
 use strum::EnumProperty;
 use strum_macros::{Display, EnumIs, EnumIter, EnumString};
 use typed_builder::TypedBuilder;
@@ -89,7 +89,7 @@ impl KmsCoreConf {
 #[derive(Default)]
 pub struct KmsCoreParty {
     pub party_id: HexVector,
-    pub public_key: HexVector,
+    pub public_key: Option<RedactedHexVector>,
     pub address: String,
     pub tls_pub_key: Option<HexVector>,
 }
@@ -254,16 +254,16 @@ pub enum KmsEventAttributeKey {
 #[cw_serde]
 #[derive(Eq, TypedBuilder, Default)]
 pub struct DecryptValues {
-    version: u32,
     /// key_id refers to the key that should be used for decryption
     /// created at key generation.
     #[builder(setter(into))]
     key_id: HexVector,
+    #[builder(setter(into))]
+    ciphertext: RedactedHexVector,
+    #[builder(setter(into))]
+    randomness: RedactedHexVector,
+    version: u32,
     fhe_type: FheType,
-    #[builder(setter(into))]
-    ciphertext: HexVector,
-    #[builder(setter(into))]
-    randomness: HexVector,
 }
 
 impl DecryptValues {
@@ -279,11 +279,11 @@ impl DecryptValues {
         self.fhe_type
     }
 
-    pub fn ciphertext(&self) -> &HexVector {
+    pub fn ciphertext(&self) -> &RedactedHexVector {
         &self.ciphertext
     }
 
-    pub fn randomness(&self) -> &HexVector {
+    pub fn randomness(&self) -> &RedactedHexVector {
         &self.randomness
     }
 }
@@ -303,18 +303,18 @@ pub struct ReencryptValues {
     // payload
     version: u32,
     #[builder(setter(into))]
-    verification_key: HexVector,
+    verification_key: RedactedHexVector,
     #[builder(setter(into))]
-    randomness: HexVector,
+    randomness: RedactedHexVector,
     #[builder(setter(into))]
-    enc_key: HexVector,
+    enc_key: RedactedHexVector,
     fhe_type: FheType,
     #[builder(setter(into))]
     key_id: HexVector,
     #[builder(setter(into))]
-    ciphertext: HexVector,
+    ciphertext: RedactedHexVector,
     #[builder(setter(into))]
-    ciphertext_digest: HexVector,
+    ciphertext_digest: RedactedHexVector,
 
     // eip712
     eip712_name: String,
@@ -335,15 +335,15 @@ impl ReencryptValues {
         self.version
     }
 
-    pub fn verification_key(&self) -> &HexVector {
+    pub fn verification_key(&self) -> &RedactedHexVector {
         &self.verification_key
     }
 
-    pub fn randomness(&self) -> &HexVector {
+    pub fn randomness(&self) -> &RedactedHexVector {
         &self.randomness
     }
 
-    pub fn enc_key(&self) -> &HexVector {
+    pub fn enc_key(&self) -> &RedactedHexVector {
         &self.enc_key
     }
 
@@ -355,11 +355,11 @@ impl ReencryptValues {
         &self.key_id
     }
 
-    pub fn ciphertext(&self) -> &HexVector {
+    pub fn ciphertext(&self) -> &RedactedHexVector {
         &self.ciphertext
     }
 
-    pub fn ciphertext_digest(&self) -> &HexVector {
+    pub fn ciphertext_digest(&self) -> &RedactedHexVector {
         &self.ciphertext_digest
     }
 
@@ -690,6 +690,14 @@ impl KmsMessage {
 #[derive(Eq, Default)]
 pub struct TransactionId(pub(crate) HexVector);
 
+impl Deref for TransactionId {
+    type Target = HexVector;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl TransactionId {
     pub fn to_hex(&self) -> String {
         self.0.to_hex()
@@ -700,7 +708,7 @@ impl TransactionId {
     }
 
     pub fn to_vec(&self) -> Vec<u8> {
-        self.0.clone().into()
+        self.deref().deref().clone()
     }
 }
 
@@ -735,6 +743,14 @@ impl From<TransactionId> for Attribute {
 #[derive(Eq, Default)]
 pub struct Proof(pub(crate) HexVector);
 
+impl Deref for Proof {
+    type Target = HexVector;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl Proof {
     pub fn to_hex(&self) -> String {
         self.0.to_hex()
@@ -745,7 +761,7 @@ impl Proof {
     }
 
     pub fn to_vec(&self) -> Vec<u8> {
-        self.0.clone().into()
+        self.deref().deref().clone()
     }
 }
 
@@ -952,8 +968,8 @@ mod tests {
                 version: u32::arbitrary(g),
                 key_id: HexVector::arbitrary(g),
                 fhe_type: FheType::arbitrary(g),
-                ciphertext: HexVector::arbitrary(g),
-                randomness: HexVector::arbitrary(g),
+                ciphertext: HexVector::arbitrary(g).into(),
+                randomness: HexVector::arbitrary(g).into(),
             }
         }
     }
@@ -963,13 +979,13 @@ mod tests {
             ReencryptValues {
                 signature: HexVector::arbitrary(g),
                 version: u32::arbitrary(g),
-                verification_key: HexVector::arbitrary(g),
-                randomness: HexVector::arbitrary(g),
-                enc_key: HexVector::arbitrary(g),
+                verification_key: HexVector::arbitrary(g).into(),
+                randomness: HexVector::arbitrary(g).into(),
+                enc_key: HexVector::arbitrary(g).into(),
                 fhe_type: FheType::arbitrary(g),
                 key_id: HexVector::arbitrary(g),
-                ciphertext: HexVector::arbitrary(g),
-                ciphertext_digest: HexVector::arbitrary(g),
+                ciphertext: HexVector::arbitrary(g).into(),
+                ciphertext_digest: HexVector::arbitrary(g).into(),
                 eip712_name: String::arbitrary(g),
                 eip712_version: String::arbitrary(g),
                 eip712_chain_id: HexVector::arbitrary(g),

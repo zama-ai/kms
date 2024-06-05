@@ -1,14 +1,16 @@
 use clap::Parser;
 use clap_stdin::FileOrStdin;
 use cosmwasm_std::Event;
-use events::kms::{KmsEvent, KmsMessage, KmsOperation, OperationValue};
+use events::kms::{DecryptValues, FheType, KmsEvent, KmsMessage, KmsOperation, OperationValue};
 use events::HexVector;
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
 use kms_blockchain_client::query_client::{
     ContractQuery, OperationQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
 };
+use kms_lib::util::key_setup::compute_cipher_from_storage;
 use simulator::conf::{Settings, SimConfig};
 use std::error::Error;
+use std::path::Path;
 use strum::IntoEnumIterator;
 
 #[derive(Debug, Parser)]
@@ -58,7 +60,18 @@ async fn execute_contract(
 ) -> Result<(), Box<dyn Error + 'static>> {
     let mut client = client;
     let msg = file.contents()?;
-    let value = serde_json::from_str::<OperationValue>(&msg)?;
+    let _ = serde_json::from_str::<OperationValue>(&msg)?;
+    let key_id = "04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea424";
+    let (cypher, _) = compute_cipher_from_storage(Some(Path::new("./keys")), 12, key_id).await;
+    let value = OperationValue::Decrypt(
+        DecryptValues::builder()
+            .ciphertext(cypher.clone())
+            .fhe_type(FheType::Euint8)
+            .key_id(hex::decode(key_id).unwrap())
+            .version(1)
+            .randomness(vec![1, 2, 3, 4, 5])
+            .build(),
+    );
 
     let request = ExecuteContractRequest::builder()
         .message(
@@ -67,7 +80,7 @@ async fn execute_contract(
                 .value(value)
                 .build(),
         )
-        .gas_limit(200_000)
+        .gas_limit(3_100_000)
         .build();
 
     let response = client.execute_contract(request).await?;
@@ -120,7 +133,7 @@ async fn query_contract(
         .contract_address(sim_config.contract)
         .query(query_req)
         .build();
-    let value: Vec<OperationValue> = query_client.query_contract(request).await?;
+    let value: Result<Vec<OperationValue>, _> = query_client.query_contract(request).await;
 
     tracing::info!("Value: {:?}", value);
 

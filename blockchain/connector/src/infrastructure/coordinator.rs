@@ -23,6 +23,7 @@ use kms_lib::kms::{
 };
 use kms_lib::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
 use kms_lib::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -244,8 +245,8 @@ impl KmsEventHandler for DecryptVal {
             .shares_needed() as u32;
         let key_id = self.decrypt.key_id().to_hex();
         let fhe_type = self.decrypt.fhe_type() as i32;
-        let ciphertext = self.decrypt.ciphertext().into();
-        let randomness = self.decrypt.randomness().into();
+        let ciphertext = self.decrypt.ciphertext().deref().into();
+        let randomness = self.decrypt.randomness().deref().into();
 
         let req = DecryptionRequest {
             version,
@@ -369,15 +370,15 @@ impl KmsEventHandler for ReencryptVal {
             payload: Some(ReencryptionRequestPayload {
                 version: reencrypt.version(),
                 servers_needed,
-                verification_key: reencrypt.verification_key().into(),
-                randomness: reencrypt.randomness().into(),
-                enc_key: reencrypt.enc_key().into(),
+                verification_key: reencrypt.verification_key().deref().into(),
+                randomness: reencrypt.randomness().deref().into(),
+                enc_key: reencrypt.enc_key().deref().into(),
                 fhe_type: reencrypt.fhe_type() as i32,
                 key_id: Some(RequestId {
                     request_id: reencrypt.key_id().to_hex(),
                 }),
-                ciphertext: Some(reencrypt.ciphertext().into()),
-                ciphertext_digest: reencrypt.ciphertext_digest().into(),
+                ciphertext: Some(reencrypt.ciphertext().deref().into()),
+                ciphertext_digest: reencrypt.ciphertext_digest().deref().into(),
             }),
             domain: Some(Eip712DomainMsg {
                 name: reencrypt.eip712_name().to_string(),

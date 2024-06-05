@@ -1,7 +1,6 @@
 use cosmwasm_schema::cw_serde;
+use events::kms::Proof;
 use std::str::FromStr;
-
-pub type Proof = Vec<u8>;
 
 pub(crate) trait ProofStrategy {
     fn verify_request_proof(&self, proof: Proof) -> bool;
