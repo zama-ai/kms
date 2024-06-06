@@ -46,7 +46,7 @@ crypto_box = { version = "0.9.1", features = ["salsa20"] }
 der = "0.7.8"
 distributed-decryption = { path = "../core/threshold/", default-features = false }
 hex = "0.4.3"
-itertools = "0.12"
+itertools = "0.13"
 k256 = "0.13.3"
 lazy_static = "1.4.0"
 nom = "7.1.3"
@@ -56,9 +56,6 @@ rayon = "1.10"
 rcgen = { version = "0.13", optional = true }
 reqwest = { version = "0.12.4", features = ["json"], optional = true }
 rsa = { version = "0.9.6", features = ["sha2"] }
-rustls = { version = "0.23.4", default-features = false, features = [
-    "std",
-], optional = true }
 serde = { version = "1.0.203", features = ["derive", "rc"] }
 serde_json = "1.0"
 serde_asn1_der = "0.8.0"
@@ -74,7 +71,6 @@ tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "0f9314fabed36188
 tracing = { version = "0.1.40", features = ["log"] }
 tracing-subscriber = "0.3.18"
 url = "2.5.0"
-webpki = { version = "0.22", features = ["std"], optional = true }
 tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "0f9314fabed36188d6b43c6436e49c220cbe9c75",  optional = true }
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -91,9 +87,11 @@ assert_cmd = "2.0.14"
 sysinfo = "0.30.12"
 tempfile = "3.10.1"
 tracing-test = "0.2.4"
+webpki = { version = "0.22", features = ["std"] }
+rustls = { version = "0.23", default-features = false, features = ["std"] }
 
 [build-dependencies]
-tonic-build = "0.10"
+tonic-build = "0.11"
 
 [features]
 default = ["non-wasm","grpc-client"]
@@ -108,9 +106,7 @@ non-wasm = [
     "dep:tokio",
     "dep:reqwest",
     "dep:rcgen",
-    "dep:rustls",
     "dep:tonic",
-    "dep:webpki",
     "dep:tfhe-zk-pok",
 ]
 slow_tests = []

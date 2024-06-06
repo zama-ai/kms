@@ -35,7 +35,6 @@ use wasm_bindgen::prelude::*;
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use anyhow::ensure;
-        use strum::EnumIter;
         use crate::storage::read_all_data;
         use std::fmt;
         use tfhe::ServerKey;
@@ -436,9 +435,7 @@ pub mod js_api {
 /// Data of this type is supposed to be readable by anyone on the internet
 /// and stored on a medium that _may_ be susceptible to malicious modifications.
 #[cfg(feature = "non-wasm")]
-#[derive(
-    Clone, Copy, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize, EnumIter,
-)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ClientDataType {
     SigningKey, // Type of the client's signing key
     VerfKey,    // Type for the servers verification keys
@@ -1478,6 +1475,7 @@ pub mod test_tools {
                 party_id: i,
                 address: "127.0.0.1".to_string(),
                 port: BASE_PORT + i as u16,
+                tls_cert_path: None,
             })
             .collect_vec()
     }
@@ -1511,9 +1509,12 @@ pub mod test_tools {
                     timeout_secs,
                     preproc_redis_conf: None,
                     num_sessions_preproc: None,
+                    tls_cert_path: None,
+                    tls_key_path: None,
                     peer_confs: peer_configs,
                     param_file_map: default_param_file_map(),
                 };
+                // TODO pass in cert_paths for testing TLS
                 let server =
                     threshold_server_init(config.clone(), cur_pub_storage, cur_priv_storage, true)
                         .await;

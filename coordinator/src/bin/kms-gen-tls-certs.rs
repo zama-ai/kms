@@ -108,15 +108,17 @@ fn create_coordinator_cert(
     let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
     let mut cp = CertificateParams::new(vec![
         coordinator_name.to_string(),
+        "127.0.0.1".to_string(),
         "localhost".to_string(),
         "192.168.0.1".to_string(),
-        "127.0.0.1".to_string(),
         "0:0:0:0:0:0:0:1".to_string(),
+        "::1".to_string(),
     ])?;
 
     // set distinguished name of coordinator cert
     let mut distinguished_name = DistinguishedName::new();
-    distinguished_name.push(DnType::CommonName, coordinator_name);
+    distinguished_name.push(DnType::CommonName, coordinator_name); // this might be the one for docker deployment
+                                                                   // distinguished_name.push(DnType::CommonName, "127.0.0.1".to_string()); // this seems to be needed for local deployment
     cp.distinguished_name = distinguished_name;
 
     // set coordinator cert CA flag

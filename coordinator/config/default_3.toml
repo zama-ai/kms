@@ -21,27 +21,35 @@ num_sessions_preproc = 2
 public_storage_path = "keys"
 private_storage_path = "keys"
 
+# The below is optional and used for TLS certificates
+tls_cert_path = "certs/cert_p3.pem"
+tls_key_path = "certs/key_p3.pem"
+
 # The number of peer_confs dictates the total number of parties.
 # This list should be the same for all parties.
 [[peer_confs]]
 party_id = 1
 address = "127.0.0.1"
 port = 50001
+tls_cert_path = "certs/cert_p1.pem"
 
 [[peer_confs]]
 party_id = 2
 address = "127.0.0.1"
 port = 50002
+tls_cert_path = "certs/cert_p2.pem"
 
 [[peer_confs]]
 party_id = 3
 address = "127.0.0.1"
 port = 50003
+tls_cert_path = "certs/cert_p3.pem"
 
 [[peer_confs]]
 party_id = 4
 address = "127.0.0.1"
 port = 50004
+tls_cert_path = "certs/cert_p4.pem"
 
 # The keys must match the keys of the ParamChoice type, in kms.proto.
 # More specifically, names must all be lower-case; e.g. "test" or "default"

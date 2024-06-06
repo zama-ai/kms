@@ -8,6 +8,7 @@ use sysinfo::System;
 
 const KMS_SERVER: &str = "kms-server";
 const KMS_GEN_KEYS: &str = "kms-gen-keys";
+const KMS_GEN_TLS_CERTS: &str = "kms-gen-tls-certs";
 const KMS_INIT: &str = "kms-init";
 
 /// Kill processes based on the executable name.
@@ -239,6 +240,19 @@ mod kms_server_binary_test {
                 .arg("threshold")
                 .arg("--param-path")
                 .arg("parameters/small_test_params.json")
+                .output()
+                .unwrap()
+                .assert()
+                .success();
+
+            Command::cargo_bin(KMS_GEN_TLS_CERTS)
+                .unwrap()
+                .arg("-o")
+                .arg("certs")
+                .arg("--coordinator-prefix")
+                .arg("p")
+                .arg("--coordinator-count")
+                .arg("4")
                 .output()
                 .unwrap()
                 .assert()

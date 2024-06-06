@@ -56,6 +56,11 @@ pub struct CertificatePaths {
 }
 
 impl CertificatePaths {
+    pub fn get_certificate(&self) -> anyhow::Result<tonic::transport::Certificate> {
+        let cert_str = std::fs::read_to_string(&self.cert)?;
+        Ok(tonic::transport::Certificate::from_pem(cert_str))
+    }
+
     pub fn get_identity(&self) -> anyhow::Result<tonic::transport::Identity> {
         let cert = std::fs::read_to_string(&self.cert)?;
         let key = std::fs::read_to_string(&self.key)?;

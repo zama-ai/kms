@@ -32,8 +32,8 @@ pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
     ./kms-server dev centralized --config-file config/default_centralized.toml \n
     If no configuration file is specified, the default configuration will be used \
     (e.g. config/default_centralized.toml for the centralize case). \n
-    Note that key material MUST exist when starting the server and be stored in the path specified by the configuration file. \n
-    Please consult the `kms-gen-keys` binary for details on generating key material."
+    Note that key material and TLS certificates MUST exist when starting the server and be stored in the path specified by the configuration file. \n
+    Please consult the `kms-gen-keys` and `kms-gen-tls-certs` binaries for details on generating key material and certificates."
 )]
 struct KmsArgs {
     #[clap(subcommand)]
@@ -163,6 +163,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 )
                 .unwrap();
                 let config = full_config.rest;
+
                 let server =
                     threshold_server_init(config.clone(), pub_storage, priv_storage, false).await?;
                 threshold_server_start(

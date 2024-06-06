@@ -268,7 +268,11 @@ pub async fn ensure_threshold_keys_exist(
         return;
     }
 
-    let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
+    let params: NoiseFloodParameters = match read_as_json(param_path).await {
+        Ok(x) => x,
+        Err(e) => panic!("Error opening params at {}: {}", param_path, e),
+    };
+
     let key_set = gen_key_set(params, &mut rng);
     let key_shares = keygen_all_party_shares(
         key_set.get_raw_lwe_client_key(),

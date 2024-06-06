@@ -21,13 +21,14 @@ use backoff::future::retry_notify;
 use backoff::ExponentialBackoff;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::Mutex;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::time::Instant;
 use tonic::codegen::http::Uri;
 use tonic::service::interceptor::InterceptedService;
-use tonic::transport::{Channel, ClientTlsConfig};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 
 /// GrpcNetworkingManager is responsible for managing
 /// channels and message queues between MPC parties.
@@ -320,33 +321,38 @@ impl Gnetworking for NetworkingImpl {
         &self,
         request: tonic::Request<SendValueRequest>,
     ) -> std::result::Result<tonic::Response<SendValueResponse>, tonic::Status> {
-        let tls_sender = extract_sender(&request)
+        // If TLS is enabled, A SAN may look like:
+        // DNS:party1.com, IP Address:127.0.0.1, DNS:localhost, IP Address:192.168.0.1, IP Address:0:0:0:0:0:0:0:1
+        // which is a collection of DNS names and IP addresses.
+        // One of these must match the "tag" that's in the request for identity verification
+        let valid_tls_senders = extract_valid_sender_sans(&request)
             .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e))?
-            .map(Identity::from);
-        tracing::info!("extract_sender returned {:?}", tls_sender);
+            .map(|x| x.into_iter().collect::<Vec<_>>());
+        tracing::info!("extract_valid_sender_sans returned {:?}", valid_tls_senders);
 
         let request = request.into_inner();
         let tag = bincode::deserialize::<Tag>(&request.tag).map_err(|_e| {
             tonic::Status::new(tonic::Code::Aborted, "failed to parse value".to_string())
         })?;
 
-        if let Some(sender) = tls_sender {
-            // tag.sender may have the form hostname:port
+        if let Some(senders) = valid_tls_senders {
+            // tag.sender has the form hostname:port
             // we remove the port component since the tls_sender does not have it
-            let host_port: Vec<_> = tag.sender.0.split(':').collect();
-            if host_port.len() != 2 {
+            let host_and_port: Vec<_> = tag.sender.0.split(':').collect();
+            if host_and_port.len() != 2 {
                 return Err(tonic::Status::new(
                     tonic::Code::Unknown,
-                    format!("wrong sender tag: {:?}", tag.sender,),
+                    format!(
+                        "wrong sender tag (could not split at ':'): {:?}",
+                        tag.sender,
+                    ),
                 ));
             }
-            if host_port[0] != sender.0 {
+            let host = host_and_port[0].to_string();
+            if !senders.contains(&host) {
                 return Err(tonic::Status::new(
                     tonic::Code::Unauthenticated,
-                    format!(
-                        "wrong sender: expected {:?} but got {:?}",
-                        tag.sender, sender
-                    ),
+                    format!("wrong sender: expected {:?} to be in {:?}", host, senders),
                 ));
             }
         }
@@ -384,62 +390,83 @@ impl Gnetworking for NetworkingImpl {
     }
 }
 
-fn extract_sender<T>(request: &tonic::Request<T>) -> Result<Option<String>, String> {
+/// returns the list of accepted sender SANs that is contained in the request's client peer certificates
+fn extract_valid_sender_sans<T>(
+    request: &tonic::Request<T>,
+) -> Result<Option<Vec<String>>, String> {
     match request.peer_certs() {
         None => Ok(None),
         Some(certs) => {
-            if certs.len() != 1 {
-                anyhow_error_and_log(format!(
-                    "cannot extract identity from certificate chain of length {:?}",
-                    certs.len()
-                ));
-            }
-
-            let (_rem, cert) =
-                x509_parser::parse_x509_certificate(certs[0].as_ref()).map_err(|err| {
-                    format!("failed to parse X509 certificate: {:?}", err.to_string())
-                })?;
-
-            // we find the common name of the issuer (currently: the party itself)
-            // since we treat the certificate authority (issuer) as the identity
-            let ca_cns: Vec<_> = cert
-                .issuer()
-                .iter_common_name()
-                .map(|attr| attr.as_str().map_err(|err| err.to_string()))
-                .collect::<Result<_, _>>()?;
-
-            // we also need to check the CN of the certificate subject itself and verify
-            // that is contains the right format. this is to prevent a malicious
-            // party from signing a core that it does not own.
-            let core_cns: Vec<_> = cert
-                .subject()
-                .iter_common_name()
-                .map(|attr| attr.as_str().map_err(|err| err.to_string()))
-                .collect::<Result<_, _>>()?;
-
-            // check that we have exactly 1 issuer and 1 subject
-            if core_cns.len() != 1 || ca_cns.len() != 1 {
-                anyhow_error_and_log(format!(
-                    "The certificate does not have exactly 1 issuer and 1 subject: issuer CNs: ({:?}), subject CNs: ({:?}).",
-                    ca_cns.len(), core_cns.len()
-                ));
-            }
-
-            match (ca_cns.first(), core_cns.first()) {
-                (Some(issuer_cn), Some(subject_cn)) => {
-                    // the party certs are currently self-signed, so check that issuer and subject are identical
-                    if subject_cn != issuer_cn {
-                        return Err(format!(
-                            "issuer CN ({}) does not match subject CN ({})!",
-                            issuer_cn, subject_cn
-                        ));
-                    }
-                    Ok(Some(issuer_cn.to_string()))
-                }
-                _ => Err("certificate common name was empty".to_string()),
-            }
+            let san_strings = extract_san_from_certs(&certs, false)?;
+            Ok(Some(san_strings))
         }
     }
+}
+
+/// Extract all the SANs in the certificate from the request.
+///
+/// Each party should have its own self-signed certificate.
+/// Each self-signed certificate is loaded into the trust store of all the parties.
+pub fn extract_san_from_certs(certs: &[Certificate], use_pem: bool) -> Result<Vec<String>, String> {
+    if certs.len() != 1 {
+        return Err(format!(
+            "cannot extract identity from certificate chain of length {:?}",
+            certs.len()
+        ));
+    }
+
+    let (pem_cert, der_cert) = if use_pem {
+        let (_rem, c) = x509_parser::pem::parse_x509_pem(certs[0].as_ref())
+            .map_err(|err| format!("failed to parse X509 certificate: {:?}", err.to_string()))?;
+        (Some(c), None)
+    } else {
+        let (_rem, c) = x509_parser::parse_x509_certificate(certs[0].as_ref())
+            .map_err(|err| format!("failed to parse X509 certificate: {:?}", err.to_string()))?;
+        (None, Some(c))
+    };
+
+    let cert = match (&pem_cert, &der_cert) {
+        (Some(pem_cert), None) => pem_cert.parse_x509().map_err(|e| e.to_string())?,
+        (None, Some(der_cert)) => der_cert.clone(),
+        _ => return Err("internal logic error when parsing certificates".to_string()),
+    };
+
+    let sans = cert
+        .subject_alternative_name()
+        .map_err(|e| e.to_string())?
+        .ok_or("SAN not specified")?;
+    let san_strings: Vec<_> = sans
+        .value
+        .general_names
+        .iter()
+        .filter_map(|san| match san {
+            x509_parser::extensions::GeneralName::DNSName(s) => Some(s.to_string()),
+            x509_parser::extensions::GeneralName::IPAddress(s) => {
+                if s.len() == 16 {
+                    let mut buf = [0u8; 16];
+                    buf.copy_from_slice(s);
+                    Some(Ipv6Addr::from(buf).to_string())
+                } else if s.len() == 4 {
+                    let mut buf = [0u8; 4];
+                    buf.copy_from_slice(s);
+                    Some(Ipv4Addr::from(buf).to_string())
+                } else {
+                    tracing::warn!("Ignoring IP SAN in unsupported format {:?}", san);
+                    None
+                }
+            }
+            _ => {
+                tracing::warn!("Ignoring SAN in unsupported format {:?}", san);
+                None
+            }
+        })
+        .collect();
+
+    if san_strings.is_empty() {
+        return Err("No valid SAN found".to_string());
+    }
+
+    Ok(san_strings)
 }
 
 #[derive(Serialize, Deserialize, Debug)]

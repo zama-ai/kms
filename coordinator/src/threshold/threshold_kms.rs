@@ -26,6 +26,7 @@ use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
 use distributed_decryption::choreography::NetworkingStrategy;
+use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::endpoints::decryption::{
     decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, Small,
 };
@@ -67,7 +68,7 @@ use tfhe::{FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
-use tonic::transport::Server;
+use tonic::transport::{Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
 
 const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
@@ -93,8 +94,33 @@ pub struct ThresholdConfigNoStorage {
     pub timeout_secs: u64,
     pub preproc_redis_conf: Option<RedisConf>,
     pub num_sessions_preproc: Option<u16>,
+    pub tls_cert_path: Option<String>,
+    pub tls_key_path: Option<String>,
     pub peer_confs: Vec<PeerConf>,
     pub param_file_map: HashMap<String, String>, // TODO parameters should be loaded once during boot
+}
+
+impl ThresholdConfigNoStorage {
+    pub fn get_tls_cert_paths(&self) -> Option<CertificatePaths> {
+        let cert_paths: Option<Vec<String>> = self
+            .peer_confs
+            .iter()
+            .map(|c| c.tls_cert_path.clone())
+            .collect();
+
+        match (
+            cert_paths,
+            self.tls_cert_path.clone(),
+            self.tls_key_path.clone(),
+        ) {
+            (Some(paths), Some(cert), Some(key)) => Some(CertificatePaths {
+                cert,
+                key,
+                calist: paths.join(","),
+            }),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -102,6 +128,7 @@ pub struct PeerConf {
     pub party_id: usize,
     pub address: String,
     pub port: u16,
+    pub tls_cert_path: Option<String>,
 }
 
 impl PeerConf {
@@ -162,6 +189,8 @@ pub async fn threshold_server_init<
     private_storage: PrivS,
     run_prss: bool,
 ) -> anyhow::Result<ThresholdKms<PubS, PrivS>> {
+    let cert_paths = config.get_tls_cert_paths();
+
     //If no RedisConf is provided, we just use in-memory storage for the preprocessing buckets.
     //NOTE: This should probably only be allowed for testing
     let factory = match config.preproc_redis_conf {
@@ -190,6 +219,7 @@ pub async fn threshold_server_init<
         public_storage,
         private_storage,
         config.param_file_map,
+        cert_paths,
     )
     .await?;
 
@@ -357,6 +387,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         public_storage: PubS,
         private_storage: PrivS,
         param_file_map: HashMap<String, String>,
+        cert_paths: Option<CertificatePaths>,
     ) -> anyhow::Result<Self> {
         let sks: HashMap<RequestId, PrivateSigKey> =
             read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
@@ -388,16 +419,54 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             .into_iter()
             .map(|peer_config| peer_config.into_role_identity())
             .collect();
+
         let own_identity = tonic_some_or_err(
             role_assignments.get(&Role::indexed_by_one(my_id)),
             "Could not find my own identity".to_string(),
         )?;
 
-        // TODO setup TLS
-        let networking_manager = GrpcNetworkingManager::new(own_identity.to_owned(), None);
+        let mut server = match &cert_paths {
+            Some(cert_bundle) => {
+                tracing::info!("Creating server with TLS enabled.");
+
+                // check that own_identity matches to what's in our certificate
+                let certificate = cert_bundle.get_certificate()?;
+                let san_strings = distributed_decryption::networking::grpc::extract_san_from_certs(
+                    &[certificate],
+                    true,
+                )
+                .map_err(|e| anyhow!(e))?;
+                let host = own_identity
+                    .0
+                    .split(':')
+                    .next()
+                    .ok_or(anyhow!("hostname not found in own_identity"))?
+                    .to_string();
+                if !san_strings.contains(&host) {
+                    return Err(anyhow_error_and_log(format!(
+                        "cannot find hostname {} in SAN {:?}",
+                        host, san_strings
+                    )));
+                }
+
+                // now setup the TLS server
+                let identity = cert_bundle.get_identity()?;
+                let ca_cert = cert_bundle.get_flattened_ca_list()?;
+                let tls_config = ServerTlsConfig::new()
+                    .identity(identity)
+                    .client_ca_root(ca_cert);
+                Server::builder().tls_config(tls_config)?
+            }
+            _ => {
+                tracing::info!("Creating server without TLS support.");
+                Server::builder()
+            }
+        };
+
+        // This will setup TLS if cert_paths is set to Some(...)
+        let networking_manager = GrpcNetworkingManager::new(own_identity.to_owned(), cert_paths);
         let networking_server = networking_manager.new_server();
 
-        let mut server = Server::builder();
         let router = server.add_service(networking_server);
         let addr: SocketAddr = format!("{listen_address}:{listen_port}").parse()?;
 
@@ -480,6 +549,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 
         let mut guarded_prss_setup = self.prss_setup.write().await;
         *guarded_prss_setup = Some(res);
+
+        tracing::info!("PRSS completed successfully for identity {}.", own_identity);
         Ok(())
     }
 
