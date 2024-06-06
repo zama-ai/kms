@@ -44,7 +44,7 @@ config = "0.14"
 cms = "0.2.3"
 crypto_box = { version = "0.9.1", features = ["salsa20"] }
 der = "0.7.8"
-distributed-decryption = { path = "../core/threshold/", default-features = false }
+distributed-decryption = { path = "../threshold/", default-features = false }
 hex = "0.4.3"
 itertools = "0.13"
 k256 = "0.13.3"

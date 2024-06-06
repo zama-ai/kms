@@ -1,8 +1,0 @@
-image = "kms:latest"
-environment = "dev"
-vpc_id = "vpc-24988f4d"
-subnet_id = "subnet-a886b4c1"
-repository_arn_aws_creds = "arn:aws:secretsmanager:eu-west-3:324777464715:secret:deploy/ddec-tXKTIn"
-ssh_key_name = "kms_team_ddec_choreo_test"
-instance_type = "m6i.xlarge"
-image_eif = "kms-enclave:latest"

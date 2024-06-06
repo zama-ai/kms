@@ -1,18 +1,18 @@
-name: "[Coordinator-Merge Main] Pipeline Run"
+name: "[core-service-Merge Main] Pipeline Run"
 
 on:
   push:
     branches: ['main']
     paths:
-      - 'coordinator/**'
+      - 'core/service/**'
       - 'core/threshold/**'
-      - '.github/workflows/coordinator-main.yml'
+      - '.github/workflows/service-main.yml'
 
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
-      working-directory: './coordinator'
+      working-directory: './core/service'
       args-tests: '-F slow_tests'
       run-wasm: true
     permissions:
@@ -32,9 +32,9 @@ jobs:
       id-token: 'write'
       packages: 'write'
     with:
-      working-directory: "./coordinator"
+      working-directory: "./core/service"
       push_image: true
-      image-name: 'kms-coordinator'
+      image-name: 'kms-service'
     needs:
       - build
     secrets:
@@ -51,9 +51,9 @@ jobs:
       id-token: 'write'
       packages: 'write'
     with:
-      working-directory: "./coordinator"
+      working-directory: "./core/service"
       push_image: true
-      image-name: 'kms-coordinator'
+      image-name: 'kms-service'
     needs:
       - build
     secrets:

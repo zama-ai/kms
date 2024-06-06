@@ -4,7 +4,7 @@ FROM rust:1.78-slim-bookworm as base
 
 ARG BLOCKCHAIN_ACTIONS_TOKEN
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
-    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config
+    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config libssl-dev
 
 WORKDIR /app/kms
 COPY . .
@@ -16,15 +16,13 @@ RUN ssh-keyscan -H github.com >> ~/.ssh/known_hosts
 # Install the binary leaving it in the WORKDIR/bin folder
 RUN mkdir -p /app/kms/bin
 RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".insteadOf ssh://git@github.com
-
-# Cargo build from coordinator directory
-WORKDIR /app/kms/coordinator
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path . --root . --bin kms-server --bin kms-gen-keys --bin kms-gen-tls-certs --bin kms-init
-RUN /app/kms/coordinator/bin/kms-gen-keys centralized
-RUN /app/kms/coordinator/bin/kms-gen-tls-certs --coordinator-prefix p --coordinator-count 4 -o certs
+    cargo install --path core/service --root core/service --bin kms-server --bin kms-gen --bin kms-init
+
+# Generate the default software keys
+RUN /app/kms/bin/kms-gen /app/kms/temp/
 
 # Second stage builds the runtime image.
 # This stage will be the final image
@@ -45,13 +43,15 @@ RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
 # Third stage: Copy the binaries from the base stage and the go-runtime stage
 FROM debian:stable-slim as runtime
-# Set the path to include the binaries and not just the default /usr/local/bin
-ENV PATH="$PATH:/app/kms/coordinator/bin"
-WORKDIR /app/kms/coordinator
-# Copy the binaries from the base stage
-COPY --from=base /app/kms/coordinator/bin/ /app/kms/coordinator/bin/
-COPY --from=base /app/kms/coordinator/parameters/ /app/kms/coordinator/parameters/
-COPY --from=base /app/kms/coordinator/keys/ /app/kms/coordinator/keys/
-COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/coordinator/bin/
+WORKDIR /app/kms
 
-CMD ["kms-server"]
+RUN mkdir -p /app/kms/parameters
+
+# Set the path to include the binaries and not just the default /usr/local/bin
+ENV PATH="$PATH:/app/kms/bin"
+# Copy the binaries from the base stage
+COPY --from=base /app/kms/core/service/bin/ /app/kms/bin/
+COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
+COPY ./core/service/parameters/default_params.json /app/kms/parameters/
+
+CMD ["kms-server", "dev"]

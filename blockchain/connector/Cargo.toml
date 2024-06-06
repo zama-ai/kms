@@ -9,7 +9,7 @@ edition = "2021"
 anyhow = "~1.0"
 async-trait = "~0.1"
 clap = { version = "~4", features = ["derive", "env"] }
-kms = { path = "../../coordinator", default-features = false, features = ["grpc-client"] }
+kms = { path = "../../core/service", default-features = false, features = ["grpc-client"] }
 config = "0.14.0"
 dashmap = "5"
 enum_dispatch = "0.3.12"
@@ -39,7 +39,7 @@ typed-builder = "0.18.1"
 [dev-dependencies]
 alloy-sol-types = "0.7.0"
 alloy-primitives = "0.7.0"
-kms = { path = "../../coordinator" }
+kms = { path = "../../core/service" }
 serial_test = "3.1.1"
 test-context = "0.3.0"
 test-utilities = { path = "./utilities" }

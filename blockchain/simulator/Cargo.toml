@@ -11,7 +11,7 @@ cosmos-proto = { path = "../cosmos-proto" }
 cosmwasm-std = { version = "2.0.2" }
 events = { path = "../events" }
 hex = "0.4.3"
-kms = { path = "../../coordinator" }
+kms = { path = "../../core/service" }
 kms-blockchain-client = { path = "../client" }
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0"

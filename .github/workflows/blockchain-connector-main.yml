@@ -6,7 +6,7 @@ on:
     paths:
       - 'blockchain/connector/**'
       - 'blockchain/events/**'
-      - 'coordinator/proto/kms.proto'
+      - 'core/service/proto/kms.proto'
       - '.github/workflows/blockchain-connector-main.yml'
 
 

@@ -9,7 +9,7 @@ members = [
     "blockchain/events",
     "blockchain/proofs",
     "blockchain/simulator",
-    "coordinator",
+    "core/service",
     "core/threshold",
 ]
 
