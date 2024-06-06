@@ -805,7 +805,8 @@ mod test {
     async fn ddec_centralized_sunshine() {
         setup_central_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            compute_cipher_from_storage(None, TEST_MSG, &TEST_CENTRAL_KEY_ID.to_string()).await;
+            compute_cipher_from_storage(None, TEST_MSG.into(), &TEST_CENTRAL_KEY_ID.to_string())
+                .await;
         let op = OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
@@ -973,7 +974,8 @@ mod test {
     async fn ddec_sunshine(slow: bool) {
         setup_threshold_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            compute_cipher_from_storage(None, TEST_MSG, &TEST_THRESHOLD_KEY_ID.to_string()).await;
+            compute_cipher_from_storage(None, TEST_MSG.into(), &TEST_THRESHOLD_KEY_ID.to_string())
+                .await;
         let op = OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
@@ -1013,7 +1015,8 @@ mod test {
     async fn reenc_sunshine(slow: bool) {
         setup_threshold_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            compute_cipher_from_storage(None, TEST_MSG, &TEST_THRESHOLD_KEY_ID.to_string()).await;
+            compute_cipher_from_storage(None, TEST_MSG.into(), &TEST_THRESHOLD_KEY_ID.to_string())
+                .await;
 
         // we need a KMS client to simply the boilerplate
         // for setting up the request correctly

@@ -783,8 +783,10 @@ mod tests {
     async fn simulate_decrypt(sim_type: SimulationType, kms_key_path: &str, key_id: &RequestId) {
         let msg = TEST_MSG;
         let keys: CentralizedTestingKeys = read_element(kms_key_path).await.unwrap();
-        let (ct, fhe_type) =
-            compute_cipher(msg, &keys.pub_fhe_keys.get(key_id).unwrap().public_key);
+        let (ct, fhe_type) = compute_cipher(
+            msg.into(),
+            &keys.pub_fhe_keys.get(key_id).unwrap().public_key,
+        );
         let kms = {
             let inner = SoftwareKms::new(
                 default_param_file_map(),
@@ -925,8 +927,10 @@ mod tests {
         let msg = TEST_MSG;
         let mut rng = AesRng::seed_from_u64(1);
         let keys: CentralizedTestingKeys = read_element(kms_key_path).await.unwrap();
-        let (ct, fhe_type) =
-            compute_cipher(msg, &keys.pub_fhe_keys.get(key_handle).unwrap().public_key);
+        let (ct, fhe_type) = compute_cipher(
+            msg.into(),
+            &keys.pub_fhe_keys.get(key_handle).unwrap().public_key,
+        );
         let kms = {
             let mut inner = SoftwareKms::new(
                 default_param_file_map(),

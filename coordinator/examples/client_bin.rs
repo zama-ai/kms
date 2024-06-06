@@ -77,7 +77,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await
             .unwrap();
     let (ct, fhe_type) =
-        compute_cipher_from_storage(None, TEST_MSG, &DEFAULT_CENTRAL_KEY_ID.to_string()).await;
+        compute_cipher_from_storage(None, TEST_MSG.into(), &DEFAULT_CENTRAL_KEY_ID.to_string())
+            .await;
 
     // DECRYPTION REQUEST
     let req = internal_client.decryption_request(

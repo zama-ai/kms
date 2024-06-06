@@ -62,7 +62,8 @@ async fn execute_contract(
     let msg = file.contents()?;
     let _ = serde_json::from_str::<OperationValue>(&msg)?;
     let key_id = "04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea424";
-    let (cypher, _) = compute_cipher_from_storage(Some(Path::new("./keys")), 12, key_id).await;
+    let (cypher, _) =
+        compute_cipher_from_storage(Some(Path::new("./keys")), 12u8.into(), key_id).await;
     let value = OperationValue::Decrypt(
         DecryptValues::builder()
             .ciphertext(cypher.clone())

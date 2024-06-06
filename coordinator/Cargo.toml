@@ -89,6 +89,8 @@ tempfile = "3.10.1"
 tracing-test = "0.2.4"
 webpki = { version = "0.22", features = ["std"] }
 rustls = { version = "0.23", default-features = false, features = ["std"] }
+rstest = "0.21.0"
+async-std = { version = "1.12.0", features = ["attributes", "tokio1"] } # required by rstest for async tests
 
 [build-dependencies]
 tonic-build = "0.11"

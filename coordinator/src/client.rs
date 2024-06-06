@@ -1650,10 +1650,7 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
     use crate::consts::TEST_CENTRAL_KEY_ID;
-    use crate::consts::{
-        AMOUNT_PARTIES, TEST_DEC_ID, TEST_FHE_TYPE, TEST_MSG, TEST_PARAM_PATH, TEST_REENC_ID,
-        THRESHOLD,
-    };
+    use crate::consts::{AMOUNT_PARTIES, TEST_DEC_ID, TEST_PARAM_PATH, TEST_REENC_ID, THRESHOLD};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM_PATH,
@@ -1678,8 +1675,8 @@ pub(crate) mod tests {
     use crate::util::file_handling::read_element;
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
-    use crate::util::key_setup::purge;
     use crate::util::key_setup::{compute_cipher_from_storage, FhePublicKey};
+    use crate::util::key_setup::{purge, TypedPlaintext};
     use crate::{
         client::num_blocks,
         kms::{Empty, RequestId},
@@ -2187,22 +2184,33 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_decryption_central() {
-        decryption_centralized(TEST_PARAM_PATH, &TEST_CENTRAL_KEY_ID.to_string()).await;
+        decryption_centralized(
+            TEST_PARAM_PATH,
+            &TEST_CENTRAL_KEY_ID.to_string(),
+            TypedPlaintext::U8(42),
+        )
+        .await;
     }
 
     #[cfg(feature = "slow_tests")]
-    #[tokio::test]
+    #[rstest::rstest]
+    #[case(TypedPlaintext::Bool(true))]
+    #[case(TypedPlaintext::U8(42))]
+    #[case(TypedPlaintext::U16(42000))]
+    #[case(TypedPlaintext::U32(4_200_000))]
+    #[case(TypedPlaintext::U64(42_000_000))]
+    #[case(TypedPlaintext::U128(420_000_000_000))]
     #[serial]
-    async fn default_decryption_centralized() {
-        decryption_centralized(DEFAULT_PARAM_PATH, &DEFAULT_CENTRAL_KEY_ID.to_string()).await;
+    async fn default_decryption_centralized(#[case] msg: TypedPlaintext) {
+        decryption_centralized(DEFAULT_PARAM_PATH, &DEFAULT_CENTRAL_KEY_ID.to_string(), msg).await;
     }
 
-    async fn decryption_centralized(param_path: &str, key_id: &str) {
+    async fn decryption_centralized(param_path: &str, key_id: &str, msg: TypedPlaintext) {
         // TODO refactor with setup and teardown setting up servers that can be used to run tests in
         // parallel
         let (kms_server, mut kms_client, mut internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
-        let (ct, fhe_type) = compute_cipher_from_storage(None, TEST_MSG, key_id).await;
+        let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
         let req = internal_client
             .decryption_request(ct.clone(), fhe_type, &TEST_DEC_ID, &req_key_id)
@@ -2231,8 +2239,16 @@ pub(crate) mod tests {
             .process_decryption_resp(Some(req), &responses)
             .unwrap()
             .unwrap();
-        assert_eq!(TEST_FHE_TYPE, plaintext.fhe_type());
-        assert_eq!(TEST_MSG, plaintext.as_u8());
+
+        assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
+        match msg {
+            TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+            TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+            TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+            TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+            TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+            TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+        }
 
         kms_server.abort();
     }
@@ -2240,24 +2256,43 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_reencryption_centralized() {
-        reencryption_centralized(TEST_PARAM_PATH, &TEST_CENTRAL_KEY_ID.to_string(), false).await;
+        reencryption_centralized(
+            TEST_PARAM_PATH,
+            &TEST_CENTRAL_KEY_ID.to_string(),
+            false,
+            TypedPlaintext::U8(42),
+        )
+        .await;
     }
 
     #[cfg(feature = "wasm_tests")]
     #[tokio::test]
     #[serial]
     async fn test_reencryption_centralized_and_write_transcript() {
-        reencryption_centralized(TEST_PARAM_PATH, &TEST_CENTRAL_KEY_ID.to_string(), true).await;
+        reencryption_centralized(
+            TEST_PARAM_PATH,
+            &TEST_CENTRAL_KEY_ID.to_string(),
+            true,
+            TypedPlaintext::U8(42),
+        )
+        .await;
     }
 
     #[cfg(feature = "slow_tests")]
-    #[tokio::test]
+    #[rstest::rstest]
+    #[case(TypedPlaintext::Bool(true))]
+    #[case(TypedPlaintext::U8(42))]
+    #[case(TypedPlaintext::U16(42000))]
+    #[case(TypedPlaintext::U32(4_200_000))]
+    #[case(TypedPlaintext::U64(42_000_000))]
+    #[case(TypedPlaintext::U128(420_000_000_000))]
     #[serial]
-    async fn default_reencryption_centralized() {
+    async fn default_reencryption_centralized(#[case] msg: TypedPlaintext) {
         reencryption_centralized(
             DEFAULT_PARAM_PATH,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             false,
+            msg,
         )
         .await;
     }
@@ -2271,12 +2306,17 @@ pub(crate) mod tests {
         )
     }
 
-    async fn reencryption_centralized(param_path: &str, key_id: &str, write_transcript: bool) {
+    async fn reencryption_centralized(
+        param_path: &str,
+        key_id: &str,
+        write_transcript: bool,
+        msg: TypedPlaintext,
+    ) {
         _ = write_transcript;
 
         let (kms_server, mut kms_client, mut internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
-        let (ct, fhe_type) = compute_cipher_from_storage(None, TEST_MSG, key_id).await;
+        let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
         let request_id = &TEST_REENC_ID;
         let (req, enc_pk, enc_sk) = internal_client
             .reencryption_request(
@@ -2333,8 +2373,15 @@ pub(crate) mod tests {
             .process_reencryption_resp(Some(req), &responses, &enc_pk, &enc_sk)
             .unwrap()
             .unwrap();
-        assert_eq!(TEST_FHE_TYPE, plaintext.fhe_type());
-        assert_eq!(TEST_MSG, plaintext.as_u8());
+        assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
+        match msg {
+            TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+            TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+            TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+            TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+            TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+            TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+        }
 
         kms_server.abort();
     }
@@ -2343,20 +2390,78 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_decryption_threshold() {
-        decryption_threshold(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID.to_string()).await;
+        decryption_threshold(
+            TEST_PARAM_PATH,
+            &TEST_THRESHOLD_KEY_ID.to_string(),
+            TypedPlaintext::U8(42),
+        )
+        .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn default_decryption_threshold() {
-        decryption_threshold(DEFAULT_PARAM_PATH, &DEFAULT_THRESHOLD_KEY_ID.to_string()).await;
+    async fn default_decryption_threshold_bool() {
+        decryption_threshold(
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+            TypedPlaintext::Bool(false),
+        )
+        .await;
     }
 
-    async fn decryption_threshold(params: &str, key_id: &str) {
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_decryption_threshold_u8() {
+        decryption_threshold(
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+            TypedPlaintext::U8(42),
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_decryption_threshold_u16() {
+        decryption_threshold(
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+            TypedPlaintext::U16(4200),
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_decryption_threshold_u64() {
+        decryption_threshold(
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+            TypedPlaintext::U64(4_200_000_000),
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_decryption_threshold_u128() {
+        decryption_threshold(
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+            TypedPlaintext::U128(42_000_000_000),
+        )
+        .await;
+    }
+
+    async fn decryption_threshold(params: &str, key_id: &str, msg: TypedPlaintext) {
         let (kms_servers, kms_clients, mut internal_client) =
             threshold_handles(StorageVersion::Dev, params).await;
-        let (ct, fhe_type) = compute_cipher_from_storage(None, TEST_MSG, key_id).await;
+        let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
         let key_id_req = key_id.to_string().try_into().unwrap();
 
         let request_id = &TEST_DEC_ID;
@@ -2399,8 +2504,15 @@ pub(crate) mod tests {
             .process_decryption_resp(Some(req), &agg)
             .unwrap()
             .unwrap();
-        assert_eq!(TEST_FHE_TYPE, plaintext.fhe_type());
-        assert_eq!(TEST_MSG, plaintext.as_u8());
+        assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
+        match msg {
+            TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+            TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+            TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+            TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+            TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+            TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+        }
         kms_servers
             .into_iter()
             .for_each(|(_id, handle)| handle.abort());
@@ -2409,34 +2521,104 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_reencryption_threshold() {
-        reencryption_threshold(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID.to_string(), false).await;
+        reencryption_threshold(
+            TEST_PARAM_PATH,
+            &TEST_THRESHOLD_KEY_ID.to_string(),
+            false,
+            TypedPlaintext::U8(42),
+        )
+        .await;
     }
 
     #[tokio::test]
     #[serial]
     #[cfg(feature = "wasm_tests")]
     async fn test_reencryption_threshold_and_write_transcript() {
-        reencryption_threshold(TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID.to_string(), true).await;
+        reencryption_threshold(
+            TEST_PARAM_PATH,
+            &TEST_THRESHOLD_KEY_ID.to_string(),
+            true,
+            TypedPlaintext::U8(42),
+        )
+        .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn default_reencryption_threshold() {
+    async fn default_reencryption_threshold_bool() {
         reencryption_threshold(
             DEFAULT_PARAM_PATH,
             &DEFAULT_THRESHOLD_KEY_ID.to_string(),
             false,
+            TypedPlaintext::Bool(false),
         )
         .await;
     }
 
-    async fn reencryption_threshold(param: &str, key_id: &str, write_transcript: bool) {
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_reencryption_threshold_u8() {
+        reencryption_threshold(
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+            false,
+            TypedPlaintext::U8(42),
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_reencryption_threshold_u16() {
+        reencryption_threshold(
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+            false,
+            TypedPlaintext::U16(4200),
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_reencryption_threshold_u64() {
+        reencryption_threshold(
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+            false,
+            TypedPlaintext::U64(4_200_000_000),
+        )
+        .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_reencryption_threshold_u128() {
+        reencryption_threshold(
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
+            false,
+            TypedPlaintext::U128(42_000_000_000),
+        )
+        .await;
+    }
+
+    async fn reencryption_threshold(
+        param: &str,
+        key_id: &str,
+        write_transcript: bool,
+        msg: TypedPlaintext,
+    ) {
         _ = write_transcript;
 
         let (kms_servers, kms_clients, mut internal_client) =
             threshold_handles(StorageVersion::Dev, param).await;
-        let (ct, fhe_type) = compute_cipher_from_storage(None, TEST_MSG, key_id).await;
+        let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
 
         let request_id = &TEST_REENC_ID;
         let (req, enc_pk, enc_sk) = internal_client
@@ -2511,8 +2693,15 @@ pub(crate) mod tests {
             .process_reencryption_resp(Some(req), &agg, &enc_pk, &enc_sk)
             .unwrap()
             .unwrap();
-        assert_eq!(TEST_FHE_TYPE, plaintext.fhe_type());
-        assert_eq!(TEST_MSG, plaintext.as_u8());
+        assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
+        match msg {
+            TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+            TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+            TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+            TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+            TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+            TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+        }
         kms_servers
             .into_iter()
             .for_each(|(_id, handle)| handle.abort());

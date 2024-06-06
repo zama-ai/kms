@@ -64,7 +64,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tfhe::integer::ciphertext::BaseRadixCiphertext;
 use tfhe::integer::IntegerCiphertext;
-use tfhe::{FheBool, FheUint16, FheUint32, FheUint4, FheUint64, FheUint8};
+use tfhe::{FheBool, FheUint128, FheUint16, FheUint160, FheUint32, FheUint4, FheUint64, FheUint8};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
@@ -305,10 +305,15 @@ impl FheType {
                 let (radix_ct, _id) = hl_ct.into_raw_parts();
                 radix_ct
             }
-            &FheType::Euint128 | &FheType::Euint160 => {
-                return Err(anyhow_error_and_log(
-                    "Euint128 or Euint160 are not supported yet!",
-                ));
+            FheType::Euint128 => {
+                let hl_ct: FheUint128 = bincode::deserialize(serialized_high_level)?;
+                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint160 => {
+                let hl_ct: FheUint160 = bincode::deserialize(serialized_high_level)?;
+                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                radix_ct
             }
         };
         Ok(radix_ct)

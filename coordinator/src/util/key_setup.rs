@@ -27,25 +27,94 @@ use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;
 use strum::IntoEnumIterator;
-use tfhe::prelude::*;
-use tfhe::FheUint8;
+use tfhe::{prelude::*, FheBool};
+use tfhe::{FheUint128, FheUint16, FheUint32, FheUint64, FheUint8};
 
 pub type FhePublicKey = tfhe::CompactPublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
 
 // TODD The code here should be split s.t. that generation code stays in production and everything else goes to the test package
 
-pub fn compute_cipher(msg: u8, pk: &FhePublicKey) -> (Vec<u8>, FheType) {
-    let ct = FheUint8::encrypt(msg, pk);
-    let mut serialized_ct = Vec::new();
-    bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
-    (serialized_ct, FheType::Euint8)
+macro_rules! serialize_ct {
+    ($msg:expr,$pk:expr,$t1:ident) => {{
+        let ct = $t1::encrypt($msg, $pk);
+        let mut serialized_ct = Vec::new();
+        bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
+        serialized_ct
+    }};
 }
+
+pub fn compute_cipher(msg: TypedPlaintext, pk: &FhePublicKey) -> (Vec<u8>, FheType) {
+    let fhe_type = msg.to_fhe_type();
+    (
+        match msg {
+            TypedPlaintext::Bool(x) => {
+                serialize_ct!(x, pk, FheBool)
+            }
+            TypedPlaintext::U8(x) => {
+                serialize_ct!(x, pk, FheUint8)
+            }
+            TypedPlaintext::U16(x) => {
+                serialize_ct!(x, pk, FheUint16)
+            }
+            TypedPlaintext::U32(x) => {
+                serialize_ct!(x, pk, FheUint32)
+            }
+            TypedPlaintext::U64(x) => {
+                serialize_ct!(x, pk, FheUint64)
+            }
+            TypedPlaintext::U128(x) => {
+                serialize_ct!(x, pk, FheUint128)
+            }
+        },
+        fhe_type,
+    )
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum TypedPlaintext {
+    Bool(bool),
+    U8(u8),
+    U16(u16),
+    U32(u32),
+    U64(u64),
+    U128(u128),
+}
+
+impl TypedPlaintext {
+    pub fn to_fhe_type(&self) -> FheType {
+        match self {
+            TypedPlaintext::Bool(_) => FheType::Bool,
+            TypedPlaintext::U8(_) => FheType::Euint8,
+            TypedPlaintext::U16(_) => FheType::Euint16,
+            TypedPlaintext::U32(_) => FheType::Euint32,
+            TypedPlaintext::U64(_) => FheType::Euint64,
+            TypedPlaintext::U128(_) => FheType::Euint128,
+        }
+    }
+}
+
+macro_rules! impl_from_for_typed_ptxt {
+    ($t1:ident,$t2:ident) => {
+        impl From<$t1> for TypedPlaintext {
+            fn from(value: $t1) -> Self {
+                Self::$t2(value)
+            }
+        }
+    };
+}
+
+impl_from_for_typed_ptxt!(bool, Bool);
+impl_from_for_typed_ptxt!(u8, U8);
+impl_from_for_typed_ptxt!(u16, U16);
+impl_from_for_typed_ptxt!(u32, U32);
+impl_from_for_typed_ptxt!(u64, U64);
+impl_from_for_typed_ptxt!(u128, U128);
 
 /// This function should be used for testing only and it can panic.
 pub async fn compute_cipher_from_storage(
     pub_path: Option<&Path>,
-    msg: u8,
+    msg: TypedPlaintext,
     key_id: &str,
 ) -> (Vec<u8>, FheType) {
     // Try first with centralized storage
