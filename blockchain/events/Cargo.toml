@@ -14,7 +14,6 @@ koit-toml = { version = "=0.2.1", optional = true }
 opentelemetry = { version = "0.22", features = ["metrics" ], optional = true }
 opentelemetry_sdk = { version = "0.22", features = ["metrics", "rt-tokio"], optional = true }
 retrying = { version = "0.1.0", features = ["tokio"], optional = true }
-secrecy = "0.8.0"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0"
 strum = "0.26"

@@ -1,8 +1,8 @@
+use std::fmt::Debug;
 use std::ops::Deref;
 
 use cosmwasm_schema::schemars;
 use cosmwasm_schema::schemars::JsonSchema;
-use secrecy::DebugSecret;
 use serde::{Deserialize, Serialize, Serializer};
 
 #[derive(Eq, PartialEq, Default, Clone, Debug, JsonSchema)]
@@ -57,8 +57,14 @@ impl<'de> serde::Deserialize<'de> for HexVector {
     }
 }
 
-#[derive(Eq, PartialEq, Default, Clone, Debug, JsonSchema, Deserialize, Serialize)]
+#[derive(Eq, PartialEq, Default, Clone, JsonSchema, Deserialize, Serialize)]
 pub struct RedactedHexVector(HexVector);
+
+impl Debug for RedactedHexVector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<REDACTED>")
+    }
+}
 
 impl Deref for RedactedHexVector {
     type Target = HexVector;
@@ -79,5 +85,3 @@ impl From<Vec<u8>> for RedactedHexVector {
         RedactedHexVector(HexVector(value))
     }
 }
-
-impl DebugSecret for RedactedHexVector {}
