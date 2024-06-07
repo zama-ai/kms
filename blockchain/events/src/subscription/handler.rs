@@ -164,8 +164,8 @@ where
         tracing::info!("Received events from Blockchain {:?}", results.len());
         if results.is_empty() {
             tracing::info!("No events received from Blockchain. Update to last height");
-            let last_height = self.storage.get_last_height().await?;
-            let new_height = 0.max(last_height as i64 + 1) as u64;
+            let last_height = self.blockchain.get_last_height().await?;
+            let new_height = 0.max(last_height as i64 - 50) as u64;
             self.storage.save_last_height(new_height).await?;
             return Ok(());
         }
@@ -362,7 +362,7 @@ mod tests {
             .subscription
             .storage
             .expect_get_last_height()
-            .times(2)
+            .times(1)
             .returning(|| Ok(0));
 
         server
@@ -377,7 +377,8 @@ mod tests {
             .subscription
             .blockchain
             .expect_get_last_height()
-            .never();
+            .times(1)
+            .returning(|| Ok(0));
 
         let mut on_message_mock = MockNeverCalledSubscriptionHandler::new();
         on_message_mock.expect_on_message().never();
