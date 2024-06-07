@@ -1,0 +1,6 @@
+node_modules/
+.last_height
+.wallet
+package-lock.json
+package.json
+.store

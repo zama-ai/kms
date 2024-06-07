@@ -4,17 +4,18 @@ name: zama-chain
 
 services:
 
-  kms-core:
-    image: ghcr.io/zama-ai/kms-dev:v0.3.2
-    ports:
-      - "50051:50051"
+  #kms-core:
+  #  image: ghcr.io/zama-ai/kms-dev:v0.3.2
+  #  ports:
+  #    - "50051:50051"
 
   fevm-full-node:
-    image: ghcr.io/zama-ai/ethermint-dev-node:v0.2.4
+    image: ghcr.io/zama-ai/ethermint-dev-node:v0.4.2
     ports:
       - "26656:26656"
       - "26657:26657"
       - "8545:8545"
+      - "8546:8546"
     volumes:
       - ./blockchain/scripts/run_developer_image.sh:/start.sh
       - ./blockchain/temp/:/config/res/keys/
@@ -47,6 +48,7 @@ services:
       - "9090:9090"
     volumes:
       - ./blockchain/scripts/bootstrap_asc.sh:/bootstrap.sh
+      - ./blockchain/scripts/setup_wasmd.sh:/setup_wasmd.sh
     entrypoint: [ "/bootstrap.sh" ]
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"
@@ -55,22 +57,22 @@ services:
       retries: 5
       start_period: 10s
 
-  kms-connector:
-    build:
-      context: .
-      dockerfile: blockchain/connector/operations/docker/local.dockerfile
-    command:
-      - "kms-blockchain-connector"
-    depends_on:
-      kms-full-node:
-        condition: service_healthy
-    volumes:
-      - validator-data:/root/.wasmd
-    environment:
-      - RUN_MODE=dev
-      - NO_COLOR=true
-      - ASC_CONN_TRACING_SERVICE_NAME=kms-connector
-      - ASC_CONN_TRACING_ENDPOINT=http://otel-collector:4317
+  #kms-connector:
+  #  build:
+  #    context: .
+  #    dockerfile: blockchain/connector/operations/docker/local.dockerfile
+  #  command:
+  #    - "kms-blockchain-connector"
+  #  depends_on:
+  #    kms-full-node:
+  #      condition: service_healthy
+  #  volumes:
+  #    - validator-data:/root/.wasmd
+  #  environment:
+  #    - RUN_MODE=dev
+  #    - NO_COLOR=true
+  #    - ASC_CONN_TRACING_SERVICE_NAME=kms-connector
+  #    - ASC_CONN_TRACING_ENDPOINT=http://otel-collector:4317
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib
@@ -84,7 +86,6 @@ services:
       - 4317:4317 # OTLP gRPC receiver
       - 4318:4318 # OTLP http receiver
       - 55679:55679 # zpages extension
-
 
 volumes:
   validator-data:

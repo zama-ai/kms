@@ -1,4 +1,6 @@
 use super::conversions::*;
+use core::hash::Hash;
+use core::hash::Hasher;
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Attribute, Event};
 use serde::ser::SerializeMap;
@@ -238,6 +240,24 @@ pub enum FheType {
     Euint128,
     #[strum(serialize = "euint160")]
     Euint160,
+    #[strum(serialize = "unknown")]
+    Unknown,
+}
+
+impl From<u8> for FheType {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => FheType::Ebool,
+            1 => FheType::Euint4,
+            2 => FheType::Euint8,
+            3 => FheType::Euint16,
+            4 => FheType::Euint32,
+            5 => FheType::Euint64,
+            6 => FheType::Euint128,
+            7 => FheType::Euint160,
+            _ => FheType::Unknown,
+        }
+    }
 }
 
 #[cw_serde]
@@ -739,6 +759,12 @@ impl From<TransactionId> for Attribute {
     }
 }
 
+impl Hash for TransactionId {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.to_hex().hash(state);
+    }
+}
+
 #[cw_serde]
 #[derive(Eq, Default)]
 pub struct Proof(pub(crate) HexVector);
@@ -942,7 +968,8 @@ mod tests {
                 4 => FheType::Euint32,
                 5 => FheType::Euint64,
                 6 => FheType::Euint128,
-                _ => FheType::Euint160,
+                7 => FheType::Euint160,
+                _ => FheType::Unknown,
             }
         }
     }

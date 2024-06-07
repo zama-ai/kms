@@ -1,0 +1,63 @@
+# Set to true to start an emulated KMS backend.
+# This option enables a debug mode where a mocked KMS backend is used instead of a real one.
+# Useful for testing and development purposes without needing actual KMS services.
+debug = false
+
+# configure to match the KMS mode: centralized or threshold
+mode = "centralized"
+
+# set the log trace level: error, warn, info, debug, trace
+trace_level = "info"
+
+# Ethereum Settings
+# Configuration settings related to the Ethereum network and smart contract event interactions.
+
+# Listener type, one of FHEVM_V1, FHEVM_V1_1, or COPROCESSOR.
+# Specifies the type of listener to be used for processing Ethereum events.
+# - FHEVM_V1: Use the FHEVM version 1 listener.
+# - FHEVM_V1_1: Use the FHEVM version 1.1 listener.
+# - COPROCESSOR: Use the Coprocessor listener.
+listener_type = "FHEVM_V1"
+
+# URL of the Ethereum WebSocket server.
+# Used for establishing a WebSocket connection to an Ethereum node.
+ethereum_wss_url = "ws://0.0.0.0:8546"
+
+# Address of the FHE library smart contract on the Ethereum blockchain.
+# Used for interactions with the FHE library contract.
+fhe_lib_address = "000000000000000000000000000000000000005d"
+
+# Address of the relayer account on the Ethereum blockchain.
+# Used for interactions with the oracle/gateway contract.
+relayer_address = "fA2E332b26542212573ae0D7937fFF976e3704db"
+
+# Address of the OraclePredeploy or GatewayPredeploy contract on the 
+# Ethereum blockchain. Used for pre-deployment operations related to the oracle.
+oracle_predeploy_address = "0a9368E9C545238c82a2FAEd62e631450d6432c1"
+
+# Test Address used for testing asynchronous decryption on the Ethereum blockchain.
+test_async_decrypt_address = "99F460504563579922352932A42172B3c04a1420"
+
+# KMS Settings
+# Configuration settings related to the Key Management System (KMS).
+
+# Address of the Tendermint node.
+# Used for connecting to a Tendermint blockchain node.
+tendermint_node_addr = "http://0.0.0.0:26657"
+
+# Address of the KMS smart contract on the blockchain.
+# Used for interactions with the KMS contract.
+kms_contract_address = "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
+
+# Mnemonic phrase for accessing the KMS.
+# This is a human-readable string of words used to derive cryptographic keys.
+# It should be kept secure and private.
+kms_mnemonic = "whisper stereo great helmet during hollow nominee skate frown daughter donor pool ozone few find risk cigar practice essay sketch rhythm novel dumb host"
+
+# Base URL of the KMS service.
+# Used for making HTTP requests to the KMS service.
+kms_address = "http://0.0.0.0:9090"
+
+# Key ID used within the KMS.
+# Identifies the specific key to be used for cryptographic operations within the KMS.
+kms_key_id = "04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea424"

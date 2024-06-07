@@ -138,7 +138,8 @@ impl QueryClient {
 
         if let Some(response) = result {
             if response.code == 0 {
-                tracing::info!("Query Tx executed successfully {:?}", response);
+                tracing::info!("Query Tx executed successfully {:?}", response.txhash);
+                tracing::trace!("Tx payload: {:?}", response);
                 Ok(Some(response))
             } else {
                 Err(Error::QueryError(format!(

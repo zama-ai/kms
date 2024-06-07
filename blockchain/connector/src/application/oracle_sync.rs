@@ -72,6 +72,26 @@ impl OracleSyncHandler<OracleClient, OpenTelemetryMetrics> {
     }
 }
 
+impl<R> OracleSyncHandler<R, OpenTelemetryMetrics>
+where
+    R: Oracle + Send + Sync + Clone + 'static,
+{
+    pub async fn new_with_config_and_listener(
+        config: ConnectorConfig,
+        oracle: R,
+    ) -> anyhow::Result<Self> {
+        let metrics = OpenTelemetryMetrics::new();
+        let handler = OracleEventHandler {
+            oracle,
+            observability: metrics,
+        };
+        Ok(Self {
+            oracle_handler: handler,
+            config,
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl<R, O> SyncHandler for OracleSyncHandler<R, O>
 where

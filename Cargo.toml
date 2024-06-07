@@ -9,6 +9,7 @@ members = [
     "blockchain/events",
     "blockchain/proofs",
     "blockchain/simulator",
+    "blockchain/gateway",
     "core/service",
     "core/threshold",
 ]

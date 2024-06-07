@@ -339,7 +339,7 @@ impl Client {
         let tx_bytes_raw = tx_raw.to_bytes()?;
         tracing::info!("Body Raw bytes length: {:?}", tx_bytes_raw.len());
 
-        tracing::info!(
+        tracing::debug!(
             "TxRaw to be broadcasted: {:?}",
             general_purpose::STANDARD.encode(&tx_bytes_raw)
         );
