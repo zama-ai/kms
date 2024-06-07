@@ -1,5 +1,4 @@
 use clap::Parser;
-use clap_stdin::FileOrStdin;
 use cosmwasm_std::Event;
 use events::kms::{DecryptValues, FheType, KmsEvent, KmsMessage, KmsOperation, OperationValue};
 use events::HexVector;
@@ -7,7 +6,9 @@ use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractReques
 use kms_blockchain_client::query_client::{
     ContractQuery, OperationQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
 };
-use kms_lib::util::key_setup::compute_cipher_from_storage;
+use kms_lib::kms::DecryptionResponsePayload;
+use kms_lib::rpc::rpc_types::Plaintext;
+use kms_lib::util::key_setup::{compute_cipher_from_storage, TypedPlaintext};
 use simulator::conf::{Settings, SimConfig};
 use std::error::Error;
 use std::path::Path;
@@ -15,16 +16,14 @@ use strum::IntoEnumIterator;
 
 #[derive(Debug, Parser)]
 struct Execute {
-    #[clap(long, short = 'm')]
-    file_stdin: FileOrStdin,
+    #[clap(long, short = 'e')]
+    to_encrypt: u8,
 }
 
 #[derive(Debug, Parser)]
 struct Query {
     #[clap(long, short = 't')]
     txn_id: String,
-    #[clap(long, short = 'p')]
-    proof: String,
     #[clap(long, short = 'o')]
     event: KmsOperation,
 }
@@ -54,16 +53,15 @@ fn to_event(event: &cosmos_proto::messages::tendermint::abci::Event) -> Event {
 }
 
 async fn execute_contract(
-    file: FileOrStdin,
+    to_encrypt: u8,
     client: Client,
     query_client: QueryClient,
 ) -> Result<(), Box<dyn Error + 'static>> {
     let mut client = client;
-    let msg = file.contents()?;
-    let _ = serde_json::from_str::<OperationValue>(&msg)?;
-    let key_id = "04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea424";
+    let key_id = "2add68b744d5f5dce2c365b2587a4374f60e4d98";
+    let typed_to_encrypt = TypedPlaintext::U8(to_encrypt);
     let (cypher, _) =
-        compute_cipher_from_storage(Some(Path::new("./keys")), 12u8.into(), key_id).await;
+        compute_cipher_from_storage(Some(Path::new("./keys")), typed_to_encrypt, key_id).await;
     let value = OperationValue::Decrypt(
         DecryptValues::builder()
             .ciphertext(cypher.clone())
@@ -122,11 +120,10 @@ async fn query_contract(
     query_client: QueryClient,
 ) -> Result<(), Box<dyn Error + 'static>> {
     let txn_id = HexVector::from_hex(&query.txn_id)?;
-    let proof = HexVector::from_hex(&query.proof)?;
     let ev = KmsEvent::builder()
         .operation(query.event)
         .txn_id(txn_id)
-        .proof(proof)
+        .proof(vec![1, 2, 3])
         .build();
     let query_req = ContractQuery::GetOperationsValue(OperationQuery::builder().event(ev).build());
 
@@ -134,9 +131,18 @@ async fn query_contract(
         .contract_address(sim_config.contract)
         .query(query_req)
         .build();
-    let value: Result<Vec<OperationValue>, _> = query_client.query_contract(request).await;
-
-    tracing::info!("Value: {:?}", value);
+    let value: Vec<OperationValue> = query_client.query_contract(request).await?;
+    value.iter().for_each(|x| match x {
+        OperationValue::DecryptResponse(decrypt) => {
+            let payload: DecryptionResponsePayload = serde_asn1_der::from_bytes(
+                <&HexVector as Into<Vec<u8>>>::into(decrypt.payload()).as_slice(),
+            )
+            .unwrap();
+            let actual_pt: Plaintext = serde_asn1_der::from_bytes(&payload.plaintext).unwrap();
+            tracing::info!("Decrypt Result: Plaintext Decrypted {:?} ", actual_pt);
+        }
+        _ => tracing::info!("Incorrect Response: {:?}", x),
+    });
 
     Ok(())
 }
@@ -174,7 +180,7 @@ async fn main() -> Result<(), Box<dyn Error + 'static>> {
 
     match config.command {
         Command::ExecuteContract(ex) => {
-            execute_contract(ex.file_stdin, client, query_client).await?
+            execute_contract(ex.to_encrypt, client, query_client).await?
         }
         Command::QueryContract(q) => query_contract(sim_conf, q, query_client).await?,
     }

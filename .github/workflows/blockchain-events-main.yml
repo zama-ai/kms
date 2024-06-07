@@ -1,8 +1,8 @@
 name: "[Blockchain-Events Merge Main] Pipeline Run"
 
 on:
-  pull_request:
-    branches: ['*']
+  push:
+    branches: ['main']
     paths:
       - 'blockchain/events/**'
       - 'blockchain/cosmos-proto/**'
