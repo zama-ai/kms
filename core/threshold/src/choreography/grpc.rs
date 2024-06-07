@@ -27,7 +27,7 @@ use crate::choreography::{
 };
 use crate::execution::endpoints::decryption::{
     init_prep_bitdec_large, init_prep_bitdec_small, run_decryption_bitdec,
-    run_decryption_noiseflood, ProtocolDecryption,
+    run_decryption_noiseflood_64, ProtocolDecryption,
 };
 use crate::execution::endpoints::decryption::{Large, Small};
 use crate::execution::endpoints::keygen::FhePubKeySet;
@@ -997,7 +997,7 @@ impl Choreography for GrpcChoreography {
                             panic!("Missing key (it was there just before)")
                         };
                         res.push(
-                            run_decryption_noiseflood(
+                            run_decryption_noiseflood_64(
                                 &mut base_session,
                                 preprocessing.as_mut(),
                                 &key_ref.1,

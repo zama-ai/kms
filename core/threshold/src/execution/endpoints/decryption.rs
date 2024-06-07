@@ -65,7 +65,7 @@ use tokio::task::JoinSet;
 use tracing::instrument;
 
 use super::keygen::PrivateKeySet;
-use super::reconstruct::{combine128, reconstruct_message};
+use super::reconstruct::{combine_decryptions, reconstruct_message};
 
 #[enum_dispatch]
 #[allow(clippy::large_enum_variant)]
@@ -180,7 +180,7 @@ impl ProtocolDecryption for Large {
 ///
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(session, protocol, ck, ct, secret_key_share), fields(session_id = ?session.session_id(), own_identity = %_own_identity, mode = %_mode))]
-pub async fn decrypt_using_noiseflooding<S, P, R>(
+pub async fn decrypt_using_noiseflooding<S, P, R, T>(
     session: &mut S,
     protocol: &mut P,
     ck: &SwitchAndSquashKey,
@@ -188,11 +188,13 @@ pub async fn decrypt_using_noiseflooding<S, P, R>(
     secret_key_share: &PrivateKeySet,
     _mode: DecryptionMode,
     _own_identity: Identity,
-) -> anyhow::Result<(HashMap<String, Z64>, Duration)>
+) -> anyhow::Result<(HashMap<String, T>, Duration)>
 where
     R: Rng + CryptoRng + Send,
     S: BaseSessionHandles<R>,
     P: ProtocolDecryption,
+    T: tfhe::integer::block_decomposition::Recomposable
+        + tfhe::core_crypto::commons::traits::CastFrom<u128>,
 {
     let execution_start_timer = Instant::now();
     let ct_large = ck.to_large_ciphertext(&ct)?;
@@ -200,9 +202,10 @@ where
     let len = ct_large.len();
     let mut preparation = protocol.init_prep_noiseflooding(len).await;
     let preparation = preparation.as_mut();
-    let outputs = run_decryption_noiseflood(session, preparation, secret_key_share, ct_large)
-        .await
-        .unwrap();
+    let outputs =
+        run_decryption_noiseflood::<_, _, _, T>(session, preparation, secret_key_share, ct_large)
+            .await
+            .unwrap();
 
     tracing::info!("Result in session {:?} is ready", session.session_id());
     results.insert(format!("{}", session.session_id()), outputs);
@@ -278,11 +281,15 @@ where
 /// Takes as input plaintexts blocks m1, ..., mN revealed to all parties
 /// which we call partial decryptions each of B bits
 /// and uses tfhe block recomposer to get back the u64 plaintext.
-fn combine_plaintext_blocks(
+fn combine_plaintext_blocks<T>(
     bits_in_block: usize,
     partial_decrypted: Vec<Z128>,
-) -> anyhow::Result<Z64> {
-    let res = match combine128(bits_in_block as u32, partial_decrypted) {
+) -> anyhow::Result<T>
+where
+    T: tfhe::integer::block_decomposition::Recomposable
+        + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+{
+    let res = match combine_decryptions::<T>(bits_in_block as u32, partial_decrypted) {
         Ok(res) => res,
         Err(error) => {
             eprint!("Panicked in combining {error}");
@@ -291,7 +298,7 @@ fn combine_plaintext_blocks(
             )));
         }
     };
-    Ok(Wrapping(res as u64))
+    Ok(res)
 }
 
 #[cfg(any(test, feature = "testing"))]
@@ -444,7 +451,7 @@ pub fn threshold_decrypt64<Z: Ring>(
                     let mut noiseflood_preprocessing = Small::new(session.clone())
                         .init_prep_noiseflooding(ct.blocks().len())
                         .await;
-                    let out = run_decryption_noiseflood(
+                    let out = run_decryption_noiseflood_64(
                         &mut session,
                         noiseflood_preprocessing.as_mut(),
                         &party_keyshare,
@@ -463,7 +470,7 @@ pub fn threshold_decrypt64<Z: Ring>(
                     let mut noiseflood_preprocessing = Large::new(session.clone())
                         .init_prep_noiseflooding(ct.blocks().len())
                         .await;
-                    let out = run_decryption_noiseflood(
+                    let out = run_decryption_noiseflood_64(
                         &mut session,
                         noiseflood_preprocessing.as_mut(),
                         &party_keyshare,
@@ -544,21 +551,21 @@ async fn open_bit_composed_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     Ok(out)
 }
 
-#[instrument(
-    name = "TFHE.Threshold-Dec-1",
-    skip(session, preprocessing, keyshares, ciphertext)
-    fields(batch_size=?ciphertext.len())
-)]
 pub async fn run_decryption_noiseflood<
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
     P: NoiseFloodPreprocessing + ?Sized,
+    T,
 >(
     session: &mut S,
     preprocessing: &mut P,
     keyshares: &PrivateKeySet,
     ciphertext: Ciphertext128,
-) -> anyhow::Result<Z64> {
+) -> anyhow::Result<T>
+where
+    T: tfhe::integer::block_decomposition::Recomposable
+        + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+{
     let mut shared_masked_ptxts = Vec::with_capacity(ciphertext.len());
     for current_ct_block in ciphertext {
         let partial_decrypt = partial_decrypt128(keyshares, &current_ct_block)?;
@@ -569,6 +576,27 @@ pub async fn run_decryption_noiseflood<
     let partial_decrypted = open_masked_ptxts(session, shared_masked_ptxts, keyshares).await?;
     let usable_message_bits = keyshares.parameters.message_modulus_log() as usize;
     combine_plaintext_blocks(usable_message_bits, partial_decrypted)
+}
+
+#[instrument(
+    name = "TFHE.Threshold-Dec-1",
+    skip(session, preprocessing, keyshares, ciphertext)
+    fields(batch_size=?ciphertext.len())
+)]
+pub async fn run_decryption_noiseflood_64<
+    R: Rng + CryptoRng,
+    S: BaseSessionHandles<R>,
+    P: NoiseFloodPreprocessing + ?Sized,
+>(
+    session: &mut S,
+    preprocessing: &mut P,
+    keyshares: &PrivateKeySet,
+    ciphertext: Ciphertext128,
+) -> anyhow::Result<Z64> {
+    let res =
+        run_decryption_noiseflood::<_, _, _, u64>(session, preprocessing, keyshares, ciphertext)
+            .await?;
+    Ok(Wrapping(res))
 }
 
 // run decryption with bit-decomposition
@@ -615,7 +643,8 @@ pub async fn run_decryption_bitdec<
     let usable_message_bits = keyshares.parameters.message_modulus_log() as usize;
 
     // combine outputs to form the decrypted integer on party 0
-    combine_plaintext_blocks(usable_message_bits, ptxts128)
+    let res = combine_plaintext_blocks::<u64>(usable_message_bits, ptxts128)?;
+    Ok(Wrapping(res))
 }
 
 /// computes b - <a, s> with no rounding of the noise. This is used for noise flooding decryption

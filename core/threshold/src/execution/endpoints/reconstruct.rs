@@ -34,9 +34,13 @@ pub fn reconstruct_message(
 }
 
 /// Helper function that takes a vector of decrypted plaintexts (each of [bits_in_block] plaintext bits)
-/// and combine them into the integer message (u128) of many bits.
-pub fn combine128(bits_in_block: u32, decryptions: Vec<Z128>) -> anyhow::Result<u128> {
-    let mut recomposer = BlockRecomposer::<u128>::new(bits_in_block);
+/// and combine them into the integer message of many bits.
+pub fn combine_decryptions<T>(bits_in_block: u32, decryptions: Vec<Z128>) -> anyhow::Result<T>
+where
+    T: tfhe::integer::block_decomposition::Recomposable
+        + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+{
+    let mut recomposer = BlockRecomposer::<T>::new(bits_in_block);
 
     for block in decryptions {
         if !recomposer.add_unmasked(block.0) {
@@ -46,4 +50,27 @@ pub fn combine128(bits_in_block: u32, decryptions: Vec<Z128>) -> anyhow::Result<
         };
     }
     Ok(recomposer.value())
+}
+
+#[test]
+fn test_recomposer() {
+    use crate::algebra::structure_traits::FromU128;
+    let out =
+        combine_decryptions::<tfhe::integer::U256>(1, vec![Z128::from_u128(1), Z128::from_u128(3)])
+            .unwrap();
+    assert_eq!(out, tfhe::integer::U256::from((3, 0)));
+
+    let out =
+        combine_decryptions::<tfhe::integer::U256>(1, vec![Z128::from_u128(0), Z128::from_u128(7)])
+            .unwrap();
+    assert_eq!(out, tfhe::integer::U256::from((2, 0)));
+
+    let out = combine_decryptions::<u64>(1, vec![Z128::from_u128(0), Z128::from_u128(0)]).unwrap();
+    assert_eq!(out, 0_u64);
+
+    let out = combine_decryptions::<u32>(2, vec![Z128::from_u128(3), Z128::from_u128(11)]).unwrap();
+    assert_eq!(out, 15_u32);
+
+    let out = combine_decryptions::<u16>(3, vec![Z128::from_u128(1), Z128::from_u128(1)]).unwrap();
+    assert_eq!(out, 9_u16);
 }

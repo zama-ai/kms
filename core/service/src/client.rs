@@ -18,7 +18,9 @@ use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
 use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::residue_poly::ResiduePoly;
-use distributed_decryption::execution::endpoints::reconstruct::{combine128, reconstruct_message};
+use distributed_decryption::execution::endpoints::reconstruct::{
+    combine_decryptions, reconstruct_message,
+};
 use distributed_decryption::execution::runtime::party::Role;
 use distributed_decryption::execution::sharing::shamir::{
     fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
@@ -65,16 +67,20 @@ fn decrypted_blocks_to_raw_decryption(
     recon_blocks: Vec<Z128>,
 ) -> anyhow::Result<Plaintext> {
     let bits_in_block = params.ciphertext_parameters.message_modulus_log();
-    let res = match combine128(bits_in_block, recon_blocks) {
-        Ok(res) => res,
-        Err(error) => {
-            eprint!("Panicked in combining {error}");
-            return Err(anyhow_error_and_log(format!(
-                "Panicked in combining {error}"
-            )));
+    let res_pt = match fhe_type {
+        FheType::Euint160 => {
+            combine_decryptions::<tfhe::integer::U256>(bits_in_block, recon_blocks)
+                .map(Plaintext::from_u160)
         }
+        FheType::Euint128 => combine_decryptions::<u128>(bits_in_block, recon_blocks)
+            .map(|x| Plaintext::new(x, fhe_type)),
+        _ => combine_decryptions::<u64>(bits_in_block, recon_blocks)
+            .map(|x| Plaintext::new(x as u128, fhe_type)),
     };
-    Ok(Plaintext::new(res, fhe_type))
+    res_pt.map_err(|error| {
+        eprint!("Panicked in combining {error}");
+        anyhow_error_and_log(format!("Panicked in combining {error}"))
+    })
 }
 
 /// Simple client to interact with the KMS servers. This can be seen as a proof-of-concept
@@ -2195,12 +2201,14 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
     #[case(TypedPlaintext::Bool(true))]
-    #[case(TypedPlaintext::U8(42))]
-    #[case(TypedPlaintext::U16(42000))]
-    #[case(TypedPlaintext::U32(4_200_000))]
-    #[case(TypedPlaintext::U64(42_000_000))]
-    #[case(TypedPlaintext::U128(420_000_000_000))]
+    #[case(TypedPlaintext::U8(u8::MAX))]
+    #[case(TypedPlaintext::U16(u16::MAX))]
+    #[case(TypedPlaintext::U32(u32::MAX))]
+    #[case(TypedPlaintext::U64(u64::MAX))]
+    #[case(TypedPlaintext::U128(u128::MAX))]
+    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
     #[serial]
+    #[tokio::test]
     async fn default_decryption_centralized(#[case] msg: TypedPlaintext) {
         decryption_centralized(DEFAULT_PARAM_PATH, &DEFAULT_CENTRAL_KEY_ID.to_string(), msg).await;
     }
@@ -2248,6 +2256,7 @@ pub(crate) mod tests {
             TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
             TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
             TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+            TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
         }
 
         kms_server.abort();
@@ -2281,12 +2290,14 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
     #[case(TypedPlaintext::Bool(true))]
-    #[case(TypedPlaintext::U8(42))]
-    #[case(TypedPlaintext::U16(42000))]
-    #[case(TypedPlaintext::U32(4_200_000))]
-    #[case(TypedPlaintext::U64(42_000_000))]
-    #[case(TypedPlaintext::U128(420_000_000_000))]
+    #[case(TypedPlaintext::U8(u8::MAX))]
+    #[case(TypedPlaintext::U16(u16::MAX))]
+    #[case(TypedPlaintext::U32(u32::MAX))]
+    #[case(TypedPlaintext::U64(u64::MAX))]
+    #[case(TypedPlaintext::U128(u128::MAX))]
+    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
     #[serial]
+    #[tokio::test]
     async fn default_reencryption_centralized(#[case] msg: TypedPlaintext) {
         reencryption_centralized(
             DEFAULT_PARAM_PATH,
@@ -2381,6 +2392,7 @@ pub(crate) mod tests {
             TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
             TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
             TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+            TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
         }
 
         kms_server.abort();
@@ -2399,61 +2411,21 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[rstest::rstest]
+    #[case(TypedPlaintext::Bool(true))]
+    #[case(TypedPlaintext::U8(u8::MAX))]
+    #[case(TypedPlaintext::U16(u16::MAX))]
+    #[case(TypedPlaintext::U32(u32::MAX))]
+    #[case(TypedPlaintext::U64(u64::MAX))]
+    #[case(TypedPlaintext::U128(u128::MAX))]
+    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
     #[serial]
-    async fn default_decryption_threshold_bool() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn default_decryption_threshold(#[case] msg: TypedPlaintext) {
         decryption_threshold(
             DEFAULT_PARAM_PATH,
             &DEFAULT_THRESHOLD_KEY_ID.to_string(),
-            TypedPlaintext::Bool(false),
-        )
-        .await;
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-    #[serial]
-    async fn default_decryption_threshold_u8() {
-        decryption_threshold(
-            DEFAULT_PARAM_PATH,
-            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
-            TypedPlaintext::U8(42),
-        )
-        .await;
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-    #[serial]
-    async fn default_decryption_threshold_u16() {
-        decryption_threshold(
-            DEFAULT_PARAM_PATH,
-            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
-            TypedPlaintext::U16(4200),
-        )
-        .await;
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-    #[serial]
-    async fn default_decryption_threshold_u64() {
-        decryption_threshold(
-            DEFAULT_PARAM_PATH,
-            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
-            TypedPlaintext::U64(4_200_000_000),
-        )
-        .await;
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-    #[serial]
-    async fn default_decryption_threshold_u128() {
-        decryption_threshold(
-            DEFAULT_PARAM_PATH,
-            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
-            TypedPlaintext::U128(42_000_000_000),
+            msg,
         )
         .await;
     }
@@ -2512,6 +2484,7 @@ pub(crate) mod tests {
             TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
             TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
             TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+            TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
         }
         kms_servers
             .into_iter()
@@ -2544,66 +2517,22 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[rstest::rstest]
+    #[case(TypedPlaintext::Bool(true))]
+    #[case(TypedPlaintext::U8(u8::MAX))]
+    #[case(TypedPlaintext::U16(u16::MAX))]
+    #[case(TypedPlaintext::U32(u32::MAX))]
+    #[case(TypedPlaintext::U64(u64::MAX))]
+    #[case(TypedPlaintext::U128(u128::MAX))]
+    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
     #[serial]
-    async fn default_reencryption_threshold_bool() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    async fn default_reencryption_threshold(#[case] msg: TypedPlaintext) {
         reencryption_threshold(
             DEFAULT_PARAM_PATH,
             &DEFAULT_THRESHOLD_KEY_ID.to_string(),
             false,
-            TypedPlaintext::Bool(false),
-        )
-        .await;
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-    #[serial]
-    async fn default_reencryption_threshold_u8() {
-        reencryption_threshold(
-            DEFAULT_PARAM_PATH,
-            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
-            false,
-            TypedPlaintext::U8(42),
-        )
-        .await;
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-    #[serial]
-    async fn default_reencryption_threshold_u16() {
-        reencryption_threshold(
-            DEFAULT_PARAM_PATH,
-            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
-            false,
-            TypedPlaintext::U16(4200),
-        )
-        .await;
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-    #[serial]
-    async fn default_reencryption_threshold_u64() {
-        reencryption_threshold(
-            DEFAULT_PARAM_PATH,
-            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
-            false,
-            TypedPlaintext::U64(4_200_000_000),
-        )
-        .await;
-    }
-
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-    #[serial]
-    async fn default_reencryption_threshold_u128() {
-        reencryption_threshold(
-            DEFAULT_PARAM_PATH,
-            &DEFAULT_THRESHOLD_KEY_ID.to_string(),
-            false,
-            TypedPlaintext::U128(42_000_000_000),
+            msg,
         )
         .await;
     }
@@ -2701,6 +2630,7 @@ pub(crate) mod tests {
             TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
             TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
             TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+            TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
         }
         kms_servers
             .into_iter()

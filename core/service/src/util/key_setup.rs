@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use strum::IntoEnumIterator;
 use tfhe::{prelude::*, FheBool};
-use tfhe::{FheUint128, FheUint16, FheUint32, FheUint64, FheUint8};
+use tfhe::{FheUint128, FheUint16, FheUint160, FheUint32, FheUint64, FheUint8};
 
 pub type FhePublicKey = tfhe::CompactPublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
@@ -66,11 +66,16 @@ pub fn compute_cipher(msg: TypedPlaintext, pk: &FhePublicKey) -> (Vec<u8>, FheTy
             TypedPlaintext::U128(x) => {
                 serialize_ct!(x, pk, FheUint128)
             }
+            TypedPlaintext::U160(x) => {
+                serialize_ct!(x, pk, FheUint160)
+            }
         },
         fhe_type,
     )
 }
 
+/// This type is used for testing only,
+/// we should move it to cfg(test) when possible.
 #[derive(Clone, Copy, Debug)]
 pub enum TypedPlaintext {
     Bool(bool),
@@ -79,6 +84,7 @@ pub enum TypedPlaintext {
     U32(u32),
     U64(u64),
     U128(u128),
+    U160(tfhe::integer::U256),
 }
 
 impl TypedPlaintext {
@@ -90,6 +96,7 @@ impl TypedPlaintext {
             TypedPlaintext::U32(_) => FheType::Euint32,
             TypedPlaintext::U64(_) => FheType::Euint64,
             TypedPlaintext::U128(_) => FheType::Euint128,
+            TypedPlaintext::U160(_) => FheType::Euint160,
         }
     }
 }
@@ -110,6 +117,16 @@ impl_from_for_typed_ptxt!(u16, U16);
 impl_from_for_typed_ptxt!(u32, U32);
 impl_from_for_typed_ptxt!(u64, U64);
 impl_from_for_typed_ptxt!(u128, U128);
+
+impl From<tfhe::integer::U256> for TypedPlaintext {
+    fn from(value: tfhe::integer::U256) -> Self {
+        let max_u160 = tfhe::integer::U256::from((u128::MAX, u32::MAX as u128));
+        if value > max_u160 {
+            panic!("value is greater than U160::MAX");
+        }
+        Self::U160(value)
+    }
+}
 
 /// This function should be used for testing only and it can panic.
 pub async fn compute_cipher_from_storage(

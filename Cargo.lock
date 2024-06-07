@@ -813,7 +813,6 @@ dependencies = [
  "blocking",
  "futures-lite 2.3.0",
  "once_cell",
- "tokio",
 ]
 
 [[package]]
@@ -5099,7 +5098,6 @@ dependencies = [
  "alloy-sol-types",
  "anyhow",
  "assert_cmd",
- "async-std",
  "aws-config",
  "aws-nitro-enclaves-nsm-api",
  "aws-sdk-kms",

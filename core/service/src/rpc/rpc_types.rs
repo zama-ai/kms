@@ -438,6 +438,42 @@ impl From<Plaintext> for Vec<u8> {
     }
 }
 
+impl From<u128> for Plaintext {
+    fn from(value: u128) -> Self {
+        Self::from_u128(value)
+    }
+}
+
+impl From<u64> for Plaintext {
+    fn from(value: u64) -> Self {
+        Self::from_u64(value)
+    }
+}
+
+impl From<u32> for Plaintext {
+    fn from(value: u32) -> Self {
+        Self::from_u32(value)
+    }
+}
+
+impl From<u16> for Plaintext {
+    fn from(value: u16) -> Self {
+        Self::from_u16(value)
+    }
+}
+
+impl From<u8> for Plaintext {
+    fn from(value: u8) -> Self {
+        Self::from_u8(value)
+    }
+}
+
+impl From<bool> for Plaintext {
+    fn from(value: bool) -> Self {
+        Self::from_bool(value)
+    }
+}
+
 impl TryFrom<RawDecryption> for Plaintext {
     type Error = anyhow::Error;
 

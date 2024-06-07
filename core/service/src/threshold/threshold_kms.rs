@@ -621,14 +621,18 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
     /// flooding.
-    async fn inner_decrypt(
+    async fn inner_decrypt<T>(
         session: &mut SmallSession<ResiduePoly128>,
         protocol: &mut Small,
         ct: &[u8],
         fhe_type: FheType,
         key_handle: &RequestId,
         fhe_keys: RwLockReadGuard<'_, HashMap<RequestId, ThresholdFheKeys>>,
-    ) -> anyhow::Result<Z64> {
+    ) -> anyhow::Result<T>
+    where
+        T: tfhe::integer::block_decomposition::Recomposable
+            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+    {
         let low_level_ct = fhe_type.deserialize_to_low_level(ct)?;
         let keys = match fhe_keys.get(key_handle) {
             Some(keys) => keys,
@@ -1533,18 +1537,40 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             let mut guarded_meta_store = meta_store.write().await;
             {
                 let fhe_keys_rlock = fhe_keys.read().await;
-                match Self::inner_decrypt(
-                    &mut session,
-                    &mut protocol,
-                    &ciphertext,
-                    fhe_type,
-                    &key_id,
-                    fhe_keys_rlock,
-                )
-                .await
-                {
-                    Ok(raw_decryption) => {
-                        let plaintext = Plaintext::new(raw_decryption.0 as u128, fhe_type);
+                let tmp = match fhe_type {
+                    FheType::Euint160 => Self::inner_decrypt::<tfhe::integer::U256>(
+                        &mut session,
+                        &mut protocol,
+                        &ciphertext,
+                        fhe_type,
+                        &key_id,
+                        fhe_keys_rlock,
+                    )
+                    .await
+                    .map(Plaintext::from_u160),
+                    FheType::Euint128 => Self::inner_decrypt::<u128>(
+                        &mut session,
+                        &mut protocol,
+                        &ciphertext,
+                        fhe_type,
+                        &key_id,
+                        fhe_keys_rlock,
+                    )
+                    .await
+                    .map(|x| Plaintext::new(x, fhe_type)),
+                    _ => Self::inner_decrypt::<u64>(
+                        &mut session,
+                        &mut protocol,
+                        &ciphertext,
+                        fhe_type,
+                        &key_id,
+                        fhe_keys_rlock,
+                    )
+                    .await
+                    .map(|x| Plaintext::new(x as u128, fhe_type)),
+                };
+                match tmp {
+                    Ok(plaintext) => {
                         // We cannot do much if updating the storage fails at this point...
                         let _ = guarded_meta_store.update(
                             &req_id,
