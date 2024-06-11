@@ -234,8 +234,8 @@ mod tests {
         assert_eq!(conf.tick_interval_secs, 3);
         assert_eq!(conf.storage_path, "./temp/events.toml");
 
-        // core configs
-        assert_eq!(conf.core.addresses, vec!["http://localhost:8080"]);
+        // coordinator configs
+        assert_eq!(conf.core.addresses, vec!["http://localhost:50051"]);
         assert_eq!(conf.core.timeout_config.channel_timeout, 60);
         assert_eq!(
             conf.core.timeout_config.decryption,
@@ -248,7 +248,7 @@ mod tests {
 
         // blockchain configs
         assert_eq!(conf.blockchain.addresses, vec!["http://localhost:9090"]);
-        assert_eq!(conf.blockchain.fee.amount, 100000);
+        assert_eq!(conf.blockchain.fee.amount, 3_000_000);
         assert_eq!(conf.blockchain.fee.denom, "ucosm");
     }
 }

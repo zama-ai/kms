@@ -62,7 +62,6 @@ impl CiphertextProvider for Fhevm1_1CiphertextProvider {
         block_number: u64,
     ) -> Result<Bytes, Box<dyn Error>> {
         let mut input = hex::decode("ff627e77")?;
-        input.extend_from_slice(oracle_predeploy_address().as_bytes());
         input.extend_from_slice(&ct_handle);
 
         let call = TransactionRequest {

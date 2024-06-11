@@ -21,7 +21,7 @@ listener_type = "FHEVM_V1"
 
 # URL of the Ethereum WebSocket server.
 # Used for establishing a WebSocket connection to an Ethereum node.
-ethereum_wss_url = "ws://0.0.0.0:8546"
+ethereum_wss_url = "ws://localhost:8546"
 
 # Address of the FHE library smart contract on the Ethereum blockchain.
 # Used for interactions with the FHE library contract.
@@ -43,7 +43,7 @@ test_async_decrypt_address = "99F460504563579922352932A42172B3c04a1420"
 
 # Address of the Tendermint node.
 # Used for connecting to a Tendermint blockchain node.
-tendermint_node_addr = "http://0.0.0.0:26657"
+tendermint_node_addr = "http://localhost:26657"
 
 # Address of the KMS smart contract on the blockchain.
 # Used for interactions with the KMS contract.
@@ -56,7 +56,7 @@ kms_mnemonic = "whisper stereo great helmet during hollow nominee skate frown da
 
 # Base URL of the KMS service.
 # Used for making HTTP requests to the KMS service.
-kms_address = "http://0.0.0.0:9090"
+kms_address = "http://localhost:9090"
 
 # Key ID used within the KMS.
 # Identifies the specific key to be used for cryptographic operations within the KMS.

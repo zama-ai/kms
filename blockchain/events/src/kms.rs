@@ -826,6 +826,18 @@ pub struct KmsEvent {
     proof: Proof,
 }
 
+impl std::fmt::Display for KmsEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:?} with txn_id: {} and proof: {}",
+            self.operation,
+            self.txn_id.to_hex(),
+            self.proof.to_hex()
+        )
+    }
+}
+
 impl KmsEvent {
     pub fn operation(&self) -> &KmsOperation {
         &self.operation

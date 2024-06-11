@@ -90,7 +90,7 @@ impl DecryptionStrategy for Mockchain {
             FheType::Euint160 => Address::zero().to_token(),
             FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
         };
-        println!("🍊 plaintext: {:#?}", res);
+        info!("🍊 plaintext: {:#?}", res);
         Ok(res)
     }
 }
@@ -116,6 +116,10 @@ impl Default for KmsBlockchain {
 #[async_trait]
 impl DecryptionStrategy for KmsBlockchain {
     async fn decrypt(&self, ctxt: Bytes, fhe_type: FheType) -> anyhow::Result<Token> {
+        tracing::info!(
+            "🔒 Decrypting ciphertext: {:?}",
+            hex::encode(ctxt.to_vec().clone())
+        );
         let ptxt = self.decrypt_request(ctxt.to_vec(), fhe_type).await?;
         tracing::debug!("decrypted ptxt: {:?}", ptxt);
 
@@ -135,7 +139,7 @@ impl DecryptionStrategy for KmsBlockchain {
             FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
         };
 
-        println!("🍊 plaintext: {:#?}", res);
+        info!("🍊 plaintext: {:#?}", res);
         Ok(res)
     }
 }

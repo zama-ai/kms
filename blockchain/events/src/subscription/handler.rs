@@ -165,7 +165,7 @@ where
         if results.is_empty() {
             tracing::info!("No events received from Blockchain. Update to last height");
             let last_height = self.blockchain.get_last_height().await?;
-            let new_height = 0.max(last_height as i64 - 50) as u64;
+            let new_height = 0.max(last_height as i64) as u64;
             self.storage.save_last_height(new_height).await?;
             return Ok(());
         }

@@ -17,7 +17,7 @@ pub(crate) async fn handle_event_decryption(
     ev: &Arc<EventDecryptionFilter>,
     block_number: u64,
 ) -> anyhow::Result<()> {
-    println!("🍻🍻🍻 handle_event_decryption enter");
+    tracing::debug!("🍻 handle_event_decryption enter");
     let mut tokens: Vec<Token> = Vec::with_capacity(ev.cts.len());
     let client_clone = Arc::clone(client);
     let ev_clone: Arc<EventDecryptionFilter> = Arc::clone(ev);
@@ -52,7 +52,8 @@ pub(crate) async fn handle_event_decryption(
         {
             Ok(pending_tx) => match pending_tx.await {
                 Ok(receipt) => {
-                    tracing::info!("Transaction receipt: {:?}", receipt);
+                    tracing::info!("Fulfilled request: {:?}", ev_clone.request_id);
+                    tracing::trace!("Transaction receipt: {:?}", receipt);
                 }
                 Err(e) => {
                     tracing::error!("Failed to await transaction receipt: {:?}", e);
@@ -63,7 +64,7 @@ pub(crate) async fn handle_event_decryption(
             }
         }
     });
-    println!("🍻🍻🍻 handle_event_decryption exit");
+    tracing::debug!("🍻 handle_event_decryption exit");
     Ok(())
 }
 

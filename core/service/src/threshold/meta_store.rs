@@ -10,6 +10,16 @@ pub(crate) enum HandlerStatus<T> {
     Done(T),
 }
 
+impl<T> std::fmt::Debug for HandlerStatus<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Started => write!(f, "Started"),
+            Self::Error(arg0) => f.debug_tuple("Error").field(arg0).finish(),
+            Self::Done(_) => write!(f, "Done()"),
+        }
+    }
+}
+
 /// Data structure that stores elements that are being processed and their status (Started, Done, Error).
 /// It holds elements up to a given capacity, and once it is full, it will remove old elements that have status [Done]/[Error], if there are sufficiently many.
 pub(crate) struct MetaStore<T> {
@@ -80,7 +90,8 @@ impl<T> MetaStore<T> {
     pub(crate) fn insert(&mut self, request_id: &RequestId) -> anyhow::Result<()> {
         if self.exists(request_id) {
             return Err(anyhow_error_and_log(format!(
-                "The element with ID {request_id} is already stored"
+                "The element with ID {request_id} is already stored and contains {:#?}",
+                self.retrieve(request_id)
             )));
         }
         if self.storage.len() >= self.capacity {

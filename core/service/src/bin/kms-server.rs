@@ -6,9 +6,6 @@ use kms_lib::threshold::threshold_kms::{
     threshold_server_init, threshold_server_start, ThresholdConfig,
 };
 use kms_lib::util::aws::{EnclaveS3Storage, S3Storage};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{filter, Layer};
 
 pub const SIG_SK_BLOB_KEY: &str = "private_sig_key";
 pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
@@ -140,9 +137,11 @@ enum ExecutionMode {
 /// Please consult the `kms-gen-keys` binary for details on generating key material.
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    let stdout_log = tracing_subscriber::fmt::layer().pretty();
-    tracing_subscriber::registry()
-        .with(stdout_log.with_filter(filter::LevelFilter::INFO))
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_line_number(true)
+        .with_file(true)
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
         .init();
     let args = KmsArgs::parse();
 

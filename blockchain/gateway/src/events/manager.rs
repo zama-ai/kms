@@ -1,7 +1,6 @@
 use crate::command::decrypt::handler::handle_event_decryption;
 use crate::common::config::oracle_predeploy_address;
 use crate::common::provider::EventDecryptionFilter;
-use crate::common::provider::ResultCallbackFilter;
 use crate::events::manager::k256::ecdsa::SigningKey;
 use crate::util::height::AtomicBlockHeight;
 use ethers::prelude::*;
@@ -45,83 +44,64 @@ impl<'a> EventManager<'a> {
             .number
             .unwrap();
         info!("last_block: {last_block}");
-        let event_decryption_stream = self
+
+        let mut last_block = self
             .provider
-            .subscribe_logs(
+            .get_block(BlockNumber::Latest)
+            .await?
+            .unwrap()
+            .number
+            .unwrap();
+        debug!("last_block: {last_block}");
+        let mut last_request_id = U256::zero();
+        debug!("last_request_id: {last_request_id}");
+        let mut stream = self.provider.subscribe_blocks().await?;
+        while let Some(block) = stream.next().await {
+            info!("🧱 block number: {}", block.number.unwrap(),);
+
+            // process any EventDecryption logs
+            let events = self.provider
+            .get_logs(
                 &Filter::new()
-                    .address(oracle_predeploy_address())
                     .from_block(last_block)
+                    .address(oracle_predeploy_address())
                     .event(
                         "EventDecryption(uint256,(uint256,uint8)[],address,bytes4,uint256,uint256)",
                     ),
             )
-            .await
-            .unwrap_or_else(|e| {
-                error!("Failed to subscribe to EventDecryption logs: {:?}", e);
-                std::process::exit(1);
-            });
+            .await?;
 
-        let result_callback_stream = self
-            .provider
-            .subscribe_logs(
-                &Filter::new()
-                    .address(oracle_predeploy_address())
-                    .from_block(last_block)
-                    .event("ResultCallback(uint256,bool,bytes)"),
-            )
-            .await
-            .unwrap_or_else(|e| {
-                error!("Failed to subscribe to ResultCallback logs: {:?}", e);
-                std::process::exit(1);
-            });
+            for log in events {
+                let block_number = log.block_number.unwrap().as_u64();
+                debug!("Block: {:?}", block_number);
+                let _ = self.atomic_height.try_update(block_number);
+                let event_decryption: EventDecryptionFilter =
+                    EthLogDecode::decode_log(&log.clone().into())?;
+                if event_decryption.request_id > last_request_id {
+                    last_request_id = event_decryption.request_id;
+                    info!("⭐ event_decryption: {:?}", event_decryption.request_id);
+                    debug!("EventDecryptionFilter: {:?}", event_decryption);
 
-        let mut combined_stream = futures::stream::select_all(vec![
-            event_decryption_stream
-                .map(EventType::EventDecryptionLog)
-                .boxed(),
-            result_callback_stream
-                .map(EventType::ResultCallbackLog)
-                .boxed(),
-        ]);
-
-        while let Some(event) = combined_stream.next().await {
-            match event {
-                EventType::EventDecryptionLog(log) => {
-                    let block_number = log.block_number.unwrap().as_u64();
-                    debug!("Block: {:?}", block_number);
-                    let _ = self.atomic_height.try_update(block_number);
-                    match <EventDecryptionFilter as EthLogDecode>::decode_log(&log.into()) {
-                        Ok(event) => {
-                            debug!("Parsed Event: {:?}", event);
-                            debug!("EventDecryptionFilter: {:?}", event);
-                            if let Err(e) = handle_event_decryption(
-                                &self.provider,
-                                &Arc::new(event.clone()),
-                                block_number,
-                            )
-                            .await
-                            {
-                                error!("Error handling event decryption: {:?}", e);
-                            }
-                            debug!("Handled event decryption: {:?}", event.request_id);
-                        }
-                        Err(e) => error!("Failed to parse event: {:?}", e),
+                    if let Err(e) = handle_event_decryption(
+                        &self.provider,
+                        &Arc::new(event_decryption.clone()),
+                        log.block_number.unwrap().as_u64(),
+                    )
+                    .await
+                    {
+                        error!("Error handling event decryption: {:?}", e);
                     }
-                }
-                EventType::ResultCallbackLog(log) => {
-                    let block_number = log.block_number.unwrap().as_u64();
-                    debug!("Block: {:?}", block_number);
-                    let _ = self.atomic_height.try_update(block_number);
-                    match <ResultCallbackFilter as EthLogDecode>::decode_log(&log.into()) {
-                        Ok(event) => {
-                            debug!("Parsed Event: {:?}", event);
-                            debug!("Handled result callback: {:?}", event.request_id);
-                        }
-                        Err(e) => error!("Failed to parse event: {:?}", e),
-                    }
+
+                    info!(
+                        "Handled event decryption: {:?}",
+                        event_decryption.request_id
+                    );
                 }
             }
+
+            last_block = block.number.unwrap();
         }
+
         Ok(())
     }
 }
