@@ -13,7 +13,7 @@ RUN wasm-opt -Os --signext-lowering "/app/blockchain/contracts/target/wasm32-unk
 FROM cosmwasm/wasmd:v0.50.0 as runtime
 
 WORKDIR /app
+RUN apk add jq
 COPY --from=compiler /app/optimized/asc.wasm /app/asc.wasm
 
 CMD ["/bin/bash"]
-
