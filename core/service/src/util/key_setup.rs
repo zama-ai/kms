@@ -7,8 +7,8 @@ use crate::cryptography::der_types::PrivateSigKey;
 use crate::kms::{FheType, RequestId};
 use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::PubDataType;
-use crate::storage::PublicStorage;
-use crate::storage::{read_all_data, PublicStorageReader};
+use crate::storage::Storage;
+use crate::storage::{read_all_data, StorageReader};
 use crate::storage::{store_at_request_id, FileStorage, StorageType};
 use crate::threshold::threshold_kms::compute_all_info;
 use crate::threshold::threshold_kms::ThresholdFheKeys;
@@ -447,7 +447,7 @@ async fn ensure_crs_store_exists<S>(
     deterministic: bool,
 ) -> bool
 where
-    S: PublicStorage,
+    S: Storage,
 {
     if pub_storage
         .data_exists(

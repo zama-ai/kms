@@ -6,13 +6,13 @@ use super::signcryption::{
 use crate::consts::ID_LENGTH;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
-use crate::kms::{FhePubKeyInfo, FheType, ParamChoice};
+use crate::kms::{FheType, ParamChoice, SignedPubDataHandle};
 use crate::rpc::rpc_types::{
     BaseKms, Kms, Plaintext, PrivDataType, PubDataType, RawDecryption, SigncryptionPayload,
 };
 use crate::storage::read_all_data;
 #[cfg(feature = "non-wasm")]
-use crate::storage::PublicStorage;
+use crate::storage::Storage;
 use crate::threshold::meta_store::MetaStore;
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
@@ -80,7 +80,7 @@ pub async fn async_generate_crs(
     sk: &PrivateSigKey,
     rng: AesRng,
     params: NoiseFloodParameters,
-) -> anyhow::Result<(PublicParameter, FhePubKeyInfo)> {
+) -> anyhow::Result<(PublicParameter, SignedPubDataHandle)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     rayon::spawn(move || {
@@ -128,7 +128,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
     params: &NoiseFloodParameters,
     mut rng: R,
-) -> anyhow::Result<(PublicParameter, FhePubKeyInfo)> {
+) -> anyhow::Result<(PublicParameter, SignedPubDataHandle)> {
     use distributed_decryption::execution::zk::ceremony::compute_witness_dim;
     let witness_dim = compute_witness_dim(&params.ciphertext_parameters)?;
     tracing::info!("Generating CRS with witness dimension {}.", witness_dim);
@@ -242,14 +242,14 @@ pub struct CentralizedTestingKeys {
     pub server_keys: Vec<PublicSigKey>,
 }
 
-pub type CrsInfoHashMap = HashMap<RequestId, FhePubKeyInfo>;
+pub type CrsInfoHashMap = HashMap<RequestId, SignedPubDataHandle>;
 pub type KeysInfoHashMap = HashMap<RequestId, KmsFheKeyHandles>;
 
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KmsFheKeyHandles {
     pub client_key: FhePrivateKey,
-    pub public_key_info: HashMap<PubDataType, FhePubKeyInfo>, // Mapping key type to information
+    pub public_key_info: HashMap<PubDataType, SignedPubDataHandle>, // Mapping key type to information
 }
 
 #[cfg(feature = "non-wasm")]
@@ -280,7 +280,7 @@ impl KmsFheKeyHandles {
 
 // Values that need to be stored temporarily as part of an async key generation call.
 #[cfg(feature = "non-wasm")]
-type KeyGenCallValues = HashMap<PubDataType, FhePubKeyInfo>;
+type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandle>;
 
 // Values that need to be stored temporarily as part of an async decryption call.
 // Represents the digest of the request and the result of the decryption.
@@ -296,7 +296,7 @@ pub type ReencCallValues = (u32, FheType, Vec<u8>, Vec<u8>);
 /// Observe that the order of write access MUST be as follows to avoid dead locks:
 /// PublicStorage -> PrivateStorage -> FheKeys/XXX_meta_map
 #[cfg(feature = "non-wasm")]
-pub struct SoftwareKms<PubS: PublicStorage, PrivS: PublicStorage> {
+pub struct SoftwareKms<PubS: Storage, PrivS: Storage> {
     pub(crate) base_kms: BaseKmsStruct,
     // Storage for data that is supposed to be readable by anyone on the internet,
     // but _may_ be suseptible to malicious modifications.
@@ -313,7 +313,7 @@ pub struct SoftwareKms<PubS: PublicStorage, PrivS: PublicStorage> {
     // Map storing ongoing reencryption requests.
     pub(crate) reenc_meta_map: Arc<RwLock<MetaStore<ReencCallValues>>>,
     // Map storing ongoing CRS generation requests.
-    pub(crate) crs_meta_map: Arc<RwLock<MetaStore<FhePubKeyInfo>>>,
+    pub(crate) crs_meta_map: Arc<RwLock<MetaStore<SignedPubDataHandle>>>,
     // Map storing the identity of parameters and the parameter file paths
     pub(crate) param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>, // TODO this should be loaded once during boot
 }
@@ -321,8 +321,8 @@ pub struct SoftwareKms<PubS: PublicStorage, PrivS: PublicStorage> {
 /// Perform asynchronous decryption and serialize the result using asn1
 #[cfg(feature = "non-wasm")]
 pub async fn async_decrypt<
-    PubS: PublicStorage + Sync + Send + 'static,
-    PrivS: PublicStorage + Sync + Send + 'static,
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
 >(
     client_key: &FhePrivateKey,
     high_level_ct: &[u8],
@@ -342,8 +342,8 @@ pub async fn async_decrypt<
 #[cfg(feature = "non-wasm")]
 #[allow(clippy::too_many_arguments)]
 pub async fn async_reencrypt<
-    PubS: PublicStorage + Sync + Send + 'static,
-    PrivS: PublicStorage + Sync + Send + 'static,
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
 >(
     client_key: &FhePrivateKey,
     sig_key: &PrivateSigKey,
@@ -368,8 +368,8 @@ pub async fn async_reencrypt<
 
 // impl fmt::Debug for SoftwareKms, we don't want to include the decryption key in the debug output
 #[cfg(feature = "non-wasm")]
-impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
-    fmt::Debug for SoftwareKms<PubS, PrivS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> fmt::Debug
+    for SoftwareKms<PubS, PrivS>
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SoftwareKms")
@@ -379,8 +379,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 }
 
 #[cfg(feature = "non-wasm")]
-impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
-    BaseKms for SoftwareKms<PubS, PrivS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> BaseKms
+    for SoftwareKms<PubS, PrivS>
 {
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
@@ -425,7 +425,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 }
 
 #[cfg(feature = "non-wasm")]
-impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static> Kms
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> Kms
     for SoftwareKms<PubS, PrivS>
 {
     fn decrypt(
@@ -516,7 +516,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 }
 
 #[cfg(feature = "non-wasm")]
-impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
     SoftwareKms<PubS, PrivS>
 {
     pub async fn new(
@@ -548,7 +548,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             .collect();
         let cs: CrsInfoHashMap =
             read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-        let cs_w_status: HashMap<RequestId, HandlerStatus<FhePubKeyInfo>> = cs
+        let cs_w_status: HashMap<RequestId, HandlerStatus<SignedPubDataHandle>> = cs
             .iter()
             .map(|(id, crs)| (id.to_owned(), HandlerStatus::Done(crs.to_owned())))
             .collect();
@@ -578,12 +578,12 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
 pub(crate) fn compute_info<S: Serialize>(
     sk: &PrivateSigKey,
     element: &S,
-) -> anyhow::Result<FhePubKeyInfo> {
+) -> anyhow::Result<SignedPubDataHandle> {
     // TODO hack serialize using serde because of issues with asn1 and public key serialization
     let ser = bincode::serialize(element)?;
     let handle = compute_handle(&ser)?;
     let signature = sign(&handle, sk)?;
-    Ok(FhePubKeyInfo {
+    Ok(SignedPubDataHandle {
         key_handle: handle,
         signature: bincode::serialize(&signature)?,
     })
@@ -603,7 +603,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{KmsFheKeyHandles, PublicStorage};
+    use super::{KmsFheKeyHandles, Storage};
     use crate::consts::TEST_MSG;
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
@@ -884,8 +884,8 @@ mod tests {
     }
 
     async fn set_wrong_client_key<
-        PubS: PublicStorage + Sync + Send + 'static,
-        PrivS: PublicStorage + Sync + Send + 'static,
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
     >(
         inner: &SoftwareKms<PubS, PrivS>,
         key_handle: &RequestId,
@@ -904,8 +904,8 @@ mod tests {
     }
 
     fn set_wrong_sig_key<
-        PubS: PublicStorage + Sync + Send + 'static,
-        PrivS: PublicStorage + Sync + Send + 'static,
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
     >(
         inner: &mut SoftwareKms<PubS, PrivS>,
         rng: &mut AesRng,

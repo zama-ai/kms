@@ -24,7 +24,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
     cargo install --path . --root . --bin kms-server --bin kms-gen-keys --bin kms-gen-tls-certs --bin kms-init
 RUN /app/kms/core/service/bin/kms-gen-keys centralized
-RUN /app/kms/core/service/bin/kms-gen-tls-certs --coordinator-prefix p --coordinator-count 4 -o certs
+RUN /app/kms/core/service/bin/kms-gen-tls-certs --ca-prefix p --ca-count 4 -o certs
 
 # Second stage builds the runtime image.
 # This stage will be the final image

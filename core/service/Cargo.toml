@@ -12,7 +12,7 @@ crate-type = ["lib", "cdylib"]
 name = "kms-gen-keys"
 path = "src/bin/kms-gen-keys.rs"
 
-[[bin]] # Bin to generate TLS certificates for coordinator and cores
+[[bin]] # Bin to generate TLS certificates for the service
 name = "kms-gen-tls-certs"
 path = "src/bin/kms-gen-tls-certs.rs"
 

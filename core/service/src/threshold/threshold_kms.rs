@@ -3,12 +3,12 @@ use crate::consts::{MINIMUM_SESSIONS_PREPROC, SEC_PAR};
 use crate::cryptography::central_kms::{compute_info, BaseKmsStruct};
 use crate::cryptography::der_types::{self, PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::cryptography::signcryption::signcrypt;
-use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer};
+use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, FhePubKeyInfo, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
+    Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
     KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ParamChoice, ReencryptionRequest,
-    ReencryptionResponse, RequestId,
+    ReencryptionResponse, RequestId, SignedPubDataHandle,
 };
 use crate::rpc::central_rpc::{
     convert_key_response, retrieve_parameters_sync, tonic_handle_potential_err, tonic_some_or_err,
@@ -18,7 +18,7 @@ use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::{
     BaseKms, Plaintext, PubDataType, RawDecryption, SigncryptionPayload, CURRENT_FORMAT_VERSION,
 };
-use crate::storage::PublicStorage;
+use crate::storage::Storage;
 use crate::storage::{delete_at_request_id, read_all_data, store_at_request_id};
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
@@ -181,8 +181,8 @@ impl ThresholdConfig {
 /// Otherwise, the setup must be done out of band by calling the init
 /// GRPC endpoint, or using the kms-init binary.
 pub async fn threshold_server_init<
-    PubS: PublicStorage + Sync + Send + 'static,
-    PrivS: PublicStorage + Sync + Send + 'static,
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
 >(
     config: ThresholdConfigNoStorage,
     public_storage: PubS,
@@ -249,8 +249,8 @@ pub async fn threshold_server_init<
 /// This function must be called after the server has been initialized.
 /// The server accepts requests from clients (not the other cores).
 pub async fn threshold_server_start<
-    PubS: PublicStorage + Sync + Send + 'static,
-    PrivS: PublicStorage + Sync + Send + 'static,
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
 >(
     listen_address: String,
     listen_port: u16,
@@ -262,7 +262,7 @@ pub async fn threshold_server_start<
     tracing::info!("Starting threshold KMS server {my_id} on socket {socket}");
     Server::builder()
         .timeout(tokio::time::Duration::from_secs(timeout_secs))
-        .add_service(CoordinatorEndpointServer::new(kms_server))
+        .add_service(CoreServiceEndpointServer::new(kms_server))
         .serve(socket)
         .await?;
     Ok(())
@@ -338,17 +338,17 @@ pub struct ThresholdKmsKeys {
 type DecMetaStore = (u32, Vec<u8>, Plaintext);
 // Servers needed, request digest, fhe type of encryption and resultant partial decryption
 type ReencMetaStore = (u32, Vec<u8>, FheType, Vec<u8>);
-// Hashmap of `PubDataType` to the corresponding `FhePubKeyInfo` information for all the different
+// Hashmap of `PubDataType` to the corresponding `SignedPubDataHandle` information for all the different
 // public keys
-type DkgMetaStore = HashMap<PubDataType, FhePubKeyInfo>;
+type DkgMetaStore = HashMap<PubDataType, SignedPubDataHandle>;
 // digest (the 160-bit hex-encoded value, computed using compute_info/handle) and the signature on
 // the handle
 type CrsMetaStore = (String, Vec<u8>);
 type BucketMetaStore = Box<dyn DKGPreprocessing<ResiduePoly128>>;
 
 pub struct ThresholdKms<
-    PubS: PublicStorage + Sync + Send + 'static,
-    PrivS: PublicStorage + Sync + Send + 'static,
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
 > {
     // NOTE: To avoid deadlocks the fhe_keys SHOULD NOT be written to while holding a meta storage
     // mutex!
@@ -375,7 +375,7 @@ pub struct ThresholdKms<
     param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
 }
 
-impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
     ThresholdKms<PubS, PrivS>
 {
     #[allow(clippy::too_many_arguments)]
@@ -576,8 +576,8 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
     }
 }
 
-impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
-    BaseKms for ThresholdKms<PubS, PrivS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> BaseKms
+    for ThresholdKms<PubS, PrivS>
 {
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
@@ -616,7 +616,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         self.base_kms.sign_eip712(msg, domain)
     }
 }
-impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
     ThresholdKms<PubS, PrivS>
 {
     /// Helper method for decryption which carries out the actual threshold decryption using noise
@@ -1165,8 +1165,8 @@ pub(crate) fn compute_all_info(
 }
 
 #[tonic::async_trait]
-impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + Send + 'static>
-    CoordinatorEndpoint for ThresholdKms<PubS, PrivS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    CoreServiceEndpoint for ThresholdKms<PubS, PrivS>
 {
     async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         // NOTE: request is not needed because our config is empty at the moment
@@ -1700,7 +1700,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
         )?;
         Ok(Response::new(CrsGenResult {
             request_id: Some(request_id),
-            crs_results: Some(FhePubKeyInfo {
+            crs_results: Some(SignedPubDataHandle {
                 key_handle: digest,
                 signature,
             }),

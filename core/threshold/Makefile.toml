@@ -17,7 +17,7 @@ args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEA
 #Generate the certificate for TLS communication of the parties
 [tasks.gen-test-certs]
 command = "cargo"
-args = ["run", "--manifest-path=../../coordinator/Cargo.toml", "--release", "--bin", "kms-gen-tls-certs", "--", "--coordinator-prefix", "p", "--coordinator-count", "${NUM_PARTIES}", "-o", "test_certs"]
+args = ["run", "--manifest-path=../service/Cargo.toml", "--release", "--bin", "kms-gen-tls-certs", "--", "--ca-prefix", "p", "--ca-count", "${NUM_PARTIES}", "-o", "test_certs"]
 
 #Generate the toml config file for the choreographer for a cluster of parties accessible from localhost
 [tasks.gen-local-choreo]

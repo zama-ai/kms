@@ -1,5 +1,5 @@
 use clap::Parser;
-use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
+use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_lib::kms::{Config, InitRequest};
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{filter, layer::SubscriberExt, Layer};
@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut handles = Vec::new();
     for addr in args.addresses {
         handles.push(tokio::spawn(async {
-            let mut kms_client = CoordinatorEndpointClient::connect(addr).await.unwrap();
+            let mut kms_client = CoreServiceEndpointClient::connect(addr).await.unwrap();
             let request = InitRequest {
                 config: Some(Config {}),
             };

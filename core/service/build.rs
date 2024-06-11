@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("KeyGenResult", DERIVES)
         .type_attribute("RequestId", EXTENDED_DERIVES)
         .type_attribute("Config", EXTENDED_DERIVES)
-        .type_attribute("FhePubKeyInfo", EXTENDED_DERIVES)
+        .type_attribute("SignedPubDataHandle", EXTENDED_DERIVES)
         .type_attribute("CrsGenRequest", DERIVES)
         .type_attribute("CrsGenResult", DERIVES)
         .type_attribute("FheType", "#[wasm_bindgen::prelude::wasm_bindgen]")
@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("KeyGenResult", DERIVES)
         .type_attribute("RequestId", EXTENDED_DERIVES)
         .type_attribute("Config", EXTENDED_DERIVES)
-        .type_attribute("FhePubKeyInfo", EXTENDED_DERIVES)
+        .type_attribute("SignedPubDataHandle", EXTENDED_DERIVES)
         .type_attribute("CrsGenRequest", DERIVES)
         .type_attribute("CrsGenResult", DERIVES)
         .compile(&["proto/kms.proto"], &["proto"])?;

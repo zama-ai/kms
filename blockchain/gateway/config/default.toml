@@ -17,34 +17,34 @@ bip32 = "xprv9s21ZrQH143K3FQVQn1Z6"
 denom = "ucosm"
 amount = 10000000
 
-[coordinator]
+[core]
 shares_needed = 2
 addresses = ["http://localhost:8080"]
 
-[coordinator.timeout_config]
+[core.timeout_config]
 channel_timeout = 60
 
-[coordinator.timeout_config.crs]
+[core.timeout_config.crs]
 initial_wait_time = 60
 retry_interval = 60
 max_poll_count = 120
 
-[coordinator.timeout_config.keygen]
+[core.timeout_config.keygen]
 initial_wait_time = 18000
 retry_interval = 15000
 max_poll_count = 1150
 
-[coordinator.timeout_config.preproc]
+[core.timeout_config.preproc]
 initial_wait_time = 18000
 retry_interval = 15000
 max_poll_count = 1150
 
-[coordinator.timeout_config.decryption]
+[core.timeout_config.decryption]
 initial_wait_time = 10
 retry_interval = 5
 max_poll_count = 24
 
-[coordinator.timeout_config.reencryption]
+[core.timeout_config.reencryption]
 initial_wait_time = 10
 retry_interval = 5
 max_poll_count = 24

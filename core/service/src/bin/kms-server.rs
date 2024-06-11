@@ -22,9 +22,9 @@ pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
     Namely, the `threshold` mode only works when the storage mode is `dev`. \
     See the help page for additional details (`kms-server --help`). \n
     For example, use the following to run a threshold KMS node with the default configuration \
-    (from `coordinator/config/default_1.toml`): \n
+    (from `core/service/config/default_1.toml`): \n
     ./kms-server dev centralized \n
-    or using cargo from the `coordinator` directory: \n
+    or using cargo from the `core/service` directory: \n
     cargo run --bin kms-server dev centralized \n
     Oberserve that some optional arugments may be added. More specifically for both the centralized and threshold \
     execution modes, the configuration file used can be specified with the `--config-file` argument. \
@@ -118,11 +118,11 @@ enum ExecutionMode {
 /// Namely, the `threshold` mode only worked when the storage mode is `dev`.
 /// See the help page for additional details.
 /// For example, use the following to run a threshold KMS node with the default configuration
-/// (from `coordinator/config/default_1.toml`):
+/// (from `core/service/config/default_1.toml`):
 /// ```
 /// ./kms-server dev centralized
 /// ```
-/// or using cargo from the `coordinator` directory:
+/// or using cargo from the `core/service` directory:
 /// ```
 /// cargo run --bin kms-server dev centralized
 /// ```

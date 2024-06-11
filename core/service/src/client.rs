@@ -40,14 +40,14 @@ cfg_if::cfg_if! {
         use crate::storage::read_all_data;
         use std::fmt;
         use tfhe::ServerKey;
-        use crate::storage::PublicStorage;
+        use crate::storage::Storage;
         use serde::de::DeserializeOwned;
         use distributed_decryption::execution::zk::ceremony::PublicParameter;
         use crate::rpc::rpc_types::{
             DecryptionRequestSerializable, PubDataType,
         };
         use crate::{cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms};
-        use crate::{storage::PublicStorageReader, util::key_setup::FhePublicKey};
+        use crate::{storage::StorageReader, util::key_setup::FhePublicKey};
         use crate::kms::{
             AggregatedDecryptionResponse, CrsGenRequest, CrsGenResult, DecryptionRequest,
             DecryptionResponsePayload, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
@@ -142,7 +142,7 @@ pub struct TestingReencryptionTranscript {
 /// The JavaScript API is created from compiling
 /// a part of the client code (along with other dependencies)
 /// into wasm and then using wasm-pack to generate the JS bindings.
-/// Care must be taken when new code is introduced to the coordinator
+/// Care must be taken when new code is introduced to the core/service
 /// or core/threshold since wasm does not support every feature
 /// that Rust supports. Specifically, for our use-case, we will not
 /// try to compile async, multi-threaded or IO code.
@@ -483,7 +483,7 @@ impl Client {
     /// Observe that this method is decoupled from the [Client] to ensure wasm complience as wasm cannot handle
     /// file reading or generic traits.
     #[cfg(feature = "non-wasm")]
-    pub async fn new_client<ClientS: PublicStorage, PubS: PublicStorageReader>(
+    pub async fn new_client<ClientS: Storage, PubS: StorageReader>(
         client_storage: ClientS,
         pub_storages: Vec<PubS>,
         param_path: &str,
@@ -653,7 +653,7 @@ impl Client {
     /// the number of honest parties, that is n - t, where n is the number
     /// of parties and t is the threshold.
     #[cfg(feature = "non-wasm")]
-    pub async fn process_distributed_crs_result<S: PublicStorageReader>(
+    pub async fn process_distributed_crs_result<S: StorageReader>(
         &self,
         request_id: &RequestId,
         results: Vec<CrsGenResult>,
@@ -678,7 +678,7 @@ impl Client {
                 let pp: PublicParameter = storage.read_data(&url).await?;
                 (pp, info)
             } else {
-                tracing::warn!("empty FhePubKeyInfo");
+                tracing::warn!("empty SignedPubDataHandle");
                 continue;
             };
 
@@ -846,7 +846,7 @@ impl Client {
 
     // TODO do we need to linking to request?
     #[cfg(feature = "non-wasm")]
-    pub async fn process_get_key_gen_resp<R: PublicStorageReader>(
+    pub async fn process_get_key_gen_resp<R: StorageReader>(
         &self,
         resp: &KeyGenResult,
         storage: &R,
@@ -873,10 +873,7 @@ impl Client {
     /// but will return None in case the signature is invalid or does not match the actual key
     /// handle.
     #[cfg(feature = "non-wasm")]
-    pub async fn retrieve_key<
-        S: serde::Serialize + DeserializeOwned + Send,
-        R: PublicStorageReader,
-    >(
+    pub async fn retrieve_key<S: serde::Serialize + DeserializeOwned + Send, R: StorageReader>(
         &self,
         key_gen_result: &KeyGenResult,
         key_type: PubDataType,
@@ -914,7 +911,7 @@ impl Client {
 
     // TODO do we need to linking to request?
     #[cfg(feature = "non-wasm")]
-    pub async fn process_get_crs_resp<R: PublicStorageReader>(
+    pub async fn process_get_crs_resp<R: StorageReader>(
         &self,
         resp: &CrsGenResult,
         storage: &R,
@@ -931,7 +928,7 @@ impl Client {
     /// but will return None in case the signature is invalid or does not match the actual key
     /// handle.
     #[cfg(feature = "non-wasm")]
-    pub async fn retrieve_crs<R: PublicStorageReader>(
+    pub async fn retrieve_crs<R: StorageReader>(
         &self,
         crs_gen_result: &CrsGenResult,
         storage: &R,
@@ -1461,11 +1458,11 @@ pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
 pub mod test_tools {
     use super::*;
     use crate::consts::{BASE_PORT, DEC_CAPACITY, DEFAULT_PROT, DEFAULT_URL, MIN_DEC_CACHE};
-    use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
+    use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
     use crate::rpc::central_rpc::{
         default_param_file_map, server_handle, CentralizedConfigNoStorage,
     };
-    use crate::storage::{FileStorage, PublicStorage, RamStorage, StorageType, StorageVersion};
+    use crate::storage::{FileStorage, RamStorage, Storage, StorageType, StorageVersion};
     use crate::threshold::threshold_kms::{
         threshold_server_init, threshold_server_start, PeerConf, ThresholdConfigNoStorage,
     };
@@ -1485,8 +1482,8 @@ pub mod test_tools {
     }
 
     pub async fn setup_threshold_no_client<
-        PubS: PublicStorage + Clone + Sync + Send + 'static,
-        PrivS: PublicStorage + Clone + Sync + Send + 'static,
+        PubS: Storage + Clone + Sync + Send + 'static,
+        PrivS: Storage + Clone + Sync + Send + 'static,
     >(
         threshold: u8,
         pub_storage: Vec<PubS>,
@@ -1556,15 +1553,15 @@ pub mod test_tools {
     }
 
     pub async fn setup_threshold<
-        PubS: PublicStorage + Clone + Sync + Send + 'static,
-        PrivS: PublicStorage + Clone + Sync + Send + 'static,
+        PubS: Storage + Clone + Sync + Send + 'static,
+        PrivS: Storage + Clone + Sync + Send + 'static,
     >(
         threshold: u8,
         pub_storage: Vec<PubS>,
         priv_storage: Vec<PrivS>,
     ) -> (
         HashMap<u32, JoinHandle<()>>,
-        HashMap<u32, CoordinatorEndpointClient<Channel>>,
+        HashMap<u32, CoreServiceEndpointClient<Channel>>,
     ) {
         let amount = priv_storage.len();
         let server_handles = setup_threshold_no_client(threshold, pub_storage, priv_storage).await;
@@ -1575,7 +1572,7 @@ pub mod test_tools {
             let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
             let uri = Uri::from_str(&url).unwrap();
             let channel = Channel::builder(uri).connect().await.unwrap();
-            client_handles.insert(i as u32, CoordinatorEndpointClient::new(channel));
+            client_handles.insert(i as u32, CoreServiceEndpointClient::new(channel));
         }
         tracing::info!("Client connected to servers");
         (server_handles, client_handles)
@@ -1583,8 +1580,8 @@ pub mod test_tools {
 
     /// Setup a client and a server running with non-persistant storage.
     pub async fn setup_centralized_no_client<
-        PubS: PublicStorage + Sync + Send + 'static,
-        PrivS: PublicStorage + Sync + Send + 'static,
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
     >(
         pub_storage: PubS,
         priv_storage: PrivS,
@@ -1603,20 +1600,20 @@ pub mod test_tools {
     }
 
     pub(crate) async fn setup_centralized<
-        PubS: PublicStorage + Sync + Send + 'static,
-        PrivS: PublicStorage + Sync + Send + 'static,
+        PubS: Storage + Sync + Send + 'static,
+        PrivS: Storage + Sync + Send + 'static,
     >(
         pub_storage: PubS,
         priv_storage: PrivS,
     ) -> (
         JoinHandle<()>,
-        CoordinatorEndpointClient<tonic::transport::Channel>,
+        CoreServiceEndpointClient<tonic::transport::Channel>,
     ) {
         let server_handle = setup_centralized_no_client(pub_storage, priv_storage).await;
         let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
         let uri = Uri::from_str(&url).unwrap();
         let channel = Channel::builder(uri).connect().await.unwrap();
-        let client = CoordinatorEndpointClient::new(channel);
+        let client = CoreServiceEndpointClient::new(channel);
         (server_handle, client)
     }
 
@@ -1626,7 +1623,7 @@ pub mod test_tools {
     pub async fn centralized_handles(
         storage_version: StorageVersion,
         param_path: &str,
-    ) -> (JoinHandle<()>, CoordinatorEndpointClient<Channel>, Client) {
+    ) -> (JoinHandle<()>, CoreServiceEndpointClient<Channel>, Client) {
         let (kms_server, kms_client) = match storage_version {
             StorageVersion::Dev => {
                 let priv_storage = FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
@@ -1666,7 +1663,7 @@ pub(crate) mod tests {
     use crate::cryptography::central_kms::CentralizedTestingKeys;
     use crate::cryptography::central_kms::{compute_handle, BaseKmsStruct};
     use crate::cryptography::der_types::Signature;
-    use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
+    use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
     #[cfg(feature = "slow_tests")]
     use crate::kms::CrsGenResult;
     use crate::kms::{
@@ -1674,7 +1671,7 @@ pub(crate) mod tests {
     };
     use crate::rpc::central_rpc::default_param_file_map;
     use crate::rpc::rpc_types::{BaseKms, PubDataType};
-    use crate::storage::PublicStorageReader;
+    use crate::storage::StorageReader;
     use crate::storage::{FileStorage, RamStorage, StorageType, StorageVersion};
     use crate::util::file_handling::read_element;
     #[cfg(feature = "wasm_tests")]
@@ -1706,7 +1703,7 @@ pub(crate) mod tests {
         param_path: &str,
     ) -> (
         HashMap<u32, JoinHandle<()>>,
-        HashMap<u32, CoordinatorEndpointClient<Channel>>,
+        HashMap<u32, CoreServiceEndpointClient<Channel>>,
         Client,
     ) {
         let (kms_servers, kms_clients) = match storage_version {
@@ -1811,6 +1808,7 @@ pub(crate) mod tests {
             .unwrap();
         assert!(server_key.is_some());
         kms_server.abort();
+        assert!(kms_server.await.unwrap_err().is_cancelled());
     }
 
     #[cfg(feature = "slow_tests")]
@@ -1902,6 +1900,7 @@ pub(crate) mod tests {
         assert!(verified);
 
         kms_server.abort();
+        assert!(kms_server.await.unwrap_err().is_cancelled());
     }
 
     /// test centralized crs generation via client interface
@@ -1937,6 +1936,7 @@ pub(crate) mod tests {
             .unwrap();
         assert!(crs.is_some());
         kms_server.abort();
+        assert!(kms_server.await.unwrap_err().is_cancelled());
 
         // try to make a proof and check that it works
         let param_file_map = HashMap::from_iter(
@@ -1995,7 +1995,7 @@ pub(crate) mod tests {
                 Some(info) => {
                     info.signature = sig.to_vec();
                 }
-                None => panic!("missing FhePubKeyInfo"),
+                None => panic!("missing SignedPubDataHandle"),
             };
         }
     }
@@ -2010,7 +2010,7 @@ pub(crate) mod tests {
                     // it's unlikely that we generate the same signature more than once
                     info.key_handle = digest.to_string();
                 }
-                None => panic!("missing FhePubKeyInfo"),
+                None => panic!("missing SignedPubDataHandle"),
             }
         }
     }
@@ -2072,9 +2072,12 @@ pub(crate) mod tests {
             }
             // if there are no reponses then we try again
         }
-        kms_servers
-            .into_iter()
-            .for_each(|(_id, handle)| handle.abort());
+        for handle in kms_servers.values() {
+            handle.abort()
+        }
+        for (_, handle) in kms_servers {
+            assert!(handle.await.unwrap_err().is_cancelled());
+        }
 
         // first check the happy path
         // the public parameter is checked in ddec tests, so we don't specifically check _pp
@@ -2205,8 +2208,8 @@ pub(crate) mod tests {
     #[case(TypedPlaintext::U64(u64::MAX))]
     #[case(TypedPlaintext::U128(u128::MAX))]
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
-    #[serial]
     #[tokio::test]
+    #[serial]
     async fn default_decryption_centralized(#[case] msg: TypedPlaintext) {
         decryption_centralized(DEFAULT_PARAM_PATH, &DEFAULT_CENTRAL_KEY_ID.to_string(), msg).await;
     }
@@ -2258,6 +2261,7 @@ pub(crate) mod tests {
         }
 
         kms_server.abort();
+        assert!(kms_server.await.unwrap_err().is_cancelled());
     }
 
     #[tokio::test]
@@ -2294,8 +2298,8 @@ pub(crate) mod tests {
     #[case(TypedPlaintext::U64(u64::MAX))]
     #[case(TypedPlaintext::U128(u128::MAX))]
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
-    #[serial]
     #[tokio::test]
+    #[serial]
     async fn default_reencryption_centralized(#[case] msg: TypedPlaintext) {
         reencryption_centralized(
             DEFAULT_PARAM_PATH,
@@ -2394,6 +2398,7 @@ pub(crate) mod tests {
         }
 
         kms_server.abort();
+        assert!(kms_server.await.unwrap_err().is_cancelled());
     }
 
     #[tracing_test::traced_test]
@@ -2417,8 +2422,8 @@ pub(crate) mod tests {
     #[case(TypedPlaintext::U64(u64::MAX))]
     #[case(TypedPlaintext::U128(u128::MAX))]
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
-    #[serial]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
     async fn default_decryption_threshold(#[case] msg: TypedPlaintext) {
         decryption_threshold(
             DEFAULT_PARAM_PATH,
@@ -2484,9 +2489,12 @@ pub(crate) mod tests {
             TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
             TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
         }
-        kms_servers
-            .into_iter()
-            .for_each(|(_id, handle)| handle.abort());
+        for handle in kms_servers.values() {
+            handle.abort()
+        }
+        for (_, handle) in kms_servers {
+            assert!(handle.await.unwrap_err().is_cancelled());
+        }
     }
 
     #[tokio::test]
@@ -2523,8 +2531,8 @@ pub(crate) mod tests {
     #[case(TypedPlaintext::U64(u64::MAX))]
     #[case(TypedPlaintext::U128(u128::MAX))]
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
-    #[serial]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
     async fn default_reencryption_threshold(#[case] msg: TypedPlaintext) {
         reencryption_threshold(
             DEFAULT_PARAM_PATH,
@@ -2630,9 +2638,12 @@ pub(crate) mod tests {
             TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
             TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
         }
-        kms_servers
-            .into_iter()
-            .for_each(|(_id, handle)| handle.abort());
+        for handle in kms_servers.values() {
+            handle.abort()
+        }
+        for (_, handle) in kms_servers {
+            assert!(handle.await.unwrap_err().is_cancelled());
+        }
     }
 
     // Validate bug-fix to ensure that the server fails gracefully when the ciphertext is too large
@@ -2694,6 +2705,7 @@ pub(crate) mod tests {
             .contains("finished with an error"));
         tracing::info!("aborting");
         kms_server.abort();
+        assert!(kms_server.await.unwrap_err().is_cancelled());
     }
 
     #[tokio::test]
@@ -2721,7 +2733,7 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     async fn get_preproc_status(
         request: crate::kms::KeyGenPreprocRequest,
-        kms_clients: &HashMap<u32, CoordinatorEndpointClient<Channel>>,
+        kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     ) -> Vec<crate::kms::KeyGenPreprocStatus> {
         let mut tasks = JoinSet::new();
         for i in 1..=AMOUNT_PARTIES as u32 {
@@ -2777,7 +2789,7 @@ pub(crate) mod tests {
         async fn test_preproc_status(
             request: KeyGenPreprocRequest,
             expected_res: KeyGenPreprocStatusEnum,
-            kms_clients: &HashMap<u32, CoordinatorEndpointClient<Channel>>,
+            kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
         ) {
             let responses = get_preproc_status(request, kms_clients).await;
 
@@ -2828,8 +2840,11 @@ pub(crate) mod tests {
         //Make sure we did break because preproc is finished and not because of timeout
         assert_eq!(finished.len(), AMOUNT_PARTIES);
 
-        for kms_server in kms_servers {
-            kms_server.1.abort();
+        for handle in kms_servers.values() {
+            handle.abort()
+        }
+        for (_, handle) in kms_servers {
+            assert!(handle.await.unwrap_err().is_cancelled());
         }
     }
 
@@ -2837,7 +2852,7 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     async fn launch_dkg(
         req_keygen: crate::kms::KeyGenRequest,
-        kms_clients: &HashMap<u32, CoordinatorEndpointClient<Channel>>,
+        kms_clients: &HashMap<u32, CoreServiceEndpointClient<Channel>>,
     ) -> Vec<Result<tonic::Response<Empty>, tonic::Status>> {
         let mut tasks_gen = JoinSet::new();
         for i in 1..=AMOUNT_PARTIES as u32 {
@@ -2998,8 +3013,11 @@ pub(crate) mod tests {
             assert_eq!(response.unwrap_err().code(), tonic::Code::NotFound);
         }
 
-        for kms_server in kms_servers {
-            kms_server.1.abort();
+        for handle in kms_servers.values() {
+            handle.abort()
+        }
+        for (_, handle) in kms_servers {
+            assert!(handle.await.unwrap_err().is_cancelled());
         }
     }
 }

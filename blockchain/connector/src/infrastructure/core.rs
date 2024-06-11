@@ -14,7 +14,7 @@ use events::kms::{
     ReencryptValues, TransactionId,
 };
 use events::HexVector;
-use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
+use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_lib::kms::{
     Config, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
     DecryptionResponsePayload, Eip712DomainMsg, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
@@ -32,7 +32,7 @@ use tonic::{Response, Status};
 use typed_builder::TypedBuilder;
 
 pub struct KmsOperationVal {
-    pub kms_client: KmsCoordinator,
+    pub kms_client: KmsCore,
     pub tx_id: TransactionId,
     pub proof: Proof,
 }
@@ -70,7 +70,7 @@ pub enum KmsOperationRequest {
 }
 
 #[async_trait]
-impl Kms for KmsCoordinator {
+impl Kms for KmsCore {
     async fn run(
         &self,
         event: KmsEvent,
@@ -92,36 +92,33 @@ pub trait KmsEventHandler {
 }
 
 #[derive(Clone, TypedBuilder)]
-pub struct KmsCoordinator {
+pub struct KmsCore {
     channel: Channel,
     metrics: Arc<OpenTelemetryMetrics>,
     timeout_config: TimeoutConfig,
 }
 
-impl KmsCoordinator {
+impl KmsCore {
     pub(crate) fn new(
-        config: crate::conf::CoordinatorConfig,
+        config: crate::conf::CoreConfig,
         metrics: OpenTelemetryMetrics,
     ) -> Result<Self, anyhow::Error> {
         // NOTE: we don't need multiple endpoints for now
         // but we keep it like this to match the blockchain implementation
         let endpoints = config
-            .coordinator_addresses()
+            .addresses()
             .iter()
             .map(|endpoint| Endpoint::new(endpoint.to_string()))
             .collect::<Result<Vec<Endpoint>, _>>()
-            .map_err(|e| anyhow::anyhow!("Error connecting to coordinator {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Error connecting to core {:?}", e))?;
 
         let endpoints = endpoints.into_iter().map(|e| {
             e.timeout(Duration::from_secs(config.timeout_config.channel_timeout))
                 .clone()
         });
         let channel = Channel::balance_list(endpoints);
-        tracing::info!(
-            "Connecting to coordinator server {:?}",
-            config.coordinator_addresses(),
-        );
-        Ok(KmsCoordinator {
+        tracing::info!("Connecting to core server {:?}", config.addresses(),);
+        Ok(KmsCore {
             channel,
             metrics: Arc::new(metrics),
             timeout_config: config.timeout_config.clone(),
@@ -183,7 +180,7 @@ macro_rules! poller {
             let resp = $f_to_poll.await;
             match $res_map(resp) {
                 Ok(PollerStatus::Done(res)) => {
-                    $metrics.increment(MetricType::CoordinatorResponseSuccess, 1, &[("ok", "ok")]);
+                    $metrics.increment(MetricType::CoreResponseSuccess, 1, &[("ok", "ok")]);
                     return Ok(res);
                 }
                 Ok(PollerStatus::Poll) => {
@@ -191,7 +188,7 @@ macro_rules! poller {
                         let err_msg =
                             format!("Time out after {cnt} tries while trying to get response");
                         $metrics.increment(
-                            MetricType::CoordinatorResponseError,
+                            MetricType::CoreResponseError,
                             1,
                             &[("error", &err_msg)],
                         );
@@ -199,7 +196,7 @@ macro_rules! poller {
                     } else {
                         cnt += 1;
                         tracing::info!(
-                            "Polling coordinator {}, tries: {cnt}, timeout_triple: {:?}",
+                            "Polling core {}, tries: {cnt}, timeout_triple: {:?}",
                             $info,
                             $timeout_triple,
                         );
@@ -207,11 +204,7 @@ macro_rules! poller {
                 }
                 Err(e) => {
                     let err_msg = format!("error while trying to get response {e}");
-                    $metrics.increment(
-                        MetricType::CoordinatorResponseError,
-                        1,
-                        &[("error", &err_msg)],
-                    );
+                    $metrics.increment(MetricType::CoreResponseError, 1, &[("error", &err_msg)]);
                     return Err(anyhow!(err_msg));
                 }
             }
@@ -226,7 +219,7 @@ impl KmsEventHandler for DecryptVal {
         config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
-        let mut client = CoordinatorEndpointClient::new(chan.clone());
+        let mut client = CoreServiceEndpointClient::new(chan.clone());
 
         if CURRENT_FORMAT_VERSION != self.decrypt.version() {
             return Err(anyhow!(
@@ -267,10 +260,10 @@ impl KmsEventHandler for DecryptVal {
             .map_err(|e| {
                 let err_msg = e.to_string();
                 tracing::error!(err_msg);
-                metrics.increment(MetricType::CoordinatorError, 1, &[("error", &err_msg)]);
+                metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
                 e
             })?;
-        metrics.increment(MetricType::CoordinatorSuccess, 1, &[("ok", "Decrypt")]);
+        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "Decrypt")]);
 
         let g =
             |res: Result<Response<DecryptionResponse>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
@@ -347,7 +340,7 @@ impl KmsEventHandler for ReencryptVal {
         config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
-        let mut client = CoordinatorEndpointClient::new(chan.clone());
+        let mut client = CoreServiceEndpointClient::new(chan.clone());
 
         let req_id = RequestId {
             request_id: self.operation_val.tx_id.to_hex(),
@@ -399,10 +392,10 @@ impl KmsEventHandler for ReencryptVal {
             .map_err(|e| {
                 let err_msg = e.to_string();
                 tracing::error!(err_msg);
-                metrics.increment(MetricType::CoordinatorError, 1, &[("error", &err_msg)]);
+                metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
                 e
             })?;
-        metrics.increment(MetricType::CoordinatorSuccess, 1, &[("ok", "Reencrypt")]);
+        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "Reencrypt")]);
 
         let g =
             |res: Result<Response<ReencryptionResponse>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
@@ -470,7 +463,7 @@ impl KmsEventHandler for KeyGenPreprocVal {
         })?;
 
         let chan = &self.operation_val.kms_client.channel;
-        let mut client = CoordinatorEndpointClient::new(chan.clone());
+        let mut client = CoreServiceEndpointClient::new(chan.clone());
 
         let req_id: RequestId = self.operation_val.tx_id.to_hex().try_into()?;
         let req = KeyGenPreprocRequest {
@@ -488,14 +481,10 @@ impl KmsEventHandler for KeyGenPreprocVal {
             .map_err(|e| {
                 let err_msg = e.to_string();
                 tracing::error!(err_msg);
-                metrics.increment(MetricType::CoordinatorError, 1, &[("error", &err_msg)]);
+                metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
                 e
             })?;
-        metrics.increment(
-            MetricType::CoordinatorSuccess,
-            1,
-            &[("ok", "KeyGenPreproc")],
-        );
+        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "KeyGenPreproc")]);
 
         let g =
             |res: Result<Response<KeyGenPreprocStatus>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
@@ -559,7 +548,7 @@ impl KmsEventHandler for KeyGenVal {
         })?;
 
         let chan = &self.operation_val.kms_client.channel;
-        let mut client = CoordinatorEndpointClient::new(chan.clone());
+        let mut client = CoreServiceEndpointClient::new(chan.clone());
 
         let req_id: RequestId = self.operation_val.tx_id.to_hex().try_into()?;
         let preproc_id = self.keygen.preproc_id().to_hex().try_into()?;
@@ -579,10 +568,10 @@ impl KmsEventHandler for KeyGenVal {
             .map_err(|e| {
                 let err_msg = e.to_string();
                 tracing::error!(err_msg);
-                metrics.increment(MetricType::CoordinatorError, 1, &[("error", &err_msg)]);
+                metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
                 e
             })?;
-        metrics.increment(MetricType::CoordinatorSuccess, 1, &[("ok", "KeyGen")]);
+        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "KeyGen")]);
 
         let g =
             |res: Result<Response<KeyGenResult>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
@@ -649,7 +638,7 @@ impl KmsEventHandler for CrsGenVal {
         })?;
 
         let chan = &self.operation_val.kms_client.channel;
-        let mut client = CoordinatorEndpointClient::new(chan.clone());
+        let mut client = CoreServiceEndpointClient::new(chan.clone());
 
         let req_id: RequestId = self.operation_val.tx_id.to_hex().try_into()?;
         let req = CrsGenRequest {
@@ -667,10 +656,10 @@ impl KmsEventHandler for CrsGenVal {
             .map_err(|e| {
                 let err_msg = e.to_string();
                 tracing::error!(err_msg);
-                metrics.increment(MetricType::CoordinatorError, 1, &[("error", &err_msg)]);
+                metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
                 e
             })?;
-        metrics.increment(MetricType::CoordinatorSuccess, 1, &[("ok", "CRS")]);
+        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "CRS")]);
 
         let g =
             |res: Result<Response<CrsGenResult>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
@@ -712,10 +701,10 @@ impl KmsEventHandler for CrsGenVal {
 mod test {
     use super::KmsEventHandler as _;
     use crate::{
-        conf::{CoordinatorConfig, TimeoutConfig},
+        conf::{CoreConfig, TimeoutConfig},
         domain::blockchain::KmsOperationResponse,
         infrastructure::{
-            coordinator::{KmsCoordinator, WrappingFheType},
+            core::{KmsCore, WrappingFheType},
             metrics::OpenTelemetryMetrics,
         },
     };
@@ -776,12 +765,12 @@ mod test {
         let join_handle = test_tools::setup_centralized_no_client(pub_storage, priv_storage).await;
 
         let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
-        let config = CoordinatorConfig {
+        let config = CoreConfig {
             addresses: vec![url],
             timeout_config: TimeoutConfig::mocking_default(),
         };
 
-        let client = KmsCoordinator::new(config.clone(), OpenTelemetryMetrics::new()).unwrap();
+        let client = KmsCore::new(config.clone(), OpenTelemetryMetrics::new()).unwrap();
 
         let mut txn_buf = vec![0u8; 20];
         rand::thread_rng().fill_bytes(&mut txn_buf);
@@ -900,7 +889,7 @@ mod test {
         op: OperationValue,
     ) -> (Vec<KmsOperationResponse>, TransactionId, Vec<u32>) {
         let txn_id = TransactionId::from(vec![2u8; 20]);
-        let coordinator_handles = if slow {
+        let core_handles = if slow {
             // Delete potentially existing CRS
             purge(None, None, &txn_id.to_hex()).await;
             let mut pub_storage = Vec::new();
@@ -921,7 +910,7 @@ mod test {
             .map(|i| {
                 let port = BASE_PORT + i + 1;
                 let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
-                CoordinatorConfig {
+                CoreConfig {
                     addresses: vec![url],
                     timeout_config: if slow {
                         TimeoutConfig::testing_default()
@@ -935,7 +924,7 @@ mod test {
         // create the clients
         let mut clients = vec![];
         for config in configs {
-            clients.push(KmsCoordinator::new(config.clone(), OpenTelemetryMetrics::new()).unwrap());
+            clients.push(KmsCore::new(config.clone(), OpenTelemetryMetrics::new()).unwrap());
         }
 
         // create events
@@ -970,7 +959,7 @@ mod test {
         }
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
-        for (_, h) in coordinator_handles {
+        for (_, h) in core_handles {
             h.abort();
         }
 
@@ -1217,31 +1206,31 @@ mod test {
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn ddec_sunshine_mocked_coordinator() {
+    async fn ddec_sunshine_mocked_core() {
         ddec_sunshine(false).await
     }
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn reenc_sunshine_mocked_coordinator() {
+    async fn reenc_sunshine_mocked_core() {
         reenc_sunshine(false).await
     }
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn keygen_sunshine_mocked_coordinator() {
+    async fn keygen_sunshine_mocked_core() {
         keygen_sunshine(false).await
     }
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn preproc_sunshine_mocked_coordinator() {
+    async fn preproc_sunshine_mocked_core() {
         preproc_sunshine(false).await
     }
 
     #[tokio::test]
     #[serial_test::serial]
-    async fn crs_sunshine_mocked_coordinator() {
+    async fn crs_sunshine_mocked_core() {
         crs_sunshine(false).await
     }
 

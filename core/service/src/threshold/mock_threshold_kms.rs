@@ -6,12 +6,12 @@ use tokio::task::JoinHandle;
 use tonic::{transport, Request, Response, Status};
 
 use crate::consts::{BASE_PORT, DEFAULT_URL, TEST_MSG};
-use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer};
+use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, FhePubKeyInfo, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
-    KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ReencryptionRequest,
-    ReencryptionResponse, RequestId,
+    Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
+    KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse, RequestId,
+    SignedPubDataHandle,
 };
 use crate::rpc::rpc_types::{Plaintext, PubDataType, CURRENT_FORMAT_VERSION};
 
@@ -24,7 +24,7 @@ pub async fn setup_mock_kms(n: usize) -> HashMap<u32, JoinHandle<()>> {
         let handle = tokio::spawn(async move {
             let kms = MockThresholdKms::default();
             let _ = transport::Server::builder()
-                .add_service(CoordinatorEndpointServer::new(kms))
+                .add_service(CoreServiceEndpointServer::new(kms))
                 .serve(addr)
                 .await;
         });
@@ -41,7 +41,7 @@ pub async fn setup_mock_kms(n: usize) -> HashMap<u32, JoinHandle<()>> {
 pub struct MockThresholdKms {}
 
 #[tonic::async_trait]
-impl CoordinatorEndpoint for MockThresholdKms {
+impl CoreServiceEndpoint for MockThresholdKms {
     async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }
@@ -70,7 +70,7 @@ impl CoordinatorEndpoint for MockThresholdKms {
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
-        let dummy_info = FhePubKeyInfo {
+        let dummy_info = SignedPubDataHandle {
             key_handle: "12".to_string(),
             signature: vec![3, 4],
         };
@@ -144,7 +144,7 @@ impl CoordinatorEndpoint for MockThresholdKms {
     ) -> Result<Response<CrsGenResult>, Status> {
         Ok(Response::new(CrsGenResult {
             request_id: Some(request.into_inner()),
-            crs_results: Some(FhePubKeyInfo::default()),
+            crs_results: Some(SignedPubDataHandle::default()),
         }))
     }
 }

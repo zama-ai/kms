@@ -2,14 +2,15 @@ use super::rpc_types::{
     protobuf_to_alloy_domain, BaseKms, DecryptionRequestSerializable, PrivDataType,
     CURRENT_FORMAT_VERSION,
 };
-use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer};
+use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
-    Empty, FhePubKeyInfo, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
-    KeyGenRequest, KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse, RequestId,
+    Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest,
+    KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse, RequestId,
+    SignedPubDataHandle,
 };
 use crate::rpc::rpc_types::PubDataType;
-use crate::storage::{store_at_request_id, PublicStorage};
+use crate::storage::{store_at_request_id, Storage};
 use crate::util::file_handling::read_as_json;
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use crate::{
@@ -101,8 +102,8 @@ impl CentralizedConfigNoStorage {
 }
 
 pub async fn server_handle<
-    PubS: PublicStorage + Sync + Send + 'static,
-    PrivS: PublicStorage + Sync + Send + 'static,
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
 >(
     config: CentralizedConfigNoStorage,
     public_storage: PubS,
@@ -113,7 +114,7 @@ pub async fn server_handle<
     tracing::info!("Starting centralized KMS server ...");
 
     Server::builder()
-        .add_service(CoordinatorEndpointServer::new(kms))
+        .add_service(CoreServiceEndpointServer::new(kms))
         .serve(socket)
         .await?;
     Ok(())
@@ -121,9 +122,9 @@ pub async fn server_handle<
 
 #[tonic::async_trait]
 impl<
-        PubS: PublicStorage + std::marker::Sync + std::marker::Send + 'static,
-        PrivS: PublicStorage + std::marker::Sync + std::marker::Send + 'static,
-    > CoordinatorEndpoint for SoftwareKms<PubS, PrivS>
+        PubS: Storage + std::marker::Sync + std::marker::Send + 'static,
+        PrivS: Storage + std::marker::Sync + std::marker::Send + 'static,
+    > CoreServiceEndpoint for SoftwareKms<PubS, PrivS>
 {
     async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         tonic_some_or_err(
@@ -659,12 +660,12 @@ pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), Status> 
     Ok(())
 }
 
-/// Helper method which takes a [HashMap<PubDataType, FhePubKeyInfo>] and returns
-/// [HashMap<String, FhePubKeyInfo>] by applying the [ToString] function on [PubDataType] for each element in the map.
+/// Helper method which takes a [HashMap<PubDataType, SignedPubDataHandle>] and returns
+/// [HashMap<String, SignedPubDataHandle>] by applying the [ToString] function on [PubDataType] for each element in the map.
 /// The function is needed since protobuf does not support enums in maps.
 pub(crate) fn convert_key_response(
-    key_info_map: HashMap<PubDataType, FhePubKeyInfo>,
-) -> HashMap<String, FhePubKeyInfo> {
+    key_info_map: HashMap<PubDataType, SignedPubDataHandle>,
+) -> HashMap<String, SignedPubDataHandle> {
     key_info_map
         .into_iter()
         .map(|(key_type, key_info)| {

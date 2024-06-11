@@ -1,4 +1,4 @@
 pub mod blockchain;
-pub mod coordinator;
+pub mod core;
 pub mod metrics;
 pub mod oracle;

@@ -3,7 +3,7 @@ use crate::cryptography::nitro_enclave::{
     decrypt_ciphertext_for_recipient, decrypt_on_data_key, encrypt_on_data_key,
     gen_nitro_enclave_keys, nitro_enclave_get_random, NitroEnclaveKeys, APP_BLOB_NONCE_SIZE,
 };
-use crate::storage::{PublicStorage, PublicStorageReader};
+use crate::storage::{Storage, StorageReader};
 use anyhow::ensure;
 use aws_config::Region;
 use aws_sdk_kms::primitives::Blob;
@@ -36,7 +36,7 @@ impl S3Storage {
 }
 
 #[tonic::async_trait]
-impl PublicStorageReader for S3Storage {
+impl StorageReader for S3Storage {
     async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
         let s3_bucket = url
             .host_str()
@@ -76,6 +76,11 @@ impl PublicStorageReader for S3Storage {
     }
 
     fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
+        if data_id.contains('/') || data_type.contains('/') {
+            return Err(anyhow_error_and_log(
+                "Could not store data, data_id or data_type contains '/'".to_string(),
+            ));
+        }
         Ok(Url::parse(
             format!("s3://{}/{}/{}.key", self.blob_bucket, data_type, data_id).as_str(),
         )?)
@@ -108,7 +113,7 @@ impl PublicStorageReader for S3Storage {
 }
 
 #[tonic::async_trait]
-impl PublicStorage for S3Storage {
+impl Storage for S3Storage {
     /// If one reads "public" not as in "public key" but as in "not a secret", it makes sense to
     /// implement storage of encrypted private keys in the `PublicStorage` trait. Encrypted secrets
     /// can be published, if the root key stays secret.
@@ -182,7 +187,7 @@ impl EnclaveS3Storage {
 }
 
 #[tonic::async_trait]
-impl PublicStorageReader for EnclaveS3Storage {
+impl StorageReader for EnclaveS3Storage {
     fn compute_url(&self, data_id: &str, data_type: &str) -> anyhow::Result<Url> {
         self.s3_storage.compute_url(data_id, data_type)
     }
@@ -211,7 +216,7 @@ impl PublicStorageReader for EnclaveS3Storage {
 }
 
 #[tonic::async_trait]
-impl PublicStorage for EnclaveS3Storage {
+impl Storage for EnclaveS3Storage {
     /// If one reads "public" not as in "public key" but as in "not a secret", it makes sense to
     /// implement storage of encrypted private keys in the `PublicStorage` trait. Encrypted secrets
     /// can be published, if the root key stays secret.
@@ -432,4 +437,20 @@ pub async fn nitro_enclave_decrypt_app_key<T: DeserializeOwned>(
     Ok(bincode::deserialize_from(
         app_key_blob.ciphertext.as_slice(),
     )?)
+}
+
+#[tokio::test]
+async fn aws_storage_url() {
+    let storage = S3Storage::new(
+        "aws_region".to_string(),
+        "aws_kms_proxy".to_string(),
+        "blob_bucket".to_string(),
+    )
+    .await;
+
+    let url = storage.compute_url("id", "type").unwrap();
+    assert_eq!(url, Url::parse("s3://blob_bucket/type/id.key").unwrap());
+
+    assert!(storage.compute_url("as/df", "type").is_err());
+    assert!(storage.compute_url("id", "as/df").is_err());
 }

@@ -18,36 +18,32 @@ enum CertFileType {
 #[derive(Debug, clap::Args)]
 #[group(required = true, multiple = false)]
 struct Group {
-    #[clap(short, long, value_parser, num_args = 1.., value_delimiter = ' ', help = "cannot be used with coordinator_prefix")]
-    coordinator_names: Vec<String>,
+    #[clap(short, long, value_parser, num_args = 1.., value_delimiter = ' ', help = "cannot be used with ca_prefix")]
+    ca_names: Vec<String>,
 
-    #[clap(
-        long,
-        default_value = "coordinator",
-        help = "cannot be used with coordinator_names"
-    )]
-    coordinator_prefix: String,
+    #[clap(long, default_value = "party", help = "cannot be used with ca_names")]
+    ca_prefix: String,
 }
 
 #[derive(Parser, Debug)]
 #[clap(name = "KMS TLS Certificate Generator")]
 #[clap(
-    about = "A CLI tool for generating separate TLS certificates for the KMS coordinator and cores. \
-The user needs to provide a set of coordinator names using either the \
---coordinator_names option, or the --coordinator_prefix and the \
---coordinator_count options. The tool also allows the user to set \
+    about = "A CLI tool for generating separate TLS certificates for KMS core. \
+The user needs to provide a set of CA names using either the \
+--ca_names option, or the --ca-prefix and the \
+--ca-count options. The tool also allows the user to set \
 the number of cores, output directory and file format. Example usage:\n
 ./kms-gen-tls-certs --help # for all available options \n
-./kms-gen-tls-certs --coordinator-prefix c --coordinator-count 4 -n 1 -o certs \n
-./kms-gen-tls-certs --coordinator-names alice bob charlie dave -n 1 -o certs \n
+./kms-gen-tls-certs --ca-prefix c --ca-count 4 -n 1 -o certs \n
+./kms-gen-tls-certs --ca-names alice bob charlie dave -n 1 -o certs \n
 
 Under the hood, the tool generates self-signed CA certificates for \
-each coordinator and <num_cores> core certificates for each \
-coordinator. The core certificates are signed by its corresponding coordinator. \
+each CA and <num_cores> core certificates for each core.\
+The core certificates are signed by its corresponding CA. \
 The private key associated to each certificate can also be found in the output. \
-Finally, the combined coordinator certificate (cert_combined.{pem,der}) \
+Finally, the combined CA certificate (cert_combined.{pem,der}) \
 is also a part of the output. \n
-Currently, the default is to use only a single coordinator certificate per logical party \
+Currently, the default is to use only a single CA certificate per logical party \
 and no separate core certificates."
 )]
 pub struct Cli {
@@ -55,12 +51,8 @@ pub struct Cli {
     #[clap(flatten)]
     group: Group,
 
-    #[clap(
-        long,
-        default_value_t = 0,
-        help = "only valid when coordinator_prefix is set"
-    )]
-    coordinator_count: u8,
+    #[clap(long, default_value_t = 0, help = "only valid when ca-prefix is set")]
+    ca_count: u8,
 
     #[clap(
         short,
@@ -74,7 +66,7 @@ pub struct Cli {
         short,
         long,
         default_value = "0",
-        help = "the number of core certificates to generate for each coordinator. Can be set to 0 to only generate the coordinator certificates."
+        help = "the number of core certificates to generate for each CA. Can be set to 0 to only generate the CA certificates."
     )]
     num_cores: usize,
 
@@ -82,10 +74,10 @@ pub struct Cli {
     output_file_type: CertFileType,
 }
 
-/// Validates if a user-specified coordinator name is valid.
+/// Validates if a user-specified CA name is valid.
 /// By valid we mean if it is alphanumeric plus '-' and '.'.
-/// This should be changed to check coordinator names, that we actually want to allow.
-fn validate_coordinator_name(input: &str) -> bool {
+/// This should be changed to check CA names, that we actually want to allow.
+fn validate_ca_name(input: &str) -> bool {
     for cur_char in input.chars() {
         if !cur_char.is_ascii_alphanumeric() && cur_char != '-' && cur_char != '.' {
             return false;
@@ -94,20 +86,14 @@ fn validate_coordinator_name(input: &str) -> bool {
     true
 }
 
-/// create the keypair and self-signed certificate for the coordinator identified by the given name
-fn create_coordinator_cert(
-    coordinator_name: &str,
-    is_ca: &IsCa,
-) -> anyhow::Result<(KeyPair, Certificate)> {
-    if !validate_coordinator_name(coordinator_name) {
-        return Err(anyhow!(
-            "Error: invalid coordinator name: {}",
-            coordinator_name
-        ));
+/// create the keypair and self-signed certificate for the CA identified by the given name
+fn create_ca_cert(ca_name: &str, is_ca: &IsCa) -> anyhow::Result<(KeyPair, Certificate)> {
+    if !validate_ca_name(ca_name) {
+        return Err(anyhow!("Error: invalid CA name: {}", ca_name));
     }
     let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
     let mut cp = CertificateParams::new(vec![
-        coordinator_name.to_string(),
+        ca_name.to_string(),
         "127.0.0.1".to_string(),
         "localhost".to_string(),
         "192.168.0.1".to_string(),
@@ -115,16 +101,16 @@ fn create_coordinator_cert(
         "::1".to_string(),
     ])?;
 
-    // set distinguished name of coordinator cert
+    // set distinguished name of CA cert
     let mut distinguished_name = DistinguishedName::new();
-    distinguished_name.push(DnType::CommonName, coordinator_name); // this might be the one for docker deployment
-                                                                   // distinguished_name.push(DnType::CommonName, "127.0.0.1".to_string()); // this seems to be needed for local deployment
+    distinguished_name.push(DnType::CommonName, ca_name); // this might be the one for docker deployment
+                                                          // distinguished_name.push(DnType::CommonName, "127.0.0.1".to_string()); // this seems to be needed for local deployment
     cp.distinguished_name = distinguished_name;
 
-    // set coordinator cert CA flag
+    // set CA cert CA flag
     cp.is_ca = is_ca.clone();
 
-    // set coordinator cert Key Usage Purposes
+    // set CA cert Key Usage Purposes
     cp.key_usages = vec![
         KeyUsagePurpose::DigitalSignature,
         KeyUsagePurpose::KeyCertSign,
@@ -133,27 +119,27 @@ fn create_coordinator_cert(
         KeyUsagePurpose::KeyAgreement,
     ];
 
-    // set coordinator cert Extended Key Usage Purposes
+    // set CA cert Extended Key Usage Purposes
     cp.extended_key_usages = vec![
         ExtendedKeyUsagePurpose::ServerAuth,
         ExtendedKeyUsagePurpose::ClientAuth,
     ];
 
-    // self-sign cert with coordinator key
+    // self-sign cert with CA key
     let cert = cp.self_signed(&keypair)?;
     Ok((keypair, cert))
 }
 
-/// create a keypair and certificate for each of the `num_cores`, signed by the given coordinator
+/// create a keypair and certificate for each of the `num_cores`, signed by the given CA
 fn create_core_certs(
-    coordinator_name: &str,
+    ca_name: &str,
     num_cores: usize,
-    coordinator_keypair: &KeyPair,
-    coordinator_cert: &Certificate,
+    ca_keypair: &KeyPair,
+    ca_cert: &Certificate,
 ) -> anyhow::Result<HashMap<usize, (KeyPair, Certificate)>> {
     let core_cert_bundle: HashMap<usize, (KeyPair, Certificate)> = (1..=num_cores)
         .map(|i: usize| {
-            let core_name = format!("core{}.{}", i, coordinator_name);
+            let core_name = format!("core{}.{}", i, ca_name);
             let core_keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256).unwrap();
             let mut cp = CertificateParams::new(vec![
                 core_name.clone(),
@@ -185,9 +171,7 @@ fn create_core_certs(
                 ExtendedKeyUsagePurpose::ClientAuth,
             ];
 
-            let core_cert = cp
-                .signed_by(&core_keypair, coordinator_cert, coordinator_keypair)
-                .unwrap();
+            let core_cert = cp.signed_by(&core_keypair, ca_cert, ca_keypair).unwrap();
             (i, (core_keypair, core_cert))
         })
         .collect();
@@ -237,12 +221,10 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Cli::parse();
 
-    let coordinator_set: HashSet<String> = if args.group.coordinator_names.is_empty() {
-        HashSet::from_iter(
-            (1..=args.coordinator_count).map(|i| format!("{}{i}", args.group.coordinator_prefix)),
-        )
+    let ca_set: HashSet<String> = if args.group.ca_names.is_empty() {
+        HashSet::from_iter((1..=args.ca_count).map(|i| format!("{}{i}", args.group.ca_prefix)))
     } else {
-        HashSet::from_iter(args.group.coordinator_names.iter().cloned())
+        HashSet::from_iter(args.group.ca_names.iter().cloned())
     };
 
     // As default, we only use self-signed player certificates, so we must not set the CA flag.
@@ -257,33 +239,27 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let mut all_certs = vec![];
-    for coordinator_name in coordinator_set {
-        let (coordinator_keypair, coordinator_cert) =
-            create_coordinator_cert(&coordinator_name, &is_ca)?;
+    for ca_name in ca_set {
+        let (ca_keypair, ca_cert) = create_ca_cert(&ca_name, &is_ca)?;
 
         write_certs_and_keys(
             &args.output_dir,
-            &coordinator_name,
-            &coordinator_cert,
-            &coordinator_keypair,
+            &ca_name,
+            &ca_cert,
+            &ca_keypair,
             args.output_file_type,
         )
         .await?;
 
         // only generate core certs, if specifically desired (currently not the default)
         if args.num_cores > 0 {
-            let core_certs = create_core_certs(
-                &coordinator_name,
-                args.num_cores,
-                &coordinator_keypair,
-                &coordinator_cert,
-            )?;
+            let core_certs = create_core_certs(&ca_name, args.num_cores, &ca_keypair, &ca_cert)?;
 
             // write all core keypairs and certificates to disk
             for (core_id, (core_keypair, core_cert)) in core_certs.iter() {
                 write_certs_and_keys(
                     &args.output_dir,
-                    format!("{}-core{}", coordinator_name, core_id).as_str(),
+                    format!("{}-core{}", ca_name, core_id).as_str(),
                     core_cert,
                     core_keypair,
                     args.output_file_type,
@@ -292,10 +268,10 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        all_certs.push(coordinator_cert);
+        all_certs.push(ca_cert);
     }
 
-    // write the combined coordinator certificate
+    // write the combined CA certificate
     match args.output_file_type {
         CertFileType::Der => {
             let cert_dir = args.output_dir.join("cert_combined.der");
@@ -320,7 +296,7 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{create_coordinator_cert, create_core_certs, validate_coordinator_name};
+    use crate::{create_ca_cert, create_core_certs, validate_ca_name};
     use rcgen::{BasicConstraints::Constrained, Certificate, IsCa};
     use webpki::{EndEntityCert, ErrorExt, TlsClientTrustAnchors, TrustAnchor};
 
@@ -335,32 +311,28 @@ mod tests {
 
     #[test]
     fn test_cert_chain() {
-        let coordinator_name = "coordinator.kms.zama.ai";
+        let ca_name = "party.kms.zama.ai";
         let is_ca = IsCa::Ca(Constrained(1));
-        let (coordinator_keypair, coordinator_cert) =
-            create_coordinator_cert(coordinator_name, &is_ca).unwrap();
+        let (ca_keypair, ca_cert) = create_ca_cert(ca_name, &is_ca).unwrap();
 
-        let core_certs =
-            create_core_certs(coordinator_name, 2, &coordinator_keypair, &coordinator_cert)
-                .unwrap();
+        let core_certs = create_core_certs(ca_name, 2, &ca_keypair, &ca_cert).unwrap();
 
-        // check that we can import the coordinator cert into the trust store
+        // check that we can import the CA cert into the trust store
         let mut root_store = rustls::RootCertStore::empty();
-        let cc = (*coordinator_cert.der()).clone();
+        let cc = (*ca_cert.der()).clone();
         root_store.add(cc).unwrap();
 
-        // create another coordinator cert, that did not sign the core certs for negative testing
-        let (_coordinator_keypair_wrong, coordinator_cert_wrong) =
-            create_coordinator_cert(coordinator_name, &is_ca).unwrap();
+        // create another CA cert, that did not sign the core certs for negative testing
+        let (_ca_keypair_wrong, ca_cert_wrong) = create_ca_cert(ca_name, &is_ca).unwrap();
 
         // check all core certs
         for c in core_certs {
-            let verif = signed_verify(&c.1 .1, &coordinator_cert);
+            let verif = signed_verify(&c.1 .1, &ca_cert);
             // check that verification works for each core cert
             assert!(verif.is_ok(), "certificate validation failed!");
 
-            // check that verification does not work for wrong coordinator cert
-            let verif = signed_verify(&c.1 .1, &coordinator_cert_wrong);
+            // check that verification does not work for wrong CA cert
+            let verif = signed_verify(&c.1 .1, &ca_cert_wrong);
             assert!(
                 verif.is_err(),
                 "certificate validation succeeded, but was expected to fail!"
@@ -370,28 +342,26 @@ mod tests {
 
     #[test]
     fn test_ca_cert_selfsigned_verify() {
-        let coordinator_name = "p1.kms.zama.ai";
+        let ca_name = "p1.kms.zama.ai";
         let is_ca = IsCa::NoCa;
 
-        let (_coordinator_keypair, coordinator_cert) =
-            create_coordinator_cert(coordinator_name, &is_ca).unwrap();
+        let (_ca_keypair, ca_cert) = create_ca_cert(ca_name, &is_ca).unwrap();
 
-        // check that we can import the coordinator cert into the trust store
+        // check that we can import the CA cert into the trust store
         let mut root_store = rustls::RootCertStore::empty();
-        let cc = (*coordinator_cert.der()).clone();
+        let cc = (*ca_cert.der()).clone();
         root_store.add(cc).unwrap();
 
-        // create another coordinator cert, that did not sign the core certs for negative testing
-        let (_coordinator_keypair_wrong, coordinator_cert_wrong) =
-            create_coordinator_cert(coordinator_name, &is_ca).unwrap();
+        // create another CA cert, that did not sign the core certs for negative testing
+        let (_ca_keypair_wrong, ca_cert_wrong) = create_ca_cert(ca_name, &is_ca).unwrap();
 
-        let verif = signed_verify(&coordinator_cert, &coordinator_cert);
+        let verif = signed_verify(&ca_cert, &ca_cert);
 
         // check that verification works for self-signed each cert
         assert!(verif.is_ok(), "certificate validation failed!");
 
-        // check that verification does not work for wrong coordinator cert
-        let verif = signed_verify(&coordinator_cert, &coordinator_cert_wrong);
+        // check that verification does not work for wrong CA cert
+        let verif = signed_verify(&ca_cert, &ca_cert_wrong);
         assert!(
             verif.is_err(),
             "certificate validation succeeded, but was expected to fail!"
@@ -399,14 +369,14 @@ mod tests {
     }
 
     #[test]
-    fn test_coordinator_name_validation() {
+    fn test_ca_name_validation() {
         assert!(
-            validate_coordinator_name("coordinator"),
-            "this should have been a valid coordinator name."
+            validate_ca_name("party"),
+            "this should have been a valid CA name."
         );
         assert!(
-            !validate_coordinator_name("coordinator/is#bad!"),
-            "this should have been an invalid coordinator name."
+            !validate_ca_name("party/is#bad!"),
+            "this should have been an invalid CA name."
         );
     }
 }

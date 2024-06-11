@@ -1,6 +1,6 @@
 use kms_lib::client::Client;
 use kms_lib::consts::DEFAULT_CENTRAL_KEY_ID;
-use kms_lib::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
+use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_lib::kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse};
 use std::collections::HashMap;
 use std::env;
@@ -66,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = &args[1];
 
     let mut kms_client = retry!(
-        CoordinatorEndpointClient::connect(url.to_owned()).await,
+        CoreServiceEndpointClient::connect(url.to_owned()).await,
         5,
         100
     )?;

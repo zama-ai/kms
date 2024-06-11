@@ -63,7 +63,7 @@ pub struct BlockchainConfig {
 }
 
 /// Three timeouts that controls the polling logic
-/// to fetch results from the coordinator.
+/// to fetch results from the core.
 /// All times are in seconds.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 pub struct TimeoutTriple {
@@ -126,7 +126,7 @@ impl TimeoutConfig {
         }
     }
 
-    /// These are the mocking/dummy defaults, used when the coordinator/core is a dummy.
+    /// These are the mocking/dummy defaults, used when the core is a dummy.
     pub fn mocking_default() -> Self {
         Self {
             channel_timeout: 60,
@@ -150,7 +150,7 @@ pub struct ConnectorConfig {
     pub storage_path: String,
     pub tracing: Option<Tracing>,
     pub blockchain: BlockchainConfig,
-    pub coordinator: CoordinatorConfig,
+    pub core: CoreConfig,
     pub oracle: OracleConfig,
 }
 
@@ -161,13 +161,13 @@ impl BlockchainConfig {
 }
 
 #[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
-pub struct CoordinatorConfig {
+pub struct CoreConfig {
     pub addresses: Vec<String>,
     pub timeout_config: TimeoutConfig,
 }
 
-impl CoordinatorConfig {
-    pub fn coordinator_addresses(&self) -> Vec<&str> {
+impl CoreConfig {
+    pub fn addresses(&self) -> Vec<&str> {
         self.addresses.iter().map(|s| s.as_str()).collect()
     }
 }
@@ -224,7 +224,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn coordinator_config() {
+    fn core_config() {
         let conf: ConnectorConfig = Settings::builder()
             .path(Some("config/default"))
             .build()
@@ -234,11 +234,11 @@ mod tests {
         assert_eq!(conf.tick_interval_secs, 3);
         assert_eq!(conf.storage_path, "./temp/events.toml");
 
-        // coordinator configs
-        assert_eq!(conf.coordinator.addresses, vec!["http://localhost:8080"]);
-        assert_eq!(conf.coordinator.timeout_config.channel_timeout, 60);
+        // core configs
+        assert_eq!(conf.core.addresses, vec!["http://localhost:8080"]);
+        assert_eq!(conf.core.timeout_config.channel_timeout, 60);
         assert_eq!(
-            conf.coordinator.timeout_config.decryption,
+            conf.core.timeout_config.decryption,
             TimeoutTriple {
                 initial_wait_time: 10,
                 retry_interval: 5,

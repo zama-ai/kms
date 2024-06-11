@@ -2,7 +2,7 @@ syntax = "proto3";
 package kms;
 
 // TODO seperate into threshold and central calls
-service CoordinatorEndpoint {
+service CoreServiceEndpoint {
   // Perform the threshold KMS initialization.
   // This call returns an error on the centralized KMS.
   rpc Init(InitRequest) returns (Empty);
@@ -109,11 +109,11 @@ message Config {
 message KeyGenResult {
   // The ID of the key generation request
   RequestId request_id = 1;
-  map<string, FhePubKeyInfo> key_results = 2;
+  map<string, SignedPubDataHandle> key_results = 2;
 }
 
 // The result of generation of a public key
-message FhePubKeyInfo {
+message SignedPubDataHandle {
   // The key handle; hash digest of the key bytes
   string key_handle = 1;
   // Signature on the key handle
@@ -138,7 +138,7 @@ message CrsGenResult {
   // The ID of the crs generation request
   RequestId request_id = 1;
   // The struct holding the signature and the handle of the CRS
-  FhePubKeyInfo crs_results = 2;
+  SignedPubDataHandle crs_results = 2;
 }
 
 message DecryptionRequest {

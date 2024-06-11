@@ -12,10 +12,10 @@ pub enum MetricType {
     TxError,
     BlockchainSuccess,
     BlockchainError,
-    CoordinatorSuccess,
-    CoordinatorError,
-    CoordinatorResponseSuccess,
-    CoordinatorResponseError,
+    CoreSuccess,
+    CoreError,
+    CoreResponseSuccess,
+    CoreResponseError,
     OracleSuccess,
     OracleError,
 }
@@ -52,25 +52,23 @@ impl OpenTelemetryMetrics {
                 "Count the number of transactions responses submitted to blockchain that succeeded",
             )
             .init();
-        let coordinator_success = meter
-            .u64_observable_counter("coordinator_success")
-            .with_description("Count the number of successful coordinator requests")
+        let core_success = meter
+            .u64_observable_counter("core_success")
+            .with_description("Count the number of successful core requests")
             .init();
-        let coordinator_error = meter
-            .u64_observable_counter("coordinator_error")
-            .with_description("Count the number of failed coordinator requests")
+        let core_error = meter
+            .u64_observable_counter("core_error")
+            .with_description("Count the number of failed core requests")
             .init();
-        let coordinator_response_success = meter
-            .u64_observable_counter("coordinator_response_success")
+        let core_response_success = meter
+            .u64_observable_counter("core_response_success")
             .with_description(
-                "Count the number of successful coordinator responses (not including polling)",
+                "Count the number of successful core responses (not including polling)",
             )
             .init();
-        let coordinator_response_error = meter
-            .u64_observable_counter("coordinator_error")
-            .with_description(
-                "Count the number of failed coordinator responses (not including polling)",
-            )
+        let core_response_error = meter
+            .u64_observable_counter("core_error")
+            .with_description("Count the number of failed core responses (not including polling)")
             .init();
         let oracle_success = meter
             .u64_observable_counter("oracle_success")
@@ -91,16 +89,10 @@ impl OpenTelemetryMetrics {
                 MetricType::BlockchainError,
                 blockchain_submit_response_error,
             ),
-            (MetricType::CoordinatorSuccess, coordinator_success),
-            (MetricType::CoordinatorError, coordinator_error),
-            (
-                MetricType::CoordinatorResponseSuccess,
-                coordinator_response_success,
-            ),
-            (
-                MetricType::CoordinatorResponseError,
-                coordinator_response_error,
-            ),
+            (MetricType::CoreSuccess, core_success),
+            (MetricType::CoreError, core_error),
+            (MetricType::CoreResponseSuccess, core_response_success),
+            (MetricType::CoreResponseError, core_response_error),
             (MetricType::OracleSuccess, oracle_success),
             (MetricType::OracleError, oracle_error),
         ]

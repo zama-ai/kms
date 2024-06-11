@@ -1,5 +1,5 @@
-use crate::kms::coordinator_endpoint_client::CoordinatorEndpointClient;
-use crate::kms::coordinator_endpoint_server::{CoordinatorEndpoint, CoordinatorEndpointServer};
+use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
+use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, Empty, InitRequest,
     KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest, KeyGenResult, ReencryptionRequest,
@@ -15,7 +15,7 @@ use tonic::{Request, Response, Status};
 use super::central_rpc::CentralizedConfigNoStorage;
 
 pub struct KmsProxy {
-    kms_client: Arc<Mutex<CoordinatorEndpointClient<Channel>>>,
+    kms_client: Arc<Mutex<CoreServiceEndpointClient<Channel>>>,
 }
 
 pub async fn server_handle(
@@ -30,14 +30,14 @@ pub async fn server_handle(
     );
     let backoff = ExponentialBackoff::default();
     let kms_client = retry(backoff, || async {
-        Ok(CoordinatorEndpointClient::connect(client_uri.to_owned()).await?)
+        Ok(CoreServiceEndpointClient::connect(client_uri.to_owned()).await?)
     })
     .await?;
     let kms_proxy = KmsProxy {
         kms_client: Arc::new(Mutex::new(kms_client)),
     };
     Server::builder()
-        .add_service(CoordinatorEndpointServer::new(kms_proxy))
+        .add_service(CoreServiceEndpointServer::new(kms_proxy))
         .serve(server_socket)
         .await?;
     Ok(())
@@ -47,7 +47,7 @@ pub async fn server_handle(
 /// unchanged. The use case of the KMS proxy is to allow a KMS server running in a Nitro enclave to
 /// communicate with the outside world.
 #[tonic::async_trait]
-impl CoordinatorEndpoint for KmsProxy {
+impl CoreServiceEndpoint for KmsProxy {
     async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         let mut kms_client = self.kms_client.lock().await;
         let response = kms_client.init(request).await?;
