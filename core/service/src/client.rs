@@ -686,7 +686,7 @@ impl Client {
             if request_id.request_id
                 != result
                     .request_id
-                    .ok_or(anyhow_error_and_log("request ID missing"))?
+                    .ok_or_else(|| anyhow_error_and_log("request ID missing"))?
                     .request_id
             {
                 tracing::warn!("request ID mismatch; discarding the CRS");
@@ -727,9 +727,7 @@ impl Client {
         let (h, c) = hash_counter_map
             .into_iter()
             .max_by(|a, b| a.1.cmp(&b.1))
-            .ok_or(anyhow_error_and_log(
-                "logic error: hash_counter_map is empty",
-            ))?;
+            .ok_or_else(|| anyhow_error_and_log("logic error: hash_counter_map is empty"))?;
 
         // shares_needed gives us t+1, enough to reconstruct
         // this means there are n - t honest parties, which should return the same result
@@ -1047,9 +1045,9 @@ impl Client {
                 enc_key: enc_pk.clone(),
             },
         };
-        let request = request.ok_or(anyhow_error_and_log(
-            "empty request while processing reencryption response",
-        ))?;
+        let request = request.ok_or_else(|| {
+            anyhow_error_and_log("empty request while processing reencryption response")
+        })?;
 
         // Execute simplified and faster flow for the centralized case
         // Observe that we don't encode exactly the same in the centralized case and in the

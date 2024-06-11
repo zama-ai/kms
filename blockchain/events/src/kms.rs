@@ -858,29 +858,29 @@ impl TryFrom<Event> for KmsEvent {
         let pos_tx_id = attributes
             .iter()
             .position(|a| a.key == "txn_id")
-            .ok_or(anyhow::anyhow!("Missing txn_id attribute"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing txn_id attribute"))?;
         let txn_id: TransactionId = attributes
             .get(pos_tx_id)
             .map(|a| hex::decode(a.value.as_str()))
             .transpose()?
             .map(Into::into)
-            .ok_or(anyhow::anyhow!("Missing txn_id attribute"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing txn_id attribute"))?;
         let pos_proof_id = attributes
             .iter()
             .position(|a| a.key == "proof")
-            .ok_or(anyhow::anyhow!("Missing proof attribute"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing proof attribute"))?;
         let proof = attributes
             .get(pos_proof_id)
             .map(|a| hex::decode(a.value.as_str()))
             .transpose()?
             .map(Into::into)
-            .ok_or(anyhow::anyhow!("Missing proof attribute"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing proof attribute"))?;
         attributes.remove(pos_tx_id);
         let operation = event
             .ty
             .as_str()
             .strip_prefix("wasm-")
-            .ok_or(anyhow::anyhow!("Invalid event type"))?;
+            .ok_or_else(|| anyhow::anyhow!("Invalid event type"))?;
         let operation = KmsOperation::from_str(operation)?;
         Ok(KmsEvent {
             operation,

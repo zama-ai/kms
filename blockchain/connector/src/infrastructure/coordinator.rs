@@ -241,7 +241,7 @@ impl KmsEventHandler for DecryptVal {
         };
         let version = self.decrypt.version();
         let servers_needed = config_contract
-            .ok_or(anyhow!("config contract missing"))?
+            .ok_or_else(|| anyhow!("config contract missing"))?
             .shares_needed() as u32;
         let key_id = self.decrypt.key_id().to_hex();
         let fhe_type = self.decrypt.fhe_type() as i32;
@@ -277,7 +277,7 @@ impl KmsEventHandler for DecryptVal {
             match res {
                 Ok(res) => {
                     let inner = res.into_inner();
-                    let payload: DecryptionResponsePayload = inner.payload.ok_or(anyhow!("empty decryption payload"))?;
+                    let payload: DecryptionResponsePayload = inner.payload.ok_or_else(||anyhow!("empty decryption payload"))?;
                         Ok(PollerStatus::Done(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
                             decrypt_response: DecryptResponseValues::builder()
                                 .signature(inner.signature)
@@ -363,7 +363,7 @@ impl KmsEventHandler for ReencryptVal {
 
         let reencrypt = &self.reencrypt;
         let servers_needed = config_contract
-            .ok_or(anyhow!("config contract is missing"))?
+            .ok_or_else(|| anyhow!("config contract is missing"))?
             .shares_needed() as u32;
         let req = ReencryptionRequest {
             signature: self.reencrypt.signature().into(),
@@ -460,12 +460,14 @@ impl KmsEventHandler for KeyGenPreprocVal {
         config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let param_choice_str = config_contract
-            .ok_or(anyhow!("config contract missing"))?
+            .ok_or_else(|| anyhow!("config contract missing"))?
             .param_choice_string();
-        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or(anyhow!(
-            "invalid parameter choice string in prep: {}",
-            param_choice_str
-        ))?;
+        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or_else(|| {
+            anyhow!(
+                "invalid parameter choice string in prep: {}",
+                param_choice_str
+            )
+        })?;
 
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
@@ -547,12 +549,14 @@ impl KmsEventHandler for KeyGenVal {
         config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let param_choice_str = config_contract
-            .ok_or(anyhow!("config contract missing"))?
+            .ok_or_else(|| anyhow!("config contract missing"))?
             .param_choice_string();
-        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or(anyhow!(
-            "invalid parameter choice string in keygen: {}",
-            param_choice_str
-        ))?;
+        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or_else(|| {
+            anyhow!(
+                "invalid parameter choice string in keygen: {}",
+                param_choice_str
+            )
+        })?;
 
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
@@ -585,15 +589,15 @@ impl KmsEventHandler for KeyGenVal {
                 match res {
                     Ok(response) => {
                         let inner = response.into_inner();
-                        let request_id = inner.request_id.ok_or(anyhow!("empty request_id"))?;
+                        let request_id = inner.request_id.ok_or_else(||anyhow!("empty request_id"))?;
                         let pk_info = inner
                             .key_results
                             .get(&PubDataType::PublicKey.to_string())
-                            .ok_or(anyhow!("empty public key info"))?;
+                            .ok_or_else(||anyhow!("empty public key info"))?;
                         let ek_info = inner
                             .key_results
                             .get(&PubDataType::ServerKey.to_string())
-                            .ok_or(anyhow!("empty evaluation key info"))?;
+                            .ok_or_else(||anyhow!("empty evaluation key info"))?;
                         Ok(PollerStatus::Done(KmsOperationResponse::KeyGenResponse(
                             crate::domain::blockchain::KeyGenResponseVal {
                                 keygen_response: KeyGenResponseValues::builder()
@@ -635,12 +639,14 @@ impl KmsEventHandler for CrsGenVal {
         config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let param_choice_str = config_contract
-            .ok_or(anyhow!("config contract missing"))?
+            .ok_or_else(|| anyhow!("config contract missing"))?
             .param_choice_string();
-        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or(anyhow!(
-            "invalid parameter choice string in crsgen: {}",
-            param_choice_str
-        ))?;
+        let param_choice = ParamChoice::from_str_name(&param_choice_str).ok_or_else(|| {
+            anyhow!(
+                "invalid parameter choice string in crsgen: {}",
+                param_choice_str
+            )
+        })?;
 
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoordinatorEndpointClient::new(chan.clone());
@@ -671,8 +677,8 @@ impl KmsEventHandler for CrsGenVal {
                 match res {
                     Ok(response) => {
                         let inner = response.into_inner();
-                        let request_id = inner.request_id.ok_or(anyhow!("empty request_id"))?;
-                        let crs_results = inner.crs_results.ok_or(anyhow!("empty crs result"))?;
+                        let request_id = inner.request_id.ok_or_else(||anyhow!("empty request_id"))?;
+                        let crs_results = inner.crs_results.ok_or_else(||anyhow!("empty crs result"))?;
                         Ok(PollerStatus::Done(KmsOperationResponse::CrsGenResponse(
                             crate::domain::blockchain::CrsGenResponseVal {
                                 crs_gen_response: events::kms::CrsGenResponseValues::builder()

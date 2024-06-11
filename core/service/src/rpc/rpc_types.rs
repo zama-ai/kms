@@ -89,7 +89,7 @@ pub(crate) fn protobuf_to_alloy_domain(
         Some(pb_domain.version.clone().into()),
         Some(
             U256::try_from_le_slice(&pb_domain.chain_id)
-                .ok_or(anyhow_error_and_log("invalid chain ID"))?,
+                .ok_or_else(|| anyhow_error_and_log("invalid chain ID"))?,
         ),
         Some(Address::parse_checksummed(
             pb_domain.verifying_contract.clone(),
@@ -104,21 +104,21 @@ pub(crate) fn allow_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<
     let name = domain
         .name
         .as_ref()
-        .ok_or(anyhow_error_and_log("missing domain name"))?
+        .ok_or_else(|| anyhow_error_and_log("missing domain name"))?
         .to_string();
     let version = domain
         .version
         .as_ref()
-        .ok_or(anyhow_error_and_log("missing domain version"))?
+        .ok_or_else(|| anyhow_error_and_log("missing domain version"))?
         .to_string();
     let chain_id = domain
         .chain_id
-        .ok_or(anyhow_error_and_log("missing domain chain_id"))?
+        .ok_or_else(|| anyhow_error_and_log("missing domain chain_id"))?
         .to_le_bytes_vec();
     let verifying_contract = domain
         .verifying_contract
         .as_ref()
-        .ok_or(anyhow_error_and_log("missing domain chain_id"))?
+        .ok_or_else(|| anyhow_error_and_log("missing domain chain_id"))?
         .to_string();
     let salt = match domain.salt {
         Some(x) => x.to_vec(),
@@ -188,13 +188,19 @@ pub(crate) struct SigncryptionPayload {
 
 impl crate::kms::ReencryptionRequest {
     pub(crate) fn compute_link_checked(&self) -> anyhow::Result<Vec<u8>> {
-        let payload = self.payload.as_ref().ok_or(anyhow!("payload not found"))?;
+        let payload = self
+            .payload
+            .as_ref()
+            .ok_or_else(|| anyhow!("payload not found"))?;
         let pk_sol = ReencryptSol {
             pub_enc_key: payload.enc_key.clone(),
         };
 
-        let domain =
-            protobuf_to_alloy_domain(self.domain.as_ref().ok_or(anyhow!("domain not found"))?)?;
+        let domain = protobuf_to_alloy_domain(
+            self.domain
+                .as_ref()
+                .ok_or_else(|| anyhow!("domain not found"))?,
+        )?;
 
         let req_digest = pk_sol.eip712_signing_hash(&domain).to_vec();
 
@@ -202,7 +208,7 @@ impl crate::kms::ReencryptionRequest {
             payload
                 .ciphertext
                 .as_ref()
-                .ok_or(anyhow!("missing ciphertext"))?,
+                .ok_or_else(|| anyhow!("missing ciphertext"))?,
         );
         if payload.ciphertext_digest != actual_ct_digest {
             return Err(anyhow!("ciphertext digest mismatch"));

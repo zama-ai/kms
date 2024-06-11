@@ -441,11 +441,11 @@ impl PublicStorage for RamStorage {
         let components: Vec<&str> = url_string.split(MAIN_SEPARATOR).collect();
         let data_id = components
             .get(components.len() - 2)
-            .ok_or(anyhow_error_and_log("URL does not contain data id"))?
+            .ok_or_else(|| anyhow_error_and_log("URL does not contain data id"))?
             .to_string();
         let data_type = components
             .last()
-            .ok_or(anyhow_error_and_log("URL does not contain data type"))?
+            .ok_or_else(|| anyhow_error_and_log("URL does not contain data type"))?
             .to_string();
         let serialized = bincode::serialize(&data)?;
         self.internal_storage

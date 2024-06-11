@@ -90,10 +90,10 @@ impl CentralizedConfigNoStorage {
         }
         let host_str: &str = url
             .host_str()
-            .ok_or(anyhow::anyhow!("Invalid host in URL."))?;
+            .ok_or_else(|| anyhow::anyhow!("Invalid host in URL."))?;
         let port: u16 = url
             .port_or_known_default()
-            .ok_or(anyhow::anyhow!("Invalid port in URL."))?;
+            .ok_or_else(|| anyhow::anyhow!("Invalid port in URL."))?;
         let socket: SocketAddr = format!("{}:{}", host_str, port).parse()?;
 
         Ok(socket)
@@ -426,8 +426,9 @@ impl<
         &self,
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        tracing::info!("Received a new request!");
+        tracing::info!("Received a new decryption request!");
         let inner = request.into_inner();
+        tracing::info!("Request ID: {:?}", inner.request_id);
         let (ciphertext, fhe_type, req_digest, _servers_needed, key_id, request_id) =
             tonic_handle_potential_err(
                 validate_decrypt_req(&inner),
@@ -693,7 +694,7 @@ pub(crate) async fn retrieve_parameters(
     let param_choice = ParamChoice::try_from(param_choice)?;
     let param_path = param_file_map
         .get(&param_choice)
-        .ok_or(anyhow::anyhow!("parameter does not exist"))?;
+        .ok_or_else(|| anyhow::anyhow!("parameter does not exist"))?;
     let params: NoiseFloodParameters = read_as_json(param_path).await?;
     Ok(params)
 }
@@ -767,10 +768,7 @@ pub async fn validate_reencrypt_req(
     let ciphertext = payload
         .ciphertext
         .clone()
-        .ok_or(anyhow_error_and_log(format!(
-            "Missing ciphertext in request {:?}",
-            req
-        )))?;
+        .ok_or_else(|| anyhow_error_and_log(format!("Missing ciphertext in request {:?}", req)))?;
     let fhe_type = payload.fhe_type();
     let link = req.compute_link_checked()?;
     let client_enc_key: PublicEncKey = from_bytes(&payload.enc_key)?;

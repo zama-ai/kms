@@ -431,10 +431,9 @@ pub fn extract_san_from_certs(certs: &[Certificate], use_pem: bool) -> Result<Ve
         _ => return Err("internal logic error when parsing certificates".to_string()),
     };
 
-    let sans = cert
-        .subject_alternative_name()
-        .map_err(|e| e.to_string())?
-        .ok_or("SAN not specified")?;
+    let Some(sans) = cert.subject_alternative_name().map_err(|e| e.to_string())? else {
+        return Err("SAN not specified".to_string());
+    };
     let san_strings: Vec<_> = sans
         .value
         .general_names

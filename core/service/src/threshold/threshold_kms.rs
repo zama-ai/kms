@@ -445,7 +445,7 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
                     .0
                     .split(':')
                     .next()
-                    .ok_or(anyhow!("hostname not found in own_identity"))?
+                    .ok_or_else(|| anyhow!("hostname not found in own_identity"))?
                     .to_string();
                 if !san_strings.contains(&host) {
                     return Err(anyhow_error_and_log(format!(
@@ -1675,10 +1675,12 @@ impl<PubS: PublicStorage + Sync + Send + 'static, PrivS: PublicStorage + Sync + 
             "witness dimension computation failed".to_string(),
         )?;
 
-        let req_id = req_inner.request_id.ok_or(tonic::Status::new(
-            tonic::Code::InvalidArgument,
-            "missing request ID in CRS generation",
-        ))?;
+        let req_id = req_inner.request_id.ok_or_else(|| {
+            tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                "missing request ID in CRS generation",
+            )
+        })?;
         self.inner_crs_gen(&req_id, witness_dim)
             .await
             .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))?;
