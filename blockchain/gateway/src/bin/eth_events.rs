@@ -2,13 +2,18 @@ use ethers::prelude::*;
 use ethers::providers::{Middleware, Provider, StreamExt, Ws};
 use ethers::types::BlockNumber;
 use eyre::Result;
-use gateway::common::config::oracle_predeploy_address;
 use gateway::common::provider::EventDecryptionFilter;
+use gateway::config::{GatewayConfig, Settings};
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let provider = Provider::<Ws>::connect_with_reconnects("ws://localhost:8546", 10).await?;
+    let config: GatewayConfig = Settings::builder()
+        .path(Some("config/gateway"))
+        .build()
+        .init_conf()
+        .unwrap();
     let provider = Arc::new(provider);
 
     let mut last_block = provider
@@ -29,7 +34,7 @@ async fn main() -> Result<()> {
             .get_logs(
                 &Filter::new()
                     .from_block(last_block)
-                    .address(oracle_predeploy_address())
+                    .address(config.ethereum.oracle_predeploy_address)
                     .event(
                         "EventDecryption(uint256,(uint256,uint8)[],address,bytes4,uint256,uint256)",
                     ),

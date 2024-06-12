@@ -2,6 +2,7 @@ use super::rpc_types::{
     protobuf_to_alloy_domain, BaseKms, DecryptionRequestSerializable, PrivDataType,
     CURRENT_FORMAT_VERSION,
 };
+use crate::conf::centralized::CentralizedConfigNoStorage;
 use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
@@ -30,76 +31,13 @@ use crate::{
 };
 use crate::{cryptography::signcryption::ReencryptSol, storage::delete_at_request_id};
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
-use serde::{Deserialize, Serialize};
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
 use std::fmt;
-use std::net::SocketAddr;
-use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
-use url::Url;
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct CentralizedConfig {
-    pub public_storage_path: Option<String>,
-    pub private_storage_path: Option<String>,
-    #[serde(flatten)]
-    pub rest: CentralizedConfigNoStorage,
-}
-
-impl CentralizedConfig {
-    pub fn init_config(fname: &str) -> anyhow::Result<CentralizedConfig> {
-        let config: CentralizedConfig = config::Config::builder()
-            .add_source(config::File::with_name(fname))
-            .add_source(config::Environment::with_prefix("KMS_CENTRALIZED"))
-            .build()?
-            .try_deserialize()?;
-        Ok(config)
-    }
-
-    pub fn private_storage_path(&self) -> Option<&Path> {
-        self.private_storage_path.as_ref().map(Path::new)
-    }
-
-    pub fn public_storage_path(&self) -> Option<&Path> {
-        self.public_storage_path.as_ref().map(Path::new)
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct CentralizedConfigNoStorage {
-    pub url: String,
-    pub param_file_map: HashMap<String, String>,
-}
-
-impl From<CentralizedConfig> for CentralizedConfigNoStorage {
-    fn from(value: CentralizedConfig) -> Self {
-        value.rest
-    }
-}
-
-impl CentralizedConfigNoStorage {
-    pub fn get_socket_addr(&self) -> anyhow::Result<SocketAddr> {
-        let url = Url::parse(&self.url)?;
-        if url.scheme() != "http" && url.scheme() != "https" && url.scheme() != "" {
-            return Err(anyhow::anyhow!(
-                "Invalid scheme in URL. Only http and https are supported."
-            ));
-        }
-        let host_str: &str = url
-            .host_str()
-            .ok_or_else(|| anyhow::anyhow!("Invalid host in URL."))?;
-        let port: u16 = url
-            .port_or_known_default()
-            .ok_or_else(|| anyhow::anyhow!("Invalid port in URL."))?;
-        let socket: SocketAddr = format!("{}:{}", host_str, port).parse()?;
-
-        Ok(socket)
-    }
-}
 
 pub async fn server_handle<
     PubS: Storage + Sync + Send + 'static,
@@ -890,21 +828,4 @@ pub fn tonic_handle_potential_err<T, E: ToString>(
         tracing::warn!(msg);
         tonic::Status::new(tonic::Code::Aborted, top_n_chars(msg))
     })
-}
-
-#[test]
-fn test_centralized_config() {
-    let config = CentralizedConfig::init_config("config/default_centralized").unwrap();
-    assert_eq!(config.rest.url, "http://127.0.0.1:50051");
-    assert_eq!(config.rest.param_file_map.len(), 2);
-    assert_eq!(
-        config.rest.param_file_map.get("test").unwrap(),
-        "parameters/small_test_params.json"
-    );
-    assert_eq!(
-        config.rest.param_file_map.get("default").unwrap(),
-        "parameters/default_params.json"
-    );
-    assert_eq!(config.private_storage_path.unwrap(), "keys");
-    assert_eq!(config.public_storage_path.unwrap(), "keys");
 }

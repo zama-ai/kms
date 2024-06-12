@@ -10,6 +10,7 @@ jobs:
     with:
       working-directory: './core/service'
       args-tests: '-F slow_tests'
+      package-name: 'kms'
     permissions:
       contents: 'read'
       id-token: 'write'

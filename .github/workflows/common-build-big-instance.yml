@@ -26,6 +26,10 @@ on:
         type: boolean
         required: false
         default: false
+      package-name:
+        type: string
+        required: true
+        default: ''
     secrets:
       SLAB_ACTION_TOKEN:
         required: true
@@ -70,6 +74,7 @@ jobs:
       args-tests-fhe: ${{ inputs.args-tests-fhe }}
       run-redis: ${{ inputs.run-redis }}
       run-wasm: ${{ inputs.run-wasm }}
+      package-name: ${{ inputs.package-name }}
 
   stop-runner:
     name: Stops self-hosted EC2 runner

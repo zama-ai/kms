@@ -2323,17 +2323,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cosmos-sdk-proto"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82e23f6ab56d5f031cde05b8b82a5fefd3a1a223595c79e32317a97189e612bc"
-dependencies = [
- "prost",
- "prost-types",
- "tendermint-proto 0.35.0",
-]
-
-[[package]]
 name = "cosmos-sdk-proto-althea"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2342,28 +2331,6 @@ dependencies = [
  "prost",
  "prost-types",
  "tonic 0.10.2",
-]
-
-[[package]]
-name = "cosmrs"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d184abb7b0039cc64f282dfa5b34165e4c5a7410ab46804636d53f4d09aee44"
-dependencies = [
- "bip32",
- "cosmos-sdk-proto",
- "ecdsa 0.16.9",
- "eyre",
- "k256",
- "rand_core 0.6.4",
- "serde",
- "serde_json",
- "signature 2.2.0",
- "subtle-encoding",
- "tendermint 0.35.0",
- "tendermint-rpc 0.35.0",
- "thiserror",
- "tokio",
 ]
 
 [[package]]
@@ -4102,7 +4069,6 @@ dependencies = [
  "clap",
  "config",
  "cosmos-proto",
- "cosmrs",
  "cosmwasm-std",
  "deep_space",
  "ethers",
@@ -4115,6 +4081,14 @@ dependencies = [
  "kms",
  "kms-blockchain-client",
  "kms-blockchain-connector",
+ "lazy_static",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry-prometheus",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry-stdout",
+ "opentelemetry_sdk",
+ "prometheus",
  "prost",
  "rand",
  "retrying",
@@ -4125,6 +4099,7 @@ dependencies = [
  "serial_test",
  "sha2 0.10.8",
  "strum",
+ "strum_macros",
  "tempfile",
  "tendermint 0.35.0",
  "tendermint-rpc 0.35.0",
@@ -4136,7 +4111,9 @@ dependencies = [
  "tonic 0.10.2",
  "tonic-build 0.10.2",
  "tracing",
+ "tracing-opentelemetry",
  "tracing-subscriber",
+ "typed-builder",
 ]
 
 [[package]]
@@ -5119,6 +5096,13 @@ dependencies = [
  "k256",
  "lazy_static",
  "nom",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry-prometheus",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry-stdout",
+ "opentelemetry_sdk",
+ "prometheus",
  "prost",
  "rand",
  "rayon",
@@ -5145,8 +5129,10 @@ dependencies = [
  "tonic 0.11.0",
  "tonic-build 0.11.0",
  "tracing",
+ "tracing-opentelemetry",
  "tracing-subscriber",
  "tracing-test",
+ "typed-builder",
  "url",
  "wasm-bindgen",
  "webpki",
@@ -8602,12 +8588,10 @@ dependencies = [
  "ed25519-consensus",
  "flex-error",
  "futures",
- "k256",
  "num-traits",
  "once_cell",
  "prost",
  "prost-types",
- "ripemd",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -8760,7 +8744,6 @@ dependencies = [
  "peg",
  "pin-project",
  "rand",
- "reqwest 0.11.27",
  "semver 1.0.23",
  "serde",
  "serde_bytes",

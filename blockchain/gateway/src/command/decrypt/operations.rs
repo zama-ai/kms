@@ -1,10 +1,5 @@
-use crate::common::config::debug_mode;
-use crate::common::config::kms_address;
-use crate::common::config::kms_contract_address;
-use crate::common::config::kms_key_id;
-use crate::common::config::kms_mnemonic;
-use crate::common::config::mode;
-use crate::common::config::Mode;
+use crate::config::GatewayConfig;
+use crate::config::KmsMode;
 use crate::util::conversion::TokenizableFrom;
 use crate::util::conversion::U4;
 use anyhow::anyhow;
@@ -43,14 +38,16 @@ use tokio::sync::OnceCell;
 use tokio::sync::RwLock;
 use tracing::info;
 
-async fn setup_decryption_strategy() -> anyhow::Result<Arc<dyn DecryptionStrategy>> {
-    let debug = debug_mode();
+async fn setup_decryption_strategy(
+    config: &GatewayConfig,
+) -> anyhow::Result<Arc<dyn DecryptionStrategy>> {
+    let debug = config.debug;
     let strategy: Arc<dyn DecryptionStrategy> = match debug {
         true => {
             tracing::info!("🐛 Running in debug mode with a mocked KMS backend 🐛");
             Arc::new(Mockchain)
         }
-        false => Arc::new(KmsBlockchain::default()),
+        false => Arc::new(KmsBlockchain::default(config.clone())),
     };
 
     Ok(strategy)
@@ -58,10 +55,10 @@ async fn setup_decryption_strategy() -> anyhow::Result<Arc<dyn DecryptionStrateg
 
 static DECRYPTION_STRATEGY: Lazy<OnceCell<Arc<dyn DecryptionStrategy>>> = Lazy::new(OnceCell::new);
 
-pub(super) async fn get_decryption_strategy() -> Arc<dyn DecryptionStrategy> {
+pub(super) async fn get_decryption_strategy(config: &GatewayConfig) -> Arc<dyn DecryptionStrategy> {
     DECRYPTION_STRATEGY
         .get_or_init(|| async {
-            setup_decryption_strategy()
+            setup_decryption_strategy(config)
                 .await
                 .expect("Failed to set up decryption strategy")
         })
@@ -101,15 +98,21 @@ struct KmsBlockchain {
     query_client: Arc<QueryClient>,
     responders: Arc<RwLock<HashMap<TransactionId, oneshot::Sender<KmsEvent>>>>,
     event_sender: mpsc::Sender<KmsEvent>,
+    config: GatewayConfig,
 }
 
-impl Default for KmsBlockchain {
-    fn default() -> Self {
-        let mnemonic = Some(kms_mnemonic());
-        let binding = kms_address().to_string();
+impl KmsBlockchain {
+    pub fn default(config: GatewayConfig) -> Self {
+        let mnemonic = Some(config.kms.mnemonic.to_string());
+        let binding = config.kms.address.to_string();
         let addresses = vec![binding.as_str()];
-        let contract_address = &kms_contract_address();
-        Self::new(mnemonic, addresses, contract_address.to_string().as_str())
+        let contract_address = &config.kms.contract_address;
+        Self::new(
+            mnemonic,
+            addresses,
+            contract_address.to_string().as_str(),
+            config,
+        )
     }
 }
 
@@ -145,7 +148,12 @@ impl DecryptionStrategy for KmsBlockchain {
 }
 
 impl<'a> KmsBlockchain {
-    fn new(mnemonic: Option<String>, addresses: Vec<&'a str>, contract_address: &'a str) -> Self {
+    fn new(
+        mnemonic: Option<String>,
+        addresses: Vec<&'a str>,
+        contract_address: &'a str,
+        config: GatewayConfig,
+    ) -> Self {
         let (event_sender, mut event_receiver): (mpsc::Sender<KmsEvent>, mpsc::Receiver<KmsEvent>) =
             mpsc::channel(100);
         let responders = Arc::new(RwLock::new(HashMap::<
@@ -181,6 +189,7 @@ impl<'a> KmsBlockchain {
             ),
             responders,
             event_sender,
+            config,
         };
 
         // Initialize the listener
@@ -209,7 +218,7 @@ impl<'a> KmsBlockchain {
         let operation = events::kms::OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
-                .key_id(hex::decode(kms_key_id()).unwrap())
+                .key_id(hex::decode(self.config.kms.key_id.as_str()).unwrap())
                 .ciphertext(ctxt)
                 .randomness(vec![6, 7, 8, 9, 0])
                 .fhe_type(fhe_type)
@@ -256,15 +265,15 @@ impl<'a> KmsBlockchain {
         println!("🍊🍊🍊🍊🍊🍊 event: {:?}", ev.txn_id().to_hex());
         let event = self.wait_for_callback(ev.txn_id()).await?;
         let request = QueryContractRequest::builder()
-            .contract_address(kms_contract_address().to_string())
+            .contract_address(self.config.kms.contract_address.to_string())
             .query(ContractQuery::GetOperationsValue(
                 OperationQuery::builder().event(event.clone()).build(),
             ))
             .build();
 
         let results: Vec<OperationValue> = self.query_client.query_contract(request).await?;
-        let payload_response = match mode() {
-            Mode::Centralized => match results.first().unwrap() {
+        let payload_response = match self.config.mode {
+            KmsMode::Centralized => match results.first().unwrap() {
                 OperationValue::DecryptResponse(decrypt_response) => {
                     let payload: DecryptionResponsePayload = serde_asn1_der::from_bytes(
                         <&HexVector as Into<Vec<u8>>>::into(decrypt_response.payload()).as_slice(),
@@ -280,7 +289,7 @@ impl<'a> KmsBlockchain {
                 }
                 _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
             },
-            Mode::Threshold => {
+            KmsMode::Threshold => {
                 // loop through the vector of results and print them
                 for value in results.iter() {
                     match value {

@@ -1,24 +1,25 @@
-name: "[core/threshold-Merge Main] Pipeline Run"
+name: "[Blockchain-Gateway-Merge Main] Pipeline Run"
 
 on:
   push:
     branches: ['main']
     paths:
-      - 'core/threshold/**'
-      - '.github/workflows/threshold-main.yml'
+      - 'blockchain/gateway/**'
+      - 'blockchain/client/**'
+      - 'blockchain/events/**'
+      - '.github/workflows/blockchain-gateway-pr.yml'
+
 
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
-      working-directory: './core/threshold'
-      args-tests: '-F slow_tests'
-      run-redis: true
-      package-name: 'distributed-decryption'
+      working-directory: './blockchain/gateway'
+      args-tests-fhe: ''
+      package-name: 'gateway'
     permissions:
       contents: 'write'
       id-token: 'write'
-      pages: 'write'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
@@ -32,11 +33,22 @@ jobs:
       id-token: 'write'
       packages: 'write'
     with:
-      working-directory: "./core/threshold"
+      working-directory: "./blockchain/gateway"
       push_image: true
-      image-name: 'kms-core-threshold'
+      image-name: 'kms-blockchain-gateway'
     needs:
       - build
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
+
+  done:
+    runs-on: ubuntu-latest
+    name: Pipeline Done
+    steps:
+      - name: Success
+        run: echo Pipeline Done
+    needs:
+      - build
+      - docker
+

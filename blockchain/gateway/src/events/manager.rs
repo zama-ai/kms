@@ -1,6 +1,6 @@
 use crate::command::decrypt::handler::handle_event_decryption;
-use crate::common::config::oracle_predeploy_address;
 use crate::common::provider::EventDecryptionFilter;
+use crate::config::GatewayConfig;
 use crate::events::manager::k256::ecdsa::SigningKey;
 use crate::util::height::AtomicBlockHeight;
 use ethers::prelude::*;
@@ -18,16 +18,19 @@ pub enum EventType {
 pub struct EventManager<'a> {
     provider: Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
     atomic_height: &'a Arc<AtomicBlockHeight>,
+    config: GatewayConfig,
 }
 
 impl<'a> EventManager<'a> {
     pub fn new(
         provider: &Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
         atomic_height: &'a Arc<AtomicBlockHeight>,
+        config: GatewayConfig,
     ) -> Self {
         Self {
             provider: Arc::clone(provider),
             atomic_height,
+            config,
         }
     }
 
@@ -64,7 +67,7 @@ impl<'a> EventManager<'a> {
             .get_logs(
                 &Filter::new()
                     .from_block(last_block)
-                    .address(oracle_predeploy_address())
+                    .address(self.config.ethereum.oracle_predeploy_address)
                     .event(
                         "EventDecryption(uint256,(uint256,uint8)[],address,bytes4,uint256,uint256)",
                     ),
@@ -85,6 +88,7 @@ impl<'a> EventManager<'a> {
                     if let Err(e) = handle_event_decryption(
                         &self.provider,
                         &Arc::new(event_decryption.clone()),
+                        &self.config,
                         log.block_number.unwrap().as_u64(),
                     )
                     .await

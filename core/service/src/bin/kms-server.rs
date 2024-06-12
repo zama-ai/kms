@@ -1,10 +1,12 @@
 use clap::{Parser, Subcommand};
-use kms_lib::rpc::central_rpc::{server_handle as kms_server_handle, CentralizedConfig};
+use kms_lib::conf::centralized::CentralizedConfig;
+use kms_lib::conf::telemetry::init_tracing;
+use kms_lib::conf::threshold::ThresholdConfig;
+use kms_lib::conf::Settings;
+use kms_lib::rpc::central_rpc::server_handle as kms_server_handle;
 use kms_lib::rpc::central_rpc_proxy::server_handle as kms_proxy_server_handle;
 use kms_lib::storage::{FileStorage, StorageType};
-use kms_lib::threshold::threshold_kms::{
-    threshold_server_init, threshold_server_start, ThresholdConfig,
-};
+use kms_lib::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
 use kms_lib::util::aws::{EnclaveS3Storage, S3Storage};
 
 pub const SIG_SK_BLOB_KEY: &str = "private_sig_key";
@@ -137,18 +139,13 @@ enum ExecutionMode {
 /// Please consult the `kms-gen-keys` binary for details on generating key material.
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_line_number(true)
-        .with_file(true)
-        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-        .init();
     let args = KmsArgs::parse();
 
     match args.mode {
         StorageMode::Dev { exec_mode } => match exec_mode {
             ExecutionMode::Threshold { config_file } => {
-                let full_config = ThresholdConfig::init_config(&config_file)?;
+                let full_config: ThresholdConfig = Settings::new(Some(&config_file)).init_conf()?;
+                init_tracing(full_config.tracing.clone())?;
                 let pub_storage = FileStorage::new_threshold(
                     full_config.public_storage_path(),
                     StorageType::PUB,
@@ -174,7 +171,9 @@ async fn main() -> Result<(), anyhow::Error> {
                 .await
             }
             ExecutionMode::Centralized { config_file } => {
-                let config = CentralizedConfig::init_config(&config_file)?;
+                let config: CentralizedConfig = Settings::new(Some(&config_file)).init_conf()?;
+                init_tracing(config.tracing.clone())?;
+
                 let pub_storage =
                     FileStorage::new_centralized(config.public_storage_path(), StorageType::PUB)
                         .unwrap();
@@ -192,7 +191,9 @@ async fn main() -> Result<(), anyhow::Error> {
                 unimplemented!("this mode is not implemented")
             }
             ExecutionMode::Centralized { config_file } => {
-                let config = CentralizedConfig::init_config(&config_file)?;
+                let config: CentralizedConfig = Settings::new(Some(&config_file)).init_conf()?;
+                init_tracing(config.tracing.clone())?;
+
                 kms_proxy_server_handle(config.into(), &enclave_vsock).await
             }
         },
@@ -209,7 +210,8 @@ async fn main() -> Result<(), anyhow::Error> {
                 unimplemented!("this mode is not implemented")
             }
             ExecutionMode::Centralized { config_file } => {
-                let config = CentralizedConfig::init_config(&config_file)?;
+                let config: CentralizedConfig = Settings::new(Some(&config_file)).init_conf()?;
+                init_tracing(config.tracing.clone())?;
                 let pub_storage =
                     S3Storage::new(aws_region.clone(), aws_s3_proxy.clone(), pub_blob_bucket).await;
                 let priv_storage = EnclaveS3Storage::new(

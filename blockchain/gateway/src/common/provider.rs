@@ -1,6 +1,5 @@
-use crate::common::config::ethereum_wss_url;
-use crate::common::config::test_async_decrypt_address;
 use crate::common::provider::k256::ecdsa::SigningKey;
+use crate::config::EthereumConfig;
 use crate::util::wallet::WalletManager;
 use ethers::middleware::SignerMiddleware;
 use ethers::prelude::*;
@@ -17,10 +16,11 @@ abigen!(
 );
 
 async fn setup_provider(
+    config: &EthereumConfig,
 ) -> Result<Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>, Box<dyn Error>> {
     let wallet = WalletManager::default().wallet;
     tracing::info!("Wallet address: {}", wallet.address());
-    let provider = Provider::<Ws>::connect(ethereum_wss_url()).await?;
+    let provider = Provider::<Ws>::connect(config.wss_url.to_string()).await?;
     let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
     Ok(Arc::new(provider))
 }
@@ -31,15 +31,20 @@ static PROVIDER: Lazy<OnceCell<Arc<SignerMiddleware<Provider<Ws>, Wallet<Signing
 
 #[allow(clippy::map_clone)]
 pub async fn get_provider(
+    config: &EthereumConfig,
 ) -> Result<Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>, Box<dyn Error>> {
-    PROVIDER.get_or_try_init(setup_provider).await.cloned()
+    PROVIDER
+        .get_or_try_init(move || setup_provider(config))
+        .await
+        .cloned()
 }
 
 async fn setup_contract(
+    config: &EthereumConfig,
 ) -> Result<Arc<OraclePredeploy<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>>, Box<dyn Error>>
 {
-    let provider = get_provider().await?;
-    let contract = OraclePredeploy::new(test_async_decrypt_address(), Arc::clone(&provider));
+    let provider = get_provider(config).await?;
+    let contract = OraclePredeploy::new(config.test_async_decrypt_address, Arc::clone(&provider));
     Ok(Arc::new(contract))
 }
 
@@ -49,7 +54,11 @@ static CONTRACT: Lazy<
 > = Lazy::new(OnceCell::new);
 
 pub async fn get_contract(
+    config: &EthereumConfig,
 ) -> Result<Arc<OraclePredeploy<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>>, Box<dyn Error>>
 {
-    CONTRACT.get_or_try_init(setup_contract).await.cloned()
+    CONTRACT
+        .get_or_try_init(move || setup_contract(config))
+        .await
+        .cloned()
 }

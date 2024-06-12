@@ -31,6 +31,10 @@ on:
         type: boolean
         required: false
         default: false
+      package-name:
+        type: string
+        required: true
+        default: ''
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
@@ -80,7 +84,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Linting
-        run: cargo clippy --all-targets --all-features --workspace -- -D warnings
+        run: cargo clippy --all-targets --all-features --package ${{inputs.package-name}} -- -D warnings
 
       - name: Run Tests
         run: cargo test ${{ inputs.args-tests }} ${{ inputs.args-tests-fhe }} --release

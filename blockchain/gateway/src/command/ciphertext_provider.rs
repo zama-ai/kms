@@ -1,8 +1,5 @@
 use crate::command::ciphertext_provider::k256::ecdsa::SigningKey;
-use crate::common::config::fhe_lib_address;
-use crate::common::config::listener_type;
-use crate::common::config::oracle_predeploy_address;
-use crate::common::config::ListenerType;
+use crate::config::{EthereumConfig, ListenerType};
 use async_trait::async_trait;
 use ethers::prelude::*;
 use ethers::types::transaction::eip2718::TypedTransaction;
@@ -23,7 +20,9 @@ pub trait CiphertextProvider: Send {
 }
 
 // Implementation for FHEVM_V1
-struct Fhevm1CiphertextProvider;
+struct Fhevm1CiphertextProvider {
+    config: EthereumConfig,
+}
 
 #[async_trait]
 impl CiphertextProvider for Fhevm1CiphertextProvider {
@@ -34,12 +33,14 @@ impl CiphertextProvider for Fhevm1CiphertextProvider {
         block_number: u64,
     ) -> Result<Bytes, Box<dyn Error>> {
         let mut input = hex::decode("e4b808cb000000000000000000000000")?;
-        input.extend_from_slice(oracle_predeploy_address().as_bytes());
+        input.extend_from_slice(self.config.oracle_predeploy_address.as_bytes());
         input.extend_from_slice(&ct_handle);
 
         let call = TransactionRequest {
-            from: Some(oracle_predeploy_address()),
-            to: Some(ethers::types::NameOrAddress::Address(fhe_lib_address())),
+            from: Some(self.config.oracle_predeploy_address),
+            to: Some(ethers::types::NameOrAddress::Address(
+                self.config.fhe_lib_address,
+            )),
             data: Some(EthersBytes::from(input)),
             ..Default::default()
         };
@@ -51,7 +52,9 @@ impl CiphertextProvider for Fhevm1CiphertextProvider {
 }
 
 // Implementation for FHEVM_V1_1
-struct Fhevm1_1CiphertextProvider;
+struct Fhevm1_1CiphertextProvider {
+    config: EthereumConfig,
+}
 
 #[async_trait]
 impl CiphertextProvider for Fhevm1_1CiphertextProvider {
@@ -65,8 +68,10 @@ impl CiphertextProvider for Fhevm1_1CiphertextProvider {
         input.extend_from_slice(&ct_handle);
 
         let call = TransactionRequest {
-            from: Some(oracle_predeploy_address()),
-            to: Some(ethers::types::NameOrAddress::Address(fhe_lib_address())),
+            from: Some(self.config.oracle_predeploy_address),
+            to: Some(ethers::types::NameOrAddress::Address(
+                self.config.fhe_lib_address,
+            )),
             data: Some(EthersBytes::from(input)),
             ..Default::default()
         };
@@ -92,11 +97,12 @@ impl CiphertextProvider for CoprocessorCiphertextProvider {
     }
 }
 
-// Function to get the appropriate ciphertext provider based on the listener type
-pub fn get() -> Box<dyn CiphertextProvider> {
-    match listener_type() {
-        ListenerType::Fhevm1 => Box::new(Fhevm1CiphertextProvider),
-        ListenerType::Fhevm1_1 => Box::new(Fhevm1_1CiphertextProvider),
-        ListenerType::Coprocessor => Box::new(CoprocessorCiphertextProvider),
+impl From<EthereumConfig> for Box<dyn CiphertextProvider> {
+    fn from(config: EthereumConfig) -> Self {
+        match config.listener_type {
+            ListenerType::Fhevm1 => Box::new(Fhevm1CiphertextProvider { config }),
+            ListenerType::Fhevm1_1 => Box::new(Fhevm1_1CiphertextProvider { config }),
+            ListenerType::Coprocessor => Box::new(CoprocessorCiphertextProvider),
+        }
     }
 }

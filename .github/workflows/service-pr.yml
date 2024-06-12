@@ -15,6 +15,7 @@ jobs:
       working-directory: './core/service'
       args-tests: '-F slow_tests'
       run-wasm: true
+      package-name: 'kms'
     permissions:
       contents: 'read'
       id-token: 'write'

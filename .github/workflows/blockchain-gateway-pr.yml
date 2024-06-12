@@ -1,22 +1,23 @@
-name: "[Threshold-PR] Pipeline Run"
+name: "[Blockchain-Gateway-PR] Pipeline Run"
 
 on:
   pull_request:
     branches: ['*']
     paths:
-      - 'core/threshold/**'
-      - '.github/workflows/threshold-pr.yml'
+      - 'blockchain/gateway/**'
+      - 'blockchain/client/**'
+      - 'blockchain/events/**'
+      - '.github/workflows/blockchain-gateway-pr.yml'
 
 jobs:
   build:
-    if: ${{ ! startsWith(github.head_ref, 'dependabot/') }}
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
-      working-directory: './core/threshold'
-      args-tests: '--lib'
-      package-name: 'distributed-decryption'
+      working-directory: './blockchain/gateway'
+      args-tests-fhe: ''
+      package-name: 'gateway'
     permissions:
-      contents: 'read'
+      contents: 'write'
       id-token: 'write'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
@@ -24,36 +25,22 @@ jobs:
       SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
 
-  build-dependabot:
-    if: ${{ startsWith(github.head_ref, 'dependabot/') }}
-    uses: ./.github/workflows/common-build.yml
-    with:
-      working-directory: './core/threshold'
-      args-tests: '--lib'
-      package-name: 'distributed-decryption'
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
   docker:
-    if: ${{ ! startsWith(github.head_ref, 'dependabot/') }}
     uses: ./.github/workflows/common-docker.yml
     permissions:
       contents: 'read'
       id-token: 'write'
       packages: 'write'
     with:
-      working-directory: "./core/threshold"
+      working-directory: "./blockchain/gateway"
       push_image: false
-      image-name: 'kms-core-threshold'
+      image-name: 'kms-blockchain-gateway'
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
 
   done:
-    if: ${{ ! startsWith(github.head_ref, 'dependabot/') }}
     runs-on: ubuntu-latest
     name: Pipeline Done
     steps:

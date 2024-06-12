@@ -1,5 +1,5 @@
 use ethers::prelude::*;
-use gateway::common::config::test_async_decrypt_address;
+use gateway::config::{GatewayConfig, Settings};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
@@ -11,6 +11,12 @@ abigen!(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config: GatewayConfig = Settings::builder()
+        .path(Some("config/gateway"))
+        .build()
+        .init_conf()
+        .unwrap();
+
     // Generate a new wallet with a random private key
     let wallet = LocalWallet::new(&mut rand::thread_rng());
 
@@ -40,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Chain ID: {}", chain_id);
     let client = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(chain_id));
     let client = Arc::new(client);
-    let addr = test_async_decrypt_address();
+    let addr = config.ethereum.test_async_decrypt_address;
 
     println!("Contract deployed at: {}", hex::encode(addr.as_bytes()));
     let contract = TestAsyncDecrypt::new(addr, client.clone());

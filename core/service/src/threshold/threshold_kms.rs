@@ -1,4 +1,5 @@
 use super::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
+use crate::conf::threshold::{PeerConf, ThresholdConfigNoStorage};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, SEC_PAR};
 use crate::cryptography::central_kms::{compute_info, BaseKmsStruct};
 use crate::cryptography::der_types::{self, PrivateSigKey, PublicEncKey, PublicSigKey};
@@ -34,7 +35,6 @@ use distributed_decryption::execution::endpoints::keygen::{
     distributed_keygen_z128, PrivateKeySet,
 };
 use distributed_decryption::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
-use distributed_decryption::execution::online::preprocessing::redis::RedisConf;
 use distributed_decryption::execution::online::preprocessing::{
     create_memory_factory, create_redis_factory, DKGPreprocessing, PreprocessorFactory,
 };
@@ -60,7 +60,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::sync::Arc;
 use tfhe::integer::ciphertext::BaseRadixCiphertext;
 use tfhe::integer::IntegerCiphertext;
@@ -72,99 +71,6 @@ use tonic::transport::{Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
 
 const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ThresholdConfig {
-    pub public_storage_path: Option<String>,
-    pub private_storage_path: Option<String>,
-    #[serde(flatten)]
-    pub rest: ThresholdConfigNoStorage,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ThresholdConfigNoStorage {
-    pub listen_address_client: String,
-    pub listen_port_client: u16,
-    pub listen_address_core: String,
-    pub listen_port_core: u16,
-    pub threshold: u8,
-    pub my_id: usize,
-    pub dec_capacity: usize,
-    pub min_dec_cache: usize,
-    pub timeout_secs: u64,
-    pub preproc_redis_conf: Option<RedisConf>,
-    pub num_sessions_preproc: Option<u16>,
-    pub tls_cert_path: Option<String>,
-    pub tls_key_path: Option<String>,
-    pub peer_confs: Vec<PeerConf>,
-    pub param_file_map: HashMap<String, String>, // TODO parameters should be loaded once during boot
-}
-
-impl ThresholdConfigNoStorage {
-    pub fn get_tls_cert_paths(&self) -> Option<CertificatePaths> {
-        let cert_paths: Option<Vec<String>> = self
-            .peer_confs
-            .iter()
-            .map(|c| c.tls_cert_path.clone())
-            .collect();
-
-        match (
-            cert_paths,
-            self.tls_cert_path.clone(),
-            self.tls_key_path.clone(),
-        ) {
-            (Some(paths), Some(cert), Some(key)) => Some(CertificatePaths {
-                cert,
-                key,
-                calist: paths.join(","),
-            }),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct PeerConf {
-    pub party_id: usize,
-    pub address: String,
-    pub port: u16,
-    pub tls_cert_path: Option<String>,
-}
-
-impl PeerConf {
-    /// Validity of the output is not guaranteed.
-    pub fn into_role_identity(&self) -> (Role, Identity) {
-        (
-            Role::indexed_by_one(self.party_id),
-            Identity(format!("{}:{}", self.address, self.port)),
-        )
-    }
-}
-
-impl From<ThresholdConfig> for ThresholdConfigNoStorage {
-    fn from(value: ThresholdConfig) -> Self {
-        value.rest
-    }
-}
-
-impl ThresholdConfig {
-    pub fn init_config(fname: &str) -> anyhow::Result<ThresholdConfig> {
-        let config: ThresholdConfig = config::Config::builder()
-            .add_source(config::File::with_name(fname))
-            .add_source(config::Environment::with_prefix("KMS_THRESHOLD"))
-            .build()?
-            .try_deserialize()?;
-        Ok(config)
-    }
-
-    pub fn private_storage_path(&self) -> Option<&Path> {
-        self.private_storage_path.as_ref().map(Path::new)
-    }
-
-    pub fn public_storage_path(&self) -> Option<&Path> {
-        self.public_storage_path.as_ref().map(Path::new)
-    }
-}
 
 /// Initialize a threshold KMS server using the DDec initialization protocol.
 /// This MUST be done before the server is started.
@@ -1728,42 +1634,4 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             }),
         }))
     }
-}
-
-#[test]
-fn test_threshold_config() {
-    let config = ThresholdConfig::init_config("config/default_1").unwrap();
-    assert_eq!(config.rest.listen_address_client, "127.0.0.1");
-    assert_eq!(config.rest.listen_port_client, 50100);
-    assert_eq!(config.rest.listen_address_core, "127.0.0.1");
-    assert_eq!(config.rest.listen_port_core, 50001);
-    assert_eq!(config.rest.threshold, 1);
-    assert_eq!(config.rest.num_sessions_preproc, Some(2));
-    assert_eq!(config.rest.param_file_map.len(), 2);
-    assert_eq!(
-        config.rest.param_file_map.get("test").unwrap(),
-        "parameters/small_test_params.json"
-    );
-
-    assert_eq!(config.rest.peer_confs.len(), 4);
-    assert_eq!(config.rest.peer_confs[0].address, "127.0.0.1");
-    assert_eq!(config.rest.peer_confs[0].port, 50001);
-    assert_eq!(config.rest.peer_confs[0].party_id, 1);
-    assert_eq!(config.rest.peer_confs[1].address, "127.0.0.1");
-    assert_eq!(config.rest.peer_confs[1].port, 50002);
-    assert_eq!(config.rest.peer_confs[1].party_id, 2);
-    assert_eq!(config.rest.peer_confs[2].address, "127.0.0.1");
-    assert_eq!(config.rest.peer_confs[2].port, 50003);
-    assert_eq!(config.rest.peer_confs[2].party_id, 3);
-    assert_eq!(config.rest.peer_confs[3].address, "127.0.0.1");
-    assert_eq!(config.rest.peer_confs[3].port, 50004);
-    assert_eq!(config.rest.peer_confs[3].party_id, 4);
-
-    assert_eq!(
-        config.rest.param_file_map.get("default").unwrap(),
-        "parameters/default_params.json"
-    );
-    assert!(config.rest.preproc_redis_conf.is_none());
-    assert_eq!(config.private_storage_path.unwrap(), "keys");
-    assert_eq!(config.public_storage_path.unwrap(), "keys");
 }

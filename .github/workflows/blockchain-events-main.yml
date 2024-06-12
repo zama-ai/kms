@@ -15,6 +15,7 @@ jobs:
       working-directory: './blockchain/events'
       args-tests-fhe: ''
       args-tests: '--all-features'
+      package-name: 'events'
     permissions:
       contents: 'read'
       id-token: 'write'

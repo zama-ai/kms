@@ -43,6 +43,8 @@ pub mod rpc {
     pub mod central_rpc_proxy;
     pub mod rpc_types;
 }
+#[cfg(feature = "non-wasm")]
+pub mod conf;
 
 /// Take the max(20, s.len()) characters of s.
 pub(crate) fn top_n_chars(mut s: String) -> String {

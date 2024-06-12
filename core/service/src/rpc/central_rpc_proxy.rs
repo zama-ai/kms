@@ -1,3 +1,4 @@
+use crate::conf::centralized::CentralizedConfigNoStorage;
 use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
 use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
@@ -11,8 +12,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tonic::transport::{Channel, Server};
 use tonic::{Request, Response, Status};
-
-use super::central_rpc::CentralizedConfigNoStorage;
 
 pub struct KmsProxy {
     kms_client: Arc<Mutex<CoreServiceEndpointClient<Channel>>>,

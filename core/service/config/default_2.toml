@@ -59,3 +59,8 @@ default = "parameters/default_params.json"
 
 # [preproc_redis_conf]
 # host = "redis://127.0.0.1"
+
+[tracing]
+service_name = "kms-threshold-2"
+endpoint = "http://localhost:4317"
+

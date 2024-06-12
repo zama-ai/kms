@@ -1457,15 +1457,13 @@ pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
 #[cfg(feature = "non-wasm")]
 pub mod test_tools {
     use super::*;
+    use crate::conf::centralized::CentralizedConfigNoStorage;
+    use crate::conf::threshold::{PeerConf, ThresholdConfigNoStorage};
     use crate::consts::{BASE_PORT, DEC_CAPACITY, DEFAULT_PROT, DEFAULT_URL, MIN_DEC_CACHE};
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-    use crate::rpc::central_rpc::{
-        default_param_file_map, server_handle, CentralizedConfigNoStorage,
-    };
+    use crate::rpc::central_rpc::{default_param_file_map, server_handle};
     use crate::storage::{FileStorage, RamStorage, Storage, StorageType, StorageVersion};
-    use crate::threshold::threshold_kms::{
-        threshold_server_init, threshold_server_start, PeerConf, ThresholdConfigNoStorage,
-    };
+    use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
     use std::str::FromStr;
     use tokio::task::JoinHandle;
     use tonic::transport::{Channel, Uri};

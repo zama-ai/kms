@@ -9,3 +9,8 @@ private_storage_path = "keys"
 [param_file_map]
 test =  "parameters/small_test_params.json"
 default = "parameters/default_params.json"
+
+[tracing]
+service_name = "kms-centralized"
+endpoint = "http://localhost:4317"
+

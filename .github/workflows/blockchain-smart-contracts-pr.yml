@@ -14,6 +14,7 @@ jobs:
     with:
       working-directory: './blockchain/contracts'
       args-tests-fhe: ''
+      package-name: 'asc'
     permissions:
       contents: 'read'
       id-token: 'write'

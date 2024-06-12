@@ -1,5 +1,7 @@
-use gateway::common::config::kms_contract_address;
-use gateway::events::tendermint::event_manager::EventManager;
+use gateway::{
+    config::{GatewayConfig, Settings},
+    events::tendermint::event_manager::EventManager,
+};
 use std::str::FromStr;
 use tendermint_rpc::{
     event::{Event, EventData},
@@ -9,7 +11,12 @@ use tendermint_rpc::{
 #[tokio::main]
 async fn main() {
     let url = Url::from_str("ws://localhost:36657/websocket").unwrap();
-    let contract_addr = kms_contract_address().to_string();
+    let config: GatewayConfig = Settings::builder()
+        .path(Some("config/gateway"))
+        .build()
+        .init_conf()
+        .unwrap();
+    let contract_addr = config.kms.contract_address.to_string();
 
     let event_manager = EventManager::new(url, &contract_addr);
     event_manager.start(on_event).await.unwrap();
