@@ -2195,71 +2195,155 @@ pub(crate) mod tests {
             TEST_PARAM_PATH,
             &TEST_CENTRAL_KEY_ID.to_string(),
             TypedPlaintext::U8(42),
+            5,
         )
         .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TypedPlaintext::Bool(true))]
-    #[case(TypedPlaintext::U8(u8::MAX))]
-    #[case(TypedPlaintext::U16(u16::MAX))]
-    #[case(TypedPlaintext::U32(u32::MAX))]
-    #[case(TypedPlaintext::U64(u64::MAX))]
-    #[case(TypedPlaintext::U128(u128::MAX))]
-    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
+    #[case(TypedPlaintext::Bool(true), 3)]
+    #[case(TypedPlaintext::U8(u8::MAX), 2)]
+    #[case(TypedPlaintext::U16(u16::MAX), 1)]
+    #[case(TypedPlaintext::U32(u32::MAX), 1)]
+    #[case(TypedPlaintext::U64(u64::MAX), 1)]
+    #[case(TypedPlaintext::U128(u128::MAX), 1)]
+    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
     #[tokio::test]
     #[serial]
-    async fn default_decryption_centralized(#[case] msg: TypedPlaintext) {
-        decryption_centralized(DEFAULT_PARAM_PATH, &DEFAULT_CENTRAL_KEY_ID.to_string(), msg).await;
+    async fn default_decryption_centralized(
+        #[case] msg: TypedPlaintext,
+        #[case] parallelism: usize,
+    ) {
+        decryption_centralized(
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_CENTRAL_KEY_ID.to_string(),
+            msg,
+            parallelism,
+        )
+        .await;
     }
 
-    async fn decryption_centralized(param_path: &str, key_id: &str, msg: TypedPlaintext) {
-        // TODO refactor with setup and teardown setting up servers that can be used to run tests in
-        // parallel
-        let (kms_server, mut kms_client, mut internal_client) =
+    async fn decryption_centralized(
+        param_path: &str,
+        key_id: &str,
+        msg: TypedPlaintext,
+        parallelism: usize,
+    ) {
+        assert!(parallelism > 0);
+        let (kms_server, kms_client, mut internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
         let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
-        let request_id = RequestId::derive("TEST_DEC_ID_123").unwrap();
-        let req = internal_client
-            .decryption_request(ct.clone(), fhe_type, &request_id, &req_key_id)
-            .unwrap();
-        let response = kms_client
-            .decrypt(tonic::Request::new(req.clone()))
-            .await
-            .unwrap();
-        assert_eq!(response.into_inner(), Empty {});
+        // build parallel requests
+        let reqs: Vec<_> = (0..parallelism)
+            .map(|j| {
+                let request_id = RequestId::derive(&format!("TEST_DEC_ID_{j}")).unwrap();
+                internal_client
+                    .decryption_request(ct.clone(), fhe_type, &request_id, &req_key_id)
+                    .unwrap()
+            })
+            .collect();
 
-        let mut response = kms_client
-            .get_decrypt_result(req.request_id.clone().unwrap())
-            .await;
-        while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-        {
-            // Sleep to give the server some time to complete decryption
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            response = kms_client
-                .get_decrypt_result(req.request_id.clone().unwrap())
-                .await;
+        // send all decryption requests simultaneously
+        let mut req_tasks = JoinSet::new();
+        for j in 0..parallelism {
+            let req_cloned = reqs.get(j).unwrap().clone();
+            let mut cur_client = kms_client.clone();
+            req_tasks
+                .spawn(async move { cur_client.decrypt(tonic::Request::new(req_cloned)).await });
         }
-        let responses = AggregatedDecryptionResponse {
-            responses: vec![response.unwrap().into_inner()],
-        };
-        let plaintext = internal_client
-            .process_decryption_resp(Some(req), &responses)
-            .unwrap()
-            .unwrap();
 
-        assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
-        match msg {
-            TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-            TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-            TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-            TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-            TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-            TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-            TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+        // collect request task responses
+        let mut req_response_vec = Vec::new();
+        while let Some(inner) = req_tasks.join_next().await {
+            req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        }
+        assert_eq!(req_response_vec.len(), parallelism);
+
+        // check that initial request responsed are all Empty
+        for rr in req_response_vec {
+            assert_eq!(rr, Empty {});
+        }
+
+        // query for decryption responses
+        let mut resp_tasks = JoinSet::new();
+        for req in &reqs {
+            let req_id_clone = req.request_id.as_ref().unwrap().clone();
+            let mut cur_client = kms_client.clone();
+            resp_tasks.spawn(async move {
+                // Sleep initially to give the server some time to complete the decryption
+                tokio::time::sleep(std::time::Duration::from_millis(50 * parallelism as u64)).await;
+
+                // send query
+                let mut response = cur_client
+                    .get_decrypt_result(tonic::Request::new(req_id_clone.clone()))
+                    .await;
+
+                // retry counter
+                let mut ctr = 0_u64;
+
+                // retry while decryption is not finished, wait between retries and only up to a maximum number of retries
+                while response.is_err()
+                    && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    // we may wait up to 5s, for big ciphertexts
+                    if ctr >= 50 {
+                        panic!("timeout while waiting for decryption result");
+                    }
+                    ctr += 1;
+                    response = cur_client
+                        .get_decrypt_result(tonic::Request::new(req_id_clone.clone()))
+                        .await;
+                }
+
+                // we have a valid response or some error happened, return this
+                (req_id_clone, response.unwrap().into_inner())
+            });
+        }
+
+        // collect decryption outputs
+        let mut resp_response_vec = Vec::new();
+        while let Some(resp) = resp_tasks.join_next().await {
+            resp_response_vec.push(resp.unwrap());
+        }
+
+        // go through all requests and check the corresponding responses
+        for req in &reqs {
+            let req_id = req.request_id.as_ref().unwrap();
+            let responses: Vec<_> = resp_response_vec
+                .iter()
+                .filter_map(|resp| {
+                    if resp.0 == *req_id {
+                        Some(resp.1.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            // we only have single response per request in the centralized case
+            assert_eq!(responses.len(), 1);
+            let responses = AggregatedDecryptionResponse { responses };
+
+            let plaintext = internal_client
+                .process_decryption_resp(Some(req.clone()), &responses)
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
+
+            match msg {
+                TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+                TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+                TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+                TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+                TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+                TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+            }
         }
 
         kms_server.abort();
@@ -2274,6 +2358,7 @@ pub(crate) mod tests {
             &TEST_CENTRAL_KEY_ID.to_string(),
             false,
             TypedPlaintext::U8(42),
+            5,
         )
         .await;
     }
@@ -2287,27 +2372,32 @@ pub(crate) mod tests {
             &TEST_CENTRAL_KEY_ID.to_string(),
             true,
             TypedPlaintext::U8(42),
+            1, // wasm tests are single-threaded
         )
         .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TypedPlaintext::Bool(true))]
-    #[case(TypedPlaintext::U8(u8::MAX))]
-    #[case(TypedPlaintext::U16(u16::MAX))]
-    #[case(TypedPlaintext::U32(u32::MAX))]
-    #[case(TypedPlaintext::U64(u64::MAX))]
-    #[case(TypedPlaintext::U128(u128::MAX))]
-    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
+    #[case(TypedPlaintext::Bool(true), 2)]
+    #[case(TypedPlaintext::U8(u8::MAX), 1)]
+    #[case(TypedPlaintext::U16(u16::MAX), 1)]
+    #[case(TypedPlaintext::U32(u32::MAX), 1)]
+    #[case(TypedPlaintext::U64(u64::MAX), 1)]
+    #[case(TypedPlaintext::U128(u128::MAX), 1)]
+    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
     #[tokio::test]
     #[serial]
-    async fn default_reencryption_centralized(#[case] msg: TypedPlaintext) {
+    async fn default_reencryption_centralized(
+        #[case] msg: TypedPlaintext,
+        #[case] parallelism: usize,
+    ) {
         reencryption_centralized(
             DEFAULT_PARAM_PATH,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             false,
             msg,
+            parallelism,
         )
         .await;
     }
@@ -2324,59 +2414,110 @@ pub(crate) mod tests {
     async fn reencryption_centralized(
         param_path: &str,
         key_id: &str,
-        write_transcript: bool,
+        _write_transcript: bool,
         msg: TypedPlaintext,
+        parallelism: usize,
     ) {
-        _ = write_transcript;
-
-        let (kms_server, mut kms_client, mut internal_client) =
+        assert!(parallelism > 0);
+        let (kms_server, kms_client, mut internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
         let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
-        let request_id = RequestId::derive("TEST_REENC_ID_123").unwrap();
-        let (req, enc_pk, enc_sk) = internal_client
-            .reencryption_request(
-                ct,
-                &dummy_domain(),
-                fhe_type,
-                &request_id,
-                &key_id.to_string().try_into().unwrap(),
-            )
-            .unwrap();
-        let response = kms_client
-            .reencrypt(tonic::Request::new(req.clone()))
-            .await
-            .unwrap();
-        assert_eq!(response.into_inner(), Empty {});
+        let req_key_id = key_id.to_owned().try_into().unwrap();
 
-        let mut response = kms_client
-            .get_reencrypt_result(req.request_id.clone().unwrap())
-            .await;
-        while response.is_err() && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
-        {
-            // Sleep to give the server some time to complete reencryption
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            response = kms_client
-                .get_reencrypt_result(req.request_id.clone().unwrap())
-                .await;
+        // build parallel requests
+        let reqs: Vec<_> = (0..parallelism)
+            .map(|j| {
+                let request_id = RequestId::derive(&format!("TEST_REENC_ID_{j}")).unwrap();
+                internal_client
+                    .reencryption_request(
+                        ct.clone(),
+                        &dummy_domain(),
+                        fhe_type,
+                        &request_id,
+                        &req_key_id,
+                    )
+                    .unwrap()
+            })
+            .collect();
+
+        // send all reencryption requests simultaneously
+        let mut req_tasks = JoinSet::new();
+        for j in 0..parallelism {
+            let req_cloned = reqs.get(j).unwrap().0.clone();
+            let mut cur_client = kms_client.clone();
+            req_tasks
+                .spawn(async move { cur_client.reencrypt(tonic::Request::new(req_cloned)).await });
         }
 
-        let inner_response = response.unwrap().into_inner();
-        let responses = AggregatedReencryptionResponse {
-            responses: HashMap::from([(1, inner_response.clone())]),
-        };
+        // collect request task responses
+        let mut req_response_vec = Vec::new();
+        while let Some(inner) = req_tasks.join_next().await {
+            req_response_vec.push(inner.unwrap().unwrap().into_inner());
+        }
+        assert_eq!(req_response_vec.len(), parallelism);
+
+        // check that initial request responsed are all Empty
+        for rr in req_response_vec {
+            assert_eq!(rr, Empty {});
+        }
+
+        // query for reencryption responses
+        let mut resp_tasks = JoinSet::new();
+        for req in &reqs {
+            let req_id_clone = req.0.request_id.as_ref().unwrap().clone();
+            let mut cur_client = kms_client.clone();
+            resp_tasks.spawn(async move {
+                // Sleep initially to give the server some time to complete the reencryption
+                tokio::time::sleep(std::time::Duration::from_millis(100 * parallelism as u64))
+                    .await;
+
+                // send query
+                let mut response = cur_client
+                    .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                    .await;
+
+                // retry counter
+                let mut ctr = 0_u64;
+
+                // retry while reencryption is not finished, wait between retries and only up to a maximum number of retries
+                while response.is_err()
+                    && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    // we may wait up to 5s, for big ciphertexts
+                    if ctr >= 50 {
+                        panic!("timeout while waiting for reencryption result");
+                    }
+                    ctr += 1;
+                    response = cur_client
+                        .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                        .await;
+                }
+
+                // we have a valid response or some error happened, return this
+                (req_id_clone, response.unwrap().into_inner())
+            });
+        }
+
+        // collect reencryption outputs
+        let mut resp_response_vec = Vec::new();
+        while let Some(resp) = resp_tasks.join_next().await {
+            resp_response_vec.push(resp.unwrap());
+        }
 
         #[cfg(feature = "wasm_tests")]
         {
-            if write_transcript {
+            assert_eq!(parallelism, 1);
+            if _write_transcript {
                 let transcript = TestingReencryptionTranscript {
                     server_pks: internal_client.server_pks.clone(),
                     client_pk: internal_client.client_pk.clone(),
                     shares_needed: 0,
                     params: internal_client.params,
-                    request: Some(req.clone()),
-                    eph_sk: enc_sk.clone(),
-                    eph_pk: enc_pk.clone(),
-                    agg_resp: HashMap::from([(1, inner_response.clone())]),
+                    request: Some(reqs[0].clone().0),
+                    eph_sk: reqs[0].clone().2,
+                    eph_pk: reqs[0].clone().1,
+                    agg_resp: HashMap::from([(1, resp_response_vec.first().unwrap().1.clone())]),
                 };
                 write_element(TEST_CENTRAL_WASM_TRANSCRIPT_PATH, &transcript)
                     .await
@@ -2384,19 +2525,44 @@ pub(crate) mod tests {
             }
         }
 
-        let plaintext = internal_client
-            .process_reencryption_resp(Some(req), &responses, &enc_pk, &enc_sk)
-            .unwrap()
-            .unwrap();
-        assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
-        match msg {
-            TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-            TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-            TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-            TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-            TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-            TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-            TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+        // go through all requests and check the corresponding responses
+        for req in &reqs {
+            let (req, enc_pk, enc_sk) = req;
+            let req_id = req.request_id.as_ref().unwrap();
+            let responses: Vec<_> = resp_response_vec
+                .iter()
+                .filter_map(|resp| {
+                    if resp.0 == *req_id {
+                        Some(resp.1.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            // we only have single response per request in the centralized case
+            assert_eq!(responses.len(), 1);
+            let inner_response = responses.first().unwrap();
+            let responses = AggregatedReencryptionResponse {
+                responses: HashMap::from([(1, inner_response.clone())]),
+            };
+
+            let plaintext = internal_client
+                .process_reencryption_resp(Some(req.clone()), &responses, enc_pk, enc_sk)
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
+
+            match msg {
+                TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+                TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+                TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+                TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+                TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+                TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+            }
         }
 
         kms_server.abort();
