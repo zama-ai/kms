@@ -88,6 +88,7 @@ pub enum TypedPlaintext {
 }
 
 impl TypedPlaintext {
+    /// Convert [self] to [FheType].
     pub fn to_fhe_type(&self) -> FheType {
         match self {
             TypedPlaintext::Bool(_) => FheType::Bool,
@@ -97,6 +98,19 @@ impl TypedPlaintext {
             TypedPlaintext::U64(_) => FheType::Euint64,
             TypedPlaintext::U128(_) => FheType::Euint128,
             TypedPlaintext::U160(_) => FheType::Euint160,
+        }
+    }
+
+    /// Return the number of bits in the plaintext.
+    pub fn bits(&self) -> usize {
+        match self {
+            TypedPlaintext::Bool(_) => 1,
+            TypedPlaintext::U8(_) => 8,
+            TypedPlaintext::U16(_) => 16,
+            TypedPlaintext::U32(_) => 32,
+            TypedPlaintext::U64(_) => 64,
+            TypedPlaintext::U128(_) => 128,
+            TypedPlaintext::U160(_) => 160,
         }
     }
 }

@@ -1651,7 +1651,7 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
     use crate::consts::TEST_CENTRAL_KEY_ID;
-    use crate::consts::{AMOUNT_PARTIES, TEST_DEC_ID, TEST_PARAM_PATH, TEST_REENC_ID, THRESHOLD};
+    use crate::consts::{AMOUNT_PARTIES, TEST_PARAM_PATH, THRESHOLD};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM_PATH,
@@ -2221,8 +2221,10 @@ pub(crate) mod tests {
             super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
         let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
+
+        let request_id = RequestId::derive("TEST_DEC_ID_123").unwrap();
         let req = internal_client
-            .decryption_request(ct.clone(), fhe_type, &TEST_DEC_ID, &req_key_id)
+            .decryption_request(ct.clone(), fhe_type, &request_id, &req_key_id)
             .unwrap();
         let response = kms_client
             .decrypt(tonic::Request::new(req.clone()))
@@ -2330,13 +2332,13 @@ pub(crate) mod tests {
         let (kms_server, mut kms_client, mut internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
         let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
-        let request_id = &TEST_REENC_ID;
+        let request_id = RequestId::derive("TEST_REENC_ID_123").unwrap();
         let (req, enc_pk, enc_sk) = internal_client
             .reencryption_request(
                 ct,
                 &dummy_domain(),
                 fhe_type,
-                request_id,
+                &request_id,
                 &key_id.to_string().try_into().unwrap(),
             )
             .unwrap();
@@ -2409,95 +2411,150 @@ pub(crate) mod tests {
             TEST_PARAM_PATH,
             &TEST_THRESHOLD_KEY_ID.to_string(),
             TypedPlaintext::U8(42),
+            4,
         )
         .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TypedPlaintext::Bool(true))]
-    #[case(TypedPlaintext::U8(u8::MAX))]
-    #[case(TypedPlaintext::U16(u16::MAX))]
-    #[case(TypedPlaintext::U32(u32::MAX))]
-    #[case(TypedPlaintext::U64(u64::MAX))]
-    #[case(TypedPlaintext::U128(u128::MAX))]
-    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
+    #[case(TypedPlaintext::Bool(true), 4)]
+    #[case(TypedPlaintext::U8(u8::MAX), 1)]
+    #[case(TypedPlaintext::U16(u16::MAX), 1)]
+    #[case(TypedPlaintext::U32(u32::MAX), 1)]
+    #[case(TypedPlaintext::U64(u64::MAX), 1)]
+    #[case(TypedPlaintext::U128(u128::MAX), 1)]
+    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn default_decryption_threshold(#[case] msg: TypedPlaintext) {
+    #[tracing_test::traced_test]
+    async fn default_decryption_threshold(#[case] msg: TypedPlaintext, #[case] parallelism: usize) {
         decryption_threshold(
             DEFAULT_PARAM_PATH,
             &DEFAULT_THRESHOLD_KEY_ID.to_string(),
             msg,
+            parallelism,
         )
         .await;
     }
 
-    async fn decryption_threshold(params: &str, key_id: &str, msg: TypedPlaintext) {
+    async fn decryption_threshold(
+        params: &str,
+        key_id: &str,
+        msg: TypedPlaintext,
+        parallelism: usize,
+    ) {
+        assert!(parallelism > 0);
         let (kms_servers, kms_clients, mut internal_client) =
             threshold_handles(StorageVersion::Dev, params).await;
         let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
         let key_id_req = key_id.to_string().try_into().unwrap();
 
-        let request_id = &TEST_DEC_ID;
-        let req = internal_client
-            .decryption_request(ct, fhe_type, request_id, &key_id_req)
-            .unwrap();
+        // make parallel requests by calling [decrypt] in a thread
         let mut req_tasks = JoinSet::new();
+        let reqs: Vec<_> = (0..parallelism)
+            .map(|j| {
+                let request_id = RequestId::derive(&format!("TEST_DEC_ID_{j}")).unwrap();
+                internal_client
+                    .decryption_request(ct.clone(), fhe_type, &request_id, &key_id_req)
+                    .unwrap()
+            })
+            .collect();
         for i in 1..=AMOUNT_PARTIES as u32 {
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
-            let req_clone = req.clone();
-            req_tasks
-                .spawn(async move { cur_client.decrypt(tonic::Request::new(req_clone)).await });
+            for j in 0..parallelism {
+                let req_cloned = reqs.get(j).unwrap().clone();
+                let mut cur_client = kms_clients.get(&i).unwrap().clone();
+                req_tasks.spawn(async move {
+                    cur_client.decrypt(tonic::Request::new(req_cloned)).await
+                });
+            }
         }
+
         let mut req_response_vec = Vec::new();
         while let Some(inner) = req_tasks.join_next().await {
             req_response_vec.push(inner.unwrap().unwrap().into_inner());
         }
-        assert_eq!(req_response_vec.len(), AMOUNT_PARTIES);
+        assert_eq!(req_response_vec.len(), AMOUNT_PARTIES * parallelism);
 
+        // get all responses
         let mut resp_tasks = JoinSet::new();
         for i in 1..=AMOUNT_PARTIES as u32 {
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
-            let req_clone = req.clone();
-            resp_tasks.spawn(async move {
-                // Sleep to give the server some time to complete decryption
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                cur_client
-                    .get_decrypt_result(tonic::Request::new(req_clone.request_id.unwrap()))
-                    .await
-            });
+            for req in &reqs {
+                let mut cur_client = kms_clients.get(&i).unwrap().clone();
+                let req_id_clone = req.request_id.as_ref().unwrap().clone();
+                let bits = msg.bits() as u64;
+                resp_tasks.spawn(async move {
+                    // Sleep to give the server some time to complete decryption
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * bits * parallelism as u64,
+                    ))
+                    .await;
+
+                    let mut response = cur_client
+                        .get_decrypt_result(tonic::Request::new(req_id_clone.clone()))
+                        .await;
+                    let mut ctr = 0u64;
+                    while response.is_err()
+                        && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+                    {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        // we may wait up to a minute, 60_000 ms, for big ciphertexts
+                        if ctr >= 600 {
+                            panic!("timeout while waiting for decryption");
+                        }
+                        ctr += 1;
+                        response = cur_client
+                            .get_decrypt_result(tonic::Request::new(req_id_clone.clone()))
+                            .await;
+                    }
+                    (req_id_clone, response.unwrap().into_inner())
+                });
+            }
         }
+
         let mut resp_response_vec = Vec::new();
         while let Some(resp) = resp_tasks.join_next().await {
-            resp_response_vec.push(resp.unwrap().unwrap().into_inner());
+            resp_response_vec.push(resp.unwrap());
         }
-        let agg = AggregatedDecryptionResponse {
-            responses: resp_response_vec,
-        };
-        let plaintext = internal_client
-            .process_decryption_resp(Some(req), &agg)
-            .unwrap()
-            .unwrap();
-        assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
-        match msg {
-            TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-            TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-            TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-            TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-            TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-            TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-            TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-        }
+
         for handle in kms_servers.values() {
             handle.abort()
         }
         for (_, handle) in kms_servers {
             assert!(handle.await.unwrap_err().is_cancelled());
         }
+
+        for req in &reqs {
+            let req_id = req.request_id.as_ref().unwrap();
+            let responses: Vec<_> = resp_response_vec
+                .iter()
+                .filter_map(|resp| {
+                    if resp.0 == *req_id {
+                        Some(resp.1.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let agg = AggregatedDecryptionResponse { responses };
+            let plaintext = internal_client
+                .process_decryption_resp(Some(req.clone()), &agg)
+                .unwrap()
+                .unwrap();
+            assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
+            match msg {
+                TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+                TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+                TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+                TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+                TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+                TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+            }
+        }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_reencryption_threshold() {
         reencryption_threshold(
@@ -2505,40 +2562,47 @@ pub(crate) mod tests {
             &TEST_THRESHOLD_KEY_ID.to_string(),
             false,
             TypedPlaintext::U8(42),
+            4,
         )
         .await;
     }
 
-    #[tokio::test]
-    #[serial]
     #[cfg(feature = "wasm_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
     async fn test_reencryption_threshold_and_write_transcript() {
         reencryption_threshold(
             TEST_PARAM_PATH,
             &TEST_THRESHOLD_KEY_ID.to_string(),
             true,
             TypedPlaintext::U8(42),
+            1,
         )
         .await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TypedPlaintext::Bool(true))]
-    #[case(TypedPlaintext::U8(u8::MAX))]
-    #[case(TypedPlaintext::U16(u16::MAX))]
-    #[case(TypedPlaintext::U32(u32::MAX))]
-    #[case(TypedPlaintext::U64(u64::MAX))]
-    #[case(TypedPlaintext::U128(u128::MAX))]
-    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
+    #[case(TypedPlaintext::Bool(true), 4)]
+    #[case(TypedPlaintext::U8(u8::MAX), 1)]
+    #[case(TypedPlaintext::U16(u16::MAX), 1)]
+    #[case(TypedPlaintext::U32(u32::MAX), 1)]
+    #[case(TypedPlaintext::U64(u64::MAX), 1)]
+    #[case(TypedPlaintext::U128(u128::MAX), 1)]
+    #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn default_reencryption_threshold(#[case] msg: TypedPlaintext) {
+    #[tracing_test::traced_test]
+    async fn default_reencryption_threshold(
+        #[case] msg: TypedPlaintext,
+        #[case] parallelism: usize,
+    ) {
         reencryption_threshold(
             DEFAULT_PARAM_PATH,
             &DEFAULT_THRESHOLD_KEY_ID.to_string(),
             false,
             msg,
+            parallelism,
         )
         .await;
     }
@@ -2548,72 +2612,115 @@ pub(crate) mod tests {
         key_id: &str,
         write_transcript: bool,
         msg: TypedPlaintext,
+        parallelism: usize,
     ) {
+        assert!(parallelism > 0);
         _ = write_transcript;
 
         let (kms_servers, kms_clients, mut internal_client) =
             threshold_handles(StorageVersion::Dev, param).await;
         let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
 
-        let request_id = &TEST_REENC_ID;
-        let (req, enc_pk, enc_sk) = internal_client
-            .reencryption_request(
-                ct,
-                &dummy_domain(),
-                fhe_type,
-                request_id,
-                &key_id.to_string().try_into().unwrap(),
-            )
-            .unwrap();
+        // make requests
+        let reqs: Vec<_> = (0..parallelism)
+            .map(|j| {
+                let request_id = RequestId::derive(&format!("TEST_REENC_ID_{j}")).unwrap();
+                let (req, enc_pk, enc_sk) = internal_client
+                    .reencryption_request(
+                        ct.clone(),
+                        &dummy_domain(),
+                        fhe_type,
+                        &request_id,
+                        &key_id.to_string().try_into().unwrap(),
+                    )
+                    .unwrap();
+                (req, enc_pk, enc_sk)
+            })
+            .collect();
+
+        // make queries to clients in parallel
         let mut req_tasks = JoinSet::new();
-        tracing::info!("Client did reencryption request");
-        for i in 1..=AMOUNT_PARTIES as u32 {
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
-            let req_clone = req.clone();
-            req_tasks
-                .spawn(async move { cur_client.reencrypt(tonic::Request::new(req_clone)).await });
+        for j in 0..parallelism {
+            for i in 1..=AMOUNT_PARTIES as u32 {
+                let mut cur_client = kms_clients.get(&i).unwrap().clone();
+                let req_clone = reqs.get(j).as_ref().unwrap().0.clone();
+                req_tasks.spawn(async move {
+                    cur_client.reencrypt(tonic::Request::new(req_clone)).await
+                });
+            }
         }
+
         let mut req_response_vec = Vec::new();
         while let Some(resp) = req_tasks.join_next().await {
             req_response_vec.push(resp.unwrap().unwrap().into_inner());
         }
-        assert_eq!(req_response_vec.len(), AMOUNT_PARTIES);
+        assert_eq!(req_response_vec.len(), AMOUNT_PARTIES * parallelism);
 
         let mut resp_tasks = JoinSet::new();
-        for i in 1..=AMOUNT_PARTIES as u32 {
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
-            let req_clone = req.clone();
-            resp_tasks.spawn(async move {
-                // Sleep to give the server some time to complete reencryption
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                (
-                    i,
-                    cur_client
-                        .get_reencrypt_result(tonic::Request::new(req_clone.request_id.unwrap()))
-                        .await,
-                )
-            });
+        for j in 0..parallelism {
+            for i in 1..=AMOUNT_PARTIES as u32 {
+                let mut cur_client = kms_clients.get(&i).unwrap().clone();
+                let req_id_clone = reqs.get(j).as_ref().unwrap().0.clone().request_id.unwrap();
+                let bits = msg.bits() as u64;
+                resp_tasks.spawn(async move {
+                    // Sleep to give the server some time to complete reencryption
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * bits * parallelism as u64,
+                    ))
+                    .await;
+                    let mut response = cur_client
+                        .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                        .await;
+
+                    let mut ctr = 0u64;
+                    while response.is_err()
+                        && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+                    {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        // we may wait up to a minute, 60_000 ms, for big ciphertexts
+                        if ctr >= 600 {
+                            panic!("timeout while waiting for reencryption");
+                        }
+                        ctr += 1;
+                        response = cur_client
+                            .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                            .await;
+                    }
+
+                    (i, req_id_clone, response)
+                });
+            }
         }
         let mut response_map = HashMap::new();
         while let Some(res) = resp_tasks.join_next().await {
             let res = res.unwrap();
             tracing::info!("Client got a response from {}", res.0);
-            let (i, resp) = res;
-            response_map.insert(i, resp.unwrap().into_inner());
+            let (i, req_id, resp) = res;
+            response_map.insert((i, req_id), resp.unwrap().into_inner());
+        }
+
+        for handle in kms_servers.values() {
+            handle.abort()
+        }
+        for (_, handle) in kms_servers {
+            assert!(handle.await.unwrap_err().is_cancelled());
         }
 
         #[cfg(feature = "wasm_tests")]
         {
+            assert_eq!(parallelism, 1);
             if write_transcript {
+                let agg_resp =
+                    HashMap::from_iter(response_map.iter().map(|((i, _req), v)| (*i, v.clone())));
                 let transcript = TestingReencryptionTranscript {
                     server_pks: internal_client.server_pks.clone(),
                     client_pk: internal_client.client_pk.clone(),
                     shares_needed: THRESHOLD as u32 + 1,
                     params: internal_client.params,
-                    request: Some(req.clone()),
-                    eph_sk: enc_sk.clone(),
-                    eph_pk: enc_pk.clone(),
-                    agg_resp: response_map.clone(),
+                    request: Some(reqs[0].clone().0),
+                    eph_sk: reqs[0].clone().2,
+                    eph_pk: reqs[0].clone().1,
+                    agg_resp,
                 };
                 write_element(TEST_THRESHOLD_WASM_TRANSCRIPT_PATH, &transcript)
                     .await
@@ -2621,28 +2728,31 @@ pub(crate) mod tests {
             }
         }
 
-        let agg = AggregatedReencryptionResponse {
-            responses: response_map,
-        };
-        let plaintext = internal_client
-            .process_reencryption_resp(Some(req), &agg, &enc_pk, &enc_sk)
-            .unwrap()
-            .unwrap();
-        assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
-        match msg {
-            TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
-            TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
-            TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
-            TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
-            TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
-            TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
-            TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
-        }
-        for handle in kms_servers.values() {
-            handle.abort()
-        }
-        for (_, handle) in kms_servers {
-            assert!(handle.await.unwrap_err().is_cancelled());
+        for req in &reqs {
+            let (req, enc_pk, enc_sk) = req;
+            let responses =
+                HashMap::from_iter(response_map.iter().filter_map(|((i, req_id), v)| {
+                    if req_id == req.request_id.as_ref().unwrap() {
+                        Some((*i, v.clone()))
+                    } else {
+                        None
+                    }
+                }));
+            let agg = AggregatedReencryptionResponse { responses };
+            let plaintext = internal_client
+                .process_reencryption_resp(Some(req.clone()), &agg, enc_pk, enc_sk)
+                .unwrap()
+                .unwrap();
+            assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
+            match msg {
+                TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
+                TypedPlaintext::U8(x) => assert_eq!(x, plaintext.as_u8()),
+                TypedPlaintext::U16(x) => assert_eq!(x, plaintext.as_u16()),
+                TypedPlaintext::U32(x) => assert_eq!(x, plaintext.as_u32()),
+                TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
+                TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
+                TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+            }
         }
     }
 
@@ -2669,13 +2779,13 @@ pub(crate) mod tests {
             1,
             keys.params,
         );
-        let request_id = &TEST_REENC_ID;
+        let request_id = RequestId::derive("TEST_REENC_ID_123").unwrap();
         let (req, _enc_pk, _enc_sk) = internal_client
             .reencryption_request(
                 ct,
                 &dummy_domain(),
                 fhe_type,
-                request_id,
+                &request_id,
                 &DEFAULT_CENTRAL_KEY_ID,
             )
             .unwrap();

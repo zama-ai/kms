@@ -633,6 +633,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         T: tfhe::integer::block_decomposition::Recomposable
             + tfhe::core_crypto::commons::traits::CastFrom<u128>,
     {
+        tracing::info!("{:?} started inner_decrypt", session.own_identity());
         let low_level_ct = fhe_type.deserialize_to_low_level(ct)?;
         let keys = match fhe_keys.get(key_handle) {
             Some(keys) => keys,
@@ -664,7 +665,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     }
                 };
                 tracing::info!(
-                    "Decryption completed. Inner thread took {:?} ms",
+                    "Decryption completed on {:?}. Inner thread took {:?} ms",
+                    session.own_identity(),
                     time.as_millis()
                 );
                 raw_decryption
@@ -1392,6 +1394,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
+        tracing::info!(
+            "Party {} received a new reencryption request with request_id {:?}",
+            self.my_id(),
+            inner.request_id
+        );
         let (
             ciphertext,
             fhe_type,
@@ -1405,13 +1412,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             validate_reencrypt_req(&inner).await,
             format!("Invalid reencryption request {:?}", inner),
         )?;
-        {
-            let mut guarded_meta_store = self.reenc_meta_store.write().await;
-            tonic_handle_potential_err(
-                guarded_meta_store.insert(&req_id),
-                "Could not insert reencryption request".to_string(),
-            )?;
-        }
 
         let mut session = tonic_handle_potential_err(
             self.prepare_ddec_data_from_requestid(&req_id).await,
@@ -1426,12 +1426,24 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         )?;
         let sig_key = Arc::clone(&self.base_kms.sig_key);
 
+        // Below we write to the meta-store.
+        // After writing, the the meta-store on this [req_id] will be in the "Started" state
+        // So we need to update it everytime something bad happens,
+        // or put all the code that may error before the first write to the meta-store,
+        // otherwise it'll be in the "Started" state forever.
+        {
+            let mut guarded_meta_store = self.reenc_meta_store.write().await;
+            tonic_handle_potential_err(
+                guarded_meta_store.insert(&req_id),
+                "Could not insert reencryption request".to_string(),
+            )?;
+        }
+
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
         let _handle = tokio::spawn(async move {
-            let mut guarded_meta_store = meta_store.write().await;
             let fhe_keys_rlock = fhe_keys.read().await;
-            match Self::inner_reencrypt(
+            let tmp = Self::inner_reencrypt(
                 &mut session,
                 &mut protocol,
                 &mut rng,
@@ -1444,8 +1456,9 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 sig_key,
                 fhe_keys_rlock,
             )
-            .await
-            {
+            .await;
+            let mut guarded_meta_store = meta_store.write().await;
+            match tmp {
                 Ok(partial_dec) => {
                     // We cannot do much if updating the storage fails at this point...
                     let _ = guarded_meta_store.update(
@@ -1480,6 +1493,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 format!("The value {} is not a valid request ID!", request_id),
             ));
         }
+
         // Retrieve the ReencMetaStore object
         let (servers_needed, link, fhe_type, signcrypted_ciphertext) = {
             let guarded_meta_store = self.reenc_meta_store.read().await;
@@ -1507,14 +1521,28 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         &self,
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
-        tracing::info!("Received a new request!");
         let inner = request.into_inner();
+        tracing::info!(
+            "Party {} received a new decryption request with request_id {:?}",
+            self.my_id(),
+            inner.request_id
+        );
         let (ciphertext, fhe_type, req_digest, servers_needed, key_id, req_id) =
             tonic_handle_potential_err(
                 validate_decrypt_req(&inner),
                 format!("Invalid key in request {:?}", inner),
             )?;
 
+        let mut session = tonic_handle_potential_err(
+            self.prepare_ddec_data_from_requestid(&req_id).await,
+            "Could not prepare ddec data for reencryption".to_string(),
+        )?;
+
+        // Below we write to the meta-store.
+        // After writing, the the meta-store on this [req_id] will be in the "Started" state
+        // So we need to update it everytime something bad happens,
+        // or put all the code that may error before the first write to the meta-store,
+        // otherwise it'll be in the "Started" state forever.
         {
             let mut guarded_meta_store = self.dec_meta_store.write().await;
             tonic_handle_potential_err(
@@ -1523,10 +1551,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             )?;
         }
 
-        let mut session = tonic_handle_potential_err(
-            self.prepare_ddec_data_from_requestid(&req_id).await,
-            "Could not prepare ddec data for reencryption".to_string(),
-        )?;
         let mut protocol = Small::new(session.clone());
         let meta_store = Arc::clone(&self.dec_meta_store);
         let fhe_keys = Arc::clone(&self.fhe_keys);
@@ -1534,60 +1558,58 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         // we do not need to hold the handle,
         // the result of the computation is tracked by the dec_meta_store
         let _handle = tokio::spawn(async move {
+            let fhe_keys_rlock = fhe_keys.read().await;
+            let tmp = match fhe_type {
+                FheType::Euint160 => Self::inner_decrypt::<tfhe::integer::U256>(
+                    &mut session,
+                    &mut protocol,
+                    &ciphertext,
+                    fhe_type,
+                    &key_id,
+                    fhe_keys_rlock,
+                )
+                .await
+                .map(Plaintext::from_u160),
+                FheType::Euint128 => Self::inner_decrypt::<u128>(
+                    &mut session,
+                    &mut protocol,
+                    &ciphertext,
+                    fhe_type,
+                    &key_id,
+                    fhe_keys_rlock,
+                )
+                .await
+                .map(|x| Plaintext::new(x, fhe_type)),
+                _ => Self::inner_decrypt::<u64>(
+                    &mut session,
+                    &mut protocol,
+                    &ciphertext,
+                    fhe_type,
+                    &key_id,
+                    fhe_keys_rlock,
+                )
+                .await
+                .map(|x| Plaintext::new(x as u128, fhe_type)),
+            };
             let mut guarded_meta_store = meta_store.write().await;
-            {
-                let fhe_keys_rlock = fhe_keys.read().await;
-                let tmp = match fhe_type {
-                    FheType::Euint160 => Self::inner_decrypt::<tfhe::integer::U256>(
-                        &mut session,
-                        &mut protocol,
-                        &ciphertext,
-                        fhe_type,
-                        &key_id,
-                        fhe_keys_rlock,
-                    )
-                    .await
-                    .map(Plaintext::from_u160),
-                    FheType::Euint128 => Self::inner_decrypt::<u128>(
-                        &mut session,
-                        &mut protocol,
-                        &ciphertext,
-                        fhe_type,
-                        &key_id,
-                        fhe_keys_rlock,
-                    )
-                    .await
-                    .map(|x| Plaintext::new(x, fhe_type)),
-                    _ => Self::inner_decrypt::<u64>(
-                        &mut session,
-                        &mut protocol,
-                        &ciphertext,
-                        fhe_type,
-                        &key_id,
-                        fhe_keys_rlock,
-                    )
-                    .await
-                    .map(|x| Plaintext::new(x as u128, fhe_type)),
-                };
-                match tmp {
-                    Ok(plaintext) => {
-                        // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store.update(
-                            &req_id,
-                            HandlerStatus::Done((
-                                servers_needed,
-                                req_digest.clone(),
-                                plaintext.clone(),
-                            )),
-                        );
-                    }
-                    Result::Err(e) => {
-                        // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store.update(
-                            &req_id,
-                            HandlerStatus::Error(format!("Failed decryption: {e}")),
-                        );
-                    }
+            match tmp {
+                Ok(plaintext) => {
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_store.update(
+                        &req_id,
+                        HandlerStatus::Done((
+                            servers_needed,
+                            req_digest.clone(),
+                            plaintext.clone(),
+                        )),
+                    );
+                }
+                Result::Err(e) => {
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_store.update(
+                        &req_id,
+                        HandlerStatus::Error(format!("Failed decryption: {e}")),
+                    );
                 }
             }
         });

@@ -722,6 +722,7 @@ mod test {
             AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID,
             TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_KEY_ID, THRESHOLD,
         },
+        kms::RequestId,
         storage::{FileStorage, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
         util::key_setup::{
@@ -729,7 +730,7 @@ mod test {
         },
     };
     use kms_lib::{
-        consts::{TEST_MSG, TEST_PARAM_PATH, TEST_REENC_ID},
+        consts::{TEST_MSG, TEST_PARAM_PATH},
         kms::{AggregatedReencryptionResponse, DecryptionResponsePayload, ReencryptionResponse},
         rpc::rpc_types::{Plaintext, CURRENT_FORMAT_VERSION},
         util::key_setup::ensure_threshold_keys_exist,
@@ -1039,10 +1040,12 @@ mod test {
             )
         }
 
-        let request_id = &TEST_REENC_ID;
+        let request_id = RequestId {
+            request_id: "1111000000000000000000000000000000001111".to_string(),
+        };
         let key_id = &TEST_THRESHOLD_KEY_ID;
         let (kms_req, enc_pk, enc_sk) = kms_client
-            .reencryption_request(ct, &dummy_domain(), fhe_type, request_id, key_id)
+            .reencryption_request(ct, &dummy_domain(), fhe_type, &request_id, key_id)
             .unwrap();
         let payload = kms_req.payload.clone().unwrap();
         let eip712 = kms_req.domain.clone().unwrap();

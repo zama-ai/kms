@@ -37,8 +37,6 @@ lazy_static! {
     pub static ref TEST_THRESHOLD_KEY_ID: RequestId =
         RequestId::derive("TEST_THRESHOLD_KEY_ID").unwrap();
     pub static ref TEST_CRS_ID: RequestId = RequestId::derive("TEST_CRS_ID").unwrap();
-    pub static ref TEST_DEC_ID: RequestId = RequestId::derive("TEST_DEC_ID").unwrap();
-    pub static ref TEST_REENC_ID: RequestId = RequestId::derive("TEST_REENC_ID").unwrap();
     pub static ref OTHER_CENTRAL_TEST_ID: RequestId = RequestId::derive("OTHER_TEST_ID").unwrap();
     pub static ref DEFAULT_CENTRAL_KEY_ID: RequestId =
         RequestId::derive("DEFAULT_CENTRAL_KEY_ID").unwrap();
