@@ -730,7 +730,7 @@ mod test {
         },
     };
     use kms_lib::{
-        consts::{TEST_MSG, TEST_PARAM_PATH},
+        consts::TEST_PARAM_PATH,
         kms::{AggregatedReencryptionResponse, DecryptionResponsePayload, ReencryptionResponse},
         rpc::rpc_types::{Plaintext, CURRENT_FORMAT_VERSION},
         util::key_setup::ensure_threshold_keys_exist,
@@ -799,10 +799,10 @@ mod test {
     #[tokio::test]
     #[serial_test::serial]
     async fn ddec_centralized_sunshine() {
+        let msg = 110u8;
         setup_central_keys().await;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            compute_cipher_from_storage(None, TEST_MSG.into(), &TEST_CENTRAL_KEY_ID.to_string())
-                .await;
+            compute_cipher_from_storage(None, msg.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
         let op = OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
@@ -823,7 +823,7 @@ mod test {
                     serde_asn1_der::from_bytes::<Plaintext>(&payload.plaintext)
                         .unwrap()
                         .as_u8(),
-                    TEST_MSG
+                    msg,
                 );
                 assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
                 assert_eq!(resp.operation_val.tx_id, txn_id);
@@ -905,11 +905,12 @@ mod test {
         } else {
             setup_mock_kms(AMOUNT_PARTIES).await
         };
+        assert_eq!(core_handles.len(), AMOUNT_PARTIES);
 
         // create configs
         let configs = (0..AMOUNT_PARTIES as u16)
             .map(|i| {
-                let port = BASE_PORT + i + 1;
+                let port = BASE_PORT + (i + 1) * 100;
                 let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
                 CoreConfig {
                     addresses: vec![url],
@@ -960,8 +961,11 @@ mod test {
         }
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
-        for (_, h) in core_handles {
+        for h in core_handles.values() {
             h.abort();
+        }
+        for (_, handle) in core_handles {
+            assert!(handle.await.unwrap_err().is_cancelled());
         }
 
         (results, txn_id, ids)
@@ -969,9 +973,9 @@ mod test {
 
     async fn ddec_sunshine(slow: bool) {
         setup_threshold_keys().await;
+        let msg = 121u8;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            compute_cipher_from_storage(None, TEST_MSG.into(), &TEST_THRESHOLD_KEY_ID.to_string())
-                .await;
+            compute_cipher_from_storage(None, msg.into(), &TEST_THRESHOLD_KEY_ID.to_string()).await;
         let op = OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
@@ -992,12 +996,14 @@ mod test {
                             .as_slice(),
                     )
                     .unwrap();
-                    assert_eq!(
-                        serde_asn1_der::from_bytes::<Plaintext>(&payload.plaintext)
-                            .unwrap()
-                            .as_u8(),
-                        TEST_MSG
-                    );
+                    if slow {
+                        assert_eq!(
+                            serde_asn1_der::from_bytes::<Plaintext>(&payload.plaintext)
+                                .unwrap()
+                                .as_u8(),
+                            msg,
+                        );
+                    }
                     assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
                     assert_eq!(resp.operation_val.tx_id, txn_id);
                 }
@@ -1010,9 +1016,9 @@ mod test {
 
     async fn reenc_sunshine(slow: bool) {
         setup_threshold_keys().await;
+        let msg = 111u8;
         let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            compute_cipher_from_storage(None, TEST_MSG.into(), &TEST_THRESHOLD_KEY_ID.to_string())
-                .await;
+            compute_cipher_from_storage(None, msg.into(), &TEST_THRESHOLD_KEY_ID.to_string()).await;
 
         // we need a KMS client to simply the boilerplate
         // for setting up the request correctly
@@ -1090,9 +1096,11 @@ mod test {
                     }
                 }))),
             };
-            _ = kms_client
+            let pt = kms_client
                 .process_reencryption_resp(Some(kms_req), &agg_resp, &enc_pk, &enc_sk)
                 .unwrap()
+                .unwrap();
+            assert_eq!(pt.as_u8(), msg);
         } else {
             // otherwise just check that we're getting dummy values back
             for result in results {
@@ -1209,6 +1217,7 @@ mod test {
 
     #[tokio::test]
     #[serial_test::serial]
+    #[tracing_test::traced_test]
     async fn ddec_sunshine_mocked_core() {
         ddec_sunshine(false).await
     }
@@ -1240,6 +1249,7 @@ mod test {
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     #[serial_test::serial]
+    #[tracing_test::traced_test]
     async fn ddec_sunshine_slow() {
         ddec_sunshine(true).await
     }

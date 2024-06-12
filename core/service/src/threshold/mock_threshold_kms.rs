@@ -5,7 +5,7 @@ use std::str::FromStr;
 use tokio::task::JoinHandle;
 use tonic::{transport, Request, Response, Status};
 
-use crate::consts::{BASE_PORT, DEFAULT_URL, TEST_MSG};
+use crate::consts::{BASE_PORT, DEFAULT_URL};
 use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
@@ -18,7 +18,7 @@ use crate::rpc::rpc_types::{Plaintext, PubDataType, CURRENT_FORMAT_VERSION};
 pub async fn setup_mock_kms(n: usize) -> HashMap<u32, JoinHandle<()>> {
     let mut out = HashMap::new();
     for i in 1..=n {
-        let port = BASE_PORT + i as u16;
+        let port = BASE_PORT + (i as u16) * 100;
         let url = format!("{DEFAULT_URL}:{}", port);
         let addr = SocketAddr::from_str(url.as_str()).unwrap();
         let handle = tokio::spawn(async move {
@@ -125,11 +125,8 @@ impl CoreServiceEndpoint for MockThresholdKms {
                 servers_needed: 0,
                 verification_key: vec![],
                 digest: "dummy digest".as_bytes().to_vec(),
-                plaintext: serde_asn1_der::to_vec(&Plaintext::new(
-                    TEST_MSG as u128,
-                    crate::kms::FheType::Euint8,
-                ))
-                .unwrap(),
+                plaintext: serde_asn1_der::to_vec(&Plaintext::new(42, crate::kms::FheType::Euint8))
+                    .unwrap(),
             }),
         }))
     }

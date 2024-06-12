@@ -5208,6 +5208,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "tracing-test",
  "typed-builder",
 ]
 

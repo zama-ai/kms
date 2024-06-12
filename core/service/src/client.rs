@@ -1490,7 +1490,7 @@ pub mod test_tools {
         let mut handles = Vec::new();
         tracing::info!("Spawning servers...");
         let amount = priv_storage.len();
-        let timeout_secs = 360u64;
+        let timeout_secs = 60u64;
         for i in 1..=amount {
             let cur_pub_storage = pub_storage[i - 1].to_owned();
             let cur_priv_storage = priv_storage[i - 1].to_owned();
@@ -1520,6 +1520,7 @@ pub mod test_tools {
                 (i, server, config)
             }));
         }
+        assert_eq!(handles.len(), amount);
         // Wait for the server to start
         tracing::info!("Client waiting for server");
         let mut servers = Vec::with_capacity(amount);
@@ -1527,7 +1528,7 @@ pub mod test_tools {
             let (i, kms_server_res, config) = cur_handle.await.unwrap();
             match kms_server_res {
                 Ok(kms_server) => servers.push((i, kms_server, config)),
-                Err(e) => tracing::warn!("Failed to start server {i} with error {:?}", e),
+                Err(e) => panic!("Failed to start server {i} with error {:?}", e),
             }
         }
         tracing::info!("Servers initialized. Starting servers...");

@@ -1,4 +1,4 @@
-use crate::kms::{FheType, RequestId};
+use crate::kms::RequestId;
 use lazy_static::lazy_static;
 
 // The amount of bytes in an ID (key handle, request ID etc.)
@@ -16,8 +16,6 @@ pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 pub const BASE_PORT: u16 = 50050;
 pub const DEFAULT_URL: &str = "127.0.0.1";
 pub const DEFAULT_PROT: &str = "http";
-pub const TEST_MSG: u8 = 42;
-pub const TEST_FHE_TYPE: FheType = FheType::Euint8;
 pub const AMOUNT_PARTIES: usize = 4;
 pub const THRESHOLD: usize = 1;
 // TODO do we want to load this from a configuration?

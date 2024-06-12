@@ -14,6 +14,7 @@ jobs:
     uses: ./.github/workflows/common-build-big-instance.yml
     with:
       working-directory: './blockchain/connector'
+      args-tests: '-F slow_tests'
       args-tests-fhe: ''
       package-name: 'kms-blockchain-connector'
     permissions:

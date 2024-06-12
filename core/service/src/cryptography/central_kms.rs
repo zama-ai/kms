@@ -604,7 +604,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::{KmsFheKeyHandles, Storage};
-    use crate::consts::TEST_MSG;
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM_PATH,
@@ -781,7 +780,7 @@ mod tests {
     }
 
     async fn simulate_decrypt(sim_type: SimulationType, kms_key_path: &str, key_id: &RequestId) {
-        let msg = TEST_MSG;
+        let msg = 111u8;
         let keys: CentralizedTestingKeys = read_element(kms_key_path).await.unwrap();
         let (ct, fhe_type) = compute_cipher(
             msg.into(),
@@ -924,7 +923,7 @@ mod tests {
         kms_key_path: &str,
         key_handle: &RequestId,
     ) {
-        let msg = TEST_MSG;
+        let msg = 112u8;
         let mut rng = AesRng::seed_from_u64(1);
         let keys: CentralizedTestingKeys = read_element(kms_key_path).await.unwrap();
         let (ct, fhe_type) = compute_cipher(

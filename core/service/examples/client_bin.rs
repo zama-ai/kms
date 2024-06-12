@@ -48,7 +48,7 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use kms_lib::{
-        consts::{DEFAULT_DEC_ID, DEFAULT_PARAM_PATH, TEST_MSG},
+        consts::{DEFAULT_DEC_ID, DEFAULT_PARAM_PATH},
         storage::{FileStorage, StorageType},
         util::key_setup::compute_cipher_from_storage,
     };
@@ -76,9 +76,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Client::new_client(client_storage, pub_storage, DEFAULT_PARAM_PATH, 1, 1)
             .await
             .unwrap();
+    let msg = 50u8;
     let (ct, fhe_type) =
-        compute_cipher_from_storage(None, TEST_MSG.into(), &DEFAULT_CENTRAL_KEY_ID.to_string())
-            .await;
+        compute_cipher_from_storage(None, msg.into(), &DEFAULT_CENTRAL_KEY_ID.to_string()).await;
 
     // DECRYPTION REQUEST
     let req = internal_client.decryption_request(
