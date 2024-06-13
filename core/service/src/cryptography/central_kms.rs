@@ -158,12 +158,11 @@ impl BaseKmsStruct {
         }
     }
 
-    pub fn new_rng(&self) -> anyhow::Result<AesRng> {
+    pub async fn new_rng(&self) -> anyhow::Result<AesRng> {
         let mut seed = [0u8; RND_SIZE];
         // Make a seperate scope for the rng so that it is dropped before the lock is released
         {
-            let mut base_rng =
-                handle_potential_err(self.rng.try_lock(), "Could not get lock on rng".to_string())?;
+            let mut base_rng = self.rng.lock().await;
             base_rng.try_fill_bytes(seed.as_mut())?;
         }
         Ok(AesRng::from_seed(seed))
@@ -960,7 +959,7 @@ mod tests {
             }
             keys
         };
-        let mut rng = kms.base_kms.new_rng().unwrap();
+        let mut rng = kms.base_kms.new_rng().await.unwrap();
         let raw_cipher = SoftwareKms::<FileStorage, FileStorage>::reencrypt(
             &kms.fhe_keys
                 .read()

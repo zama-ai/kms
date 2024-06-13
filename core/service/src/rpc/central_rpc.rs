@@ -280,7 +280,7 @@ impl<
         let fhe_keys = Arc::clone(&self.fhe_keys);
         let sig_key = Arc::clone(&self.base_kms.sig_key);
         let mut rng = tonic_handle_potential_err(
-            self.base_kms.new_rng(),
+            self.base_kms.new_rng().await,
             "Could not get handle on RNG".to_string(),
         )?;
 
@@ -489,7 +489,7 @@ impl<
         let meta_store = Arc::clone(&self.crs_meta_map);
         let sk = Arc::clone(&self.base_kms.sig_key);
         let rng = tonic_handle_potential_err(
-            self.base_kms.new_rng(),
+            self.base_kms.new_rng().await,
             "Could not generate RNG for CRS generation".to_string(),
         )?;
 

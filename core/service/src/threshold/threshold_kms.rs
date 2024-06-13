@@ -447,7 +447,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             self.role_assignments.clone(),
         )?;
         let mut base_session =
-            BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng()?)?;
+            BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng().await?)?;
 
         // TODO does this work with base session? we have a catch 22 otherwise
         tracing::info!("Starting PRSS for identity {}.", own_identity);
@@ -785,7 +785,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         )?;
         let prss_state = prss_setup.new_prss_session_state(session_id);
         let session = SmallSession {
-            base_session: BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng()?)?,
+            base_session: BaseSessionStruct::new(
+                parameters,
+                networking,
+                self.base_kms.new_rng().await?,
+            )?,
             prss_state,
         };
         Ok(session)
@@ -817,8 +821,19 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let session_id: u128 = request_id.clone().try_into()?;
         let own_identity = self.own_identity()?;
         let my_id = self.my_id;
-        let base_sessions: Vec<_> = (session_id..session_id + self.num_sessions_preproc as u128)
-            .map(|sid| {
+
+        let sids: Vec<_> = (session_id..session_id + self.num_sessions_preproc as u128).collect();
+        let rngs = {
+            let mut out = Vec::with_capacity(sids.len());
+            for _ in &sids {
+                out.push(self.base_kms.new_rng().await?)
+            }
+            out
+        };
+        let base_sessions: Vec<_> = sids
+            .into_iter()
+            .zip(rngs)
+            .map(|(sid, rng)| {
                 let session_id = SessionId(sid);
                 let params = SessionParameters::new(
                     self.threshold,
@@ -829,7 +844,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 let networking =
                     (self.networking_strategy)(session_id, self.role_assignments.clone());
 
-                BaseSessionStruct::new(params, networking, self.base_kms.new_rng()?)
+                BaseSessionStruct::new(params, networking, rng)
             })
             .try_collect()?;
 
@@ -889,7 +904,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 self.role_assignments.clone(),
             )?;
             let networking = (self.networking_strategy)(session_id, self.role_assignments.clone());
-            BaseSessionStruct::new(params, networking, self.base_kms.new_rng()?)?
+            BaseSessionStruct::new(params, networking, self.base_kms.new_rng().await?)?
         };
 
         //Clone all the Arcs to give them to the tokio thread
@@ -1327,7 +1342,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let meta_store = Arc::clone(&self.reenc_meta_store);
         let fhe_keys = Arc::clone(&self.fhe_keys);
         let mut rng = tonic_handle_potential_err(
-            self.base_kms.new_rng(),
+            self.base_kms.new_rng().await,
             "Could not get a new RNG".to_string(),
         )?;
         let sig_key = Arc::clone(&self.base_kms.sig_key);
