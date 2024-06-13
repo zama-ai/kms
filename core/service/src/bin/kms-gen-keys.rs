@@ -23,7 +23,7 @@ use tracing_subscriber::{filter, layer::SubscriberExt, Layer};
     the FHE key shares should be used for testing only. \
     Use the threshold protocols to generate FHE key shares. \
     But observe that threshold mode should only be used for testing since keys will get generated centrally. \n
-    For example, to generate centralized keys with the default paramters \
+    For example, to generate centralized keys with the default parameters \
     (from parameters/default_params.json) run: \n
     ./kms-gen-keys centralized \n
     Multiple options are supported which can be explored with \
@@ -56,6 +56,9 @@ enum Mode {
         /// Whether to overwrite the existing keys,
         #[clap(long, default_value_t = false)]
         overwrite: bool,
+        /// Whether to output the private FHE key separately,
+        #[clap(long, default_value_t = false)]
+        write_privkey: bool,
     },
 
     /// Generate shares of FHE key shares and signing keys.
@@ -88,7 +91,7 @@ enum Mode {
 /// Key generation is supported for 2 different modes; centralized and threshold.
 /// However, the threshold mode should only be used for testing since keys will get generated centrally.
 ///
-/// For example, to generate centralized keys with the default paramters
+/// For example, to generate centralized keys with the default parameters
 /// (from parameters/default_params.json) run:
 /// ```
 /// ./kms-gen-keys centralized
@@ -115,6 +118,7 @@ async fn main() {
             pub_path,
             deterministic,
             overwrite,
+            write_privkey,
         } => {
             let pub_path = pub_path.as_ref().map(Path::new);
             let priv_path = priv_path.as_ref().map(Path::new);
@@ -135,6 +139,7 @@ async fn main() {
                 &DEFAULT_CENTRAL_KEY_ID,
                 &OTHER_CENTRAL_DEFAULT_ID,
                 deterministic,
+                write_privkey,
             )
             .await
             {

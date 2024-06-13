@@ -753,6 +753,7 @@ mod test {
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,
             true,
+            false,
         )
         .await;
         ensure_client_keys_exist(None, true).await;

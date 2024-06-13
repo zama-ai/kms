@@ -64,6 +64,7 @@ pub enum PrivDataType {
     SigningKey,
     FheKeyInfo,
     CrsInfo,
+    FhePrivateKey,
 }
 
 impl fmt::Display for PrivDataType {
@@ -72,6 +73,7 @@ impl fmt::Display for PrivDataType {
             PrivDataType::FheKeyInfo => write!(f, "FheKeyInfo"),
             PrivDataType::SigningKey => write!(f, "SigningKey"),
             PrivDataType::CrsInfo => write!(f, "CrsInfo"),
+            PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
         }
     }
 }

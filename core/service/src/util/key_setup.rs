@@ -521,6 +521,7 @@ pub async fn ensure_central_keys_exist(
     key_id: &RequestId,
     other_key_id: &RequestId,
     deterministic: bool,
+    write_privkey: bool,
 ) -> bool {
     ensure_central_server_signing_keys_exist(priv_path, pub_path, deterministic).await;
     let mut priv_storage = FileStorage::new_centralized(priv_path, StorageType::PRIV).unwrap();
@@ -542,8 +543,11 @@ pub async fn ensure_central_keys_exist(
         read_all_data(&priv_storage, &PrivDataType::SigningKey.to_string())
             .await
             .unwrap();
-    if sk_map.values().cloned().collect_vec().len() != 1 {
-        panic!("Client signing key map should only contain one entry");
+    if sk_map.values().len() != 1 {
+        panic!(
+            "Client signing key map must contain exactly one entry, but contains {}",
+            sk_map.values().len()
+        );
     }
     let sk = sk_map
         .values()
@@ -572,6 +576,18 @@ pub async fn ensure_central_keys_exist(
         )
         .await
         .unwrap();
+
+        // when the flag [write_privkey] is set, store the private key separately
+        if write_privkey {
+            store_at_request_id(
+                &mut priv_storage,
+                req_id,
+                &key_info.client_key,
+                &PrivDataType::FhePrivateKey.to_string(),
+            )
+            .await
+            .unwrap();
+        }
     }
     for (req_id, cur_keys) in &pub_fhe_map {
         store_at_request_id(
@@ -617,6 +633,7 @@ mod tests {
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,
             true,
+            false,
         )
         .await;
         ensure_central_crs_store_exists(None, None, TEST_PARAM_PATH, &TEST_CRS_ID, true).await;
@@ -642,6 +659,7 @@ mod tests {
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
             true,
+            false,
         )
         .await;
         ensure_central_crs_store_exists(None, None, DEFAULT_PARAM_PATH, &DEFAULT_CRS_ID, true)
