@@ -480,7 +480,7 @@ impl Client {
     }
 
     /// Helper method to create a client based on a specific type of storage for loading the keys.
-    /// Observe that this method is decoupled from the [Client] to ensure wasm complience as wasm cannot handle
+    /// Observe that this method is decoupled from the [Client] to ensure wasm compliance as wasm cannot handle
     /// file reading or generic traits.
     #[cfg(feature = "non-wasm")]
     pub async fn new_client<ClientS: Storage, PubS: StorageReader>(
@@ -570,7 +570,7 @@ impl Client {
     ///
     /// The key generated will then be stored under the request_id handle.
     /// In the threshold case, we also need to reference the preprocessing we want to consume via
-    /// its [`RequestId`] it can be set to None in the centralised case
+    /// its [`RequestId`] it can be set to None in the centralized case
     #[cfg(feature = "non-wasm")]
     pub fn key_gen_request(
         &self,
@@ -1005,7 +1005,7 @@ impl Client {
                 return Ok(None);
             }
             // Observe that it has already been verified in [self.validate_meta_data] that server
-            // verification key is in the set of permissble keys
+            // verification key is in the set of permissible keys
             let cur_verf_key: PublicSigKey = from_bytes(&cur_payload.verification_key)?;
             if !BaseKmsStruct::verify_sig(&to_vec(&cur_payload)?, &sig, &cur_verf_key) {
                 tracing::warn!("Signature on received response is not valid!");
@@ -1135,7 +1135,7 @@ impl Client {
             };
             // Validate the signature on the response
             // Observe that it has already been verified in [self.validate_meta_data] that server
-            // verification key is in the set of permissble keys
+            // verification key is in the set of permissible keys
             let cur_verf_key: PublicSigKey = from_bytes(&cur_payload.verification_key)?;
             if !BaseKmsStruct::verify_sig(&to_vec(&cur_payload)?, &sig, &cur_verf_key) {
                 tracing::warn!("Signature on received response is not valid!");
@@ -1320,7 +1320,7 @@ impl Client {
         }
         for (cur_role_id, cur_resp) in &agg_resp {
             // Observe that it has already been verified in [validate_meta_data] that server
-            // verification key is in the set of permissble keys
+            // verification key is in the set of permissible keys
             //
             // Also it's ok to use [cur_resp.digest] as the link since we already checked
             // that it matches with the original request
@@ -1578,7 +1578,7 @@ pub mod test_tools {
         (server_handles, client_handles)
     }
 
-    /// Setup a client and a server running with non-persistant storage.
+    /// Setup a client and a server running with non-persistent storage.
     pub async fn setup_centralized_no_client<
         PubS: Storage + Sync + Send + 'static,
         PrivS: Storage + Sync + Send + 'static,
@@ -1694,7 +1694,7 @@ pub(crate) mod tests {
     use tonic::transport::Channel;
 
     /// Reads the testing keys for the threshold servers and starts them up, and returns a hash map
-    /// of the servers, based on their ID, which starts from 1. A smiliar map is also returned
+    /// of the servers, based on their ID, which starts from 1. A similar map is also returned
     /// is the client endpoints needed to talk with each of the servers, finally the internal
     /// client is returned (which is responsible for constructing requests and validating
     /// responses).
@@ -2195,7 +2195,7 @@ pub(crate) mod tests {
             TEST_PARAM_PATH,
             &TEST_CENTRAL_KEY_ID.to_string(),
             TypedPlaintext::U8(42),
-            5,
+            9,
         )
         .await;
     }
@@ -2262,7 +2262,7 @@ pub(crate) mod tests {
         }
         assert_eq!(req_response_vec.len(), parallelism);
 
-        // check that initial request responsed are all Empty
+        // check that initial request responses are all Empty
         for rr in req_response_vec {
             assert_eq!(rr, Empty {});
         }
@@ -2274,7 +2274,7 @@ pub(crate) mod tests {
             let mut cur_client = kms_client.clone();
             resp_tasks.spawn(async move {
                 // Sleep initially to give the server some time to complete the decryption
-                tokio::time::sleep(std::time::Duration::from_millis(50 * parallelism as u64)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
                 // send query
                 let mut response = cur_client
@@ -2288,9 +2288,9 @@ pub(crate) mod tests {
                 while response.is_err()
                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                 {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     // we may wait up to 5s, for big ciphertexts
-                    if ctr >= 50 {
+                    if ctr >= 100 {
                         panic!("timeout while waiting for decryption result");
                     }
                     ctr += 1;
@@ -2358,7 +2358,7 @@ pub(crate) mod tests {
             &TEST_CENTRAL_KEY_ID.to_string(),
             false,
             TypedPlaintext::U8(42),
-            5,
+            7,
         )
         .await;
     }
@@ -2468,8 +2468,7 @@ pub(crate) mod tests {
             let mut cur_client = kms_client.clone();
             resp_tasks.spawn(async move {
                 // Sleep initially to give the server some time to complete the reencryption
-                tokio::time::sleep(std::time::Duration::from_millis(100 * parallelism as u64))
-                    .await;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
                 // send query
                 let mut response = cur_client
@@ -2483,9 +2482,9 @@ pub(crate) mod tests {
                 while response.is_err()
                     && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                 {
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     // we may wait up to 5s, for big ciphertexts
-                    if ctr >= 50 {
+                    if ctr >= 100 {
                         panic!("timeout while waiting for reencryption result");
                     }
                     ctr += 1;
