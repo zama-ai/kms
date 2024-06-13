@@ -1,23 +1,14 @@
-use crate::kms::RequestId;
-use lazy_static::lazy_static;
-
 // The amount of bytes in an ID (key handle, request ID etc.)
 pub const ID_LENGTH: usize = 20;
 pub const KEY_PATH_PREFIX: &str = "keys";
 pub const DEFAULT_PARAM_PATH: &str = "parameters/default_params.json";
+pub const TEST_PARAM_PATH: &str = "parameters/small_test_params.json";
 
 #[cfg(test)]
 pub const TMP_PATH_PREFIX: &str = "temp";
 #[cfg(test)]
 pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 
-// TODO Test should be in a test module, however I have spend an hour trying to refactor this
-// without success. Someone with good rust skills are very welcome to try this
-pub const BASE_PORT: u16 = 50050;
-pub const DEFAULT_URL: &str = "127.0.0.1";
-pub const DEFAULT_PROT: &str = "http";
-pub const AMOUNT_PARTIES: usize = 4;
-pub const THRESHOLD: usize = 1;
 // TODO do we want to load this from a configuration?
 pub const SEC_PAR: u64 = 128;
 // TODO do we want to load this from a configuration?
@@ -29,24 +20,35 @@ pub const COMPRESSED: bool = true;
 
 pub const MINIMUM_SESSIONS_PREPROC: u16 = 2;
 
-lazy_static! {
-    pub static ref TEST_CENTRAL_KEY_ID: RequestId =
-        RequestId::derive("TEST_CENTRAL_KEY_ID").unwrap();
-    pub static ref TEST_THRESHOLD_KEY_ID: RequestId =
-        RequestId::derive("TEST_THRESHOLD_KEY_ID").unwrap();
-    pub static ref TEST_CRS_ID: RequestId = RequestId::derive("TEST_CRS_ID").unwrap();
-    pub static ref OTHER_CENTRAL_TEST_ID: RequestId = RequestId::derive("OTHER_TEST_ID").unwrap();
-    pub static ref DEFAULT_CENTRAL_KEY_ID: RequestId =
-        RequestId::derive("DEFAULT_CENTRAL_KEY_ID").unwrap();
-    pub static ref DEFAULT_THRESHOLD_KEY_ID: RequestId =
-        RequestId::derive("DEFAULT_THRESHOLD_KEY_ID").unwrap();
-    pub static ref DEFAULT_CRS_ID: RequestId = RequestId::derive("DEFAULT_CRS_ID").unwrap();
-    pub static ref DEFAULT_DEC_ID: RequestId = RequestId::derive("DEFAULT_DEC_ID").unwrap();
-    pub static ref OTHER_CENTRAL_DEFAULT_ID: RequestId =
-        RequestId::derive("OTHER_DEFAULT_ID").unwrap();
-}
+cfg_if::cfg_if! {
+    if #[cfg(any(test, feature = "testing"))] {
+        use crate::kms::RequestId;
+        use lazy_static::lazy_static;
 
-pub const TEST_PARAM_PATH: &str = "parameters/small_test_params.json";
+        pub const AMOUNT_PARTIES: usize = 4;
+        pub const THRESHOLD: usize = 1;
+        pub const BASE_PORT: u16 = 50050;
+        pub const DEFAULT_URL: &str = "127.0.0.1";
+        pub const DEFAULT_PROT: &str = "http";
+
+        lazy_static! {
+            pub static ref TEST_CENTRAL_KEY_ID: RequestId =
+                RequestId::derive("TEST_CENTRAL_KEY_ID").unwrap();
+            pub static ref TEST_THRESHOLD_KEY_ID: RequestId =
+                RequestId::derive("TEST_THRESHOLD_KEY_ID").unwrap();
+            pub static ref TEST_CRS_ID: RequestId = RequestId::derive("TEST_CRS_ID").unwrap();
+            pub static ref OTHER_CENTRAL_TEST_ID: RequestId = RequestId::derive("OTHER_TEST_ID").unwrap();
+            pub static ref DEFAULT_CENTRAL_KEY_ID: RequestId =
+                RequestId::derive("DEFAULT_CENTRAL_KEY_ID").unwrap();
+            pub static ref DEFAULT_THRESHOLD_KEY_ID: RequestId =
+                RequestId::derive("DEFAULT_THRESHOLD_KEY_ID").unwrap();
+            pub static ref DEFAULT_CRS_ID: RequestId = RequestId::derive("DEFAULT_CRS_ID").unwrap();
+            pub static ref DEFAULT_DEC_ID: RequestId = RequestId::derive("DEFAULT_DEC_ID").unwrap();
+            pub static ref OTHER_CENTRAL_DEFAULT_ID: RequestId =
+                RequestId::derive("OTHER_DEFAULT_ID").unwrap();
+        }
+    }
+}
 
 cfg_if::cfg_if! {
     if #[cfg(test)] {

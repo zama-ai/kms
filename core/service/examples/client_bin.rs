@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use kms_lib::{
         consts::{DEFAULT_DEC_ID, DEFAULT_PARAM_PATH},
         storage::{FileStorage, StorageType},
-        util::key_setup::compute_cipher_from_storage,
+        util::key_setup::test_tools::compute_cipher_from_storage,
     };
 
     // TODO ensure the keys exist

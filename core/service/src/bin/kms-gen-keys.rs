@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use clap::{Parser, Subcommand};
+use kms_lib::util::key_setup::test_tools::ensure_threshold_keys_exist;
 use kms_lib::{
     consts::{
         DEFAULT_CENTRAL_KEY_ID, DEFAULT_CRS_ID, DEFAULT_THRESHOLD_KEY_ID, OTHER_CENTRAL_DEFAULT_ID,
@@ -8,7 +9,7 @@ use kms_lib::{
     storage::{FileStorage, StorageType},
     util::key_setup::{
         ensure_central_crs_store_exists, ensure_central_keys_exist,
-        ensure_central_server_signing_keys_exist, ensure_threshold_keys_exist,
+        ensure_central_server_signing_keys_exist,
     },
 };
 use strum::IntoEnumIterator;

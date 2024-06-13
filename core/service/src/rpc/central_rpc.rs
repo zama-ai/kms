@@ -3,6 +3,9 @@ use super::rpc_types::{
     CURRENT_FORMAT_VERSION,
 };
 use crate::conf::centralized::CentralizedConfigNoStorage;
+#[cfg(any(test, feature = "testing"))]
+use crate::consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH};
+use crate::cryptography::central_kms::handle_potential_err;
 use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
@@ -14,10 +17,6 @@ use crate::rpc::rpc_types::PubDataType;
 use crate::storage::{store_at_request_id, Storage};
 use crate::util::file_handling::read_as_json;
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
-use crate::{
-    consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH},
-    cryptography::central_kms::handle_potential_err,
-};
 use crate::{
     cryptography::central_kms::{
         async_decrypt, async_generate_crs, async_generate_fhe_keys, async_reencrypt, BaseKmsStruct,
@@ -617,6 +616,7 @@ pub(crate) fn convert_key_response(
         .collect()
 }
 
+#[cfg(any(test, feature = "testing"))]
 pub(crate) fn default_param_file_map() -> HashMap<String, String> {
     HashMap::from_iter(vec![
         (

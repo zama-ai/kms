@@ -8,7 +8,7 @@ use kms_blockchain_client::query_client::{
 };
 use kms_lib::kms::DecryptionResponsePayload;
 use kms_lib::rpc::rpc_types::Plaintext;
-use kms_lib::util::key_setup::{compute_cipher_from_storage, TypedPlaintext};
+use kms_lib::util::key_setup::test_tools::{compute_cipher_from_storage, TypedPlaintext};
 use simulator::conf::{Settings, SimConfig};
 use std::error::Error;
 use std::path::Path;

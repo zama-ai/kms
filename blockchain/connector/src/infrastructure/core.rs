@@ -720,20 +720,19 @@ mod test {
         client::{test_tools, Client},
         consts::{
             AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID,
-            TEST_CENTRAL_KEY_ID, TEST_THRESHOLD_KEY_ID, THRESHOLD,
+            TEST_CENTRAL_KEY_ID, TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID, THRESHOLD,
         },
-        kms::RequestId,
+        kms::{
+            AggregatedReencryptionResponse, DecryptionResponsePayload, ReencryptionResponse,
+            RequestId,
+        },
+        rpc::rpc_types::{Plaintext, CURRENT_FORMAT_VERSION},
         storage::{FileStorage, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
-        util::key_setup::{
-            compute_cipher_from_storage, ensure_central_keys_exist, ensure_client_keys_exist, purge,
+        util::key_setup::test_tools::{
+            compute_cipher_from_storage, ensure_threshold_keys_exist, purge,
         },
-    };
-    use kms_lib::{
-        consts::TEST_PARAM_PATH,
-        kms::{AggregatedReencryptionResponse, DecryptionResponsePayload, ReencryptionResponse},
-        rpc::rpc_types::{Plaintext, CURRENT_FORMAT_VERSION},
-        util::key_setup::ensure_threshold_keys_exist,
+        util::key_setup::{ensure_central_keys_exist, ensure_client_keys_exist},
     };
     use rand::RngCore;
     use std::collections::HashMap;

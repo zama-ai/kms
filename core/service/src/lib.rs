@@ -31,6 +31,7 @@ pub mod cryptography {
 #[cfg(feature = "non-wasm")]
 pub mod threshold {
     pub mod meta_store;
+    #[cfg(any(test, feature = "testing"))]
     pub mod mock_threshold_kms;
     pub mod threshold_kms;
 }

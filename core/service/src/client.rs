@@ -1454,6 +1454,7 @@ pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
 // but we need it in other places such as the connector
 // and cfg(test) is not compiled by tests in other crates.
 // Consider putting this behind a test-specific crate.
+#[cfg(any(test, feature = "testing"))]
 #[cfg(feature = "non-wasm")]
 pub mod test_tools {
     use super::*;
@@ -1675,8 +1676,8 @@ pub(crate) mod tests {
     use crate::util::file_handling::read_element;
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
-    use crate::util::key_setup::{compute_cipher_from_storage, FhePublicKey};
-    use crate::util::key_setup::{purge, TypedPlaintext};
+    use crate::util::key_setup::test_tools::{compute_cipher_from_storage, purge, TypedPlaintext};
+    use crate::util::key_setup::FhePublicKey;
     use crate::{
         client::num_blocks,
         kms::{Empty, RequestId},

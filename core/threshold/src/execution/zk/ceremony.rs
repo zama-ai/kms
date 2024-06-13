@@ -541,8 +541,41 @@ mod tests {
     use tfhe_zk_pok::{curve_api::Bls12_446, proofs};
     use tokio::task::JoinSet;
 
+    #[derive(Clone, Default)]
+    struct InsecureCeremony {}
+
+    #[async_trait]
+    impl Ceremony for InsecureCeremony {
+        async fn execute<Z: Ring, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+            &self,
+            session: &mut S,
+            witness_dim: usize,
+        ) -> anyhow::Result<PublicParameter> {
+            Ok(PublicParameter {
+                round: session.num_parties(),
+                inner: (
+                    vec![curve::G1::GENERATOR; witness_dim * 2],
+                    vec![curve::G2::GENERATOR; witness_dim],
+                ),
+            })
+        }
+    }
+
     #[test]
-    fn test_honest_crs_ceremony() {
+    fn test_honest_crs_ceremony_secure() {
+        test_honest_crs_ceremony(RealCeremony::default)
+    }
+
+    #[test]
+    fn test_honest_crs_ceremony_insecure() {
+        test_honest_crs_ceremony(InsecureCeremony::default)
+    }
+
+    fn test_honest_crs_ceremony<F, C>(ceremony_f: F)
+    where
+        F: Fn() -> C,
+        C: Ceremony + 'static,
+    {
         let threshold = 1usize;
         let num_parties = 4usize;
         let witness_dim = 10usize;
@@ -558,9 +591,9 @@ mod tests {
         let mut set = JoinSet::new();
         for (index_id, _identity) in runtime.identities.clone().into_iter().enumerate() {
             let mut session = runtime.large_session_for_party(session_id, index_id);
+            let ceremony = ceremony_f();
             set.spawn(async move {
-                let real_ceremony = RealCeremony::default();
-                let out = real_ceremony
+                let out = ceremony
                     .execute::<ResiduePoly64, _, _>(&mut session, witness_dim)
                     .await
                     .unwrap();

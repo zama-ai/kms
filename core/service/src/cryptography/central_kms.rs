@@ -621,7 +621,7 @@ mod tests {
     use crate::rpc::rpc_types::{Kms, Plaintext};
     use crate::storage::{FileStorage, RamStorage, StorageType};
     use crate::util::file_handling::read_element;
-    use crate::util::key_setup::compute_cipher;
+    use crate::util::key_setup::test_tools::compute_cipher;
     use aes_prng::AesRng;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use rand::{RngCore, SeedableRng};

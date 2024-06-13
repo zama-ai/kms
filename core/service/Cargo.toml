@@ -11,6 +11,7 @@ crate-type = ["lib", "cdylib"]
 [[bin]] # Bin to generate keys
 name = "kms-gen-keys"
 path = "src/bin/kms-gen-keys.rs"
+required-features = ["testing"]
 
 [[bin]] # Bin to generate TLS certificates for the service
 name = "kms-gen-tls-certs"
@@ -105,8 +106,10 @@ tonic-build = "0.11"
 
 [features]
 default = ["non-wasm","grpc-client"]
+testing = []
 non-wasm = [
     "distributed-decryption/non-wasm",
+    # TODO we need a way to move "distributed-decryption/testing" to dev-dependencies
     "distributed-decryption/testing",
     "dep:aws-config",
     "dep:aws-nitro-enclaves-nsm-api",
@@ -127,8 +130,8 @@ non-wasm = [
     "dep:opentelemetry_sdk",
     "dep:prometheus",
 ]
-slow_tests = []
-wasm_tests = []
+slow_tests = ["testing"]
+wasm_tests = ["testing"]
 grpc-client = [
     "dep:tonic",
     "dep:tokio",
