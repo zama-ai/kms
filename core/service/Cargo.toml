@@ -25,6 +25,11 @@ path = "src/bin/kms-server.rs"
 name = "kms-init"
 path = "src/bin/kms-init.rs"
 
+[[bin]] # An example client binary
+name = "kms-example-client"
+path = "src/bin/kms-example-client.rs"
+required-features = ["testing"]
+
 [dependencies]
 aes = "0.8.4"
 aes-gcm-siv = "0.11.1"

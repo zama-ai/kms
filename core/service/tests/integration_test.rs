@@ -1,5 +1,5 @@
 use assert_cmd::{assert::OutputAssertExt, Command};
-use kms_lib::consts::{AMOUNT_PARTIES, KEY_PATH_PREFIX};
+use kms_lib::consts::KEY_PATH_PREFIX;
 use kms_lib::storage::{FileStorage, StorageType};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -40,23 +40,26 @@ fn purge_file_storage(storage: &FileStorage) {
     }
 }
 
+// We purge the centralized storage and the threshold storage for party-1
+// since the CLI test only use default_1.toml.
 fn purge_all() {
     let priv_storage = FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
     let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
     purge_file_storage(&priv_storage);
     purge_file_storage(&pub_storage);
-    for i in 1..=AMOUNT_PARTIES {
-        let priv_storage = FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap();
-        let pub_storage = FileStorage::new_threshold(None, StorageType::PUB, i).unwrap();
-        purge_file_storage(&priv_storage);
-        purge_file_storage(&pub_storage);
-    }
+
+    let i = 1usize;
+    let priv_storage = FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap();
+    let pub_storage = FileStorage::new_threshold(None, StorageType::PUB, i).unwrap();
+    purge_file_storage(&priv_storage);
+    purge_file_storage(&pub_storage);
 
     let key_dir = PathBuf::from_str(KEY_PATH_PREFIX).unwrap();
     if key_dir.exists() {
         fs::remove_dir_all(key_dir).unwrap();
     }
 }
+
 #[cfg(test)]
 mod kms_init_binary_test {
     use super::*;
