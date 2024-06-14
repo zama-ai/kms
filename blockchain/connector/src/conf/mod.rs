@@ -42,7 +42,7 @@ pub enum Mode {
     Test,
 }
 
-#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
 pub struct ContractFee {
     pub amount: u64,
     pub denom: String,
@@ -54,7 +54,16 @@ pub struct SignKeyConfig {
     pub bip32: Option<String>,
 }
 
-#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
+impl std::fmt::Debug for SignKeyConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SignKeyConfig")
+            .field("mnemonic", &"<REDACTED>")
+            .field("bip32", &"<REDACTED>")
+            .finish()
+    }
+}
+
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
 pub struct BlockchainConfig {
     pub addresses: Vec<String>,
     pub contract: String,
@@ -85,7 +94,7 @@ impl TimeoutTriple {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct TimeoutConfig {
     pub channel_timeout: u64,
     pub crs: TimeoutTriple,
@@ -139,12 +148,12 @@ impl TimeoutConfig {
     }
 }
 
-#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
 pub struct OracleConfig {
     pub addresses: Vec<String>,
 }
 
-#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
 pub struct ConnectorConfig {
     pub tick_interval_secs: u64,
     pub storage_path: String,
@@ -160,7 +169,7 @@ impl BlockchainConfig {
     }
 }
 
-#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default)]
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
 pub struct CoreConfig {
     pub addresses: Vec<String>,
     pub timeout_config: TimeoutConfig,

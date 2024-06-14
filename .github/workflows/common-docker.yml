@@ -150,7 +150,7 @@ jobs:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: index
 
       - name: Docker Build and Push Dev Image
-        if: ${{ github.event_name == 'release' && inputs.generate-dev-image }}
+        if: ${{ inputs.generate-dev-image }}
         uses: docker/build-push-action@v5
         with:
           context: .

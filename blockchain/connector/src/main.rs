@@ -24,7 +24,11 @@ async fn main() -> anyhow::Result<()> {
     init_tracing(config.tracing.clone())
         .map_err(|e| anyhow::anyhow!("Error initializing tracing and metrics {:?}", e))?;
 
-    tracing::info!("Starting kms-asc-connector with mode '{:?}'", mode);
+    tracing::info!(
+        "Starting kms-asc-connector in mode '{:?}' - config {:?}",
+        mode,
+        config
+    );
 
     kms_blockchain_connector::application::listen(config, mode).await
 }
