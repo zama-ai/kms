@@ -1,0 +1,50 @@
+name: zama-kms
+
+services:
+
+  blockchain-validator:
+    platform: linux/amd64
+    image: ghcr.io/zama-ai/kms-asc-dev:latest
+    ports:
+      - "36656:26656"
+      - "36657:26657"
+      - "1317:1317"
+      - "9090:9090"
+    volumes:
+      - ./bootstrap_asc.sh:/bootstrap.sh
+    entrypoint: [ "/bootstrap.sh" ]
+    healthcheck:
+      test: "wget -Sq --spider http://localhost:26657/status"
+      interval: 1s
+      timeout: 1s
+      retries: 5
+      start_period: 10s
+
+  connector:
+    platform: linux/amd64
+    image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
+    command:
+      - "kms-blockchain-connector"
+    volumes:
+      - ./connector.toml:/app/kms-blockchain-connector/config/default.toml
+    depends_on:
+      blockchain-validator:
+        condition: service_healthy
+      core:
+        condition: service_healthy
+
+  core:
+    platform: linux/amd64
+    image: ghcr.io/zama-ai/kms-service-dev:latest
+    volumes:
+      - ./core.toml:/app/kms/core/service/config/default_centralized.toml
+    ports:
+      - "60051:60051"
+    healthcheck:
+      test: "wget -Sq --spider http://localhost:60051"
+      interval: 1s
+      timeout: 1s
+      retries: 5
+      start_period: 10s
+
+

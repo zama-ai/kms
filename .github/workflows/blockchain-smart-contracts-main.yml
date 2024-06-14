@@ -43,7 +43,9 @@ jobs:
     with:
       working-directory: './blockchain/contracts'
       push_image: true
-      image-name: 'kms-smart-contract-deploy'
+      image-name: 'kms-asc'
+      image-dev: 'kms-asc-dev'
+      generate-dev-image: true
     needs:
         - build-smart-contracts
         - optimize-smart-contracts

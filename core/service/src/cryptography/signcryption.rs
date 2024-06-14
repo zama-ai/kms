@@ -330,6 +330,7 @@ where
 }
 
 /// Serialize an element and hash it using a cryptographic hash function.
+#[cfg(any(feature = "testing", feature = "non-wasm"))]
 pub(crate) fn serialize_hash_element<T>(msg: &T) -> anyhow::Result<Vec<u8>>
 where
     T: Serialize,

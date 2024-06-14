@@ -36,6 +36,8 @@ jobs:
       working-directory: "./blockchain/gateway"
       push_image: true
       image-name: 'kms-blockchain-gateway'
+      image-dev: 'kms-blockchain-gateway-dev'
+      generate-dev-image: true
     needs:
       - build
     secrets:

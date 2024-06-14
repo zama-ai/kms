@@ -19,7 +19,7 @@ RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".ins
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path core/service --root core/service --bin kms-server --bin kms-gen --bin kms-init
+    cargo install --path core/service --root core/service --bin kms-server --bin kms-gen-keys --bin kms-init
 
 # Generate the default software keys
 RUN /app/kms/bin/kms-gen /app/kms/temp/
@@ -43,15 +43,18 @@ RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
 # Third stage: Copy the binaries from the base stage and the go-runtime stage
 FROM debian:stable-slim as runtime
-WORKDIR /app/kms
+WORKDIR /app/kms/core/service
 
 RUN mkdir -p /app/kms/parameters
 
 # Set the path to include the binaries and not just the default /usr/local/bin
-ENV PATH="$PATH:/app/kms/bin"
+ENV PATH="$PATH:/app/kms/core/service/bin"
 # Copy the binaries from the base stage
-COPY --from=base /app/kms/core/service/bin/ /app/kms/bin/
-COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
-COPY ./core/service/parameters/default_params.json /app/kms/parameters/
+COPY --from=base /app/kms/core/service/bin/ /app/kms/core/service/bin/
+COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/core/service/bin/
+COPY ./core/service/parameters/default_params.json /app/kms/core/service/parameters/
+COPY ./core/service/config/default_centralized.toml /app/kms/core/service/config/
 
-CMD ["kms-server", "dev"]
+RUN /app/kms/core/service/bin/kms-gen-keys centralized
+
+CMD ["kms-server", "dev", "centralized"]

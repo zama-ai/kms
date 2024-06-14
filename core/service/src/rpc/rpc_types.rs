@@ -224,14 +224,14 @@ impl crate::kms::ReencryptionRequest {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct RawDecryption {
-    pub(crate) bytes: Vec<u8>,
-    pub(crate) fhe_type: FheType,
+pub struct RawDecryption {
+    pub bytes: Vec<u8>,
+    pub fhe_type: FheType,
 }
 
 impl RawDecryption {
     #[allow(dead_code)]
-    pub(crate) fn new(bytes: Vec<u8>, fhe_type: FheType) -> Self {
+    pub fn new(bytes: Vec<u8>, fhe_type: FheType) -> Self {
         Self { bytes, fhe_type }
     }
 }
