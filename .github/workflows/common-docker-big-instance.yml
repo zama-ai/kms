@@ -85,8 +85,6 @@ jobs:
       image-dev: ${{ inputs.image-dev }}
       generate-dev-image: ${{ inputs.generate-dev-image }}
       arm-build: ${{ inputs.arm-build }}
-      cache-from: local
-      cache-to: ""
 
   stop-runner:
     name: Stops self-hosted EC2 runner
