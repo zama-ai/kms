@@ -3,7 +3,6 @@ name: zama-kms
 services:
 
   blockchain-validator:
-    platform: linux/amd64
     image: ghcr.io/zama-ai/kms-asc-dev:latest
     ports:
       - "36656:26656"
@@ -19,12 +18,12 @@ services:
       start_period: 10s
 
   connector:
-    platform: linux/amd64
     image: ghcr.io/zama-ai/kms-blockchain-connector-dev:latest
     command:
       - "kms-blockchain-connector"
-    volumes:
-      - ./connector.toml:/app/kms-blockchain-connector/config/default.toml
+    environment:
+      - ASC_CONN_BLOCKCHAIN_ADDRESSES=http://blockchain-validator:9090
+      - ASC_CONN_CORE_ADDRESS=http://core:50051
     depends_on:
       blockchain-validator:
         condition: service_healthy
@@ -32,14 +31,11 @@ services:
         condition: service_healthy
 
   core:
-    platform: linux/amd64
     image: ghcr.io/zama-ai/kms-service-dev:latest
-    volumes:
-      - ./core.toml:/app/kms/core/service/config/default_centralized.toml
     ports:
-      - "60051:60051"
+      - "50051:50051"
     healthcheck:
-      test: "wget -Sq --spider http://localhost:60051"
+      test: "wget -Sq --spider http://localhost:50051"
       interval: 1s
       timeout: 1s
       retries: 5

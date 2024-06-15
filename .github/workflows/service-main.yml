@@ -47,17 +47,4 @@ jobs:
       SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
 
-        #  docker-enclave:
-        #    uses: ./.github/workflows/common-docker-enclave.yml
-        #    permissions:
-        #      contents: 'read'
-        #      id-token: 'write'
-        #      packages: 'write'
-        #    with:
-        #      working-directory: "./core/service"
-        #      push_image: true
-        #      image-name: 'kms-service'
-        #    needs:
-        #      - build
-        #    secrets:
-        #      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
