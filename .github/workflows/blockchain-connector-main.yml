@@ -37,7 +37,7 @@ jobs:
       working-directory: "./blockchain/connector"
       push_image: true
       image-name: 'kms-blockchain-connector'
-      image-dev: 'kms-blockchain-connector-dev'
+      image-dev: 'kms-blockchain-connector'
       generate-dev-image: true
     needs:
       - build

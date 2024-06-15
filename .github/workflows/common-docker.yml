@@ -160,7 +160,7 @@ jobs:
           file: ${{ inputs.working-directory }}/operations/docker/dev.dockerfile
           push: ${{ inputs.push_image }}
           pull: false
-          tags: ghcr.io/zama-ai//${{ inputs.image-dev }}-dev:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-dev }}-dev:latest
+          tags: ghcr.io/zama-ai/${{ inputs.image-dev }}-dev:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-dev }}-dev:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: ${{ steps.meta.outputs.labels }}

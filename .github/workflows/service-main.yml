@@ -36,7 +36,7 @@ jobs:
       working-directory: "./core/service"
       push_image: true
       image-name: 'kms-service'
-      image-dev: 'kms-service-dev'
+      image-dev: 'kms-service'
       generate-dev-image: true
     needs:
       - build
