@@ -26,7 +26,7 @@ jobs:
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
 
   docker:
-    uses: ./.github/workflows/common-docker-big-instance.yml
+    uses: ./.github/workflows/common-docker.yml
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -38,9 +38,6 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
-      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
-      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
-      JOB_SECRET: ${{ secrets.JOB_SECRET }}
 
   docker-enclave:
     uses: ./.github/workflows/common-docker-enclave.yml
