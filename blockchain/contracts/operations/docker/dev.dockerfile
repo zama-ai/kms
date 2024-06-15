@@ -15,5 +15,6 @@ FROM cosmwasm/wasmd:v0.51.0 as runtime
 WORKDIR /app
 RUN apk add jq
 COPY --from=compiler /app/optimized/asc.wasm /app/asc.wasm
+COPY ./blockchain/scripts/bootstrap_asc.sh /app/bootstrap.sh
 
 CMD ["/bin/bash"]

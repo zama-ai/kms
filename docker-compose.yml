@@ -39,17 +39,14 @@ services:
 
   kms-full-node:
     build:
-      context: blockchain
-      dockerfile: contracts/Dockerfile
+      context: .
+      dockerfile: blockchain/contracts/operations/docker/dev.dockerfile
     ports:
       - "36656:26656"
       - "36657:26657"
       - "1317:1317"
       - "9090:9090"
-    volumes:
-      - ./blockchain/scripts/bootstrap_asc.sh:/bootstrap.sh
-      - ./blockchain/scripts/setup_wasmd.sh:/setup_wasmd.sh
-    entrypoint: [ "/bootstrap.sh" ]
+    entrypoint: [ "/app/bootstrap.sh" ]
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"
       interval: 1s
@@ -66,8 +63,6 @@ services:
   #  depends_on:
   #    kms-full-node:
   #      condition: service_healthy
-  #  volumes:
-  #    - validator-data:/root/.wasmd
   #  environment:
   #    - RUN_MODE=dev
   #    - NO_COLOR=true
@@ -87,5 +82,3 @@ services:
       - 4318:4318 # OTLP http receiver
       - 55679:55679 # zpages extension
 
-volumes:
-  validator-data:

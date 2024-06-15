@@ -4,16 +4,14 @@ name: kms-connector-test
 services:
   kms-full-node:
     build:
-      context: ../../
-      dockerfile: contracts/Dockerfile
+      context: ../../../
+      dockerfile: ./blockchain/contracts/operations/docker/dev.dockerfile
     ports:
       - "36656:26656"
       - "36657:26657"
       - "1317:1317"
       - "9090:9090"
-    volumes:
-      - ../../scripts/bootstrap_asc.sh:/bootstrap.sh
-    entrypoint: [ "/bootstrap.sh" ]
+    entrypoint: [ "/app/bootstrap.sh" ]
     healthcheck:
       test: "wget -Sq --spider http://localhost:26657/status"
       interval: 1s

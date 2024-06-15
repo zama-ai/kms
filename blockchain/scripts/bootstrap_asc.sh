@@ -26,14 +26,14 @@ echo $PASSWORD |wasmd tx bank send validator $CONN_ADD "100000000ucosm" -y --cha
 
 # Deploy and instantiate the ASC smart contract
 sleep 1
-echo $PASSWORD | wasmd tx wasm upload /app/asc.wasm --from validator --chain-id testing --node tcp://kms-full-node:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json
+echo $PASSWORD | wasmd tx wasm upload /app/asc.wasm --from validator --chain-id testing --node tcp://localhost:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json
 
 # Instantiate the ASC smart contract
 sleep 1
 # run in threshold mode
 # echo $PASSWORD | wasmd tx wasm instantiate 1 '{"proof_type": "debug", "kms_core_conf": { "threshold": { "parties": [], "shares_needed": 1, "param_choice": "default" }  }}' --label "configuration_0" --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 -y --no-admin
 # run in centlized mode
-echo $PASSWORD | wasmd tx wasm instantiate 1 '{"proof_type": "debug", "kms_core_conf": { "centralized": "default" }}' --label "configuration_0" --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 -y --no-admin
+echo $PASSWORD | wasmd tx wasm instantiate 1 '{"proof_type": "debug", "kms_core_conf": { "centralized": "default" }}' --label "configuration_0" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin
 
 
 # keep the container running
