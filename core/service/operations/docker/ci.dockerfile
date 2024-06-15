@@ -50,7 +50,7 @@ WORKDIR /app/kms/core/service
 # Copy the binaries from the base stage
 COPY --from=base /app/kms/core/service/bin/ /app/kms/core/service/bin/
 COPY --from=base /app/kms/core/service/parameters/ /app/kms/core/service/parameters/
-COPY --from=base /app/kms/core/service/keys/ /app/kms/core/service/keys/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/core/service/bin/
+RUN mkdir -p /app/kms/core/service/keys
 
 CMD ["kms-server"]
