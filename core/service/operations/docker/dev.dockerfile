@@ -19,7 +19,8 @@ RUN git config --global url."https://${BLOCKCHAIN_ACTIONS_TOKEN}@github.com".ins
 RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path core/service --root core/service --bin kms-server --bin kms-gen-keys --bin kms-init
+    cargo install --path . --root . --bin kms-server --bin kms-gen-tls-certs --bin kms-init && \
+    cargo install --path . --root . --bin kms-gen-keys -F testing
 
 # Generate the default software keys
 RUN /app/kms/bin/kms-gen /app/kms/temp/
