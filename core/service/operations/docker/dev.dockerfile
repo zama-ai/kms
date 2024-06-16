@@ -27,7 +27,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
 
 # Second stage builds the runtime image.
 # This stage will be the final image
-FROM debian:stable-slim as go-runtime
+FROM --platform=$BUILDPLATFORM debian:stable-slim as go-runtime
 WORKDIR /app/kms
 
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
@@ -43,7 +43,7 @@ ENV PATH="$PATH:/usr/local/go/bin:/root/go/bin"
 RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
 # Third stage: Copy the binaries from the base stage and the go-runtime stage
-FROM debian:stable-slim as runtime
+FROM --platform=$BUILDPLATFORM debian:stable-slim as runtime
 WORKDIR /app/kms/core/service
 
 RUN mkdir -p /app/kms/parameters
