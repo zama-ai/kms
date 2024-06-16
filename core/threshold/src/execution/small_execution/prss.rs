@@ -28,6 +28,7 @@ use anyhow::Context;
 use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
+use serde::{Deserialize, Serialize};
 use sha3::{
     digest::ExtendableOutput,
     digest::{Update, XofReader},
@@ -49,10 +50,9 @@ struct PrfAes {
 }
 
 /// structure for holding values for each subset of n-t parties
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrssSet<Z> {
     parties: PartySet,
-    prfs: Option<PrfAes>,
     set_key: PrfKey,
     f_a_points: Vec<Z>,
 }
@@ -71,9 +71,9 @@ pub type PartySet = Vec<usize>;
 type ValueVotes<Z> = HashMap<Vec<Z>, HashSet<Role>>;
 
 /// PRSS object that holds info in a certain epoch for a single party Pi
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PRSSSetup<Z: Default + Clone> {
-    /// all possible subsets of n-t parties (A) that contain Pi and their shared PRG
+    /// all possible subsets of n-t parties (A) that contain Pi and their shared PRF keys
     sets: Vec<PrssSet<Z>>,
     alpha_powers: Vec<Vec<Z>>,
 }
@@ -87,6 +87,8 @@ pub struct PRSSState<Z: Default + Clone> {
     pub przs_ctr: u128,
     /// PRSSSetup
     prss_setup: PRSSSetup<Z>,
+    /// the initialized PRFs for each set
+    prfs: Vec<PrfAes>,
 }
 
 /// computes the points on the polys f_A for all parties in the given sets A
@@ -149,9 +151,9 @@ where
     pub fn mask_next(&mut self, party_id: Role, bd1: u128) -> anyhow::Result<Z> {
         let mut res = Z::ZERO;
 
-        for set in self.prss_setup.sets.iter_mut() {
+        for (i, set) in self.prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_id.one_based()) {
-                if let Some(aes_prf) = &set.prfs {
+                if let Some(aes_prf) = &self.prfs.get(i) {
                     let phi0 = phi(&aes_prf.phi_aes, self.mask_ctr, bd1)?;
                     let phi1 = phi(&aes_prf.phi_aes, self.mask_ctr + 1, bd1)?;
                     let phi = phi0 + phi1;
@@ -181,9 +183,9 @@ where
     pub fn prss_next(&mut self, party_id: Role) -> anyhow::Result<Z> {
         let mut res = Z::ZERO;
 
-        for set in self.prss_setup.sets.iter_mut() {
+        for (i, set) in self.prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_id.one_based()) {
-                if let Some(aes_prf) = &set.prfs {
+                if let Some(aes_prf) = &self.prfs.get(i) {
                     let psi = psi(&aes_prf.psi_aes, self.prss_ctr)?;
 
                     // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
@@ -211,9 +213,9 @@ where
     pub fn przs_next(&mut self, party_id: Role, threshold: u8) -> anyhow::Result<Z> {
         let mut res = Z::ZERO;
 
-        for set in self.prss_setup.sets.iter_mut() {
+        for (i, set) in self.prss_setup.sets.iter().enumerate() {
             if set.parties.contains(&party_id.one_based()) {
-                if let Some(aes_prf) = &set.prfs {
+                if let Some(aes_prf) = &self.prfs.get(i) {
                     for j in 1..=threshold {
                         let chi = chi(&aes_prf.chi_aes, self.przs_ctr, j)?;
                         // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
@@ -248,8 +250,8 @@ where
     ) -> anyhow::Result<HashMap<Role, Z>> {
         let sets = &self.prss_setup.sets;
         let mut psi_values = Vec::with_capacity(sets.len());
-        for cur_set in sets {
-            if let Some(aes_prf) = &cur_set.prfs {
+        for (i, cur_set) in sets.iter().enumerate() {
+            if let Some(aes_prf) = &self.prfs.get(i) {
                 let psi = vec![psi(&aes_prf.psi_aes, ctr)?];
                 psi_values.push((cur_set.parties.clone(), psi));
             } else {
@@ -284,8 +286,8 @@ where
     ) -> anyhow::Result<HashMap<Role, Z>> {
         let sets = &self.prss_setup.sets;
         let mut chi_values = Vec::with_capacity(sets.len());
-        for cur_set in sets {
-            if let Some(aes_prf) = &cur_set.prfs {
+        for (i, cur_set) in sets.iter().enumerate() {
+            if let Some(aes_prf) = &self.prfs.get(i) {
                 let mut chi_list = Vec::with_capacity(session.threshold() as usize);
                 for j in 1..=session.threshold() {
                     chi_list.push(chi(&aes_prf.chi_aes, ctr, j)?);
@@ -532,7 +534,7 @@ where
         for (idx, set) in party_sets.iter().enumerate() {
             let pset = PrssSet {
                 parties: set.to_vec(),
-                prfs: None,
+
                 set_key: ars[idx].clone(),
                 f_a_points: f_a_points[idx].clone(),
             };
@@ -591,7 +593,7 @@ where
             }
             let pset = PrssSet {
                 parties: set.to_vec(),
-                prfs: None,
+
                 set_key: prf_key.to_owned(),
                 f_a_points: f_a_point.clone(),
             };
@@ -614,15 +616,15 @@ where
     /// PRxS counters are set to zero
     /// PRFs are initialized with agreed keys XORed with the session id
     pub fn new_prss_session_state(&self, sid: SessionId) -> PRSSState<Z> {
-        let mut prss_setup = self.clone();
+        let mut prfs = Vec::new();
 
         // initialize AES PRFs once with random agreed keys and sid
-        for set in prss_setup.sets.iter_mut() {
+        for set in &self.sets {
             let chi_aes = ChiAes::new(&set.set_key, sid);
             let psi_aes = PsiAes::new(&set.set_key, sid);
             let phi_aes = PhiAes::new(&set.set_key, sid);
 
-            set.prfs = Some(PrfAes {
+            prfs.push(PrfAes {
                 phi_aes,
                 psi_aes,
                 chi_aes,
@@ -633,7 +635,8 @@ where
             mask_ctr: 0,
             prss_ctr: 0,
             przs_ctr: 0,
-            prss_setup,
+            prss_setup: self.clone(),
+            prfs,
         }
     }
 }
@@ -791,7 +794,7 @@ mod tests {
                 .enumerate()
                 .map(|(idx, s)| PrssSet {
                     parties: s.to_vec(),
-                    prfs: None,
+
                     set_key: random_agreed_keys[idx].clone(),
                     f_a_points: f_a_points[idx].clone(),
                 })
@@ -1471,11 +1474,11 @@ mod tests {
         // clone state so we can iterate over the PRFs and call next/compute at the same time.
         let mut cloned_state = state.clone();
 
-        for set in state.prss_setup.sets {
+        for (i, set) in state.prss_setup.sets.iter().enumerate() {
             // Compute the reference value and use clone to ensure that the same counter is used for all parties
             let psi_next = cloned_state.prss_next(role).unwrap();
 
-            let local_psi = psi(&set.prfs.unwrap().psi_aes, state.prss_ctr).unwrap();
+            let local_psi = psi(&state.prfs[i].psi_aes, state.prss_ctr).unwrap();
             let local_psi_value = vec![local_psi];
             let true_psi_vals = HashMap::from([(&set.parties, &local_psi_value)]);
 

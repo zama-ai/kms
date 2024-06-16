@@ -85,7 +85,7 @@ pub async fn delete_at_request_id<S: Storage>(
 }
 
 /// Helper method for reading data based on a data type and request ID.
-pub async fn read_request_id<S: Storage, Ser: DeserializeOwned + Send>(
+pub async fn read_at_request_id<S: Storage, Ser: DeserializeOwned + Send>(
     storage: &S,
     request_id: &RequestId,
     data_type: &str,

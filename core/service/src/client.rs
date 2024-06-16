@@ -1487,6 +1487,7 @@ pub mod test_tools {
         threshold: u8,
         pub_storage: Vec<PubS>,
         priv_storage: Vec<PrivS>,
+        run_prss: bool,
     ) -> HashMap<u32, JoinHandle<()>> {
         let mut handles = Vec::new();
         tracing::info!("Spawning servers...");
@@ -1515,9 +1516,13 @@ pub mod test_tools {
                     param_file_map: default_param_file_map(),
                 };
                 // TODO pass in cert_paths for testing TLS
-                let server =
-                    threshold_server_init(config.clone(), cur_pub_storage, cur_priv_storage, true)
-                        .await;
+                let server = threshold_server_init(
+                    config.clone(),
+                    cur_pub_storage,
+                    cur_priv_storage,
+                    run_prss,
+                )
+                .await;
                 (i, server, config)
             }));
         }
@@ -1564,7 +1569,8 @@ pub mod test_tools {
         HashMap<u32, CoreServiceEndpointClient<Channel>>,
     ) {
         let amount = priv_storage.len();
-        let server_handles = setup_threshold_no_client(threshold, pub_storage, priv_storage).await;
+        let server_handles =
+            setup_threshold_no_client(threshold, pub_storage, priv_storage, true).await;
         let mut client_handles = HashMap::new();
         for i in 1..=amount {
             // NOTE: calculation of port must match what's done in [setup_threshold_no_client]

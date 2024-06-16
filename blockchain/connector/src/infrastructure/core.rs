@@ -901,7 +901,8 @@ mod test {
                 let cur_priv = FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap();
                 priv_storage.push(cur_priv);
             }
-            test_tools::setup_threshold_no_client(THRESHOLD as u8, pub_storage, priv_storage).await
+            test_tools::setup_threshold_no_client(THRESHOLD as u8, pub_storage, priv_storage, true)
+                .await
         } else {
             setup_mock_kms(AMOUNT_PARTIES).await
         };

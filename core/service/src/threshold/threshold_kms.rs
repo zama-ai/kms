@@ -19,8 +19,8 @@ use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::{
     BaseKms, Plaintext, PubDataType, RawDecryption, SigncryptionPayload, CURRENT_FORMAT_VERSION,
 };
-use crate::storage::Storage;
 use crate::storage::{delete_at_request_id, read_all_data, store_at_request_id};
+use crate::storage::{read_at_request_id, Storage};
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
@@ -112,6 +112,17 @@ pub async fn threshold_server_init<
     } else {
         MINIMUM_SESSIONS_PREPROC
     };
+
+    // TODO pass epoch ID fom config? (once we have epochs)
+    let epoch_id = 1_u128;
+
+    let prss_setup = read_at_request_id::<PrivS, PRSSSetup<ResiduePoly128>>(
+        &private_storage,
+        &RequestId::from(epoch_id),
+        &PrivDataType::PrssSetup.to_string(),
+    )
+    .await;
+
     let kms = ThresholdKms::new(
         config.threshold,
         config.dec_capacity,
@@ -129,18 +140,30 @@ pub async fn threshold_server_init<
     )
     .await?;
 
+    // compute new PRSS setup
     if run_prss {
         tracing::info!(
-            "Initializing threshold KMS server with PRSS for {}",
+            "Initializing threshold KMS server and generating a new PRSS Setup for {}",
             config.my_id
         );
-        kms.init_prss().await?;
+        kms.init_prss(epoch_id).await?;
     } else {
-        tracing::info!(
-            "Not initializing threshold KMS server with PRSS for {}, \
-                remember to call the init GRPC endpoint",
-            config.my_id
-        );
+        // check if a PRSS setup already exists in storage.
+        match prss_setup {
+            Ok(prss_setup) => {
+                let mut guarded_prss_setup = kms.prss_setup.write().await;
+                *guarded_prss_setup = Some(prss_setup.clone());
+                tracing::info!(
+                    "Initializing threshold KMS server with PRSS Setup from disk for {}",
+                    config.my_id
+                )
+            }
+            _ => tracing::info!(
+                "Initializing threshold KMS server without PRSS Setup for {}, \
+                        remember to call the init GRPC endpoint",
+                config.my_id
+            ),
+        }
     }
 
     tracing::info!(
@@ -430,14 +453,14 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     }
 
     /// Initializes a threshold KMS server by executing the PRSS setup.
-    pub async fn init_prss(&self) -> anyhow::Result<()> {
+    pub async fn init_prss(&self, epoch_id: u128) -> anyhow::Result<()> {
+        // we can only init the PRSS once. If we try to do it again, we get an error.
         if self.prss_setup.read().await.is_some() {
             return Err(anyhow_error_and_log("PRSS state already exists"));
         }
 
         let own_identity = self.own_identity()?;
-        // Assume we only have one epoch and start with session 1
-        let session_id = SessionId(1);
+        let session_id = SessionId(epoch_id);
         let networking = (self.networking_strategy)(session_id, self.role_assignments.clone());
 
         let parameters = SessionParameters::new(
@@ -449,9 +472,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let mut base_session =
             BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng().await?)?;
 
-        // TODO does this work with base session? we have a catch 22 otherwise
         tracing::info!("Starting PRSS for identity {}.", own_identity);
-        let res: PRSSSetup<ResiduePoly128> = PRSSSetup::init_with_abort::<
+        let prss_setup_obj: PRSSSetup<ResiduePoly128> = PRSSSetup::init_with_abort::<
             RealAgreeRandomWithAbort,
             AesRng,
             BaseSessionStruct<AesRng, SessionParameters>,
@@ -459,7 +481,18 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         .await?;
 
         let mut guarded_prss_setup = self.prss_setup.write().await;
-        *guarded_prss_setup = Some(res);
+        *guarded_prss_setup = Some(prss_setup_obj.clone());
+
+        // serialize and write PRSS Setup to disk into private storage
+        let private_storage = Arc::clone(&self.private_storage);
+        let mut priv_storage = private_storage.lock().await;
+        store_at_request_id(
+            &mut (*priv_storage),
+            &RequestId::from(epoch_id),
+            &prss_setup_obj,
+            &PrivDataType::PrssSetup.to_string(),
+        )
+        .await?;
 
         tracing::info!("PRSS completed successfully for identity {}.", own_identity);
         Ok(())
@@ -1093,7 +1126,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 {
     async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         // NOTE: request is not needed because our config is empty at the moment
-        self.init_prss().await.map_err(|e| {
+        self.init_prss(1).await.map_err(|e| {
             tonic::Status::new(
                 tonic::Code::Internal,
                 format!("PRSS initialization failed with error {}", e),
@@ -1648,5 +1681,72 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 signature,
             }),
         }))
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use crate::{
+        client::test_tools,
+        consts::{AMOUNT_PARTIES, THRESHOLD},
+        storage::{FileStorage, StorageType},
+    };
+
+    #[serial_test::serial]
+    #[tracing_test::traced_test]
+    async fn prss_disk_test() {
+        let mut pub_storage = Vec::new();
+        let mut priv_storage = Vec::new();
+        for i in 1..=AMOUNT_PARTIES {
+            let cur_pub = FileStorage::new_threshold(None, StorageType::PUB, i).unwrap();
+            pub_storage.push(cur_pub);
+            let cur_priv = FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap();
+            priv_storage.push(cur_priv);
+        }
+
+        // create parties and run PrssSetup
+        let core_handles = test_tools::setup_threshold_no_client(
+            THRESHOLD as u8,
+            pub_storage.clone(),
+            priv_storage.clone(),
+            true,
+        )
+        .await;
+        assert_eq!(core_handles.len(), AMOUNT_PARTIES);
+
+        // shut parties down
+        for h in core_handles.values() {
+            h.abort();
+        }
+        for (_, handle) in core_handles {
+            assert!(handle.await.unwrap_err().is_cancelled());
+        }
+
+        // check that PRSS was created (and not read form disk)
+        assert!(!logs_contain(
+            "Initializing threshold KMS server with PRSS Setup from disk"
+        ));
+
+        // create parties again without running PrssSetup this time (it should now be read from disk)
+        let core_handles = test_tools::setup_threshold_no_client(
+            THRESHOLD as u8,
+            pub_storage,
+            priv_storage,
+            false,
+        )
+        .await;
+        assert_eq!(core_handles.len(), AMOUNT_PARTIES);
+
+        // check that PRSS was not created, but instead read form disk now
+        assert!(logs_contain(
+            "Initializing threshold KMS server with PRSS Setup from disk"
+        ));
+
+        for h in core_handles.values() {
+            h.abort();
+        }
+        for (_, handle) in core_handles {
+            assert!(handle.await.unwrap_err().is_cancelled());
+        }
     }
 }

@@ -65,6 +65,7 @@ pub enum PrivDataType {
     FheKeyInfo,
     CrsInfo,
     FhePrivateKey,
+    PrssSetup,
 }
 
 impl fmt::Display for PrivDataType {
@@ -74,6 +75,7 @@ impl fmt::Display for PrivDataType {
             PrivDataType::SigningKey => write!(f, "SigningKey"),
             PrivDataType::CrsInfo => write!(f, "CrsInfo"),
             PrivDataType::FhePrivateKey => write!(f, "FhePrivateKey"),
+            PrivDataType::PrssSetup => write!(f, "PrssSetup"),
         }
     }
 }
@@ -719,6 +721,16 @@ impl TryFrom<String> for RequestId {
     }
 }
 
+impl From<u128> for RequestId {
+    fn from(value: u128) -> Self {
+        let bytes = value.to_be_bytes();
+        let hex_string = hex::encode(bytes); // 128 bits / 32 bytes
+        RequestId {
+            request_id: "00000000".to_string() + hex_string.as_str(), // fill up to 160 bits / 40 bytes with 8 leading hex zeros
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use crate::kms::RequestId;
@@ -837,7 +849,8 @@ pub(crate) mod tests {
             request_id: "0000000000000000000000000000000000000001".to_owned(),
         };
         assert!(request_id.is_valid());
-        let x: u128 = request_id.try_into().unwrap();
-        assert_eq!(x, 1);
+        let x: u128 = request_id.clone().try_into().unwrap();
+        let req_id2 = RequestId::from(x);
+        assert_eq!(request_id, req_id2);
     }
 }
