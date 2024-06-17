@@ -61,20 +61,33 @@ cfg_if::cfg_if! {
 
 /// Helper method for combining reconstructed messages after decryption.
 // TODO is this the right place for this function? Should probably be in ddec. Related to this issue https://github.com/zama-ai/distributed-decryption/issues/352
-fn decrypted_blocks_to_raw_decryption(
+fn decrypted_blocks_to_plaintext(
     params: &NoiseFloodParameters,
     fhe_type: FheType,
     recon_blocks: Vec<Z128>,
 ) -> anyhow::Result<Plaintext> {
     let bits_in_block = params.ciphertext_parameters.message_modulus_log();
     let res_pt = match fhe_type {
+        FheType::Euint2048 => {
+            combine_decryptions::<tfhe::integer::bigint::U2048>(bits_in_block, recon_blocks)
+                .map(Plaintext::from_u2048)
+        }
+        FheType::Euint256 => {
+            combine_decryptions::<tfhe::integer::U256>(bits_in_block, recon_blocks)
+                .map(Plaintext::from_u256)
+        }
         FheType::Euint160 => {
             combine_decryptions::<tfhe::integer::U256>(bits_in_block, recon_blocks)
                 .map(Plaintext::from_u160)
         }
         FheType::Euint128 => combine_decryptions::<u128>(bits_in_block, recon_blocks)
             .map(|x| Plaintext::new(x, fhe_type)),
-        _ => combine_decryptions::<u64>(bits_in_block, recon_blocks)
+        FheType::Bool
+        | FheType::Euint4
+        | FheType::Euint8
+        | FheType::Euint16
+        | FheType::Euint32
+        | FheType::Euint64 => combine_decryptions::<u64>(bits_in_block, recon_blocks)
             .map(|x| Plaintext::new(x as u128, fhe_type)),
     };
     res_pt.map_err(|error| {
@@ -1054,7 +1067,7 @@ impl Client {
         if agg_resp.responses.len() <= 1 {
             self.centralized_reencryption_resp(request, agg_resp, &client_keys)
         } else {
-            self.distributed_reencryption_resp(request, agg_resp, &client_keys)
+            self.threshold_reencryption_resp(request, agg_resp, &client_keys)
         }
     }
 
@@ -1261,7 +1274,7 @@ impl Client {
             client_keys,
             &cur_verf_key,
         )? {
-            Some(decryption_share) => Ok(Some(decryption_share.try_into()?)),
+            Some(decryption_share) => Ok(Some(decryption_share)),
             None => {
                 tracing::warn!("Could decrypt or validate signcrypted response");
                 Ok(None)
@@ -1269,7 +1282,7 @@ impl Client {
         }
     }
 
-    fn distributed_reencryption_resp(
+    fn threshold_reencryption_resp(
         &self,
         request: ReencryptionRequest,
         agg_resp: &AggregatedReencryptionResponse,
@@ -1298,7 +1311,7 @@ impl Client {
         }
         let recon_blocks =
             reconstruct_message(Some(decrypted_blocks), &self.params.ciphertext_parameters)?;
-        Ok(Some(decrypted_blocks_to_raw_decryption(
+        Ok(Some(decrypted_blocks_to_plaintext(
             &self.params,
             req_payload.fhe_type(),
             recon_blocks,
@@ -1447,6 +1460,12 @@ pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
         FheType::Euint160 => {
             160_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
         }
+        FheType::Euint256 => {
+            256_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
+        }
+        FheType::Euint2048 => {
+            2048_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
+        }
     }
 }
 
@@ -1493,6 +1512,7 @@ pub mod test_tools {
         tracing::info!("Spawning servers...");
         let amount = priv_storage.len();
         let timeout_secs = 60u64;
+        let grpc_max_message_size = 10 * 1024 * 1024; // 10 MiB
         for i in 1..=amount {
             let cur_pub_storage = pub_storage[i - 1].to_owned();
             let cur_priv_storage = priv_storage[i - 1].to_owned();
@@ -1508,6 +1528,7 @@ pub mod test_tools {
                     min_dec_cache: MIN_DEC_CACHE,
                     my_id: i,
                     timeout_secs,
+                    grpc_max_message_size,
                     preproc_redis_conf: None,
                     num_sessions_preproc: None,
                     tls_cert_path: None,
@@ -1546,6 +1567,7 @@ pub mod test_tools {
                     config.listen_address_client,
                     config.listen_port_client,
                     timeout_secs,
+                    config.grpc_max_message_size,
                     cur_server,
                 )
                 .await;
@@ -1597,6 +1619,7 @@ pub mod test_tools {
             let config = CentralizedConfigNoStorage {
                 url,
                 param_file_map: default_param_file_map(),
+                grpc_max_message_size: 10 * 1024 * 1024, // 10 MiB to allow for 2048 bit encryptions
             };
             let _ = server_handle(config, pub_storage, priv_storage).await;
         });
@@ -2208,13 +2231,19 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
-    #[case(TypedPlaintext::Bool(true), 3)]
-    #[case(TypedPlaintext::U8(u8::MAX), 2)]
-    #[case(TypedPlaintext::U16(u16::MAX), 1)]
+    #[case(TypedPlaintext::Bool(true), 5)]
+    #[case(TypedPlaintext::U8(u8::MAX), 4)]
+    #[case(TypedPlaintext::U8(0), 4)]
+    #[case(TypedPlaintext::U16(u16::MAX), 2)]
+    #[case(TypedPlaintext::U16(0), 1)]
     #[case(TypedPlaintext::U32(u32::MAX), 1)]
+    #[case(TypedPlaintext::U32(1234567), 1)]
     #[case(TypedPlaintext::U64(u64::MAX), 1)]
     #[case(TypedPlaintext::U128(u128::MAX), 1)]
+    #[case(TypedPlaintext::U128(0), 1)]
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
+    #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
+    #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
     #[tokio::test]
     #[serial]
     async fn default_decryption_centralized(
@@ -2349,6 +2378,8 @@ pub(crate) mod tests {
                 TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
                 TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
                 TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+                TypedPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                TypedPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
             }
         }
 
@@ -2387,11 +2418,17 @@ pub(crate) mod tests {
     #[rstest::rstest]
     #[case(TypedPlaintext::Bool(true), 2)]
     #[case(TypedPlaintext::U8(u8::MAX), 1)]
+    #[case(TypedPlaintext::U8(0), 1)]
     #[case(TypedPlaintext::U16(u16::MAX), 1)]
+    #[case(TypedPlaintext::U16(0), 1)]
     #[case(TypedPlaintext::U32(u32::MAX), 1)]
+    #[case(TypedPlaintext::U32(1234567), 1)]
     #[case(TypedPlaintext::U64(u64::MAX), 1)]
     #[case(TypedPlaintext::U128(u128::MAX), 1)]
+    #[case(TypedPlaintext::U128(0), 1)]
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
+    #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
+    #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
     #[tokio::test]
     #[serial]
     async fn default_reencryption_centralized(
@@ -2567,6 +2604,8 @@ pub(crate) mod tests {
                 TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
                 TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
                 TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+                TypedPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                TypedPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
             }
         }
 
@@ -2596,6 +2635,8 @@ pub(crate) mod tests {
     #[case(TypedPlaintext::U64(u64::MAX), 1)]
     #[case(TypedPlaintext::U128(u128::MAX), 1)]
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
+    // #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
+    // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     #[tracing_test::traced_test]
@@ -2721,6 +2762,8 @@ pub(crate) mod tests {
                 TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
                 TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
                 TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+                TypedPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                TypedPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
             }
         }
     }
@@ -2761,6 +2804,8 @@ pub(crate) mod tests {
     #[case(TypedPlaintext::U64(u64::MAX), 1)]
     #[case(TypedPlaintext::U128(u128::MAX), 1)]
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
+    // #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)] // TODO: this takes approx. 150 secs locally.
+    // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     #[tracing_test::traced_test]
@@ -2923,6 +2968,8 @@ pub(crate) mod tests {
                 TypedPlaintext::U64(x) => assert_eq!(x, plaintext.as_u64()),
                 TypedPlaintext::U128(x) => assert_eq!(x, plaintext.as_u128()),
                 TypedPlaintext::U160(x) => assert_eq!(x, plaintext.as_u160()),
+                TypedPlaintext::U256(x) => assert_eq!(x, plaintext.as_u256()),
+                TypedPlaintext::U2048(x) => assert_eq!(x, plaintext.as_u2048()),
             }
         }
     }

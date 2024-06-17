@@ -13,7 +13,7 @@ use super::der_types::{
     Cipher, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
     SigncryptionPubKey,
 };
-use crate::rpc::rpc_types::{RawDecryption, SigncryptionPayload};
+use crate::rpc::rpc_types::{Plaintext, SigncryptionPayload};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
 use ::signature::{Signer, Verifier};
 #[cfg(feature = "non-wasm")]
@@ -352,7 +352,7 @@ pub(crate) fn decrypt_signcryption(
     link: &[u8],
     client_keys: &SigncryptionPair,
     server_verf_key: &PublicSigKey,
-) -> anyhow::Result<Option<RawDecryption>> {
+) -> anyhow::Result<Option<Plaintext>> {
     let cipher: Cipher = from_bytes(cipher)?;
     let decrypted_signcryption = match validate_and_decrypt(&cipher, client_keys, server_verf_key)?
     {
@@ -367,7 +367,7 @@ pub(crate) fn decrypt_signcryption(
         tracing::warn!("Link validation for signcryption failed");
         return Ok(None);
     }
-    Ok(Some(signcrypted_msg.raw_decryption))
+    Ok(Some(signcrypted_msg.plaintext))
 }
 
 #[cfg(test)]

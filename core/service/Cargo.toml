@@ -80,13 +80,13 @@ strum = "0.26"
 strum_macros = "0.26"
 tonic = { version = "0.11", optional = true }
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread"], optional = true }
-tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "0f9314fabed36188d6b43c6436e49c220cbe9c75", features = ["boolean", "shortint", "integer", "zk-pok-experimental"] }
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", features = ["boolean", "shortint", "integer", "zk-pok-experimental"] } # == tfhe-rs v0.6.3
 tracing = { version = "0.1.40", features = ["log"] }
 tracing-opentelemetry = { version = "0.23", optional = true }
 tracing-subscriber = "0.3.18"
 typed-builder = "0.18.1"
 url = "2.5.0"
-tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "0f9314fabed36188d6b43c6436e49c220cbe9c75",  optional = true }
+tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456",  optional = true } # == tfhe-rs v0.6.3
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { version = "0.2.86", features = ["serde-serialize"] }
@@ -94,7 +94,7 @@ console_error_panic_hook = { version = "0.1.7" }
 serde-wasm-bindgen = { version = "0.6.0" }
 
 [target.'cfg(unix)'.dependencies]
-tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "0f9314fabed36188d6b43c6436e49c220cbe9c75", features = ["seeder_unix"] }
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", features = ["seeder_unix"] } # == tfhe-rs v0.6.3
 
 [dev-dependencies]
 ctor = "0.2.8"

@@ -8,7 +8,7 @@ use crate::consts::ID_LENGTH;
 use crate::kms::RequestId;
 use crate::kms::{FheType, ParamChoice, SignedPubDataHandle};
 use crate::rpc::rpc_types::{
-    BaseKms, Kms, Plaintext, PrivDataType, PubDataType, RawDecryption, SigncryptionPayload,
+    BaseKms, Kms, Plaintext, PrivDataType, PubDataType, SigncryptionPayload,
 };
 use crate::storage::read_all_data;
 #[cfg(feature = "non-wasm")]
@@ -36,12 +36,13 @@ use serde_asn1_der::to_vec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::{fmt, panic};
+use tfhe::integer::bigint::U2048;
 use tfhe::integer::U256;
 use tfhe::prelude::FheDecrypt;
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
-    ClientKey, ConfigBuilder, FheBool, FheUint128, FheUint16, FheUint160, FheUint32, FheUint4,
-    FheUint64, FheUint8,
+    ClientKey, ConfigBuilder, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
+    FheUint32, FheUint4, FheUint64, FheUint8,
 };
 #[cfg(feature = "non-wasm")]
 use tfhe_zk_pok::curve_api::bls12_446 as curve;
@@ -474,6 +475,16 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     let plaintext: U256 = cipher.decrypt(client_key);
                     Plaintext::from_u160(plaintext)
                 }
+                FheType::Euint256 => {
+                    let cipher: FheUint256 = bincode::deserialize(high_level_ct)?;
+                    let plaintext: U256 = cipher.decrypt(client_key);
+                    Plaintext::from_u256(plaintext)
+                }
+                FheType::Euint2048 => {
+                    let cipher: FheUint2048 = bincode::deserialize(high_level_ct)?;
+                    let plaintext: U2048 = cipher.decrypt(client_key);
+                    Plaintext::from_u2048(plaintext)
+                }
             })
         };
         match panic::catch_unwind(f) {
@@ -495,10 +506,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let plaintext = Self::decrypt(client_key, ct, fhe_type)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
         // where it is first mapped to a Vec<Residuepoly<Z128>> element
-        let bytes: Vec<u8> = plaintext.into();
-        let raw_decryption = RawDecryption::new(bytes, fhe_type);
         let signcryption_msg = SigncryptionPayload {
-            raw_decryption,
+            plaintext,
             link: link.to_vec(),
         };
         let enc_res = signcrypt(
@@ -618,7 +627,7 @@ mod tests {
     use crate::cryptography::signcryption::decrypt_signcryption;
     use crate::kms::{FheType, RequestId};
     use crate::rpc::central_rpc::default_param_file_map;
-    use crate::rpc::rpc_types::{Kms, Plaintext};
+    use crate::rpc::rpc_types::Kms;
     use crate::storage::{FileStorage, RamStorage, StorageType};
     use crate::util::file_handling::read_element;
     use crate::util::key_setup::test_tools::compute_cipher;
@@ -1006,8 +1015,7 @@ mod tests {
             assert!(decrypted.is_none());
             return;
         }
-        let decrypted_msg = decrypted.unwrap();
-        let plaintext: Plaintext = decrypted_msg.try_into().unwrap();
+        let plaintext = decrypted.unwrap();
         if sim_type == SimulationType::BadFheKey {
             assert_ne!(plaintext.as_u8(), msg);
         } else {

@@ -51,7 +51,11 @@ pub async fn server_handle<
     tracing::info!("Starting centralized KMS server ...");
 
     Server::builder()
-        .add_service(CoreServiceEndpointServer::new(kms))
+        .add_service(
+            CoreServiceEndpointServer::new(kms)
+                .max_decoding_message_size(config.grpc_max_message_size)
+                .max_encoding_message_size(config.grpc_max_message_size),
+        )
         .serve(socket)
         .await?;
     Ok(())

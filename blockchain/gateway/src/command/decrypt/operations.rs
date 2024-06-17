@@ -85,6 +85,8 @@ impl DecryptionStrategy for Mockchain {
             FheType::Euint64 => 33_u64.to_token(),
             FheType::Euint128 => 33_u128.to_token(),
             FheType::Euint160 => Address::zero().to_token(),
+            FheType::Euint256 => Address::zero().to_token(),
+            FheType::Euint2048 => Address::zero().to_token(),
             FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
         };
         info!("🍊 plaintext: {:#?}", res);
@@ -136,6 +138,16 @@ impl DecryptionStrategy for KmsBlockchain {
             FheType::Euint128 => ptxt.as_u128().to_token(),
             FheType::Euint160 => {
                 let mut cake = vec![0u8; 20];
+                ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
+                Address::from_slice(&cake).to_token()
+            }
+            FheType::Euint256 => {
+                let mut cake = vec![0u8; 32];
+                ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
+                Address::from_slice(&cake).to_token()
+            }
+            FheType::Euint2048 => {
+                let mut cake = vec![0u8; 256];
                 ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
                 Address::from_slice(&cake).to_token()
             }

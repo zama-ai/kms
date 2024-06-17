@@ -7,6 +7,9 @@ listen_port_client = 50200
 listen_address_core = "127.0.0.1"
 listen_port_core = 50002
 
+# maximum grpc message size in bytes
+grpc_max_message_size = 10485760 # 10 MiB
+
 my_id = 2
 
 # Threshold is the number of corruptions that the protocol handles.
@@ -63,4 +66,3 @@ default = "parameters/default_params.json"
 [tracing]
 service_name = "kms-threshold-2"
 endpoint = "http://localhost:4317"
-

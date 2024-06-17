@@ -30,6 +30,7 @@ impl CentralizedConfig {
 pub struct CentralizedConfigNoStorage {
     pub url: String,
     pub param_file_map: HashMap<String, String>,
+    pub grpc_max_message_size: usize,
 }
 
 impl From<CentralizedConfig> for CentralizedConfigNoStorage {

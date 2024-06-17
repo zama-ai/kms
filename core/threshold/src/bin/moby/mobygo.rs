@@ -21,7 +21,8 @@ use rand::{distributions::Uniform, random, Rng};
 use tfhe::{
     integer::{ciphertext::BaseRadixCiphertext, IntegerCiphertext},
     prelude::FheEncrypt,
-    FheBool, FheUint128, FheUint16, FheUint160, FheUint32, FheUint4, FheUint64, FheUint8,
+    FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32, FheUint4,
+    FheUint64, FheUint8,
 };
 use tonic::transport::ClientTlsConfig;
 
@@ -452,6 +453,30 @@ async fn threshold_decrypt_command(
             messages
                 .iter()
                 .map(|msg| FheUint160::encrypt(*msg, &compact_key).into_raw_parts().0)
+                .collect_vec()
+        }
+        TfheType::U256 => {
+            //Limiting to u64 because otherwise there is wrap around at decryption
+            messages = rand::thread_rng()
+                .sample_iter(Uniform::<u128>::from(0..u64::MAX as u128))
+                .take(num_messages)
+                .collect_vec();
+
+            messages
+                .iter()
+                .map(|msg| FheUint256::encrypt(*msg, &compact_key).into_raw_parts().0)
+                .collect_vec()
+        }
+        TfheType::U2048 => {
+            //Limiting to u64 because otherwise there is wrap around at decryption
+            messages = rand::thread_rng()
+                .sample_iter(Uniform::<u128>::from(0..u64::MAX as u128))
+                .take(num_messages)
+                .collect_vec();
+
+            messages
+                .iter()
+                .map(|msg| FheUint2048::encrypt(*msg, &compact_key).into_raw_parts().0)
                 .collect_vec()
         }
     };

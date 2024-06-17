@@ -166,6 +166,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     config.listen_address_client,
                     config.listen_port_client,
                     config.timeout_secs,
+                    config.grpc_max_message_size,
                     server,
                 )
                 .await

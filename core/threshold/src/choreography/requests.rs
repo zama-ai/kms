@@ -79,4 +79,6 @@ pub enum TfheType {
     U64,
     U128,
     U160,
+    U256,
+    U2048,
 }

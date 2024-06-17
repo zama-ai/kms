@@ -17,7 +17,7 @@ use crate::rpc::central_rpc::{
 };
 use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::{
-    BaseKms, Plaintext, PubDataType, RawDecryption, SigncryptionPayload, CURRENT_FORMAT_VERSION,
+    BaseKms, Plaintext, PubDataType, SigncryptionPayload, CURRENT_FORMAT_VERSION,
 };
 use crate::storage::{delete_at_request_id, read_all_data, store_at_request_id};
 use crate::storage::{read_at_request_id, Storage};
@@ -63,7 +63,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tfhe::integer::ciphertext::BaseRadixCiphertext;
 use tfhe::integer::IntegerCiphertext;
-use tfhe::{FheBool, FheUint128, FheUint16, FheUint160, FheUint32, FheUint4, FheUint64, FheUint8};
+use tfhe::{
+    FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32, FheUint4,
+    FheUint64, FheUint8,
+};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use tokio::task::AbortHandle;
 use tokio::time::Instant;
@@ -184,6 +187,7 @@ pub async fn threshold_server_start<
     listen_address: String,
     listen_port: u16,
     timeout_secs: u64,
+    grpc_max_message_size: usize,
     kms_server: ThresholdKms<PubS, PrivS>,
 ) -> anyhow::Result<()> {
     let my_id = kms_server.my_id;
@@ -191,7 +195,11 @@ pub async fn threshold_server_start<
     tracing::info!("Starting threshold KMS server {my_id} on socket {socket}");
     Server::builder()
         .timeout(tokio::time::Duration::from_secs(timeout_secs))
-        .add_service(CoreServiceEndpointServer::new(kms_server))
+        .add_service(
+            CoreServiceEndpointServer::new(kms_server)
+                .max_decoding_message_size(grpc_max_message_size)
+                .max_encoding_message_size(grpc_max_message_size),
+        )
         .serve(socket)
         .await?;
     Ok(())
@@ -241,6 +249,16 @@ impl FheType {
             }
             FheType::Euint160 => {
                 let hl_ct: FheUint160 = bincode::deserialize(serialized_high_level)?;
+                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint256 => {
+                let hl_ct: FheUint256 = bincode::deserialize(serialized_high_level)?;
+                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                radix_ct
+            }
+            FheType::Euint2048 => {
+                let hl_ct: FheUint2048 = bincode::deserialize(serialized_high_level)?;
                 let (radix_ct, _id) = hl_ct.into_raw_parts();
                 radix_ct
             }
@@ -647,31 +665,30 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         .await
         {
             Ok((partial_dec_map, time)) => {
-                let partial_signcryption = match partial_dec_map
-                    .get(&session.session_id().to_string())
-                {
-                    Some(partial_dec) => {
-                        let partial_dec_serialized = serde_asn1_der::to_vec(&partial_dec)?;
-                        let signcryption_msg = SigncryptionPayload {
-                            raw_decryption: RawDecryption::new(partial_dec_serialized, fhe_type),
-                            link,
-                        };
-                        let enc_res = signcrypt(
-                            rng,
-                            &serde_asn1_der::to_vec(&signcryption_msg)?,
-                            client_enc_key,
-                            client_verf_key,
-                            &sig_key,
-                        )?;
-                        serde_asn1_der::to_vec(&enc_res)?
-                    }
-                    None => {
-                        return Err(anyhow!(
-                            "Reencryption with session ID {} could not be retrived",
-                            session.session_id().to_string()
-                        ))
-                    }
-                };
+                let partial_signcryption =
+                    match partial_dec_map.get(&session.session_id().to_string()) {
+                        Some(partial_dec) => {
+                            let partial_dec_serialized = serde_asn1_der::to_vec(&partial_dec)?;
+                            let signcryption_msg = SigncryptionPayload {
+                                plaintext: Plaintext::from_bytes(partial_dec_serialized, fhe_type),
+                                link,
+                            };
+                            let enc_res = signcrypt(
+                                rng,
+                                &serde_asn1_der::to_vec(&signcryption_msg)?,
+                                client_enc_key,
+                                client_verf_key,
+                                &sig_key,
+                            )?;
+                            serde_asn1_der::to_vec(&enc_res)?
+                        }
+                        None => {
+                            return Err(anyhow!(
+                                "Reencryption with session ID {} could not be retrived",
+                                session.session_id().to_string()
+                            ))
+                        }
+                    };
                 tracing::info!(
                     "Reencryption completed. Inner thread took {:?} ms",
                     time.as_millis()
@@ -1514,6 +1531,26 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let _handle = tokio::spawn(async move {
             let fhe_keys_rlock = fhe_keys.read().await;
             let tmp = match fhe_type {
+                FheType::Euint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
+                    &mut session,
+                    &mut protocol,
+                    &ciphertext,
+                    fhe_type,
+                    &key_id,
+                    fhe_keys_rlock,
+                )
+                .await
+                .map(Plaintext::from_u2048),
+                FheType::Euint256 => Self::inner_decrypt::<tfhe::integer::U256>(
+                    &mut session,
+                    &mut protocol,
+                    &ciphertext,
+                    fhe_type,
+                    &key_id,
+                    fhe_keys_rlock,
+                )
+                .await
+                .map(Plaintext::from_u256),
                 FheType::Euint160 => Self::inner_decrypt::<tfhe::integer::U256>(
                     &mut session,
                     &mut protocol,
@@ -1534,7 +1571,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 )
                 .await
                 .map(|x| Plaintext::new(x, fhe_type)),
-                _ => Self::inner_decrypt::<u64>(
+                FheType::Bool
+                | FheType::Euint4
+                | FheType::Euint8
+                | FheType::Euint16
+                | FheType::Euint32
+                | FheType::Euint64 => Self::inner_decrypt::<u64>(
                     &mut session,
                     &mut protocol,
                     &ciphertext,

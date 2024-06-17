@@ -186,7 +186,7 @@ pub trait Kms: BaseKms {
 /// The result is linked to some byte array.
 #[derive(Clone, Serialize, Deserialize, Hash, PartialEq, Eq, Debug)]
 pub(crate) struct SigncryptionPayload {
-    pub(crate) raw_decryption: RawDecryption,
+    pub(crate) plaintext: Plaintext,
     pub(crate) link: Vec<u8>,
 }
 
@@ -224,199 +224,245 @@ impl crate::kms::ReencryptionRequest {
     }
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RawDecryption {
-    pub bytes: Vec<u8>,
-    pub fhe_type: FheType,
-}
-
-impl RawDecryption {
-    #[allow(dead_code)]
-    pub fn new(bytes: Vec<u8>, fhe_type: FheType) -> Self {
-        Self { bytes, fhe_type }
-    }
-}
-
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
-#[wasm_bindgen]
+#[wasm_bindgen(getter_with_clone)]
 pub struct Plaintext {
-    // Observe that the clunky representation is needed due to the wasm binding, which does not
-    // work with vectors or u128 elements directly
-    pub lowest_bits: u64,
-    pub middle_bits: u64,
-    pub higest_bits: u32,
+    pub bytes: Vec<u8>,
     fhe_type: FheType,
 }
+/// returns a slice of the first N bytes of the vector, padding with zeros if the vector is too short
+fn sub_slice<const N: usize>(vec: &[u8]) -> [u8; N] {
+    // Get a slice of the first len bytes, if available
+    let bytes = if vec.len() >= N { &vec[..N] } else { vec };
 
-/// Little endian encoding to allow for easy serialization by allowing most significant bytes to be
-/// 0
+    // Pad with zeros if the slice is shorter than N bytes
+    let padded: [u8; N] = match bytes.try_into() {
+        Ok(arr) => arr,
+        Err(_) => {
+            let mut temp = [0u8; N];
+            temp[..bytes.len()].copy_from_slice(bytes);
+            temp
+        }
+    };
+    padded
+}
+
+/// Little endian encoding for easy serialization by allowing most significant bytes to be 0
 impl Plaintext {
     /// Make a new plaintext from a 128 bit integer
     pub fn new(value: u128, fhe_type: FheType) -> Self {
-        if fhe_type == FheType::Euint160 {
-            tracing::warn!("Trying to create plaintext of 160 bits from only 128 bits. Upper 32 bits will be set as 0");
+        if fhe_type == FheType::Euint160
+            || fhe_type == FheType::Euint256
+            || fhe_type == FheType::Euint2048
+        {
+            tracing::warn!(
+                "Trying to create larger plaintext from only 128 bits. Upper bits will be set to 0."
+            );
         }
-        let high = (value >> 64) as u64;
-        let low = value as u64;
         Self {
-            lowest_bits: low,
-            middle_bits: high,
-            higest_bits: 0,
+            bytes: value.to_le_bytes().to_vec(),
             fhe_type,
         }
     }
 
+    pub fn from_bytes(bytes: Vec<u8>, fhe_type: FheType) -> Self {
+        Self { bytes, fhe_type }
+    }
+
     pub fn from_bool(value: bool) -> Self {
-        let plaintext: u64 = match value {
+        let plaintext: u8 = match value {
             true => 1,
             false => 0,
         };
         Self {
-            lowest_bits: plaintext,
-            middle_bits: 0,
-            higest_bits: 0,
+            bytes: vec![plaintext],
             fhe_type: FheType::Bool,
         }
     }
 
     pub fn from_u4(value: u8) -> Self {
         Self {
-            lowest_bits: value as u64,
-            middle_bits: 0,
-            higest_bits: 0,
+            bytes: vec![value % 16],
             fhe_type: FheType::Euint4,
         }
     }
 
     pub fn from_u8(value: u8) -> Self {
         Self {
-            lowest_bits: value as u64,
-            middle_bits: 0,
-            higest_bits: 0,
+            bytes: vec![value],
             fhe_type: FheType::Euint8,
         }
     }
 
     pub fn from_u16(value: u16) -> Self {
         Self {
-            lowest_bits: value as u64,
-            middle_bits: 0,
-            higest_bits: 0,
+            bytes: value.to_le_bytes().to_vec(),
             fhe_type: FheType::Euint16,
         }
     }
 
     pub fn from_u32(value: u32) -> Self {
         Self {
-            lowest_bits: value as u64,
-            middle_bits: 0,
-            higest_bits: 0,
+            bytes: value.to_le_bytes().to_vec(),
             fhe_type: FheType::Euint32,
         }
     }
 
     pub fn from_u64(value: u64) -> Self {
         Self {
-            lowest_bits: value,
-            middle_bits: 0,
-            higest_bits: 0,
+            bytes: value.to_le_bytes().to_vec(),
             fhe_type: FheType::Euint64,
         }
     }
 
     pub fn from_u128(value: u128) -> Self {
-        let high = (value >> 64) as u64;
-        let low = value as u64;
         Self {
-            lowest_bits: low,
-            middle_bits: high,
-            higest_bits: 0,
+            bytes: value.to_le_bytes().to_vec(),
             fhe_type: FheType::Euint128,
         }
     }
 
-    // le encoding
     pub fn from_u160(value: tfhe::integer::U256) -> Self {
         let (low_128, high_128) = value.to_low_high_u128();
-        let high_64 = (low_128 >> 64) as u64;
-        let low_64 = low_128 as u64;
+        let mut bytes = low_128.to_le_bytes().to_vec();
+        bytes.extend(high_128.to_le_bytes()[0..4].to_vec());
         Self {
-            lowest_bits: low_64,
-            middle_bits: high_64,
-            higest_bits: high_128 as u32,
+            bytes,
             fhe_type: FheType::Euint160,
         }
     }
 
     pub fn from_u160_low_high(value: (u128, u32)) -> Self {
-        let high_64 = (value.0 >> 64) as u64;
-        let low_64 = value.0 as u64;
+        let mut bytes = value.0.to_le_bytes().to_vec();
+        bytes.extend(value.1.to_le_bytes().to_vec());
         Self {
-            lowest_bits: low_64,
-            middle_bits: high_64,
-            higest_bits: value.1,
+            bytes,
             fhe_type: FheType::Euint160,
+        }
+    }
+
+    pub fn from_u256(value: tfhe::integer::U256) -> Self {
+        let (low_128, high_128) = value.to_low_high_u128();
+        let mut bytes = low_128.to_le_bytes().to_vec();
+        bytes.extend(high_128.to_le_bytes().to_vec());
+        Self {
+            bytes,
+            fhe_type: FheType::Euint256,
+        }
+    }
+
+    pub fn from_u2048(value: tfhe::integer::bigint::U2048) -> Self {
+        let mut bytes = [0u8; 256];
+        value.copy_to_le_byte_slice(&mut bytes);
+        Self {
+            bytes: bytes.to_vec(),
+            fhe_type: FheType::Euint2048,
         }
     }
 
     pub fn as_bool(&self) -> bool {
         if self.fhe_type != FheType::Bool {
             tracing::warn!(
-                "Plaintext is not of type u8. Returning the least significant bit as bool"
+                "Plaintext is not of type Bool. Returning the least significant bit as Bool"
             );
         }
-        self.lowest_bits % 2 == 1
+        if self.bytes[0] > 1 {
+            tracing::warn!("Plaintext should be Bool (0 or 1), but was bigger ({}). Returning the least significant bit as Bool.", self.bytes[0]);
+        }
+        self.bytes[0] % 2 == 1
     }
 
     pub fn as_u4(&self) -> u8 {
         if self.fhe_type != FheType::Euint4 {
             tracing::warn!("Plaintext is not of type u4. Returning the value modulo 16");
         }
-        (self.lowest_bits % 16) as u8
+        if self.bytes[0] > 15 {
+            tracing::warn!(
+                "Plaintext should be u4, but was bigger ({}). Returning the value modulo 16.",
+                self.bytes[0]
+            );
+        }
+        self.bytes[0] % 16
     }
 
     pub fn as_u8(&self) -> u8 {
         if self.fhe_type != FheType::Euint8 {
             tracing::warn!("Plaintext is not of type u8. Returning the value modulo 256");
         }
-        self.lowest_bits as u8
+        self.bytes[0]
     }
 
     pub fn as_u16(&self) -> u16 {
         if self.fhe_type != FheType::Euint16 {
-            tracing::warn!("Plaintext is not of type u16. Returning the value modulo 65536");
+            tracing::warn!("Plaintext is not of type u16. Returning the value modulo 65536 or padding with leading zeros");
         }
-        self.lowest_bits as u16
+        u16::from_le_bytes(sub_slice::<2>(&self.bytes))
     }
 
     pub fn as_u32(&self) -> u32 {
         if self.fhe_type != FheType::Euint32 {
-            tracing::warn!("Plaintext is not of type u32. Returning the value modulo 2^32");
+            tracing::warn!("Plaintext is not of type u32. Returning the value modulo 2^32 or padding with leading zeros");
         }
-        self.lowest_bits as u32
+        u32::from_le_bytes(sub_slice::<4>(&self.bytes))
     }
     pub fn as_u64(&self) -> u64 {
         if self.fhe_type != FheType::Euint64 {
-            tracing::warn!("Plaintext is not of type u64. Returning the value modulo 2^64");
+            tracing::warn!("Plaintext is not of type u64. Returning the value modulo 2^64 or padding with leading zeros");
         }
-        self.lowest_bits
+        u64::from_le_bytes(sub_slice::<8>(&self.bytes))
     }
 
     pub fn as_u128(&self) -> u128 {
         if self.fhe_type != FheType::Euint128 {
-            tracing::warn!("Plaintext is not of type u128. Returning the value modulo 2^128");
+            tracing::warn!("Plaintext is not of type u128. Returning the value modulo 2^128 or padding with leading zeros");
         }
-        (self.lowest_bits as u128) + ((self.middle_bits as u128) << 64)
+        u128::from_le_bytes(sub_slice::<16>(&self.bytes))
     }
 
     pub fn as_u160(&self) -> tfhe::integer::U256 {
         if self.fhe_type != FheType::Euint160 {
-            tracing::warn!("Plaintext is not of type u160. Returning the value modulo 2^160");
+            tracing::warn!("Plaintext is not of type u160. Returning the value modulo 2^160 or padding with leading zeros");
         }
-        let low_128 = (self.lowest_bits as u128) + ((self.middle_bits as u128) << 64);
-        let high_128 = self.higest_bits as u128;
+
+        let slice = sub_slice::<20>(&self.bytes);
+        let low_128 = u128::from_le_bytes(
+            slice[0..16]
+                .try_into()
+                .expect("error converting slice to u160"),
+        );
+        let high_128 = u32::from_le_bytes(
+            slice[16..20]
+                .try_into()
+                .expect("error converting slice to u160"),
+        );
+        tfhe::integer::U256::from((low_128, high_128 as u128))
+    }
+
+    pub fn as_u256(&self) -> tfhe::integer::U256 {
+        if self.fhe_type != FheType::Euint256 {
+            tracing::warn!("Plaintext is not of type u256. Returning the value modulo 2^256 or padding with leading zeros");
+        }
+        let slice = sub_slice::<32>(&self.bytes);
+        let low_128 = u128::from_le_bytes(
+            slice[0..16]
+                .try_into()
+                .expect("error converting slice to u256"),
+        );
+        let high_128 = u128::from_le_bytes(
+            slice[16..32]
+                .try_into()
+                .expect("error converting slice to u256"),
+        );
         tfhe::integer::U256::from((low_128, high_128))
+    }
+
+    pub fn as_u2048(&self) -> tfhe::integer::bigint::U2048 {
+        if self.fhe_type != FheType::Euint2048 {
+            tracing::warn!("Plaintext is not of type u2048. Returning the value modulo 2^2048 or padding with leading zeros");
+        }
+        let mut value = tfhe::integer::bigint::U2048::default();
+        tfhe::integer::bigint::U2048::copy_from_le_byte_slice(&mut value, &self.bytes);
+        value
     }
 
     pub fn fhe_type(&self) -> FheType {
@@ -427,23 +473,16 @@ impl Plaintext {
 impl From<Plaintext> for Vec<u8> {
     fn from(value: Plaintext) -> Self {
         match value.fhe_type {
-            FheType::Bool => vec![(value.lowest_bits % 2) as u8],
-            FheType::Euint4 => vec![(value.lowest_bits % 16) as u8],
-            FheType::Euint8 => vec![value.lowest_bits as u8],
-            FheType::Euint16 => value.lowest_bits.to_le_bytes()[0..2].to_vec(),
-            FheType::Euint32 => value.lowest_bits.to_le_bytes()[0..4].to_vec(),
-            FheType::Euint64 => value.lowest_bits.to_le_bytes().to_vec(),
-            FheType::Euint128 => {
-                let mut val = value.lowest_bits.to_le_bytes().to_vec();
-                val.extend(value.middle_bits.to_le_bytes().to_vec());
-                val
-            }
-            FheType::Euint160 => {
-                let mut val = value.lowest_bits.to_le_bytes().to_vec();
-                val.extend(value.middle_bits.to_le_bytes().to_vec());
-                val.extend(value.higest_bits.to_le_bytes().to_vec());
-                val
-            }
+            FheType::Bool => vec![value.bytes[0] % 2],
+            FheType::Euint4 => vec![value.bytes[0] % 16],
+            FheType::Euint8 => vec![value.bytes[0]],
+            FheType::Euint16 => value.bytes[0..2].to_vec(),
+            FheType::Euint32 => value.bytes[0..4].to_vec(),
+            FheType::Euint64 => value.bytes[0..8].to_vec(),
+            FheType::Euint128 => value.bytes[0..16].to_vec(),
+            FheType::Euint160 => value.bytes[0..20].to_vec(),
+            FheType::Euint256 => value.bytes[0..32].to_vec(),
+            FheType::Euint2048 => value.bytes[0..256].to_vec(),
         }
     }
 }
@@ -483,36 +522,6 @@ impl From<bool> for Plaintext {
         Self::from_bool(value)
     }
 }
-
-impl TryFrom<RawDecryption> for Plaintext {
-    type Error = anyhow::Error;
-
-    fn try_from(value: RawDecryption) -> Result<Self, Self::Error> {
-        match value.fhe_type {
-            FheType::Bool => Ok(Plaintext::from_bool(value.bytes[0] % 2 == 1)),
-            FheType::Euint4 => Ok(Plaintext::from_u4(value.bytes[0])),
-            FheType::Euint8 => Ok(Plaintext::from_u8(value.bytes[0])),
-            FheType::Euint16 => Ok(Plaintext::from_u16(u16::from_le_bytes(
-                value.bytes[0..=1].try_into()?,
-            ))),
-            FheType::Euint32 => Ok(Plaintext::from_u32(u32::from_le_bytes(
-                value.bytes[0..=3].try_into()?,
-            ))),
-            FheType::Euint64 => Ok(Plaintext::from_u64(u64::from_le_bytes(
-                value.bytes[0..=7].try_into()?,
-            ))),
-            FheType::Euint128 => Ok(Plaintext::from_u128(u128::from_le_bytes(
-                value.bytes[0..=15].try_into()?,
-            ))),
-            FheType::Euint160 => {
-                let lower_bits = u128::from_le_bytes(value.bytes[0..=15].try_into()?);
-                let higher_bits = u32::from_le_bytes(value.bytes[16..=19].try_into()?);
-                Ok(Plaintext::from_u160_low_high((lower_bits, higher_bits)))
-            }
-        }
-    }
-}
-
 // TODO these serializable types can be removed by using the type_attribute additions on protobuf
 /// Observe that this seemingly redundant types are required since the Protobuf compiled types do
 /// not implement the serializable and deserializable traits. Hence [DecryptionRequestSerializable]
@@ -733,26 +742,26 @@ impl From<u128> for RequestId {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use super::Plaintext;
     use crate::kms::RequestId;
-
-    use super::{Plaintext, RawDecryption};
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
 
     #[test]
-    fn sunshine_plaintext_as_u160() {
+    fn sunshine_plaintext_as_u256() {
         let mut rng = AesRng::seed_from_u64(1);
-        let mut bytes = [0u8; 20];
+        let mut bytes = [0u8; 32];
         rng.fill_bytes(&mut bytes);
 
-        let raw = RawDecryption::new(bytes.to_vec(), crate::kms::FheType::Euint160);
-        let plaintext: Plaintext = raw.try_into().unwrap();
+        let plaintext = Plaintext {
+            bytes: bytes.to_vec(),
+            fhe_type: crate::kms::FheType::Euint160,
+        };
         // Check the value is greater than 2^128
-        assert!(plaintext.as_u160() > tfhe::integer::U256::from((u128::MAX, 1)));
-        // Sanitiy check the internal values
-        assert_ne!(plaintext.lowest_bits, 0);
-        assert_ne!(plaintext.middle_bits, 0);
-        assert_ne!(plaintext.higest_bits, 0);
+        assert!(plaintext.as_u160() > tfhe::integer::U256::from((0, 1)));
+        assert!(plaintext.as_u256() > tfhe::integer::U256::from((0, 1)));
+        // Sanity check the internal values - at least one byte must be different from zero
+        assert!(bytes.iter().any(|&b| b != 0));
         assert_eq!(plaintext.fhe_type, crate::kms::FheType::Euint160);
         // Check consistent representations
         assert!(bytes[0] % 2 == plaintext.as_bool() as u8);
@@ -775,72 +784,37 @@ pub(crate) mod tests {
         assert_eq!(Plaintext::from_u4(3).as_u4(), 3);
         assert_eq!(Plaintext::from_u8(7).as_u4(), 7);
         assert_eq!(Plaintext::from_u16(65000).as_u16(), 65000);
+
         assert_eq!(Plaintext::from_u32(u32::MAX - 1).as_u32(), u32::MAX - 1);
+        assert_eq!(Plaintext::from_u32(u32::MAX).as_u32(), u32::MAX);
+        assert_eq!(Plaintext::from_u32(0).as_u32(), 0);
+
         assert_eq!(Plaintext::from_u64(u64::MAX - 1).as_u64(), u64::MAX - 1);
+        assert_eq!(Plaintext::from_u64(u64::MAX).as_u64(), u64::MAX);
+        assert_eq!(Plaintext::from_u64(0).as_u64(), 0);
+
         assert_eq!(Plaintext::from_u128(u128::MAX - 1).as_u128(), u128::MAX - 1);
         let alt_u128_plaintext = Plaintext::new(u128::MAX - 1, crate::kms::FheType::Euint128);
         assert_eq!(Plaintext::from_u128(u128::MAX - 1), alt_u128_plaintext);
+
+        let u160_val = tfhe::integer::U256::from((23, 999));
+        assert_eq!(Plaintext::from_u160(u160_val).as_u160(), u160_val);
         let u160_val = tfhe::integer::U256::from((u128::MAX, 1000));
         assert_eq!(Plaintext::from_u160(u160_val).as_u160(), u160_val);
         let alt_u160_val = Plaintext::from_u160_low_high((u128::MAX, 1000));
         assert_eq!(Plaintext::from_u160(u160_val), alt_u160_val);
-    }
 
-    #[test]
-    fn plaintext_raw_decryption_conversion() {
-        let mut rng = AesRng::seed_from_u64(2);
-        let mut bytes = [0u8; 20];
-        rng.fill_bytes(&mut bytes);
+        let u256_val = tfhe::integer::U256::from((u128::MAX, u128::MAX));
+        assert_eq!(Plaintext::from_u256(u256_val).as_u256(), u256_val);
+        let u256_val = tfhe::integer::U256::from((1, 1 << 77));
+        assert_eq!(Plaintext::from_u256(u256_val).as_u256(), u256_val);
 
-        let bool_raw = RawDecryption::new(bytes.to_vec(), crate::kms::FheType::Bool);
-        let bool_plaintext: Plaintext = bool_raw.try_into().unwrap();
-        let bool_vec: Vec<u8> = bool_plaintext.into();
-        assert_eq!(bool_vec, vec![bytes[0] % 2]);
-
-        let u4_raw = RawDecryption::new(bytes.to_vec(), crate::kms::FheType::Euint4);
-        let u4_plaintext: Plaintext = u4_raw.try_into().unwrap();
-        let u4_vec: Vec<u8> = u4_plaintext.into();
-        assert_eq!(u4_vec, vec![bytes[0] % 16]);
-
-        let u8_raw = RawDecryption::new(bytes.to_vec(), crate::kms::FheType::Euint8);
-        let u8_plaintext: Plaintext = u8_raw.try_into().unwrap();
-        let u8_vec: Vec<u8> = u8_plaintext.into();
-        assert_eq!(u8_vec, vec![bytes[0]]);
-
-        let u16_raw = RawDecryption::new(bytes.to_vec(), crate::kms::FheType::Euint16);
-        let u16_plaintext: Plaintext = u16_raw.try_into().unwrap();
-        let u16_vec: Vec<u8> = u16_plaintext.into();
-        assert_eq!(u16_vec, vec![bytes[0], bytes[1]]);
-
-        let u32_raw = RawDecryption::new(bytes.to_vec(), crate::kms::FheType::Euint32);
-        let u32_plaintext: Plaintext = u32_raw.try_into().unwrap();
-        let u32_vec: Vec<u8> = u32_plaintext.into();
-        assert_eq!(u32_vec, vec![bytes[0], bytes[1], bytes[2], bytes[3]]);
-
-        let u64_raw = RawDecryption::new(bytes.to_vec(), crate::kms::FheType::Euint64);
-        let u64_plaintext: Plaintext = u64_raw.try_into().unwrap();
-        let u64_vec: Vec<u8> = u64_plaintext.into();
-        assert_eq!(
-            u64_vec,
-            vec![bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]]
-        );
-
-        let u128_raw = RawDecryption::new(bytes.to_vec(), crate::kms::FheType::Euint128);
-        let u128_plaintext: Plaintext = u128_raw.try_into().unwrap();
-        let u128_vec: Vec<u8> = u128_plaintext.into();
-        assert_eq!(
-            u128_vec,
-            vec![
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14],
-                bytes[15]
-            ]
-        );
-
-        let u160_raw = RawDecryption::new(bytes.to_vec(), crate::kms::FheType::Euint160);
-        let u160_plaintext: Plaintext = u160_raw.try_into().unwrap();
-        let u160_vec: Vec<u8> = u160_plaintext.into();
-        assert_eq!(u160_vec, bytes);
+        let bytes = [0xFF; 256];
+        let mut u2048_val = tfhe::integer::bigint::U2048::default();
+        tfhe::integer::bigint::U2048::copy_from_le_byte_slice(&mut u2048_val, &bytes);
+        assert_eq!(Plaintext::from_u2048(u2048_val).as_u2048(), u2048_val);
+        let u2048_val = tfhe::integer::bigint::U2048::from(12345_u64);
+        assert_eq!(Plaintext::from_u2048(u2048_val).as_u2048(), u2048_val);
     }
 
     #[test]

@@ -28,6 +28,7 @@ pub struct ThresholdConfigNoStorage {
     pub dec_capacity: usize,
     pub min_dec_cache: usize,
     pub timeout_secs: u64,
+    pub grpc_max_message_size: usize,
     pub preproc_redis_conf: Option<RedisConf>,
     pub num_sessions_preproc: Option<u16>,
     pub tls_cert_path: Option<String>,

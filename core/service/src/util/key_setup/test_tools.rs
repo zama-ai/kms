@@ -20,7 +20,7 @@ use itertools::Itertools;
 use rand::SeedableRng;
 use std::path::Path;
 use strum::IntoEnumIterator;
-use tfhe::{prelude::*, FheBool};
+use tfhe::{prelude::*, FheBool, FheUint2048, FheUint256};
 use tfhe::{FheUint128, FheUint16, FheUint160, FheUint32, FheUint64, FheUint8};
 
 // TODD The code here should be split s.t. that generation code stays in production and everything else goes to the test package
@@ -59,11 +59,19 @@ pub fn compute_cipher(msg: TypedPlaintext, pk: &FhePublicKey) -> (Vec<u8>, FheTy
             TypedPlaintext::U160(x) => {
                 serialize_ct!(x, pk, FheUint160)
             }
+            TypedPlaintext::U256(x) => {
+                serialize_ct!(x, pk, FheUint256)
+            }
+            TypedPlaintext::U2048(x) => {
+                serialize_ct!(x, pk, FheUint2048)
+            }
         },
         fhe_type,
     )
 }
 
+// TODO not sure how to deal with that clippy warning
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, Debug)]
 pub enum TypedPlaintext {
     Bool(bool),
@@ -73,6 +81,8 @@ pub enum TypedPlaintext {
     U64(u64),
     U128(u128),
     U160(tfhe::integer::U256),
+    U256(tfhe::integer::U256),
+    U2048(tfhe::integer::bigint::U2048),
 }
 
 impl TypedPlaintext {
@@ -86,6 +96,8 @@ impl TypedPlaintext {
             TypedPlaintext::U64(_) => FheType::Euint64,
             TypedPlaintext::U128(_) => FheType::Euint128,
             TypedPlaintext::U160(_) => FheType::Euint160,
+            TypedPlaintext::U256(_) => FheType::Euint256,
+            TypedPlaintext::U2048(_) => FheType::Euint2048,
         }
     }
 
@@ -99,6 +111,8 @@ impl TypedPlaintext {
             TypedPlaintext::U64(_) => 64,
             TypedPlaintext::U128(_) => 128,
             TypedPlaintext::U160(_) => 160,
+            TypedPlaintext::U256(_) => 256,
+            TypedPlaintext::U2048(_) => 2048,
         }
     }
 }
