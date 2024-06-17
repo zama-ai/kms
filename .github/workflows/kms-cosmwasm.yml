@@ -71,8 +71,6 @@ jobs:
           push: true
           pull: false
           tags: ghcr.io/zama-ai/${{ inputs.image-name }}:${{ inputs.tag }},ghcr.io/zama-ai/${{ inputs.image-name }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
 
