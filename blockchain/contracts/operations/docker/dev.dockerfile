@@ -10,7 +10,7 @@ RUN mkdir -p /app/optimized
 
 RUN wasm-opt -Os --signext-lowering "/app/blockchain/contracts/target/wasm32-unknown-unknown/release/asc.wasm" -o "/app/optimized/asc.wasm"
 
-FROM --platform=$BUILDPLATFORM cosmwasm/wasmd:v0.51.0 as runtime
+FROM --platform=$BUILDPLATFORM ghcr.io/zama-ai/kms-blockchain-validator:v0.51.0 as runtime
 
 WORKDIR /app
 RUN apk add jq
