@@ -33,9 +33,12 @@ ENV PATH="$PATH:/app/ddec/bin"
 
 # We are going to need grpc-health-probe to check the health of the grpc server for docker-compose or future deployments
 # Install go because grpc-health-probe is written in go and we need to compile it
-RUN curl -OL https://go.dev/dl/go1.21.6.linux-amd64.tar.gz
-RUN rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.6.linux-amd64.tar.gz
-RUN rm go1.21.6.linux-amd64.tar.gz
+ARG TARGETOS
+ARG TARGETARCH
+ARG go_file=go1.21.6.$TARGETOS-$TARGETARCH.tar.gz
+RUN curl -OL https://go.dev/dl/$go_file
+RUN rm -rf /usr/local/go && tar -C /usr/local -xzf $go_file
+RUN rm $go_file
 ENV PATH="$PATH:/usr/local/go/bin:/root/go/bin"
 # Install grpc-health-probe
 RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest

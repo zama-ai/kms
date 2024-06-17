@@ -24,6 +24,10 @@ on:
         type: string
         required: false
         default: 'kms'
+      image-dev-description:
+        type: string
+        required: false
+        default: 'KMS Service Docker Image'
       push_image:
         type: boolean
         default: true
@@ -40,10 +44,14 @@ on:
         type: boolean
         default: false
         required: false
+      docker-file-dev:
+        type: string
+        default: 'ci.dockerfile'
+        required: false
       graviton-build-host:
           type: string
           required: false
-          default: 'ec2-13-38-73-248.eu-west-3.compute.amazonaws.com'
+          default: 'ec2-13-39-112-66.eu-west-3.compute.amazonaws.com'
       arm-build:
         type: boolean
         default: true
@@ -136,16 +144,16 @@ jobs:
           cache-to: ${{ inputs.cache-to }}
 
       - name: Extract Docker metadata
-        if: ${{ github.event_name == 'release' && inputs.generate-dev-image }}
+        if: ${{ inputs.generate-dev-image }}
         id: meta
         uses: docker/metadata-action@v5.5.1
         with:
           annotations: |
-            org.opencontainers.image.description="KMS Centralized Dev Docker Image ${{ env.DOCKER_TAG_IMAGE }}"
+            org.opencontainers.image.description="${{ inputs.image-dev-description }}"
           labels: |
             zama.kms.version=${{ env.DOCKER_TAG_IMAGE }}
-            zama.kms.description="${{ inputs.image-dev }} Image"
-          images: ghcr.io/${{ inputs.image-dev }}-dev:${{ env.DOCKER_TAG_IMAGE }}
+            zama.kms.description="${{ inputs.image-dev-description }}"
+          images: ghcr.io/zama-ai/${{ inputs.image-dev }}:${{ env.DOCKER_TAG_IMAGE }}
         env:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: index
 
@@ -153,14 +161,14 @@ jobs:
         if: ${{ inputs.generate-dev-image }}
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${{ inputs.docker-context }}
           platforms: linux/amd64,linux/arm64
           build-args: |
             BLOCKCHAIN_ACTIONS_TOKEN=${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-          file: ${{ inputs.working-directory }}/operations/docker/dev.dockerfile
+          file: ${{ inputs.working-directory }}/operations/docker/${{ inputs.docker-file-dev }}
           push: ${{ inputs.push_image }}
           pull: false
-          tags: ghcr.io/zama-ai/${{ inputs.image-dev }}-dev:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-dev }}-dev:latest
+          tags: ghcr.io/zama-ai/${{ inputs.image-dev }}:${{env.DOCKER_TAG_IMAGE}},ghcr.io/zama-ai/${{ inputs.image-dev }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: ${{ steps.meta.outputs.labels }}

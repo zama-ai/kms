@@ -3,7 +3,7 @@
 FROM rust:1.78-slim-bookworm as base
 
 RUN apt update && \
-    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev 
+    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev
 
 WORKDIR /app/ddec
 COPY . .
@@ -22,7 +22,7 @@ RUN cargo install --path . --root . --bins ${FEATURES}
 FROM debian:stable-slim as go-runtime
 
 RUN apt update && \
-    apt install -y iproute2 iputils-ping iperf net-tools dnsutils libssl-dev libprotobuf-dev curl netcat-openbsd 
+    apt install -y iproute2 iputils-ping iperf net-tools dnsutils libssl-dev libprotobuf-dev curl netcat-openbsd
 WORKDIR /app/ddec
 RUN mkdir -p /app/ddec/config
 
@@ -31,13 +31,15 @@ ENV PATH="$PATH:/app/ddec/bin"
 
 # We are going to need grpc-health-probe to check the health of the grpc server for docker-compose or future deployments
 # Install go because grpc-health-probe is written in go and we need to compile it
-RUN curl -OL https://go.dev/dl/go1.21.6.linux-amd64.tar.gz
-RUN rm -rf /usr/local/go && tar -C /usr/local -xzf go1.21.6.linux-amd64.tar.gz
-RUN rm go1.21.6.linux-amd64.tar.gz
+ARG TARGETOS
+ARG TARGETARCH
+ARG go_file=go1.21.6.$TARGETOS-$TARGETARCH.tar.gz
+RUN curl -OL https://go.dev/dl/$go_file
+RUN rm -rf /usr/local/go && tar -C /usr/local -xzf $go_file
+RUN rm $go_file
 ENV PATH="$PATH:/usr/local/go/bin:/root/go/bin"
 # Install grpc-health-probe
 RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
-
 
 # Third stage: Copy the binaries from the base stage and the go-runtime stage
 FROM debian:stable-slim as runtime

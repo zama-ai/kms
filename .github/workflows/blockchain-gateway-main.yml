@@ -36,8 +36,9 @@ jobs:
       working-directory: "./blockchain/gateway"
       push_image: true
       image-name: 'kms-blockchain-gateway'
-      image-dev: 'kms-blockchain-gateway'
+      image-dev: 'kms-blockchain-gateway-dev'
       generate-dev-image: true
+      image-dev-description: 'KMS-Blockchain Gateway Dev Docker Image'
     needs:
       - build
     secrets:

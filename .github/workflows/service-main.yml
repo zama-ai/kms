@@ -36,8 +36,10 @@ jobs:
       working-directory: "./core/service"
       push_image: true
       image-name: 'kms-service'
-      image-dev: 'kms-service'
+      image-dev: 'kms-service-dev'
       generate-dev-image: true
+      docker-file-dev: 'dev.dockerfile'
+      image-dev-description: 'KMS Service Dev Docker Image'
     needs:
       - build
     secrets:
