@@ -2,7 +2,7 @@ locals {
   region = "eu-west-3"
   arm = {
     # Buildkite Elastic Stack (Amazon Linux 2023 w/ docker)
-    ami           = "ami-0bb87f0dc4192d154"
+    ami           = "ami-0c27d0db6baadedc5"
     instance_type = "t4g.xlarge"
     name          = "kms-core-docker-builder-arm"
     key_name      = "docker_builder_arm"
