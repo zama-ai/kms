@@ -1,10 +1,12 @@
-use super::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
+use super::generic::{
+    CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
+};
 use crate::conf::threshold::{PeerConf, ThresholdConfigNoStorage};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, SEC_PAR};
 use crate::cryptography::central_kms::{compute_info, BaseKmsStruct};
-use crate::cryptography::der_types::{self, PrivateSigKey, PublicEncKey, PublicSigKey};
+use crate::cryptography::der_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::cryptography::signcryption::signcrypt;
-use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
+use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
@@ -19,11 +21,12 @@ use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::{
     BaseKms, Plaintext, PubDataType, SigncryptionPayload, CURRENT_FORMAT_VERSION,
 };
-use crate::storage::{delete_at_request_id, read_all_data, store_at_request_id};
-use crate::storage::{read_at_request_id, Storage};
+use crate::storage::{
+    delete_at_request_id, read_all_data, read_at_request_id, store_at_request_id, Storage,
+};
+use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
-use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
 use distributed_decryption::choreography::NetworkingStrategy;
@@ -58,7 +61,6 @@ use itertools::Itertools;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tfhe::integer::ciphertext::BaseRadixCiphertext;
@@ -68,7 +70,6 @@ use tfhe::{
     FheUint64, FheUint8,
 };
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
-use tokio::task::AbortHandle;
 use tokio::time::Instant;
 use tonic::transport::{Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
@@ -97,7 +98,7 @@ pub async fn threshold_server_init<
     public_storage: PubS,
     private_storage: PrivS,
     run_prss: bool,
-) -> anyhow::Result<ThresholdKms<PubS, PrivS>> {
+) -> anyhow::Result<RealThresholdKms<PubS, PrivS>> {
     let cert_paths = config.get_tls_cert_paths();
 
     //If no RedisConf is provided, we just use in-memory storage for the preprocessing buckets.
@@ -116,17 +117,7 @@ pub async fn threshold_server_init<
         MINIMUM_SESSIONS_PREPROC
     };
 
-    // TODO pass epoch ID fom config? (once we have epochs)
-    let epoch_id = 1_u128;
-
-    let prss_setup = read_at_request_id::<PrivS, PRSSSetup<ResiduePoly128>>(
-        &private_storage,
-        &RequestId::from(epoch_id),
-        &PrivDataType::PrssSetup.to_string(),
-    )
-    .await;
-
-    let kms = ThresholdKms::new(
+    let kms = new_real_threshold_kms(
         config.threshold,
         config.dec_capacity,
         config.min_dec_cache,
@@ -140,34 +131,9 @@ pub async fn threshold_server_init<
         private_storage,
         config.param_file_map,
         cert_paths,
+        run_prss,
     )
     .await?;
-
-    // compute new PRSS setup
-    if run_prss {
-        tracing::info!(
-            "Initializing threshold KMS server and generating a new PRSS Setup for {}",
-            config.my_id
-        );
-        kms.init_prss(epoch_id).await?;
-    } else {
-        // check if a PRSS setup already exists in storage.
-        match prss_setup {
-            Ok(prss_setup) => {
-                let mut guarded_prss_setup = kms.prss_setup.write().await;
-                *guarded_prss_setup = Some(prss_setup.clone());
-                tracing::info!(
-                    "Initializing threshold KMS server with PRSS Setup from disk for {}",
-                    config.my_id
-                )
-            }
-            _ => tracing::info!(
-                "Initializing threshold KMS server without PRSS Setup for {}, \
-                        remember to call the init GRPC endpoint",
-                config.my_id
-            ),
-        }
-    }
 
     tracing::info!(
         "Initialization done! Starting threshold KMS server for {} ...",
@@ -188,16 +154,15 @@ pub async fn threshold_server_start<
     listen_port: u16,
     timeout_secs: u64,
     grpc_max_message_size: usize,
-    kms_server: ThresholdKms<PubS, PrivS>,
+    kms_server: RealThresholdKms<PubS, PrivS>,
 ) -> anyhow::Result<()> {
-    let my_id = kms_server.my_id;
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
     health_reporter
-        .set_serving::<CoreServiceEndpointServer<ThresholdKms<PubS, PrivS>>>()
+        .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
         .await;
 
     let socket: std::net::SocketAddr = format!("{}:{}", listen_address, listen_port).parse()?;
-    tracing::info!("Starting threshold KMS server {my_id} on socket {socket}");
+    tracing::info!("Starting threshold KMS server on socket {socket}");
     Server::builder()
         .timeout(tokio::time::Duration::from_secs(timeout_secs))
         .add_service(
@@ -299,202 +264,392 @@ type DkgMetaStore = HashMap<PubDataType, SignedPubDataHandle>;
 type CrsMetaStore = (String, Vec<u8>);
 type BucketMetaStore = Box<dyn DKGPreprocessing<ResiduePoly128>>;
 
-pub struct ThresholdKms<
+/// Compute all the info of a [FhePubKeySet] and return the result as as [DkgMetaStore]
+pub(crate) fn compute_all_info(
+    sig_key: &PrivateSigKey,
+    fhe_key_set: &FhePubKeySet,
+) -> anyhow::Result<DkgMetaStore> {
+    //Compute all the info required for storing
+    let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key);
+    let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key);
+
+    //Make sure we did manage to compute the info
+    Ok(match (pub_key_info, serv_key_info) {
+        (Ok(pub_key_info), Ok(serv_key_info)) => {
+            let mut info = HashMap::new();
+            info.insert(PubDataType::PublicKey, pub_key_info);
+            info.insert(PubDataType::ServerKey, serv_key_info);
+            info
+        }
+        _ => {
+            return Err(anyhow_error_and_log(
+                "Could not compute info on some public key element",
+            ));
+        }
+    })
+}
+
+pub type RealThresholdKms<PubS, PrivS> = GenericKms<
+    RealInitiator<PrivS>,
+    RealReencryptor,
+    RealDecryptor,
+    RealKeyGenerator<PubS, PrivS>,
+    RealPreprocessor,
+    RealCrsGenerator<PubS, PrivS>,
+>;
+
+#[allow(clippy::too_many_arguments)]
+async fn new_real_threshold_kms<PubS, PrivS>(
+    threshold: u8,
+    dec_capacity: usize,
+    min_dec_cache: usize,
+    listen_address: &str,
+    listen_port: u16,
+    my_id: usize,
+    preproc_factory: Box<dyn PreprocessorFactory>,
+    num_sessions_preproc: u16,
+    peer_configs: Vec<PeerConf>,
+    public_storage: PubS,
+    private_storage: PrivS,
+    param_file_map: HashMap<String, String>,
+    cert_paths: Option<CertificatePaths>,
+    run_prss: bool,
+) -> anyhow::Result<RealThresholdKms<PubS, PrivS>>
+where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
-> {
-    // NOTE: To avoid deadlocks the fhe_keys SHOULD NOT be written to while holding a meta storage
-    // mutex!
-    fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
+{
+    let sks: HashMap<RequestId, PrivateSigKey> =
+        read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
+    let sk: PrivateSigKey = some_or_err(
+        sks.values().collect_vec().first(),
+        "There is no private signing key stored".to_string(),
+    )?
+    .to_owned()
+    .to_owned();
+    let key_info: HashMap<RequestId, ThresholdFheKeys> =
+        read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+    let key_info_w_status = key_info
+        .iter()
+        .map(|(id, info)| {
+            (
+                id.to_owned(),
+                HandlerStatus::Done(info.pk_meta_data.to_owned()),
+            )
+        })
+        .collect();
+    let cs: HashMap<RequestId, CrsMetaStore> =
+        read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+    let cs_w_status: HashMap<RequestId, HandlerStatus<CrsMetaStore>> = cs
+        .iter()
+        .map(|(id, crs)| (id.to_owned(), HandlerStatus::Done(crs.to_owned())))
+        .collect();
+
+    let role_assignments: RoleAssignment = peer_configs
+        .into_iter()
+        .map(|peer_config| peer_config.into_role_identity())
+        .collect();
+
+    let own_identity = tonic_some_or_err(
+        role_assignments.get(&Role::indexed_by_one(my_id)),
+        "Could not find my own identity".to_string(),
+    )?;
+
+    let mut server = match &cert_paths {
+        Some(cert_bundle) => {
+            tracing::info!("Creating server with TLS enabled.");
+
+            // check that own_identity matches to what's in our certificate
+            let certificate = cert_bundle.get_certificate()?;
+            let san_strings = distributed_decryption::networking::grpc::extract_san_from_certs(
+                &[certificate],
+                true,
+            )
+            .map_err(|e| anyhow!(e))?;
+            let host = own_identity
+                .0
+                .split(':')
+                .next()
+                .ok_or_else(|| anyhow!("hostname not found in own_identity"))?
+                .to_string();
+            if !san_strings.contains(&host) {
+                return Err(anyhow_error_and_log(format!(
+                    "cannot find hostname {} in SAN {:?}",
+                    host, san_strings
+                )));
+            }
+
+            // now setup the TLS server
+            let identity = cert_bundle.get_identity()?;
+            let ca_cert = cert_bundle.get_flattened_ca_list()?;
+            let tls_config = ServerTlsConfig::new()
+                .identity(identity)
+                .client_ca_root(ca_cert);
+            Server::builder().tls_config(tls_config)?
+        }
+        _ => {
+            tracing::info!("Creating server without TLS support.");
+            Server::builder()
+        }
+    };
+
+    // This will setup TLS if cert_paths is set to Some(...)
+    let networking_manager = GrpcNetworkingManager::new(own_identity.to_owned(), cert_paths);
+    let networking_server = networking_manager.new_server();
+
+    let router = server.add_service(networking_server);
+    let addr: SocketAddr = format!("{listen_address}:{listen_port}").parse()?;
+
+    tracing::info!(
+        "Starting core-to-core server for identity {} on address {}.",
+        own_identity,
+        addr
+    );
+    let ddec_handle = tokio::spawn(async move {
+        match router.serve(addr).await {
+            Ok(handle) => Ok(handle),
+            Err(e) => {
+                let msg = format!("Failed to launch ddec server with error: {:?}", e);
+                Err(anyhow_error_and_log(msg))
+            }
+        }
+    });
+
+    let param_file_map = Arc::new(RwLock::new(HashMap::from_iter(
+        param_file_map
+            .into_iter()
+            .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
+    )));
+
+    let networking_strategy: Arc<RwLock<NetworkingStrategy>> =
+        Arc::new(RwLock::new(Box::new(move |session_id, roles| {
+            networking_manager.make_session(session_id, roles)
+        })));
+    let base_kms = BaseKmsStruct::new(sk);
+
+    let fhe_keys = Arc::new(RwLock::new(key_info));
+    let prss_setup = Arc::new(RwLock::new(None));
+    let preproc_buckets = Arc::new(RwLock::new(MetaStore::new_unlimited()));
+    let preproc_factory = Arc::new(Mutex::new(preproc_factory));
+    let public_storage = Arc::new(Mutex::new(public_storage));
+    let private_storage = Arc::new(Mutex::new(private_storage));
+    let crs_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(cs_w_status)));
+    let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(key_info_w_status)));
+    let dec_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
+    let reenc_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
+
+    let session_preparer = SessionPreparer {
+        base_kms: base_kms.clone(),
+        threshold,
+        my_id,
+        role_assignments: role_assignments.clone(),
+        networking_strategy,
+        prss_setup: prss_setup.clone(),
+    };
+
+    let initiator = RealInitiator {
+        prss_setup: Arc::clone(&prss_setup),
+        private_storage: Arc::clone(&private_storage),
+        session_preparer: session_preparer.clone(),
+    };
+    if run_prss {
+        tracing::info!(
+            "Initializing threshold KMS server and generating a new PRSS Setup for {}",
+            my_id
+        );
+        initiator.init_prss().await?;
+    } else {
+        tracing::info!(
+            "Initializing threshold KMS server and reading PRSS from storage for {}",
+            my_id
+        );
+        initiator.init_prss_from_disk().await?;
+    }
+
+    let reencryptor = RealReencryptor {
+        fhe_keys: Arc::clone(&fhe_keys),
+        base_kms: base_kms.clone(),
+        reenc_meta_store,
+        session_preparer: session_preparer.clone(),
+    };
+
+    let decryptor = RealDecryptor {
+        fhe_keys: Arc::clone(&fhe_keys),
+        base_kms: base_kms.clone(),
+        dec_meta_store,
+        session_preparer: session_preparer.clone(),
+    };
+
+    let keygenerator = RealKeyGenerator {
+        fhe_keys,
+        base_kms: base_kms.clone(),
+        preproc_buckets: Arc::clone(&preproc_buckets),
+        public_storage: Arc::clone(&public_storage),
+        private_storage: Arc::clone(&private_storage),
+        dkg_pubinfo_meta_store,
+        param_file_map: Arc::clone(&param_file_map),
+        session_preparer: session_preparer.clone(),
+    };
+
+    let preprocessor = RealPreprocessor {
+        prss_setup,
+        preproc_buckets,
+        preproc_factory,
+        num_sessions_preproc,
+        param_file_map: param_file_map.clone(),
+        session_preparer: session_preparer.clone(),
+    };
+
+    let crsgenerator = RealCrsGenerator {
+        base_kms,
+        public_storage,
+        private_storage,
+        crs_meta_store,
+        param_file_map,
+        session_preparer,
+    };
+
+    let kms = GenericKms::new(
+        initiator,
+        reencryptor,
+        decryptor,
+        keygenerator,
+        preprocessor,
+        crsgenerator,
+        ddec_handle.abort_handle(),
+    );
+
+    Ok(kms)
+}
+
+/// This is a shared type between all the modules,
+/// it's responsible for creating sessions and holds
+/// information on the network setting.
+#[derive(Clone)]
+struct SessionPreparer {
     base_kms: BaseKmsStruct,
     threshold: u8,
     my_id: usize,
     role_assignments: RoleAssignment,
-    networking_strategy: NetworkingStrategy,
-    abort_handle: AbortHandle,
-    // TODO eventually add mode to allow for nlarge as well.
+    networking_strategy: Arc<RwLock<NetworkingStrategy>>,
     prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePoly128>>>>,
-    preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
-    preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
-    num_sessions_preproc: u16,
-    // NOTE: To avoid deadlocks the public_storage MUST ALWAYS be accessed BEFORE the private_storage when both are needed concurrently
-    public_storage: Arc<Mutex<PubS>>,
-    private_storage: Arc<Mutex<PrivS>>,
-    crs_meta_store: Arc<RwLock<MetaStore<CrsMetaStore>>>,
-    dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<DkgMetaStore>>>,
-    dec_meta_store: Arc<RwLock<MetaStore<DecMetaStore>>>,
-    reenc_meta_store: Arc<RwLock<MetaStore<ReencMetaStore>>>,
-    // Map storing the identity of parameters and the parameter file paths
-    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
 }
 
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
-    ThresholdKms<PubS, PrivS>
-{
-    #[allow(clippy::too_many_arguments)]
-    pub async fn new(
-        threshold: u8,
-        dec_capacity: usize,
-        min_dec_cache: usize,
-        listen_address: &str,
-        listen_port: u16,
-        my_id: usize,
-        preproc_factory: Box<dyn PreprocessorFactory>,
-        num_sessions_preproc: u16,
-        peer_configs: Vec<PeerConf>,
-        public_storage: PubS,
-        private_storage: PrivS,
-        param_file_map: HashMap<String, String>,
-        cert_paths: Option<CertificatePaths>,
-    ) -> anyhow::Result<Self> {
-        let sks: HashMap<RequestId, PrivateSigKey> =
-            read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
-        let sk: PrivateSigKey = some_or_err(
-            sks.values().collect_vec().first(),
-            "There is no private signing key stored".to_string(),
-        )?
-        .to_owned()
-        .to_owned();
-        let key_info: HashMap<RequestId, ThresholdFheKeys> =
-            read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
-        let key_info_w_status = key_info
-            .iter()
-            .map(|(id, info)| {
-                (
-                    id.to_owned(),
-                    HandlerStatus::Done(info.pk_meta_data.to_owned()),
-                )
-            })
-            .collect();
-        let cs: HashMap<RequestId, CrsMetaStore> =
-            read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-        let cs_w_status: HashMap<RequestId, HandlerStatus<CrsMetaStore>> = cs
-            .iter()
-            .map(|(id, crs)| (id.to_owned(), HandlerStatus::Done(crs.to_owned())))
-            .collect();
-
-        let role_assignments: RoleAssignment = peer_configs
-            .into_iter()
-            .map(|peer_config| peer_config.into_role_identity())
-            .collect();
-
-        let own_identity = tonic_some_or_err(
-            role_assignments.get(&Role::indexed_by_one(my_id)),
-            "Could not find my own identity".to_string(),
+impl SessionPreparer {
+    fn own_identity(&self) -> anyhow::Result<Identity> {
+        let id = tonic_some_or_err(
+            self.role_assignments.get(&Role::indexed_by_one(self.my_id)),
+            "Could not find my own identity in role assignments".to_string(),
         )?;
-
-        let mut server = match &cert_paths {
-            Some(cert_bundle) => {
-                tracing::info!("Creating server with TLS enabled.");
-
-                // check that own_identity matches to what's in our certificate
-                let certificate = cert_bundle.get_certificate()?;
-                let san_strings = distributed_decryption::networking::grpc::extract_san_from_certs(
-                    &[certificate],
-                    true,
-                )
-                .map_err(|e| anyhow!(e))?;
-                let host = own_identity
-                    .0
-                    .split(':')
-                    .next()
-                    .ok_or_else(|| anyhow!("hostname not found in own_identity"))?
-                    .to_string();
-                if !san_strings.contains(&host) {
-                    return Err(anyhow_error_and_log(format!(
-                        "cannot find hostname {} in SAN {:?}",
-                        host, san_strings
-                    )));
-                }
-
-                // now setup the TLS server
-                let identity = cert_bundle.get_identity()?;
-                let ca_cert = cert_bundle.get_flattened_ca_list()?;
-                let tls_config = ServerTlsConfig::new()
-                    .identity(identity)
-                    .client_ca_root(ca_cert);
-                Server::builder().tls_config(tls_config)?
-            }
-            _ => {
-                tracing::info!("Creating server without TLS support.");
-                Server::builder()
-            }
-        };
-
-        // This will setup TLS if cert_paths is set to Some(...)
-        let networking_manager = GrpcNetworkingManager::new(own_identity.to_owned(), cert_paths);
-        let networking_server = networking_manager.new_server();
-
-        let router = server.add_service(networking_server);
-        let addr: SocketAddr = format!("{listen_address}:{listen_port}").parse()?;
-
-        tracing::info!(
-            "Starting core-to-core server for identity {} on address {}.",
-            own_identity,
-            addr
-        );
-        let ddec_handle = tokio::spawn(async move {
-            match router.serve(addr).await {
-                Ok(handle) => Ok(handle),
-                Err(e) => {
-                    let msg = format!("Failed to launch ddec server with error: {:?}", e);
-                    Err(anyhow_error_and_log(msg))
-                }
-            }
-        });
-
-        let param_file_map = Arc::new(RwLock::new(HashMap::from_iter(
-            param_file_map
-                .into_iter()
-                .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
-        )));
-
-        let networking_strategy: NetworkingStrategy =
-            Box::new(move |session_id, roles| networking_manager.make_session(session_id, roles));
-        let base_kms = BaseKmsStruct::new(sk);
-        Ok(ThresholdKms {
-            fhe_keys: Arc::new(RwLock::new(key_info)),
-            base_kms,
-            threshold,
-            my_id,
-            role_assignments,
-            networking_strategy,
-            abort_handle: ddec_handle.abort_handle(),
-            prss_setup: Arc::new(RwLock::new(None)),
-            preproc_buckets: Arc::new(RwLock::new(MetaStore::new_unlimited())),
-            preproc_factory: Arc::new(Mutex::new(preproc_factory)),
-            num_sessions_preproc,
-            public_storage: Arc::new(Mutex::new(public_storage)),
-            private_storage: Arc::new(Mutex::new(private_storage)),
-            crs_meta_store: Arc::new(RwLock::new(MetaStore::new_from_map(cs_w_status))),
-            dkg_pubinfo_meta_store: Arc::new(RwLock::new(MetaStore::new_from_map(
-                key_info_w_status,
-            ))),
-            dec_meta_store: Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache))),
-            reenc_meta_store: Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache))),
-            param_file_map,
-        })
+        Ok(id.to_owned())
     }
 
-    /// Initializes a threshold KMS server by executing the PRSS setup.
-    pub async fn init_prss(&self, epoch_id: u128) -> anyhow::Result<()> {
-        // we can only init the PRSS once. If we try to do it again, we get an error.
-        if self.prss_setup.read().await.is_some() {
-            return Err(anyhow_error_and_log("PRSS state already exists"));
-        }
+    async fn get_networking(
+        &self,
+        session_id: SessionId,
+    ) -> distributed_decryption::execution::runtime::session::NetworkingImpl {
+        let strat = self.networking_strategy.read().await;
+        (strat)(session_id, self.role_assignments.clone())
+    }
 
+    async fn make_base_session(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<BaseSessionStruct<AesRng, SessionParameters>> {
+        let networking = self.get_networking(session_id).await;
         let own_identity = self.own_identity()?;
-        let session_id = SessionId(epoch_id);
-        let networking = (self.networking_strategy)(session_id, self.role_assignments.clone());
 
         let parameters = SessionParameters::new(
             self.threshold,
             session_id,
-            own_identity.clone(),
+            own_identity,
             self.role_assignments.clone(),
         )?;
-        let mut base_session =
+        let base_session =
             BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng().await?)?;
+        Ok(base_session)
+    }
+
+    async fn prepare_ddec_data_from_requestid(
+        &self,
+        request_id: &RequestId,
+    ) -> anyhow::Result<SmallSession<ResiduePoly128>> {
+        self.prepare_ddec_data_from_sessionid(SessionId(request_id.clone().try_into()?))
+            .await
+    }
+
+    async fn prepare_ddec_data_from_sessionid(
+        &self,
+        session_id: SessionId,
+    ) -> anyhow::Result<SmallSession<ResiduePoly128>> {
+        let base_session = self.make_base_session(session_id).await?;
+        let prss_setup = tonic_some_or_err(
+            self.prss_setup.read().await.clone(),
+            "No PRSS setup exists".to_string(),
+        )?;
+        let prss_state = prss_setup.new_prss_session_state(session_id);
+
+        let session = SmallSession {
+            base_session,
+            prss_state,
+        };
+        Ok(session)
+    }
+}
+
+pub struct RealInitiator<PrivS: Storage + Send + Sync + 'static> {
+    // TODO eventually add mode to allow for nlarge as well.
+    prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePoly128>>>>,
+    private_storage: Arc<Mutex<PrivS>>,
+    session_preparer: SessionPreparer,
+}
+
+impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
+    async fn init_prss_from_disk(&self) -> anyhow::Result<()> {
+        // TODO pass epoch ID fom config? (once we have epochs)
+        let epoch_id = 1_u128;
+
+        let prss_setup_from_file = {
+            let guarded_private_storage = self.private_storage.lock().await;
+            read_at_request_id::<PrivS, PRSSSetup<ResiduePoly128>>(
+                &guarded_private_storage,
+                &RequestId::from(epoch_id),
+                &PrivDataType::PrssSetup.to_string(),
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!("failed to read PRSS from file with error: {e}");
+                e
+            })
+            .ok()
+        };
+
+        // check if a PRSS setup already exists in storage.
+        match prss_setup_from_file {
+            Some(prss_setup) => {
+                let mut guarded_prss_setup = self.prss_setup.write().await;
+                *guarded_prss_setup = Some(prss_setup.clone());
+                tracing::info!("Initializing threshold KMS server with PRSS Setup from disk",)
+            }
+            None => tracing::info!(
+                "Initializing threshold KMS server without PRSS Setup, \
+                        remember to call the init GRPC endpoint",
+            ),
+        }
+
+        Ok(())
+    }
+
+    async fn init_prss(&self) -> anyhow::Result<()> {
+        if self.prss_setup.read().await.is_some() {
+            return Err(anyhow_error_and_log("PRSS state already exists"));
+        }
+
+        let own_identity = self.session_preparer.own_identity()?;
+        // Assume we only have one epoch and start with session 1
+        let epoch_id = 1_u128;
+        let session_id = SessionId(epoch_id);
+        let mut base_session = self.session_preparer.make_base_session(session_id).await?;
 
         tracing::info!("Starting PRSS for identity {}.", own_identity);
         let prss_setup_obj: PRSSSetup<ResiduePoly128> = PRSSSetup::init_with_abort::<
@@ -521,124 +676,29 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         tracing::info!("PRSS completed successfully for identity {}.", own_identity);
         Ok(())
     }
-
-    pub fn own_identity(&self) -> anyhow::Result<Identity> {
-        let id = tonic_some_or_err(
-            self.role_assignments.get(&Role::indexed_by_one(self.my_id)),
-            "Could not find my own identity in role assignments".to_string(),
-        )?;
-        Ok(id.to_owned())
-    }
-
-    pub fn my_id(&self) -> usize {
-        self.my_id
-    }
-
-    pub fn shutdown(&self) {
-        self.abort_handle.abort();
-    }
 }
 
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> BaseKms
-    for ThresholdKms<PubS, PrivS>
-{
-    fn verify_sig<T: Serialize + AsRef<[u8]>>(
-        payload: &T,
-        signature: &der_types::Signature,
-        verification_key: &PublicSigKey,
-    ) -> bool {
-        BaseKmsStruct::verify_sig(payload, signature, verification_key)
-    }
-
-    fn sign<T: Serialize + AsRef<[u8]>>(&self, msg: &T) -> anyhow::Result<der_types::Signature> {
-        self.base_kms.sign(msg)
-    }
-
-    fn get_verf_key(&self) -> PublicSigKey {
-        self.base_kms.get_verf_key()
-    }
-
-    fn digest<T: fmt::Debug + Serialize>(msg: &T) -> anyhow::Result<Vec<u8>> {
-        BaseKmsStruct::digest(&msg)
-    }
-
-    fn verify_sig_eip712<T: SolStruct>(
-        payload: &T,
-        domain: &Eip712Domain,
-        signature: &der_types::Signature,
-        verification_key: &PublicSigKey,
-    ) -> bool {
-        BaseKmsStruct::verify_sig_eip712(payload, domain, signature, verification_key)
-    }
-
-    fn sign_eip712<T: SolStruct>(
-        &self,
-        msg: &T,
-        domain: &Eip712Domain,
-    ) -> anyhow::Result<der_types::Signature> {
-        self.base_kms.sign_eip712(msg, domain)
+#[tonic::async_trait]
+impl<PrivS: Storage + Send + Sync + 'static> Initiator for RealInitiator<PrivS> {
+    async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
+        // NOTE: request is not needed because our config is empty at the moment
+        self.init_prss().await.map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                format!("PRSS initialization failed with error {}", e),
+            )
+        })?;
+        Ok(Response::new(Empty {}))
     }
 }
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
-    ThresholdKms<PubS, PrivS>
-{
-    /// Helper method for decryption which carries out the actual threshold decryption using noise
-    /// flooding.
-    async fn inner_decrypt<T>(
-        session: &mut SmallSession<ResiduePoly128>,
-        protocol: &mut Small,
-        ct: &[u8],
-        fhe_type: FheType,
-        key_handle: &RequestId,
-        fhe_keys: RwLockReadGuard<'_, HashMap<RequestId, ThresholdFheKeys>>,
-    ) -> anyhow::Result<T>
-    where
-        T: tfhe::integer::block_decomposition::Recomposable
-            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
-    {
-        tracing::info!("{:?} started inner_decrypt", session.own_identity());
-        let low_level_ct = fhe_type.deserialize_to_low_level(ct)?;
-        let keys = match fhe_keys.get(key_handle) {
-            Some(keys) => keys,
-            None => {
-                return Err(anyhow_error_and_log(format!(
-                    "Key handle {key_handle} does not exist"
-                )))
-            }
-        };
-        let raw_decryption = match decrypt_using_noiseflooding(
-            session,
-            protocol,
-            &keys.sns_key,
-            low_level_ct,
-            &keys.private_keys,
-            DECRYPTION_MODE,
-            session.own_identity(),
-        )
-        .await
-        {
-            Ok((partial_dec, time)) => {
-                let raw_decryption = match partial_dec.get(&session.session_id().to_string()) {
-                    Some(raw_decryption) => *raw_decryption,
-                    None => {
-                        return Err(anyhow!(
-                            "Decryption with session ID {} could not be retrived",
-                            session.session_id().to_string()
-                        ))
-                    }
-                };
-                tracing::info!(
-                    "Decryption completed on {:?}. Inner thread took {:?} ms",
-                    session.own_identity(),
-                    time.as_millis()
-                );
-                raw_decryption
-            }
-            Err(e) => return Err(anyhow!("Failed decryption with noiseflooding: {e}")),
-        };
-        Ok(raw_decryption)
-    }
+pub struct RealReencryptor {
+    fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
+    base_kms: BaseKmsStruct,
+    reenc_meta_store: Arc<RwLock<MetaStore<ReencMetaStore>>>,
+    session_preparer: SessionPreparer,
+}
 
+impl RealReencryptor {
     /// Helper method for reencryptin which carries out the actual threshold decryption using noise
     /// flooding.
     #[allow(clippy::too_many_arguments)]
@@ -705,265 +765,434 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         };
         Ok(partial_signcryption)
     }
+}
 
-    async fn inner_crs_gen(&self, req_id: &RequestId, witness_dim: usize) -> anyhow::Result<()> {
+#[tonic::async_trait]
+impl Reencryptor for RealReencryptor {
+    async fn reencrypt(
+        &self,
+        request: Request<ReencryptionRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let inner = request.into_inner();
+        tracing::info!(
+            "Party {:?} received a new reencryption request with request_id {:?}",
+            self.session_preparer.own_identity(),
+            inner.request_id
+        );
+        let (
+            ciphertext,
+            fhe_type,
+            link,
+            client_enc_key,
+            client_verf_key,
+            servers_needed,
+            key_id,
+            req_id,
+        ) = tonic_handle_potential_err(
+            validate_reencrypt_req(&inner).await,
+            format!("Invalid reencryption request {:?}", inner),
+        )?;
+
+        let mut session = tonic_handle_potential_err(
+            self.session_preparer
+                .prepare_ddec_data_from_requestid(&req_id)
+                .await,
+            "Could not prepare ddec data".to_string(),
+        )?;
+        let mut protocol = Small::new(session.clone());
+        let meta_store = Arc::clone(&self.reenc_meta_store);
+        let fhe_keys = Arc::clone(&self.fhe_keys);
+        let mut rng = tonic_handle_potential_err(
+            self.base_kms.new_rng().await,
+            "Could not get a new RNG".to_string(),
+        )?;
+        let sig_key = Arc::clone(&self.base_kms.sig_key);
+
+        // Below we write to the meta-store.
+        // After writing, the the meta-store on this [req_id] will be in the "Started" state
+        // So we need to update it everytime something bad happens,
+        // or put all the code that may error before the first write to the meta-store,
+        // otherwise it'll be in the "Started" state forever.
         {
-            let mut guarded_meta_store = self.crs_meta_store.write().await;
-            guarded_meta_store.insert(req_id)?;
+            let mut guarded_meta_store = self.reenc_meta_store.write().await;
+            tonic_handle_potential_err(
+                guarded_meta_store.insert(&req_id),
+                "Could not insert reencryption request".to_string(),
+            )?;
         }
-
-        let session_id = SessionId(req_id.clone().try_into()?);
-        let mut session = self.prepare_ddec_data_from_sessionid(session_id).await?;
-        let meta_store = Arc::clone(&self.crs_meta_store);
-        let public_storage = Arc::clone(&self.public_storage);
-        let private_storage = Arc::clone(&self.private_storage);
-        let owned_req_id = req_id.to_owned();
-
-        // we need to clone the signature key because it needs to be given
-        // the thread that spawns the CRS ceremony
-        let sig_key = self.base_kms.sig_key.clone();
 
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
         let _handle = tokio::spawn(async move {
-            let crs_start_timer = Instant::now();
-            let real_ceremony = RealCeremony::default();
-            let res_pp = real_ceremony
-                .execute::<Z64, _, _>(&mut session, witness_dim)
-                .await;
-            let res_info_pp =
-                res_pp.and_then(|pp| compute_info(&sig_key, &pp).map(|info| (info, pp)));
-            let f = || async {
-                // we take these two locks at the same time in case there are races
-                // on return, the two locks should be dropped in the correct order also
-                let mut pub_storage = public_storage.lock().await;
-                let mut priv_storage = private_storage.lock().await;
+            let fhe_keys_rlock = fhe_keys.read().await;
+            let tmp = Self::inner_reencrypt(
+                &mut session,
+                &mut protocol,
+                &mut rng,
+                &ciphertext,
+                fhe_type,
+                link.clone(),
+                &key_id,
+                &client_enc_key,
+                &client_verf_key,
+                sig_key,
+                fhe_keys_rlock,
+            )
+            .await;
+            let mut guarded_meta_store = meta_store.write().await;
+            match tmp {
+                Ok(partial_dec) => {
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_store.update(
+                        &req_id,
+                        HandlerStatus::Done((servers_needed, link, fhe_type, partial_dec)),
+                    );
+                }
+                Result::Err(e) => {
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_store.update(
+                        &req_id,
+                        HandlerStatus::Error(format!("Failed decryption: {e}")),
+                    );
+                }
+            }
+        });
+        Ok(Response::new(Empty {}))
+    }
 
-                let (info, pp) = match res_info_pp {
-                    Ok(info_pp) => info_pp,
-                    Err(e) => {
-                        let mut guarded_meta_store = meta_store.write().await;
-                        // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store
-                            .update(&owned_req_id, HandlerStatus::Error(e.to_string()));
-                        return;
+    async fn get_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<ReencryptionResponse>, Status> {
+        let request_id = request.into_inner();
+        if !request_id.is_valid() {
+            tracing::warn!(
+                "The value {} is not a valid request ID!",
+                request_id.to_string()
+            );
+            return Err(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("The value {} is not a valid request ID!", request_id),
+            ));
+        }
+
+        // Retrieve the ReencMetaStore object
+        let (servers_needed, link, fhe_type, signcrypted_ciphertext) = {
+            let guarded_meta_store = self.reenc_meta_store.read().await;
+            handle_res_mapping(
+                guarded_meta_store.retrieve(&request_id).cloned(),
+                &request_id,
+                "Reencryption",
+            )?
+        };
+        let server_verf_key = tonic_handle_potential_err(
+            serde_asn1_der::to_vec(&self.base_kms.get_verf_key()),
+            "Could not serialize server verification key".to_string(),
+        )?;
+        Ok(Response::new(ReencryptionResponse {
+            version: CURRENT_FORMAT_VERSION,
+            servers_needed,
+            signcrypted_ciphertext,
+            fhe_type: fhe_type.into(),
+            digest: link,
+            verification_key: server_verf_key,
+        }))
+    }
+}
+
+pub struct RealDecryptor {
+    fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
+    base_kms: BaseKmsStruct,
+    dec_meta_store: Arc<RwLock<MetaStore<DecMetaStore>>>,
+    session_preparer: SessionPreparer,
+}
+
+impl RealDecryptor {
+    /// Helper method for decryption which carries out the actual threshold decryption using noise
+    /// flooding.
+    async fn inner_decrypt<T>(
+        session: &mut SmallSession<ResiduePoly128>,
+        protocol: &mut Small,
+        ct: &[u8],
+        fhe_type: FheType,
+        key_handle: &RequestId,
+        fhe_keys: RwLockReadGuard<'_, HashMap<RequestId, ThresholdFheKeys>>,
+    ) -> anyhow::Result<T>
+    where
+        T: tfhe::integer::block_decomposition::Recomposable
+            + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+    {
+        tracing::info!("{:?} started inner_decrypt", session.own_identity());
+        let low_level_ct = fhe_type.deserialize_to_low_level(ct)?;
+        let keys = match fhe_keys.get(key_handle) {
+            Some(keys) => keys,
+            None => {
+                return Err(anyhow_error_and_log(format!(
+                    "Key handle {key_handle} does not exist"
+                )))
+            }
+        };
+        let raw_decryption = match decrypt_using_noiseflooding(
+            session,
+            protocol,
+            &keys.sns_key,
+            low_level_ct,
+            &keys.private_keys,
+            DECRYPTION_MODE,
+            session.own_identity(),
+        )
+        .await
+        {
+            Ok((partial_dec, time)) => {
+                let raw_decryption = match partial_dec.get(&session.session_id().to_string()) {
+                    Some(raw_decryption) => *raw_decryption,
+                    None => {
+                        return Err(anyhow!(
+                            "Decryption with session ID {} could not be retrived",
+                            session.session_id().to_string()
+                        ))
                     }
                 };
+                tracing::info!(
+                    "Decryption completed on {:?}. Inner thread took {:?} ms",
+                    session.own_identity(),
+                    time.as_millis()
+                );
+                raw_decryption
+            }
+            Err(e) => return Err(anyhow!("Failed decryption with noiseflooding: {e}")),
+        };
+        Ok(raw_decryption)
+    }
+}
 
-                let crs_meta_data = (info.key_handle, info.signature);
-                if store_at_request_id(
-                    &mut (*priv_storage),
-                    &owned_req_id,
-                    &crs_meta_data,
-                    &PrivDataType::CrsInfo.to_string(),
+#[tonic::async_trait]
+impl Decryptor for RealDecryptor {
+    async fn decrypt(
+        &self,
+        request: Request<DecryptionRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let inner = request.into_inner();
+        tracing::info!(
+            "Party {:?} received a new decryption request with request_id {:?}",
+            self.session_preparer.own_identity(),
+            inner.request_id
+        );
+        let (ciphertext, fhe_type, req_digest, servers_needed, key_id, req_id) =
+            tonic_handle_potential_err(
+                validate_decrypt_req(&inner),
+                format!("Invalid key in request {:?}", inner),
+            )?;
+
+        let mut session = tonic_handle_potential_err(
+            self.session_preparer
+                .prepare_ddec_data_from_requestid(&req_id)
+                .await,
+            "Could not prepare ddec data for reencryption".to_string(),
+        )?;
+
+        // Below we write to the meta-store.
+        // After writing, the the meta-store on this [req_id] will be in the "Started" state
+        // So we need to update it everytime something bad happens,
+        // or put all the code that may error before the first write to the meta-store,
+        // otherwise it'll be in the "Started" state forever.
+        {
+            let mut guarded_meta_store = self.dec_meta_store.write().await;
+            tonic_handle_potential_err(
+                guarded_meta_store.insert(&req_id),
+                "Could not insert decryption into meta store".to_string(),
+            )?;
+        }
+
+        let mut protocol = Small::new(session.clone());
+        let meta_store = Arc::clone(&self.dec_meta_store);
+        let fhe_keys = Arc::clone(&self.fhe_keys);
+
+        // we do not need to hold the handle,
+        // the result of the computation is tracked by the dec_meta_store
+        let _handle = tokio::spawn(async move {
+            let fhe_keys_rlock = fhe_keys.read().await;
+            let tmp = match fhe_type {
+                FheType::Euint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
+                    &mut session,
+                    &mut protocol,
+                    &ciphertext,
+                    fhe_type,
+                    &key_id,
+                    fhe_keys_rlock,
                 )
                 .await
-                .is_ok()
-                // Only store the CRS if no other server has already stored it
-                    && store_at_request_id(
-                        &mut (*pub_storage),
-                        &owned_req_id,
-                        &pp,
-                        &PubDataType::CRS.to_string(),
-                    )
-                    .await
-                    .is_ok()
-                {
-                    let mut guarded_meta_store = meta_store.write().await;
+                .map(Plaintext::from_u2048),
+                FheType::Euint256 => Self::inner_decrypt::<tfhe::integer::U256>(
+                    &mut session,
+                    &mut protocol,
+                    &ciphertext,
+                    fhe_type,
+                    &key_id,
+                    fhe_keys_rlock,
+                )
+                .await
+                .map(Plaintext::from_u256),
+                FheType::Euint160 => Self::inner_decrypt::<tfhe::integer::U256>(
+                    &mut session,
+                    &mut protocol,
+                    &ciphertext,
+                    fhe_type,
+                    &key_id,
+                    fhe_keys_rlock,
+                )
+                .await
+                .map(Plaintext::from_u160),
+                FheType::Euint128 => Self::inner_decrypt::<u128>(
+                    &mut session,
+                    &mut protocol,
+                    &ciphertext,
+                    fhe_type,
+                    &key_id,
+                    fhe_keys_rlock,
+                )
+                .await
+                .map(|x| Plaintext::new(x, fhe_type)),
+                FheType::Bool
+                | FheType::Euint4
+                | FheType::Euint8
+                | FheType::Euint16
+                | FheType::Euint32
+                | FheType::Euint64 => Self::inner_decrypt::<u64>(
+                    &mut session,
+                    &mut protocol,
+                    &ciphertext,
+                    fhe_type,
+                    &key_id,
+                    fhe_keys_rlock,
+                )
+                .await
+                .map(|x| Plaintext::new(x as u128, fhe_type)),
+            };
+            let mut guarded_meta_store = meta_store.write().await;
+            match tmp {
+                Ok(plaintext) => {
                     // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_store
-                        .update(&owned_req_id, HandlerStatus::Done(crs_meta_data));
-                } else {
-                    tracing::error!("Could not store all the CRS data from request ID {owned_req_id}. Deleting any dangling data.");
-                    // Try to delete stored data to avoid anything dangling
-                    // Ignore any failure to delete something since it might be because the data did not get created
-                    // In any case, we can't do much.
-                    let _ = delete_at_request_id(
-                        &mut (*pub_storage),
-                        &owned_req_id,
-                        &PubDataType::CRS.to_string(),
-                    )
-                    .await;
-                    let _ = delete_at_request_id(
-                        &mut (*priv_storage),
-                        &owned_req_id,
-                        &PrivDataType::CrsInfo.to_string(),
-                    )
-                    .await;
-                    {
-                        let mut guarded_meta_store = meta_store.write().await;
-                        // We cannot do much if updating the storage fails at this point...
-                        let _ = guarded_meta_store.update(
-                            &owned_req_id,
-                            HandlerStatus::Error(format!(
-                                "failed to store data to public storage for ID {}",
-                                owned_req_id
-                            )),
-                        );
-                    }
+                    let _ = guarded_meta_store.update(
+                        &req_id,
+                        HandlerStatus::Done((
+                            servers_needed,
+                            req_digest.clone(),
+                            plaintext.clone(),
+                        )),
+                    );
                 }
-            };
-            let _ = f().await;
-
-            let crs_stop_timer = Instant::now();
-            let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
-            tracing::info!(
-                "CRS stored. CRS ceremony time was {:?} ms",
-                (elapsed_time).as_millis()
-            );
-        });
-        Ok(())
-    }
-
-    async fn prepare_ddec_data_from_requestid(
-        &self,
-        request_id: &RequestId,
-    ) -> anyhow::Result<SmallSession<ResiduePoly128>> {
-        self.prepare_ddec_data_from_sessionid(SessionId(request_id.clone().try_into()?))
-            .await
-    }
-
-    async fn prepare_ddec_data_from_sessionid(
-        &self,
-        session_id: SessionId,
-    ) -> anyhow::Result<SmallSession<ResiduePoly128>> {
-        let networking = (self.networking_strategy)(session_id, self.role_assignments.clone());
-        let own_identity = self.own_identity()?;
-        let parameters = SessionParameters::new(
-            self.threshold,
-            session_id,
-            own_identity.clone(),
-            self.role_assignments.clone(),
-        )?;
-        let prss_setup = tonic_some_or_err(
-            self.prss_setup.read().await.clone(),
-            "No PRSS setup exists".to_string(),
-        )?;
-        let prss_state = prss_setup.new_prss_session_state(session_id);
-        let session = SmallSession {
-            base_session: BaseSessionStruct::new(
-                parameters,
-                networking,
-                self.base_kms.new_rng().await?,
-            )?,
-            prss_state,
-        };
-        Ok(session)
-    }
-
-    async fn launch_dkg_preproc(
-        &self,
-        dkg_params: DKGParams,
-        request_id: RequestId,
-    ) -> anyhow::Result<()> {
-        {
-            let mut guarded_meta_store = self.preproc_buckets.write().await;
-            guarded_meta_store.insert(&request_id)?;
-        }
-
-        fn create_sessions(
-            base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
-            prss_setup: PRSSSetup<ResiduePoly128>,
-        ) -> Vec<SmallSession<ResiduePoly128>> {
-            base_sessions
-                .into_iter()
-                .map(|base_session| {
-                    let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
-                    SmallSession::new_from_prss_state(base_session, prss_state).unwrap()
-                })
-                .collect_vec()
-        }
-        //Derive a sequence of sessionId from request_id
-        let session_id: u128 = request_id.clone().try_into()?;
-        let own_identity = self.own_identity()?;
-        let my_id = self.my_id;
-
-        let sids: Vec<_> = (session_id..session_id + self.num_sessions_preproc as u128).collect();
-        let rngs = {
-            let mut out = Vec::with_capacity(sids.len());
-            for _ in &sids {
-                out.push(self.base_kms.new_rng().await?)
+                Result::Err(e) => {
+                    // We cannot do much if updating the storage fails at this point...
+                    let _ = guarded_meta_store.update(
+                        &req_id,
+                        HandlerStatus::Error(format!("Failed decryption: {e}")),
+                    );
+                }
             }
-            out
-        };
-        let base_sessions: Vec<_> = sids
-            .into_iter()
-            .zip(rngs)
-            .map(|(sid, rng)| {
-                let session_id = SessionId(sid);
-                let params = SessionParameters::new(
-                    self.threshold,
-                    session_id,
-                    own_identity.clone(),
-                    self.role_assignments.clone(),
-                )?;
-                let networking =
-                    (self.networking_strategy)(session_id, self.role_assignments.clone());
-
-                BaseSessionStruct::new(params, networking, rng)
-            })
-            .try_collect()?;
-
-        let factory = Arc::clone(&self.preproc_factory);
-        let bucket_store = Arc::clone(&self.preproc_buckets);
-
-        let prss_setup = tonic_some_or_err(
-            (*self.prss_setup.read().await).clone(),
-            "No PRSS setup exists".to_string(),
-        )?;
-        //NOTE: For now we just discard the handle, we can check status with get_preproc_status
-        // endpoint
-        let _handle = tokio::spawn(async move {
-            let sessions = create_sessions(base_sessions, prss_setup);
-            let orchestrator = {
-                let mut factory_guard = factory.lock().await;
-                let factory = factory_guard.as_mut();
-                PreprocessingOrchestrator::<ResiduePoly128>::new(factory, dkg_params).unwrap()
-            };
-            tracing::info!("Starting Preproc Orchestration on P[{my_id}]");
-            let preproc_result = orchestrator
-                .orchestrate_small_session_dkg_processing(sessions)
-                .await;
-            //write the preproc handle to the bucket store
-            let handle_update = match preproc_result {
-                Ok((_, preproc_handle)) => HandlerStatus::Done(preproc_handle),
-                Err(error) => HandlerStatus::Error(error.to_string()),
-            };
-            let mut guarded_meta_store = bucket_store.write().await;
-            // We cannot do much if updating the storage fails at this point...
-            let _ = guarded_meta_store.update(&request_id, handle_update);
-            tracing::info!("Preproc Finished P[{my_id}]");
         });
-        Ok(())
+        Ok(Response::new(Empty {}))
     }
 
+    async fn get_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<DecryptionResponse>, Status> {
+        let request_id = request.into_inner();
+        if !request_id.is_valid() {
+            tracing::warn!(
+                "The value {} is not a valid request ID!",
+                request_id.to_string()
+            );
+            return Err(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("The value {} is not a valid request ID!", request_id),
+            ));
+        }
+        let (servers_needed, req_digest, plaintext) = {
+            let guarded_meta_store = self.dec_meta_store.read().await;
+            handle_res_mapping(
+                guarded_meta_store.retrieve(&request_id).cloned(),
+                &request_id,
+                "Decryption",
+            )?
+        };
+        let decrypted_bytes = tonic_handle_potential_err(
+            serde_asn1_der::to_vec(&plaintext),
+            format!(
+                "Could not convert plaintext to bytes in request with ID {:?}",
+                request_id
+            ),
+        )?;
+        let server_verf_key = tonic_handle_potential_err(
+            serde_asn1_der::to_vec(&self.base_kms.get_verf_key()),
+            "Could not serialize server verification key".to_string(),
+        )?;
+        let sig_payload = DecryptionResponsePayload {
+            version: CURRENT_FORMAT_VERSION,
+            servers_needed,
+            plaintext: decrypted_bytes,
+            verification_key: server_verf_key,
+            digest: req_digest,
+        };
+
+        let sig_payload_vec = tonic_handle_potential_err(
+            serde_asn1_der::to_vec(&sig_payload),
+            format!("Could not convert payload to bytes {:?}", sig_payload),
+        )?;
+
+        let sig = tonic_handle_potential_err(
+            self.base_kms.sign(&sig_payload_vec),
+            format!("Could not sign payload {:?}", sig_payload),
+        )?;
+        Ok(Response::new(DecryptionResponse {
+            signature: sig.sig.to_vec(),
+            payload: Some(sig_payload),
+        }))
+    }
+}
+
+pub struct RealKeyGenerator<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+> {
+    // NOTE: To avoid deadlocks the fhe_keys SHOULD NOT be written to while holding a meta storage
+    // mutex!
+    fhe_keys: Arc<RwLock<HashMap<RequestId, ThresholdFheKeys>>>,
+    base_kms: BaseKmsStruct,
+    // TODO eventually add mode to allow for nlarge as well.
+    preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
+    // NOTE: To avoid deadlocks the public_storage MUST ALWAYS be accessed BEFORE the private_storage when both are needed concurrently
+    public_storage: Arc<Mutex<PubS>>,
+    private_storage: Arc<Mutex<PrivS>>,
+    dkg_pubinfo_meta_store: Arc<RwLock<MetaStore<DkgMetaStore>>>,
+    // Map storing the identity of parameters and the parameter file paths
+    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
+    session_preparer: SessionPreparer,
+}
+
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    RealKeyGenerator<PubS, PrivS>
+{
     async fn launch_dkg(
         &self,
         dkg_params: DKGParams,
         mut preproc_handle: Box<dyn DKGPreprocessing<ResiduePoly128>>,
         req_id: RequestId,
     ) -> anyhow::Result<()> {
-        //Update status
+        // Update status
         {
             let mut guarded_meta_store = self.dkg_pubinfo_meta_store.write().await;
             guarded_meta_store.insert(&req_id)?;
         }
 
-        //Create the base session necessary to run the DKG
+        // Create the base session necessary to run the DKG
         let mut base_session = {
             let session_id = SessionId(req_id.clone().try_into()?);
-            let own_identity = self.own_identity()?;
-            let params = SessionParameters::new(
-                self.threshold,
-                session_id,
-                own_identity,
-                self.role_assignments.clone(),
-            )?;
-            let networking = (self.networking_strategy)(session_id, self.role_assignments.clone());
-            BaseSessionStruct::new(params, networking, self.base_kms.new_rng().await?)?
+            self.session_preparer.make_base_session(session_id).await?
         };
 
-        //Clone all the Arcs to give them to the tokio thread
+        // Clone all the Arcs to give them to the tokio thread
         let meta_store = Arc::clone(&self.dkg_pubinfo_meta_store);
         let public_storage = Arc::clone(&self.public_storage);
         let private_storage = Arc::clone(&self.private_storage);
@@ -1118,138 +1347,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     }
 }
 
-/// Compute all the info of a [FhePubKeySet] and return the result as as [DkgMetaStore]
-pub(crate) fn compute_all_info(
-    sig_key: &PrivateSigKey,
-    fhe_key_set: &FhePubKeySet,
-) -> anyhow::Result<DkgMetaStore> {
-    //Compute all the info required for storing
-    let pub_key_info = compute_info(sig_key, &fhe_key_set.public_key);
-    let serv_key_info = compute_info(sig_key, &fhe_key_set.server_key);
-
-    //Make sure we did manage to compute the info
-    Ok(match (pub_key_info, serv_key_info) {
-        (Ok(pub_key_info), Ok(serv_key_info)) => {
-            let mut info = HashMap::new();
-            info.insert(PubDataType::PublicKey, pub_key_info);
-            info.insert(PubDataType::ServerKey, serv_key_info);
-            info
-        }
-        _ => {
-            return Err(anyhow_error_and_log(
-                "Could not compute info on some public key element",
-            ));
-        }
-    })
-}
-
 #[tonic::async_trait]
-impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
-    CoreServiceEndpoint for ThresholdKms<PubS, PrivS>
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> KeyGenerator
+    for RealKeyGenerator<PubS, PrivS>
 {
-    async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
-        // NOTE: request is not needed because our config is empty at the moment
-        self.init_prss(1).await.map_err(|e| {
-            tonic::Status::new(
-                tonic::Code::Internal,
-                format!("PRSS initialization failed with error {}", e),
-            )
-        })?;
-        Ok(Response::new(Empty {}))
-    }
-
-    async fn key_gen_preproc(
-        &self,
-        request: Request<KeyGenPreprocRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        let inner = request.into_inner();
-        let request_id = tonic_some_or_err(
-            inner.request_id.clone(),
-            "Request ID is not set".to_string(),
-        )?;
-
-        // ensure the request ID is valid
-        if !request_id.is_valid() {
-            tracing::warn!("Request ID {} is not valid!", request_id.to_string());
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("Request ID {} is not valid!", request_id),
-            ));
-        }
-
-        //Retrieve the DKG parameters
-        let params = tonic_handle_potential_err(
-            retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
-            "Parameter choice is not recognized".to_string(),
-        )?;
-
-        let dkg_params = DKGParams::WithSnS(DKGParamsSnS {
-            regular_params: DKGParamsRegular {
-                sec: SEC_PAR,
-                ciphertext_parameters: params.ciphertext_parameters,
-                flag: true,
-            },
-            sns_params: params.sns_parameters,
-        });
-
-        //Ensure there's no entry in preproc buckets for that request_id
-        let entry_exists = {
-            let map = self.preproc_buckets.read().await;
-            map.exists(&request_id)
-        };
-
-        //If the entry did not exist before, start the preproc
-        if !entry_exists {
-            tracing::info!("Starting preproc generation for Request ID {}", request_id);
-            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, request_id.clone()).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params))?;
-        } else {
-            tracing::warn!(
-                "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",
-                request_id
-            );
-        }
-        Ok(Response::new(Empty {}))
-    }
-
-    async fn get_preproc_status(
-        &self,
-        request: Request<KeyGenPreprocRequest>,
-    ) -> Result<Response<KeyGenPreprocStatus>, Status> {
-        let inner = request.into_inner();
-        let request_id = tonic_some_or_err(
-            inner.request_id.clone(),
-            "Request ID is not set".to_string(),
-        )?;
-        let response = {
-            let map = self.preproc_buckets.read().await;
-            match map.retrieve(&request_id) {
-                None => {
-                    tracing::warn!(
-                        "Requesting status for request id that does not exist {request_id}"
-                    );
-                    KeyGenPreprocStatusEnum::Missing
-                }
-                Some(HandlerStatus::Error(e)) => {
-                    tracing::warn!(
-                        "Error while generating keygen preproc for request id {request_id} : {e}"
-                    );
-                    KeyGenPreprocStatusEnum::Error
-                }
-                Some(HandlerStatus::Started) => {
-                    tracing::info!("Preproc for request id {request_id} is in progress.");
-                    KeyGenPreprocStatusEnum::InProgress
-                }
-                Some(HandlerStatus::Done(_)) => {
-                    tracing::info!("Preproc for request id {request_id} is finished.");
-                    KeyGenPreprocStatusEnum::Finished
-                }
-            }
-        };
-        Ok(Response::new(KeyGenPreprocStatus {
-            result: response.into(),
-        }))
-    }
-
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(
@@ -1348,7 +1449,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         Ok(Response::new(Empty {}))
     }
 
-    async fn get_key_gen_result(
+    async fn get_result(
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
@@ -1365,316 +1466,319 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             key_results: convert_key_response(res),
         }))
     }
+}
 
-    async fn reencrypt(
+pub struct RealPreprocessor {
+    // TODO eventually add mode to allow for nlarge as well.
+    prss_setup: Arc<RwLock<Option<PRSSSetup<ResiduePoly128>>>>,
+    preproc_buckets: Arc<RwLock<MetaStore<BucketMetaStore>>>,
+    preproc_factory: Arc<Mutex<Box<dyn PreprocessorFactory>>>,
+    num_sessions_preproc: u16,
+    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
+    session_preparer: SessionPreparer,
+}
+
+impl RealPreprocessor {
+    async fn launch_dkg_preproc(
         &self,
-        request: Request<ReencryptionRequest>,
+        dkg_params: DKGParams,
+        request_id: RequestId,
+    ) -> anyhow::Result<()> {
+        {
+            let mut guarded_meta_store = self.preproc_buckets.write().await;
+            guarded_meta_store.insert(&request_id)?;
+        }
+
+        fn create_sessions(
+            base_sessions: Vec<BaseSessionStruct<AesRng, SessionParameters>>,
+            prss_setup: PRSSSetup<ResiduePoly128>,
+        ) -> Vec<SmallSession<ResiduePoly128>> {
+            base_sessions
+                .into_iter()
+                .map(|base_session| {
+                    let prss_state = prss_setup.new_prss_session_state(base_session.session_id());
+                    SmallSession::new_from_prss_state(base_session, prss_state).unwrap()
+                })
+                .collect_vec()
+        }
+        //Derive a sequence of sessionId from request_id
+        let session_id: u128 = request_id.clone().try_into()?;
+        let own_identity = self.session_preparer.own_identity()?;
+
+        let sids: Vec<_> = (session_id..session_id + self.num_sessions_preproc as u128).collect();
+        let base_sessions = {
+            let mut res = Vec::with_capacity(sids.len());
+            for sid in sids {
+                let base_session = self
+                    .session_preparer
+                    .make_base_session(SessionId(sid))
+                    .await?;
+                res.push(base_session)
+            }
+            res
+        };
+
+        let factory = Arc::clone(&self.preproc_factory);
+        let bucket_store = Arc::clone(&self.preproc_buckets);
+
+        let prss_setup = tonic_some_or_err(
+            (*self.prss_setup.read().await).clone(),
+            "No PRSS setup exists".to_string(),
+        )?;
+        //NOTE: For now we just discard the handle, we can check status with get_preproc_status
+        // endpoint
+        let _handle = tokio::spawn(async move {
+            let sessions = create_sessions(base_sessions, prss_setup);
+            let orchestrator = {
+                let mut factory_guard = factory.lock().await;
+                let factory = factory_guard.as_mut();
+                PreprocessingOrchestrator::<ResiduePoly128>::new(factory, dkg_params).unwrap()
+            };
+            tracing::info!("Starting Preproc Orchestration on P[{:?}]", own_identity);
+            let preproc_result = orchestrator
+                .orchestrate_small_session_dkg_processing(sessions)
+                .await;
+            //write the preproc handle to the bucket store
+            let handle_update = match preproc_result {
+                Ok((_, preproc_handle)) => HandlerStatus::Done(preproc_handle),
+                Err(error) => HandlerStatus::Error(error.to_string()),
+            };
+            let mut guarded_meta_store = bucket_store.write().await;
+            // We cannot do much if updating the storage fails at this point...
+            let _ = guarded_meta_store.update(&request_id, handle_update);
+            tracing::info!("Preproc Finished P[{:?}]", own_identity);
+        });
+        Ok(())
+    }
+}
+
+#[tonic::async_trait]
+impl KeyGenPreprocessor for RealPreprocessor {
+    async fn key_gen_preproc(
+        &self,
+        request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
-        tracing::info!(
-            "Party {} received a new reencryption request with request_id {:?}",
-            self.my_id(),
-            inner.request_id
-        );
-        let (
-            ciphertext,
-            fhe_type,
-            link,
-            client_enc_key,
-            client_verf_key,
-            servers_needed,
-            key_id,
-            req_id,
-        ) = tonic_handle_potential_err(
-            validate_reencrypt_req(&inner).await,
-            format!("Invalid reencryption request {:?}", inner),
+        let request_id = tonic_some_or_err(
+            inner.request_id.clone(),
+            "Request ID is not set".to_string(),
         )?;
 
-        let mut session = tonic_handle_potential_err(
-            self.prepare_ddec_data_from_requestid(&req_id).await,
-            "Could not prepare ddec data".to_string(),
-        )?;
-        let mut protocol = Small::new(session.clone());
-        let meta_store = Arc::clone(&self.reenc_meta_store);
-        let fhe_keys = Arc::clone(&self.fhe_keys);
-        let mut rng = tonic_handle_potential_err(
-            self.base_kms.new_rng().await,
-            "Could not get a new RNG".to_string(),
-        )?;
-        let sig_key = Arc::clone(&self.base_kms.sig_key);
-
-        // Below we write to the meta-store.
-        // After writing, the the meta-store on this [req_id] will be in the "Started" state
-        // So we need to update it everytime something bad happens,
-        // or put all the code that may error before the first write to the meta-store,
-        // otherwise it'll be in the "Started" state forever.
-        {
-            let mut guarded_meta_store = self.reenc_meta_store.write().await;
-            tonic_handle_potential_err(
-                guarded_meta_store.insert(&req_id),
-                "Could not insert reencryption request".to_string(),
-            )?;
+        // ensure the request ID is valid
+        if !request_id.is_valid() {
+            tracing::warn!("Request ID {} is not valid!", request_id.to_string());
+            return Err(tonic::Status::new(
+                tonic::Code::InvalidArgument,
+                format!("Request ID {} is not valid!", request_id),
+            ));
         }
+
+        //Retrieve the DKG parameters
+        let params = tonic_handle_potential_err(
+            retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
+            "Parameter choice is not recognized".to_string(),
+        )?;
+
+        let dkg_params = DKGParams::WithSnS(DKGParamsSnS {
+            regular_params: DKGParamsRegular {
+                sec: SEC_PAR,
+                ciphertext_parameters: params.ciphertext_parameters,
+                flag: true,
+            },
+            sns_params: params.sns_parameters,
+        });
+
+        //Ensure there's no entry in preproc buckets for that request_id
+        let entry_exists = {
+            let map = self.preproc_buckets.read().await;
+            map.exists(&request_id)
+        };
+
+        //If the entry did not exist before, start the preproc
+        if !entry_exists {
+            tracing::info!("Starting preproc generation for Request ID {}", request_id);
+            tonic_handle_potential_err(self.launch_dkg_preproc(dkg_params, request_id.clone()).await, format!("Error launching dkg preprocessing for Request ID {request_id} and parameters {:?}",dkg_params))?;
+        } else {
+            tracing::warn!(
+                "Tried to generate preproc multiple times for the same Request ID {} -- skipped it!",
+                request_id
+            );
+        }
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_result(
+        &self,
+        request: Request<KeyGenPreprocRequest>,
+    ) -> Result<Response<KeyGenPreprocStatus>, Status> {
+        let inner = request.into_inner();
+        let request_id = tonic_some_or_err(
+            inner.request_id.clone(),
+            "Request ID is not set".to_string(),
+        )?;
+        let response = {
+            let map = self.preproc_buckets.read().await;
+            match map.retrieve(&request_id) {
+                None => {
+                    tracing::warn!(
+                        "Requesting status for request id that does not exist {request_id}"
+                    );
+                    KeyGenPreprocStatusEnum::Missing
+                }
+                Some(HandlerStatus::Error(e)) => {
+                    tracing::warn!(
+                        "Error while generating keygen preproc for request id {request_id} : {e}"
+                    );
+                    KeyGenPreprocStatusEnum::Error
+                }
+                Some(HandlerStatus::Started) => {
+                    tracing::info!("Preproc for request id {request_id} is in progress.");
+                    KeyGenPreprocStatusEnum::InProgress
+                }
+                Some(HandlerStatus::Done(_)) => {
+                    tracing::info!("Preproc for request id {request_id} is finished.");
+                    KeyGenPreprocStatusEnum::Finished
+                }
+            }
+        };
+        Ok(Response::new(KeyGenPreprocStatus {
+            result: response.into(),
+        }))
+    }
+}
+
+pub struct RealCrsGenerator<
+    PubS: Storage + Sync + Send + 'static,
+    PrivS: Storage + Sync + Send + 'static,
+> {
+    base_kms: BaseKmsStruct,
+    public_storage: Arc<Mutex<PubS>>,
+    private_storage: Arc<Mutex<PrivS>>,
+    crs_meta_store: Arc<RwLock<MetaStore<CrsMetaStore>>>,
+    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
+    session_preparer: SessionPreparer,
+}
+
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
+    RealCrsGenerator<PubS, PrivS>
+{
+    async fn inner_crs_gen(&self, req_id: &RequestId, witness_dim: usize) -> anyhow::Result<()> {
+        {
+            let mut guarded_meta_store = self.crs_meta_store.write().await;
+            guarded_meta_store.insert(req_id)?;
+        }
+
+        let session_id = SessionId(req_id.clone().try_into()?);
+        let mut session = self
+            .session_preparer
+            .prepare_ddec_data_from_sessionid(session_id)
+            .await?;
+        let meta_store = Arc::clone(&self.crs_meta_store);
+        let public_storage = Arc::clone(&self.public_storage);
+        let private_storage = Arc::clone(&self.private_storage);
+        let owned_req_id = req_id.to_owned();
+
+        // we need to clone the signature key because it needs to be given
+        // the thread that spawns the CRS ceremony
+        let sig_key = self.base_kms.sig_key.clone();
 
         // we do not need to hold the handle,
         // the result of the computation is tracked the crs_meta_store
         let _handle = tokio::spawn(async move {
-            let fhe_keys_rlock = fhe_keys.read().await;
-            let tmp = Self::inner_reencrypt(
-                &mut session,
-                &mut protocol,
-                &mut rng,
-                &ciphertext,
-                fhe_type,
-                link.clone(),
-                &key_id,
-                &client_enc_key,
-                &client_verf_key,
-                sig_key,
-                fhe_keys_rlock,
-            )
-            .await;
-            let mut guarded_meta_store = meta_store.write().await;
-            match tmp {
-                Ok(partial_dec) => {
+            let crs_start_timer = Instant::now();
+            let real_ceremony = RealCeremony::default();
+            let res_pp = real_ceremony
+                .execute::<Z64, _, _>(&mut session, witness_dim)
+                .await;
+            let res_info_pp =
+                res_pp.and_then(|pp| compute_info(&sig_key, &pp).map(|info| (info, pp)));
+            let f = || async {
+                // we take these two locks at the same time in case there are races
+                // on return, the two locks should be dropped in the correct order also
+                let mut pub_storage = public_storage.lock().await;
+                let mut priv_storage = private_storage.lock().await;
+
+                let (info, pp) = match res_info_pp {
+                    Ok(info_pp) => info_pp,
+                    Err(e) => {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        // We cannot do much if updating the storage fails at this point...
+                        let _ = guarded_meta_store
+                            .update(&owned_req_id, HandlerStatus::Error(e.to_string()));
+                        return;
+                    }
+                };
+
+                let crs_meta_data = (info.key_handle, info.signature);
+                if store_at_request_id(
+                    &mut (*priv_storage),
+                    &owned_req_id,
+                    &crs_meta_data,
+                    &PrivDataType::CrsInfo.to_string(),
+                )
+                .await
+                .is_ok()
+                // Only store the CRS if no other server has already stored it
+                    && store_at_request_id(
+                        &mut (*pub_storage),
+                        &owned_req_id,
+                        &pp,
+                        &PubDataType::CRS.to_string(),
+                    )
+                    .await
+                    .is_ok()
+                {
+                    let mut guarded_meta_store = meta_store.write().await;
                     // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_store.update(
-                        &req_id,
-                        HandlerStatus::Done((servers_needed, link, fhe_type, partial_dec)),
-                    );
+                    let _ = guarded_meta_store
+                        .update(&owned_req_id, HandlerStatus::Done(crs_meta_data));
+                } else {
+                    tracing::error!("Could not store all the CRS data from request ID {owned_req_id}. Deleting any dangling data.");
+                    // Try to delete stored data to avoid anything dangling
+                    // Ignore any failure to delete something since it might be because the data did not get created
+                    // In any case, we can't do much.
+                    let _ = delete_at_request_id(
+                        &mut (*pub_storage),
+                        &owned_req_id,
+                        &PubDataType::CRS.to_string(),
+                    )
+                    .await;
+                    let _ = delete_at_request_id(
+                        &mut (*priv_storage),
+                        &owned_req_id,
+                        &PrivDataType::CrsInfo.to_string(),
+                    )
+                    .await;
+                    {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        // We cannot do much if updating the storage fails at this point...
+                        let _ = guarded_meta_store.update(
+                            &owned_req_id,
+                            HandlerStatus::Error(format!(
+                                "failed to store data to public storage for ID {}",
+                                owned_req_id
+                            )),
+                        );
+                    }
                 }
-                Result::Err(e) => {
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_store.update(
-                        &req_id,
-                        HandlerStatus::Error(format!("Failed decryption: {e}")),
-                    );
-                }
-            }
-        });
-        Ok(Response::new(Empty {}))
-    }
-
-    async fn get_reencrypt_result(
-        &self,
-        request: Request<RequestId>,
-    ) -> Result<Response<ReencryptionResponse>, Status> {
-        let request_id = request.into_inner();
-        if !request_id.is_valid() {
-            tracing::warn!(
-                "The value {} is not a valid request ID!",
-                request_id.to_string()
-            );
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("The value {} is not a valid request ID!", request_id),
-            ));
-        }
-
-        // Retrieve the ReencMetaStore object
-        let (servers_needed, link, fhe_type, signcrypted_ciphertext) = {
-            let guarded_meta_store = self.reenc_meta_store.read().await;
-            handle_res_mapping(
-                guarded_meta_store.retrieve(&request_id).cloned(),
-                &request_id,
-                "Reencryption",
-            )?
-        };
-        let server_verf_key = tonic_handle_potential_err(
-            serde_asn1_der::to_vec(&self.get_verf_key()),
-            "Could not serialize server verification key".to_string(),
-        )?;
-        Ok(Response::new(ReencryptionResponse {
-            version: CURRENT_FORMAT_VERSION,
-            servers_needed,
-            signcrypted_ciphertext,
-            fhe_type: fhe_type.into(),
-            digest: link,
-            verification_key: server_verf_key,
-        }))
-    }
-
-    async fn decrypt(
-        &self,
-        request: Request<DecryptionRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        let inner = request.into_inner();
-        tracing::info!(
-            "Party {} received a new decryption request with request_id {:?}",
-            self.my_id(),
-            inner.request_id
-        );
-        let (ciphertext, fhe_type, req_digest, servers_needed, key_id, req_id) =
-            tonic_handle_potential_err(
-                validate_decrypt_req(&inner),
-                format!("Invalid key in request {:?}", inner),
-            )?;
-
-        let mut session = tonic_handle_potential_err(
-            self.prepare_ddec_data_from_requestid(&req_id).await,
-            "Could not prepare ddec data for reencryption".to_string(),
-        )?;
-
-        // Below we write to the meta-store.
-        // After writing, the the meta-store on this [req_id] will be in the "Started" state
-        // So we need to update it everytime something bad happens,
-        // or put all the code that may error before the first write to the meta-store,
-        // otherwise it'll be in the "Started" state forever.
-        {
-            let mut guarded_meta_store = self.dec_meta_store.write().await;
-            tonic_handle_potential_err(
-                guarded_meta_store.insert(&req_id),
-                "Could not insert decryption into meta store".to_string(),
-            )?;
-        }
-
-        let mut protocol = Small::new(session.clone());
-        let meta_store = Arc::clone(&self.dec_meta_store);
-        let fhe_keys = Arc::clone(&self.fhe_keys);
-
-        // we do not need to hold the handle,
-        // the result of the computation is tracked by the dec_meta_store
-        let _handle = tokio::spawn(async move {
-            let fhe_keys_rlock = fhe_keys.read().await;
-            let tmp = match fhe_type {
-                FheType::Euint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
-                    &mut session,
-                    &mut protocol,
-                    &ciphertext,
-                    fhe_type,
-                    &key_id,
-                    fhe_keys_rlock,
-                )
-                .await
-                .map(Plaintext::from_u2048),
-                FheType::Euint256 => Self::inner_decrypt::<tfhe::integer::U256>(
-                    &mut session,
-                    &mut protocol,
-                    &ciphertext,
-                    fhe_type,
-                    &key_id,
-                    fhe_keys_rlock,
-                )
-                .await
-                .map(Plaintext::from_u256),
-                FheType::Euint160 => Self::inner_decrypt::<tfhe::integer::U256>(
-                    &mut session,
-                    &mut protocol,
-                    &ciphertext,
-                    fhe_type,
-                    &key_id,
-                    fhe_keys_rlock,
-                )
-                .await
-                .map(Plaintext::from_u160),
-                FheType::Euint128 => Self::inner_decrypt::<u128>(
-                    &mut session,
-                    &mut protocol,
-                    &ciphertext,
-                    fhe_type,
-                    &key_id,
-                    fhe_keys_rlock,
-                )
-                .await
-                .map(|x| Plaintext::new(x, fhe_type)),
-                FheType::Bool
-                | FheType::Euint4
-                | FheType::Euint8
-                | FheType::Euint16
-                | FheType::Euint32
-                | FheType::Euint64 => Self::inner_decrypt::<u64>(
-                    &mut session,
-                    &mut protocol,
-                    &ciphertext,
-                    fhe_type,
-                    &key_id,
-                    fhe_keys_rlock,
-                )
-                .await
-                .map(|x| Plaintext::new(x as u128, fhe_type)),
             };
-            let mut guarded_meta_store = meta_store.write().await;
-            match tmp {
-                Ok(plaintext) => {
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_store.update(
-                        &req_id,
-                        HandlerStatus::Done((
-                            servers_needed,
-                            req_digest.clone(),
-                            plaintext.clone(),
-                        )),
-                    );
-                }
-                Result::Err(e) => {
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_store.update(
-                        &req_id,
-                        HandlerStatus::Error(format!("Failed decryption: {e}")),
-                    );
-                }
-            }
-        });
-        Ok(Response::new(Empty {}))
-    }
+            let _ = f().await;
 
-    async fn get_decrypt_result(
-        &self,
-        request: Request<RequestId>,
-    ) -> Result<Response<DecryptionResponse>, Status> {
-        let request_id = request.into_inner();
-        if !request_id.is_valid() {
-            tracing::warn!(
-                "The value {} is not a valid request ID!",
-                request_id.to_string()
+            let crs_stop_timer = Instant::now();
+            let elapsed_time = crs_stop_timer.duration_since(crs_start_timer);
+            tracing::info!(
+                "CRS stored. CRS ceremony time was {:?} ms",
+                (elapsed_time).as_millis()
             );
-            return Err(tonic::Status::new(
-                tonic::Code::InvalidArgument,
-                format!("The value {} is not a valid request ID!", request_id),
-            ));
-        }
-        let (servers_needed, req_digest, plaintext) = {
-            let guarded_meta_store = self.dec_meta_store.read().await;
-            handle_res_mapping(
-                guarded_meta_store.retrieve(&request_id).cloned(),
-                &request_id,
-                "Decryption",
-            )?
-        };
-        let decrypted_bytes = tonic_handle_potential_err(
-            serde_asn1_der::to_vec(&plaintext),
-            format!(
-                "Could not convert plaintext to bytes in request with ID {:?}",
-                request_id
-            ),
-        )?;
-        let server_verf_key = tonic_handle_potential_err(
-            serde_asn1_der::to_vec(&self.get_verf_key()),
-            "Could not serialize server verification key".to_string(),
-        )?;
-        let sig_payload = DecryptionResponsePayload {
-            version: CURRENT_FORMAT_VERSION,
-            servers_needed,
-            plaintext: decrypted_bytes,
-            verification_key: server_verf_key,
-            digest: req_digest,
-        };
-
-        let sig_payload_vec = tonic_handle_potential_err(
-            serde_asn1_der::to_vec(&sig_payload),
-            format!("Could not convert payload to bytes {:?}", sig_payload),
-        )?;
-
-        let sig = tonic_handle_potential_err(
-            self.sign(&sig_payload_vec),
-            format!("Could not sign payload {:?}", sig_payload),
-        )?;
-        Ok(Response::new(DecryptionResponse {
-            signature: sig.sig.to_vec(),
-            payload: Some(sig_payload),
-        }))
+        });
+        Ok(())
     }
+}
 
+#[tonic::async_trait]
+impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> CrsGenerator
+    for RealCrsGenerator<PubS, PrivS>
+{
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         let req_inner = request.into_inner();
         tracing::info!(
@@ -1711,7 +1815,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         Ok(Response::new(Empty {}))
     }
 
-    async fn get_crs_gen_result(
+    async fn get_result(
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
@@ -1733,13 +1837,14 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use crate::{
         client::test_tools,
         consts::{AMOUNT_PARTIES, THRESHOLD},
         storage::{FileStorage, StorageType},
     };
 
+    #[tokio::test]
     #[serial_test::serial]
     #[tracing_test::traced_test]
     async fn prss_disk_test() {

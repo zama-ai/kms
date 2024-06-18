@@ -5,8 +5,9 @@ use std::str::FromStr;
 use tokio::task::JoinHandle;
 use tonic::{transport, Request, Response, Status};
 
+use super::generic::*;
 use crate::consts::{BASE_PORT, DEFAULT_URL};
-use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
+use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
@@ -22,7 +23,7 @@ pub async fn setup_mock_kms(n: usize) -> HashMap<u32, JoinHandle<()>> {
         let url = format!("{DEFAULT_URL}:{}", port);
         let addr = SocketAddr::from_str(url.as_str()).unwrap();
         let handle = tokio::spawn(async move {
-            let kms = MockThresholdKms::default();
+            let kms = new_dummy_threshold_kms();
             let _ = transport::Server::builder()
                 .add_service(CoreServiceEndpointServer::new(kms))
                 .serve(addr)
@@ -37,36 +38,101 @@ pub async fn setup_mock_kms(n: usize) -> HashMap<u32, JoinHandle<()>> {
 
 /// This is a mock threshold KMS that doesn't do anything and only
 /// returns dummy values on grpc calls.
-#[derive(Default)]
-pub struct MockThresholdKms {}
+type DummyThresholdKms = GenericKms<
+    DummyInitiator,
+    DummyReencryptor,
+    DummyDecryptor,
+    DummyKeyGenerator,
+    DummyPreprocessor,
+    DummyCrsGenerator,
+>;
+
+fn new_dummy_threshold_kms() -> DummyThresholdKms {
+    let handle = tokio::spawn(async {});
+    DummyThresholdKms::new(
+        DummyInitiator {},
+        DummyReencryptor {},
+        DummyDecryptor {},
+        DummyKeyGenerator {},
+        DummyPreprocessor {},
+        DummyCrsGenerator {},
+        handle.abort_handle(),
+    )
+}
+
+struct DummyInitiator;
 
 #[tonic::async_trait]
-impl CoreServiceEndpoint for MockThresholdKms {
+impl Initiator for DummyInitiator {
     async fn init(&self, _request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }
+}
 
-    async fn key_gen_preproc(
+struct DummyReencryptor;
+
+#[tonic::async_trait]
+impl Reencryptor for DummyReencryptor {
+    async fn reencrypt(
         &self,
-        _request: Request<KeyGenPreprocRequest>,
+        _request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }
 
-    async fn get_preproc_status(
+    async fn get_result(
         &self,
-        _request: Request<KeyGenPreprocRequest>,
-    ) -> Result<Response<KeyGenPreprocStatus>, Status> {
-        Ok(Response::new(KeyGenPreprocStatus {
-            result: KeyGenPreprocStatusEnum::Finished as i32,
+        _request: Request<RequestId>,
+    ) -> Result<Response<ReencryptionResponse>, Status> {
+        Ok(Response::new(ReencryptionResponse {
+            version: CURRENT_FORMAT_VERSION,
+            servers_needed: 0,
+            verification_key: vec![],
+            digest: "dummy digest".as_bytes().to_vec(),
+            fhe_type: crate::kms::FheType::Euint8.into(),
+            signcrypted_ciphertext: "signcrypted_ciphertext".as_bytes().to_vec(),
         }))
     }
+}
 
+struct DummyDecryptor;
+
+#[tonic::async_trait]
+impl Decryptor for DummyDecryptor {
+    async fn decrypt(
+        &self,
+        _request: Request<DecryptionRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_result(
+        &self,
+        _request: Request<RequestId>,
+    ) -> Result<Response<DecryptionResponse>, Status> {
+        Ok(Response::new(DecryptionResponse {
+            signature: vec![],
+            payload: Some(DecryptionResponsePayload {
+                version: CURRENT_FORMAT_VERSION,
+                servers_needed: 0,
+                verification_key: vec![],
+                digest: "dummy digest".as_bytes().to_vec(),
+                plaintext: serde_asn1_der::to_vec(&Plaintext::new(42, crate::kms::FheType::Euint8))
+                    .unwrap(),
+            }),
+        }))
+    }
+}
+
+struct DummyKeyGenerator;
+
+#[tonic::async_trait]
+impl KeyGenerator for DummyKeyGenerator {
     async fn key_gen(&self, _request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }
 
-    async fn get_key_gen_result(
+    async fn get_result(
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<KeyGenResult>, Status> {
@@ -85,57 +151,36 @@ impl CoreServiceEndpoint for MockThresholdKms {
             ]),
         }))
     }
+}
 
-    async fn reencrypt(
+struct DummyPreprocessor;
+#[tonic::async_trait]
+impl KeyGenPreprocessor for DummyPreprocessor {
+    async fn key_gen_preproc(
         &self,
-        _request: Request<ReencryptionRequest>,
+        _request: Request<KeyGenPreprocRequest>,
     ) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }
-
-    async fn get_reencrypt_result(
+    async fn get_result(
         &self,
-        _request: Request<RequestId>,
-    ) -> Result<Response<ReencryptionResponse>, Status> {
-        Ok(Response::new(ReencryptionResponse {
-            version: CURRENT_FORMAT_VERSION,
-            servers_needed: 0,
-            verification_key: vec![],
-            digest: "dummy digest".as_bytes().to_vec(),
-            fhe_type: crate::kms::FheType::Euint8.into(),
-            signcrypted_ciphertext: "signcrypted_ciphertext".as_bytes().to_vec(),
+        _request: Request<KeyGenPreprocRequest>,
+    ) -> Result<Response<KeyGenPreprocStatus>, Status> {
+        Ok(Response::new(KeyGenPreprocStatus {
+            result: KeyGenPreprocStatusEnum::Finished as i32,
         }))
     }
+}
 
-    async fn decrypt(
-        &self,
-        _request: Request<DecryptionRequest>,
-    ) -> Result<Response<Empty>, Status> {
-        Ok(Response::new(Empty {}))
-    }
+struct DummyCrsGenerator;
 
-    async fn get_decrypt_result(
-        &self,
-        _request: Request<RequestId>,
-    ) -> Result<Response<DecryptionResponse>, Status> {
-        Ok(Response::new(DecryptionResponse {
-            signature: vec![],
-            payload: Some(DecryptionResponsePayload {
-                version: CURRENT_FORMAT_VERSION,
-                servers_needed: 0,
-                verification_key: vec![],
-                digest: "dummy digest".as_bytes().to_vec(),
-                plaintext: serde_asn1_der::to_vec(&Plaintext::new(42, crate::kms::FheType::Euint8))
-                    .unwrap(),
-            }),
-        }))
-    }
-
+#[tonic::async_trait]
+impl CrsGenerator for DummyCrsGenerator {
     async fn crs_gen(&self, _request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         Ok(Response::new(Empty {}))
     }
 
-    async fn get_crs_gen_result(
+    async fn get_result(
         &self,
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {

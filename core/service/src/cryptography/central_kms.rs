@@ -4,6 +4,7 @@ use super::signcryption::{
     signcrypt, RND_SIZE,
 };
 use crate::consts::ID_LENGTH;
+use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
 use crate::kms::{FheType, ParamChoice, SignedPubDataHandle};
@@ -13,14 +14,10 @@ use crate::rpc::rpc_types::{
 use crate::storage::read_all_data;
 #[cfg(feature = "non-wasm")]
 use crate::storage::Storage;
-use crate::threshold::meta_store::MetaStore;
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
+use crate::util::meta_store::{HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, some_or_err};
-use crate::{
-    consts::{DEC_CAPACITY, MIN_DEC_CACHE},
-    threshold::meta_store::HandlerStatus,
-};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use der::zeroize::Zeroize;

@@ -206,8 +206,8 @@ pub(crate) fn handle_res_mapping<T>(
 
 #[cfg(test)]
 mod tests {
-    use super::MetaStore;
-    use crate::{kms::RequestId, threshold::meta_store::HandlerStatus};
+    use super::*;
+    use crate::kms::RequestId;
 
     #[test]
     fn sunshine() {

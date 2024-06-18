@@ -47,9 +47,9 @@ service CoreServiceEndpoint {
 
 // Initialization request for bootstrapping the threshold KMS.
 message InitRequest {
-  Config config = 1;
   // Eventually the config will contain role assignment,
   // this is needed for the threshold protocol.
+  Config config = 1;
 }
 
 // Placeholder response, when no content is needed

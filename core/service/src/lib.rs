@@ -18,6 +18,7 @@ pub mod util {
     pub mod aws;
     pub mod file_handling;
     pub mod key_setup;
+    pub mod meta_store;
 }
 pub mod cryptography {
     #[cfg(feature = "non-wasm")]
@@ -30,7 +31,7 @@ pub mod cryptography {
 }
 #[cfg(feature = "non-wasm")]
 pub mod threshold {
-    pub mod meta_store;
+    pub mod generic;
     #[cfg(any(test, feature = "testing"))]
     pub mod mock_threshold_kms;
     pub mod threshold_kms;

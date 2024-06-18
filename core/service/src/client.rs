@@ -1561,7 +1561,6 @@ pub mod test_tools {
         tracing::info!("Servers initialized. Starting servers...");
         let mut server_handles = HashMap::new();
         for (i, cur_server, config) in servers {
-            assert_eq!(i, cur_server.my_id());
             let handle = tokio::spawn(async move {
                 let _ = threshold_server_start(
                     config.listen_address_client,
