@@ -26,6 +26,7 @@ ENV PATH="$PATH:/app/gateway/bin"
 
 # Third stage: Copy the binaries from the base stage and the go-runtime stage
 FROM debian:stable-slim as runtime
+RUN apt update && apt install -y libssl3
 WORKDIR /app/gateway
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="$PATH:/app/gateway/bin"
