@@ -7,6 +7,7 @@ use core::cell::RefCell;
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Response, StdError, StdResult, VerificationError};
 use cw_controllers::Admin;
+use cw_utils::must_pay;
 use events::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
     KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
@@ -15,10 +16,13 @@ use events::kms::{
 };
 use events::HexVector;
 use sha3::{Digest, Sha3_256};
+use std::ops::Deref;
 use sylvia::{
     contract, entry_points,
     types::{ExecCtx, InstantiateCtx, QueryCtx},
 };
+
+const UCOSM: &str = "ucosm";
 
 #[cw_serde]
 pub struct SequenceResponse {
@@ -159,6 +163,31 @@ impl KmsContract {
                 VerificationError::GenericErr,
             ));
         }
+
+        // decipher the size encoding and ensure the payment is included in the message
+        let ciphertext_handle: Vec<u8> = decrypt.ciphertext_handle().deref().into();
+        let size_bytes = &ciphertext_handle[..8];
+        let data_size = ((size_bytes[0] as u32) << 24)
+            | ((size_bytes[1] as u32) << 16)
+            | ((size_bytes[2] as u32) << 8)
+            | (size_bytes[3] as u32);
+
+        // Ensure the payment is included in the message
+        let payment = must_pay(&ctx.info, UCOSM).map_err(|_| {
+            StdError::generic_err(format!(
+                "Unable to find ciphertext storage payment in the message - required: {}",
+                data_size
+            ))
+        })?;
+
+        if payment < data_size.into() {
+            return Err(StdError::generic_err(format!(
+                "Insufficient funds sent to cover the ciphertext storage size - payment: {}, required: {}",
+                payment,
+                data_size
+            )));
+        }
+
         let txn_id = self.derive_transaction_id(&ctx)?;
         self.process_transaction(ctx, &txn_id, proof, decrypt)
     }
@@ -345,6 +374,9 @@ mod tests {
     use crate::contract::sv::mt::CodeId;
     use crate::contract::KmsContract;
     use crate::proof::ContractProofType;
+    use cosmwasm_std::coin;
+    use cosmwasm_std::coins;
+    use cosmwasm_std::Addr;
     use cosmwasm_std::Event;
     use events::kms::CrsGenResponseValues;
     use events::kms::DecryptResponseValues;
@@ -366,6 +398,8 @@ mod tests {
     use events::HexVector;
     use sylvia::cw_multi_test::IntoAddr as _;
     use sylvia::multitest::App;
+
+    const UCOSM: &str = "ucosm";
 
     #[test]
     fn test_instantiate() {
@@ -424,9 +458,25 @@ mod tests {
         assert_eq!(result, value);
     }
 
+    fn extract_ciphertext_size(ciphertext_handle: &[u8]) -> u32 {
+        ((ciphertext_handle[0] as u32) << 24)
+            | ((ciphertext_handle[1] as u32) << 16)
+            | ((ciphertext_handle[2] as u32) << 8)
+            | (ciphertext_handle[3] as u32)
+    }
+
     #[test]
     fn test_decrypt() {
-        let app = App::default();
+        let gateway = Addr::unchecked("gateway");
+
+        let app = cw_multi_test::App::new(|router, _api, storage| {
+            router
+                .bank
+                .init_balance(storage, &gateway, coins(5000000, UCOSM))
+                .unwrap();
+        });
+
+        let app = App::new(app);
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
         let proof: HexVector = vec![1, 2, 3].into();
@@ -443,16 +493,31 @@ mod tests {
             .call(&owner)
             .unwrap();
 
+        let ciphertext_handle =
+            hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
+                .unwrap();
+        let data_size = extract_ciphertext_size(&ciphertext_handle);
+        assert_eq!(data_size, 661448);
+
         let decrypt = DecryptValues::builder()
             .key_id(vec![1, 2, 3])
             .version(1)
-            .ciphertext(vec![2, 3, 4])
+            .ciphertext_handle(ciphertext_handle.clone())
             .randomness(vec![3, 4, 5])
             .fhe_type(FheType::Euint8)
             .build();
+
+        // test insufficient funds
+        let _failed_response = contract
+            .decrypt(decrypt.clone(), proof.clone())
+            .with_funds(&[coin(42_u128, UCOSM)])
+            .call(&gateway)
+            .expect_err("Insufficient funds sent to cover the data size");
+
         let response = contract
             .decrypt(decrypt.clone(), proof.clone())
-            .call(&owner)
+            .with_funds(&[coin(data_size.into(), UCOSM)])
+            .call(&gateway)
             .unwrap();
         println!("response: {:#?}", response);
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
@@ -744,7 +809,14 @@ mod tests {
 
     #[test]
     fn test_get_operations_value() {
-        let app = App::default();
+        let caller = Addr::unchecked("caller");
+        let app = cw_multi_test::App::new(|router, _api, storage| {
+            router
+                .bank
+                .init_balance(storage, &caller, coins(5000000, UCOSM))
+                .unwrap();
+        });
+        let app = App::new(app);
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
         let proof: HexVector = vec![1, 2, 3].into();
@@ -761,16 +833,23 @@ mod tests {
             .call(&owner)
             .unwrap();
 
+        let ciphertext_handle =
+            hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
+                .unwrap();
+        let data_size = extract_ciphertext_size(&ciphertext_handle);
+        assert_eq!(data_size, 661448);
+
         let decrypt = DecryptValues::builder()
             .key_id(vec![1, 2, 3])
             .version(1)
-            .ciphertext(vec![2, 3, 4])
+            .ciphertext_handle(ciphertext_handle)
             .randomness(vec![3, 4, 5])
             .fhe_type(FheType::Euint8)
             .build();
         let response = contract
             .decrypt(decrypt.clone(), proof.clone())
-            .call(&owner)
+            .with_funds(&[coin(data_size.into(), UCOSM)])
+            .call(&caller)
             .unwrap();
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
         assert_eq!(response.events.len(), 2);

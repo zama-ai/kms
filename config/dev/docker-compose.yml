@@ -2,6 +2,11 @@ name: zama-kms
 
 services:
 
+  # gateway:
+  #   image: ghcr.io/zama-ai/kms-blockchain-gateway-dev:latest
+  #   command:
+  #     - "gateway"
+
   blockchain-validator:
     image: ghcr.io/zama-ai/kms-blockchain-asc-dev:latest
     ports:

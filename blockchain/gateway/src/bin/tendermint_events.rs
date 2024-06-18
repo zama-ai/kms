@@ -24,6 +24,7 @@ async fn main() {
 
 fn on_event(event: Event) -> Result<(), Error> {
     // match on the event data
+
     match event.data {
         EventData::Tx { tx_result } => {
             // for all of the events, match on the event kind and print the attributes
@@ -31,24 +32,23 @@ fn on_event(event: Event) -> Result<(), Error> {
             //println!("Tx: {:?}", tx_result.tx);
             for event in tx_result.result.events.iter() {
                 // println!("\t - Event: {:?}", event.kind.as_str());
-
                 match event.kind.as_str() {
                     //"message" => {
                     //    println!("\t Message Event Attributes: {:#?}", event.attributes);
                     //}
                     "wasm-decrypt" => {
+                        println!("\t ➡️ Wasm Decrypt");
                         //println!(
-                        //    "\n ➡️ Wasm Decrypt Event Attributes: {:#?}",
+                        //    "\t\t ➡️ Wasm Decrypt Event Attributes: {:#?}",
                         //    event.attributes
                         //);
-                        println!("\t ➡️ Wasm Decrypt");
                     }
                     "wasm-decrypt_response" => {
+                        println!("\t ⬅️ Wasm Decrypt Response");
                         //println!(
-                        //    "\t ⬅️ Wasm Decrypt Response Event Attributes: {:#?}",
+                        //    "\t\t ⬅️ Wasm Decrypt Response Event Attributes: {:#?}",
                         //    event.attributes
                         //);
-                        println!("\t ⬅️ Wasm Decrypt Response");
                     }
                     _ => {}
                 }

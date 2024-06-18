@@ -3,7 +3,7 @@
 FROM rust:1.78-slim-bookworm as base
 
 RUN apt update && \
-    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev
+    apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config
 
 WORKDIR /app/gateway
 COPY . .

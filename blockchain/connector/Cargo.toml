@@ -35,6 +35,10 @@ tracing = { version = "0.1.40", features = ["log"] }
 tracing-opentelemetry = "0.23"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
 typed-builder = "0.18.1"
+hex = "0.4.3"
+reqwest = "0.12.4"
+sha2 = "0.10.8"
+byteorder = "1.5.0"
 
 [dev-dependencies]
 kms = { path = "../../core/service", features = ["testing"] }

@@ -10,11 +10,10 @@ use std::sync::Arc;
 use tokio::sync::OnceCell;
 
 abigen!(
-    OraclePredeploy,
-    "./artifacts/OraclePredeploy.abi",
+    GatewayContract,
+    "./artifacts/GatewayContract.abi",
     event_derives(serde::Deserialize, serde::Serialize)
 );
-
 async fn setup_provider(
     config: &EthereumConfig,
 ) -> Result<Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>, Box<dyn Error>> {
@@ -41,21 +40,21 @@ pub async fn get_provider(
 
 async fn setup_contract(
     config: &EthereumConfig,
-) -> Result<Arc<OraclePredeploy<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>>, Box<dyn Error>>
+) -> Result<Arc<GatewayContract<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>>, Box<dyn Error>>
 {
     let provider = get_provider(config).await?;
-    let contract = OraclePredeploy::new(config.test_async_decrypt_address, Arc::clone(&provider));
+    let contract = GatewayContract::new(config.test_async_decrypt_address, Arc::clone(&provider));
     Ok(Arc::new(contract))
 }
 
 #[allow(clippy::type_complexity)]
 static CONTRACT: Lazy<
-    OnceCell<Arc<OraclePredeploy<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>>>,
+    OnceCell<Arc<GatewayContract<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>>>,
 > = Lazy::new(OnceCell::new);
 
 pub async fn get_contract(
     config: &EthereumConfig,
-) -> Result<Arc<OraclePredeploy<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>>, Box<dyn Error>>
+) -> Result<Arc<GatewayContract<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>>, Box<dyn Error>>
 {
     CONTRACT
         .get_or_try_init(move || setup_contract(config))

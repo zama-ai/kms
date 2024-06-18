@@ -2,7 +2,7 @@ use clap::Parser;
 use cosmwasm_std::Event;
 use events::kms::{DecryptValues, FheType, KmsEvent, KmsMessage, KmsOperation, OperationValue};
 use events::HexVector;
-use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest};
+use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
 use kms_blockchain_client::query_client::{
     ContractQuery, OperationQuery, QueryClient, QueryClientBuilder, QueryContractRequest,
 };
@@ -64,7 +64,7 @@ async fn execute_contract(
         compute_cipher_from_storage(Some(Path::new("./keys")), typed_to_encrypt, key_id).await;
     let value = OperationValue::Decrypt(
         DecryptValues::builder()
-            .ciphertext(cypher.clone())
+            .ciphertext_handle(cypher.clone())
             .fhe_type(FheType::Euint8)
             .key_id(hex::decode(key_id).unwrap())
             .version(1)
@@ -80,6 +80,10 @@ async fn execute_contract(
                 .build(),
         )
         .gas_limit(3_100_000)
+        .funds(vec![ProtoCoin::builder()
+            .amount(20_000_000)
+            .denom("ucosm".to_string())
+            .build()])
         .build();
 
     let response = client.execute_contract(request).await?;

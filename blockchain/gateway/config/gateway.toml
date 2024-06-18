@@ -15,7 +15,7 @@ mode = "centralized"
 # - FHEVM_V1: Use the FHEVM version 1 listener.
 # - FHEVM_V1_1: Use the FHEVM version 1.1 listener.
 # - COPROCESSOR: Use the Coprocessor listener.
-listener_type = "FHEVM_V1"
+listener_type = "FHEVM_V1_1"
 
 # URL of the Ethereum WebSocket server.
 # Used for establishing a WebSocket connection to an Ethereum node.
@@ -27,11 +27,11 @@ fhe_lib_address = "000000000000000000000000000000000000005d"
 
 # Address of the relayer account on the Ethereum blockchain.
 # Used for interactions with the oracle/gateway contract.
-relayer_address = "fA2E332b26542212573ae0D7937fFF976e3704db"
+relayer_address = "97F272ccfef4026A1F3f0e0E879d514627B84E69"
 
 # Address of the OraclePredeploy or GatewayPredeploy contract on the
 # Ethereum blockchain. Used for pre-deployment operations related to the oracle.
-oracle_predeploy_address = "0a9368E9C545238c82a2FAEd62e631450d6432c1"
+oracle_predeploy_address = "c8c9303Cd7F337fab769686B593B87DC3403E0ce"
 
 # Test Address used for testing asynchronous decryption on the Ethereum blockchain.
 test_async_decrypt_address = "99F460504563579922352932A42172B3c04a1420"

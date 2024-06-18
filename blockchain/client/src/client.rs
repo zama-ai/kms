@@ -38,10 +38,18 @@ const ACCOUNT_PREFIX: &str = "wasm";
 /// Denomination for transaction fees and balances.
 const DENOM: &str = "ucosm";
 
+#[derive(Clone, Debug, TypedBuilder)]
+pub struct ProtoCoin {
+    pub denom: String,
+    pub amount: u64,
+}
+
 #[derive(TypedBuilder, Clone, Debug)]
 pub struct ExecuteContractRequest {
     message: KmsMessage,
     gas_limit: u64,
+    #[builder(setter(strip_option), default)]
+    funds: Option<Vec<ProtoCoin>>,
 }
 
 #[derive(TypedBuilder)]
@@ -229,7 +237,11 @@ impl Client {
 
         let gas_price = self.gas_price;
 
-        let tx_bytes = self.prepare_msg(&msg_payload, gas_limit, gas_price).await?;
+        let funds = request.funds;
+
+        let tx_bytes = self
+            .prepare_msg(&msg_payload, gas_limit, gas_price, funds)
+            .await?;
 
         let mut tx_client = ServiceClient::new(self.client.clone());
 
@@ -264,19 +276,25 @@ impl Client {
         msg_payload: &[u8],
         gas_limit: u64,
         gas_price: f64,
+        funds: Option<Vec<ProtoCoin>>,
     ) -> Result<Vec<u8>, Error> {
         let sender_public_key = self.sender_key.public_key();
         let sender_account_id = sender_public_key.account_id(ACCOUNT_PREFIX)?;
+
+        let funds = funds
+            .unwrap_or_default()
+            .iter()
+            .map(|coin| Coin {
+                denom: coin.denom.clone(),
+                amount: coin.amount.to_string(),
+            })
+            .collect::<Vec<Coin>>();
 
         let msg = MsgExecuteContract {
             sender: sender_account_id.to_string(),
             contract: self.contract_address.to_string(),
             msg: msg_payload.to_vec(),
-            //funds: vec![Coin {
-            //    denom: self.coin_denom.clone(),
-            //    amount: gas_limit.to_string(),
-            //}],
-            funds: vec![],
+            funds,
         };
 
         let message = Any::from_msg(&msg)?;

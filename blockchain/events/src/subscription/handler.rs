@@ -130,7 +130,7 @@ where
         U: SubscriptionHandler + Clone + Send + Sync + 'static,
     {
         loop {
-            tracing::info!(
+            tracing::trace!(
                 "Waiting {} secs for next tick before getting events",
                 self.tick_time_in_sec
             );
@@ -149,21 +149,21 @@ where
         U: SubscriptionHandler + Clone + Send + Sync + 'static,
     {
         let enter = tracing::span!(
-            tracing::Level::INFO,
+            tracing::Level::TRACE,
             "subscribe",
             "Loop Getting Event from Blockchain"
         );
         let _guard = enter.enter();
         let height = self.storage.get_last_height().await?;
-        tracing::info!("Getting events from Blockchain from height {:?}", height);
+        tracing::debug!("Getting events from Blockchain from height {:?}", height);
         let results = self.get_txs_events(height).await.map_err(|e| {
             self.metrics
                 .increment_connection_errors(1, &[("error", &e.to_string())]);
             e
         })?;
-        tracing::info!("Received events from Blockchain {:?}", results.len());
+        tracing::debug!("Received events from Blockchain {:?}", results.len());
         if results.is_empty() {
-            tracing::info!("No events received from Blockchain. Update to last height");
+            tracing::debug!("No events received from Blockchain. Update to last height");
             let last_height = self.blockchain.get_last_height().await?;
             let new_height = 0.max(last_height as i64) as u64;
             self.storage.save_last_height(new_height).await?;

@@ -64,6 +64,10 @@ impl CiphertextProvider for Fhevm1_1CiphertextProvider {
         ct_handle: Vec<u8>,
         block_number: u64,
     ) -> Result<Bytes, Box<dyn Error>> {
+        tracing::info!(
+            "Getting ciphertext for ct_handle: {:?}",
+            hex::encode(ct_handle.clone())
+        );
         let mut input = hex::decode("ff627e77")?;
         input.extend_from_slice(&ct_handle);
 

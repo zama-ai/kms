@@ -154,6 +154,11 @@ pub struct OracleConfig {
 }
 
 #[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
+pub struct StoreConfig {
+    pub url: String,
+}
+
+#[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
 pub struct ConnectorConfig {
     pub tick_interval_secs: u64,
     pub storage_path: String,
@@ -161,6 +166,7 @@ pub struct ConnectorConfig {
     pub blockchain: BlockchainConfig,
     pub core: CoreConfig,
     pub oracle: OracleConfig,
+    pub store: StoreConfig,
 }
 
 impl BlockchainConfig {
@@ -259,5 +265,8 @@ mod tests {
         assert_eq!(conf.blockchain.addresses, vec!["http://localhost:9090"]);
         assert_eq!(conf.blockchain.fee.amount, 3_000_000);
         assert_eq!(conf.blockchain.fee.denom, "ucosm");
+
+        // store configs
+        assert_eq!(conf.store.url, "http://localhost:8088");
     }
 }

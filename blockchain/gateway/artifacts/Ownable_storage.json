@@ -1,1 +1,1 @@
-{"storage":[{"astId":32877,"contract":"@openzeppelin/contracts/access/Ownable.sol:Ownable","label":"_owner","offset":0,"slot":"0","type":"t_address"}],"types":{"t_address":{"encoding":"inplace","label":"address","numberOfBytes":"20"}}}
+{"storage":[{"astId":32004,"contract":"@openzeppelin/contracts/access/Ownable.sol:Ownable","label":"_owner","offset":0,"slot":"0","type":"t_address"}],"types":{"t_address":{"encoding":"inplace","label":"address","numberOfBytes":"20"}}}

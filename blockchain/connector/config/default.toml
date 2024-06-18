@@ -52,3 +52,5 @@ max_poll_count = 24
 service_name = "kms-asc-connector"
 endpoint = "http://localhost:4317"
 
+[store]
+url = "http://localhost:8088"

@@ -29,7 +29,7 @@ impl Default for WalletManager {
             println!("-- Generated new key --");
             println!("   To fund the wallet address, run the following command:");
             println!(
-                "   docker exec -i zama-chain-fevm-full-node-1 faucet {}",
+                "   docker exec -i ethermintnode0 faucet {}",
                 hex::encode(wallet.address().as_bytes())
             );
             println!("-- End of key generation --");

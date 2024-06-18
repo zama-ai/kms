@@ -4,6 +4,7 @@ use crate::domain::kms::Kms;
 use crate::infrastructure::blockchain::KmsBlockchain;
 use crate::infrastructure::core::KmsCore;
 use crate::infrastructure::metrics::{MetricType, Metrics, OpenTelemetryMetrics};
+use crate::infrastructure::store::KVStore;
 use events::kms::TransactionEvent;
 use events::subscription::handler::{EventsMode, SubscriptionEventBuilder, SubscriptionHandler};
 use typed_builder::TypedBuilder;
@@ -92,13 +93,14 @@ where
     }
 }
 
-impl KmsCoreSyncHandler<KmsBlockchain, KmsCore, OpenTelemetryMetrics> {
+impl KmsCoreSyncHandler<KmsBlockchain, KmsCore<KVStore>, OpenTelemetryMetrics> {
     pub async fn new_with_config(config: ConnectorConfig) -> anyhow::Result<Self> {
         let metrics = OpenTelemetryMetrics::new();
         let blockchain = KmsBlockchain::new(config.blockchain.clone(), metrics.clone()).await?;
+        let storage = KVStore::new(config.store.clone());
         // TODO the core should read the addresses from the blockchain
         // instead of the config
-        let kms = KmsCore::new(config.core.clone(), metrics.clone())?;
+        let kms = KmsCore::new(config.core.clone(), storage, metrics.clone())?;
         let handler = KmsCoreEventHandler {
             blockchain,
             kms,

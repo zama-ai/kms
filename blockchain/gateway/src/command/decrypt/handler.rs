@@ -2,7 +2,7 @@ use crate::command::ciphertext_provider::CiphertextProvider;
 use crate::command::decrypt::handler::k256::ecdsa::SigningKey;
 use crate::command::decrypt::operations::get_decryption_strategy;
 use crate::common::provider::EventDecryptionFilter;
-use crate::common::provider::OraclePredeploy;
+use crate::common::provider::GatewayContract;
 use crate::config::EthereumConfig;
 use crate::config::GatewayConfig;
 use crate::util::wallet::WalletManager;
@@ -46,11 +46,14 @@ pub(crate) async fn handle_event_decryption(
         let provider = Provider::<Ws>::connect(ethereum_wss_url).await.unwrap();
         let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
         let provider = Arc::new(provider);
-        let contract = OraclePredeploy::new(oracle_predeploy_address, Arc::clone(&provider));
+        let contract = GatewayContract::new(oracle_predeploy_address, Arc::clone(&provider));
+
+        // Fake signatures for now
+        let signatures = vec![Bytes::from(vec![0u8; 65])];
 
         tracing::info!("Fulfilling request: {:?}", ev_clone.request_id);
         match contract
-            .fulfill_request(ev_clone.request_id, encode(&tokens).into())
+            .fulfill_request(ev_clone.request_id, encode(&tokens).into(), signatures)
             .send()
             .await
         {
@@ -87,11 +90,31 @@ async fn decrypt(
         <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
             .get_ciphertext(client, ct_handle_bytes.to_vec(), block_number)
             .await?;
+    let data_bytes = ct_bytes.to_vec();
+
+    // Convert the Vec<u8> to a hex string
+    let hex_data = hex::encode(&data_bytes);
+
+    // Send the hex-encoded data to the Actix web service
+    let response = reqwest::Client::new()
+        .post(format!("{}/store", "http://localhost:8088"))
+        .body(hex_data)
+        .send()
+        .await?;
+
+    // Print the response
+    let handle = response.text().await?;
+    println!("Response: {}", handle);
+
+    tracing::info!("📦 Stored ciphertext, handle: {}", handle);
+
+    let handle_bytes = hex::decode(handle).unwrap();
+
     tracing::debug!("Got ct bytes of length: {}", ct_bytes.len());
     tracing::trace!("ct_bytes: 0x{}", hex::encode(&ct_bytes));
     tracing::info!("🚀 request_id: {}, ct_type: {}", request_id, ct_type,);
     Ok(get_decryption_strategy(config)
         .await
-        .decrypt(ct_bytes, FheType::from(ct_type))
+        .decrypt(handle_bytes, FheType::from(ct_type))
         .await?)
 }

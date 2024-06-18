@@ -285,7 +285,7 @@ pub struct DecryptValues {
     #[builder(setter(into))]
     key_id: HexVector,
     #[builder(setter(into))]
-    ciphertext: RedactedHexVector,
+    ciphertext_handle: RedactedHexVector,
     #[builder(setter(into))]
     randomness: RedactedHexVector,
     version: u32,
@@ -305,8 +305,8 @@ impl DecryptValues {
         self.fhe_type
     }
 
-    pub fn ciphertext(&self) -> &RedactedHexVector {
-        &self.ciphertext
+    pub fn ciphertext_handle(&self) -> &RedactedHexVector {
+        &self.ciphertext_handle
     }
 
     pub fn randomness(&self) -> &RedactedHexVector {
@@ -825,11 +825,11 @@ impl From<Proof> for Attribute {
 #[derive(Eq, TypedBuilder, Default)]
 pub struct KmsEvent {
     #[builder(setter(into))]
-    operation: KmsOperation,
+    pub operation: KmsOperation,
     #[builder(setter(into))]
-    txn_id: TransactionId,
+    pub txn_id: TransactionId,
     #[builder(setter(into))]
-    proof: Proof,
+    pub proof: Proof,
 }
 
 impl std::fmt::Display for KmsEvent {
@@ -1013,7 +1013,7 @@ mod tests {
                 version: u32::arbitrary(g),
                 key_id: HexVector::arbitrary(g),
                 fhe_type: FheType::arbitrary(g),
-                ciphertext: HexVector::arbitrary(g).into(),
+                ciphertext_handle: HexVector::arbitrary(g).into(),
                 randomness: HexVector::arbitrary(g).into(),
             }
         }
@@ -1155,7 +1155,7 @@ mod tests {
             .version(1)
             .key_id("mykeyid".as_bytes().to_vec())
             .fhe_type(FheType::Ebool)
-            .ciphertext(vec![1, 2, 3])
+            .ciphertext_handle(vec![1, 2, 3])
             .randomness(vec![4, 5, 6])
             .build();
         let message = KmsMessage::builder()
@@ -1170,7 +1170,7 @@ mod tests {
                     "version": 1,
                     "key_id": hex::encode("mykeyid".as_bytes()),
                     "fhe_type": "ebool",
-                    "ciphertext": hex::encode([1, 2, 3]),
+                    "ciphertext_handle": hex::encode([1, 2, 3]),
                     "randomness": hex::encode([4, 5, 6]),
                 },
                 "proof": hex::encode([1, 2, 3]),

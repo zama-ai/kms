@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wallet = LocalWallet::new(&mut rand::thread_rng());
 
     println!(
-        "docker exec -i zama-chain-fevm-full-node-1 faucet {}",
+        "docker exec -i ethermintnode0 faucet {}",
         hex::encode(wallet.address().as_bytes())
     );
 
@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .args([
             "exec",
             "-i",
-            "zama-chain-fevm-full-node-1",
+            "ethermintnode0",
             "faucet",
             &hex::encode(wallet.address().as_bytes()),
         ])
@@ -50,10 +50,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Contract deployed at: {}", hex::encode(addr.as_bytes()));
     let contract = TestAsyncDecrypt::new(addr, client.clone());
 
+    /*
     println!("Requesting uint8");
     let _receipt: TransactionReceipt = contract.request_uint_8().send().await?.await?.unwrap();
     let response = contract.y_uint_8().await?;
     println!("y_uint_8: {:#?}", response);
+    */
+    println!("Requesting uint32");
+    let _receipt: TransactionReceipt = contract
+        .request_uint_32(17, 13)
+        .send()
+        .await?
+        .await?
+        .unwrap();
+    let response = contract.y_uint_32().await?;
+    println!("y_uint_32: {:#?}", response);
 
     Ok(())
 }

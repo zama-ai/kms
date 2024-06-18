@@ -4,6 +4,7 @@ use crate::domain::blockchain::{
     BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse, ReencryptResponseVal,
 };
 use crate::domain::kms::Kms;
+use crate::domain::storage::Storage;
 use crate::infrastructure::metrics::{MetricType, Metrics};
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -31,46 +32,71 @@ use tonic::transport::{Channel, Endpoint};
 use tonic::{Response, Status};
 use typed_builder::TypedBuilder;
 
-pub struct KmsOperationVal {
-    pub kms_client: KmsCore,
+pub struct KmsOperationVal<S> {
+    pub kms_client: KmsCore<S>,
     pub tx_id: TransactionId,
     pub proof: Proof,
 }
 
-pub struct DecryptVal {
+pub struct DecryptVal<S> {
     pub decrypt: DecryptValues,
-    pub operation_val: KmsOperationVal,
+    pub operation_val: KmsOperationVal<S>,
 }
 
-pub struct ReencryptVal {
+pub struct ReencryptVal<S> {
     pub reencrypt: ReencryptValues,
-    pub operation_val: KmsOperationVal,
+    pub operation_val: KmsOperationVal<S>,
 }
 
-pub struct KeyGenPreprocVal {
-    pub operation_val: KmsOperationVal,
+pub struct KeyGenPreprocVal<S> {
+    pub operation_val: KmsOperationVal<S>,
 }
 
-pub struct KeyGenVal {
+pub struct KeyGenVal<S> {
     pub keygen: KeyGenValues,
-    pub operation_val: KmsOperationVal,
+    pub operation_val: KmsOperationVal<S>,
 }
 
-pub struct CrsGenVal {
-    pub operation_val: KmsOperationVal,
+pub struct CrsGenVal<S> {
+    pub operation_val: KmsOperationVal<S>,
 }
 
-#[enum_dispatch]
-pub enum KmsOperationRequest {
-    Reencrypt(ReencryptVal),
-    Decrypt(DecryptVal),
-    KeyGen(KeyGenVal),
-    KeyGenPreproc(KeyGenPreprocVal),
-    CrsGen(CrsGenVal),
+pub enum KmsOperationRequest<S> {
+    Reencrypt(ReencryptVal<S>),
+    Decrypt(DecryptVal<S>),
+    KeyGen(KeyGenVal<S>),
+    KeyGenPreproc(KeyGenPreprocVal<S>),
+    CrsGen(CrsGenVal<S>),
 }
 
 #[async_trait]
-impl Kms for KmsCore {
+impl<S> KmsEventHandler for KmsOperationRequest<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    async fn run_operation(
+        &self,
+        config_contract: Option<KmsCoreConf>,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        match self {
+            KmsOperationRequest::Reencrypt(reencrypt) => {
+                reencrypt.run_operation(config_contract).await
+            }
+            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_operation(config_contract).await,
+            KmsOperationRequest::KeyGenPreproc(keygen_preproc) => {
+                keygen_preproc.run_operation(config_contract).await
+            }
+            KmsOperationRequest::KeyGen(keygen) => keygen.run_operation(config_contract).await,
+            KmsOperationRequest::CrsGen(crsgen) => crsgen.run_operation(config_contract).await,
+        }
+    }
+}
+
+#[async_trait]
+impl<S> Kms for KmsCore<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
     async fn run(
         &self,
         event: KmsEvent,
@@ -92,15 +118,20 @@ pub trait KmsEventHandler {
 }
 
 #[derive(Clone, TypedBuilder)]
-pub struct KmsCore {
+pub struct KmsCore<S> {
     channel: Channel,
     metrics: Arc<OpenTelemetryMetrics>,
     timeout_config: TimeoutConfig,
+    storage: S,
 }
 
-impl KmsCore {
+impl<S> KmsCore<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
     pub(crate) fn new(
         config: crate::conf::CoreConfig,
+        storage: S,
         metrics: OpenTelemetryMetrics,
     ) -> Result<Self, anyhow::Error> {
         // NOTE: we don't need multiple endpoints for now
@@ -122,6 +153,7 @@ impl KmsCore {
             channel,
             metrics: Arc::new(metrics),
             timeout_config: config.timeout_config.clone(),
+            storage,
         })
     }
 
@@ -129,7 +161,7 @@ impl KmsCore {
         &self,
         event: KmsEvent,
         operation_value: OperationValue,
-    ) -> anyhow::Result<KmsOperationRequest> {
+    ) -> anyhow::Result<KmsOperationRequest<S>> {
         let operation_val = KmsOperationVal {
             kms_client: self.clone(),
             tx_id: event.txn_id().clone(),
@@ -213,7 +245,10 @@ macro_rules! poller {
 }
 
 #[async_trait]
-impl KmsEventHandler for DecryptVal {
+impl<S> KmsEventHandler for DecryptVal<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
     async fn run_operation(
         &self,
         config_contract: Option<KmsCoreConf>,
@@ -238,8 +273,15 @@ impl KmsEventHandler for DecryptVal {
             .shares_needed() as u32;
         let key_id = self.decrypt.key_id().to_hex();
         let fhe_type = self.decrypt.fhe_type() as i32;
-        let ciphertext = self.decrypt.ciphertext().deref().into();
+        let ciphertext_handle: Vec<u8> = self.decrypt.ciphertext_handle().deref().into();
         let randomness = self.decrypt.randomness().deref().into();
+
+        let ciphertext = self
+            .operation_val
+            .kms_client
+            .storage
+            .get_ciphertext(ciphertext_handle)
+            .await?;
 
         let req = DecryptionRequest {
             version,
@@ -338,7 +380,10 @@ impl TryFrom<i32> for WrappingFheType {
 }
 
 #[async_trait]
-impl KmsEventHandler for ReencryptVal {
+impl<S> KmsEventHandler for ReencryptVal<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
     async fn run_operation(
         &self,
         config_contract: Option<KmsCoreConf>,
@@ -450,7 +495,10 @@ impl KmsEventHandler for ReencryptVal {
 }
 
 #[async_trait]
-impl KmsEventHandler for KeyGenPreprocVal {
+impl<S> KmsEventHandler for KeyGenPreprocVal<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
@@ -535,7 +583,10 @@ impl KmsEventHandler for KeyGenPreprocVal {
 }
 
 #[async_trait]
-impl KmsEventHandler for KeyGenVal {
+impl<S> KmsEventHandler for KeyGenVal<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
@@ -625,7 +676,10 @@ impl KmsEventHandler for KeyGenVal {
 }
 
 #[async_trait]
-impl KmsEventHandler for CrsGenVal {
+impl<S> KmsEventHandler for CrsGenVal<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
     #[tracing::instrument(skip(self), fields(tx_id = %self.operation_val.tx_id.to_hex()))]
     async fn run_operation(
         &self,
@@ -706,7 +760,7 @@ mod test {
     use super::KmsEventHandler as _;
     use crate::{
         conf::{CoreConfig, TimeoutConfig},
-        domain::blockchain::KmsOperationResponse,
+        domain::{blockchain::KmsOperationResponse, storage::Storage},
         infrastructure::{
             core::{KmsCore, WrappingFheType},
             metrics::OpenTelemetryMetrics,
@@ -762,7 +816,29 @@ mod test {
         ensure_client_keys_exist(None, true).await;
     }
 
+    #[derive(Clone)]
+    struct MockStorage {
+        pub ciphertext: HashMap<Vec<u8>, Vec<u8>>,
+    }
+
+    impl MockStorage {
+        pub fn new() -> Self {
+            MockStorage {
+                ciphertext: HashMap::new(),
+            }
+        }
+    }
+    #[async_trait::async_trait]
+    impl Storage for MockStorage {
+        async fn get_ciphertext(&self, ciphertext_handle: Vec<u8>) -> anyhow::Result<Vec<u8>> {
+            self.ciphertext
+                .get(&ciphertext_handle)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("ciphertext not found"))
+        }
+    }
     async fn generic_centralized_sunshine_test(
+        ct: Vec<u8>,
         op: OperationValue,
     ) -> (KmsOperationResponse, TransactionId) {
         let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
@@ -775,7 +851,10 @@ mod test {
             timeout_config: TimeoutConfig::mocking_default(),
         };
 
-        let client = KmsCore::new(config.clone(), OpenTelemetryMetrics::new()).unwrap();
+        let mut mock = MockStorage::new();
+        mock.ciphertext.insert(vec![1, 2, 3], ct);
+
+        let client = KmsCore::new(config.clone(), mock, OpenTelemetryMetrics::new()).unwrap();
 
         let mut txn_buf = vec![0u8; 20];
         rand::thread_rng().fill_bytes(&mut txn_buf);
@@ -812,11 +891,11 @@ mod test {
                 .version(CURRENT_FORMAT_VERSION)
                 .key_id(HexVector::from_hex(&TEST_CENTRAL_KEY_ID.request_id).unwrap())
                 .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
-                .ciphertext(ct)
+                .ciphertext_handle(vec![1, 2, 3])
                 .randomness(vec![1, 2, 3])
                 .build(),
         );
-        let (result, txn_id) = generic_centralized_sunshine_test(op).await;
+        let (result, txn_id) = generic_centralized_sunshine_test(ct, op).await;
         match result {
             KmsOperationResponse::DecryptResponse(resp) => {
                 let payload: DecryptionResponsePayload = serde_asn1_der::from_bytes(
@@ -852,7 +931,7 @@ mod test {
                 )
                 .build(),
         );
-        let (result, txn_id) = generic_centralized_sunshine_test(op).await;
+        let (result, txn_id) = generic_centralized_sunshine_test(vec![], op).await;
         match result {
             KmsOperationResponse::KeyGenResponse(resp) => {
                 assert!(!resp.keygen_response.public_key_digest().is_empty());
@@ -872,7 +951,7 @@ mod test {
     async fn crs_sunshine_central() {
         setup_central_keys().await;
         let op = OperationValue::CrsGen(CrsGenValues {});
-        let (result, txn_id) = generic_centralized_sunshine_test(op).await;
+        let (result, txn_id) = generic_centralized_sunshine_test(vec![], op).await;
         match result {
             KmsOperationResponse::CrsGenResponse(resp) => {
                 assert_eq!(resp.crs_gen_response.request_id(), txn_id.to_hex());
@@ -891,6 +970,7 @@ mod test {
     /// Before running this function, ensure [setup_keys] is executed
     async fn generic_sunshine_test(
         slow: bool,
+        ct: Vec<u8>,
         op: OperationValue,
     ) -> (Vec<KmsOperationResponse>, TransactionId, Vec<u32>) {
         let txn_id = TransactionId::from(vec![2u8; 20]);
@@ -931,7 +1011,9 @@ mod test {
         // create the clients
         let mut clients = vec![];
         for config in configs {
-            clients.push(KmsCore::new(config.clone(), OpenTelemetryMetrics::new()).unwrap());
+            let mut mock = MockStorage::new();
+            mock.ciphertext.insert(vec![1, 2, 3], ct.clone());
+            clients.push(KmsCore::new(config.clone(), mock, OpenTelemetryMetrics::new()).unwrap());
         }
 
         // create events
@@ -986,11 +1068,11 @@ mod test {
                 .version(CURRENT_FORMAT_VERSION)
                 .key_id(HexVector::from_hex(&TEST_THRESHOLD_KEY_ID.request_id).unwrap())
                 .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
-                .ciphertext(ct)
+                .ciphertext_handle(vec![1, 2, 3])
                 .randomness(vec![1, 2, 3])
                 .build(),
         );
-        let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
+        let (results, txn_id, _) = generic_sunshine_test(slow, ct, op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
         for result in results {
@@ -1056,7 +1138,7 @@ mod test {
         };
         let key_id = &TEST_THRESHOLD_KEY_ID;
         let (kms_req, enc_pk, enc_sk) = kms_client
-            .reencryption_request(ct, &dummy_domain(), fhe_type, &request_id, key_id)
+            .reencryption_request(ct.clone(), &dummy_domain(), fhe_type, &request_id, key_id)
             .unwrap();
         let payload = kms_req.payload.clone().unwrap();
         let eip712 = kms_req.domain.clone().unwrap();
@@ -1078,7 +1160,7 @@ mod test {
                 .eip712_salt(eip712.salt)
                 .build(),
         );
-        let (results, txn_id, ids) = generic_sunshine_test(slow, op).await;
+        let (results, txn_id, ids) = generic_sunshine_test(slow, ct, op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
         if slow {
@@ -1140,7 +1222,7 @@ mod test {
                 )
                 .build(),
         );
-        let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
+        let (results, txn_id, _) = generic_sunshine_test(slow, vec![], op).await;
         for result in results {
             match result {
                 KmsOperationResponse::KeyGenResponse(resp) => {
@@ -1160,7 +1242,7 @@ mod test {
     async fn preproc_sunshine(slow: bool) {
         setup_threshold_keys().await;
         let op = OperationValue::KeyGenPreproc(KeyGenPreprocValues {});
-        let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
+        let (results, txn_id, _) = generic_sunshine_test(slow, vec![], op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
         for result in results {
@@ -1178,7 +1260,7 @@ mod test {
     async fn crs_sunshine(slow: bool) {
         setup_threshold_keys().await;
         let op = OperationValue::CrsGen(CrsGenValues {});
-        let (results, txn_id, _) = generic_sunshine_test(slow, op).await;
+        let (results, txn_id, _) = generic_sunshine_test(slow, vec![], op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
         // we stop testing the response logic in "fast" mode, which uses a dummy kms

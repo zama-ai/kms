@@ -24,7 +24,6 @@ cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
         use crate::kms::RequestId;
         use lazy_static::lazy_static;
-
         pub const AMOUNT_PARTIES: usize = 4;
         pub const THRESHOLD: usize = 1;
         pub const BASE_PORT: u16 = 50050;

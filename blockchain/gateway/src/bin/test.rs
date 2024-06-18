@@ -21,7 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let wallet = LocalWallet::new(&mut rand::thread_rng());
 
     println!(
-        "docker exec -i zama-chain-fevm-full-node-1 faucet {}",
+        "docker exec -i ethermintnode0 faucet {}",
         hex::encode(wallet.address().as_bytes())
     );
 
@@ -29,7 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .args([
             "exec",
             "-i",
-            "zama-chain-fevm-full-node-1",
+            "ethermintnode0",
             "faucet",
             &hex::encode(wallet.address().as_bytes()),
         ])

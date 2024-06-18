@@ -15,11 +15,10 @@ bip32 = "xprv9s21ZrQH143K3FQVQn1Z6"
 
 [blockchain.fee]
 denom = "ucosm"
-amount = 10000000
+amount = 3000000
 
 [core]
-shares_needed = 2
-addresses = ["http://localhost:8080"]
+addresses = ["http://localhost:50051"]
 
 [core.timeout_config]
 channel_timeout = 60
@@ -53,3 +52,5 @@ max_poll_count = 24
 service_name = "kms-asc-connector"
 endpoint = "http://localhost:4317"
 
+[store]
+url = "http://localhost:8088"

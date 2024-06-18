@@ -154,7 +154,10 @@ mod tests {
             .unwrap();
         assert!(!gateway_config.debug);
         assert_eq!(gateway_config.mode, KmsMode::Centralized);
-        assert_eq!(gateway_config.ethereum.listener_type, ListenerType::Fhevm1);
+        assert_eq!(
+            gateway_config.ethereum.listener_type,
+            ListenerType::Fhevm1_1
+        );
         assert_eq!(gateway_config.ethereum.wss_url, "ws://localhost:8546");
         assert_eq!(
             gateway_config.ethereum.fhe_lib_address,
@@ -162,11 +165,11 @@ mod tests {
         );
         assert_eq!(
             gateway_config.ethereum.relayer_address,
-            H160::from_str("fA2E332b26542212573ae0D7937fFF976e3704db").unwrap()
+            H160::from_str("97F272ccfef4026A1F3f0e0E879d514627B84E69").unwrap()
         );
         assert_eq!(
             gateway_config.ethereum.oracle_predeploy_address,
-            H160::from_str("0a9368E9C545238c82a2FAEd62e631450d6432c1").unwrap()
+            H160::from_str("c8c9303Cd7F337fab769686B593B87DC3403E0ce").unwrap()
         );
         assert_eq!(
             gateway_config.ethereum.test_async_decrypt_address,

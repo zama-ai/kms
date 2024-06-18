@@ -4,7 +4,7 @@ pragma solidity ^0.8.25;
 
 import "../lib/TFHE.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
-import "../KmsVerifier.sol";
+import "../lib/KmsVerifier.sol";
 
 enum CiphertextType {
     EBOOL,
@@ -41,15 +41,9 @@ contract GatewayContract is Ownable2Step {
     mapping(uint256 => DecryptionRequest) internal decryptionRequests;
     mapping(uint256 => bool) internal isFulfilled;
 
-    /*
-    constructor(
-        address _gatewayOwner,
-        address _kmsVerifier
-    ) Ownable(_gatewayOwner) {
+    constructor(address _gatewayOwner, address _kmsVerifier) Ownable(_gatewayOwner) {
         kmsVerifier = KmsVerifier(_kmsVerifier);
     }
-    */
-    constructor(address _gatewayOwner) Ownable(_gatewayOwner) {}
 
     event EventDecryption(
         uint256 indexed requestID,
@@ -78,14 +72,11 @@ contract GatewayContract is Ownable2Step {
         emit RemovedRelayer(relayerAddress);
     }
 
-    function isExpiredOrFulfilled(
-        uint256 requestID
-    ) external view returns (bool) {
+    function isExpiredOrFulfilled(uint256 requestID) external view returns (bool) {
         uint256 timeNow = block.timestamp;
         return
             isFulfilled[requestID] ||
-            (timeNow > decryptionRequests[requestID].maxTimestamp &&
-                decryptionRequests[requestID].maxTimestamp != 0);
+            (timeNow > decryptionRequests[requestID].maxTimestamp && decryptionRequests[requestID].maxTimestamp != 0);
     }
 
     // Requests the decryption of n ciphertexts `ctsHandles` with the result returned in a callback.
@@ -97,18 +88,10 @@ contract GatewayContract is Ownable2Step {
         uint256 msgValue, // msg.value of callback tx, if callback is payable
         uint256 maxTimestamp
     ) external returns (uint256 initialCounter) {
-        require(
-            maxTimestamp > block.timestamp,
-            "maxTimestamp must be a future date"
-        );
-        require(
-            maxTimestamp <= block.timestamp + MAX_DELAY,
-            "maxTimestamp exceeded MAX_DELAY"
-        );
+        require(maxTimestamp > block.timestamp, "maxTimestamp must be a future date");
+        require(maxTimestamp <= block.timestamp + MAX_DELAY, "maxTimestamp exceeded MAX_DELAY");
         initialCounter = counter;
-        DecryptionRequest storage decryptionReq = decryptionRequests[
-            initialCounter
-        ];
+        DecryptionRequest storage decryptionReq = decryptionRequests[initialCounter];
 
         uint256 len = cts.length;
         for (uint256 i = 0; i < len; i++) {
@@ -119,14 +102,7 @@ contract GatewayContract is Ownable2Step {
         decryptionReq.callbackSelector = callbackSelector;
         decryptionReq.msgValue = msgValue;
         decryptionReq.maxTimestamp = maxTimestamp;
-        emit EventDecryption(
-            initialCounter,
-            cts,
-            msg.sender,
-            callbackSelector,
-            msgValue,
-            maxTimestamp
-        );
+        emit EventDecryption(initialCounter, cts, msg.sender, callbackSelector, msgValue, maxTimestamp);
         counter++;
     }
 
@@ -138,22 +114,17 @@ contract GatewayContract is Ownable2Step {
         bytes[] memory signatures
     ) external payable onlyRelayer {
         require(
-            kmsVerifier.verifySignatures(
-                keccak256(abi.encode(decryptedCts)),
-                signatures
-            ),
+            kmsVerifier.verifySignatures(keccak256(abi.encode(decryptedCts)), signatures),
             "KMS signature verification failed"
         );
         require(!isFulfilled[requestID], "Request is already fulfilled");
         DecryptionRequest memory decryptionReq = decryptionRequests[requestID];
         require(block.timestamp <= decryptionReq.maxTimestamp, "Too late");
-        bytes memory callbackCalldata = abi.encodeWithSelector(
-            decryptionReq.callbackSelector,
-            requestID
-        );
+        bytes memory callbackCalldata = abi.encodeWithSelector(decryptionReq.callbackSelector, requestID);
         callbackCalldata = abi.encodePacked(callbackCalldata, decryptedCts); // decryptedCts MUST be correctly abi-encoded by the relayer, according to the requested `ctsTypes`
-        (bool success, bytes memory result) = (decryptionReq.contractCaller)
-            .call{value: decryptionReq.msgValue}(callbackCalldata);
+        (bool success, bytes memory result) = (decryptionReq.contractCaller).call{value: decryptionReq.msgValue}(
+            callbackCalldata
+        );
         emit ResultCallback(requestID, success, result);
         isFulfilled[requestID] = true;
     }
