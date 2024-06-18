@@ -1,7 +1,7 @@
 # The address and port that tcp listener binds on to
 # accept client requests.
 # This endpoint should not be exposed externally.
-listen_address_client = "127.0.0.1"
+listen_address_client = "0.0.0.0"
 listen_port_client = 50100
 
 # The address and port that tcp listener binds on to

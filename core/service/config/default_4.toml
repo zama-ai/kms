@@ -1,5 +1,5 @@
 # The address and port that tcp listener binds on.
-listen_address_client = "127.0.0.1"
+listen_address_client = "0.0.0.0"
 listen_port_client = 50400
 
 # The address and port that tcp listener binds on to

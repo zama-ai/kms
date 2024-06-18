@@ -191,6 +191,11 @@ pub async fn threshold_server_start<
     kms_server: ThresholdKms<PubS, PrivS>,
 ) -> anyhow::Result<()> {
     let my_id = kms_server.my_id;
+    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+    health_reporter
+        .set_serving::<CoreServiceEndpointServer<ThresholdKms<PubS, PrivS>>>()
+        .await;
+
     let socket: std::net::SocketAddr = format!("{}:{}", listen_address, listen_port).parse()?;
     tracing::info!("Starting threshold KMS server {my_id} on socket {socket}");
     Server::builder()
@@ -200,6 +205,7 @@ pub async fn threshold_server_start<
                 .max_decoding_message_size(grpc_max_message_size)
                 .max_encoding_message_size(grpc_max_message_size),
         )
+        .add_service(health_service)
         .serve(socket)
         .await?;
     Ok(())

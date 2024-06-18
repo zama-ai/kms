@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn test_threshold_config() {
         let config: ThresholdConfig = Settings::new(Some("config/default_1")).init_conf().unwrap();
-        assert_eq!(config.rest.listen_address_client, "127.0.0.1");
+        assert_eq!(config.rest.listen_address_client, "0.0.0.0");
         assert_eq!(config.rest.listen_port_client, 50100);
         assert_eq!(config.rest.listen_address_core, "127.0.0.1");
         assert_eq!(config.rest.listen_port_core, 50001);
@@ -147,7 +147,7 @@ mod tests {
         let config: CentralizedConfig = Settings::new(Some("config/default_centralized"))
             .init_conf()
             .unwrap();
-        assert_eq!(config.rest.url, "http://127.0.0.1:50051");
+        assert_eq!(config.rest.url, "http://0.0.0.0:50051");
         assert_eq!(config.rest.param_file_map.len(), 2);
         assert_eq!(
             config.rest.param_file_map.get("test").unwrap(),

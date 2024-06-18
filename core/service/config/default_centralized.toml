@@ -1,4 +1,4 @@
-url = "http://127.0.0.1:50051"
+url = "http://0.0.0.0:50051"
 
 # The two settings below are optional and are only used for file storage
 public_storage_path = "keys"

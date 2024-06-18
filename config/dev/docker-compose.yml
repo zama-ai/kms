@@ -3,7 +3,7 @@ name: zama-kms
 services:
 
   blockchain-validator:
-    image: ghcr.io/zama-ai/kms-asc-dev:latest
+    image: ghcr.io/zama-ai/kms-blockchain-asc-dev:latest
     ports:
       - "36656:26656"
       - "36657:26657"
@@ -35,7 +35,7 @@ services:
     ports:
       - "50051:50051"
     healthcheck:
-      test: "wget -Sq --spider http://localhost:50051"
+      test: "grpc-health-probe --addr=localhost:50051"
       interval: 1s
       timeout: 1s
       retries: 5

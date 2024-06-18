@@ -49,6 +49,10 @@ pub async fn server_handle<
     let socket = config.get_socket_addr()?;
     let kms = SoftwareKms::new(config.param_file_map, public_storage, private_storage).await?;
     tracing::info!("Starting centralized KMS server ...");
+    let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+    health_reporter
+        .set_serving::<CoreServiceEndpointServer<SoftwareKms<PubS, PrivS>>>()
+        .await;
 
     Server::builder()
         .add_service(
@@ -56,6 +60,7 @@ pub async fn server_handle<
                 .max_decoding_message_size(config.grpc_max_message_size)
                 .max_encoding_message_size(config.grpc_max_message_size),
         )
+        .add_service(health_service)
         .serve(socket)
         .await?;
     Ok(())

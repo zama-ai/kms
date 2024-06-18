@@ -79,6 +79,7 @@ signature = "2.2.0"
 strum = "0.26"
 strum_macros = "0.26"
 tonic = { version = "0.11", optional = true }
+tonic-health = { version = "0.11", optional = true }
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread"], optional = true }
 tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", features = ["boolean", "shortint", "integer", "zk-pok-experimental"] } # == tfhe-rs v0.6.3
 tracing = { version = "0.1.40", features = ["log"] }
@@ -125,6 +126,7 @@ non-wasm = [
     "dep:reqwest",
     "dep:rcgen",
     "dep:tonic",
+    "dep:tonic-health",
     "dep:tfhe-zk-pok",
     "dep:tracing-opentelemetry",
     "dep:opentelemetry",
@@ -139,5 +141,6 @@ slow_tests = ["testing"]
 wasm_tests = ["testing"]
 grpc-client = [
     "dep:tonic",
+    "dep:tonic-health",
     "dep:tokio",
 ]
