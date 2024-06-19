@@ -1665,7 +1665,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     async fn inner_crs_gen(&self, req_id: &RequestId, witness_dim: usize) -> anyhow::Result<()> {
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
-            guarded_meta_store.insert(req_id)?;
+            guarded_meta_store.insert(req_id).map_err(|e| {
+                anyhow_error_and_log(format!(
+                    "failed to insert to meta store in inner_crs_gen with error: {e}"
+                ))
+            })?;
         }
 
         let session_id = SessionId(req_id.clone().try_into()?);

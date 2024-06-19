@@ -292,7 +292,6 @@ where
     let res = match combine_decryptions::<T>(bits_in_block as u32, partial_decrypted) {
         Ok(res) => res,
         Err(error) => {
-            eprint!("Panicked in combining {error}");
             return Err(anyhow_error_and_log(format!(
                 "Panicked in combining {error}"
             )));

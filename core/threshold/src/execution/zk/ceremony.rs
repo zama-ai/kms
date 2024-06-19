@@ -433,6 +433,10 @@ impl Ceremony for RealCeremony {
         let my_role = session.my_role()?;
 
         let mut pp = PublicParameter::new(witness_dim);
+        tracing::info!(
+            "Role {my_role} starting CRS ceremony in session {}",
+            session.session_id()
+        );
 
         for (round, role) in all_roles_sorted.iter().enumerate() {
             if role == &my_role {

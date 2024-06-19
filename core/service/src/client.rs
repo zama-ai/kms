@@ -90,10 +90,7 @@ fn decrypted_blocks_to_plaintext(
         | FheType::Euint64 => combine_decryptions::<u64>(bits_in_block, recon_blocks)
             .map(|x| Plaintext::new(x as u128, fhe_type)),
     };
-    res_pt.map_err(|error| {
-        eprint!("Panicked in combining {error}");
-        anyhow_error_and_log(format!("Panicked in combining {error}"))
-    })
+    res_pt.map_err(|error| anyhow_error_and_log(format!("Panicked in combining {error}")))
 }
 
 /// Simple client to interact with the KMS servers. This can be seen as a proof-of-concept
@@ -2004,16 +2001,16 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    #[tokio::test]
+    #[rstest::rstest]
+    #[case(4)]
+    #[case(1)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_crs_gen_threshold() {
+    #[tracing_test::traced_test]
+    async fn test_crs_gen_threshold(#[case] parallelism: usize) {
         // NOTE: the test parameter has 300 witness size
         // so we set this as a slow test
-
-        let request_id = RequestId::derive("test_crs_gen_threshold").unwrap();
-        // Ensure the test is idempotent
-        purge(None, None, &request_id.to_string()).await;
-        crs_gen_threshold(&request_id).await
+        crs_gen_threshold(parallelism).await
     }
 
     #[cfg(feature = "slow_tests")]
@@ -2044,62 +2041,86 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    async fn crs_gen_threshold(req_id: &RequestId) {
+    async fn crs_gen_threshold(parallelism: usize) {
+        assert!(parallelism > 0);
+        let req_ids: Vec<RequestId> = (0..parallelism)
+            .map(|j| RequestId::derive(&format!("test_crs_gen_threshold_{j}")).unwrap())
+            .collect();
+
+        // Ensure the test is idempotent
+        for req_id in &req_ids {
+            purge(None, None, &req_id.request_id).await;
+        }
+
+        // The threshold handle should only be started after the storage is purged
+        // since the threshold parties will load the CRS from private storage
         let (kms_servers, kms_clients, internal_client) =
             threshold_handles(StorageVersion::Dev, TEST_PARAM_PATH).await;
-        let req_gen = internal_client
-            .crs_gen_request(req_id, Some(ParamChoice::Test))
-            .unwrap();
+
+        let reqs: Vec<_> = (0..parallelism)
+            .map(|j| {
+                let request_id = RequestId::derive(&format!("test_crs_gen_threshold_{j}")).unwrap();
+                internal_client
+                    .crs_gen_request(&request_id, Some(ParamChoice::Test))
+                    .unwrap()
+            })
+            .collect();
 
         let mut tasks_gen = JoinSet::new();
-        for i in 1..=AMOUNT_PARTIES as u32 {
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
-            let req_clone = req_gen.clone();
-            tasks_gen
-                .spawn(async move { cur_client.crs_gen(tonic::Request::new(req_clone)).await });
+        for req in &reqs {
+            for i in 1..=AMOUNT_PARTIES as u32 {
+                let mut cur_client = kms_clients.get(&i).unwrap().clone();
+                let req_clone = req.clone();
+                tasks_gen
+                    .spawn(async move { cur_client.crs_gen(tonic::Request::new(req_clone)).await });
+            }
         }
         let mut responses_gen = Vec::new();
         while let Some(inner) = tasks_gen.join_next().await {
             let resp = inner.unwrap().unwrap();
             responses_gen.push(resp.into_inner());
         }
-        assert_eq!(responses_gen.len(), AMOUNT_PARTIES);
+        assert_eq!(responses_gen.len(), AMOUNT_PARTIES * parallelism);
 
         // wait a bit for the crs generation to finish
         const TRIES: usize = 20;
         let mut joined_responses = vec![];
-        for i in 0..TRIES {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        for count in 0..TRIES {
+            tokio::time::sleep(std::time::Duration::from_secs(5 * parallelism as u64)).await;
 
             let mut tasks_get = JoinSet::new();
-            for j in 1..=AMOUNT_PARTIES as u32 {
-                let mut cur_client = kms_clients.get(&j).unwrap().clone();
-                let req_id_cloned = req_id.clone();
-                tasks_get.spawn(async move {
-                    (
-                        j,
-                        cur_client
-                            .get_crs_gen_result(tonic::Request::new(req_id_cloned))
-                            .await,
-                    )
-                });
+            for req in &reqs {
+                for i in 1..=AMOUNT_PARTIES as u32 {
+                    let mut cur_client = kms_clients.get(&i).unwrap().clone();
+                    let req_id_cloned = req.request_id.as_ref().unwrap().clone();
+                    tasks_get.spawn(async move {
+                        (
+                            i,
+                            req_id_cloned.clone(),
+                            cur_client
+                                .get_crs_gen_result(tonic::Request::new(req_id_cloned))
+                                .await,
+                        )
+                    });
+                }
             }
             let mut responses_get = Vec::new();
-            while let Some(Ok((j, Ok(resp)))) = tasks_get.join_next().await {
-                responses_get.push((j, resp.into_inner()));
+            while let Some(Ok((j, req_id, Ok(resp)))) = tasks_get.join_next().await {
+                responses_get.push((j, req_id, resp.into_inner()));
             }
 
             // fail if we can't find a response
-            if i == TRIES - 1 {
-                panic!("could not get crs after {} tries", i);
+            if count == TRIES - 1 {
+                panic!("could not get crs after {} tries", count);
             }
-            if !responses_get.is_empty() {
-                // i.e., not empty
-                joined_responses = responses_get;
+
+            // add the responses in this iteration to the bigger vector
+            joined_responses.append(&mut responses_get);
+            if joined_responses.len() == AMOUNT_PARTIES * parallelism {
                 break;
             }
-            // if there are no reponses then we try again
         }
+
         for handle in kms_servers.values() {
             handle.abort()
         }
@@ -2109,111 +2130,131 @@ pub(crate) mod tests {
 
         // first check the happy path
         // the public parameter is checked in ddec tests, so we don't specifically check _pp
-        assert_eq!(joined_responses.len(), AMOUNT_PARTIES);
-
-        // we need to setup the storage devices in the right order
-        // so that the client can read the CRS
-        let (storage_readers, final_responses): (Vec<_>, Vec<_>) = joined_responses
-            .into_iter()
-            .map(|(i, res)| {
-                (
-                    { FileStorage::new_threshold(None, StorageType::PUB, i as usize).unwrap() },
-                    res,
+        for req in reqs {
+            let req_id = req.request_id.unwrap();
+            let joined_responses: Vec<_> = joined_responses
+                .iter()
+                .cloned()
+                .filter_map(
+                    |(i, rid, resp)| {
+                        if rid == req_id {
+                            Some((i, resp))
+                        } else {
+                            None
+                        }
+                    },
                 )
-            })
-            .unzip();
+                .collect();
 
-        let _pp = internal_client
-            .process_distributed_crs_result(req_id, final_responses.clone(), &storage_readers)
-            .await
+            // we need to setup the storage devices in the right order
+            // so that the client can read the CRS
+            let (storage_readers, final_responses): (Vec<_>, Vec<_>) = joined_responses
+                .into_iter()
+                .map(|(i, res)| {
+                    (
+                        { FileStorage::new_threshold(None, StorageType::PUB, i as usize).unwrap() },
+                        res,
+                    )
+                })
+                .unzip();
+
+            let _pp = internal_client
+                .process_distributed_crs_result(&req_id, final_responses.clone(), &storage_readers)
+                .await
+                .unwrap();
+
+            // if there are [THRESHOLD] result missing, we can still recover the result
+            let _pp = internal_client
+                .process_distributed_crs_result(
+                    &req_id,
+                    final_responses[0..final_responses.len() - THRESHOLD].to_vec(),
+                    &storage_readers,
+                )
+                .await
+                .unwrap();
+
+            // if there are [THRESHOLD+1] results missing, then we do not have consensus
+            assert!(internal_client
+                .process_distributed_crs_result(
+                    &req_id,
+                    final_responses[0..final_responses.len() - (THRESHOLD + 1)].to_vec(),
+                    &storage_readers
+                )
+                .await
+                .is_err());
+
+            // if the request_id is wrong, we get nothing
+            let bad_request_id = RequestId::derive("bad_request_id").unwrap();
+            assert!(internal_client
+                .process_distributed_crs_result(
+                    &bad_request_id,
+                    final_responses.clone(),
+                    &storage_readers
+                )
+                .await
+                .is_err());
+
+            // test that having [THRESHOLD] wrong signatures still works
+            let mut final_responses_with_bad_sig = final_responses.clone();
+            let client_sk = internal_client.client_sk.clone().unwrap();
+            let bad_sig = bincode::serialize(
+                &crate::cryptography::signcryption::sign(&"wrong msg".to_string(), &client_sk)
+                    .unwrap(),
+            )
             .unwrap();
+            set_signatures(&mut final_responses_with_bad_sig, THRESHOLD, &bad_sig);
 
-        // if there's [THRESHOLD] result missing, we can still recover the result
-        let _pp = internal_client
-            .process_distributed_crs_result(
-                req_id,
-                final_responses[0..final_responses.len() - THRESHOLD].to_vec(),
-                &storage_readers,
-            )
-            .await
-            .unwrap();
+            let _pp = internal_client
+                .process_distributed_crs_result(
+                    &req_id,
+                    final_responses_with_bad_sig.clone(),
+                    &storage_readers,
+                )
+                .await
+                .unwrap();
 
-        // if there are [THRESHOLD+1] results missing, then we do not have consensus
-        assert!(internal_client
-            .process_distributed_crs_result(
-                req_id,
-                final_responses[0..final_responses.len() - (THRESHOLD + 1)].to_vec(),
-                &storage_readers
-            )
-            .await
-            .is_err());
+            // having [THRESHOLD+1] wrong signatures won't work
+            set_signatures(&mut final_responses_with_bad_sig, THRESHOLD + 1, &bad_sig);
+            assert!(internal_client
+                .process_distributed_crs_result(
+                    &req_id,
+                    final_responses_with_bad_sig,
+                    &storage_readers
+                )
+                .await
+                .is_err());
 
-        // if the request_id is wrong, we get nothing
-        let bad_request_id = RequestId::derive("bad_request_id").unwrap();
-        assert!(internal_client
-            .process_distributed_crs_result(
-                &bad_request_id,
-                final_responses.clone(),
-                &storage_readers
-            )
-            .await
-            .is_err());
+            // having [THRESHOLD] wrong digests still works
+            let mut final_responses_with_bad_digest = final_responses.clone();
+            set_digests(
+                &mut final_responses_with_bad_digest,
+                THRESHOLD,
+                "9fdca770403e2eed9dacb4cdd405a14fc6df7226",
+            );
+            let _pp = internal_client
+                .process_distributed_crs_result(
+                    &req_id,
+                    final_responses_with_bad_digest.clone(),
+                    &storage_readers,
+                )
+                .await
+                .unwrap();
 
-        // test that having [THRESHOLD] wrong signatures still works
-        let mut final_responses_with_bad_sig = final_responses.clone();
-        let client_sk = internal_client.client_sk.clone().unwrap();
-        let bad_sig = bincode::serialize(
-            &crate::cryptography::signcryption::sign(&"wrong msg".to_string(), &client_sk).unwrap(),
-        )
-        .unwrap();
-        set_signatures(&mut final_responses_with_bad_sig, THRESHOLD, &bad_sig);
-
-        let _pp = internal_client
-            .process_distributed_crs_result(
-                req_id,
-                final_responses_with_bad_sig.clone(),
-                &storage_readers,
-            )
-            .await
-            .unwrap();
-
-        // having [THRESHOLD+1] wrong signatures won't work
-        set_signatures(&mut final_responses_with_bad_sig, THRESHOLD + 1, &bad_sig);
-        assert!(internal_client
-            .process_distributed_crs_result(req_id, final_responses_with_bad_sig, &storage_readers)
-            .await
-            .is_err());
-
-        // having [THRESHOLD] wrong digest still works
-        let mut final_responses_with_bad_digest = final_responses.clone();
-        set_digests(
-            &mut final_responses_with_bad_digest,
-            THRESHOLD,
-            "9fdca770403e2eed9dacb4cdd405a14fc6df7226",
-        );
-        let _pp = internal_client
-            .process_distributed_crs_result(
-                req_id,
-                final_responses_with_bad_digest.clone(),
-                &storage_readers,
-            )
-            .await
-            .unwrap();
-
-        // having [THRESHOLD+1] wrong digests will fail
-        set_digests(
-            &mut final_responses_with_bad_digest,
-            THRESHOLD + 1,
-            "9fdca770403e2eed9dacb4cdd405a14fc6df7226",
-        );
-        assert!(internal_client
-            .process_distributed_crs_result(
-                req_id,
-                final_responses_with_bad_digest,
-                &storage_readers
-            )
-            .await
-            .is_err());
+            // having [THRESHOLD+1] wrong digests will fail
+            set_digests(
+                &mut final_responses_with_bad_digest,
+                THRESHOLD + 1,
+                "9fdca770403e2eed9dacb4cdd405a14fc6df7226",
+            );
+            assert!(internal_client
+                .process_distributed_crs_result(
+                    &req_id,
+                    final_responses_with_bad_digest,
+                    &storage_readers
+                )
+                .await
+                .is_err());
+        }
     }
 
     #[tokio::test]
@@ -2612,9 +2653,9 @@ pub(crate) mod tests {
         assert!(kms_server.await.unwrap_err().is_cancelled());
     }
 
-    #[tracing_test::traced_test]
     #[tokio::test]
     #[serial]
+    #[tracing_test::traced_test]
     async fn test_decryption_threshold() {
         decryption_threshold(
             TEST_PARAM_PATH,
@@ -3080,39 +3121,59 @@ pub(crate) mod tests {
         responses
     }
 
+    // TODO parallel preproc needs to be investigated, there are two issues
+    // 1. for parallelism=4, it took 700, parallelism=2 is 300s, but parallelism=1 is 100s,
+    // so running preproc in parallel is slower than sequential
+    // 2. for parallelism=4, sometimes (not always) it fails with
+    // kms_lib-9439e559ff01deb4(86525,0x16e223000) malloc: Heap corruption detected, free list is damaged at 0x600000650510
+    // *** Incorrect guard value: 0
+    // issue: https://github.com/zama-ai/kms-core/issues/663
     #[cfg(feature = "slow_tests")]
+    #[rstest::rstest]
+    #[case(1)]
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
-    async fn test_preproc() {
+    async fn test_preproc(#[case] parallelism: usize) {
+        assert!(parallelism > 0);
         use crate::kms::{KeyGenPreprocRequest, KeyGenPreprocStatusEnum};
 
         let (kms_servers, kms_clients, internal_client) =
             threshold_handles(StorageVersion::Dev, TEST_PARAM_PATH).await;
 
-        let request_id = RequestId::derive("test_preproc").unwrap();
+        let request_ids: Vec<_> = (0..parallelism)
+            .map(|j| RequestId::derive(&format!("test_preproc_{j}")).unwrap())
+            .collect();
         let request_id_nok = RequestId::derive("not ok").unwrap();
-        let req_gen = internal_client
-            .preproc_request(&request_id, Some(ParamChoice::Test))
-            .unwrap();
+
+        let reqs: Vec<_> = request_ids
+            .iter()
+            .map(|req_id| {
+                internal_client
+                    .preproc_request(req_id, Some(ParamChoice::Test))
+                    .unwrap()
+            })
+            .collect();
 
         let mut tasks_gen = JoinSet::new();
-        for i in 1..=AMOUNT_PARTIES as u32 {
-            let mut cur_client = kms_clients.get(&i).unwrap().clone();
-            let req_clone = req_gen.clone();
-            tasks_gen.spawn(async move {
-                cur_client
-                    .key_gen_preproc(tonic::Request::new(req_clone))
-                    .await
-            });
+        for req in &reqs {
+            for i in 1..=AMOUNT_PARTIES as u32 {
+                let mut cur_client = kms_clients.get(&i).unwrap().clone();
+                let req_clone = req.clone();
+                tasks_gen.spawn(async move {
+                    cur_client
+                        .key_gen_preproc(tonic::Request::new(req_clone))
+                        .await
+                });
+            }
         }
 
         let mut responses_gen = Vec::new();
         while let Some(resp) = tasks_gen.join_next().await {
             responses_gen.push(resp.unwrap().unwrap().into_inner());
         }
-        assert_eq!(responses_gen.len(), AMOUNT_PARTIES);
+        assert_eq!(responses_gen.len(), AMOUNT_PARTIES * parallelism);
 
-        //Check status of preproc request
+        // Check status of preproc request
         async fn test_preproc_status(
             request: KeyGenPreprocRequest,
             expected_res: KeyGenPreprocStatusEnum,
@@ -3126,16 +3187,18 @@ pub(crate) mod tests {
             }
         }
 
-        //This request should give us the correct status
-        let req_status_ok = internal_client
-            .preproc_request(&request_id, Some(ParamChoice::Test))
-            .unwrap();
-        test_preproc_status(
-            req_status_ok.clone(),
-            KeyGenPreprocStatusEnum::InProgress,
-            &kms_clients,
-        )
-        .await;
+        // This request should give us the correct status
+        for request_id in &request_ids {
+            let req_status_ok = internal_client
+                .preproc_request(request_id, Some(ParamChoice::Test))
+                .unwrap();
+            test_preproc_status(
+                req_status_ok.clone(),
+                KeyGenPreprocStatusEnum::InProgress,
+                &kms_clients,
+            )
+            .await;
+        }
 
         //This request is not ok because no preproc was ever started for this session id
         let req_status_nok_sid = internal_client
@@ -3152,20 +3215,28 @@ pub(crate) mod tests {
         let mut finished: Vec<_> = Vec::new();
         let finished_enum: i32 = KeyGenPreprocStatusEnum::Finished.into();
         for _ in 0..20 {
-            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-            let preproc_status = get_preproc_status(req_status_ok.clone(), &kms_clients).await;
-            finished = preproc_status
-                .into_iter()
-                .filter(|x| x.result == finished_enum)
-                .collect();
+            tokio::time::sleep(std::time::Duration::from_secs(15 * parallelism as u64)).await;
 
-            if finished.len() == AMOUNT_PARTIES {
+            let mut done = true;
+            for req in &reqs {
+                let preproc_status = get_preproc_status(req.clone(), &kms_clients).await;
+                finished = preproc_status
+                    .into_iter()
+                    .filter(|x| x.result == finished_enum)
+                    .collect();
+
+                if finished.len() != AMOUNT_PARTIES {
+                    done = false;
+                }
+            }
+
+            if done {
                 break;
             }
         }
 
         //Make sure we did break because preproc is finished and not because of timeout
-        assert_eq!(finished.len(), AMOUNT_PARTIES);
+        assert_eq!(finished.len(), AMOUNT_PARTIES * parallelism);
 
         for handle in kms_servers.values() {
             handle.abort()

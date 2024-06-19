@@ -89,10 +89,10 @@ impl<T> MetaStore<T> {
     /// If the store is at max capacity and not enough elements have been completed, we will not accept new elements to be inserted.
     pub(crate) fn insert(&mut self, request_id: &RequestId) -> anyhow::Result<()> {
         if self.exists(request_id) {
-            return Err(anyhow_error_and_log(format!(
+            return Err(anyhow::anyhow!(
                 "The element with ID {request_id} is already stored and contains {:#?}",
                 self.retrieve(request_id)
-            )));
+            ));
         }
         if self.storage.len() >= self.capacity {
             // We have reached the capacity limit. Delete an old element.
