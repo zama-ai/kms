@@ -229,7 +229,7 @@ impl Blockchain for KmsBlockchainImpl {
                     .unwrap();
 
                     tracing::info!(
-                        "🍇🥐🍇🥐🍇🥐 Centralized Gateway results payload: {:?}",
+                        "🍇🥐🍇🥐🍇🥐 Centralized Gateway decryption result payload: {:?}",
                         hex::encode(payload.plaintext.clone())
                     );
                     serde_asn1_der::from_bytes::<Plaintext>(&payload.plaintext)?
@@ -237,7 +237,8 @@ impl Blockchain for KmsBlockchainImpl {
                 _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
             },
             KmsMode::Threshold => {
-                // loop through the vector of results and print them
+                let mut ptxts = Vec::new();
+                // loop through the vector of results
                 for value in results.iter() {
                     match value {
                         OperationValue::DecryptResponse(decrypt_response) => {
@@ -247,9 +248,11 @@ impl Blockchain for KmsBlockchainImpl {
                             )
                             .unwrap();
                             tracing::info!(
-                                "🥐🥐🥐🥐🥐🥐 Threshold Gateway results payload: {:?}",
-                                hex::encode(payload.plaintext)
+                                "🥐🥐🥐🥐🥐🥐 Threshold Gateway decryption results payload: {:?}",
+                                hex::encode(payload.plaintext.clone())
                             );
+                            ptxts
+                                .push(serde_asn1_der::from_bytes::<Plaintext>(&payload.plaintext)?);
                         }
                         _ => {
                             return Err(anyhow::anyhow!(
@@ -259,7 +262,17 @@ impl Blockchain for KmsBlockchainImpl {
                         }
                     };
                 }
-                Plaintext::from_u8(21_u8)
+
+                // check that all received plaintexts are identical (optimistic case)
+                // TODO: use majority vote to tolerate up to t malicious responses (unless we do that in an earlier step)
+                let pivot = &ptxts[0];
+                if ptxts.iter().all(|x| x == pivot) {
+                    pivot.clone() // all plaintext are identical, return the first one
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Threshold decryption failed: Received different plaintext values."
+                    ));
+                }
             }
         };
 
