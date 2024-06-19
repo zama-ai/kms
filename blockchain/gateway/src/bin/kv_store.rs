@@ -1,10 +1,10 @@
 use actix_web::web;
 use gateway::config::telemetry::init_tracing;
 use gateway::config::{GatewayConfig, Settings};
-use gateway::store::kvstore::evictor;
-use gateway::store::kvstore::initialize_storage;
-use gateway::store::kvstore::Storage;
-use gateway::store::kvstore::{get, put};
+use gateway::service::kvstore::evictor;
+use gateway::service::kvstore::initialize_storage;
+use gateway::service::kvstore::Storage;
+use gateway::service::kvstore::{get, put};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;

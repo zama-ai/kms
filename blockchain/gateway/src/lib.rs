@@ -1,6 +1,6 @@
-pub mod command;
+pub mod blockchain;
 pub mod common;
 pub mod config;
 pub mod events;
-pub mod store;
+pub mod service;
 pub mod util;

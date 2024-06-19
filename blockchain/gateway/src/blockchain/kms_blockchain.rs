@@ -1,7 +1,8 @@
+use crate::blockchain::Blockchain;
+use crate::blockchain::KmsEventSubscriber;
 use crate::config::GatewayConfig;
 use crate::config::KmsMode;
 use crate::util::conversion::TokenizableFrom;
-use crate::util::conversion::U4;
 use crate::util::footprint;
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -12,6 +13,7 @@ use events::kms::DecryptValues;
 use events::kms::KmsEvent;
 use events::kms::KmsOperation;
 use events::kms::OperationValue;
+use events::kms::ReencryptValues;
 use events::kms::TransactionId;
 use events::kms::{FheType, KmsMessage};
 use events::HexVector;
@@ -24,11 +26,6 @@ use kms_blockchain_client::query_client::OperationQuery;
 use kms_blockchain_client::query_client::QueryClient;
 use kms_blockchain_client::query_client::QueryClientBuilder;
 use kms_blockchain_client::query_client::QueryContractRequest;
-use kms_blockchain_connector::application::oracle_sync::OracleSyncHandler;
-use kms_blockchain_connector::application::SyncHandler;
-use kms_blockchain_connector::conf::ConnectorConfig;
-use kms_blockchain_connector::conf::Settings;
-use kms_blockchain_connector::domain::oracle::Oracle;
 use kms_lib::kms::DecryptionResponsePayload;
 use kms_lib::rpc::rpc_types::Plaintext;
 use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
@@ -37,132 +34,30 @@ use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use tokio::sync::OnceCell;
 use tokio::sync::RwLock;
 use tracing::info;
 
-async fn setup_decryption_strategy(
-    config: &GatewayConfig,
-) -> anyhow::Result<Arc<dyn DecryptionStrategy>> {
-    let debug = config.debug;
-    let strategy: Arc<dyn DecryptionStrategy> = match debug {
-        true => {
-            tracing::info!("🐛 Running in debug mode with a mocked KMS backend 🐛");
-            Arc::new(Mockchain)
-        }
-        false => Arc::new(KmsBlockchain::default(config.clone())),
-    };
-
-    Ok(strategy)
-}
-
-static DECRYPTION_STRATEGY: Lazy<OnceCell<Arc<dyn DecryptionStrategy>>> = Lazy::new(OnceCell::new);
-
-pub(super) async fn get_decryption_strategy(config: &GatewayConfig) -> Arc<dyn DecryptionStrategy> {
-    DECRYPTION_STRATEGY
-        .get_or_init(|| async {
-            setup_decryption_strategy(config)
-                .await
-                .expect("Failed to set up decryption strategy")
-        })
-        .await
-        .clone()
-}
-
-#[async_trait]
-pub(crate) trait DecryptionStrategy: Send + Sync {
-    async fn decrypt(&self, ctxt_handle: Vec<u8>, fhe_type: FheType) -> anyhow::Result<Token>;
-}
-
-struct Mockchain;
-
-#[async_trait]
-impl DecryptionStrategy for Mockchain {
-    async fn decrypt(&self, _ctxt_handle: Vec<u8>, fhe_type: FheType) -> anyhow::Result<Token> {
-        let res = match fhe_type {
-            FheType::Ebool => true.to_token(),
-            FheType::Euint4 => U4::new(3_u8).unwrap().to_token(),
-            FheType::Euint8 => 42_u8.to_token(),
-            FheType::Euint16 => 42_u16.to_token(),
-            FheType::Euint32 => 42_u32.to_token(),
-            FheType::Euint64 => 42_u64.to_token(),
-            FheType::Euint128 => 42_u128.to_token(),
-            FheType::Euint160 => Address::zero().to_token(),
-            FheType::Euint256 => Address::zero().to_token(),
-            FheType::Euint2048 => Address::zero().to_token(),
-            FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
-        };
-        info!("🍊 plaintext: {:#?}", res);
-        Ok(res)
-    }
-}
-
 #[derive(Clone)]
-struct KmsBlockchain {
-    client: Arc<RwLock<Client>>,
-    query_client: Arc<QueryClient>,
-    responders: Arc<RwLock<HashMap<TransactionId, oneshot::Sender<KmsEvent>>>>,
-    event_sender: mpsc::Sender<KmsEvent>,
-    config: GatewayConfig,
-}
-
-impl KmsBlockchain {
-    pub fn default(config: GatewayConfig) -> Self {
-        let mnemonic = Some(config.kms.mnemonic.to_string());
-        let binding = config.kms.address.to_string();
-        let addresses = vec![binding.as_str()];
-        let contract_address = &config.kms.contract_address;
-        Self::new(
-            mnemonic,
-            addresses,
-            contract_address.to_string().as_str(),
-            config,
-        )
-    }
+pub(crate) struct KmsBlockchainImpl {
+    pub(crate) client: Arc<RwLock<Client>>,
+    pub(crate) query_client: Arc<QueryClient>,
+    pub(crate) responders: Arc<RwLock<HashMap<TransactionId, oneshot::Sender<KmsEvent>>>>,
+    pub(crate) event_sender: mpsc::Sender<KmsEvent>,
+    pub(crate) config: GatewayConfig,
 }
 
 #[async_trait]
-impl DecryptionStrategy for KmsBlockchain {
-    async fn decrypt(&self, ctxt_handle: Vec<u8>, fhe_type: FheType) -> anyhow::Result<Token> {
-        tracing::info!(
-            "🔒 Decrypting ciphertext: {:?}",
-            hex::encode(ctxt_handle.clone())
-        );
-        let ptxt = self.decrypt_request(ctxt_handle, fhe_type).await?;
-        tracing::debug!("decrypted ptxt: {:?}", ptxt);
-
-        let res = match fhe_type {
-            FheType::Ebool => ptxt.as_bool().to_token(),
-            FheType::Euint4 => ptxt.as_u4().to_token(),
-            FheType::Euint8 => ptxt.as_u8().to_token(),
-            FheType::Euint16 => ptxt.as_u16().to_token(),
-            FheType::Euint32 => ptxt.as_u32().to_token(),
-            FheType::Euint64 => ptxt.as_u64().to_token(),
-            FheType::Euint128 => ptxt.as_u128().to_token(),
-            FheType::Euint160 => {
-                let mut cake = vec![0u8; 20];
-                ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
-                Address::from_slice(&cake).to_token()
-            }
-            FheType::Euint256 => {
-                let mut cake = vec![0u8; 32];
-                ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
-                Address::from_slice(&cake).to_token()
-            }
-            FheType::Euint2048 => {
-                let mut cake = vec![0u8; 256];
-                ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
-                Address::from_slice(&cake).to_token()
-            }
-            FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
-        };
-
-        info!("🍊 plaintext: {:#?}", res);
-        Ok(res)
+impl KmsEventSubscriber for KmsBlockchainImpl {
+    async fn receive(&self, event: KmsEvent) -> anyhow::Result<()> {
+        tracing::info!("🤠 Received KmsEvent: {:?}", event);
+        self.event_sender
+            .send(event)
+            .await
+            .map_err(|e| anyhow!(e.to_string()))
     }
 }
 
-impl<'a> KmsBlockchain {
+impl<'a> KmsBlockchainImpl {
     fn new(
         mnemonic: Option<String>,
         addresses: Vec<&'a str>,
@@ -185,7 +80,7 @@ impl<'a> KmsBlockchain {
             }
         });
 
-        let kms_blockchain = KmsBlockchain {
+        Self {
             client: Arc::new(RwLock::new(
                 ClientBuilder::builder()
                     .mnemonic_wallet(mnemonic.as_deref())
@@ -205,35 +100,54 @@ impl<'a> KmsBlockchain {
             responders,
             event_sender,
             config,
-        };
-
-        // Initialize the listener
-        tokio::spawn(Self::listen(kms_blockchain.clone()));
-        kms_blockchain
+        }
     }
 
-    pub async fn listen<T>(oracle: T) -> anyhow::Result<()>
-    where
-        T: Oracle + Send + Sync + Clone + 'static,
-    {
-        let settings = Settings::builder()
-            .path(Some("config/default.toml"))
-            .build();
-        let config: ConnectorConfig = settings
-            .init_conf()
-            .map_err(|e| anyhow::anyhow!("Error on initializing config {:?}", e))?;
-
-        OracleSyncHandler::new_with_config_and_listener(config, oracle)
-            .await?
-            .listen_for_events()
-            .await
+    pub(crate) fn new_from_config(config: GatewayConfig) -> Self {
+        let mnemonic = Some(config.kms.mnemonic.to_string());
+        let binding = config.kms.address.to_string();
+        let addresses = vec![binding.as_str()];
+        let contract_address = &config.kms.contract_address;
+        Self::new(
+            mnemonic,
+            addresses,
+            contract_address.to_string().as_str(),
+            config,
+        )
     }
 
-    async fn decrypt_request(
+    pub(crate) async fn wait_for_callback(
         &self,
-        ctxt_handle: Vec<u8>,
-        fhe_type: FheType,
-    ) -> anyhow::Result<Plaintext> {
+        txn_id: &TransactionId,
+    ) -> anyhow::Result<KmsEvent> {
+        let (tx, rx) = oneshot::channel();
+        self.responders.write().await.insert(txn_id.clone(), tx);
+
+        match tokio::time::timeout(tokio::time::Duration::from_secs(100), rx).await {
+            Ok(Ok(response)) => Ok(response),
+            Ok(Err(_)) => Err(anyhow!("Failed to receive response")),
+            Err(_) => Err(anyhow!("Request timed out")),
+        }
+    }
+
+    #[retrying::retry(stop=(attempts(5)|duration(10)),wait=fixed(0.25))]
+    pub(crate) async fn call_execute_contract(
+        &self,
+        client: &mut Client,
+        request: &ExecuteContractRequest,
+    ) -> Result<TxResponse, kms_blockchain_client::errors::Error> {
+        client.execute_contract(request.clone()).await
+    }
+}
+
+#[async_trait]
+impl Blockchain for KmsBlockchainImpl {
+    async fn decrypt(&self, ctxt_handle: Vec<u8>, fhe_type: FheType) -> anyhow::Result<Token> {
+        tracing::info!(
+            "🔒 Decrypting ciphertext: {:?}",
+            hex::encode(ctxt_handle.clone())
+        );
+
         let operation = events::kms::OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
@@ -261,15 +175,8 @@ impl<'a> KmsBlockchain {
                 .build()])
             .build();
 
-        #[retrying::retry(stop=(attempts(5)|duration(10)),wait=fixed(0.25))]
-        async fn call_execute_contract(
-            client: &mut Client,
-            request: &ExecuteContractRequest,
-        ) -> Result<TxResponse, kms_blockchain_client::errors::Error> {
-            client.execute_contract(request.clone()).await
-        }
         let mut client = self.client.write().await;
-        let response = call_execute_contract(&mut client, &request).await?;
+        let response = self.call_execute_contract(&mut client, &request).await?;
 
         let resp;
         loop {
@@ -313,7 +220,7 @@ impl<'a> KmsBlockchain {
             .build();
 
         let results: Vec<OperationValue> = self.query_client.query_contract(request).await?;
-        let payload_response = match self.config.mode {
+        let ptxt = match self.config.mode {
             KmsMode::Centralized => match results.first().unwrap() {
                 OperationValue::DecryptResponse(decrypt_response) => {
                     let payload: DecryptionResponsePayload = serde_asn1_der::from_bytes(
@@ -356,34 +263,74 @@ impl<'a> KmsBlockchain {
             }
         };
 
-        // let payload_response = Plaintext::from_u8(47_u8);
-        Ok(payload_response)
+        let res = match fhe_type {
+            FheType::Ebool => ptxt.as_bool().to_token(),
+            FheType::Euint4 => ptxt.as_u4().to_token(),
+            FheType::Euint8 => ptxt.as_u8().to_token(),
+            FheType::Euint16 => ptxt.as_u16().to_token(),
+            FheType::Euint32 => ptxt.as_u32().to_token(),
+            FheType::Euint64 => ptxt.as_u64().to_token(),
+            FheType::Euint128 => ptxt.as_u128().to_token(),
+            FheType::Euint160 => {
+                let mut cake = vec![0u8; 20];
+                ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
+                Address::from_slice(&cake).to_token()
+            }
+            FheType::Euint256 => {
+                let mut cake = vec![0u8; 32];
+                ptxt.as_u256().copy_to_be_byte_slice(cake.as_mut_slice());
+                Address::from_slice(&cake).to_token()
+            }
+            FheType::Euint2048 => {
+                let mut cake = vec![0u8; 256];
+                ptxt.as_u2048().copy_to_be_byte_slice(cake.as_mut_slice());
+                Address::from_slice(&cake).to_token()
+            }
+            FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
+        };
+
+        info!("🍊 plaintext: {:#?}", res);
+        Ok(res)
     }
 
-    async fn wait_for_callback(&self, txn_id: &TransactionId) -> anyhow::Result<KmsEvent> {
-        let (tx, rx) = oneshot::channel();
-        self.responders.write().await.insert(txn_id.clone(), tx);
+    #[allow(clippy::too_many_arguments)]
+    async fn reencrypt(
+        &self,
+        signature: Vec<u8>,
+        version: u32,
+        verification_key: Vec<u8>,
+        randomness: Vec<u8>,
+        enc_key: Vec<u8>,
+        fhe_type: FheType,
+        key_id: Vec<u8>,
+        ciphertext: Vec<u8>,
+        ciphertext_digest: Vec<u8>,
+        eip712_name: String,
+        eip712_version: String,
+        eip712_chain_id: Vec<u8>,
+        eip712_verifying_contract: String,
+        eip712_salt: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        let reencrypt_values = ReencryptValues::builder()
+            .signature(signature)
+            .version(version)
+            .verification_key(verification_key)
+            .randomness(randomness)
+            .enc_key(enc_key)
+            .fhe_type(fhe_type)
+            .key_id(key_id)
+            .ciphertext(ciphertext)
+            .ciphertext_digest(ciphertext_digest)
+            .eip712_name(eip712_name)
+            .eip712_version(eip712_version)
+            .eip712_chain_id(eip712_chain_id)
+            .eip712_verifying_contract(eip712_verifying_contract)
+            .eip712_salt(eip712_salt)
+            .build();
 
-        match tokio::time::timeout(tokio::time::Duration::from_secs(100), rx).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(anyhow!("Failed to receive response")),
-            Err(_) => Err(anyhow!("Request timed out")),
-        }
-    }
-
-    async fn receive_response(&self, event: KmsEvent) -> anyhow::Result<()> {
-        self.event_sender
-            .send(event)
-            .await
-            .map_err(|e| anyhow!(e.to_string()))
-    }
-}
-
-#[async_trait]
-impl Oracle for KmsBlockchain {
-    async fn respond(&self, event: KmsEvent) -> anyhow::Result<()> {
-        info!("🚀🚀🚀🚀🚀🚀 Oracle event: {:?}", event.txn_id());
-        self.receive_response(event).await
+        tracing::info!("🔒 Reencrypting ciphertext");
+        tracing::info!("🔒 values: {:?}", reencrypt_values);
+        todo!("Implement reencrypt")
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::command::ciphertext_provider::k256::ecdsa::SigningKey;
+use crate::blockchain::ciphertext_provider::k256::ecdsa::SigningKey;
 use crate::config::{EthereumConfig, ListenerType};
 use async_trait::async_trait;
 use ethers::prelude::*;

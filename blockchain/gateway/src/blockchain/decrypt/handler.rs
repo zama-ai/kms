@@ -1,10 +1,10 @@
-use crate::command::ciphertext_provider::CiphertextProvider;
-use crate::command::decrypt::handler::k256::ecdsa::SigningKey;
-use crate::command::decrypt::operations::get_decryption_strategy;
-use crate::common::provider::EventDecryptionFilter;
+use crate::blockchain::blockchain_impl;
+use crate::blockchain::ciphertext_provider::CiphertextProvider;
+use crate::blockchain::decrypt::handler::k256::ecdsa::SigningKey;
 use crate::common::provider::GatewayContract;
 use crate::config::EthereumConfig;
 use crate::config::GatewayConfig;
+use crate::events::manager::DecryptionEvent;
 use crate::util::wallet::WalletManager;
 use ethers::abi::encode;
 use ethers::abi::Token;
@@ -15,27 +15,26 @@ use std::sync::Arc;
 #[retrying::retry(stop=(attempts(5)|duration(20)),wait=fixed(5))]
 pub(crate) async fn handle_event_decryption(
     client: &Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
-    ev: &Arc<EventDecryptionFilter>,
+    event: &Arc<DecryptionEvent>,
     config: &GatewayConfig,
-    block_number: u64,
 ) -> anyhow::Result<()> {
     tracing::debug!("🍻 handle_event_decryption enter");
-    let mut tokens: Vec<Token> = Vec::with_capacity(ev.cts.len());
+    let mut tokens: Vec<Token> = Vec::with_capacity(event.filter.cts.len());
     let client_clone = Arc::clone(client);
-    let ev_clone: Arc<EventDecryptionFilter> = Arc::clone(ev);
+    let event = Arc::clone(event);
     let conf = config.clone();
     let _handle = tokio::spawn(async move {
         let ethereum_wss_url = conf.ethereum.wss_url.clone();
         let oracle_predeploy_address = conf.ethereum.oracle_predeploy_address;
-        for (i, ct) in ev_clone.cts.iter().enumerate() {
+        for (i, ct) in event.filter.cts.iter().enumerate() {
             let token = decrypt(
                 &client_clone,
                 &conf.clone(),
-                ev_clone.request_id,
+                event.filter.request_id,
                 ct.ct_handle,
                 ct.ct_type,
                 i as i64,
-                block_number,
+                event.block_number,
             )
             .await
             .unwrap();
@@ -51,15 +50,15 @@ pub(crate) async fn handle_event_decryption(
         // Fake signatures for now
         let signatures = vec![Bytes::from(vec![0u8; 65])];
 
-        tracing::info!("Fulfilling request: {:?}", ev_clone.request_id);
+        tracing::info!("Fulfilling request: {:?}", event.filter.request_id);
         match contract
-            .fulfill_request(ev_clone.request_id, encode(&tokens).into(), signatures)
+            .fulfill_request(event.filter.request_id, encode(&tokens).into(), signatures)
             .send()
             .await
         {
             Ok(pending_tx) => match pending_tx.await {
                 Ok(receipt) => {
-                    tracing::info!("Fulfilled request: {:?}", ev_clone.request_id);
+                    tracing::info!("Fulfilled request: {:?}", event.filter.request_id);
                     tracing::trace!("Transaction receipt: {:?}", receipt);
                 }
                 Err(e) => {
@@ -113,7 +112,7 @@ async fn decrypt(
     tracing::debug!("Got ct bytes of length: {}", ct_bytes.len());
     tracing::trace!("ct_bytes: 0x{}", hex::encode(&ct_bytes));
     tracing::info!("🚀 request_id: {}, ct_type: {}", request_id, ct_type,);
-    Ok(get_decryption_strategy(config)
+    Ok(blockchain_impl(config)
         .await
         .decrypt(handle_bytes, FheType::from(ct_type))
         .await?)
