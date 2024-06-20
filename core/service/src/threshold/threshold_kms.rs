@@ -54,7 +54,7 @@ use distributed_decryption::execution::tfhe_internals::switch_and_squash::Switch
 use distributed_decryption::execution::zk::ceremony::{
     compute_witness_dim, Ceremony, RealCeremony,
 };
-use distributed_decryption::networking::grpc::GrpcNetworkingManager;
+use distributed_decryption::networking::grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager};
 use distributed_decryption::session_id::SessionId;
 use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;
@@ -131,6 +131,7 @@ pub async fn threshold_server_init<
         private_storage,
         config.param_file_map,
         cert_paths,
+        config.core_to_core_net_conf,
         run_prss,
     )
     .await?;
@@ -313,6 +314,7 @@ async fn new_real_threshold_kms<PubS, PrivS>(
     private_storage: PrivS,
     param_file_map: HashMap<String, String>,
     cert_paths: Option<CertificatePaths>,
+    core_to_core_net_conf: Option<CoreToCoreNetworkConfig>,
     run_prss: bool,
 ) -> anyhow::Result<RealThresholdKms<PubS, PrivS>>
 where
@@ -394,7 +396,8 @@ where
     };
 
     // This will setup TLS if cert_paths is set to Some(...)
-    let networking_manager = GrpcNetworkingManager::new(own_identity.to_owned(), cert_paths);
+    let networking_manager =
+        GrpcNetworkingManager::new(own_identity.to_owned(), cert_paths, core_to_core_net_conf);
     let networking_server = networking_manager.new_server();
 
     let router = server.add_service(networking_server);

@@ -1531,6 +1531,7 @@ pub mod test_tools {
                     tls_cert_path: None,
                     tls_key_path: None,
                     peer_confs: peer_configs,
+                    core_to_core_net_conf: None,
                     param_file_map: default_param_file_map(),
                 };
                 // TODO pass in cert_paths for testing TLS

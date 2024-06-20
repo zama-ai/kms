@@ -27,7 +27,11 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
     let own_identity: Identity = settings.protocol().host().into();
 
     // the networking manager is shared between the two services
-    let networking = GrpcNetworkingManager::new(own_identity.clone(), settings.certpaths.clone());
+    let networking = GrpcNetworkingManager::new(
+        own_identity.clone(),
+        settings.certpaths.clone(),
+        settings.net_conf,
+    );
     let networking_server = networking.new_server();
 
     let factory = match &settings.redis {

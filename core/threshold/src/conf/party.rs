@@ -3,7 +3,9 @@
 //!
 use serde::{Deserialize, Serialize};
 
-use crate::execution::online::preprocessing::redis::RedisConf;
+use crate::{
+    execution::online::preprocessing::redis::RedisConf, networking::grpc::CoreToCoreNetworkConfig,
+};
 
 use super::{Party, Tracing};
 
@@ -39,6 +41,7 @@ pub struct PartyConf {
     /// TLS will be enabled for the choreographer-to-core
     /// communication.
     pub choreo_use_tls: bool,
+    pub net_conf: Option<CoreToCoreNetworkConfig>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -192,6 +195,18 @@ mod tests {
                 }
             ]
         );
+
+        let core_to_core_net_conf = party_conf.net_conf;
+        assert!(core_to_core_net_conf.is_some());
+        let core_to_core_net_conf = core_to_core_net_conf.unwrap();
+        assert_eq!(core_to_core_net_conf.message_limit, 70);
+        assert_eq!(core_to_core_net_conf.multiplier, 1.1);
+        assert_eq!(core_to_core_net_conf.max_interval, 5);
+        assert_eq!(core_to_core_net_conf.max_elapsed_time, Some(300));
+        assert_eq!(core_to_core_net_conf.network_timeout, 10);
+        assert_eq!(core_to_core_net_conf.network_timeout_bk, 300);
+        assert_eq!(core_to_core_net_conf.network_timeout_bk_sns, 1200);
+        assert_eq!(core_to_core_net_conf.max_en_decode_message_size, 2147483648);
     }
 
     #[test]
@@ -243,7 +258,28 @@ mod tests {
         env::set_var("DDEC-CHOREO_USE_TLS", "true");
         env::set_var("DDEC-TRACING-SERVICE_NAME", "moby-p3");
         env::set_var("DDEC-TRACING-ENDPOINT", "moby-p3-endpoint");
+
+        env::set_var("DDEC-NET_CONF-MESSAGE_LIMIT", "60");
+        env::set_var("DDEC-NET_CONF-MULTIPLIER", "2.2");
+        env::set_var("DDEC-NET_CONF-MAX_INTERVAL", "4");
+        env::set_var("DDEC-NET_CONF-MAX_ELAPSED_TIME", "200");
+        env::set_var("DDEC-NET_CONF-NETWORK_TIMEOUT", "20");
+        env::set_var("DDEC-NET_CONF-NETWORK_TIMEOUT_BK", "200");
+        env::set_var("DDEC-NET_CONF-NETWORK_TIMEOUT_BK_SNS", "2300");
+        env::set_var("DDEC-NET_CONF-MAX_EN_DECODE_MESSAGE_SIZE", "3258");
         let party_conf: PartyConf = Settings::builder().build().init_conf().unwrap();
+
+        let core_to_core_net_conf = party_conf.net_conf;
+        assert!(core_to_core_net_conf.is_some());
+        let core_to_core_net_conf = core_to_core_net_conf.unwrap();
+        assert_eq!(core_to_core_net_conf.message_limit, 60);
+        assert_eq!(core_to_core_net_conf.multiplier, 2.2);
+        assert_eq!(core_to_core_net_conf.max_interval, 4);
+        assert_eq!(core_to_core_net_conf.max_elapsed_time, Some(200));
+        assert_eq!(core_to_core_net_conf.network_timeout, 20);
+        assert_eq!(core_to_core_net_conf.network_timeout_bk, 200);
+        assert_eq!(core_to_core_net_conf.network_timeout_bk_sns, 2300);
+        assert_eq!(core_to_core_net_conf.max_en_decode_message_size, 3258);
 
         let bundle = party_conf.certpaths.unwrap();
         assert_eq!(bundle.cert, "/path/to/cert");
@@ -262,5 +298,14 @@ mod tests {
         env::remove_var("DDEC-CHOREO_USE_TLS");
         env::remove_var("DDEC-TRACING-SERVICE_NAME");
         env::remove_var("DDEC-TRACING-ENDPOINT");
+
+        env::remove_var("DDEC-NET_CONF-MESSAGE_LIMIT");
+        env::remove_var("DDEC-NET_CONF-MULTIPLIER");
+        env::remove_var("DDEC-NET_CONF-MAX_INTERVAL");
+        env::remove_var("DDEC-NET_CONF-MAX_ELAPSED_TIME");
+        env::remove_var("DDEC-NET_CONF-NETWORK_TIMEOUT");
+        env::remove_var("DDEC-NET_CONF-NETWORK_TIMEOUT_BK");
+        env::remove_var("DDEC-NET_CONF-NETWORK_TIMEOUT_BK_SNS");
+        env::remove_var("DDEC-NET_CONF-MAX_EN_DECODE_MESSAGE_SIZE");
     }
 }

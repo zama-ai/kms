@@ -597,6 +597,8 @@ where
     .await?;
     tracing::info!("(Party {my_role}) Generating KSK...Done");
 
+    //Computing and opening BK can take a while, so we increase the timeout
+    session.network().set_timeout_for_bk()?;
     //Compute the bootstrapping keys
     let bk = generate_bootstrap_key(
         &glwe_secret_key_share,
@@ -618,6 +620,9 @@ where
                 sns_params.polynomial_size_sns(),
                 preprocessing,
             )?;
+
+            //Computing and opening BK SNS can take a while, so we increase the timeout
+            session.network().set_timeout_for_bk_sns()?;
 
             tracing::info!("(Party {my_role}) Generating SnS GLWE...Done");
             let bk_sns = generate_bootstrap_key(

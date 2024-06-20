@@ -140,6 +140,18 @@ mod tests {
         assert!(config.rest.preproc_redis_conf.is_none());
         assert_eq!(config.private_storage_path.unwrap(), "keys");
         assert_eq!(config.public_storage_path.unwrap(), "keys");
+
+        let core_to_core_net_conf = config.rest.core_to_core_net_conf;
+        assert!(core_to_core_net_conf.is_some());
+        let core_to_core_net_conf = core_to_core_net_conf.unwrap();
+        assert_eq!(core_to_core_net_conf.message_limit, 70);
+        assert_eq!(core_to_core_net_conf.multiplier, 1.1);
+        assert_eq!(core_to_core_net_conf.max_interval, 5);
+        assert_eq!(core_to_core_net_conf.max_elapsed_time, Some(300));
+        assert_eq!(core_to_core_net_conf.network_timeout, 10);
+        assert_eq!(core_to_core_net_conf.network_timeout_bk, 300);
+        assert_eq!(core_to_core_net_conf.network_timeout_bk_sns, 1200);
+        assert_eq!(core_to_core_net_conf.max_en_decode_message_size, 2147483648);
     }
 
     #[test]

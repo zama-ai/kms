@@ -8,12 +8,14 @@ mod gen {
 use self::gen::gnetworking_client::GnetworkingClient;
 use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
-use super::constants::{MESSAGE_LIMIT, NETWORK_TIMEOUT_LONG};
+use super::constants::{
+    MAX_ELAPSED_TIME, MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MESSAGE_LIMIT, MULTIPLIER,
+    NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
+};
 use crate::conf::party::CertificatePaths;
 use crate::conf::telemetry::ContextPropagator;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::{Identity, RoleAssignment};
-use crate::networking::constants::{self, MAX_EN_DECODE_MESSAGE_SIZE};
 use crate::networking::Networking;
 use crate::session_id::SessionId;
 use async_trait::async_trait;
@@ -30,6 +32,89 @@ use tonic::codegen::http::Uri;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 
+#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+pub struct CoreToCoreNetworkConfig {
+    pub message_limit: u64,
+    pub multiplier: f64,
+    pub max_interval: u64,
+    pub max_elapsed_time: Option<u64>,
+    pub network_timeout: u64,
+    pub network_timeout_bk: u64,
+    pub network_timeout_bk_sns: u64,
+    pub max_en_decode_message_size: u64,
+}
+
+#[derive(Debug, Clone)]
+struct OptionConfigWrapper {
+    conf: Option<CoreToCoreNetworkConfig>,
+}
+
+impl OptionConfigWrapper {
+    fn get_message_limit(&self) -> usize {
+        if let Some(conf) = self.conf {
+            conf.message_limit as usize
+        } else {
+            MESSAGE_LIMIT
+        }
+    }
+
+    fn get_multiplier(&self) -> f64 {
+        if let Some(conf) = self.conf {
+            conf.multiplier
+        } else {
+            MULTIPLIER
+        }
+    }
+
+    fn get_max_interval(&self) -> Duration {
+        if let Some(conf) = self.conf {
+            Duration::from_secs(conf.max_interval)
+        } else {
+            *MAX_INTERVAL
+        }
+    }
+
+    fn get_max_elapsed_time(&self) -> Option<Duration> {
+        if let Some(conf) = self.conf {
+            conf.max_elapsed_time.map(Duration::from_secs)
+        } else {
+            *MAX_ELAPSED_TIME
+        }
+    }
+
+    fn get_network_timeout(&self) -> Duration {
+        if let Some(conf) = self.conf {
+            Duration::from_secs(conf.network_timeout)
+        } else {
+            *NETWORK_TIMEOUT_LONG
+        }
+    }
+
+    fn get_network_timeout_bk(&self) -> Duration {
+        if let Some(conf) = self.conf {
+            Duration::from_secs(conf.network_timeout_bk)
+        } else {
+            *NETWORK_TIMEOUT_BK
+        }
+    }
+
+    fn get_network_timeout_bk_sns(&self) -> Duration {
+        if let Some(conf) = self.conf {
+            Duration::from_secs(conf.network_timeout_bk_sns)
+        } else {
+            *NETWORK_TIMEOUT_BK_SNS
+        }
+    }
+
+    fn get_max_en_decode_message_size(&self) -> usize {
+        if let Some(conf) = self.conf {
+            conf.max_en_decode_message_size as usize
+        } else {
+            *MAX_EN_DECODE_MESSAGE_SIZE
+        }
+    }
+}
+
 /// GrpcNetworkingManager is responsible for managing
 /// channels and message queues between MPC parties.
 #[derive(Debug, Clone)]
@@ -38,6 +123,7 @@ pub struct GrpcNetworkingManager {
     message_queues: Arc<MessageQueueStores>,
     owner: Identity,
     cert_bundle: Arc<Option<CertificatePaths>>,
+    conf: OptionConfigWrapper,
 }
 
 pub type GrpcServer = GnetworkingServer<NetworkingImpl>;
@@ -49,17 +135,22 @@ impl GrpcNetworkingManager {
         GnetworkingServer::new(NetworkingImpl {
             message_queues: Arc::clone(&self.message_queues),
         })
-        .max_decoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
-        .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
+        .max_decoding_message_size(self.conf.get_max_en_decode_message_size())
+        .max_encoding_message_size(self.conf.get_max_en_decode_message_size())
     }
 
     /// Owner should be the external address
-    pub fn new(owner: Identity, cert_bundle: Option<CertificatePaths>) -> Self {
+    pub fn new(
+        owner: Identity,
+        cert_bundle: Option<CertificatePaths>,
+        conf: Option<CoreToCoreNetworkConfig>,
+    ) -> Self {
         GrpcNetworkingManager {
             channels: Default::default(),
             message_queues: Default::default(),
             owner,
             cert_bundle: Arc::new(cert_bundle),
+            conf: OptionConfigWrapper { conf },
         }
     }
 
@@ -75,12 +166,15 @@ impl GrpcNetworkingManager {
     ) -> Arc<impl Networking> {
         let message_store = DashMap::new();
         for (_role, identity) in roles {
-            let (tx, rx) = async_channel::bounded(MESSAGE_LIMIT);
+            let (tx, rx) = async_channel::bounded(self.conf.get_message_limit());
             message_store.insert(identity, (Arc::new(tx), Arc::new(rx)));
         }
         self.message_queues
             .insert(session_id, Arc::new(message_store));
         Arc::new(GrpcNetworking {
+            current_network_timeout: Mutex::new(self.conf.get_network_timeout()),
+            next_network_timeout: Mutex::new(self.conf.get_network_timeout()),
+            max_elapsed_time: Mutex::new(Duration::ZERO),
             session_id,
             channels: Arc::clone(&self.channels),
             message_queues: Arc::clone(&self.message_queues),
@@ -88,11 +182,17 @@ impl GrpcNetworkingManager {
             owner: self.owner.clone(),
             init_time: OnceLock::new(),
             cert_bundle: self.cert_bundle.clone(),
+            conf: Arc::new(self.conf.clone()),
         })
     }
 }
 
+//This is using mutexes for everything round related to be able to
+//mutate state without needing self to be mutable in functions' signature
 pub struct GrpcNetworking {
+    current_network_timeout: Mutex<Duration>,
+    next_network_timeout: Mutex<Duration>,
+    max_elapsed_time: Mutex<Duration>,
     session_id: SessionId,
     channels: Arc<Channels>,
     message_queues: Arc<MessageQueueStores>,
@@ -100,6 +200,7 @@ pub struct GrpcNetworking {
     owner: Identity,
     init_time: OnceLock<Instant>,
     cert_bundle: Arc<Option<CertificatePaths>>,
+    conf: Arc<OptionConfigWrapper>,
 }
 
 impl GrpcNetworking {
@@ -119,6 +220,9 @@ impl GrpcNetworking {
                         receiver
                     ))
                 })?;
+                let network_timeout = self.current_network_timeout.lock().map_err(|e| {
+                    anyhow_error_and_log(format!("Can not lock network_timeout: {e}"))
+                })?;
                 let channel = match *self.cert_bundle {
                     Some(ref cert_bundle) => {
                         let host_port: Vec<_> = receiver.0.split(':').collect();
@@ -137,10 +241,11 @@ impl GrpcNetworking {
                             .identity(cert_bundle.get_identity()?);
                         Channel::builder(endpoint)
                             .tls_config(tls_config)?
-                            .timeout(*NETWORK_TIMEOUT_LONG)
+                            .timeout(*network_timeout)
                     }
-                    None => Channel::builder(endpoint).timeout(*NETWORK_TIMEOUT_LONG),
+                    None => Channel::builder(endpoint).timeout(*network_timeout),
                 };
+                drop(network_timeout);
                 Ok::<Channel, anyhow::Error>(channel.connect_lazy())
             })?
             .clone(); // cloning channels is cheap per tonic documentation
@@ -153,8 +258,8 @@ impl GrpcNetworking {
     ) -> anyhow::Result<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>> {
         let channel = self.channel(identity)?;
         let client = GnetworkingClient::with_interceptor(channel, ContextPropagator)
-            .max_decoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE)
-            .max_encoding_message_size(*MAX_EN_DECODE_MESSAGE_SIZE);
+            .max_decoding_message_size(self.conf.get_max_en_decode_message_size())
+            .max_encoding_message_size(self.conf.get_max_en_decode_message_size());
         Ok(client)
     }
 }
@@ -201,9 +306,9 @@ impl Networking for GrpcNetworking {
         };
 
         let exponential_backoff = ExponentialBackoff {
-            max_elapsed_time: *constants::MAX_ELAPSED_TIME,
-            max_interval: *constants::MAX_INTERVAL,
-            multiplier: constants::MULTIPLIER,
+            max_elapsed_time: self.conf.get_max_elapsed_time(),
+            max_interval: self.conf.get_max_interval(),
+            multiplier: self.conf.get_multiplier(),
             ..Default::default()
         };
 
@@ -262,12 +367,31 @@ impl Networking for GrpcNetworking {
     }
 
     fn increase_round_counter(&self) -> anyhow::Result<()> {
-        if let Ok(mut net_round) = self.network_round.lock() {
+        //Locking all mutexes in same place
+        //Update max_elapsed_time
+        if let (
+            Ok(mut max_elapsed_time),
+            Ok(mut current_round_timeout),
+            Ok(next_round_timeout),
+            Ok(mut net_round),
+        ) = (
+            self.max_elapsed_time.lock(),
+            self.current_network_timeout.lock(),
+            self.next_network_timeout.lock(),
+            self.network_round.lock(),
+        ) {
+            *max_elapsed_time += *current_round_timeout;
+
+            //Update next round timeout
+            *current_round_timeout = *next_round_timeout;
+
+            //Update round counter
             *net_round += 1;
             tracing::debug!(
-                "changed network round to: {:?} on party: {:?}",
+                "changed network round to: {:?} on party: {:?}, with timeout: {:?}",
                 *net_round,
-                self.owner
+                self.owner,
+                *current_round_timeout
             );
         } else {
             return Err(anyhow_error_and_log("Couldn't lock mutex"));
@@ -280,8 +404,11 @@ impl Networking for GrpcNetworking {
         // this avoids running into timeouts when large computations happen after the test runtime is set up and before the first message is received.
         let init_time = self.init_time.get_or_init(Instant::now);
 
-        if let Ok(net_round) = self.network_round.lock() {
-            Ok(*init_time + *NETWORK_TIMEOUT_LONG * (*net_round as u32))
+        if let (Ok(max_elapsed_time), Ok(network_timeout)) = (
+            self.max_elapsed_time.lock(),
+            self.current_network_timeout.lock(),
+        ) {
+            Ok(*init_time + *network_timeout + *max_elapsed_time)
         } else {
             Err(anyhow_error_and_log("Couldn't lock mutex"))
         }
@@ -289,6 +416,23 @@ impl Networking for GrpcNetworking {
 
     fn get_current_round(&self) -> anyhow::Result<usize> {
         todo!("Need to implement get_current_round for grpc")
+    }
+
+    fn set_timeout_for_next_round(&self, timeout: Duration) -> anyhow::Result<()> {
+        if let Ok(mut next_network_timeout) = self.next_network_timeout.lock() {
+            *next_network_timeout = timeout;
+        } else {
+            return Err(anyhow_error_and_log("Couldn't lock mutex"));
+        }
+        Ok(())
+    }
+
+    fn set_timeout_for_bk(&self) -> anyhow::Result<()> {
+        self.set_timeout_for_next_round(self.conf.get_network_timeout_bk())
+    }
+
+    fn set_timeout_for_bk_sns(&self) -> anyhow::Result<()> {
+        self.set_timeout_for_next_round(self.conf.get_network_timeout_bk_sns())
     }
 }
 
