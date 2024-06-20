@@ -2,11 +2,6 @@ name: zama-kms
 
 services:
 
-  # gateway:
-  #   image: ghcr.io/zama-ai/kms-blockchain-gateway-dev:latest
-  #   command:
-  #     - "gateway"
-
   blockchain-validator:
     image: ghcr.io/zama-ai/kms-blockchain-asc-dev:latest
     ports:
@@ -27,8 +22,8 @@ services:
     command:
       - "kms-blockchain-connector"
     environment:
-      - ASC_CONN_BLOCKCHAIN_ADDRESSES=http://blockchain-validator:9090
-      - ASC_CONN_CORE_ADDRESS=http://core:50051
+      - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://blockchain-validator:9090
+      - ASC_CONN__CORE__ADDRESSES=http://core:50051
     depends_on:
       blockchain-validator:
         condition: service_healthy

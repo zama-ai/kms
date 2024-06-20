@@ -87,11 +87,17 @@ pub struct KmsConfig {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
+pub struct StorageConfig {
+    pub url: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
 pub struct GatewayConfig {
     pub debug: bool,
     pub mode: KmsMode,
     pub ethereum: EthereumConfig,
     pub kms: KmsConfig,
+    pub storage: StorageConfig,
     pub tracing: Option<Tracing>,
 }
 
@@ -129,8 +135,7 @@ impl<'a> Settings<'a> {
             .add_source(
                 config::Environment::default()
                     .prefix("GATEWAY")
-                    .separator("_")
-                    .list_separator(","),
+                    .separator("__"),
             )
             .build()?;
 
@@ -148,50 +153,157 @@ mod tests {
 
     #[test]
     fn test_gateway_config() {
-        let gateway_config: GatewayConfig = Settings::builder()
-            .path(Some("config/gateway"))
-            .build()
-            .init_conf()
-            .unwrap();
-        assert!(!gateway_config.debug);
-        assert_eq!(gateway_config.mode, KmsMode::Centralized);
-        assert_eq!(
-            gateway_config.ethereum.listener_type,
-            ListenerType::Fhevm1_1
-        );
-        assert_eq!(gateway_config.ethereum.wss_url, "ws://localhost:8546");
-        assert_eq!(
-            gateway_config.ethereum.fhe_lib_address,
-            H160::from_str("000000000000000000000000000000000000005d").unwrap()
-        );
-        assert_eq!(
-            gateway_config.ethereum.relayer_address,
-            H160::from_str("97F272ccfef4026A1F3f0e0E879d514627B84E69").unwrap()
-        );
-        assert_eq!(
-            gateway_config.ethereum.oracle_predeploy_address,
-            H160::from_str("c8c9303Cd7F337fab769686B593B87DC3403E0ce").unwrap()
-        );
-        assert_eq!(
-            gateway_config.ethereum.test_async_decrypt_address,
-            H160::from_str("99F460504563579922352932A42172B3c04a1420").unwrap()
-        );
-        assert_eq!(
-            gateway_config.kms.tendermint_node_addr,
-            "http://localhost:26657"
-        );
-        assert_eq!(
-            gateway_config.kms.contract_address,
-            "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
-        );
-        assert_eq!(
+        let env_conf: [(&str, Option<&str>); 13] = [
+            ("GATEWAY__DEBUG", None),
+            ("GATEWAY__MODE", None),
+            ("GATEWAY__ETHEREUM__LISTENER_TYPE", None),
+            ("GATEWAY__ETHEREUM__WSS_URL", None),
+            ("GATEWAY__ETHEREUM__FHE_LIB_ADDRESS", None),
+            ("GATEWAY__ETHEREUM__RELAYER_ADDRESS", None),
+            ("GATEWAY__ETHEREUM__ORACLE_PREDEPLOY_ADDRESS", None),
+            ("GATEWAY__ETHEREUM__TEST_ASYNC_DECRYPT_ADDRESS", None),
+            ("GATEWAY__KMS__TENDERMINT_NODE_ADDR", None),
+            ("GATEWAY__KMS__CONTRACT_ADDRESS", None),
+            ("GATEWAY__KMS__MNEMONIC", None),
+            ("GATEWAY__KMS__ADDRESS", None),
+            ("GATEWAY__KMS__KEY_ID", None),
+        ];
+        temp_env::with_vars(env_conf, || {
+            let gateway_config: GatewayConfig = Settings::builder()
+                .path(Some("config/gateway"))
+                .build()
+                .init_conf()
+                .unwrap();
+            assert!(!gateway_config.debug);
+            assert_eq!(gateway_config.mode, KmsMode::Centralized);
+            assert_eq!(
+                gateway_config.ethereum.listener_type,
+                ListenerType::Fhevm1_1
+            );
+            assert_eq!(gateway_config.ethereum.wss_url, "ws://localhost:8546");
+            assert_eq!(
+                gateway_config.ethereum.fhe_lib_address,
+                H160::from_str("000000000000000000000000000000000000005d").unwrap()
+            );
+            assert_eq!(
+                gateway_config.ethereum.relayer_address,
+                H160::from_str("97F272ccfef4026A1F3f0e0E879d514627B84E69").unwrap()
+            );
+            assert_eq!(
+                gateway_config.ethereum.oracle_predeploy_address,
+                H160::from_str("c8c9303Cd7F337fab769686B593B87DC3403E0ce").unwrap()
+            );
+            assert_eq!(
+                gateway_config.ethereum.test_async_decrypt_address,
+                H160::from_str("99F460504563579922352932A42172B3c04a1420").unwrap()
+            );
+            assert_eq!(
+                gateway_config.kms.tendermint_node_addr,
+                "http://localhost:26657"
+            );
+            assert_eq!(
+                gateway_config.kms.contract_address,
+                "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
+            );
+            assert_eq!(
             gateway_config.kms.mnemonic,
             "whisper stereo great helmet during hollow nominee skate frown daughter donor pool ozone few find risk cigar practice essay sketch rhythm novel dumb host"
         );
-        assert_eq!(gateway_config.kms.address, "http://localhost:9090");
-        assert_eq!(
-            gateway_config.kms.key_id,
-            "04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea424"
-        );
+            assert_eq!(gateway_config.kms.address, "http://localhost:9090");
+            assert_eq!(
+                gateway_config.kms.key_id,
+                "04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea424"
+            );
+        });
+    }
+
+    #[test]
+    fn test_gateway_config_with_overwrite_env() {
+        let env_conf = [
+            ("GATEWAY__DEBUG", Some("true")),
+            ("GATEWAY__MODE", Some("threshold")),
+            ("GATEWAY__ETHEREUM__LISTENER_TYPE", Some("FHEVM_V1")),
+            (
+                "GATEWAY__ETHEREUM__WSS_URL",
+                Some("ws://test_with_var:8546"),
+            ),
+            (
+                "GATEWAY__ETHEREUM__FHE_LIB_ADDRESS",
+                Some("000000000000000000000000000000000000005e"),
+            ),
+            (
+                "GATEWAY__ETHEREUM__RELAYER_ADDRESS",
+                Some("97F272ccfef4026A1F3f0e0E879d514627B84E68"),
+            ),
+            (
+                "GATEWAY__ETHEREUM__ORACLE_PREDEPLOY_ADDRESS",
+                Some("c8c9303Cd7F337fab769686B593B87DC3403E0cd"),
+            ),
+            (
+                "GATEWAY__ETHEREUM__TEST_ASYNC_DECRYPT_ADDRESS",
+                Some("99F460504563579922352932A42172B3c04a1400"),
+            ),
+            (
+                "GATEWAY__KMS__TENDERMINT_NODE_ADDR",
+                Some("http://test_with_var:26658"),
+            ),
+            (
+                "GATEWAY__KMS__CONTRACT_ADDRESS",
+                Some("wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4f"),
+            ),
+            (
+                "GATEWAY__KMS__MNEMONIC",
+                Some("some mnemonic for testing purpose only"),
+            ),
+            ("GATEWAY__KMS__ADDRESS", Some("http://test_with_var:9091")),
+            (
+                "GATEWAY__KMS__KEY_ID",
+                Some("04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea400"),
+            ),
+        ];
+        temp_env::with_vars(env_conf, || {
+            let gateway_config: GatewayConfig = Settings::builder()
+                .path(Some("config/gateway"))
+                .build()
+                .init_conf()
+                .unwrap();
+            assert!(gateway_config.debug);
+            assert_eq!(gateway_config.mode, KmsMode::Threshold);
+            assert_eq!(gateway_config.ethereum.listener_type, ListenerType::Fhevm1);
+            assert_eq!(gateway_config.ethereum.wss_url, "ws://test_with_var:8546");
+            assert_eq!(
+                gateway_config.ethereum.fhe_lib_address,
+                H160::from_str("000000000000000000000000000000000000005e").unwrap()
+            );
+            assert_eq!(
+                gateway_config.ethereum.relayer_address,
+                H160::from_str("97F272ccfef4026A1F3f0e0E879d514627B84E68").unwrap()
+            );
+            assert_eq!(
+                gateway_config.ethereum.oracle_predeploy_address,
+                H160::from_str("c8c9303Cd7F337fab769686B593B87DC3403E0cd").unwrap()
+            );
+            assert_eq!(
+                gateway_config.ethereum.test_async_decrypt_address,
+                H160::from_str("99F460504563579922352932A42172B3c04a1400").unwrap()
+            );
+            assert_eq!(
+                gateway_config.kms.tendermint_node_addr,
+                "http://test_with_var:26658"
+            );
+            assert_eq!(
+                gateway_config.kms.contract_address,
+                "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4f"
+            );
+            assert_eq!(
+                gateway_config.kms.mnemonic,
+                "some mnemonic for testing purpose only"
+            );
+            assert_eq!(gateway_config.kms.address, "http://test_with_var:9091");
+            assert_eq!(
+                gateway_config.kms.key_id,
+                "04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea400"
+            );
+        });
     }
 }

@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::process::Command;
 
 #[derive(Clone)]
@@ -13,19 +14,21 @@ impl DockerComposeCmd {
     }
 
     pub fn up(&self) {
-        Command::new("docker")
+        let output = Command::new("docker")
             .arg("compose")
             .arg("-f")
             .arg(self.file.clone())
             .arg("up")
             .arg("-d")
+            .arg("--build")
             .arg("--wait")
             .output()
             .expect("Failed to execute command");
+        std::io::stdout().write_all(&output.stdout).unwrap();
     }
 
     pub fn down(&self) {
-        let _output = Command::new("docker")
+        let output = Command::new("docker")
             .arg("compose")
             .arg("-f")
             .arg(self.file.clone())
@@ -34,6 +37,7 @@ impl DockerComposeCmd {
             .arg("--remove-orphans")
             .output()
             .expect("Failed to execute command");
+        std::io::stdout().write_all(&output.stdout).unwrap();
     }
 }
 

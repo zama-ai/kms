@@ -205,6 +205,13 @@ impl<'a> Settings<'a> {
     ///
     /// Returns an error if the configuration cannot be created or deserialized.
     pub fn init_conf<'de, T: Deserialize<'de>>(&self) -> Result<T, ConfigError> {
+        let env_conf = config::Environment::default()
+            .prefix("ASC_CONN")
+            .separator("__")
+            .list_separator(",")
+            .try_parsing(true)
+            .with_list_parse_key("blockchain.addresses")
+            .with_list_parse_key("core.addresses");
         let mut s = Config::builder()
             .add_source(File::with_name("config/default").required(cfg!(not(test))))
             .add_source(File::with_name("config/asc-connector").required(false))
@@ -217,14 +224,7 @@ impl<'a> Settings<'a> {
             s = s.add_source(File::with_name(path).required(false))
         };
 
-        let s = s
-            .add_source(
-                config::Environment::default()
-                    .prefix("ASC_CONN")
-                    .separator("_")
-                    .list_separator(","),
-            )
-            .build()?;
+        let s = s.add_source(env_conf).build()?;
 
         let settings: T = s.try_deserialize()?;
 
@@ -240,33 +240,69 @@ mod tests {
 
     #[test]
     fn core_config() {
-        let conf: ConnectorConfig = Settings::builder()
-            .path(Some("config/default"))
-            .build()
-            .init_conf()
-            .unwrap();
+        let envs: [(&str, Option<&str>); 2] = [
+            ("ASC_CONN___CORE__ADDRESSES", None),
+            ("ASC_CONN___BLOCKCHAIN__ADDRESSES", None),
+        ];
 
-        assert_eq!(conf.tick_interval_secs, 3);
-        assert_eq!(conf.storage_path, "./temp/events.toml");
+        temp_env::with_vars(envs, || {
+            let conf: ConnectorConfig = Settings::builder()
+                .path(Some("config/default"))
+                .build()
+                .init_conf()
+                .unwrap();
 
-        // coordinator configs
-        assert_eq!(conf.core.addresses, vec!["http://localhost:50051"]);
-        assert_eq!(conf.core.timeout_config.channel_timeout, 60);
-        assert_eq!(
-            conf.core.timeout_config.decryption,
-            TimeoutTriple {
-                initial_wait_time: 10,
-                retry_interval: 5,
-                max_poll_count: 24,
-            }
-        );
+            assert_eq!(conf.tick_interval_secs, 3);
+            assert_eq!(conf.storage_path, "./temp/events.toml");
 
-        // blockchain configs
-        assert_eq!(conf.blockchain.addresses, vec!["http://localhost:9090"]);
-        assert_eq!(conf.blockchain.fee.amount, 3_000_000);
-        assert_eq!(conf.blockchain.fee.denom, "ucosm");
+            // coordinator configs
+            assert_eq!(conf.core.addresses, vec!["http://localhost:50051"]);
+            assert_eq!(conf.core.timeout_config.channel_timeout, 60);
+            assert_eq!(
+                conf.core.timeout_config.decryption,
+                TimeoutTriple {
+                    initial_wait_time: 10,
+                    retry_interval: 5,
+                    max_poll_count: 24,
+                }
+            );
 
-        // store configs
-        assert_eq!(conf.store.url, "http://localhost:8088");
+            // blockchain configs
+            assert_eq!(conf.blockchain.addresses, vec!["http://localhost:9090"]);
+            assert_eq!(conf.blockchain.fee.amount, 3_000_000);
+            assert_eq!(conf.blockchain.fee.denom, "ucosm");
+
+            // store configs
+            assert_eq!(conf.store.url, "http://localhost:8088");
+        });
+    }
+
+    #[test]
+    fn core_config_with_rewrite_env() {
+        let envs = [
+            (
+                "ASC_CONN__CORE__ADDRESSES",
+                Some("http://localhost:50051,http://localhost:50052"),
+            ),
+            (
+                "ASC_CONN__BLOCKCHAIN__ADDRESSES",
+                Some("http://localhost:9091"),
+            ),
+        ];
+        temp_env::with_vars(envs, || {
+            let conf: ConnectorConfig = Settings::builder()
+                .path(Some("config/default"))
+                .build()
+                .init_conf()
+                .unwrap();
+
+            // coordinator configs
+            assert_eq!(
+                conf.core.addresses,
+                vec!["http://localhost:50051", "http://localhost:50052"]
+            );
+            // blockchain configs
+            assert_eq!(conf.blockchain.addresses, vec!["http://localhost:9091"]);
+        });
     }
 }

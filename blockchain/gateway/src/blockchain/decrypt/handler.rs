@@ -95,7 +95,7 @@ async fn decrypt(
 
     // Send the hex-encoded data to the Actix web service
     let response = reqwest::Client::new()
-        .post(format!("{}/store", "http://localhost:8088"))
+        .post(format!("{}/store", config.storage.url))
         .body(hex_data)
         .send()
         .await?;

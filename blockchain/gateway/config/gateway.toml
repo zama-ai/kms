@@ -63,6 +63,9 @@ address = "http://localhost:9090"
 # Identifies the specific key to be used for cryptographic operations within the KMS.
 key_id = "04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea424"
 
+[storage]
+url = "http://localhost:8088"
+
 [tracing]
 service_name = "gateway"
 endpoint = "http://localhost:4317"

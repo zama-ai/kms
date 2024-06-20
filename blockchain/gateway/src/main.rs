@@ -132,4 +132,10 @@ fn intro(config: &GatewayConfig) {
         to_checksum(&config.ethereum.relayer_address, None),
         width = width
     );
+    tracing::info!(
+        "{:<width$}{}",
+        "🤝 Storage URL:",
+        &config.storage.url,
+        width = width
+    );
 }
