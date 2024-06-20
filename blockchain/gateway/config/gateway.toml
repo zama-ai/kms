@@ -36,6 +36,9 @@ oracle_predeploy_address = "c8c9303Cd7F337fab769686B593B87DC3403E0ce"
 # Test Address used for testing asynchronous decryption on the Ethereum blockchain.
 test_async_decrypt_address = "99F460504563579922352932A42172B3c04a1420"
 
+# Address of the coprocessor to query for ciphertexts
+coprocessor_url = "http://127.0.0.1:8745/"
+
 # KMS Settings
 # Configuration settings related to the Key Management System (KMS).
 [kms]

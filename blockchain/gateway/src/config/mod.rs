@@ -74,6 +74,7 @@ pub struct EthereumConfig {
     pub relayer_address: H160,
     pub oracle_predeploy_address: H160,
     pub test_async_decrypt_address: H160,
+    pub coprocessor_url: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]

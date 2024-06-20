@@ -85,11 +85,10 @@ async fn decrypt(
 ) -> Result<Token, Box<dyn std::error::Error>> {
     let mut ct_handle_bytes = [0u8; 32];
     ct_handle.to_big_endian(&mut ct_handle_bytes);
-    let ct_bytes =
+    let data_bytes =
         <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
             .get_ciphertext(client, ct_handle_bytes.to_vec(), block_number)
             .await?;
-    let data_bytes = ct_bytes.to_vec();
 
     // Convert the Vec<u8> to a hex string
     let hex_data = hex::encode(&data_bytes);
@@ -109,8 +108,6 @@ async fn decrypt(
 
     let handle_bytes = hex::decode(handle).unwrap();
 
-    tracing::debug!("Got ct bytes of length: {}", ct_bytes.len());
-    tracing::trace!("ct_bytes: 0x{}", hex::encode(&ct_bytes));
     tracing::info!("🚀 request_id: {}, ct_type: {}", request_id, ct_type,);
     Ok(blockchain_impl(config)
         .await

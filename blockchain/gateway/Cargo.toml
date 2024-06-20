@@ -36,7 +36,7 @@ opentelemetry_sdk = { version = "0.22", features = ["rt-tokio", "logs", "metrics
 prometheus = "=0.13.4"
 prost = "0.12"
 rand = "0.8.5"
-reqwest = "0.12.4"
+reqwest = { version = "0.12.4", features = ["json"] }
 retrying = { version = "0.1.0", features = ["tokio"] }
 secp256k1 = "0.29.0"
 serde = { version = "1.0.203", features = ["derive"] }
