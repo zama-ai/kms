@@ -160,7 +160,7 @@ jobs:
       - name: Docker Build and Push Dev Image
         if: ${{ inputs.generate-dev-image }}
         uses: docker/build-push-action@v5
-        timeout-minutes: 10
+        timeout-minutes: 60
         with:
           context: ${{ inputs.docker-context }}
           platforms: linux/amd64,linux/arm64
