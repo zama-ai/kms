@@ -276,7 +276,7 @@ impl Plaintext {
         };
         Self {
             bytes: vec![plaintext],
-            fhe_type: FheType::Bool,
+            fhe_type: FheType::Ebool,
         }
     }
 
@@ -361,7 +361,7 @@ impl Plaintext {
     }
 
     pub fn as_bool(&self) -> bool {
-        if self.fhe_type != FheType::Bool {
+        if self.fhe_type != FheType::Ebool {
             tracing::warn!(
                 "Plaintext is not of type Bool. Returning the least significant bit as Bool"
             );
@@ -473,7 +473,7 @@ impl Plaintext {
 impl From<Plaintext> for Vec<u8> {
     fn from(value: Plaintext) -> Self {
         match value.fhe_type {
-            FheType::Bool => vec![value.bytes[0] % 2],
+            FheType::Ebool => vec![value.bytes[0] % 2],
             FheType::Euint4 => vec![value.bytes[0] % 16],
             FheType::Euint8 => vec![value.bytes[0]],
             FheType::Euint16 => value.bytes[0..2].to_vec(),

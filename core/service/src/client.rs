@@ -81,7 +81,7 @@ fn decrypted_blocks_to_plaintext(
         }
         FheType::Euint128 => combine_decryptions::<u128>(bits_in_block, recon_blocks)
             .map(|x| Plaintext::new(x, fhe_type)),
-        FheType::Bool
+        FheType::Ebool
         | FheType::Euint4
         | FheType::Euint8
         | FheType::Euint16
@@ -1432,7 +1432,7 @@ impl Client {
 /// parameters. Rounds up to ensure enough blocks.
 pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
     match fhe_type {
-        FheType::Bool => {
+        FheType::Ebool => {
             8_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
         }
         FheType::Euint4 => {
@@ -3090,7 +3090,7 @@ pub(crate) mod tests {
     async fn num_blocks_sunshine() {
         let params: NoiseFloodParameters = read_as_json(TEST_PARAM_PATH).await.unwrap();
         // 2 bits per block, using Euint8 as internal representation
-        assert_eq!(num_blocks(FheType::Bool, params), 4);
+        assert_eq!(num_blocks(FheType::Ebool, params), 4);
         // 2 bits per block, using Euint8 as internal representation
         assert_eq!(num_blocks(FheType::Euint4, params), 4);
         // 2 bits per block

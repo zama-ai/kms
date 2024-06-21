@@ -73,7 +73,7 @@ enum KeyGenPreprocStatusEnum {
 
 // The plaintext types that can be encrypted in a fhevm ciphertext.
 enum FheType {
-  Bool = 0;
+  Ebool = 0;
   Euint4 = 1;
   Euint8 = 2;
   Euint16 = 3;

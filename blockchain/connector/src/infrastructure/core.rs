@@ -352,7 +352,7 @@ struct WrappingFheType(events::kms::FheType);
 impl TryFrom<i32> for WrappingFheType {
     type Error = anyhow::Error;
     fn try_from(value: i32) -> anyhow::Result<Self> {
-        let fhe_type = if kms_lib::kms::FheType::Bool as i32 == value {
+        let fhe_type = if kms_lib::kms::FheType::Ebool as i32 == value {
             events::kms::FheType::Ebool
         } else if kms_lib::kms::FheType::Euint4 as i32 == value {
             events::kms::FheType::Euint4

@@ -435,7 +435,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     ) -> anyhow::Result<Plaintext> {
         let f = || -> anyhow::Result<Plaintext> {
             Ok(match fhe_type {
-                FheType::Bool => {
+                FheType::Ebool => {
                     let cipher: FheBool = bincode::deserialize(high_level_ct)?;
                     let plaintext = cipher.decrypt(client_key);
                     Plaintext::from_bool(plaintext)

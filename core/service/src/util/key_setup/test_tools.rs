@@ -89,7 +89,7 @@ impl TypedPlaintext {
     /// Convert [self] to [FheType].
     pub fn to_fhe_type(&self) -> FheType {
         match self {
-            TypedPlaintext::Bool(_) => FheType::Bool,
+            TypedPlaintext::Bool(_) => FheType::Ebool,
             TypedPlaintext::U8(_) => FheType::Euint8,
             TypedPlaintext::U16(_) => FheType::Euint16,
             TypedPlaintext::U32(_) => FheType::Euint32,

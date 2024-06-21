@@ -184,7 +184,7 @@ impl FheType {
         serialized_high_level: &[u8],
     ) -> anyhow::Result<Ciphertext64> {
         let radix_ct = match self {
-            FheType::Bool => {
+            FheType::Ebool => {
                 let hl_ct: FheBool = bincode::deserialize(serialized_high_level)?;
                 let radix_ct = hl_ct.into_raw_parts();
                 BaseRadixCiphertext::from_blocks(vec![radix_ct])
@@ -1056,7 +1056,7 @@ impl Decryptor for RealDecryptor {
                 )
                 .await
                 .map(|x| Plaintext::new(x, fhe_type)),
-                FheType::Bool
+                FheType::Ebool
                 | FheType::Euint4
                 | FheType::Euint8
                 | FheType::Euint16
