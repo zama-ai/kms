@@ -2,6 +2,15 @@ name: zama-kms
 
 services:
 
+  kv-store:
+    image: ghcr.io/zama-ai/kms-blockchain-gateway-dev:latest
+    command:
+      - "kv_store"
+    ports:
+      - "8088:8088"
+
+
+
   blockchain-validator:
     image: ghcr.io/zama-ai/kms-blockchain-asc-dev:latest
     ports:
@@ -24,6 +33,7 @@ services:
     environment:
       - ASC_CONN__BLOCKCHAIN__ADDRESSES=http://blockchain-validator:9090
       - ASC_CONN__CORE__ADDRESSES=http://core:50051
+      - ASC_CONN__STORE__URL=http://kv-store:8088
     depends_on:
       blockchain-validator:
         condition: service_healthy

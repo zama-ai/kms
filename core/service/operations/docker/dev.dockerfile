@@ -60,6 +60,6 @@ COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/core/service/bin/
 COPY ./core/service/parameters/ /app/kms/core/service/parameters/
 COPY ./core/service/config/default_centralized.toml /app/kms/core/service/config/
 
-RUN /app/kms/core/service/bin/kms-gen-keys centralized --param-path /app/kms/core/service/parameters/small_test_params.json --overwrite
+RUN /app/kms/core/service/bin/kms-gen-keys centralized --param-path /app/kms/core/service/parameters/default_params.json --overwrite
 
 CMD ["kms-server", "dev", "centralized"]

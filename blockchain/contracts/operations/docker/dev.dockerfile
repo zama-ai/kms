@@ -18,3 +18,4 @@ COPY --from=compiler /app/optimized/asc.wasm /app/asc.wasm
 COPY ./blockchain/scripts/bootstrap_asc.sh /app/bootstrap.sh
 
 CMD ["/bin/bash"]
+

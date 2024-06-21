@@ -104,12 +104,6 @@ fn intro(config: &GatewayConfig) {
     );
     tracing::info!(
         "{:<width$}{}",
-        "🍬 KMS Tendermint node URL:",
-        config.kms.tendermint_node_addr,
-        width = width
-    );
-    tracing::info!(
-        "{:<width$}{}",
         "⭐ KMS ASC contract address:",
         config.kms.contract_address,
         width = width
