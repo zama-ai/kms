@@ -1,7 +1,10 @@
-use super::der_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature};
 use super::signcryption::{
     internal_verify_sig, internal_verify_sig_eip712, serialize_hash_element, sign, sign_eip712,
     signcrypt, RND_SIZE,
+};
+use super::{
+    der_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature},
+    signcryption::hash_element,
 };
 use crate::consts::ID_LENGTH;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
@@ -197,9 +200,9 @@ impl BaseKms for BaseKmsStruct {
 
     fn digest<T>(msg: &T) -> anyhow::Result<Vec<u8>>
     where
-        T: fmt::Debug + Serialize,
+        T: ?Sized + AsRef<[u8]>,
     {
-        serialize_hash_element(msg)
+        Ok(hash_element(msg))
     }
 
     fn verify_sig_eip712<T: SolStruct>(
@@ -399,7 +402,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         self.base_kms.get_verf_key()
     }
 
-    fn digest<T: fmt::Debug + Serialize>(msg: &T) -> anyhow::Result<Vec<u8>> {
+    fn digest<T: ?Sized + AsRef<[u8]>>(msg: &T) -> anyhow::Result<Vec<u8>> {
         BaseKmsStruct::digest(&msg)
     }
 

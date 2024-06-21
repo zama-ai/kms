@@ -158,7 +158,7 @@ pub trait BaseKms {
         domain: &Eip712Domain,
     ) -> anyhow::Result<Signature>;
     fn get_verf_key(&self) -> PublicSigKey;
-    fn digest<T: fmt::Debug + Serialize>(msg: &T) -> anyhow::Result<Vec<u8>>;
+    fn digest<T: ?Sized + AsRef<[u8]>>(msg: &T) -> anyhow::Result<Vec<u8>>;
 }
 /// The [Kms] trait represents either a dummy KMS, an HSM, or an MPC network.
 #[cfg(feature = "non-wasm")]

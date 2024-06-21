@@ -54,7 +54,6 @@ cfg_if::cfg_if! {
         };
         use crate::cryptography::{central_kms::compute_handle, der_types::Signature};
         use crate::kms::ParamChoice;
-        use crate::cryptography::signcryption::serialize_hash_element;
         use crate::util::file_handling::read_as_json;
     }
 }
@@ -1096,7 +1095,7 @@ impl Client {
                     return Ok(false);
                 }
                 let sig_payload: DecryptionRequestSerializable = req.try_into()?;
-                if serialize_hash_element(&to_vec(&sig_payload)?)? != pivot_payload.digest {
+                if BaseKmsStruct::digest(&to_vec(&sig_payload)?)? != pivot_payload.digest {
                     tracing::warn!("The decryption response is not linked to the correct request");
                     return Ok(false);
                 }
