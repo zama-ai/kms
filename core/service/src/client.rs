@@ -2083,7 +2083,7 @@ pub(crate) mod tests {
         assert_eq!(responses_gen.len(), AMOUNT_PARTIES * parallelism);
 
         // wait a bit for the crs generation to finish
-        const TRIES: usize = 20;
+        const TRIES: usize = 60;
         let mut joined_responses = vec![];
         for count in 0..TRIES {
             tokio::time::sleep(std::time::Duration::from_secs(5 * parallelism as u64)).await;
@@ -2675,7 +2675,8 @@ pub(crate) mod tests {
     #[case(TypedPlaintext::U64(u64::MAX), 1)]
     #[case(TypedPlaintext::U128(u128::MAX), 1)]
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
-    // #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
+    #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
+    // TODO: this takes approx. 138 secs locally.
     // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
@@ -2749,8 +2750,12 @@ pub(crate) mod tests {
                     while response.is_err()
                         && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                     {
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                        // we may wait up to a minute, 60_000 ms, for big ciphertexts
+                        // wait for 4*bits ms before the next query, but at least 100ms and at most 1s.
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            4 * bits.clamp(100, 1000),
+                        ))
+                        .await;
+                        // do at most 600 retries (stop after max. 10 minutes for large types)
                         if ctr >= 600 {
                             panic!("timeout while waiting for decryption");
                         }
@@ -2844,7 +2849,8 @@ pub(crate) mod tests {
     #[case(TypedPlaintext::U64(u64::MAX), 1)]
     #[case(TypedPlaintext::U128(u128::MAX), 1)]
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
-    // #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)] // TODO: this takes approx. 150 secs locally.
+    #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
+    // TODO: this takes approx. 300 secs locally.
     // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
@@ -2932,8 +2938,12 @@ pub(crate) mod tests {
                     while response.is_err()
                         && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
                     {
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                        // we may wait up to a minute, 60_000 ms, for big ciphertexts
+                        // wait for 4*bits ms before the next query, but at least 100ms and at most 1s.
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            4 * bits.clamp(100, 1000),
+                        ))
+                        .await;
+                        // do at most 600 retries (stop after max. 10 minutes for large types)
                         if ctr >= 600 {
                             panic!("timeout while waiting for reencryption");
                         }

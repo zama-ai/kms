@@ -50,8 +50,6 @@ use super::requests::{
     PrssInitParams, SupportedRing, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
 };
 
-pub const EPOCH: SessionId = SessionId(0_u128);
-
 #[derive(Clone)]
 enum SupportedPRSSSetup {
     LevelOne(PRSSSetup<LevelOne>),

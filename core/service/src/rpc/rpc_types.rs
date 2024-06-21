@@ -666,7 +666,7 @@ impl RequestId {
     /// Method for deterministically deriving a request ID from an abitrary string.
     /// Is currently only used for testing purposes, since deriving is the responsibility of the smart contract.
     #[cfg(any(test, feature = "testing"))]
-    pub(crate) fn derive(name: &str) -> anyhow::Result<Self> {
+    pub fn derive(name: &str) -> anyhow::Result<Self> {
         let mut hashed_name =
             crate::cryptography::signcryption::serialize_hash_element(&name.to_string())?;
         // Truncate and convert to hex

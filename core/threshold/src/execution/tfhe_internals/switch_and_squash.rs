@@ -1,10 +1,11 @@
+use aligned_vec::ABox;
 use core::fmt;
 use core::fmt::Debug;
-use std::num::Wrapping;
-
-use aligned_vec::ABox;
 use num_traits::AsPrimitive;
+#[cfg(not(feature = "sequential_sns"))]
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
+use std::num::Wrapping;
 use tfhe::{
     core_crypto::{
         algorithms::{
@@ -53,16 +54,38 @@ impl SwitchAndSquashKey {
     /// Converts a ciphertext over a 64 bit domain to a ciphertext over a 128 bit domain (which is needed for secure threshold decryption).
     /// Conversion is done using a precreated conversion key [conversion_key].
     /// Observe that the decryption key will be different after conversion, since [conversion_key] is actually a key-switching key.
+    /// This version computes SnS on the blocks sequentially.
+    #[cfg(feature = "sequential_sns")]
     #[instrument(name = "SwitchAndSquash", skip(self, raw_small_ct), fields(batch_size=?raw_small_ct.blocks().len()))]
     pub fn to_large_ciphertext(
         &self,
         raw_small_ct: &Ciphertext64,
     ) -> anyhow::Result<Ciphertext128> {
         let blocks = raw_small_ct.blocks();
-        let mut res = Vec::with_capacity(blocks.len());
-        for current_block in blocks {
-            res.push(self.to_large_ciphertext_block(current_block)?);
-        }
+        // do switch and squash on all blocks sequentially
+        let res = blocks
+            .iter()
+            .map(|current_block| self.to_large_ciphertext_block(current_block))
+            .collect::<anyhow::Result<Vec<Ciphertext128Block>>>()?;
+        Ok(res)
+    }
+
+    /// Converts a ciphertext over a 64 bit domain to a ciphertext over a 128 bit domain (which is needed for secure threshold decryption).
+    /// Conversion is done using a precreated conversion key [conversion_key].
+    /// Observe that the decryption key will be different after conversion, since [conversion_key] is actually a key-switching key.
+    /// This version computes SnS on all blocks in parallel.
+    #[cfg(not(feature = "sequential_sns"))]
+    #[instrument(name = "SwitchAndSquash", skip(self, raw_small_ct), fields(batch_size=?raw_small_ct.blocks().len()))]
+    pub fn to_large_ciphertext(
+        &self,
+        raw_small_ct: &Ciphertext64,
+    ) -> anyhow::Result<Ciphertext128> {
+        let blocks = raw_small_ct.blocks();
+        // do switch and squash on all blocks in parallel
+        let res = blocks
+            .par_iter()
+            .map(|current_block| self.to_large_ciphertext_block(current_block))
+            .collect::<anyhow::Result<Vec<Ciphertext128Block>>>()?;
         Ok(res)
     }
 

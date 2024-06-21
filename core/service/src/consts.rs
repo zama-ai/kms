@@ -20,6 +20,8 @@ pub const COMPRESSED: bool = true;
 
 pub const MINIMUM_SESSIONS_PREPROC: u16 = 2;
 
+pub const PRSS_EPOCH_ID: u128 = 1;
+
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
         use crate::kms::RequestId;

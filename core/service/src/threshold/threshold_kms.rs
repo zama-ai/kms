@@ -2,7 +2,7 @@ use super::generic::{
     CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
 };
 use crate::conf::threshold::{PeerConf, ThresholdConfigNoStorage};
-use crate::consts::{MINIMUM_SESSIONS_PREPROC, SEC_PAR};
+use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID, SEC_PAR};
 use crate::cryptography::central_kms::{compute_info, BaseKmsStruct};
 use crate::cryptography::der_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::cryptography::signcryption::signcrypt;
@@ -610,7 +610,7 @@ pub struct RealInitiator<PrivS: Storage + Send + Sync + 'static> {
 impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
     async fn init_prss_from_disk(&self) -> anyhow::Result<()> {
         // TODO pass epoch ID fom config? (once we have epochs)
-        let epoch_id = 1_u128;
+        let epoch_id = PRSS_EPOCH_ID;
 
         let prss_setup_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
@@ -650,7 +650,7 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 
         let own_identity = self.session_preparer.own_identity()?;
         // Assume we only have one epoch and start with session 1
-        let epoch_id = 1_u128;
+        let epoch_id = PRSS_EPOCH_ID;
         let session_id = SessionId(epoch_id);
         let mut base_session = self.session_preparer.make_base_session(session_id).await?;
 
@@ -1847,8 +1847,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 mod tests {
     use crate::{
         client::test_tools,
-        consts::{AMOUNT_PARTIES, THRESHOLD},
+        consts::{AMOUNT_PARTIES, PRSS_EPOCH_ID, THRESHOLD},
         storage::{FileStorage, StorageType},
+        threshold::threshold_kms::RequestId,
+        util::key_setup::test_tools::purge,
     };
 
     #[tokio::test]
@@ -1861,6 +1863,11 @@ mod tests {
             let cur_pub = FileStorage::new_threshold(None, StorageType::PUB, i).unwrap();
             pub_storage.push(cur_pub);
             let cur_priv = FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap();
+
+            // make sure the store does not contain any PRSS info (currently stored under ID 1)
+            let req_id = RequestId::from(PRSS_EPOCH_ID);
+            purge(None, Some(cur_priv.root_dir()), &req_id.to_string()).await;
+
             priv_storage.push(cur_priv);
         }
 

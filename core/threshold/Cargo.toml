@@ -20,7 +20,11 @@ clap = { version = "~4", features = ["derive", "env"] }
 concrete-csprng = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456" } # == tfhe-rs v0.6.3
 config = "0.14.0"
 const_format = "0.2.32"
-crypto-bigint = { version = "~0.6.0-pre.12", features = ["serde", "rand_core", "extra-sizes"], optional = true }
+crypto-bigint = { version = "~0.6.0-pre.12", features = [
+    "serde",
+    "rand_core",
+    "extra-sizes",
+], optional = true }
 crypto_box = { version = "~0.9.1", features = ["salsa20"] }
 dashmap = "~5"
 derive_more = "~0.99"
@@ -39,10 +43,17 @@ nom = "7.1.3"
 num-integer = "0.1.45"
 num-traits = "0.2"
 opentelemetry = { version = "0.22", optional = true }
-opentelemetry-otlp = { version = "0.15.0", features = ["tokio"], optional = true }
+opentelemetry-otlp = { version = "0.15.0", features = [
+    "tokio",
+], optional = true }
 opentelemetry-semantic-conventions = { version = "0.14.0", optional = true }
-opentelemetry-stdout = { version = "0.3.0", features = ["trace"], optional = true }
-opentelemetry_sdk = { version = "0.22", features = ["rt-tokio", "logs"], optional = true }
+opentelemetry-stdout = { version = "0.3.0", features = [
+    "trace",
+], optional = true }
+opentelemetry_sdk = { version = "0.22", features = [
+    "rt-tokio",
+    "logs",
+], optional = true }
 opentelemetry-http = { version = "0.11", optional = true }
 prettytable-rs = { version = "~0.10", optional = true }
 paste = "1.0.12"
@@ -63,14 +74,19 @@ tonic = { version = "0.11", features = ["tls"], optional = true }
 tonic-health = { version = "0.11", optional = true }
 tower = { version = "0.4", features = ["retry", "timeout"], optional = true }
 tower-http = { version = "0.4", features = ["trace"], optional = true }
-tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", features = ["boolean", "shortint", "integer", "zk-pok-experimental"] } # == tfhe-rs v0.6.3
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", features = [
+    "boolean",
+    "shortint",
+    "integer",
+    "zk-pok-experimental",
+] } # == tfhe-rs v0.6.3
 tracing = { version = "0.1.40", features = ["log"] }
 tracing-opentelemetry = "0.23"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
 typed-builder = "0.18.1"
 x509-parser = "~0.16"
 zeroize = { version = "~1.8", features = ["zeroize_derive"] }
-tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456",  optional = true } # == tfhe-rs v0.6.3
+tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", optional = true } # == tfhe-rs v0.6.3
 
 # we need getrandom to have the js feature so that it can target wasm
 # this is an indirect dependency
@@ -80,7 +96,9 @@ getrandom = { version = "0.2", features = ["js"] }
 tonic-build = "~0.10"
 
 [target.'cfg(unix)'.dependencies]
-tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", features = ["seeder_unix"] } # == tfhe-rs v0.6.3
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", features = [
+    "seeder_unix",
+] } # == tfhe-rs v0.6.3
 
 [dev-dependencies]
 criterion = "~0.5"
@@ -168,6 +186,7 @@ opt-level = 3
 default = ["non-wasm"]
 testing = []
 slow_tests = []
+sequential_sns = []
 experimental = ["dep:crypto-bigint"]
 templating = ["minijinja"]
 choreographer = ["prettytable-rs"]

@@ -369,10 +369,6 @@ impl<
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         tracing::info!("Received a new request!");
-        tracing::trace!(
-            "Request: {:?}",
-            hex::encode(request.get_ref().ciphertext.clone())
-        );
         let inner = request.into_inner();
         tracing::info!("Request ID: {:?}", inner.request_id);
         let (ciphertext, fhe_type, req_digest, _servers_needed, key_id, request_id) =
