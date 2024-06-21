@@ -545,6 +545,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         .to_owned();
         let key_info: KeysInfoHashMap =
             read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+        tracing::info!(
+            "loaded key_info with key_ids: {:?}",
+            key_info
+                .keys()
+                .map(|rid| &rid.request_id)
+                .collect::<Vec<_>>()
+        );
         let key_info_w_status = key_info
             .iter()
             .map(|(id, info)| {

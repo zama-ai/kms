@@ -6,24 +6,24 @@ use crate::config::GatewayConfig;
 use crate::config::Settings;
 use crate::events::manager::k256::ecdsa::SigningKey;
 use crate::util::height::AtomicBlockHeight;
-use actix_web::rt::System;
 use actix_web::App;
 use actix_web::HttpServer;
 use actix_web::{post, web, HttpResponse};
-use anyhow::Ok;
 use async_trait::async_trait;
 use ethers::prelude::*;
 use ethers::providers::{Provider, Ws};
 use ethers::types::U256;
+use events::kms::FheType;
 use events::kms::KmsEvent;
-use events::kms::ReencryptValues;
+use events::kms::ReencryptResponseValues;
+use events::HexVector;
 use kms_blockchain_connector::application::oracle_sync::OracleSyncHandler;
 use kms_blockchain_connector::application::SyncHandler;
 use kms_blockchain_connector::conf::ConnectorConfig;
 use kms_blockchain_connector::domain::oracle::Oracle;
 use serde_json::json;
 use std::sync::Arc;
-use std::thread;
+use tokio::sync::oneshot;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info};
 
@@ -32,9 +32,29 @@ pub struct DecryptionEvent {
     pub(crate) filter: EventDecryptionFilter,
     pub(crate) block_number: u64,
 }
-#[derive(Debug, Clone)]
+
+#[derive(Default, Debug, serde::Deserialize, serde::Serialize)]
+pub(crate) struct ApiReencryptValues {
+    signature: HexVector,
+    version: u32,
+    verification_key: HexVector,
+    randomness: HexVector,
+    enc_key: HexVector,
+    fhe_type: FheType,
+    key_id: HexVector,
+    ciphertext: HexVector,
+    ciphertext_digest: HexVector,
+    eip712_name: String,
+    eip712_version: String,
+    eip712_chain_id: HexVector,
+    eip712_verifying_contract: String,
+    eip712_salt: HexVector,
+}
+
+#[derive(Debug)]
 pub struct ReencryptionEvent {
-    pub(crate) values: ReencryptValues,
+    pub(crate) values: ApiReencryptValues,
+    pub(crate) sender: oneshot::Sender<Vec<ReencryptResponseValues>>,
 }
 
 // Define different event types
@@ -74,8 +94,17 @@ impl DecryptionEventPublisher {
             config,
         }
     }
+}
 
-    async fn event_loop(&self) -> anyhow::Result<()> {
+#[async_trait]
+impl Publisher<DecryptionEvent> for DecryptionEventPublisher {
+    fn publish(&self, event: DecryptionEvent) {
+        self.sender
+            .try_send(GatewayEvent::Decryption(event))
+            .unwrap();
+    }
+
+    async fn run(&self) -> anyhow::Result<()> {
         let mut last_block = self
             .provider
             .get_block(BlockNumber::Latest)
@@ -97,14 +126,16 @@ impl DecryptionEventPublisher {
             info!("🧱 block number: {}", block.number.unwrap());
 
             // process any EventDecryption logs
-            let events = self.provider
-            .get_logs(
-                &Filter::new()
-                    .from_block(last_block)
-                    .address(self.config.ethereum.oracle_predeploy_address)
-                    .event("EventDecryption(uint256,(uint256,uint8)[],address,bytes4,uint256,uint256)"),
-            )
-            .await.unwrap();
+            let events = self
+                .provider
+                .get_logs(
+                    &Filter::new()
+                        .from_block(last_block)
+                        .address(self.config.ethereum.oracle_predeploy_address)
+                        .event(&self.config.ethereum.decryption_event_filter),
+                )
+                .await
+                .unwrap();
 
             for log in events {
                 let block_number = log.block_number.unwrap().as_u64();
@@ -131,28 +162,6 @@ impl DecryptionEventPublisher {
 
             last_block = block.number.unwrap();
         }
-
-        Ok(())
-    }
-}
-
-#[async_trait]
-impl Publisher<DecryptionEvent> for DecryptionEventPublisher {
-    fn publish(&self, event: DecryptionEvent) {
-        self.sender
-            .try_send(GatewayEvent::Decryption(event))
-            .unwrap();
-    }
-
-    async fn run(&self) -> anyhow::Result<()> {
-        let self_clone = self.clone();
-        let handle = tokio::spawn(async move {
-            self_clone.event_loop().await.unwrap_or_else(|e| {
-                error!("Error in DecryptionEventPublisher: {:?}", e);
-                std::process::exit(1);
-            });
-        });
-        handle.await.unwrap();
         Ok(())
     }
 }
@@ -183,20 +192,17 @@ impl Publisher<KmsEvent> for KmsEventPublisher {
     }
 
     async fn run(&self) -> anyhow::Result<()> {
-        let cloned = self.clone();
-        tokio::spawn(async move {
-            let settings = Settings::builder()
-                .path(Some("config/default.toml"))
-                .build();
-            let config: ConnectorConfig = settings
-                .init_conf()
-                .map_err(|e| anyhow::anyhow!("Error on initializing config {:?}", e))?;
+        let settings = Settings::builder()
+            .path(Some("config/default.toml"))
+            .build();
+        let config: ConnectorConfig = settings
+            .init_conf()
+            .map_err(|e| anyhow::anyhow!("Error on initializing config {:?}", e))?;
 
-            OracleSyncHandler::new_with_config_and_listener(config, cloned)
-                .await?
-                .listen_for_events()
-                .await
-        });
+        let _ = OracleSyncHandler::new_with_config_and_listener(config, self.clone())
+            .await?
+            .listen_for_events()
+            .await;
         Ok(())
     }
 }
@@ -204,24 +210,13 @@ impl Publisher<KmsEvent> for KmsEventPublisher {
 #[derive(Clone)]
 pub struct ReencryptionEventPublisher {
     sender: mpsc::Sender<GatewayEvent>,
+    config: GatewayConfig,
 }
 
 impl ReencryptionEventPublisher {
-    pub async fn new(sender: mpsc::Sender<GatewayEvent>) -> Self {
-        Self { sender }
+    pub async fn new(sender: mpsc::Sender<GatewayEvent>, config: GatewayConfig) -> Self {
+        Self { sender, config }
     }
-}
-
-#[post("/reencrypt")]
-async fn reencrypt_payload(
-    payload: web::Json<ReencryptValues>,
-    publisher: web::Data<Arc<ReencryptionEventPublisher>>,
-) -> HttpResponse {
-    publisher.publish(ReencryptionEvent {
-        values: payload.into_inner(),
-    });
-
-    HttpResponse::Ok().json(json!({"status": "success"}))
 }
 
 #[async_trait]
@@ -234,22 +229,46 @@ impl Publisher<ReencryptionEvent> for ReencryptionEventPublisher {
 
     async fn run(&self) -> anyhow::Result<()> {
         let publisher = Arc::new(self.clone());
-        // Spawn the Actix-web server in a new thread
-        thread::spawn(move || {
-            let sys = System::new();
-            sys.block_on(async {
-                HttpServer::new(move || {
-                    App::new()
-                        .app_data(web::Data::new(publisher.clone()))
-                        .service(reencrypt_payload)
-                })
-                .bind("127.0.0.1:8888")?
-                .run()
-                .await
-            })
-            .unwrap();
-        });
+        let api_url = self.config.api_url.clone();
+        let payload_limit = 10 * 1024 * 1024; // 10 MB
+        let _handle = HttpServer::new(move || {
+            App::new()
+                .app_data(web::PayloadConfig::new(payload_limit))
+                .app_data(web::Data::new(publisher.clone()))
+                .service(reencrypt_payload)
+        })
+        .workers(20)
+        .bind(api_url)
+        .unwrap()
+        .run()
+        .await;
+
         Ok(())
+    }
+}
+
+#[post("/reencrypt")]
+async fn reencrypt_payload(
+    payload: web::Json<ApiReencryptValues>,
+    publisher: web::Data<Arc<ReencryptionEventPublisher>>,
+) -> HttpResponse {
+    tracing::info!("🍓🍓🍓 => Received reencryption request");
+
+    let (sender, receiver) = oneshot::channel();
+
+    publisher.publish(ReencryptionEvent {
+        values: payload.into_inner(),
+        sender,
+    });
+    tracing::info!("🍓🍓🍓 Published reencryption request");
+
+    match receiver.await {
+        Ok(reencryption_response) => {
+            tracing::info!("🍓🍓🍓 <= Received reencryption response");
+            HttpResponse::Ok()
+                .json(json!({ "status": "success", "response": reencryption_response }))
+        }
+        Err(_) => HttpResponse::InternalServerError().json(json!({ "status": "failure" })),
     }
 }
 
@@ -284,46 +303,72 @@ impl GatewaySubscriber {
         tokio::spawn(async move {
             loop {
                 let event = receiver.lock().await.recv().await.unwrap();
-                match event {
-                    GatewayEvent::Decryption(msg_event) => {
-                        if let Err(e) = handle_event_decryption(
-                            &provider,
-                            &Arc::new(msg_event.clone()),
-                            &config,
-                        )
-                        .await
-                        {
-                            error!("Error handling event decryption: {:?}", e);
+                let provider = Arc::clone(&provider);
+                let config = config.clone();
+                let kms = Arc::clone(&kms);
+
+                tokio::task::spawn(async move {
+                    match event {
+                        GatewayEvent::Decryption(msg_event) => {
+                            if let Err(e) = handle_event_decryption(
+                                &provider,
+                                &Arc::new(msg_event.clone()),
+                                &config,
+                            )
+                            .await
+                            {
+                                error!("Error handling event decryption: {:?}", e);
+                            }
+                            println!("Received Message: {:?}", msg_event);
                         }
-                        println!("Received Message: {:?}", msg_event);
+                        GatewayEvent::Reencryption(reencrypt_event) => {
+                            tracing::info!("🫐🫐🫐 Received Reencryption Event");
+                            let values = reencrypt_event.values;
+
+                            let reencrypt_response = kms
+                                .reencrypt(
+                                    values.signature.to_vec(),
+                                    values.version,
+                                    values.verification_key.to_vec(),
+                                    values.randomness.to_vec(),
+                                    values.enc_key.to_vec(),
+                                    values.fhe_type,
+                                    values.key_id.to_vec(),
+                                    values.ciphertext.to_vec(),
+                                    values.ciphertext_digest.to_vec(),
+                                    values.eip712_name.to_string(),
+                                    values.eip712_version.to_string(),
+                                    values.eip712_chain_id.to_vec(),
+                                    values.eip712_verifying_contract.to_string(),
+                                    values.eip712_salt.to_vec(),
+                                )
+                                .await
+                                .unwrap();
+
+                            /*
+                            // hack to simulate reencryption response
+                            // sleep for 10 seconds
+                            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                            let reencrypt_first = ReencryptResponseValues::builder()
+                                .version(values.version)
+                                .servers_needed(2)
+                                .verification_key(values.verification_key.to_vec())
+                                .digest(values.ciphertext_digest.to_vec())
+                                .fhe_type(values.fhe_type)
+                                .signcrypted_ciphertext(vec![42])
+                                .build();
+
+                            let reencrypt_response = vec![reencrypt_first];
+                            */
+
+                            let _ = reencrypt_event.sender.send(reencrypt_response);
+                        }
+                        GatewayEvent::KmsEvent(kms_event) => {
+                            println!("🤠 Received KmsEvent: {:?}", kms_event);
+                            kms.receive(kms_event).await.unwrap();
+                        }
                     }
-                    GatewayEvent::Reencryption(reencrypt_event) => {
-                        tracing::info!("Received Reencryption: {:?}", reencrypt_event.clone());
-                        let values = reencrypt_event.values;
-                        kms.reencrypt(
-                            values.signature().to_vec(),
-                            values.version(),
-                            values.verification_key().to_vec(),
-                            values.randomness().to_vec(),
-                            values.enc_key().to_vec(),
-                            values.fhe_type(),
-                            values.key_id().to_vec(),
-                            values.ciphertext().to_vec(),
-                            values.ciphertext_digest().to_vec(),
-                            values.eip712_name().to_string(),
-                            values.eip712_version().to_string(),
-                            values.eip712_chain_id().to_vec(),
-                            values.eip712_verifying_contract().to_string(),
-                            values.eip712_salt().to_vec(),
-                        )
-                        .await
-                        .unwrap();
-                    }
-                    GatewayEvent::KmsEvent(kms_event) => {
-                        println!("🤠 Received KmsEvent: {:?}", kms_event);
-                        kms.receive(kms_event).await.unwrap();
-                    }
-                }
+                });
             }
         });
     }

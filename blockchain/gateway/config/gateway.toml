@@ -6,6 +6,8 @@ debug = false
 # configure to match the KMS mode: centralized or threshold
 mode = "centralized"
 
+# api url binding
+api_url = "0.0.0.0:7077"
 
 # Ethereum Settings
 # Configuration settings related to the Ethereum network and smart contract event interactions.
@@ -25,10 +27,6 @@ wss_url = "ws://localhost:8546"
 # Used for interactions with the FHE library contract.
 fhe_lib_address = "000000000000000000000000000000000000005d"
 
-# Address of the relayer account on the Ethereum blockchain.
-# Used for interactions with the oracle/gateway contract.
-relayer_address = "97F272ccfef4026A1F3f0e0E879d514627B84E69"
-
 # Address of the OraclePredeploy or GatewayPredeploy contract on the
 # Ethereum blockchain. Used for pre-deployment operations related to the oracle.
 oracle_predeploy_address = "c8c9303Cd7F337fab769686B593B87DC3403E0ce"
@@ -38,6 +36,9 @@ test_async_decrypt_address = "99F460504563579922352932A42172B3c04a1420"
 
 # Address of the coprocessor to query for ciphertexts
 coprocessor_url = "http://127.0.0.1:8745/"
+
+# Decryption Event signature filter
+decryption_event_filter = "EventDecryption(uint256,(uint256,uint8)[],address,bytes4,uint256,uint256)"
 
 # KMS Settings
 # Configuration settings related to the Key Management System (KMS).

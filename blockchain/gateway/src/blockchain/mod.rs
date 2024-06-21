@@ -2,7 +2,6 @@ pub mod ciphertext_provider;
 pub mod decrypt;
 pub mod kms_blockchain;
 pub mod mockchain;
-
 use crate::blockchain::kms_blockchain::KmsBlockchainImpl;
 use crate::blockchain::mockchain::MockchainImpl;
 use crate::config::GatewayConfig;
@@ -11,6 +10,7 @@ use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::FheType;
 use events::kms::KmsEvent;
+use events::kms::ReencryptResponseValues;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
@@ -48,7 +48,7 @@ pub(crate) trait KmsEventSubscriber: Send + Sync {
 #[allow(clippy::too_many_arguments)]
 #[async_trait]
 pub(crate) trait Blockchain: KmsEventSubscriber {
-    async fn decrypt(&self, ctxt_handle: Vec<u8>, fhe_type: FheType) -> anyhow::Result<Token>;
+    async fn decrypt(&self, ciphertext: Vec<u8>, fhe_type: FheType) -> anyhow::Result<Token>;
 
     async fn reencrypt(
         &self,
@@ -66,5 +66,5 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         eip712_chain_id: Vec<u8>,
         eip712_verifying_contract: String,
         eip712_salt: Vec<u8>,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<Vec<ReencryptResponseValues>>;
 }

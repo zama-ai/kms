@@ -9,7 +9,9 @@ use gateway::events::manager::KmsEventPublisher;
 use gateway::events::manager::Publisher;
 use gateway::events::manager::ReencryptionEventPublisher;
 use gateway::util::height::AtomicBlockHeight;
+use gateway::util::wallet::WalletManager;
 use std::sync::Arc;
+use tokio::signal;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 
@@ -44,45 +46,47 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Channel for communication
-    let (tx, rx) = mpsc::channel(100);
+    let (sender, receiver) = mpsc::channel(100);
 
-    // Create DecryptionEventPublisher
+    // Create and run DecryptionEventPublisher
     let decryption_publisher =
-        DecryptionEventPublisher::new(tx.clone(), &provider, &atomic_height, config.clone()).await;
+        DecryptionEventPublisher::new(sender.clone(), &provider, &atomic_height, config.clone())
+            .await;
+    tokio::spawn(async move {
+        if let Err(e) = decryption_publisher.run().await {
+            tracing::error!("Failed to run DecryptionEventPublisher: {:?}", e);
+        }
+    });
     tracing::info!("DecryptionEventPublisher created");
 
-    // Create KmsEventPublisher
-    let kms_publisher = KmsEventPublisher::new(tx.clone()).await;
-    tracing::info!("KmsEventPublisher created");
-
-    // Create ReencryptionEventPublisher
-    let reencryption_publisher = ReencryptionEventPublisher::new(tx.clone()).await;
+    // Create and run ReencryptionEventPublisher
+    let reencrypt_publisher = ReencryptionEventPublisher::new(sender.clone(), config.clone()).await;
+    tokio::spawn(async move {
+        if let Err(e) = reencrypt_publisher.run().await {
+            tracing::error!("Failed to run ReencryptionEventPublisher: {:?}", e);
+        }
+    });
     tracing::info!("ReencryptionEventPublisher created");
 
-    // Create and start GatewaySubscriber
-    let subscriber = GatewaySubscriber::new(Arc::new(Mutex::new(rx)), &provider, config).await;
+    // Create and run KmsEventPublisher
+    let kms_publisher = KmsEventPublisher::new(sender.clone()).await;
+    tokio::spawn(async move {
+        if let Err(e) = kms_publisher.run().await {
+            tracing::error!("Failed to run KmsEventPublisher: {:?}", e);
+        }
+    });
+    tracing::info!("KmsEventPublisher created");
+
+    // Create and run GatewaySubscriber
+    let subscriber =
+        GatewaySubscriber::new(Arc::new(Mutex::new(receiver)), &provider, config.clone()).await;
     subscriber.listen();
     tracing::info!("GatewaySubscriber started");
 
-    // Start the KmsEventPublisher
-    kms_publisher.run().await?;
-    tracing::info!("KmsEventPublisher started");
-
-    // Start the ReencryptionEventPublisher
-    reencryption_publisher.run().await?;
-    tracing::info!("ReencryptionEventPublisher started");
-
-    // Start the DecryptionEventPublisher
-    decryption_publisher.run().await?;
-    tracing::info!("DecryptionEventPublisher started");
-
-    /*
-    let event_manager = EventManager::new(&provider, &atomic_height, config);
-    Arc::new(event_manager).run().await.unwrap_or_else(|e| {
-        error!("Failed to run event manager: {:?}", e);
-        std::process::exit(1);
-    });
-     */
+    // Handle SIGINT and SIGTERM signals for graceful shutdown
+    let shutdown_signal = signal::ctrl_c();
+    shutdown_signal.await?;
+    tracing::info!("Received shutdown signal, exiting...");
 
     Ok(())
 }
@@ -123,7 +127,7 @@ fn intro(config: &GatewayConfig) {
     tracing::info!(
         "{:<width$}{}",
         "🤝 Relayer address:",
-        to_checksum(&config.ethereum.relayer_address, None),
+        to_checksum(&WalletManager::default().wallet.address(), None),
         width = width
     );
     tracing::info!(

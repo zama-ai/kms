@@ -469,6 +469,8 @@ pub enum StorageVersion {
 
 #[cfg(test)]
 mod tests {
+    use strum::IntoEnumIterator;
+
     use super::*;
     use crate::rpc::rpc_types::PubDataType;
 
@@ -493,13 +495,7 @@ mod tests {
         let _ = fs::remove_dir_all(storage2.root_dir());
 
         // urls should be empty
-        for data_type in [
-            PubDataType::PublicKey,
-            PubDataType::ServerKey,
-            PubDataType::SnsKey,
-            PubDataType::CRS,
-            PubDataType::VerfKey,
-        ] {
+        for data_type in PubDataType::iter() {
             assert!(storage1
                 .all_urls(&data_type.to_string())
                 .await

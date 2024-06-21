@@ -404,6 +404,13 @@ where
         }
 
         let reencrypt = &self.reencrypt;
+        let ciphertext_handle: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
+        let ciphertext = self
+            .operation_val
+            .kms_client
+            .storage
+            .get_ciphertext(ciphertext_handle)
+            .await?;
         let servers_needed = config_contract
             .ok_or_else(|| anyhow!("config contract is missing"))?
             .shares_needed() as u32;
@@ -419,7 +426,7 @@ where
                 key_id: Some(RequestId {
                     request_id: reencrypt.key_id().to_hex(),
                 }),
-                ciphertext: Some(reencrypt.ciphertext().deref().into()),
+                ciphertext: Some(ciphertext),
                 ciphertext_digest: reencrypt.ciphertext_digest().deref().into(),
             }),
             domain: Some(Eip712DomainMsg {
@@ -796,6 +803,8 @@ mod test {
     use std::collections::HashMap;
     use tokio::task::JoinSet;
 
+    const MOCK_CT_HANDLE: &[u8; 3] = &[1, 2, 3];
+
     async fn setup_threshold_keys() {
         ensure_threshold_keys_exist(None, None, TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID, true)
             .await;
@@ -837,6 +846,7 @@ mod test {
                 .ok_or_else(|| anyhow::anyhow!("ciphertext not found"))
         }
     }
+
     async fn generic_centralized_sunshine_test(
         ct: Vec<u8>,
         op: OperationValue,
@@ -852,7 +862,7 @@ mod test {
         };
 
         let mut mock = MockStorage::new();
-        mock.ciphertext.insert(vec![1, 2, 3], ct);
+        mock.ciphertext.insert(MOCK_CT_HANDLE.to_vec(), ct);
 
         let client = KmsCore::new(config.clone(), mock, OpenTelemetryMetrics::new()).unwrap();
 
@@ -891,7 +901,7 @@ mod test {
                 .version(CURRENT_FORMAT_VERSION)
                 .key_id(HexVector::from_hex(&TEST_CENTRAL_KEY_ID.request_id).unwrap())
                 .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
-                .ciphertext_handle(vec![1, 2, 3])
+                .ciphertext_handle(MOCK_CT_HANDLE.to_vec())
                 .randomness(vec![1, 2, 3])
                 .build(),
         );
@@ -1068,7 +1078,7 @@ mod test {
                 .version(CURRENT_FORMAT_VERSION)
                 .key_id(HexVector::from_hex(&TEST_THRESHOLD_KEY_ID.request_id).unwrap())
                 .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
-                .ciphertext_handle(vec![1, 2, 3])
+                .ciphertext_handle(MOCK_CT_HANDLE.to_vec())
                 .randomness(vec![1, 2, 3])
                 .build(),
         );
@@ -1151,7 +1161,7 @@ mod test {
                 .enc_key(payload.enc_key)
                 .fhe_type(WrappingFheType::try_from(payload.fhe_type).unwrap().0)
                 .key_id(HexVector::from_hex(payload.key_id.unwrap().request_id.as_str()).unwrap())
-                .ciphertext(payload.ciphertext.unwrap())
+                .ciphertext_handle(MOCK_CT_HANDLE.to_vec())
                 .ciphertext_digest(payload.ciphertext_digest)
                 .eip712_name(eip712.name)
                 .eip712_version(eip712.version)

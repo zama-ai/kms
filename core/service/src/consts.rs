@@ -57,6 +57,9 @@ cfg_if::cfg_if! {
         pub const TEST_CENTRAL_KEYS_PATH: &str = "temp/test-central-keys.bin";
         pub const TEST_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/test-central-wasm-transcript.bin";
         pub const TEST_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/test-threshold-wasm-transcript.bin";
+        pub const DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH: &str = "temp/default-central-wasm-transcript.bin";
+        pub const DEFAULT_THRESHOLD_WASM_TRANSCRIPT_PATH: &str = "temp/default-threshold-wasm-transcript.bin";
+
         pub const TEST_SEC_PAR: u64 = 40;
     }
 }

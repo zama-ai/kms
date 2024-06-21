@@ -71,10 +71,10 @@ pub struct EthereumConfig {
     pub listener_type: ListenerType,
     pub wss_url: String,
     pub fhe_lib_address: H160,
-    pub relayer_address: H160,
     pub oracle_predeploy_address: H160,
     pub test_async_decrypt_address: H160,
     pub coprocessor_url: String,
+    pub decryption_event_filter: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
@@ -93,6 +93,7 @@ pub struct StorageConfig {
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
 pub struct GatewayConfig {
     pub debug: bool,
+    pub api_url: String,
     pub mode: KmsMode,
     pub ethereum: EthereumConfig,
     pub kms: KmsConfig,
@@ -184,10 +185,6 @@ mod tests {
                 H160::from_str("000000000000000000000000000000000000005d").unwrap()
             );
             assert_eq!(
-                gateway_config.ethereum.relayer_address,
-                H160::from_str("97F272ccfef4026A1F3f0e0E879d514627B84E69").unwrap()
-            );
-            assert_eq!(
                 gateway_config.ethereum.oracle_predeploy_address,
                 H160::from_str("c8c9303Cd7F337fab769686B593B87DC3403E0ce").unwrap()
             );
@@ -264,10 +261,6 @@ mod tests {
             assert_eq!(
                 gateway_config.ethereum.fhe_lib_address,
                 H160::from_str("000000000000000000000000000000000000005e").unwrap()
-            );
-            assert_eq!(
-                gateway_config.ethereum.relayer_address,
-                H160::from_str("97F272ccfef4026A1F3f0e0E879d514627B84E68").unwrap()
             );
             assert_eq!(
                 gateway_config.ethereum.oracle_predeploy_address,

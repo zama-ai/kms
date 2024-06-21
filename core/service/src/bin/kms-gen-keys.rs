@@ -1,6 +1,8 @@
 use std::path::Path;
 
 use clap::{Parser, Subcommand};
+use kms_lib::rpc::rpc_types::{PrivDataType, PubDataType};
+use kms_lib::storage::StorageReader;
 use kms_lib::util::key_setup::test_tools::ensure_threshold_keys_exist;
 use kms_lib::{
     consts::{
@@ -60,6 +62,9 @@ enum Mode {
         /// Whether to output the private FHE key separately,
         #[clap(long, default_value_t = false)]
         write_privkey: bool,
+        /// Only show existing keys, do not generate any
+        #[clap(long, default_value_t = false)]
+        show_existing: bool,
     },
 
     /// Generate shares of FHE key shares and signing keys.
@@ -85,6 +90,9 @@ enum Mode {
         /// Whether to overwrite the existing keys,
         #[clap(long, default_value_t = false)]
         overwrite: bool,
+        /// Only show existing keys, do not generate any
+        #[clap(long, default_value_t = false)]
+        show_existing: bool,
     },
 }
 
@@ -120,9 +128,14 @@ async fn main() {
             deterministic,
             overwrite,
             write_privkey,
+            show_existing,
         } => {
             let pub_path = pub_path.as_ref().map(Path::new);
             let priv_path = priv_path.as_ref().map(Path::new);
+            if show_existing {
+                show_keys_centralized(pub_path, priv_path).await;
+                return;
+            }
             if overwrite {
                 // Remove any existing keys
                 for storage in StorageType::iter() {
@@ -175,9 +188,13 @@ async fn main() {
             pub_path,
             deterministic,
             overwrite,
+            show_existing,
         } => {
             let pub_path = pub_path.as_ref().map(Path::new);
             let priv_path = priv_path.as_ref().map(Path::new);
+            if show_existing {
+                unimplemented!();
+            }
             if overwrite {
                 // Remove any existing keys
                 for storage in StorageType::iter() {
@@ -197,6 +214,30 @@ async fn main() {
                 "Default threshold keys written based on parameters stored in {}",
                 param_path
             );
+        }
+    }
+}
+
+async fn show_keys_centralized(priv_path: Option<&Path>, pub_path: Option<&Path>) {
+    let pub_storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
+    for data_type in PubDataType::iter() {
+        let data_type = data_type.to_string();
+        let urlmap = pub_storage.all_urls(&data_type).await.unwrap();
+        for (k, v) in urlmap {
+            // TODO read the key material and print extra info
+            let buf: Vec<u8> = pub_storage.read_data(&v).await.unwrap();
+            println!("{data_type}, {k}, {v}, {}", buf.len());
+        }
+    }
+
+    let priv_storage = FileStorage::new_centralized(priv_path, StorageType::PRIV).unwrap();
+    for data_type in PrivDataType::iter() {
+        let data_type = data_type.to_string();
+        let urlmap = priv_storage.all_urls(&data_type).await.unwrap();
+        for (k, v) in urlmap {
+            // TODO read the key material and print extra info
+            let buf: Vec<u8> = pub_storage.read_data(&v).await.unwrap();
+            println!("{data_type}, {k}, {v}, {}", buf.len());
         }
     }
 }

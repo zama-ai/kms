@@ -2,8 +2,8 @@ use crate::consts::{AMOUNT_PARTIES, THRESHOLD};
 #[cfg(test)]
 use crate::consts::{KEY_PATH_PREFIX, TMP_PATH_PREFIX};
 use crate::kms::{FheType, RequestId};
-use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::PubDataType;
+use crate::rpc::rpc_types::{Plaintext, PrivDataType};
 use crate::storage::Storage;
 use crate::storage::StorageReader;
 use crate::storage::{store_at_request_id, FileStorage, StorageType};
@@ -98,6 +98,20 @@ impl TypedPlaintext {
             TypedPlaintext::U160(_) => FheType::Euint160,
             TypedPlaintext::U256(_) => FheType::Euint256,
             TypedPlaintext::U2048(_) => FheType::Euint2048,
+        }
+    }
+
+    pub fn to_plaintext(&self) -> Plaintext {
+        match self {
+            TypedPlaintext::Bool(x) => Plaintext::from_bool(*x),
+            TypedPlaintext::U8(x) => Plaintext::from_u8(*x),
+            TypedPlaintext::U16(x) => Plaintext::from_u16(*x),
+            TypedPlaintext::U32(x) => Plaintext::from_u32(*x),
+            TypedPlaintext::U64(x) => Plaintext::from_u64(*x),
+            TypedPlaintext::U128(x) => Plaintext::from_u128(*x),
+            TypedPlaintext::U160(x) => Plaintext::from_u160(*x),
+            TypedPlaintext::U256(x) => Plaintext::from_u256(*x),
+            TypedPlaintext::U2048(x) => Plaintext::from_u2048(*x),
         }
     }
 

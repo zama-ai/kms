@@ -31,7 +31,8 @@ fn on_event(event: Event) -> Result<(), Error> {
             println!("🔥 Tx: (size: {:?})", tx_result.tx.len());
             //println!("Tx: {:?}", tx_result.tx);
             for event in tx_result.result.events.iter() {
-                // println!("\t - Event: {:?}", event.kind.as_str());
+                println!("\t - Event: {:?}", event.kind.as_str());
+                /*
                 match event.kind.as_str() {
                     //"message" => {
                     //    println!("\t Message Event Attributes: {:#?}", event.attributes);
@@ -52,6 +53,7 @@ fn on_event(event: Event) -> Result<(), Error> {
                     }
                     _ => {}
                 }
+                 */
             }
         }
         EventData::NewBlock {

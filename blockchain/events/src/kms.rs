@@ -338,7 +338,7 @@ pub struct ReencryptValues {
     #[builder(setter(into))]
     key_id: HexVector,
     #[builder(setter(into))]
-    ciphertext: RedactedHexVector,
+    ciphertext_handle: RedactedHexVector,
     #[builder(setter(into))]
     ciphertext_digest: RedactedHexVector,
 
@@ -381,8 +381,8 @@ impl ReencryptValues {
         &self.key_id
     }
 
-    pub fn ciphertext(&self) -> &RedactedHexVector {
-        &self.ciphertext
+    pub fn ciphertext_handle(&self) -> &RedactedHexVector {
+        &self.ciphertext_handle
     }
 
     pub fn ciphertext_digest(&self) -> &RedactedHexVector {
@@ -1029,7 +1029,7 @@ mod tests {
                 enc_key: HexVector::arbitrary(g).into(),
                 fhe_type: FheType::arbitrary(g),
                 key_id: HexVector::arbitrary(g),
-                ciphertext: HexVector::arbitrary(g).into(),
+                ciphertext_handle: HexVector::arbitrary(g).into(),
                 ciphertext_digest: HexVector::arbitrary(g).into(),
                 eip712_name: String::arbitrary(g),
                 eip712_version: String::arbitrary(g),
@@ -1215,7 +1215,7 @@ mod tests {
             .enc_key(vec![4])
             .fhe_type(FheType::Ebool)
             .key_id("kid".as_bytes().to_vec())
-            .ciphertext(vec![5])
+            .ciphertext_handle(vec![5])
             .ciphertext_digest(vec![8])
             .eip712_name("name".to_string())
             .eip712_version("version".to_string())
@@ -1239,7 +1239,7 @@ mod tests {
                     "enc_key": hex::encode(vec![4]),
                     "fhe_type": "ebool",
                     "key_id": hex::encode("kid".as_bytes()),
-                    "ciphertext": hex::encode(vec![5]),
+                    "ciphertext_handle": hex::encode(vec![5]),
                     "ciphertext_digest": hex::encode(vec![8]),
                     "eip712_name": "name",
                     "eip712_version": "version",

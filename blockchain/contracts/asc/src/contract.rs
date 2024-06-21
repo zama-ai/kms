@@ -147,30 +147,15 @@ impl KmsContract {
         self.storage.get_operations_value(ctx.deps.storage, event)
     }
 
-    #[sv::msg(exec)]
-    pub fn decrypt(
-        &self,
-        ctx: ExecCtx,
-        decrypt: DecryptValues,
-        proof: HexVector,
-    ) -> StdResult<Response> {
-        if !self
-            .proof_strategy
-            .borrow()
-            .verify_request_proof(proof.clone().into())
-        {
-            return Err(cosmwasm_std::StdError::verification_err(
-                VerificationError::GenericErr,
-            ));
-        }
+    fn parse_ciphertext_handle_size(ciphertext_handle: &[u8]) -> u32 {
+        ((ciphertext_handle[0] as u32) << 24)
+            | ((ciphertext_handle[1] as u32) << 16)
+            | ((ciphertext_handle[2] as u32) << 8)
+            | (ciphertext_handle[3] as u32)
+    }
 
-        // decipher the size encoding and ensure the payment is included in the message
-        let ciphertext_handle: Vec<u8> = decrypt.ciphertext_handle().deref().into();
-        let size_bytes = &ciphertext_handle[..8];
-        let data_size = ((size_bytes[0] as u32) << 24)
-            | ((size_bytes[1] as u32) << 16)
-            | ((size_bytes[2] as u32) << 8)
-            | (size_bytes[3] as u32);
+    fn verify_payment(&self, ctx: &ExecCtx, ciphertext_handle: Vec<u8>) -> StdResult<()> {
+        let data_size = Self::parse_ciphertext_handle_size(&ciphertext_handle[..8]);
 
         // Ensure the payment is included in the message
         let payment = must_pay(&ctx.info, UCOSM).map_err(|_| {
@@ -186,6 +171,29 @@ impl KmsContract {
                 payment,
                 data_size
             )));
+        }
+        Ok(())
+    }
+
+    #[sv::msg(exec)]
+    pub fn decrypt(
+        &self,
+        ctx: ExecCtx,
+        decrypt: DecryptValues,
+        proof: HexVector,
+    ) -> StdResult<Response> {
+        // decipher the size encoding and ensure the payment is included in the message
+        let ciphertext_handle: Vec<u8> = decrypt.ciphertext_handle().deref().into();
+        self.verify_payment(&ctx, ciphertext_handle)?;
+
+        if !self
+            .proof_strategy
+            .borrow()
+            .verify_request_proof(proof.clone().into())
+        {
+            return Err(cosmwasm_std::StdError::verification_err(
+                VerificationError::GenericErr,
+            ));
         }
 
         let txn_id = self.derive_transaction_id(&ctx)?;
@@ -298,6 +306,10 @@ impl KmsContract {
         reencrypt: ReencryptValues,
         proof: HexVector,
     ) -> StdResult<Response> {
+        // decipher the size encoding and ensure the payment is included in the message
+        let ciphertext_handle: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
+        self.verify_payment(&ctx, ciphertext_handle)?;
+
         if !self
             .proof_strategy
             .borrow()
@@ -671,9 +683,20 @@ mod tests {
 
     #[test]
     fn test_reencrypt() {
-        let app = App::default();
+        let owner = Addr::unchecked("owner");
+
+        let app = cw_multi_test::App::new(|router, _api, storage| {
+            router
+                .bank
+                .init_balance(storage, &owner, coins(5000000, UCOSM))
+                .unwrap();
+        });
+
+        let app = App::new(app);
+
+        //let app = App::default();
         let code_id = CodeId::store_code(&app);
-        let owner = "owner".into_addr();
+        //let owner = "owner".into_addr();
         let proof: HexVector = vec![1, 2, 3].into();
 
         let contract = code_id
@@ -688,6 +711,12 @@ mod tests {
             .call(&owner)
             .unwrap();
 
+        let ciphertext_handle =
+            hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
+                .unwrap();
+        let data_size = extract_ciphertext_size(&ciphertext_handle);
+        assert_eq!(data_size, 661448);
+
         let reencrypt = ReencryptValues::builder()
             .signature(vec![1])
             .version(1)
@@ -696,7 +725,7 @@ mod tests {
             .enc_key(vec![4])
             .fhe_type(FheType::Euint8)
             .key_id(vec![5])
-            .ciphertext(vec![6])
+            .ciphertext_handle(ciphertext_handle.clone())
             .ciphertext_digest(vec![9])
             .eip712_name("name".to_string())
             .eip712_version("version".to_string())
@@ -705,8 +734,15 @@ mod tests {
             .eip712_salt(vec![8])
             .build();
 
+        let _failed_response = contract
+            .reencrypt(reencrypt.clone(), proof.clone())
+            .with_funds(&[coin(42_u128, UCOSM)])
+            .call(&owner)
+            .expect_err("Insufficient funds sent to cover the data size");
+
         let response = contract
             .reencrypt(reencrypt.clone(), proof.clone())
+            .with_funds(&[coin(data_size.into(), UCOSM)])
             .call(&owner)
             .unwrap();
 

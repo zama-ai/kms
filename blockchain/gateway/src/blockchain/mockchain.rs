@@ -7,6 +7,7 @@ use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::FheType;
 use events::kms::KmsEvent;
+use events::kms::ReencryptResponseValues;
 
 pub(crate) struct MockchainImpl;
 
@@ -54,7 +55,7 @@ impl Blockchain for MockchainImpl {
         eip712_chain_id: Vec<u8>,
         eip712_verifying_contract: String,
         eip712_salt: Vec<u8>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
         tracing::debug!("🐛 Mockchain reencrypting ciphertext");
         tracing::debug!("🐛 signature: {:?}", signature);
         tracing::debug!("🐛 version: {:?}", version);
@@ -74,6 +75,6 @@ impl Blockchain for MockchainImpl {
         );
         tracing::debug!("🐛 eip712_salt: {:?}", eip712_salt);
 
-        Ok(())
+        Ok(vec![])
     }
 }

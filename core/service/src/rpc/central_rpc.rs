@@ -304,6 +304,11 @@ impl<
                     return;
                 }
             };
+            tracing::info!(
+                "Starting reencryption using key_id {} for request ID {}",
+                &key_id,
+                &request_id
+            );
             match async_reencrypt::<PubS, PrivS>(
                 &keys.client_key,
                 &sig_key,
@@ -702,9 +707,12 @@ pub async fn validate_reencrypt_req(
         &from_bytes(&req.signature)?,
         &client_verf_key,
     ) {
-        return Err(anyhow_error_and_warn_log(format!(
-            "Could not validate signature in request {:?}",
-            req
+        return Err(anyhow_error_and_log(format!(
+            "Could not validate signature {} using domain={:?}, payload={}, verf_key={:?}",
+            hex::encode(&req.signature),
+            domain,
+            hex::encode(&pk_sol.pub_enc_key),
+            client_verf_key,
         )));
     }
 

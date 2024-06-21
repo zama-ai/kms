@@ -18,7 +18,6 @@ async fn setup_provider(
     config: &EthereumConfig,
 ) -> Result<Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>, Box<dyn Error>> {
     let wallet = WalletManager::default().wallet;
-    tracing::info!("Wallet address: {}", wallet.address());
     let provider = Provider::<Ws>::connect(config.wss_url.to_string()).await?;
     let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
     Ok(Arc::new(provider))

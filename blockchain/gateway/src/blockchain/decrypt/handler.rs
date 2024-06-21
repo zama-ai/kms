@@ -85,32 +85,13 @@ async fn decrypt(
 ) -> Result<Token, Box<dyn std::error::Error>> {
     let mut ct_handle_bytes = [0u8; 32];
     ct_handle.to_big_endian(&mut ct_handle_bytes);
-    let data_bytes =
+    let ct_bytes =
         <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
             .get_ciphertext(client, ct_handle_bytes.to_vec(), block_number)
             .await?;
-
-    // Convert the Vec<u8> to a hex string
-    let hex_data = hex::encode(&data_bytes);
-
-    // Send the hex-encoded data to the Actix web service
-    let response = reqwest::Client::new()
-        .post(format!("{}/store", config.storage.url))
-        .body(hex_data)
-        .send()
-        .await?;
-
-    // Print the response
-    let handle = response.text().await?;
-    println!("Response: {}", handle);
-
-    tracing::info!("📦 Stored ciphertext, handle: {}", handle);
-
-    let handle_bytes = hex::decode(handle).unwrap();
-
     tracing::info!("🚀 request_id: {}, ct_type: {}", request_id, ct_type,);
     Ok(blockchain_impl(config)
         .await
-        .decrypt(handle_bytes, FheType::from(ct_type))
+        .decrypt(ct_bytes, FheType::from(ct_type))
         .await?)
 }

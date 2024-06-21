@@ -28,8 +28,11 @@ async fn main() -> std::io::Result<()> {
 
     tokio::spawn(evictor(storage));
 
+    let payload_limit = 10 * 1024 * 1024; // 10 MB
+
     actix_web::HttpServer::new(move || {
         actix_web::App::new()
+            .app_data(web::PayloadConfig::new(payload_limit))
             .app_data(storage_data.clone())
             .service(put)
             .service(get)
