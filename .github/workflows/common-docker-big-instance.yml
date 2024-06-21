@@ -30,6 +30,14 @@ on:
           type: boolean
           default: false
           required: false
+      image-dev-description:
+        type: string
+        required: false
+        default: 'KMS Service Docker Image'
+      docker-file-dev:
+        type: string
+        default: 'ci.dockerfile'
+        required: false
     secrets:
       SLAB_ACTION_TOKEN:
         required: true
@@ -85,6 +93,8 @@ jobs:
       image-dev: ${{ inputs.image-dev }}
       generate-dev-image: ${{ inputs.generate-dev-image }}
       arm-build: ${{ inputs.arm-build }}
+      docker-file-dev: ${{ inputs.docker-file-dev }}
+      image-dev-description: ${{ inputs.image-dev-description }}
 
   stop-runner:
     name: Stops self-hosted EC2 runner
