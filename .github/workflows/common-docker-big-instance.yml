@@ -95,6 +95,8 @@ jobs:
       arm-build: ${{ inputs.arm-build }}
       docker-file-dev: ${{ inputs.docker-file-dev }}
       image-dev-description: ${{ inputs.image-dev-description }}
+      cache-from: 'local'
+      cache-to: 'local'
 
   stop-runner:
     name: Stops self-hosted EC2 runner
