@@ -104,11 +104,9 @@ jobs:
           private-key: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
           private-key-name: docker_builder_arm
 
-      - name: Check ssh
-        run: ls -ahl ~/.ssh
-
-      - name: Check ssh known_host
-        run: cat ~/.ssh/known_hosts
+      - name: Recreate ssh known host
+        if: inputs.arm-build
+        run: ssh-keygen -R ${{ inputs.graviton-build-host }}
 
       - name: Set up Docker Buildx
         if: inputs.arm-build
