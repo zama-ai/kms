@@ -91,7 +91,7 @@ jobs:
       eif_info_path: ${{ steps.eif.outputs.eif_info_path }}
       eif_pcr0: ${{ steps.eif.outputs.eif_pcr0 }}
     env:
-      HOME: ${{ inputs.runs_on != 'ubuntu-latest' && '/home/ubuntu' || '/home/runner' }}
+      HOME: ${{ inputs.runs_on != 'ubuntu-latest' && '/root' || '/home/runner' }}
     steps:
       - name: Checkout Project
         uses: actions/checkout@v4
@@ -103,10 +103,6 @@ jobs:
           host: ${{ inputs.graviton-build-host }}
           private-key: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
           private-key-name: docker_builder_arm
-
-      - name: Recreate ssh known host
-        if: inputs.arm-build
-        run: ssh-keygen -R ${{ inputs.graviton-build-host }}
 
       - name: Set up Docker Buildx
         if: inputs.arm-build
