@@ -19,7 +19,7 @@ lazy_static! {
     pub(crate) static ref NETWORK_TIMEOUT: Duration = Duration::from_secs(5);
 
     /// maximum number of seconds that a party waits for a network message during a protocol
-    pub(crate) static ref NETWORK_TIMEOUT_LONG: Duration = Duration::from_secs(10);
+    pub(crate) static ref NETWORK_TIMEOUT_LONG: Duration = Duration::from_secs(60);
 
     /// maximum number of seconds that a party waits for BK round in DKG
     ///
