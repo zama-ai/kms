@@ -78,3 +78,11 @@ To obtain the `Key Id` to set up in the `GATEWAY__KMS__KEY_ID` environment varia
 ```
 
 If there are no fundamental changes, you should see 2 outputs of hex numbers. The first number `04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea424`, which is the default value, is the key id.
+
+## Image tag versions inside compose files
+
+Please notice that each image inside docker compose files point to specific tagged images. This will help us to track potential problems or bugs related to version.
+
+Contact Zama Support Team to request latest stable version.
+
+

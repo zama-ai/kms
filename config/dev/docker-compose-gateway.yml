@@ -3,7 +3,7 @@ name: zama-gateway
 services:
 
   gateway:
-    image: ghcr.io/zama-ai/kms-blockchain-gateway-dev:latest
+    image: ghcr.io/zama-ai/kms-blockchain-gateway-dev:c22a5b7
     command:
       - "gateway"
     environment:
