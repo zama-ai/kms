@@ -94,6 +94,9 @@ jobs:
       - name: Checkout Project
         uses: actions/checkout@v4
 
+      - name: Create ssh dir if not exist
+        run: mkdir -p ~/.ssh
+
       - name: Set up SSH
         if: inputs.arm-build
         uses: MrSquaare/ssh-setup-action@2d028b70b5e397cf8314c6eaea229a6c3e34977a # v3.1.0
