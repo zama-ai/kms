@@ -94,9 +94,6 @@ jobs:
       - name: Checkout Project
         uses: actions/checkout@v4
 
-      - name: Create ssh dir if not exist
-        run: mkdir -p ~/.ssh
-
       - name: Set up SSH
         if: inputs.arm-build
         uses: MrSquaare/ssh-setup-action@2d028b70b5e397cf8314c6eaea229a6c3e34977a # v3.1.0
@@ -104,6 +101,7 @@ jobs:
           host: ${{ inputs.graviton-build-host }}
           private-key: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
           private-key-name: docker_builder_arm
+          ssh-path: ${{ inputs.runs_on != 'ubuntu-latest' && '/home/ubuntu/.ssh' || '/home/runner/.ssh' }}
 
       - name: Set up Docker Buildx
         if: inputs.arm-build
