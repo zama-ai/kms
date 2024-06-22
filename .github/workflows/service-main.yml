@@ -40,6 +40,7 @@ jobs:
       generate-dev-image: true
       docker-file-dev: 'dev.dockerfile'
       image-dev-description: 'KMS Service Dev Docker Image'
+      arm-build: true
     needs:
       - build
     secrets:
