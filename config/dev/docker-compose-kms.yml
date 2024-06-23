@@ -41,7 +41,7 @@ services:
         condition: service_healthy
 
   core:
-    image: ghcr.io/zama-ai/kms-service-dev:f7d5ba8
+    image: ghcr.io/zama-ai/kms-service-dev:aa9971e
     ports:
       - "50051:50051"
     healthcheck:
