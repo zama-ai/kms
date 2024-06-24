@@ -32,40 +32,39 @@ use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
 use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
+use tfhe::shortint::ClassicPBSParameters;
 use wasm_bindgen::prelude::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
-        use anyhow::ensure;
-        use crate::storage::read_all_data;
-        use std::fmt;
-        use tfhe::ServerKey;
-        use crate::storage::Storage;
-        use serde::de::DeserializeOwned;
-        use distributed_decryption::execution::zk::ceremony::PublicParameter;
-        use crate::rpc::rpc_types::{
-            DecryptionRequestSerializable, PubDataType,
-        };
-        use crate::{cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms};
-        use crate::{storage::StorageReader, util::key_setup::FhePublicKey};
+        use crate::cryptography::{central_kms::compute_handle, der_types::Signature};
+        use crate::kms::ParamChoice;
         use crate::kms::{
             AggregatedDecryptionResponse, CrsGenRequest, CrsGenResult, DecryptionRequest,
             DecryptionResponsePayload, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
         };
-        use crate::cryptography::{central_kms::compute_handle, der_types::Signature};
-        use crate::kms::ParamChoice;
+        use crate::rpc::rpc_types::{DecryptionRequestSerializable, PubDataType};
+        use crate::storage::read_all_data;
+        use crate::storage::Storage;
         use crate::util::file_handling::read_as_json;
+        use crate::{cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms};
+        use crate::{storage::StorageReader, util::key_setup::FhePublicKey};
+        use anyhow::ensure;
+        use distributed_decryption::execution::zk::ceremony::PublicParameter;
+        use serde::de::DeserializeOwned;
+        use std::fmt;
+        use tfhe::ServerKey;
     }
 }
 
 /// Helper method for combining reconstructed messages after decryption.
 // TODO is this the right place for this function? Should probably be in ddec. Related to this issue https://github.com/zama-ai/distributed-decryption/issues/352
 fn decrypted_blocks_to_plaintext(
-    params: &NoiseFloodParameters,
+    params: &ClassicPBSParameters,
     fhe_type: FheType,
     recon_blocks: Vec<Z128>,
 ) -> anyhow::Result<Plaintext> {
-    let bits_in_block = params.ciphertext_parameters.message_modulus_log();
+    let bits_in_block = params.message_modulus_log();
     let res_pt = match fhe_type {
         FheType::Euint2048 => {
             combine_decryptions::<tfhe::integer::bigint::U2048>(bits_in_block, recon_blocks)
@@ -111,7 +110,7 @@ pub struct Client {
     // we allow it because num_servers is used in only certain features
     #[allow(dead_code)]
     num_servers: u32,
-    params: NoiseFloodParameters,
+    params: ClassicPBSParameters,
 }
 
 // This testing struct needs to be outside of js_api module
@@ -125,7 +124,7 @@ pub struct TestingReencryptionTranscript {
     client_pk: PublicSigKey,
     client_sk: Option<PrivateSigKey>,
     shares_needed: u32,
-    params: NoiseFloodParameters,
+    params: ClassicPBSParameters,
     // example pt and ct
     fhe_type: FheType,
     pt: Vec<u8>,
@@ -212,6 +211,7 @@ pub struct TestingReencryptionTranscript {
 #[cfg(all(not(feature = "non-wasm"), not(feature = "grpc-client")))]
 pub mod js_api {
     use crate::kms::Eip712DomainMsg;
+    use crate::kms::ParamChoice;
     use crypto_box::aead::{Aead, AeadCore};
     use crypto_box::{Nonce, SalsaBox};
 
@@ -227,27 +227,60 @@ pub mod js_api {
         serde_asn1_der::from_bytes(v).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Instantiate a new client.
+    ///
+    /// * `server_pks` - a list of KMS server signature public keys,
+    /// which can parsed using [u8vec_to_public_sig_key].
+    ///
+    /// * `server_pks_ids` - a list of the IDs that are associated to the
+    /// server public keys. If None is given, then the IDs default to
+    /// 1..n, where n is the length of `server_pks`.
+    ///
+    /// * `client_pk` - the client (wallet) public key,
+    /// which can parsed using [u8vec_to_public_sig_key] also.
+    ///
+    /// * `shares_needed` - number of shares needed for reconstruction.
+    /// In the centralized setting this is 1.
+    ///
+    /// * `param_choice` - the parameter choice, which can be either `"test"` or `"default"`.
+    /// The "default" parameter choice is selected if no matching string is found.
     #[wasm_bindgen]
     pub fn new_client(
         server_pks: Vec<PublicSigKey>,
-        server_pks_ids: Vec<u8>,
+        server_pks_ids: Option<Vec<u8>>,
         client_pk: PublicSigKey,
         shares_needed: u32,
-        params_json: &str,
+        param_choice: &str,
     ) -> Result<Client, JsError> {
         console_error_panic_hook::set_once();
+
+        // TODO: we cannot use the consts like TEST_PARAM_PATH
+        // here because include_str! only accepts literals.
+        let default_params = include_str!("../parameters/default_params.json");
+        let test_params = include_str!("../parameters/small_test_params.json");
+
+        let params_json = match ParamChoice::from_str_name(param_choice) {
+            Some(choice) => match choice {
+                ParamChoice::Default => default_params,
+                ParamChoice::Test => test_params,
+            },
+            None => default_params,
+        };
+        let params: NoiseFloodParameters =
+            serde_json::from_str::<NoiseFloodParameters>(params_json)
+                .map_err(|e| JsError::new(&e.to_string()))?;
+
+        let server_pks_ids = match server_pks_ids {
+            Some(inner) => inner,
+            None => (1..=server_pks.len() as u8).collect_vec(),
+        };
 
         if server_pks.len() != server_pks_ids.len() {
             return Err(JsError::new("server_pks.len() != server_pks_ids.len()"));
         }
 
         let server_pks = HashMap::from_iter(server_pks.into_iter().zip(server_pks_ids));
-        // TODO: we just use parameters stored in json for now
-        // think about how to instantiate different parameters later
-        // when we have an enum that specifies parameters
-        let params: NoiseFloodParameters =
-            serde_json::from_str::<NoiseFloodParameters>(params_json)
-                .map_err(|e| JsError::new(&e.to_string()))?;
+
         // Note: This may fail if there are multiple possible signing keys for each server
         let num_servers = server_pks.len() as u32;
 
@@ -258,7 +291,7 @@ pub mod js_api {
             client_sk: None,
             shares_needed,
             num_servers,
-            params,
+            params: params.ciphertext_parameters,
         })
     }
 
@@ -474,11 +507,61 @@ pub mod js_api {
         salsa_box.decrypt(&ct.nonce, &ct.ct[..]).unwrap()
     }
 
-    /// This function assembles [ReencryptionRequest]
+    #[wasm_bindgen]
+    pub fn new_eip712_domain(
+        name: String,
+        version: String,
+        chain_id: Vec<u8>,
+        verifying_contract: String,
+        salt: Vec<u8>,
+    ) -> Eip712DomainMsg {
+        Eip712DomainMsg {
+            name,
+            version,
+            chain_id,
+            verifying_contract,
+            salt,
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn new_request_id(request_id: String) -> RequestId {
+        RequestId { request_id }
+    }
+
+    #[wasm_bindgen]
+    pub fn new_fhe_type(mut type_str: String) -> Result<FheType, JsError> {
+        make_ascii_titlecase(&mut type_str);
+        let out = FheType::from_str_name(&type_str).ok_or(JsError::new("invalid fhe type"))?;
+        Ok(out)
+    }
+
+    /// This function assembles a reencryption request
     /// from a signature and other metadata.
     /// The signature is on the ephemeral public key
     /// signed by the client's private key
     /// following the EIP712 standard.
+    ///
+    /// The result value needs to convert to the following JSON
+    /// for the gateway.
+    /// ```
+    /// { "signature": "010203",                  // HEX
+    ///   "version": 1,                           // Integer
+    ///   "verification_key": "010203",           // HEX
+    ///   "randomness": "010203",                 // HEX
+    ///   "enc_key": "010203",                    // HEX
+    ///   "fhe_type": "euint8",                   // String
+    ///   "key_id": "010203",                     // HEX
+    ///   "ciphertext": "010203",                 // HEX
+    ///   "ciphertext_digest": "010203",          // HEX
+    ///   "eip712_name": "test",                  // String
+    ///   "eip712_version": "1",                  // String
+    ///   "eip712_chain_id": "010203",            // HEX
+    ///   "eip712_verifying_contract": "0x1234",  // String
+    ///   "eip712_salt": "010203"                 // HEX
+    /// }
+    /// ```
+    /// This can be done using [reencryption_request_to_flat_json_string].
     #[wasm_bindgen]
     pub fn make_reencryption_req(
         client: &mut Client,
@@ -486,6 +569,7 @@ pub mod js_api {
         enc_pk: PublicEncKey,
         fhe_type: FheType,
         key_id: RequestId,
+        ciphertext: Option<Vec<u8>>,
         ciphertext_digest: Vec<u8>,
         domain: Eip712DomainMsg,
     ) -> Result<ReencryptionRequest, JsError> {
@@ -499,8 +583,7 @@ pub mod js_api {
             verification_key: serde_asn1_der::to_vec(&client.client_pk)?,
             fhe_type: fhe_type as i32,
             key_id: Some(key_id),
-            // this is None because the gateway needs to fill it
-            ciphertext: None,
+            ciphertext,
             ciphertext_digest,
         };
         Ok(ReencryptionRequest {
@@ -510,6 +593,37 @@ pub mod js_api {
             // the request_id needs to be filled by the gateway/connector
             request_id: None,
         })
+    }
+
+    #[wasm_bindgen]
+    pub fn reencryption_request_to_flat_json_string(req: &ReencryptionRequest) -> String {
+        let fhe_type = req.payload.as_ref().unwrap().fhe_type();
+        let domain = req.domain.as_ref().unwrap();
+        let mut json = serde_json::json!(
+        {
+            "signature": hex::encode(&req.signature),
+            "version": req.payload.as_ref().unwrap().version,
+            "verification_key": hex::encode(&req.payload.as_ref().unwrap().verification_key),
+            "randomness": hex::encode(&req.payload.as_ref().unwrap().randomness),
+            "enc_key": hex::encode(&req.payload.as_ref().unwrap().enc_key),
+            "fhe_type": fhe_type.as_str_name().to_lowercase(),
+            "key_id": req.payload.as_ref().unwrap().key_id.clone().unwrap().request_id,
+            "ciphertext_digest": hex::encode(&req.payload.as_ref().unwrap().ciphertext_digest),
+            "eip712_name": domain.name,
+            "eip712_version": domain.version,
+            "eip712_chain_id": hex::encode(&domain.chain_id),
+            "eip712_verifying_contract": domain.verifying_contract,
+            "eip712_salt": hex::encode(&domain.salt),
+        });
+
+        let ciphertext = req.payload.as_ref().unwrap().ciphertext.clone();
+        if let Some(ct) = ciphertext {
+            json.as_object_mut().unwrap().insert(
+                "ciphertext".to_string(),
+                serde_json::Value::String(hex::encode(ct)),
+            );
+        }
+        json.to_string()
     }
 
     fn make_ascii_titlecase(s: &mut str) {
@@ -555,6 +669,21 @@ pub mod js_api {
         Ok(out)
     }
 
+    /// Process the reencryption response from a JSON object.
+    /// The result is a byte array representing a plaintext of any length.
+    ///
+    /// * `client` - client that wants to perform reencryption.
+    ///
+    /// * `request` - the initial reencryption request.
+    ///
+    /// * `agg_resp - the response JSON object from the gateway.
+    ///
+    /// * `agg_resp_ids - the KMS server identities that correspond to each request.
+    /// If this is not given, the initial configuration is used
+    /// from when the client is instantiated.
+    ///
+    /// * `enc_pk` - The ephemeral public key.
+    /// * `enc_sk` - The ephemeral secret key.
     #[wasm_bindgen]
     pub fn process_reencryption_resp_from_json(
         client: &mut Client,
@@ -568,10 +697,21 @@ pub mod js_api {
         process_reencryption_resp(client, request, agg_resp, agg_resp_ids, enc_pk, enc_sk)
     }
 
-    /// This function takes [AggregatedReencryptionResponse] normally
-    /// but wasm does not support HashMap so we need to take two parameters:
-    /// `agg_resp` and `agg_resp_id`.
-    /// The result is little-endian byte representation.
+    /// Process the reencryption response from a JSON object.
+    /// The result is a byte array representing a plaintext of any length.
+    ///
+    /// * `client` - client that wants to perform reencryption.
+    ///
+    /// * `request` - the initial reencryption request.
+    ///
+    /// * `agg_resp - the vector of reencryption responses.
+    ///
+    /// * `agg_resp_ids - the KMS server identities that correspond to each request.
+    /// If this is not given, the initial configuration is used
+    /// from when the client is instantiated.
+    ///
+    /// * `enc_pk` - The ephemeral public key.
+    /// * `enc_sk` - The ephemeral secret key.
     #[wasm_bindgen]
     pub fn process_reencryption_resp(
         client: &mut Client,
@@ -641,7 +781,7 @@ impl Client {
         client_sk: Option<PrivateSigKey>,
         shares_needed: u32,
         num_servers: u32,
-        params: NoiseFloodParameters,
+        params: ClassicPBSParameters,
     ) -> Self {
         Client {
             rng: Box::new(AesRng::from_entropy()), // todo should be argument
@@ -703,7 +843,7 @@ impl Client {
             client_sk,
             shares_needed,
             num_servers,
-            params,
+            params.ciphertext_parameters,
         ))
     }
 
@@ -1478,8 +1618,7 @@ impl Client {
                 return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
             }
         }
-        let recon_blocks =
-            reconstruct_message(Some(decrypted_blocks), &self.params.ciphertext_parameters)?;
+        let recon_blocks = reconstruct_message(Some(decrypted_blocks), &self.params)?;
         Ok(Some(decrypted_blocks_to_plaintext(
             &self.params,
             req_payload.fhe_type(),
@@ -1495,7 +1634,7 @@ impl Client {
         fhe_type: FheType,
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<ShamirSharings<ResiduePoly<Z128>>>> {
-        let num_blocks = num_blocks(fhe_type, self.params);
+        let num_blocks = num_blocks(fhe_type, &self.params);
         let mut sharings = Vec::new();
         for _i in 0..num_blocks {
             sharings.push(ShamirSharings::new());
@@ -1603,38 +1742,18 @@ impl Client {
 /// Calculates the number of blocks needed to encode a message of the given FHE
 /// type, based on the usable message modulus log from the
 /// parameters. Rounds up to ensure enough blocks.
-pub fn num_blocks(fhe_type: FheType, params: NoiseFloodParameters) -> usize {
+pub fn num_blocks(fhe_type: FheType, params: &ClassicPBSParameters) -> usize {
     match fhe_type {
-        FheType::Ebool => {
-            8_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
-        }
-        FheType::Euint4 => {
-            8_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
-        }
-        FheType::Euint8 => {
-            8_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
-        }
-        FheType::Euint16 => {
-            16_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
-        }
-        FheType::Euint32 => {
-            32_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
-        }
-        FheType::Euint64 => {
-            64_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
-        }
-        FheType::Euint128 => {
-            128_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
-        }
-        FheType::Euint160 => {
-            160_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
-        }
-        FheType::Euint256 => {
-            256_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
-        }
-        FheType::Euint2048 => {
-            2048_usize.div_ceil(params.ciphertext_parameters.message_modulus_log() as usize)
-        }
+        FheType::Ebool => 8_usize.div_ceil(params.message_modulus_log() as usize),
+        FheType::Euint4 => 8_usize.div_ceil(params.message_modulus_log() as usize),
+        FheType::Euint8 => 8_usize.div_ceil(params.message_modulus_log() as usize),
+        FheType::Euint16 => 16_usize.div_ceil(params.message_modulus_log() as usize),
+        FheType::Euint32 => 32_usize.div_ceil(params.message_modulus_log() as usize),
+        FheType::Euint64 => 64_usize.div_ceil(params.message_modulus_log() as usize),
+        FheType::Euint128 => 128_usize.div_ceil(params.message_modulus_log() as usize),
+        FheType::Euint160 => 160_usize.div_ceil(params.message_modulus_log() as usize),
+        FheType::Euint256 => 256_usize.div_ceil(params.message_modulus_log() as usize),
+        FheType::Euint2048 => 2048_usize.div_ceil(params.message_modulus_log() as usize),
     }
 }
 
@@ -3292,7 +3411,7 @@ pub(crate) mod tests {
             Some(keys.client_sk),
             1,
             1,
-            keys.params,
+            keys.params.ciphertext_parameters,
         );
         let request_id = RequestId::derive("TEST_REENC_ID_123").unwrap();
         let (req, _enc_pk, _enc_sk) = internal_client
@@ -3336,6 +3455,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn num_blocks_sunshine() {
         let params: NoiseFloodParameters = read_as_json(TEST_PARAM_PATH).await.unwrap();
+        let params = &params.ciphertext_parameters;
         // 2 bits per block, using Euint8 as internal representation
         assert_eq!(num_blocks(FheType::Ebool, params), 4);
         // 2 bits per block, using Euint8 as internal representation

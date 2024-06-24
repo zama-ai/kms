@@ -16,13 +16,16 @@ const {
     threshold_reencryption_response_from_transcript,
     u8vec_to_cryptobox_pk,
     u8vec_to_cryptobox_sk,
-    public_sig_key_to_u8vec,
-    get_server_public_keys,
     new_client,
-    u8vec_to_public_sig_key
+    u8vec_to_public_sig_key,
+    new_eip712_domain,
+    new_request_id,
+    new_fhe_type,
+    make_reencryption_req,
+    reencryption_request_to_flat_json_string
 } = require("../../pkg");
 
-test('crypto_box', (t) => {
+test('crypto_box', (_t) => {
     let alice_sk = cryptobox_keygen();
     let bob_sk = cryptobox_keygen();
     let alice_pk = cryptobox_get_pk(alice_sk);
@@ -40,7 +43,7 @@ test('crypto_box', (t) => {
 });
 
 
-test('crypto_box ser', (t) => {
+test('crypto_box ser', (_t) => {
     let alice_sk = cryptobox_keygen();
     let bob_sk = cryptobox_keygen();
     let alice_pk = cryptobox_get_pk(alice_sk);
@@ -58,7 +61,7 @@ test('crypto_box ser', (t) => {
     assert.deepEqual(x, pt);
 });
 
-test('centralized reencryption response', (t) => {
+test('centralized reencryption response', (_t) => {
     // TEST_CENTRAL_WASM_TRANSCRIPT_PATH
     const transcript_buf = fs.readFileSync('temp/test-central-wasm-transcript.bin.8')
     let client = client_from_transcript(transcript_buf);
@@ -69,7 +72,7 @@ test('centralized reencryption response', (t) => {
     assert.deepEqual(48, pt[0]);
 });
 
-test('threshold reencryption response', (t) => {
+test('threshold reencryption response', (_t) => {
     // TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
     const transcript_buf = fs.readFileSync('temp/test-threshold-wasm-transcript.bin.8')
     let client = client_from_transcript(transcript_buf);
@@ -79,7 +82,7 @@ test('threshold reencryption response', (t) => {
     assert.deepEqual(42, pt[0]);
 });
 
-test('new client', (t) => {
+test('new client', (_t) => {
     const public_sig_key = new Uint8Array([
         4, 33, 3, 85, 67, 103, 18, 94, 225,
         252, 7, 1, 61, 75, 2, 61, 88, 226,
@@ -93,9 +96,25 @@ test('new client', (t) => {
         36, 210, 228, 244, 194, 77, 12, 90,
         88, 122, 242
     ]);
-    const params = '{"ciphertext_parameters": {"lwe_dimension": 1024,"glwe_dimension": 1,"polynomial_size": 2048,"lwe_noise_distribution": {"TUniform": {"bound_log2": 41,"_phantom": null}},"glwe_noise_distribution": {"TUniform": {"bound_log2": 14,"_phantom": null}},"pbs_base_log": 21,"pbs_level": 1,"ks_base_log": 6,"ks_level": 3,"message_modulus": 4,"carry_modulus": 4,"max_noise_level": 5,"log2_p_fail": -80.0,"ciphertext_modulus": {"modulus": 0,"scalar_bits": 64},"encryption_key_choice": "Small"},"sns_parameters": {"glwe_dimension": 2,"glwe_noise_distribution": {"bound_log2": 24,"_phantom": null},"polynomial_size": 2048,"pbs_base_log": 24,"pbs_level": 3,"ciphertext_modulus": {"modulus": 0,"scalar_bits": 128}}}';
-    new_client([u8vec_to_public_sig_key(public_sig_key)], [1], u8vec_to_public_sig_key(client_sig_key), 0, params);
-})
+    let client = new_client([u8vec_to_public_sig_key(public_sig_key)], null, u8vec_to_public_sig_key(client_sig_key), 0, 'default');
+
+    // create a request
+    let eipmsg = new_eip712_domain("dummy", "1", new Uint8Array([1, 2, 3]), "0x010203", new Uint8Array([1, 2, 3]));
+    let key_id = new_request_id("myrequestid");
+    let fhe_type = new_fhe_type("euint8");
+    let sig = new Uint8Array([2, 3, 4]);
+
+    let alice_sk = cryptobox_keygen();
+    let alice_pk = cryptobox_get_pk(alice_sk);
+
+    let ct = new Uint8Array([7, 6, 5]);
+    let ct_digest = new Uint8Array([7, 8, 9]);
+    let req = make_reencryption_req(client, sig, alice_pk, fhe_type, key_id, ct, ct_digest, eipmsg);
+
+    // turn the request into json
+    let req_json = reencryption_request_to_flat_json_string(req);
+    console.log(JSON.parse(req_json));
+});
 
 async function postData(url = "", data = "") {
     const response = await fetch(url, {
@@ -108,8 +127,8 @@ async function postData(url = "", data = "") {
     return response.json();
 }
 
-// test('centralized integration', async (t) => {
-test('centralized integration', { skip: 'start the gateway to run integration test' }, async (t) => {
+// test('centralized integration', async (_t) => {
+test('centralized integration', { skip: 'start the gateway to run integration test' }, async (_t) => {
     // DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH
     // change the .8 to something else to test with a different type
     const transcript_buf = fs.readFileSync('temp/default-central-wasm-transcript.bin.8')
