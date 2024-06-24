@@ -20,56 +20,50 @@ pub(crate) async fn handle_event_decryption(
 ) -> anyhow::Result<()> {
     tracing::debug!("🍻 handle_event_decryption enter");
     let mut tokens: Vec<Token> = Vec::with_capacity(event.filter.cts.len());
-    let client_clone = Arc::clone(client);
-    let event = Arc::clone(event);
-    let conf = config.clone();
-    let _handle = tokio::spawn(async move {
-        let ethereum_wss_url = conf.ethereum.wss_url.clone();
-        let oracle_predeploy_address = conf.ethereum.oracle_predeploy_address;
-        for (i, ct) in event.filter.cts.iter().enumerate() {
-            let token = decrypt(
-                &client_clone,
-                &conf.clone(),
-                event.filter.request_id,
-                ct.ct_handle,
-                ct.ct_type,
-                i as i64,
-                event.block_number,
-            )
-            .await
-            .unwrap();
-            tokens.push(token);
-        }
+    let ethereum_wss_url = config.ethereum.wss_url.clone();
+    let oracle_predeploy_address = config.ethereum.oracle_predeploy_address;
+    for (i, ct_handle) in event.filter.cts.iter().enumerate() {
+        let token = decrypt(
+            client,
+            &config.clone(),
+            event.filter.request_id,
+            *ct_handle,
+            i as i64,
+            event.block_number,
+        )
+        .await
+        .unwrap();
+        tokens.push(token);
+    }
 
-        let wallet = WalletManager::default().wallet;
-        let provider = Provider::<Ws>::connect(ethereum_wss_url).await.unwrap();
-        let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
-        let provider = Arc::new(provider);
-        let contract = GatewayContract::new(oracle_predeploy_address, Arc::clone(&provider));
+    let wallet = WalletManager::default().wallet;
+    let provider = Provider::<Ws>::connect(ethereum_wss_url).await.unwrap();
+    let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
+    let provider = Arc::new(provider);
+    let contract = GatewayContract::new(oracle_predeploy_address, Arc::clone(&provider));
 
-        // Fake signatures for now
-        let signatures = vec![Bytes::from(vec![0u8; 65])];
+    // Fake signatures for now
+    let signatures = vec![Bytes::from(vec![0u8; 65])];
 
-        tracing::info!("Fulfilling request: {:?}", event.filter.request_id);
-        match contract
-            .fulfill_request(event.filter.request_id, encode(&tokens).into(), signatures)
-            .send()
-            .await
-        {
-            Ok(pending_tx) => match pending_tx.await {
-                Ok(receipt) => {
-                    tracing::info!("Fulfilled request: {:?}", event.filter.request_id);
-                    tracing::trace!("Transaction receipt: {:?}", receipt);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to await transaction receipt: {:?}", e);
-                }
-            },
-            Err(e) => {
-                tracing::error!("Failed to send fulfill_request transaction: {:?}", e);
+    tracing::info!("Fulfilling request: {:?}", event.filter.request_id);
+    match contract
+        .fulfill_request(event.filter.request_id, encode(&tokens).into(), signatures)
+        .send()
+        .await
+    {
+        Ok(pending_tx) => match pending_tx.await {
+            Ok(receipt) => {
+                tracing::info!("Fulfilled request: {:?}", event.filter.request_id);
+                tracing::trace!("Transaction receipt: {:?}", receipt);
             }
+            Err(e) => {
+                tracing::error!("Failed to await transaction receipt: {:?}", e);
+            }
+        },
+        Err(e) => {
+            tracing::error!("Failed to send fulfill_request transaction: {:?}", e);
         }
-    });
+    }
     tracing::debug!("🍻 handle_event_decryption exit");
     Ok(())
 }
@@ -79,7 +73,6 @@ async fn decrypt(
     config: &GatewayConfig,
     request_id: U256,
     ct_handle: U256,
-    ct_type: u8,
     _ct_index: i64,
     block_number: u64,
 ) -> Result<Token, Box<dyn std::error::Error>> {
@@ -89,6 +82,7 @@ async fn decrypt(
         <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
             .get_ciphertext(client, ct_handle_bytes.to_vec(), block_number)
             .await?;
+    let ct_type = ct_handle_bytes[30];
     tracing::info!("🚀 request_id: {}, ct_type: {}", request_id, ct_type,);
     Ok(blockchain_impl(config)
         .await

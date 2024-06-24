@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
                     .from_block(last_block)
                     .address(config.ethereum.oracle_predeploy_address)
                     .event(
-                        "EventDecryption(uint256,(uint256,uint8)[],address,bytes4,uint256,uint256)",
+                        "EventDecryption(uint256,uint256[],address,bytes4,uint256,uint256,bool)",
                     ),
             )
             .await?;

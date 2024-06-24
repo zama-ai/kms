@@ -132,7 +132,7 @@ impl Publisher<DecryptionEvent> for DecryptionEventPublisher {
                     &Filter::new()
                         .from_block(last_block)
                         .address(self.config.ethereum.oracle_predeploy_address)
-                        .event(&self.config.ethereum.decryption_event_filter),
+                        .event("EventDecryption(uint256,uint256[],address,bytes4,uint256,uint256,bool)"),
                 )
                 .await
                 .unwrap();
@@ -308,6 +308,7 @@ impl GatewaySubscriber {
                 let kms = Arc::clone(&kms);
 
                 tokio::task::spawn(async move {
+                    let start = std::time::Instant::now();
                     match event {
                         GatewayEvent::Decryption(msg_event) => {
                             if let Err(e) = handle_event_decryption(
@@ -322,6 +323,7 @@ impl GatewaySubscriber {
                             println!("Received Message: {:?}", msg_event);
                         }
                         GatewayEvent::Reencryption(reencrypt_event) => {
+                            let start = std::time::Instant::now();
                             tracing::info!("🫐🫐🫐 Received Reencryption Event");
                             let values = reencrypt_event.values;
 
@@ -361,13 +363,17 @@ impl GatewaySubscriber {
                             let reencrypt_response = vec![reencrypt_first];
                             */
 
+                            let duration = start.elapsed();
+                            tracing::info!("⏱️ Reencryption Event Time elapsed: {:?}", duration);
                             let _ = reencrypt_event.sender.send(reencrypt_response);
                         }
                         GatewayEvent::KmsEvent(kms_event) => {
-                            println!("🤠 Received KmsEvent: {:?}", kms_event);
+                            tracing::info!("🤠 Received KmsEvent: {:?}", kms_event);
                             kms.receive(kms_event).await.unwrap();
                         }
                     }
+                    let duration = start.elapsed();
+                    tracing::info!("⏱️ Event Time elapsed: {:?}", duration);
                 });
             }
         });

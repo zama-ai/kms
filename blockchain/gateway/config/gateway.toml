@@ -37,9 +37,6 @@ test_async_decrypt_address = "99F460504563579922352932A42172B3c04a1420"
 # Address of the coprocessor to query for ciphertexts
 coprocessor_url = "http://127.0.0.1:8745/"
 
-# Decryption Event signature filter
-decryption_event_filter = "EventDecryption(uint256,(uint256,uint8)[],address,bytes4,uint256,uint256)"
-
 # KMS Settings
 # Configuration settings related to the Key Management System (KMS).
 [kms]
@@ -50,7 +47,7 @@ contract_address = "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0ph
 # Mnemonic phrase for accessing the KMS.
 # This is a human-readable string of words used to derive cryptographic keys.
 # It should be kept secure and private.
-mnemonic = "connect ginger time detail vocal hospital fantasy flower wish erosion chat junior vote bullet already tent electric wrong suspect general bounce ecology margin matrix"
+mnemonic = "bachelor similar spirit copper rely carbon web hobby conduct wrap conduct wire shine parrot erosion divert crucial balance lock reason price ignore educate open"
 
 # Base URL of the KMS service.
 # Used for making HTTP requests to the KMS service.
