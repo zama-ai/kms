@@ -1,6 +1,6 @@
 use super::{
     prf::{xor_u8_arr_in_place, PrfKey},
-    prss::create_sets,
+    prss::{create_sets, DSEP_AR},
 };
 use crate::{
     algebra::structure_traits::Ring,
@@ -16,11 +16,7 @@ use anyhow::Context;
 use async_trait::async_trait;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
-use sha3::{
-    digest::ExtendableOutput,
-    digest::{Update, XofReader},
-    Shake256,
-};
+use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 use tracing::instrument;
 
@@ -402,10 +398,11 @@ impl AgreeRandom for DummyAgreeRandom {
                     bytes.extend_from_slice(&p.to_le_bytes());
                 }
 
-                let mut hasher = Shake256::default();
+                let mut hasher = Sha3_256::new();
+                hasher.update(DSEP_AR);
                 hasher.update(&bytes);
-                let mut or = hasher.finalize_xof();
-                or.read(&mut r_a);
+                let or = hasher.finalize();
+                r_a.copy_from_slice(&or.as_slice()[0..KEY_BYTE_LEN]);
                 PrfKey(r_a)
             })
             .collect();
@@ -431,7 +428,7 @@ mod tests {
     };
     use crate::{
         algebra::residue_poly::ResiduePoly128,
-        commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, KEY_BYTE_LEN},
+        commitment::{Commitment, Opening, COMMITMENT_BYTE_LEN, DSEP_COMM, KEY_BYTE_LEN},
         execution::{
             runtime::{
                 party::Role,
@@ -449,16 +446,14 @@ mod tests {
         },
         networking::value::{AgreeRandomValue, NetworkValue},
         session_id::SessionId,
-        tests::helper::tests::get_networkless_base_session_for_parties,
-        tests::helper::tests_and_benches::execute_protocol_small,
+        tests::helper::{
+            tests::get_networkless_base_session_for_parties,
+            tests_and_benches::execute_protocol_small,
+        },
     };
     use aes_prng::AesRng;
     use rand::SeedableRng;
-    use sha3::{
-        digest::ExtendableOutput,
-        digest::{Update, XofReader},
-        Shake256,
-    };
+    use sha3::{Digest, Sha3_256};
     use std::collections::{HashMap, VecDeque};
     use tokio::task::JoinSet;
 
@@ -860,12 +855,13 @@ mod tests {
         let rcv_keys_opens = vec![vec![ko1.clone()], Vec::<(PrfKey, Opening)>::new()];
 
         // compute commitment for received key
-        let mut com_buf = [0u8; COMMITMENT_BYTE_LEN];
-        let mut hasher = Shake256::default();
-        hasher.update(&opening1.0);
-        hasher.update(&key1.0);
-        let mut or = hasher.finalize_xof();
-        or.read(&mut com_buf);
+        let mut hasher = Sha3_256::new();
+        hasher.update(DSEP_COMM);
+        hasher.update(opening1.0);
+        hasher.update(key1.0);
+        let or = hasher.finalize();
+
+        let com_buf: [u8; COMMITMENT_BYTE_LEN] = or.as_slice().try_into().expect("wrong length");
         let commitment1 = Commitment(com_buf);
         let mut rcv_coms = vec![vec![commitment1], Vec::<Commitment>::new()];
 

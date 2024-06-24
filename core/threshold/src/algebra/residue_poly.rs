@@ -931,6 +931,12 @@ impl ResiduePoly128 {
     }
 }
 
+/// Domain separator for the function `derive_challenges_from_coinflip`.
+///
+/// "LDS" stands for local double sharing
+/// but this is also used for local single sharing in the NIST spec.
+const DSEP_LDS: &[u8] = b"LDS";
+
 impl Derive for ResiduePoly128 {
     fn derive_challenges_from_coinflip(
         x: &Self,
@@ -939,6 +945,7 @@ impl Derive for ResiduePoly128 {
         roles: &[Role],
     ) -> HashMap<Role, Vec<Self>> {
         let mut hasher = Shake256::default();
+        hasher.update(DSEP_LDS);
         //Update hasher with x
         for x_coef in x.coefs {
             hasher.update(&x_coef.0.to_le_bytes());
@@ -1012,6 +1019,7 @@ impl Derive for ResiduePoly64 {
         roles: &[Role],
     ) -> std::collections::HashMap<Role, Vec<Self>> {
         let mut hasher = Shake256::default();
+        hasher.update(DSEP_LDS);
         //Update hasher with x
         for x_coef in x.coefs {
             hasher.update(&x_coef.0.to_le_bytes());

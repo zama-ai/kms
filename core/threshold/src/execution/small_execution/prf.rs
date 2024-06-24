@@ -8,7 +8,7 @@ use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
 use serde::{Deserialize, Serialize};
 
-///Trait required for PRSS executions
+/// Trait required for PRSS executions
 pub trait PRSSConversions {
     fn from_u128_chunks(coefs: Vec<u128>) -> Self;
     fn from_i128(value: i128) -> Self;

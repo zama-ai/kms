@@ -1,10 +1,6 @@
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use sha3::{
-    digest::ExtendableOutput,
-    digest::{Update, XofReader},
-    Shake256,
-};
+use sha3::{Digest, Sha3_256};
 
 /// Byte size of a typical key or opening value (currently 16 byte = 128 bit)
 pub(crate) const KEY_BYTE_LEN: usize = 16;
@@ -18,14 +14,19 @@ pub struct Commitment(pub [u8; COMMITMENT_BYTE_LEN]);
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Hash, Eq)]
 pub struct Opening(pub [u8; KEY_BYTE_LEN]);
 
+/// Domain separator for commitments.
+pub(crate) const DSEP_COMM: &[u8; 4] = b"COMM";
+
 /// hash the given message and opening to compute the 256-bit commitment in the ROM
 fn commitment_inner_hash(msg: &[u8], o: &Opening) -> Commitment {
-    let mut com = [0u8; COMMITMENT_BYTE_LEN];
-    let mut hasher = Shake256::default();
-    hasher.update(&o.0);
+    let mut hasher = Sha3_256::new();
+    hasher.update(DSEP_COMM);
+    hasher.update(o.0);
     hasher.update(msg);
-    let mut or = hasher.finalize_xof();
-    or.read(&mut com);
+    let digest = hasher.finalize();
+
+    // the try_into should never fail because our tests will guarantee the lengths are correct
+    let com: [u8; COMMITMENT_BYTE_LEN] = digest.as_slice().try_into().expect("wrong length");
     Commitment(com)
 }
 

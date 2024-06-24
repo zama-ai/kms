@@ -29,11 +29,7 @@ use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use sha3::{
-    digest::ExtendableOutput,
-    digest::{Update, XofReader},
-    Shake256,
-};
+use sha3::{Digest, Sha3_256};
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
 use tracing::instrument;
@@ -652,6 +648,9 @@ fn inverse_vdm<Z: Ring + RingEmbed>(rows: usize, columns: usize) -> anyhow::Resu
     Ok(init_vdm::<Z>(columns, rows)?.reversed_axes())
 }
 
+/// Domain separator for `agree_random_robust`.
+pub(crate) const DSEP_AR: &[u8; 2] = b"AR";
+
 #[instrument(name="AgreeRandom-Robust",skip(session,shares),fields(session_id = ?session.session_id(),own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
 async fn agree_random_robust<
     Z: Ring + ErrorCorrect,
@@ -668,12 +667,13 @@ async fn agree_random_robust<
     let s_vec = r_vec
         .iter()
         .map(|cur_r| {
-            let mut digest = [0u8; KEY_BYTE_LEN];
-            let mut hasher = Shake256::default();
+            let mut inner = [0u8; KEY_BYTE_LEN];
+            let mut hasher = Sha3_256::new();
+            hasher.update(DSEP_AR);
             hasher.update(&cur_r.to_byte_vec());
-            let mut or = hasher.finalize_xof();
-            or.read(&mut digest);
-            PrfKey(digest)
+            let digest = hasher.finalize();
+            inner.copy_from_slice(&digest.as_slice()[0..KEY_BYTE_LEN]);
+            PrfKey(inner)
         })
         .collect_vec();
     Ok(s_vec)
@@ -1132,10 +1132,11 @@ mod tests {
                     bytes.extend_from_slice(&p.to_le_bytes());
                 }
 
-                let mut hasher = Shake256::default();
+                let mut hasher = Sha3_256::new();
+                hasher.update(DSEP_AR);
                 hasher.update(&bytes);
-                let mut or = hasher.finalize_xof();
-                or.read(&mut r_a);
+                let or = hasher.finalize();
+                r_a.copy_from_slice(&or.as_slice()[0..KEY_BYTE_LEN]);
                 PrfKey(r_a)
             })
             .collect();

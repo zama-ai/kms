@@ -116,6 +116,7 @@ pub trait ErrorCorrect: Ring {
 }
 
 pub trait Derive: Sized {
+    /// This is known as H_{LDS} from the NIST spec.
     fn derive_challenges_from_coinflip(
         x: &Self,
         g: usize,
