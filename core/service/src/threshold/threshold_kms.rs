@@ -37,6 +37,7 @@ use distributed_decryption::execution::endpoints::decryption::{
 use distributed_decryption::execution::endpoints::keygen::{
     distributed_keygen_z128, PrivateKeySet,
 };
+use distributed_decryption::execution::large_execution::vss::RealVss;
 use distributed_decryption::execution::online::preprocessing::orchestrator::PreprocessingOrchestrator;
 use distributed_decryption::execution::online::preprocessing::{
     create_memory_factory, create_redis_factory, DKGPreprocessing, PreprocessorFactory,
@@ -45,7 +46,6 @@ use distributed_decryption::execution::runtime::party::{Identity, Role, RoleAssi
 use distributed_decryption::execution::runtime::session::{
     BaseSessionStruct, DecryptionMode, ParameterHandles, SessionParameters, SmallSession,
 };
-use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandomWithAbort;
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
 use distributed_decryption::execution::tfhe_internals::parameters::{
     Ciphertext64, DKGParams, DKGParamsRegular, DKGParamsSnS,
@@ -655,12 +655,8 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         let mut base_session = self.session_preparer.make_base_session(session_id).await?;
 
         tracing::info!("Starting PRSS for identity {}.", own_identity);
-        let prss_setup_obj: PRSSSetup<ResiduePoly128> = PRSSSetup::init_with_abort::<
-            RealAgreeRandomWithAbort,
-            AesRng,
-            BaseSessionStruct<AesRng, SessionParameters>,
-        >(&mut base_session)
-        .await?;
+        let prss_setup_obj: PRSSSetup<ResiduePoly128> =
+            PRSSSetup::robust_init(&mut base_session, &RealVss::default()).await?;
 
         let mut guarded_prss_setup = self.prss_setup.write().await;
         *guarded_prss_setup = Some(prss_setup_obj.clone());
