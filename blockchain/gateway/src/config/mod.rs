@@ -197,7 +197,7 @@ mod tests {
             );
             assert_eq!(
             gateway_config.kms.mnemonic,
-            "connect ginger time detail vocal hospital fantasy flower wish erosion chat junior vote bullet already tent electric wrong suspect general bounce ecology margin matrix"
+            "bachelor similar spirit copper rely carbon web hobby conduct wrap conduct wire shine parrot erosion divert crucial balance lock reason price ignore educate open"
         );
             assert_eq!(gateway_config.kms.address, "http://localhost:9090");
             assert_eq!(
