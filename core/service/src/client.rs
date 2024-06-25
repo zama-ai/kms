@@ -3,8 +3,8 @@ use crate::cryptography::der_types::{
     SigncryptionPrivKey, SigncryptionPubKey,
 };
 use crate::cryptography::signcryption::{
-    decrypt_signcryption, encryption_key_generation, hash_element, sign_eip712, ReencryptSol,
-    RND_SIZE,
+    decrypt_signcryption, encryption_key_generation, hash_element,
+    insecure_decrypt_ignoring_signature, sign_eip712, ReencryptSol, RND_SIZE,
 };
 use crate::kms::{
     AggregatedReencryptionResponse, FheType, ReencryptionRequest, ReencryptionRequestPayload,
@@ -1378,6 +1378,39 @@ impl Client {
         }
     }
 
+    /// Processes the aggregated reencryption response to attempt to decrypt
+    /// the encryption of the secret shared plaintext and returns this.
+    /// This function does *not* do any verification and is thus insecure and should be used only for testing.
+    /// TODO hide behind flag for insecure function?
+    pub fn insecure_process_reencryption_resp(
+        &self,
+        agg_resp: &AggregatedReencryptionResponse,
+        enc_pk: &PublicEncKey,
+        enc_sk: &PrivateEncKey,
+    ) -> anyhow::Result<Option<Plaintext>> {
+        let client_keys = SigncryptionPair {
+            sk: SigncryptionPrivKey {
+                signing_key: self.client_sk.clone(),
+                decryption_key: enc_sk.clone(),
+            },
+            pk: SigncryptionPubKey {
+                verification_key: self.client_pk.clone(),
+                enc_key: enc_pk.clone(),
+            },
+        };
+
+        // Execute simplified and faster flow for the centralized case
+        // Observe that we don't encode exactly the same in the centralized case and in the
+        // distributed case. For the centralized case we directly encode the [Plaintext]
+        // object whereas for the distributed we encode the plain text as a
+        // Vec<ResiduePoly<Z128>>
+        if agg_resp.responses.len() <= 1 {
+            self.insecure_centralized_reencryption_resp(agg_resp, &client_keys)
+        } else {
+            self.insecure_threshold_reencryption_resp(agg_resp, &client_keys)
+        }
+    }
+
     /// Validates the aggregated decryption response by checking:
     /// - The responses agree on metadata like shares needed
     /// - The response matches the original request
@@ -1558,6 +1591,7 @@ impl Client {
         Ok(Some(resp_parsed))
     }
 
+    /// Decrypt the reencryption response from the centralized KMS and verify that the signatures are valid
     fn centralized_reencryption_resp(
         &self,
         request: ReencryptionRequest,
@@ -1594,6 +1628,32 @@ impl Client {
         }
     }
 
+    /// Decrypt the reencryption response from the centralized KMS.
+    /// This function does *not* do any verification and is thus insecure and should be used only for testing.
+    /// TODO hide behind flag for insecure function?
+    fn insecure_centralized_reencryption_resp(
+        &self,
+        agg_resp: &AggregatedReencryptionResponse,
+        client_keys: &SigncryptionPair,
+    ) -> anyhow::Result<Option<Plaintext>> {
+        let resp = some_or_err(
+            agg_resp.responses.values().last(),
+            "Response does not exist".to_owned(),
+        )?;
+
+        match crate::cryptography::signcryption::insecure_decrypt_ignoring_signature(
+            &resp.signcrypted_ciphertext,
+            client_keys,
+        )? {
+            Some(decryption_share) => Ok(Some(decryption_share)),
+            None => {
+                tracing::warn!("Could decrypt or validate signcrypted response");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Decrypt the reencryption responses from the threshold KMS and verify that the signatures are valid
     fn threshold_reencryption_resp(
         &self,
         request: ReencryptionRequest,
@@ -1625,6 +1685,99 @@ impl Client {
         Ok(Some(decrypted_blocks_to_plaintext(
             &self.params,
             req_payload.fhe_type(),
+            recon_blocks,
+        )?))
+    }
+
+    /// Decrypt the reencryption response from the threshold KMS.
+    /// This function does *not* do any verification and is thus insecure and should be used only for testing.
+    /// TODO hide behind flag for insecure function?
+    fn insecure_threshold_reencryption_resp(
+        &self,
+        agg_resp: &AggregatedReencryptionResponse,
+        client_keys: &SigncryptionPair,
+    ) -> anyhow::Result<Option<Plaintext>> {
+        //Do not actually validate responses
+        let validated_resps = &agg_resp.responses;
+
+        //Recover sharings
+        let mut opt_sharings = None;
+
+        //Trust all responses have all expected blocks
+        for (cur_role_id, cur_resp) in validated_resps {
+            let shares =
+                insecure_decrypt_ignoring_signature(&cur_resp.signcrypted_ciphertext, client_keys)?;
+            if let Some(shares) = shares {
+                let cipher_blocks_share: Vec<ResiduePoly<Z128>> =
+                    serde_asn1_der::from_bytes(&shares.bytes)?;
+                let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
+                for cur_block_share in cipher_blocks_share {
+                    cur_blocks.push(cur_block_share);
+                }
+                if opt_sharings.is_none() {
+                    opt_sharings = Some(Vec::new());
+                    for _i in 0..cur_blocks.len() {
+                        (opt_sharings.as_mut()).unwrap().push(ShamirSharings::new());
+                    }
+                }
+                let num_values = cur_blocks.len();
+                fill_indexed_shares(
+                    opt_sharings.as_mut().unwrap(),
+                    cur_blocks,
+                    num_values,
+                    Role::indexed_by_one(*cur_role_id as usize),
+                )?;
+            }
+        }
+        let sharings = opt_sharings.unwrap();
+        let num_parties = validated_resps.len();
+        let mut decrypted_blocks = Vec::new();
+        let degree = num_parties / 3;
+        for cur_block_shares in sharings {
+            // NOTE: this performs optimistic reconstruction
+            if let Ok(Some(r)) =
+                reconstruct_w_errors_sync(num_parties, degree, degree, &cur_block_shares)
+            {
+                decrypted_blocks.push(r);
+            } else {
+                return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
+            }
+        }
+        let recon_blocks = reconstruct_message(Some(decrypted_blocks), &self.params)?;
+
+        //Deduce fhe_type from recon_blocks and message_modulus
+        let bits_in_block = self.params.message_modulus_log() as usize;
+        let num_blocks = recon_blocks.len();
+
+        let total_num_bits = bits_in_block * num_blocks;
+
+        let fhe_type = if total_num_bits == bits_in_block {
+            FheType::Ebool
+        } else if total_num_bits == 4 {
+            FheType::Euint4
+        } else if total_num_bits == 8 {
+            FheType::Euint8
+        } else if total_num_bits == 16 {
+            FheType::Euint16
+        } else if total_num_bits == 32 {
+            FheType::Euint32
+        } else if total_num_bits == 64 {
+            FheType::Euint64
+        } else if total_num_bits == 128 {
+            FheType::Euint128
+        } else if total_num_bits == 160 {
+            FheType::Euint160
+        } else if total_num_bits == 256 {
+            FheType::Euint256
+        } else if total_num_bits == 2048 {
+            FheType::Euint2048
+        } else {
+            panic!("Unexpected type: total_num_bits {total_num_bits}")
+        };
+
+        Ok(Some(decrypted_blocks_to_plaintext(
+            &self.params,
+            fhe_type,
             recon_blocks,
         )?))
     }
@@ -2379,6 +2532,7 @@ pub(crate) mod tests {
         const TRIES: usize = 60;
         let mut joined_responses = vec![];
         for count in 0..TRIES {
+            joined_responses = vec![];
             tokio::time::sleep(std::time::Duration::from_secs(5 * parallelism as u64)).await;
 
             let mut tasks_get = JoinSet::new();
@@ -2402,15 +2556,15 @@ pub(crate) mod tests {
                 responses_get.push((j, req_id, resp.into_inner()));
             }
 
-            // fail if we can't find a response
-            if count == TRIES - 1 {
-                panic!("could not get crs after {} tries", count);
-            }
-
             // add the responses in this iteration to the bigger vector
             joined_responses.append(&mut responses_get);
             if joined_responses.len() == AMOUNT_PARTIES * parallelism {
                 break;
+            }
+
+            // fail if we can't find a response
+            if count == TRIES - 1 {
+                panic!("could not get crs after {} tries", count);
             }
         }
 
@@ -2720,29 +2874,35 @@ pub(crate) mod tests {
         assert!(kms_server.await.unwrap_err().is_cancelled());
     }
 
+    #[rstest::rstest]
     #[tokio::test]
     #[serial]
-    async fn test_reencryption_centralized() {
+    async fn test_reencryption_centralized(#[values(true, false)] secure: bool) {
         reencryption_centralized(
             TEST_PARAM_PATH,
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
             false,
             TypedPlaintext::U8(48),
             7,
+            secure,
         )
         .await;
     }
 
     #[cfg(feature = "wasm_tests")]
+    #[rstest::rstest]
     #[tokio::test]
     #[serial]
-    async fn test_reencryption_centralized_and_write_transcript() {
+    async fn test_reencryption_centralized_and_write_transcript(
+        #[values(true, false)] secure: bool,
+    ) {
         reencryption_centralized(
             TEST_PARAM_PATH,
             &TEST_CENTRAL_KEY_ID.to_string(),
             true,
             TypedPlaintext::U8(48),
             1, // wasm tests are single-threaded
+            secure,
         )
         .await;
     }
@@ -2760,13 +2920,17 @@ pub(crate) mod tests {
     // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])))]
     #[tokio::test]
     #[serial]
-    async fn default_reencryption_centralized_and_write_transcript(#[case] msg: TypedPlaintext) {
+    async fn default_reencryption_centralized_and_write_transcript(
+        #[case] msg: TypedPlaintext,
+        #[values(true, false)] secure: bool,
+    ) {
         reencryption_centralized(
             DEFAULT_PARAM_PATH,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             true,
             msg,
             1, // wasm tests are single-threaded
+            secure,
         )
         .await;
     }
@@ -2791,6 +2955,7 @@ pub(crate) mod tests {
     async fn default_reencryption_centralized(
         #[case] msg: TypedPlaintext,
         #[case] parallelism: usize,
+        #[values(true, false)] secure: bool,
     ) {
         reencryption_centralized(
             DEFAULT_PARAM_PATH,
@@ -2798,6 +2963,7 @@ pub(crate) mod tests {
             false,
             msg,
             parallelism,
+            secure,
         )
         .await;
     }
@@ -2817,6 +2983,7 @@ pub(crate) mod tests {
         _write_transcript: bool,
         msg: TypedPlaintext,
         parallelism: usize,
+        secure: bool,
     ) {
         assert!(parallelism > 0);
         let (kms_server, kms_client, mut internal_client) =
@@ -2959,10 +3126,18 @@ pub(crate) mod tests {
                 responses: HashMap::from([(1, inner_response.clone())]),
             };
 
-            let plaintext = internal_client
-                .process_reencryption_resp(Some(req.clone()), &responses, enc_pk, enc_sk)
-                .unwrap()
-                .unwrap();
+            let plaintext = if secure {
+                internal_client
+                    .process_reencryption_resp(Some(req.clone()), &responses, enc_pk, enc_sk)
+                    .unwrap()
+                    .unwrap()
+            } else {
+                internal_client.server_pks = HashMap::new();
+                internal_client
+                    .insecure_process_reencryption_resp(&responses, enc_pk, enc_sk)
+                    .unwrap()
+                    .unwrap()
+            };
 
             assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
 
@@ -3143,29 +3318,33 @@ pub(crate) mod tests {
         }
     }
 
+    #[rstest::rstest]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_reencryption_threshold() {
+    async fn test_reencryption_threshold(#[values(true, false)] secure: bool) {
         reencryption_threshold(
             TEST_PARAM_PATH,
             &TEST_THRESHOLD_KEY_ID.to_string(),
             false,
             TypedPlaintext::U8(42),
             4,
+            secure,
         )
         .await;
     }
 
     #[cfg(feature = "wasm_tests")]
+    #[rstest::rstest]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn test_reencryption_threshold_and_write_transcript() {
+    async fn test_reencryption_threshold_and_write_transcript(#[values(true, false)] secure: bool) {
         reencryption_threshold(
             TEST_PARAM_PATH,
             &TEST_THRESHOLD_KEY_ID.to_string(),
             true,
             TypedPlaintext::U8(42),
             1,
+            secure,
         )
         .await;
     }
@@ -3184,13 +3363,17 @@ pub(crate) mod tests {
     #[ignore]
     #[tokio::test]
     #[serial]
-    async fn default_reencryption_threshold_and_write_transcript(#[case] msg: TypedPlaintext) {
+    async fn default_reencryption_threshold_and_write_transcript(
+        #[case] msg: TypedPlaintext,
+        #[values(true, false)] secure: bool,
+    ) {
         reencryption_threshold(
             DEFAULT_PARAM_PATH,
             &DEFAULT_THRESHOLD_KEY_ID.to_string(),
             true,
             msg,
             1, // wasm tests are single-threaded
+            secure,
         )
         .await;
     }
@@ -3213,6 +3396,7 @@ pub(crate) mod tests {
     async fn default_reencryption_threshold(
         #[case] msg: TypedPlaintext,
         #[case] parallelism: usize,
+        #[values(true, false)] secure: bool,
     ) {
         reencryption_threshold(
             DEFAULT_PARAM_PATH,
@@ -3220,6 +3404,7 @@ pub(crate) mod tests {
             false,
             msg,
             parallelism,
+            secure,
         )
         .await;
     }
@@ -3230,6 +3415,7 @@ pub(crate) mod tests {
         write_transcript: bool,
         msg: TypedPlaintext,
         parallelism: usize,
+        secure: bool,
     ) {
         assert!(parallelism > 0);
         _ = write_transcript;
@@ -3373,10 +3559,19 @@ pub(crate) mod tests {
                     }
                 }));
             let agg = AggregatedReencryptionResponse { responses };
-            let plaintext = internal_client
-                .process_reencryption_resp(Some(req.clone()), &agg, enc_pk, enc_sk)
-                .unwrap()
-                .unwrap();
+
+            let plaintext = if secure {
+                internal_client
+                    .process_reencryption_resp(Some(req.clone()), &agg, enc_pk, enc_sk)
+                    .unwrap()
+                    .unwrap()
+            } else {
+                internal_client.server_pks = HashMap::new();
+                internal_client
+                    .insecure_process_reencryption_resp(&agg, enc_pk, enc_sk)
+                    .unwrap()
+                    .unwrap()
+            };
             assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
             match msg {
                 TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),

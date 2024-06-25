@@ -347,6 +347,9 @@ where
     Ok(hash_element(&to_hash))
 }
 
+/// decrypt a signcrypted message and verify the signature
+///
+/// this fn also checks that the provided link parameter corresponds to the link in the signcryption payload
 pub(crate) fn decrypt_signcryption(
     cipher: &[u8],
     link: &[u8],
@@ -367,6 +370,35 @@ pub(crate) fn decrypt_signcryption(
         tracing::warn!("Link validation for signcryption failed");
         return Ok(None);
     }
+    Ok(Some(signcrypted_msg.plaintext))
+}
+
+/// Decrypt a signcrypted message and ignore the signature
+/// This function does *not* do any verification and is thus insecure and should be used only for testing.
+/// TODO hide behind flag for insecure function?
+pub(crate) fn insecure_decrypt_ignoring_signature(
+    cipher: &[u8],
+    client_keys: &SigncryptionPair,
+) -> anyhow::Result<Option<Plaintext>> {
+    let cipher: Cipher = from_bytes(cipher)?;
+
+    let nonce = Nonce::from_slice(cipher.nonce.as_bytes());
+    let dec_box = SalsaBox::new(&cipher.server_enc_key.0, &client_keys.sk.decryption_key.0);
+    let decrypted_plaintext = match dec_box.decrypt(nonce, cipher.bytes.as_ref()) {
+        Ok(decrypted_plaintext) => decrypted_plaintext,
+        Err(e) => {
+            return Err(anyhow_error_and_warn_log(format!(
+                "Could not decrypt message. Failed with error: {:?}",
+                e
+            )));
+        }
+    };
+
+    // strip off the signature bytes
+    let msg_len = decrypted_plaintext.len() - 2 * DIGEST_BYTES - SIG_SIZE;
+    let msg = &decrypted_plaintext[..msg_len];
+    let signcrypted_msg: SigncryptionPayload = serde_asn1_der::from_bytes(msg)?;
+
     Ok(Some(signcrypted_msg.plaintext))
 }
 
