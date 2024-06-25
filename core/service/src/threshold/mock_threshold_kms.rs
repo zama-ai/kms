@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
 
+use bincode::serialize;
 use tokio::task::JoinHandle;
 use tonic::{transport, Request, Response, Status};
 
@@ -117,8 +118,7 @@ impl Decryptor for DummyDecryptor {
                 servers_needed: 0,
                 verification_key: vec![],
                 digest: "dummy digest".as_bytes().to_vec(),
-                plaintext: serde_asn1_der::to_vec(&Plaintext::new(42, crate::kms::FheType::Euint8))
-                    .unwrap(),
+                plaintext: serialize(&Plaintext::new(42, crate::kms::FheType::Euint8)).unwrap(),
             }),
         }))
     }

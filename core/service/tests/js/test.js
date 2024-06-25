@@ -33,7 +33,7 @@ test('crypto_box', (_t) => {
 
     let pk_buf = cryptobox_pk_to_u8vec(bob_pk);
     let pk_buf_2 = cryptobox_pk_to_u8vec(alice_pk);
-    assert.deepEqual(34, pk_buf.length);
+    assert.deepEqual(40, pk_buf.length);
     assert.notDeepEqual(pk_buf, pk_buf_2);
 
     const x = new Uint8Array([21, 31, 1, 2, 3]);
@@ -83,20 +83,16 @@ test('threshold reencryption response', (_t) => {
 });
 
 test('new client', (_t) => {
-    const public_sig_key = new Uint8Array([
-        4, 33, 3, 85, 67, 103, 18, 94, 225,
-        252, 7, 1, 61, 75, 2, 61, 88, 226,
-        154, 45, 101, 182, 67, 207, 198, 61, 95,
-        1, 208, 126, 28, 6, 15, 105, 99
+    const server_pk = new Uint8Array([
+        2, 202, 118, 214, 19, 106, 39, 216, 225, 169, 207, 51, 129, 179, 226, 0, 109, 197, 49, 143, 238, 4, 214, 34, 188, 182, 30,
+        67, 235, 13, 224, 104, 147
+
     ]);
-    const client_sig_key = new Uint8Array([
-        4, 33, 2, 56, 109, 153, 78, 220,
-        11, 175, 140, 47, 11, 165, 160, 218,
-        95, 68, 4, 155, 118, 226, 161, 185,
-        36, 210, 228, 244, 194, 77, 12, 90,
-        88, 122, 242
+    const client_pk = new Uint8Array([
+        2, 190, 131, 237, 176, 0, 13, 171, 152, 220, 41, 77, 205, 59, 208, 48, 37, 75, 0, 159, 68, 39, 28, 30, 76, 96, 11, 61, 38,
+        66, 2, 129, 0
     ]);
-    let client = new_client([u8vec_to_public_sig_key(public_sig_key)], null, u8vec_to_public_sig_key(client_sig_key), 0, 'default');
+    let client = new_client([u8vec_to_public_sig_key(server_pk)], [1], u8vec_to_public_sig_key(client_pk), 0, 'default');
 
     // create a request
     let eipmsg = new_eip712_domain("dummy", "1", new Uint8Array([1, 2, 3]), "0x010203", new Uint8Array([1, 2, 3]));

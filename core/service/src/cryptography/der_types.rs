@@ -104,7 +104,7 @@ impl<'de> Visitor<'de> for PrivateEncKeyVisitor {
 pub struct PublicSigKey {
     pub(crate) pk: k256::ecdsa::VerifyingKey,
 }
-/// Serialize the public key using SEC1
+/// Serialize the public key as a SEC1 point, which is what is used in Ethereum
 impl Serialize for PublicSigKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

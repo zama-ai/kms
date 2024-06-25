@@ -79,7 +79,6 @@ reqwest = { version = "0.12.4", features = ["json"], optional = true }
 rsa = { version = "0.9.6", features = ["sha2"] }
 serde = { version = "1.0.203", features = ["derive", "rc"] }
 serde_json = "1.0"
-serde_asn1_der = "0.8.0"
 serde_bytes = "0.11"
 serial_test = "3.0.0"
 sha3 = "0.10.8"

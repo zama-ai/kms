@@ -19,13 +19,13 @@ use ::signature::{Signer, Verifier};
 #[cfg(feature = "non-wasm")]
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
+use bincode::{deserialize, serialize};
 use crypto_box::aead::{Aead, AeadCore};
 use crypto_box::{Nonce, SalsaBox, SecretKey};
 use k256::ecdsa::SigningKey;
 use nom::AsBytes;
 use rand::{CryptoRng, RngCore};
 use serde::Serialize;
-use serde_asn1_der::{from_bytes, to_vec};
 use sha3::{Digest, Sha3_256};
 
 const DIGEST_BYTES: usize = 256 / 8; // SHA3-256 digest
@@ -150,8 +150,8 @@ where
     // Sign msg || H(client_verf_key) || H(client_enc_key)
     let to_sign = [
         msg.as_ref(),
-        &hash_element(&to_vec(client_verf_key)?),
-        &hash_element(&to_vec(client_pk)?),
+        &serialize_hash_element(client_verf_key)?,
+        &serialize_hash_element(client_pk)?,
     ]
     .concat();
     let sig: k256::ecdsa::Signature = server_sig_key.sk.sign(to_sign.as_ref());
@@ -169,10 +169,10 @@ where
     let to_encrypt = [
         msg.as_ref(),
         &sig.to_bytes(),
-        &hash_element(&to_vec(&PublicSigKey {
+        &serialize_hash_element(&PublicSigKey {
             pk: SigningKey::verifying_key(&server_sig_key.sk).to_owned(),
-        })?),
-        &hash_element(&to_vec(&server_enc_pk)?),
+        })?,
+        &serialize_hash_element(&server_enc_pk)?,
     ]
     .concat();
 
@@ -239,14 +239,14 @@ fn parse_msg(
     let server_enc_key_digest = &decrypted_plaintext
         [(msg_len + SIG_SIZE + DIGEST_BYTES)..(msg_len + 2 * DIGEST_BYTES + SIG_SIZE)];
     // Verify verification key digest
-    if hash_element(&to_vec(server_verf_key)?) != server_ver_key_digest {
+    if serialize_hash_element(server_verf_key)? != server_ver_key_digest {
         return Err(anyhow_error_and_warn_log(format!(
             "Unexpected verification key digest {:X?} was part of the decryption",
             server_ver_key_digest
         )));
     }
     // Verify encryption key digest
-    if hash_element(&to_vec(server_enc_key)?) != server_enc_key_digest {
+    if serialize_hash_element(server_enc_key)? != server_enc_key_digest {
         return Err(anyhow_error_and_warn_log(format!(
             "Unexpected encryption key digest {:X?} was part of the decryption",
             server_enc_key
@@ -264,7 +264,7 @@ fn check_signature(
     server_verf_key: &PublicSigKey,
     client_pk: &SigncryptionPubKey,
 ) -> bool {
-    let verf_key_digest = match to_vec(&client_pk.verification_key) {
+    let verf_key_digest = match serialize(&client_pk.verification_key) {
         Ok(verf_key_digest) => verf_key_digest,
         Err(_) => {
             tracing::warn!(
@@ -274,7 +274,7 @@ fn check_signature(
             return false;
         }
     };
-    let enc_key_digest = match to_vec(&client_pk.enc_key) {
+    let enc_key_digest = match serialize(&client_pk.enc_key) {
         Ok(enc_key_digest) => enc_key_digest,
         Err(_) => {
             tracing::warn!("Could not serialize encryption key {:?}", client_pk.enc_key);
@@ -330,12 +330,11 @@ where
 }
 
 /// Serialize an element and hash it using a cryptographic hash function.
-#[cfg(any(feature = "testing", feature = "non-wasm"))]
 pub(crate) fn serialize_hash_element<T>(msg: &T) -> anyhow::Result<Vec<u8>>
 where
     T: Serialize,
 {
-    let to_hash = match to_vec(msg) {
+    let to_hash = match serialize(msg) {
         Ok(to_hash) => to_hash,
         Err(e) => {
             return Err(anyhow_error_and_warn_log(format!(
@@ -356,7 +355,7 @@ pub(crate) fn decrypt_signcryption(
     client_keys: &SigncryptionPair,
     server_verf_key: &PublicSigKey,
 ) -> anyhow::Result<Option<Plaintext>> {
-    let cipher: Cipher = from_bytes(cipher)?;
+    let cipher: Cipher = deserialize(cipher)?;
     let decrypted_signcryption = match validate_and_decrypt(&cipher, client_keys, server_verf_key)?
     {
         Some(decrypted_signcryption) => decrypted_signcryption,
@@ -365,7 +364,7 @@ pub(crate) fn decrypt_signcryption(
             return Ok(None);
         }
     };
-    let signcrypted_msg: SigncryptionPayload = serde_asn1_der::from_bytes(&decrypted_signcryption)?;
+    let signcrypted_msg: SigncryptionPayload = bincode::deserialize(&decrypted_signcryption)?;
     if link != signcrypted_msg.link {
         tracing::warn!("Link validation for signcryption failed");
         return Ok(None);
@@ -380,7 +379,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     cipher: &[u8],
     client_keys: &SigncryptionPair,
 ) -> anyhow::Result<Option<Plaintext>> {
-    let cipher: Cipher = from_bytes(cipher)?;
+    let cipher: Cipher = deserialize(cipher)?;
 
     let nonce = Nonce::from_slice(cipher.nonce.as_bytes());
     let dec_box = SalsaBox::new(&cipher.server_enc_key.0, &client_keys.sk.decryption_key.0);
@@ -397,7 +396,7 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
     // strip off the signature bytes
     let msg_len = decrypted_plaintext.len() - 2 * DIGEST_BYTES - SIG_SIZE;
     let msg = &decrypted_plaintext[..msg_len];
-    let signcrypted_msg: SigncryptionPayload = serde_asn1_der::from_bytes(msg)?;
+    let signcrypted_msg: SigncryptionPayload = deserialize(msg)?;
 
     Ok(Some(signcrypted_msg.plaintext))
 }
@@ -405,16 +404,16 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
 #[cfg(test)]
 mod tests {
     use super::{PrivateSigKey, PublicSigKey, SigncryptionPair};
-    use crate::cryptography::der_types::Signature;
     use crate::cryptography::request::{ephemeral_key_generation, ClientRequest};
     use crate::cryptography::signcryption::{
-        check_signature, encryption_key_generation, hash_element, internal_verify_sig, parse_msg,
-        sign, signcrypt, validate_and_decrypt, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
+        check_signature, encryption_key_generation, internal_verify_sig, parse_msg, sign,
+        signcrypt, validate_and_decrypt, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
     };
+    use crate::cryptography::{der_types::Signature, signcryption::serialize_hash_element};
     use aes_prng::AesRng;
+    use bincode::{deserialize, serialize};
     use k256::ecdsa::SigningKey;
     use rand::{CryptoRng, RngCore, SeedableRng};
-    use serde_asn1_der::{from_bytes, to_vec};
     use signature::Signer;
     use tracing_test::traced_test;
 
@@ -474,21 +473,21 @@ mod tests {
             &server_sig_key,
         )
         .unwrap();
-        // Observe that the methods from serde_asn1_der is used to make an en-decoding in DER ASN1
-        let enc_req = to_vec(&request).unwrap();
-        let dec_req = from_bytes(&enc_req).unwrap();
+        // Observe that the methods from bincode are used to make an en-decoding
+        let enc_req = serialize(&request).unwrap();
+        let dec_req: ClientRequest = deserialize(&enc_req).unwrap();
         assert_eq!(request, dec_req);
-        let enc_pk = to_vec(&client_signcryption_keys.pk).unwrap();
-        let dec_pk = from_bytes(&enc_pk).unwrap();
+        let enc_pk = serialize(&client_signcryption_keys.pk).unwrap();
+        let dec_pk = deserialize(&enc_pk).unwrap();
         assert_eq!(client_signcryption_keys.pk, dec_pk);
-        let enc_cipher = to_vec(&cipher).unwrap();
-        let dec_cipher = from_bytes(&enc_cipher).unwrap();
+        let enc_cipher = serialize(&cipher).unwrap();
+        let dec_cipher = deserialize(&enc_cipher).unwrap();
         assert_eq!(cipher, dec_cipher);
-        let enc_sig_key = to_vec(&server_sig_key).unwrap();
-        let dec_sig_key: PrivateSigKey = from_bytes(&enc_sig_key).unwrap();
+        let enc_sig_key = serialize(&server_sig_key).unwrap();
+        let dec_sig_key: PrivateSigKey = deserialize(&enc_sig_key).unwrap();
         assert_eq!(server_sig_key, dec_sig_key);
-        let enc_verf_key = to_vec(&server_verf_key).unwrap();
-        let dec_verf_key: PublicSigKey = from_bytes(&enc_verf_key).unwrap();
+        let enc_verf_key = serialize(&server_verf_key).unwrap();
+        let dec_verf_key: PublicSigKey = deserialize(&enc_verf_key).unwrap();
         assert_eq!(server_verf_key, dec_verf_key);
     }
 
@@ -573,7 +572,7 @@ mod tests {
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
         let (server_enc_key, _server_dec_key) = encryption_key_generation(&mut rng);
         let mut to_encrypt = [0_u8; 1 + 2 * DIGEST_BYTES + SIG_SIZE].to_vec();
-        let key_digest = hash_element(&to_vec(&server_verf_key).unwrap());
+        let key_digest = serialize_hash_element(&server_verf_key).unwrap();
         // Set the correct verification key so that part of `parse_msg` won't fail
         to_encrypt.splice(
             1 + SIG_SIZE..1 + SIG_SIZE + DIGEST_BYTES,
@@ -620,8 +619,8 @@ mod tests {
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let to_sign = [
             msg,
-            &hash_element(&to_vec(&client_signcryption_keys.pk.verification_key).unwrap()),
-            &hash_element(&to_vec(&client_signcryption_keys.pk.enc_key).unwrap()),
+            &serialize_hash_element(&client_signcryption_keys.pk.verification_key).unwrap(),
+            &serialize_hash_element(&client_signcryption_keys.pk.enc_key).unwrap(),
         ]
         .concat();
         let sig = Signature {

@@ -24,8 +24,8 @@ use crate::util::file_handling::read_as_json;
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
 use crate::{cryptography::signcryption::ReencryptSol, storage::delete_at_request_id};
+use bincode::{deserialize, serialize};
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
-use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -355,7 +355,7 @@ impl<
         };
 
         let server_verf_key = tonic_handle_potential_err(
-            to_vec(&self.get_verf_key()),
+            serialize(&self.get_verf_key()),
             "Could not serialize server verification key".to_string(),
         )?;
 
@@ -445,7 +445,7 @@ impl<
             )?
         };
         let server_verf_key = tonic_handle_potential_err(
-            to_vec(&self.get_verf_key()),
+            serialize(&self.get_verf_key()),
             "Could not serialize server verification key".to_string(),
         )?;
         let sig_payload = DecryptionResponsePayload {
@@ -457,7 +457,7 @@ impl<
         };
 
         let sig_payload_vec = tonic_handle_potential_err(
-            to_vec(&sig_payload),
+            bincode::serialize(&sig_payload),
             format!("Could not convert payload to bytes {:?}", sig_payload),
         )?;
 
@@ -698,13 +698,13 @@ pub async fn validate_reencrypt_req(
         pub_enc_key: payload.enc_key.clone(),
     };
     let client_verf_key: PublicSigKey = handle_potential_err(
-        from_bytes(&payload.verification_key),
+        deserialize(&payload.verification_key),
         format!("Invalid verification key in request {:?}", req),
     )?;
     if !BaseKmsStruct::verify_sig_eip712(
         &pk_sol,
         &domain,
-        &from_bytes(&req.signature)?,
+        &deserialize(&req.signature)?,
         &client_verf_key,
     ) {
         return Err(anyhow_error_and_log(format!(
@@ -722,7 +722,7 @@ pub async fn validate_reencrypt_req(
         .ok_or_else(|| anyhow_error_and_log(format!("Missing ciphertext in request {:?}", req)))?;
     let fhe_type = payload.fhe_type();
     let link = req.compute_link_checked()?;
-    let client_enc_key: PublicEncKey = from_bytes(&payload.enc_key)?;
+    let client_enc_key: PublicEncKey = deserialize(&payload.enc_key)?;
     let key_id = tonic_some_or_err(
         payload.key_id.clone(),
         format!("The request {:?} does not have a key_id", req),
@@ -768,7 +768,7 @@ pub(crate) fn validate_decrypt_req(
         ),
     )?;
     let serialized_req = tonic_handle_potential_err(
-        to_vec(&req_serialized),
+        bincode::serialize(&req_serialized),
         format!("Could not serialize payload {:?}", req),
     )?;
     let req_digest = tonic_handle_potential_err(

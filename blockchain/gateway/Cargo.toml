@@ -40,7 +40,6 @@ reqwest = { version = "0.12.4", features = ["json"] }
 retrying = { version = "0.1.0", features = ["tokio"] }
 secp256k1 = "0.29.0"
 serde = { version = "1.0.203", features = ["derive"] }
-serde_asn1_der = "0.8.0"
 serde_json = "1.0.117"
 sha2 = "0.10.8"
 structopt = "0.3.26"

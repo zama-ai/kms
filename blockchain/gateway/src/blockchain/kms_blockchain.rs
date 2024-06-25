@@ -6,6 +6,7 @@ use crate::util::conversion::TokenizableFrom;
 use crate::util::footprint;
 use anyhow::anyhow;
 use async_trait::async_trait;
+use bincode::deserialize;
 use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
 use ethers::abi::Token;
 use ethers::prelude::*;
@@ -255,7 +256,7 @@ impl Blockchain for KmsBlockchainImpl {
         let ptxt = match self.config.mode {
             KmsMode::Centralized => match results.first().unwrap() {
                 OperationValue::DecryptResponse(decrypt_response) => {
-                    let payload: DecryptionResponsePayload = serde_asn1_der::from_bytes(
+                    let payload: DecryptionResponsePayload = bincode::deserialize(
                         <&HexVector as Into<Vec<u8>>>::into(decrypt_response.payload()).as_slice(),
                     )
                     .unwrap();
@@ -264,7 +265,7 @@ impl Blockchain for KmsBlockchainImpl {
                         "🍇🥐🍇🥐🍇🥐 Centralized Gateway decryption result payload: {:?}",
                         hex::encode(payload.plaintext.clone())
                     );
-                    serde_asn1_der::from_bytes::<Plaintext>(&payload.plaintext)?
+                    deserialize::<Plaintext>(&payload.plaintext)?
                 }
                 _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
             },
@@ -274,7 +275,7 @@ impl Blockchain for KmsBlockchainImpl {
                 for value in results.iter() {
                     match value {
                         OperationValue::DecryptResponse(decrypt_response) => {
-                            let payload: DecryptionResponsePayload = serde_asn1_der::from_bytes(
+                            let payload: DecryptionResponsePayload = bincode::deserialize(
                                 <&HexVector as Into<Vec<u8>>>::into(decrypt_response.payload())
                                     .as_slice(),
                             )
@@ -283,8 +284,7 @@ impl Blockchain for KmsBlockchainImpl {
                                 "🥐🥐🥐🥐🥐🥐 Threshold Gateway decryption results payload: {:?}",
                                 hex::encode(payload.plaintext.clone())
                             );
-                            ptxts
-                                .push(serde_asn1_der::from_bytes::<Plaintext>(&payload.plaintext)?);
+                            ptxts.push(deserialize::<Plaintext>(&payload.plaintext)?);
                         }
                         _ => {
                             return Err(anyhow::anyhow!(

@@ -1,4 +1,5 @@
 use ::signature::{Signer, Verifier};
+use bincode::serialize;
 use crypto_box::{
     aead::{Aead, AeadCore},
     Nonce, SalsaBox, SecretKey,
@@ -229,8 +230,8 @@ impl ClientRequest {
             digest,
             sig_randomization: r.to_vec(),
         };
-        // DER encode the payload
-        let to_sign = serde_asn1_der::to_vec(&payload)?;
+        // Observe encoding using bincode
+        let to_sign = serialize(&payload)?;
         // Sign the public key and digest of the message
         let signature: Signature = Signature {
             sig: keys.sk.signing_key.sk.sign(&to_sign[..]),
@@ -251,8 +252,8 @@ impl ClientRequest {
         if digest != self.payload.digest {
             return Ok(false);
         };
-        // DER encode the payload
-        let signed = serde_asn1_der::to_vec(&self.payload)?;
+        // Observe encoding using bincode
+        let signed = serialize(&self.payload)?;
         // Verify the signature
         if self
             .payload
@@ -488,10 +489,10 @@ mod tests {
         file_handling::write_element,
     };
     use aes_prng::AesRng;
+    use bincode::{deserialize, serialize};
     use k256::ecdsa::SigningKey;
     use rand::SeedableRng;
     use rand::{CryptoRng, Rng};
-    use serde_asn1_der::{from_bytes, to_vec};
     use signature::Signer;
     use tracing_test::traced_test;
 
@@ -532,15 +533,15 @@ mod tests {
             &server_sig_key,
         )
         .unwrap();
-        let enc_req = to_vec(&request).unwrap();
+        let enc_req = serialize(&request).unwrap();
         write_element(TEMP_DIR.to_string() + "/client_req.der", &enc_req).unwrap();
-        let enc_pk = to_vec(&client_signcryption_keys.pk).unwrap();
+        let enc_pk = serialize(&client_signcryption_keys.pk).unwrap();
         write_element(
             TEMP_DIR.to_string() + "/client_signcryption_pk.der",
             &enc_pk,
         )
         .unwrap();
-        let enc_cipher = to_vec(&cipher).unwrap();
+        let enc_cipher = serialize(&cipher).unwrap();
         write_element(TEMP_DIR.to_string() + "/signcryption.der", &enc_cipher).unwrap();
     }
 
@@ -576,15 +577,15 @@ mod tests {
             &server_sig_key,
         )
         .unwrap();
-        // Observe that the methods from serde_asn1_der is used to make an en-decoding in DER ASN1
-        let enc_req = to_vec(&request).unwrap();
-        let dec_req = from_bytes(&enc_req).unwrap();
+        // Observe that the methods from bincode is used to serialize
+        let enc_req = serialize(&request).unwrap();
+        let dec_req: ClientRequest = deserialize(&enc_req).unwrap();
         assert_eq!(request, dec_req);
-        let enc_pk = to_vec(&client_signcryption_keys.pk).unwrap();
-        let dec_pk = from_bytes(&enc_pk).unwrap();
+        let enc_pk = serialize(&client_signcryption_keys.pk).unwrap();
+        let dec_pk = deserialize(&enc_pk).unwrap();
         assert_eq!(client_signcryption_keys.pk, dec_pk);
-        let enc_cipher = to_vec(&cipher).unwrap();
-        let dec_cipher = from_bytes(&enc_cipher).unwrap();
+        let enc_cipher = serialize(&cipher).unwrap();
+        let dec_cipher = deserialize(&enc_cipher).unwrap();
         assert_eq!(cipher, dec_cipher);
     }
 

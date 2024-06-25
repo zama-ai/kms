@@ -194,7 +194,7 @@ message DecryptionResponsePayload {
 
 message DecryptionResponse {
   bytes signature = 1;
-  // Signature of the ASN1 DER serialization of [DecryptionResponsePayload].
+  // Signature of the serialization of [DecryptionResponsePayload].
   DecryptionResponsePayload payload = 2;
 }
 
@@ -246,7 +246,7 @@ message Eip712DomainMsg {
 }
 
 message ReencryptionRequest {
-  // Signature of the ASN1 DER serialization of [ReencryptionRequestPayload].
+  // Signature of the serialization of [ReencryptionRequestPayload].
   bytes signature = 1;
   ReencryptionRequestPayload payload = 2;
   Eip712DomainMsg domain = 3;

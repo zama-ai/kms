@@ -49,8 +49,8 @@ impl ClientRequest {
             digest,
             sig_randomization: r.to_vec(),
         };
-        // DER encode the payload
-        let to_sign = serde_asn1_der::to_vec(&payload)?;
+        // bincode encode the payload
+        let to_sign = bincode::serialize(&payload)?;
         // Sign the public key and digest of the message
         let signature: k256::ecdsa::Signature = match &keys.sk.signing_key {
             Some(sk) => sk.sk.sign(&to_sign[..]),
@@ -81,8 +81,8 @@ impl ClientRequest {
         if digest != self.payload.digest {
             return Ok(false);
         };
-        // DER encode the payload
-        let signed = serde_asn1_der::to_vec(&self.payload)?;
+        // bincode encode the payload
+        let signed = bincode::serialize(&self.payload)?;
         // Verify the signature
         if self
             .payload

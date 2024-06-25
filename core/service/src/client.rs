@@ -16,6 +16,7 @@ use crate::rpc::rpc_types::{
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_sol_types::Eip712Domain;
+use bincode::{deserialize, serialize};
 use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::residue_poly::ResiduePoly;
 use distributed_decryption::execution::endpoints::reconstruct::{
@@ -28,7 +29,6 @@ use distributed_decryption::execution::sharing::shamir::{
 use distributed_decryption::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
 use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
-use serde_asn1_der::{from_bytes, to_vec};
 use std::collections::HashMap;
 use tfhe::shortint::ClassicPBSParameters;
 use wasm_bindgen::prelude::*;
@@ -217,13 +217,16 @@ pub mod js_api {
     use super::*;
 
     #[wasm_bindgen]
-    pub fn public_sig_key_to_u8vec(pk: &PublicSigKey) -> Result<Vec<u8>, JsError> {
-        serde_asn1_der::to_vec(pk).map_err(|e| JsError::new(&e.to_string()))
+    pub fn public_sig_key_to_u8vec(pk: &PublicSigKey) -> Vec<u8> {
+        pk.pk.to_sec1_bytes().to_vec()
     }
 
     #[wasm_bindgen]
     pub fn u8vec_to_public_sig_key(v: &[u8]) -> Result<PublicSigKey, JsError> {
-        serde_asn1_der::from_bytes(v).map_err(|e| JsError::new(&e.to_string()))
+        Ok(PublicSigKey {
+            pk: k256::ecdsa::VerifyingKey::from_sec1_bytes(v)
+                .map_err(|e| JsError::new(&e.to_string()))?,
+        })
     }
 
     /// Instantiate a new client.
@@ -461,22 +464,22 @@ pub mod js_api {
 
     #[wasm_bindgen]
     pub fn cryptobox_pk_to_u8vec(pk: &PublicEncKey) -> Result<Vec<u8>, JsError> {
-        serde_asn1_der::to_vec(pk).map_err(|e| JsError::new(&e.to_string()))
+        serialize(pk).map_err(|e| JsError::new(&e.to_string()))
     }
 
     #[wasm_bindgen]
     pub fn cryptobox_sk_to_u8vec(sk: &PrivateEncKey) -> Result<Vec<u8>, JsError> {
-        serde_asn1_der::to_vec(sk).map_err(|e| JsError::new(&e.to_string()))
+        serialize(sk).map_err(|e| JsError::new(&e.to_string()))
     }
 
     #[wasm_bindgen]
     pub fn u8vec_to_cryptobox_pk(v: &[u8]) -> Result<PublicEncKey, JsError> {
-        serde_asn1_der::from_bytes(v).map_err(|e| JsError::new(&e.to_string()))
+        deserialize(v).map_err(|e| JsError::new(&e.to_string()))
     }
 
     #[wasm_bindgen]
     pub fn u8vec_to_cryptobox_sk(v: &[u8]) -> Result<PrivateEncKey, JsError> {
-        serde_asn1_der::from_bytes(v).map_err(|e| JsError::new(&e.to_string()))
+        deserialize(v).map_err(|e| JsError::new(&e.to_string()))
     }
 
     #[wasm_bindgen]
@@ -578,8 +581,8 @@ pub mod js_api {
             version: CURRENT_FORMAT_VERSION,
             randomness,
             servers_needed: client.shares_needed,
-            enc_key: serde_asn1_der::to_vec(&enc_pk)?,
-            verification_key: serde_asn1_der::to_vec(&client.client_pk)?,
+            enc_key: serialize(&enc_pk)?,
+            verification_key: serialize(&client.client_pk)?,
             fhe_type: fhe_type as i32,
             key_id: Some(key_id),
             ciphertext,
@@ -1136,8 +1139,8 @@ impl Client {
         let sig_payload = ReencryptionRequestPayload {
             version: CURRENT_FORMAT_VERSION,
             servers_needed: self.shares_needed,
-            enc_key: to_vec(&enc_pk)?,
-            verification_key: to_vec(&self.client_pk)?,
+            enc_key: serialize(&enc_pk)?,
+            verification_key: serialize(&self.client_pk)?,
             fhe_type: fhe_type as i32,
             randomness,
             key_id: Some(key_id.clone()),
@@ -1154,7 +1157,7 @@ impl Client {
         let domain_msg = allow_to_protobuf_domain(domain)?;
         Ok((
             ReencryptionRequest {
-                signature: to_vec(&sig)?,
+                signature: serialize(&sig)?,
                 payload: Some(sig_payload),
                 domain: Some(domain_msg),
                 request_id: Some(request_id.clone()),
@@ -1326,8 +1329,8 @@ impl Client {
             }
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys
-            let cur_verf_key: PublicSigKey = from_bytes(&cur_payload.verification_key)?;
-            if !BaseKmsStruct::verify_sig(&to_vec(&cur_payload)?, &sig, &cur_verf_key) {
+            let cur_verf_key: PublicSigKey = deserialize(&cur_payload.verification_key)?;
+            if !BaseKmsStruct::verify_sig(&bincode::serialize(&cur_payload)?, &sig, &cur_verf_key) {
                 tracing::warn!("Signature on received response is not valid!");
                 return Ok(None);
             }
@@ -1337,7 +1340,7 @@ impl Client {
             "No payload in pivot response for decryption".to_owned(),
         )?
         .plaintext;
-        let plaintext: Plaintext = from_bytes(&serialized_plaintext)?;
+        let plaintext: Plaintext = deserialize(&serialized_plaintext)?;
         Ok(Some(plaintext))
     }
 
@@ -1439,7 +1442,9 @@ impl Client {
                     return Ok(false);
                 }
                 let sig_payload: DecryptionRequestSerializable = req.try_into()?;
-                if BaseKmsStruct::digest(&to_vec(&sig_payload)?)? != pivot_payload.digest {
+                if BaseKmsStruct::digest(&bincode::serialize(&sig_payload)?)?
+                    != pivot_payload.digest
+                {
                     tracing::warn!("The decryption response is not linked to the correct request");
                     return Ok(false);
                 }
@@ -1489,8 +1494,8 @@ impl Client {
             // Validate the signature on the response
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys
-            let cur_verf_key: PublicSigKey = from_bytes(&cur_payload.verification_key)?;
-            if !BaseKmsStruct::verify_sig(&to_vec(&cur_payload)?, &sig, &cur_verf_key) {
+            let cur_verf_key: PublicSigKey = deserialize(&cur_payload.verification_key)?;
+            if !BaseKmsStruct::verify_sig(&bincode::serialize(&cur_payload)?, &sig, &cur_verf_key) {
                 tracing::warn!("Signature on received response is not valid!");
                 continue;
             }
@@ -1613,7 +1618,7 @@ impl Client {
             )));
         }
 
-        let cur_verf_key: PublicSigKey = from_bytes(&resp.verification_key)?;
+        let cur_verf_key: PublicSigKey = deserialize(&resp.verification_key)?;
         match decrypt_signcryption(
             &resp.signcrypted_ciphertext,
             &link,
@@ -1708,8 +1713,7 @@ impl Client {
             let shares =
                 insecure_decrypt_ignoring_signature(&cur_resp.signcrypted_ciphertext, client_keys)?;
             if let Some(shares) = shares {
-                let cipher_blocks_share: Vec<ResiduePoly<Z128>> =
-                    serde_asn1_der::from_bytes(&shares.bytes)?;
+                let cipher_blocks_share: Vec<ResiduePoly<Z128>> = deserialize(&shares.bytes)?;
                 let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
                 for cur_block_share in cipher_blocks_share {
                     cur_blocks.push(cur_block_share);
@@ -1801,7 +1805,7 @@ impl Client {
             //
             // Also it's ok to use [cur_resp.digest] as the link since we already checked
             // that it matches with the original request
-            let cur_verf_key: PublicSigKey = from_bytes(&cur_resp.verification_key)?;
+            let cur_verf_key: PublicSigKey = deserialize(&cur_resp.verification_key)?;
             match decrypt_signcryption(
                 &cur_resp.signcrypted_ciphertext,
                 &cur_resp.digest,
@@ -1810,7 +1814,7 @@ impl Client {
             )? {
                 Some(decryption_share) => {
                     let cipher_blocks_share: Vec<ResiduePoly<Z128>> =
-                        serde_asn1_der::from_bytes(&decryption_share.bytes)?;
+                        deserialize(&decryption_share.bytes)?;
                     let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
                     for cur_block_share in cipher_blocks_share {
                         cur_blocks.push(cur_block_share);
@@ -1881,7 +1885,7 @@ impl Client {
                 );
             return Ok(false);
         }
-        let resp_verf_key: PublicSigKey = from_bytes(&other_resp.verification_key())?;
+        let resp_verf_key: PublicSigKey = deserialize(&other_resp.verification_key())?;
         if !&self.server_pks.keys().contains(&resp_verf_key) {
             tracing::warn!("Server key is incorrect in reencryption request");
             return Ok(false);
@@ -2990,6 +2994,15 @@ pub(crate) mod tests {
             super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
         let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
+
+        // The following lines are used to generate integration test-code with javascript for test `new client` in test.js
+        // println!(
+        //     "Client PK {:?}",
+        //     internal_client.client_pk.pk.to_sec1_bytes()
+        // );
+        // for key in internal_client.server_pks.keys() {
+        //     println!("Server PK {:?}", key.pk.to_sec1_bytes());
+        // }
 
         // build parallel requests
         let reqs: Vec<_> = (0..parallelism)

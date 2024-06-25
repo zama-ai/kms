@@ -1,3 +1,4 @@
+use bincode::deserialize;
 use clap::Parser;
 use cosmwasm_std::Event;
 use events::kms::{DecryptValues, FheType, KmsEvent, KmsMessage, KmsOperation, OperationValue};
@@ -138,11 +139,11 @@ async fn query_contract(
     let value: Vec<OperationValue> = query_client.query_contract(request).await?;
     value.iter().for_each(|x| match x {
         OperationValue::DecryptResponse(decrypt) => {
-            let payload: DecryptionResponsePayload = serde_asn1_der::from_bytes(
+            let payload: DecryptionResponsePayload = bincode::deserialize(
                 <&HexVector as Into<Vec<u8>>>::into(decrypt.payload()).as_slice(),
             )
             .unwrap();
-            let actual_pt: Plaintext = serde_asn1_der::from_bytes(&payload.plaintext).unwrap();
+            let actual_pt: Plaintext = deserialize(&payload.plaintext).unwrap();
             tracing::info!("Decrypt Result: Plaintext Decrypted {:?} ", actual_pt);
         }
         _ => tracing::info!("Incorrect Response: {:?}", x),

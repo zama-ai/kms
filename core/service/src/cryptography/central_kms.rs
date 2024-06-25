@@ -23,6 +23,7 @@ use crate::util::meta_store::{HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_sol_types::{Eip712Domain, SolStruct};
+use bincode::{deserialize, serialize};
 use der::zeroize::Zeroize;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
@@ -32,7 +33,6 @@ use itertools::Itertools;
 use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
-use serde_asn1_der::to_vec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::{fmt, panic};
@@ -318,7 +318,7 @@ pub struct SoftwareKms<PubS: Storage, PrivS: Storage> {
     pub(crate) param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>, // TODO this should be loaded once during boot
 }
 
-/// Perform asynchronous decryption and serialize the result using asn1
+/// Perform asynchronous decryption and serialize the result
 #[cfg(feature = "non-wasm")]
 pub async fn async_decrypt<
     PubS: Storage + Sync + Send + 'static,
@@ -329,7 +329,7 @@ pub async fn async_decrypt<
     fhe_type: FheType,
 ) -> anyhow::Result<Vec<u8>> {
     handle_potential_err(
-        to_vec(&SoftwareKms::<PubS, PrivS>::decrypt(
+        serialize(&SoftwareKms::<PubS, PrivS>::decrypt(
             client_key,
             high_level_ct,
             fhe_type,
@@ -338,7 +338,7 @@ pub async fn async_decrypt<
     )
 }
 
-/// Perform asynchronous reencryption and serialize the result using asn1
+/// Perform asynchronous reencryption and serialize the result
 #[cfg(feature = "non-wasm")]
 #[allow(clippy::too_many_arguments)]
 pub async fn async_reencrypt<
@@ -436,27 +436,27 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let f = || -> anyhow::Result<Plaintext> {
             Ok(match fhe_type {
                 FheType::Ebool => {
-                    let cipher: FheBool = bincode::deserialize(high_level_ct)?;
+                    let cipher: FheBool = deserialize(high_level_ct)?;
                     let plaintext = cipher.decrypt(client_key);
                     Plaintext::from_bool(plaintext)
                 }
                 FheType::Euint4 => {
-                    let cipher: FheUint4 = bincode::deserialize(high_level_ct)?;
+                    let cipher: FheUint4 = deserialize(high_level_ct)?;
                     let plaintext: u8 = cipher.decrypt(client_key);
                     Plaintext::from_u4(plaintext)
                 }
                 FheType::Euint8 => {
-                    let cipher: FheUint8 = bincode::deserialize(high_level_ct)?;
+                    let cipher: FheUint8 = deserialize(high_level_ct)?;
                     let plaintext: u8 = cipher.decrypt(client_key);
                     Plaintext::from_u8(plaintext)
                 }
                 FheType::Euint16 => {
-                    let cipher: FheUint16 = bincode::deserialize(high_level_ct)?;
+                    let cipher: FheUint16 = deserialize(high_level_ct)?;
                     let plaintext: u16 = cipher.decrypt(client_key);
                     Plaintext::from_u16(plaintext)
                 }
                 FheType::Euint32 => {
-                    let cipher: FheUint32 = bincode::deserialize(high_level_ct)?;
+                    let cipher: FheUint32 = deserialize(high_level_ct)?;
                     let plaintext: u32 = cipher.decrypt(client_key);
                     Plaintext::from_u32(plaintext)
                 }
@@ -512,12 +512,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         };
         let enc_res = signcrypt(
             rng,
-            &serde_asn1_der::to_vec(&signcryption_msg)?,
+            &serialize(&signcryption_msg)?,
             client_enc_key,
             client_verf_key,
             sig_key,
         )?;
-        let res = to_vec(&enc_res)?;
+        let res = serialize(&enc_res)?;
         tracing::info!("Completed reencyption of ciphertext");
         Ok(res)
     }
@@ -594,13 +594,12 @@ pub(crate) fn compute_info<S: Serialize>(
     sk: &PrivateSigKey,
     element: &S,
 ) -> anyhow::Result<SignedPubDataHandle> {
-    // TODO hack serialize using serde because of issues with asn1 and public key serialization
-    let ser = bincode::serialize(element)?;
+    let ser = serialize(element)?;
     let handle = compute_handle(&ser)?;
     let signature = sign(&handle, sk)?;
     Ok(SignedPubDataHandle {
         key_handle: handle,
-        signature: bincode::serialize(&signature)?,
+        signature: serialize(&signature)?,
     })
 }
 

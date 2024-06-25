@@ -63,7 +63,6 @@ rayon = "1.10"
 redis = { version = "0.25.3", optional = true }
 serde = { version = "~1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-serde_asn1_der = "0.8.0"
 sha3 = "~0.10.8"
 signature = "~2.2"
 strum = { version = "0.26", features = ["derive"] }

@@ -28,6 +28,7 @@ use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use anyhow::anyhow;
+use bincode::serialize;
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
 use distributed_decryption::choreography::NetworkingStrategy;
 use distributed_decryption::conf::party::CertificatePaths;
@@ -733,19 +734,19 @@ impl RealReencryptor {
                 let partial_signcryption =
                     match partial_dec_map.get(&session.session_id().to_string()) {
                         Some(partial_dec) => {
-                            let partial_dec_serialized = serde_asn1_der::to_vec(&partial_dec)?;
+                            let partial_dec_serialized = serialize(&partial_dec)?;
                             let signcryption_msg = SigncryptionPayload {
                                 plaintext: Plaintext::from_bytes(partial_dec_serialized, fhe_type),
                                 link,
                             };
                             let enc_res = signcrypt(
                                 rng,
-                                &serde_asn1_der::to_vec(&signcryption_msg)?,
+                                &bincode::serialize(&signcryption_msg)?,
                                 client_enc_key,
                                 client_verf_key,
                                 &sig_key,
                             )?;
-                            serde_asn1_der::to_vec(&enc_res)?
+                            serialize(&enc_res)?
                         }
                         None => {
                             return Err(anyhow!(
@@ -885,7 +886,7 @@ impl Reencryptor for RealReencryptor {
             )?
         };
         let server_verf_key = tonic_handle_potential_err(
-            serde_asn1_der::to_vec(&self.base_kms.get_verf_key()),
+            serialize(&self.base_kms.get_verf_key()),
             "Could not serialize server verification key".to_string(),
         )?;
         Ok(Response::new(ReencryptionResponse {
@@ -1117,14 +1118,14 @@ impl Decryptor for RealDecryptor {
             )?
         };
         let decrypted_bytes = tonic_handle_potential_err(
-            serde_asn1_der::to_vec(&plaintext),
+            serialize(&plaintext),
             format!(
                 "Could not convert plaintext to bytes in request with ID {:?}",
                 request_id
             ),
         )?;
         let server_verf_key = tonic_handle_potential_err(
-            serde_asn1_der::to_vec(&self.base_kms.get_verf_key()),
+            serialize(&self.base_kms.get_verf_key()),
             "Could not serialize server verification key".to_string(),
         )?;
         let sig_payload = DecryptionResponsePayload {
@@ -1136,7 +1137,7 @@ impl Decryptor for RealDecryptor {
         };
 
         let sig_payload_vec = tonic_handle_potential_err(
-            serde_asn1_der::to_vec(&sig_payload),
+            bincode::serialize(&sig_payload),
             format!("Could not convert payload to bytes {:?}", sig_payload),
         )?;
 

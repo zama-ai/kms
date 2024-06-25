@@ -14,11 +14,11 @@ use crate::util::key_setup::FhePrivateKey;
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
+use bincode::deserialize;
 #[cfg(feature = "non-wasm")]
 use rand::{CryptoRng, RngCore};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_asn1_der::from_bytes;
 use std::fmt;
 use strum_macros::EnumIter;
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -525,7 +525,7 @@ impl From<bool> for Plaintext {
 // TODO these serializable types can be removed by using the type_attribute additions on protobuf
 /// Observe that this seemingly redundant types are required since the Protobuf compiled types do
 /// not implement the serializable and deserializable traits. Hence [DecryptionRequestSerializable]
-/// implement data to be asn1 serialized and hashed.
+/// implement data to be serialized and hashed.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DecryptionRequestSerializable {
     pub version: u32,
@@ -643,7 +643,7 @@ impl MetaResponse for DecryptionResponsePayload {
     }
 
     fn fhe_type(&self) -> anyhow::Result<FheType> {
-        let plaintext: Plaintext = from_bytes(&self.plaintext)?;
+        let plaintext: Plaintext = deserialize(&self.plaintext)?;
         Ok(plaintext.fhe_type)
     }
 

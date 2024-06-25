@@ -316,7 +316,7 @@ where
                         Ok(PollerStatus::Done(KmsOperationResponse::DecryptResponse(DecryptResponseVal {
                             decrypt_response: DecryptResponseValues::builder()
                                 .signature(inner.signature)
-                                .payload(serde_asn1_der::to_vec(&payload)?)
+                                .payload(bincode::serialize(&payload)?)
                                 .build(),
                             operation_val: BlockchainOperationVal {
                                 tx_id: self.operation_val.tx_id.clone(),
@@ -908,12 +908,12 @@ mod test {
         let (result, txn_id) = generic_centralized_sunshine_test(ct, op).await;
         match result {
             KmsOperationResponse::DecryptResponse(resp) => {
-                let payload: DecryptionResponsePayload = serde_asn1_der::from_bytes(
+                let payload: DecryptionResponsePayload = bincode::deserialize(
                     <&HexVector as Into<Vec<u8>>>::into(resp.decrypt_response.payload()).as_slice(),
                 )
                 .unwrap();
                 assert_eq!(
-                    serde_asn1_der::from_bytes::<Plaintext>(&payload.plaintext)
+                    bincode::deserialize::<Plaintext>(&payload.plaintext)
                         .unwrap()
                         .as_u8(),
                     msg,
@@ -1088,14 +1088,14 @@ mod test {
         for result in results {
             match result {
                 KmsOperationResponse::DecryptResponse(resp) => {
-                    let payload: DecryptionResponsePayload = serde_asn1_der::from_bytes(
+                    let payload: DecryptionResponsePayload = bincode::deserialize(
                         <&HexVector as Into<Vec<u8>>>::into(resp.decrypt_response.payload())
                             .as_slice(),
                     )
                     .unwrap();
                     if slow {
                         assert_eq!(
-                            serde_asn1_der::from_bytes::<Plaintext>(&payload.plaintext)
+                            bincode::deserialize::<Plaintext>(&payload.plaintext)
                                 .unwrap()
                                 .as_u8(),
                             msg,
