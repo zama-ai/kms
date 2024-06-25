@@ -68,6 +68,12 @@ fn decrypted_blocks_to_plaintext(
             combine_decryptions::<tfhe::integer::bigint::U2048>(bits_in_block, recon_blocks)
                 .map(Plaintext::from_u2048)
         }
+        FheType::Euint1024 => {
+            todo!("Implement Euint1024")
+        }
+        FheType::Euint512 => {
+            todo!("Implement Euint512")
+        }
         FheType::Euint256 => {
             combine_decryptions::<tfhe::integer::U256>(bits_in_block, recon_blocks)
                 .map(Plaintext::from_u256)
@@ -229,6 +235,22 @@ pub mod js_api {
         })
     }
 
+    /// Instantiate a new client for use with the centralized KMS.
+    ///
+    /// * `client_pk` - the client (wallet) public key,
+    /// which can parsed using [u8vec_to_public_sig_key] also.
+    ///
+    /// * `param_choice` - the parameter choice, which can be either `"test"` or `"default"`.
+    /// The "default" parameter choice is selected if no matching string is found.
+    #[wasm_bindgen]
+    pub fn default_client_for_centralized_kms(
+        client_pk: PublicSigKey,
+        param_choice: &str,
+    ) -> Result<Client, JsError> {
+        console_error_panic_hook::set_once();
+        new_client(vec![], None, client_pk, 1, param_choice)
+    }
+
     /// Instantiate a new client.
     ///
     /// * `server_pks` - a list of KMS server signature public keys,
@@ -379,23 +401,7 @@ pub mod js_api {
             )
             .unwrap();
 
-        let json = serde_json::json!(
-        {
-            "signature": hex::encode(&req.signature),
-            "version": req.payload.as_ref().unwrap().version,
-            "verification_key": hex::encode(&req.payload.as_ref().unwrap().verification_key),
-            "randomness": hex::encode(&req.payload.as_ref().unwrap().randomness),
-            "enc_key": hex::encode(&req.payload.as_ref().unwrap().enc_key),
-            "fhe_type": transcript.fhe_type.as_str_name().to_lowercase(),
-            "key_id": req.payload.as_ref().unwrap().key_id.clone().unwrap().request_id,
-            "ciphertext": hex::encode(&req.payload.as_ref().unwrap().ciphertext.clone().unwrap()),
-            "ciphertext_digest": hex::encode(&req.payload.as_ref().unwrap().ciphertext_digest),
-            "eip712_name": domain.name.unwrap().to_string(),
-            "eip712_version": domain.version.unwrap().to_string(),
-            "eip712_chain_id": hex::encode(domain.chain_id.unwrap().to_be_bytes::<32>()),
-            "eip712_verifying_contract": domain.verifying_contract.unwrap().to_string(),
-            "eip712_salt": ""
-        });
+        let json = reencryption_request_to_flat_json_string(&req);
 
         DummyReencRequest {
             inner: req,
@@ -548,19 +554,10 @@ pub mod js_api {
     /// for the gateway.
     /// ```
     /// { "signature": "010203",                  // HEX
-    ///   "version": 1,                           // Integer
     ///   "verification_key": "010203",           // HEX
-    ///   "randomness": "010203",                 // HEX
     ///   "enc_key": "010203",                    // HEX
-    ///   "fhe_type": "euint8",                   // String
-    ///   "key_id": "010203",                     // HEX
-    ///   "ciphertext": "010203",                 // HEX
     ///   "ciphertext_digest": "010203",          // HEX
-    ///   "eip712_name": "test",                  // String
-    ///   "eip712_version": "1",                  // String
-    ///   "eip712_chain_id": "010203",            // HEX
     ///   "eip712_verifying_contract": "0x1234",  // String
-    ///   "eip712_salt": "010203"                 // HEX
     /// }
     /// ```
     /// This can be done using [reencryption_request_to_flat_json_string].
@@ -599,25 +596,17 @@ pub mod js_api {
 
     #[wasm_bindgen]
     pub fn reencryption_request_to_flat_json_string(req: &ReencryptionRequest) -> String {
-        let fhe_type = req.payload.as_ref().unwrap().fhe_type();
         let domain = req.domain.as_ref().unwrap();
         let mut json = serde_json::json!(
         {
             "signature": hex::encode(&req.signature),
-            "version": req.payload.as_ref().unwrap().version,
             "verification_key": hex::encode(&req.payload.as_ref().unwrap().verification_key),
-            "randomness": hex::encode(&req.payload.as_ref().unwrap().randomness),
             "enc_key": hex::encode(&req.payload.as_ref().unwrap().enc_key),
-            "fhe_type": fhe_type.as_str_name().to_lowercase(),
-            "key_id": req.payload.as_ref().unwrap().key_id.clone().unwrap().request_id,
             "ciphertext_digest": hex::encode(&req.payload.as_ref().unwrap().ciphertext_digest),
-            "eip712_name": domain.name,
-            "eip712_version": domain.version,
-            "eip712_chain_id": hex::encode(&domain.chain_id),
             "eip712_verifying_contract": domain.verifying_contract,
-            "eip712_salt": hex::encode(&domain.salt),
         });
 
+        // optionally include the full ciphertext for testing
         let ciphertext = req.payload.as_ref().unwrap().ciphertext.clone();
         if let Some(ct) = ciphertext {
             json.as_object_mut().unwrap().insert(
@@ -685,7 +674,11 @@ pub mod js_api {
     /// from when the client is instantiated.
     ///
     /// * `enc_pk` - The ephemeral public key.
+    ///
     /// * `enc_sk` - The ephemeral secret key.
+    ///
+    /// * `verify` - Whether to perform signature verification for the response.
+    /// It is insecure if `verify = false`!
     #[wasm_bindgen]
     pub fn process_reencryption_resp_from_json(
         client: &mut Client,
@@ -694,9 +687,18 @@ pub mod js_api {
         agg_resp_ids: Option<Vec<u32>>,
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
+        verify: bool,
     ) -> Result<Vec<u8>, JsError> {
         let agg_resp = json_to_resp(agg_resp)?;
-        process_reencryption_resp(client, request, agg_resp, agg_resp_ids, enc_pk, enc_sk)
+        process_reencryption_resp(
+            client,
+            request,
+            agg_resp,
+            agg_resp_ids,
+            enc_pk,
+            enc_sk,
+            verify,
+        )
     }
 
     /// Process the reencryption response from a JSON object.
@@ -713,7 +715,11 @@ pub mod js_api {
     /// from when the client is instantiated.
     ///
     /// * `enc_pk` - The ephemeral public key.
+    ///
     /// * `enc_sk` - The ephemeral secret key.
+    ///
+    /// * `verify` - Whether to perform signature verification for the response.
+    /// It is insecure if `verify = false`!
     #[wasm_bindgen]
     pub fn process_reencryption_resp(
         client: &mut Client,
@@ -722,6 +728,7 @@ pub mod js_api {
         agg_resp_ids: Option<Vec<u32>>,
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
+        verify: bool,
     ) -> Result<Vec<u8>, JsError> {
         // In the centralized case, agg_resp_ids is ignored and is always set to vec![1]
         // in the threshold case, if agg_resp_ids is given then we use it,
@@ -743,7 +750,12 @@ pub mod js_api {
         for (k, v) in agg_resp_ids.into_iter().zip(agg_resp) {
             hm.responses.insert(k, v);
         }
-        match client.process_reencryption_resp(request, &hm, enc_pk, enc_sk) {
+        let reenc_resp = if verify {
+            client.process_reencryption_resp(request, &hm, enc_pk, enc_sk)
+        } else {
+            client.insecure_process_reencryption_resp(&hm, enc_pk, enc_sk)
+        };
+        match reenc_resp {
             Ok(resp) => match resp {
                 Some(out) => Ok(out.bytes),
                 None => Err(JsError::new("no response")),
@@ -1913,6 +1925,8 @@ pub fn num_blocks(fhe_type: FheType, params: &ClassicPBSParameters) -> usize {
         FheType::Euint128 => 128_usize.div_ceil(params.message_modulus_log() as usize),
         FheType::Euint160 => 160_usize.div_ceil(params.message_modulus_log() as usize),
         FheType::Euint256 => 256_usize.div_ceil(params.message_modulus_log() as usize),
+        FheType::Euint512 => 512_usize.div_ceil(params.message_modulus_log() as usize),
+        FheType::Euint1024 => 1024_usize.div_ceil(params.message_modulus_log() as usize),
         FheType::Euint2048 => 2048_usize.div_ceil(params.message_modulus_log() as usize),
     }
 }

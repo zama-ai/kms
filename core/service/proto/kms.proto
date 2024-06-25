@@ -82,7 +82,9 @@ enum FheType {
   Euint128 = 6;
   Euint160 = 7;
   Euint256 = 8;
-  Euint2048 = 9;
+  Euint512 = 9;
+  Euint1024 = 10;
+  Euint2048 = 11;
 }
 
 message KeyGenPreprocRequest {

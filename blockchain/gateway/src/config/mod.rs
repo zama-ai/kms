@@ -2,7 +2,7 @@ use std::env;
 use std::str::FromStr;
 
 use config::{Config, ConfigError, File};
-use ethers::types::H160;
+use ethers::types::{H160, U256};
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, Display, EnumString};
 use typed_builder::TypedBuilder;
@@ -74,6 +74,7 @@ pub struct EthereumConfig {
     pub oracle_predeploy_address: H160,
     pub test_async_decrypt_address: H160,
     pub coprocessor_url: String,
+    pub chain_id: U256,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]

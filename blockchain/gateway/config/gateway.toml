@@ -37,6 +37,9 @@ test_async_decrypt_address = "99F460504563579922352932A42172B3c04a1420"
 # Address of the coprocessor to query for ciphertexts
 coprocessor_url = "http://127.0.0.1:8745/"
 
+# The chain ID, 0x1f49 is 8009 in base 10
+chain_id = "1f49"
+
 # KMS Settings
 # Configuration settings related to the Key Management System (KMS).
 [kms]

@@ -242,6 +242,10 @@ pub enum FheType {
     Euint160,
     #[strum(serialize = "euint256")]
     Euint256,
+    #[strum(serialize = "euint512")]
+    Euint512,
+    #[strum(serialize = "euint1024")]
+    Euint1024,
     #[strum(serialize = "euint2048")]
     Euint2048,
     #[strum(serialize = "unknown")]
@@ -260,7 +264,9 @@ impl From<u8> for FheType {
             6 => FheType::Euint128,
             7 => FheType::Euint160,
             8 => FheType::Euint256,
-            9 => FheType::Euint2048,
+            9 => FheType::Euint512,
+            10 => FheType::Euint1024,
+            11 => FheType::Euint2048,
             _ => FheType::Unknown,
         }
     }

@@ -1,5 +1,5 @@
 pub mod ciphertext_provider;
-pub mod decrypt;
+pub mod handlers;
 pub mod kms_blockchain;
 pub mod mockchain;
 use crate::blockchain::kms_blockchain::KmsBlockchainImpl;
@@ -53,18 +53,10 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
     async fn reencrypt(
         &self,
         signature: Vec<u8>,
-        version: u32,
         verification_key: Vec<u8>,
-        randomness: Vec<u8>,
         enc_key: Vec<u8>,
         fhe_type: FheType,
-        key_id: Vec<u8>,
         ciphertext: Vec<u8>,
-        ciphertext_digest: Vec<u8>,
-        eip712_name: String,
-        eip712_version: String,
-        eip712_chain_id: Vec<u8>,
         eip712_verifying_contract: String,
-        eip712_salt: Vec<u8>,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>>;
 }

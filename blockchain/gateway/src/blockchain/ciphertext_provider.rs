@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use ethers::prelude::*;
 use ethers::types::transaction::eip2718::TypedTransaction;
 use ethers::types::{BlockId, Bytes as EthersBytes, TransactionRequest};
+use events::kms::FheType;
 use hex;
 use serde::Deserialize;
 use serde::Serialize;
@@ -17,8 +18,8 @@ pub trait CiphertextProvider: Send {
         &self,
         client: &Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
         ct_handle: Vec<u8>,
-        block_number: u64,
-    ) -> anyhow::Result<Vec<u8>>;
+        block_id: Option<BlockId>,
+    ) -> anyhow::Result<(Vec<u8>, FheType)>;
 }
 
 // Implementation for FHEVM_V1
@@ -32,8 +33,8 @@ impl CiphertextProvider for Fhevm1CiphertextProvider {
         &self,
         client: &Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
         ct_handle: Vec<u8>,
-        block_number: u64,
-    ) -> anyhow::Result<Vec<u8>> {
+        block_id: Option<BlockId>,
+    ) -> anyhow::Result<(Vec<u8>, FheType)> {
         let mut input = hex::decode("e4b808cb000000000000000000000000")?;
         input.extend_from_slice(self.config.oracle_predeploy_address.as_bytes());
         input.extend_from_slice(&ct_handle);
@@ -48,8 +49,8 @@ impl CiphertextProvider for Fhevm1CiphertextProvider {
         };
         let tx: TypedTransaction = call.into();
 
-        let response = client.call(&tx, Some(BlockId::from(block_number))).await?;
-        Ok(response.to_vec())
+        let response = client.call(&tx, block_id).await?;
+        Ok((response.to_vec(), FheType::from(ct_handle[30])))
     }
 }
 
@@ -64,8 +65,8 @@ impl CiphertextProvider for Fhevm1_1CiphertextProvider {
         &self,
         client: &Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
         ct_handle: Vec<u8>,
-        block_number: u64,
-    ) -> anyhow::Result<Vec<u8>> {
+        block_id: Option<BlockId>,
+    ) -> anyhow::Result<(Vec<u8>, FheType)> {
         tracing::info!(
             "Getting ciphertext for ct_handle: {:?}",
             hex::encode(ct_handle.clone())
@@ -82,9 +83,8 @@ impl CiphertextProvider for Fhevm1_1CiphertextProvider {
             ..Default::default()
         };
         let tx: TypedTransaction = call.into();
-
-        let response = client.call(&tx, Some(BlockId::from(block_number))).await?;
-        Ok(response.to_vec())
+        let response = client.call(&tx, block_id).await?;
+        Ok((response.to_vec(), FheType::from(ct_handle[30])))
     }
 }
 
@@ -114,11 +114,11 @@ impl CiphertextProvider for CoprocessorCiphertextProvider {
         &self,
         _client: &Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
         ct_handle: Vec<u8>,
-        _block_number: u64,
-    ) -> anyhow::Result<Vec<u8>> {
+        _block_id: Option<BlockId>,
+    ) -> anyhow::Result<(Vec<u8>, FheType)> {
         // Create a reqwest client
         let client = reqwest::Client::new();
-        let handle = vec![format!("0x{}", hex::encode(ct_handle))];
+        let handle = vec![format!("0x{}", hex::encode(ct_handle.clone()))];
         // Create the JSON payload
         let payload = json!({
             "method": "eth_getCiphertextByHandle",
@@ -140,7 +140,7 @@ impl CiphertextProvider for CoprocessorCiphertextProvider {
         // Extract the ciphertext and decode from hex to Vec<u8>
         let ciphertext_hex = rpc_response.result.ciphertext.trim_start_matches("0x");
         let ciphertext_bytes = hex::decode(ciphertext_hex)?;
-        Ok(ciphertext_bytes)
+        Ok((ciphertext_bytes, FheType::from(ct_handle[30])))
     }
 }
 

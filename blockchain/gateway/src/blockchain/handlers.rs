@@ -1,15 +1,16 @@
 use crate::blockchain::blockchain_impl;
 use crate::blockchain::ciphertext_provider::CiphertextProvider;
-use crate::blockchain::decrypt::handler::k256::ecdsa::SigningKey;
+use crate::blockchain::handlers::k256::ecdsa::SigningKey;
 use crate::common::provider::GatewayContract;
 use crate::config::EthereumConfig;
 use crate::config::GatewayConfig;
+use crate::events::manager::ApiReencryptValues;
 use crate::events::manager::DecryptionEvent;
 use crate::util::wallet::WalletManager;
 use ethers::abi::encode;
 use ethers::abi::Token;
 use ethers::prelude::*;
-use events::kms::FheType;
+use events::kms::ReencryptResponseValues;
 use std::sync::Arc;
 
 #[retrying::retry(stop=(attempts(5)|duration(20)),wait=fixed(5))]
@@ -22,13 +23,12 @@ pub(crate) async fn handle_event_decryption(
     let mut tokens: Vec<Token> = Vec::with_capacity(event.filter.cts.len());
     let ethereum_wss_url = config.ethereum.wss_url.clone();
     let oracle_predeploy_address = config.ethereum.oracle_predeploy_address;
-    for (i, ct_handle) in event.filter.cts.iter().enumerate() {
+    for ct_handle in event.filter.cts.iter() {
         let token = decrypt(
             client,
             &config.clone(),
             event.filter.request_id,
             *ct_handle,
-            i as i64,
             event.block_number,
         )
         .await
@@ -73,19 +73,45 @@ async fn decrypt(
     config: &GatewayConfig,
     request_id: U256,
     ct_handle: U256,
-    _ct_index: i64,
     block_number: u64,
 ) -> Result<Token, Box<dyn std::error::Error>> {
     let mut ct_handle_bytes = [0u8; 32];
     ct_handle.to_big_endian(&mut ct_handle_bytes);
-    let ct_bytes =
+    let (ct_bytes, fhe_type) =
         <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
-            .get_ciphertext(client, ct_handle_bytes.to_vec(), block_number)
+            .get_ciphertext(
+                client,
+                ct_handle_bytes.to_vec(),
+                Some(BlockId::from(block_number)),
+            )
             .await?;
-    let ct_type = ct_handle_bytes[30];
-    tracing::info!("🚀 request_id: {}, ct_type: {}", request_id, ct_type,);
+    tracing::info!("🚀 request_id: {}, fhe_type: {}", request_id, fhe_type,);
     Ok(blockchain_impl(config)
         .await
-        .decrypt(ct_bytes, FheType::from(ct_type))
+        .decrypt(ct_bytes, fhe_type)
         .await?)
+}
+
+#[retrying::retry(stop=(attempts(5)|duration(20)),wait=fixed(5))]
+pub(crate) async fn handle_reencryption_event(
+    client: &Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
+    event: &ApiReencryptValues,
+    config: &GatewayConfig,
+) -> anyhow::Result<Vec<ReencryptResponseValues>> {
+    let ethereum_ct_handle = event.ciphertext_digest.0.clone();
+    let (ciphertext, fhe_type) =
+        <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
+            .get_ciphertext(client, ethereum_ct_handle.clone(), None)
+            .await?;
+    blockchain_impl(config)
+        .await
+        .reencrypt(
+            event.signature.0.clone(),
+            event.verification_key.0.clone(),
+            event.enc_key.0.clone(),
+            fhe_type,
+            ciphertext,
+            event.eip712_verifying_contract.clone(),
+        )
+        .await
 }

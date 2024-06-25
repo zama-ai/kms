@@ -480,6 +480,12 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     let plaintext: U256 = cipher.decrypt(client_key);
                     Plaintext::from_u256(plaintext)
                 }
+                FheType::Euint512 => {
+                    todo!("Implement Euint512 decryption")
+                }
+                FheType::Euint1024 => {
+                    todo!("Implement Euint1024 decryption")
+                }
                 FheType::Euint2048 => {
                     let cipher: FheUint2048 = bincode::deserialize(high_level_ct)?;
                     let plaintext: U2048 = cipher.decrypt(client_key);

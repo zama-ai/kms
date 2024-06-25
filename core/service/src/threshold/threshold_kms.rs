@@ -230,6 +230,12 @@ impl FheType {
                 let (radix_ct, _id) = hl_ct.into_raw_parts();
                 radix_ct
             }
+            FheType::Euint512 => {
+                todo!("Implement deserialization for Euint512")
+            }
+            FheType::Euint1024 => {
+                todo!("Implement deserialization for Euint1024")
+            }
             FheType::Euint2048 => {
                 let hl_ct: FheUint2048 = bincode::deserialize(serialized_high_level)?;
                 let (radix_ct, _id) = hl_ct.into_raw_parts();
@@ -1013,6 +1019,12 @@ impl Decryptor for RealDecryptor {
         let _handle = tokio::spawn(async move {
             let fhe_keys_rlock = fhe_keys.read().await;
             let tmp = match fhe_type {
+                FheType::Euint512 => {
+                    todo!("Implement decryption for Euint512")
+                }
+                FheType::Euint1024 => {
+                    todo!("Implement decryption for Euint1024")
+                }
                 FheType::Euint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
                     &mut session,
                     &mut protocol,

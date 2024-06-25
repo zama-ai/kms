@@ -31,6 +31,8 @@ use kms_blockchain_client::query_client::QueryContractRequest;
 use kms_lib::kms::DecryptionResponsePayload;
 use kms_lib::rpc::rpc_types::Plaintext;
 use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
+use sha3::Digest;
+use sha3::Sha3_256;
 use std::collections::HashMap;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
@@ -326,6 +328,12 @@ impl Blockchain for KmsBlockchainImpl {
                 ptxt.as_u256().copy_to_be_byte_slice(cake.as_mut_slice());
                 Address::from_slice(&cake).to_token()
             }
+            FheType::Euint512 => {
+                todo!("Implement Euint512")
+            }
+            FheType::Euint1024 => {
+                todo!("Implement Euint1024")
+            }
             FheType::Euint2048 => {
                 let mut cake = vec![0u8; 256];
                 ptxt.as_u2048().copy_to_be_byte_slice(cake.as_mut_slice());
@@ -342,35 +350,50 @@ impl Blockchain for KmsBlockchainImpl {
     async fn reencrypt(
         &self,
         signature: Vec<u8>,
-        version: u32,
         verification_key: Vec<u8>,
-        randomness: Vec<u8>,
         enc_key: Vec<u8>,
         fhe_type: FheType,
-        key_id: Vec<u8>,
         ciphertext: Vec<u8>,
-        ciphertext_digest: Vec<u8>,
-        eip712_name: String,
-        eip712_version: String,
-        eip712_chain_id: Vec<u8>,
         eip712_verifying_contract: String,
-        eip712_salt: Vec<u8>,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
         let ctxt_handle = self.store_ciphertext(ciphertext.clone()).await?;
+        let mut hasher = Sha3_256::new();
+        hasher.update(&ciphertext);
+        let digest = hasher.finalize().to_vec();
+        let ctxt_digest = digest.to_vec();
+
+        let key_id = HexVector::from_hex(self.config.kms.key_id.as_str())?;
         tracing::info!(
-            "🔒 Reencrypting ciphertext using key_id {:?}",
-            hex::encode(&key_id)
+            "🔒 Reencrypting ciphertext using key_id={:?}, ctxt_handle={}, ctxt_digest={}",
+            key_id.to_hex(),
+            hex::encode(&ctxt_handle),
+            hex::encode(&ctxt_digest)
         );
+
+        // TODO(later) check whether randomness is essential
+        let randomness = vec![1, 2, 3, 4];
+        let eip712_name = "Authorization token".to_string();
+        let eip712_version = "1".to_string();
+        let eip712_salt = HexVector(vec![]);
+
+        // chain ID is 32 bytes
+        let mut eip712_chain_id = vec![0u8; 32];
+        self.config
+            .ethereum
+            .chain_id
+            .to_big_endian(&mut eip712_chain_id);
+
+        // NOTE: the ciphertext digest must be the real SHA3 digest
         let reencrypt_values = ReencryptValues::builder()
             .signature(signature)
-            .version(version)
+            .version(CURRENT_FORMAT_VERSION)
             .verification_key(verification_key)
             .randomness(randomness)
             .enc_key(enc_key)
             .fhe_type(fhe_type)
             .key_id(key_id)
             .ciphertext_handle(ctxt_handle.clone())
-            .ciphertext_digest(ciphertext_digest)
+            .ciphertext_digest(ctxt_digest)
             .eip712_name(eip712_name)
             .eip712_version(eip712_version)
             .eip712_chain_id(eip712_chain_id)
@@ -378,12 +401,22 @@ impl Blockchain for KmsBlockchainImpl {
             .eip712_salt(eip712_salt)
             .build();
 
+        tracing::info!(
+            "Reencryption EIP712 info: name={}, version={}, \
+            chain_id={} (HEX), verifying_contract={}, salt={} (HEX)",
+            reencrypt_values.eip712_name(),
+            reencrypt_values.eip712_version(),
+            reencrypt_values.eip712_chain_id().to_hex(),
+            reencrypt_values.eip712_verifying_contract(),
+            reencrypt_values.eip712_salt().to_hex(),
+        );
+
         let operation = events::kms::OperationValue::Reencrypt(reencrypt_values);
 
         let proof = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
         // send coins 1:1 with the ciphertext size
         let data_size = footprint::extract_ciphertext_size(&ctxt_handle);
-        tracing::info!("🍊 Decrypting ciphertext of size: {:?}", data_size);
+        tracing::info!("🍊 Reencrypting ciphertext of size: {:?}", data_size);
         let evs = self
             .make_req_to_kms_blockchain(data_size, operation, proof)
             .await?;

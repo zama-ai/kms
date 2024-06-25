@@ -370,6 +370,10 @@ impl TryFrom<i32> for WrappingFheType {
             events::kms::FheType::Euint160
         } else if kms_lib::kms::FheType::Euint256 as i32 == value {
             events::kms::FheType::Euint256
+        } else if kms_lib::kms::FheType::Euint512 as i32 == value {
+            events::kms::FheType::Euint512
+        } else if kms_lib::kms::FheType::Euint1024 as i32 == value {
+            events::kms::FheType::Euint1024
         } else if kms_lib::kms::FheType::Euint2048 as i32 == value {
             events::kms::FheType::Euint2048
         } else {

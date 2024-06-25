@@ -126,6 +126,12 @@ fn intro(config: &GatewayConfig) {
     );
     tracing::info!(
         "{:<width$}{}",
+        "🎉 Ethereum chain ID:",
+        &config.ethereum.chain_id,
+        width = width
+    );
+    tracing::info!(
+        "{:<width$}{}",
         "🤝 Relayer address:",
         to_checksum(&WalletManager::default().wallet.address(), None),
         width = width

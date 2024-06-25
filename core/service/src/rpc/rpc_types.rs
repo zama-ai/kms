@@ -482,6 +482,8 @@ impl From<Plaintext> for Vec<u8> {
             FheType::Euint128 => value.bytes[0..16].to_vec(),
             FheType::Euint160 => value.bytes[0..20].to_vec(),
             FheType::Euint256 => value.bytes[0..32].to_vec(),
+            FheType::Euint512 => value.bytes[0..64].to_vec(),
+            FheType::Euint1024 => value.bytes[0..128].to_vec(),
             FheType::Euint2048 => value.bytes[0..256].to_vec(),
         }
     }
