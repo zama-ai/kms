@@ -98,7 +98,7 @@ pub(crate) async fn handle_reencryption_event(
     event: &ApiReencryptValues,
     config: &GatewayConfig,
 ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
-    let ethereum_ct_handle = event.ciphertext_digest.0.clone();
+    let ethereum_ct_handle = event.ciphertext_handle.0.clone();
     let (ciphertext, fhe_type) =
         <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
             .get_ciphertext(client, ethereum_ct_handle.clone(), None)

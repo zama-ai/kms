@@ -21,6 +21,8 @@ use kms_blockchain_connector::application::oracle_sync::OracleSyncHandler;
 use kms_blockchain_connector::application::SyncHandler;
 use kms_blockchain_connector::conf::ConnectorConfig;
 use kms_blockchain_connector::domain::oracle::Oracle;
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::oneshot;
@@ -33,13 +35,12 @@ pub struct DecryptionEvent {
     pub(crate) block_number: u64,
 }
 
-#[derive(Clone, Default, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct ApiReencryptValues {
     pub(crate) signature: HexVector,
     pub(crate) verification_key: HexVector,
     pub(crate) enc_key: HexVector,
-    pub(crate) ciphertext: Option<HexVector>,
-    pub(crate) ciphertext_digest: HexVector,
+    pub(crate) ciphertext_handle: HexVector,
     pub(crate) eip712_verifying_contract: String,
 }
 
@@ -339,5 +340,29 @@ impl GatewaySubscriber {
                 });
             }
         });
+    }
+}
+
+// write a test for serialization and deserialization of the ApiReencryptValues struct
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_serde() {
+        let values = ApiReencryptValues {
+            signature: HexVector::from(vec![1, 2, 3]),
+            verification_key: HexVector::from(vec![4, 5, 6]),
+            enc_key: HexVector::from(vec![7, 8, 9]),
+            ciphertext_handle: HexVector::from(vec![10, 11, 12]),
+            eip712_verifying_contract: "0x1234567890abcdef".to_string(),
+        };
+
+        let serialized = serde_json::to_string_pretty(&values).unwrap();
+        // make the output more readable
+        println!("serialized = {}", serialized);
+        let deserialized: ApiReencryptValues = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(values, deserialized);
     }
 }
