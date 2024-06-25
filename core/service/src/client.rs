@@ -25,9 +25,7 @@ use distributed_decryption::execution::runtime::party::Role;
 use distributed_decryption::execution::sharing::shamir::{
     fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
 };
-use distributed_decryption::execution::tfhe_internals::parameters::{
-    AugmentedCiphertextParameters, NoiseFloodParameters,
-};
+use distributed_decryption::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
 use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
 use serde_asn1_der::{from_bytes, to_vec};
@@ -214,6 +212,7 @@ pub mod js_api {
     use crate::kms::ParamChoice;
     use crypto_box::aead::{Aead, AeadCore};
     use crypto_box::{Nonce, SalsaBox};
+    use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 
     use super::*;
 
@@ -834,6 +833,10 @@ impl Client {
             ));
         }
         let client_sk = client_sk_map.values().next().cloned();
+
+        // This import need to be within this scope otherwise
+        // it is considered unused with certain features
+        use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
         let params: NoiseFloodParameters = read_as_json(param_path).await?;
 
         let n = server_keys.len() as u8;
