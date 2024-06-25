@@ -188,7 +188,7 @@ impl<'a> KmsBlockchainImpl {
 
         // Send the hex-encoded data to the kv_store
         let response = reqwest::Client::new()
-            .post(format!("{}/store", "http://localhost:8088"))
+            .post(format!("{}/store", self.config.storage.url))
             .body(hex_data)
             .send()
             .await?;
