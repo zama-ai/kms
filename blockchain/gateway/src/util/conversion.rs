@@ -1,3 +1,4 @@
+use ethers::abi::FixedBytes;
 use ethers::abi::Token;
 use ethers::types::{Address, U256};
 use thiserror::Error;
@@ -61,6 +62,12 @@ impl TokenizableFrom for u8 {
     }
 }
 
+impl TokenizableFrom for U4 {
+    fn to_token(self) -> Token {
+        Token::Uint(U256::from(self.value()))
+    }
+}
+
 impl TokenizableFrom for u16 {
     fn to_token(self) -> Token {
         Token::Uint(U256::from(self))
@@ -91,9 +98,9 @@ impl TokenizableFrom for U256 {
     }
 }
 
-impl TokenizableFrom for U4 {
+impl TokenizableFrom for FixedBytes {
     fn to_token(self) -> Token {
-        Token::Uint(U256::from(self.value()))
+        Token::FixedBytes(self)
     }
 }
 
@@ -105,6 +112,23 @@ impl TryTokenizable for bool {
     fn from_token(token: Token) -> Result<Self, Self::Error> {
         if let Token::Bool(value) = token {
             Ok(value)
+        } else {
+            Err(ConversionError::InvalidConversion)
+        }
+    }
+}
+
+impl TryTokenizable for U4 {
+    type Error = ConversionError;
+
+    fn from_token(token: Token) -> Result<Self, Self::Error> {
+        if let Token::Uint(value) = token {
+            let value_as_u8 = value.as_u32() as u8;
+            if value_as_u8 <= 0x0F {
+                Ok(U4(value_as_u8))
+            } else {
+                Err(ConversionError::Uint4Overflow)
+            }
         } else {
             Err(ConversionError::InvalidConversion)
         }
@@ -215,17 +239,12 @@ impl TryTokenizable for Address {
     }
 }
 
-impl TryTokenizable for U4 {
+impl TryTokenizable for FixedBytes {
     type Error = ConversionError;
 
     fn from_token(token: Token) -> Result<Self, Self::Error> {
-        if let Token::Uint(value) = token {
-            let value_as_u8 = value.as_u32() as u8;
-            if value_as_u8 <= 0x0F {
-                Ok(U4(value_as_u8))
-            } else {
-                Err(ConversionError::Uint4Overflow)
-            }
+        if let Token::FixedBytes(value) = token {
+            Ok(value)
         } else {
             Err(ConversionError::InvalidConversion)
         }

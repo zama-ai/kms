@@ -4,6 +4,7 @@ use crate::config::GatewayConfig;
 use crate::config::KmsMode;
 use crate::util::conversion::TokenizableFrom;
 use crate::util::footprint;
+use abi::FixedBytes;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use bincode::deserialize;
@@ -319,14 +320,14 @@ impl Blockchain for KmsBlockchainImpl {
             FheType::Euint64 => ptxt.as_u64().to_token(),
             FheType::Euint128 => ptxt.as_u128().to_token(),
             FheType::Euint160 => {
-                let mut cake = vec![0u8; 20];
+                let mut cake = vec![0u8; 32];
                 ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
-                Address::from_slice(&cake).to_token()
+                Address::from_slice(&cake[12..]).to_token()
             }
             FheType::Euint256 => {
                 let mut cake = vec![0u8; 32];
                 ptxt.as_u256().copy_to_be_byte_slice(cake.as_mut_slice());
-                Address::from_slice(&cake).to_token()
+                U256::from_big_endian(&cake).to_token()
             }
             FheType::Euint512 => {
                 todo!("Implement Euint512")
@@ -337,7 +338,7 @@ impl Blockchain for KmsBlockchainImpl {
             FheType::Euint2048 => {
                 let mut cake = vec![0u8; 256];
                 ptxt.as_u2048().copy_to_be_byte_slice(cake.as_mut_slice());
-                Address::from_slice(&cake).to_token()
+                FixedBytes::from(cake).to_token()
             }
             FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
         };
