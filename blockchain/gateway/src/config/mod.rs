@@ -75,6 +75,7 @@ pub struct EthereumConfig {
     pub test_async_decrypt_address: H160,
     pub coprocessor_url: String,
     pub chain_id: U256,
+    pub relayer_key: String,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
@@ -153,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_gateway_config() {
-        let env_conf: [(&str, Option<&str>); 12] = [
+        let env_conf: [(&str, Option<&str>); 13] = [
             ("GATEWAY__DEBUG", None),
             ("GATEWAY__MODE", None),
             ("GATEWAY__ETHEREUM__LISTENER_TYPE", None),
@@ -162,6 +163,7 @@ mod tests {
             ("GATEWAY__ETHEREUM__RELAYER_ADDRESS", None),
             ("GATEWAY__ETHEREUM__ORACLE_PREDEPLOY_ADDRESS", None),
             ("GATEWAY__ETHEREUM__TEST_ASYNC_DECRYPT_ADDRESS", None),
+            ("GATEWAY__ETHEREUM__RELAYER_KEY", None),
             ("GATEWAY__KMS__CONTRACT_ADDRESS", None),
             ("GATEWAY__KMS__MNEMONIC", None),
             ("GATEWAY__KMS__ADDRESS", None),
@@ -191,6 +193,10 @@ mod tests {
             assert_eq!(
                 gateway_config.ethereum.test_async_decrypt_address,
                 H160::from_str("99F460504563579922352932A42172B3c04a1420").unwrap()
+            );
+            assert_eq!(
+                gateway_config.ethereum.relayer_key,
+                "7ec931411ad75a7c201469a385d6f18a325d4923f9f213bd882bbea87e160b67"
             );
             assert_eq!(
                 gateway_config.kms.contract_address,
@@ -235,6 +241,10 @@ mod tests {
                 Some("99F460504563579922352932A42172B3c04a1400"),
             ),
             (
+                "GATEWAY__ETHEREUM__RELAYER_KEY",
+                Some("1095a3b5efa0cbd54b9c840e3881fa62d74b793d01f091c292ce916cb2e7757a"),
+            ),
+            (
                 "GATEWAY__KMS__CONTRACT_ADDRESS",
                 Some("wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4f"),
             ),
@@ -269,6 +279,10 @@ mod tests {
             assert_eq!(
                 gateway_config.ethereum.test_async_decrypt_address,
                 H160::from_str("99F460504563579922352932A42172B3c04a1400").unwrap()
+            );
+            assert_eq!(
+                gateway_config.ethereum.relayer_key,
+                "1095a3b5efa0cbd54b9c840e3881fa62d74b793d01f091c292ce916cb2e7757a"
             );
             assert_eq!(
                 gateway_config.kms.contract_address,

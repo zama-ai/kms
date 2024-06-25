@@ -40,6 +40,9 @@ coprocessor_url = "http://127.0.0.1:8745/"
 # The chain ID, 0x1f49 is 8009 in base 10
 chain_id = "1f49"
 
+# relayer private key
+relayer_key = "7ec931411ad75a7c201469a385d6f18a325d4923f9f213bd882bbea87e160b67"
+
 # KMS Settings
 # Configuration settings related to the Key Management System (KMS).
 [kms]
