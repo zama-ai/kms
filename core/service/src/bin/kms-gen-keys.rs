@@ -1,6 +1,5 @@
-use std::path::Path;
-
 use clap::{Parser, Subcommand};
+use kms_lib::consts::AMOUNT_PARTIES;
 use kms_lib::rpc::rpc_types::{PrivDataType, PubDataType};
 use kms_lib::storage::StorageReader;
 use kms_lib::util::key_setup::test_tools::ensure_threshold_keys_exist;
@@ -14,6 +13,7 @@ use kms_lib::{
         ensure_central_server_signing_keys_exist,
     },
 };
+use std::path::Path;
 use strum::IntoEnumIterator;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{filter, layer::SubscriberExt, Layer};
@@ -56,7 +56,7 @@ enum Mode {
         /// The determinism is not guaranteed to be the same between releases.
         #[clap(long, default_value_t = false)]
         deterministic: bool,
-        /// Whether to overwrite the existing keys,
+        /// Whether to overwrite ALL the existing keys,
         #[clap(long, default_value_t = false)]
         overwrite: bool,
         /// Whether to output the private FHE key separately,
@@ -138,10 +138,8 @@ async fn main() {
             }
             if overwrite {
                 // Remove any existing keys
-                for storage in StorageType::iter() {
-                    FileStorage::purge_centralized(pub_path, storage).unwrap();
-                    FileStorage::purge_centralized(priv_path, storage).unwrap();
-                }
+                let _ = FileStorage::purge_centralized(pub_path, StorageType::PUB);
+                let _ = FileStorage::purge_centralized(priv_path, StorageType::PRIV);
             }
             if !ensure_central_server_signing_keys_exist(priv_path, pub_path, deterministic).await {
                 tracing::warn!("Signing keys already exist, skipping generation");
@@ -197,9 +195,9 @@ async fn main() {
             }
             if overwrite {
                 // Remove any existing keys
-                for storage in StorageType::iter() {
-                    FileStorage::purge_centralized(pub_path, storage).unwrap();
-                    FileStorage::purge_centralized(priv_path, storage).unwrap();
+                for i in 1..=AMOUNT_PARTIES {
+                    let _ = FileStorage::purge_threshold(pub_path, StorageType::PUB, i);
+                    let _ = FileStorage::purge_threshold(priv_path, StorageType::PRIV, i);
                 }
             }
             ensure_threshold_keys_exist(

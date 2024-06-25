@@ -201,12 +201,14 @@ impl FileStorage {
     ) -> anyhow::Result<()> {
         match optional_path {
             Some(path) => {
-                let path = path.join(storage_type.to_string());
-                fs::create_dir_all(path)?;
+                let full_path = path.join(storage_type.to_string());
+                tracing::warn!("Purging storage at {:?}", full_path);
+                fs::remove_dir_all(full_path)?;
             }
             None => {
-                let default_path = Self::default_path_with_prefix(&storage_type.to_string())?;
-                fs::remove_dir_all(default_path)?;
+                let full_path = Self::default_path_with_prefix(&storage_type.to_string())?;
+                tracing::warn!("Purging storage at {:?}", full_path);
+                fs::remove_dir_all(full_path)?;
             }
         }
         Ok(())
@@ -220,13 +222,15 @@ impl FileStorage {
     ) -> anyhow::Result<()> {
         match optional_path {
             Some(path) => {
-                let path = path.join(format!("{storage_type}-p{party_id}"));
-                fs::remove_dir_all(path)?;
+                let full_path = path.join(format!("{storage_type}-p{party_id}"));
+                tracing::warn!("Purging storage at {:?}", full_path);
+                fs::remove_dir_all(full_path)?;
             }
             None => {
-                let default_path =
+                let full_path =
                     Self::default_path_with_prefix(&format!("{storage_type}-p{party_id}"))?;
-                fs::remove_dir_all(default_path)?;
+                tracing::warn!("Purging storage at {:?}", full_path);
+                fs::remove_dir_all(full_path)?;
             }
         }
         Ok(())
