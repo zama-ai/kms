@@ -29,13 +29,6 @@ jobs:
         uses: codfish/semantic-release-action@v3
         with:
           branches: ${{ inputs.branch }}
-          additional_packages: |
-            [
-              '@semantic-release/commit-analyzer',
-              '@semantic-release/release-notes-generator',
-              '@semantic-release/git',
-              '@semantic-release/exec',
-            ]
         env:
           GITHUB_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
   cargo-release:
