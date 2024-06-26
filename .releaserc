@@ -1,0 +1,34 @@
+{
+  "tagFormat": "v${version}",
+  "verifyConditions": ["@semantic-release/github"],
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/changelog",
+      {
+        "changelogFile": "CHANGELOG.md",
+        "changelogTitle": "# Semantic Versioning Changelog"
+      }
+    ],
+    [
+      "@semantic-release/exec", {
+      "prepareCmd": "./prepare-version.sh v${nextRelease.version}"
+    }],
+    [
+      "@semantic-release/git",
+      {
+        "assets": ["CHANGELOG.md", "VERSION"]
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          {
+            "path": "CHANGELOG.md"
+          }
+        ]
+      }
+    ]
+]}
