@@ -161,10 +161,9 @@ function generic_make_reenc(client, reqf) {
 
     // turn the request into json
     let req_json = reencryption_request_to_flat_json_string(req);
+    // check that the parsed result is ok
     let _parsed = JSON.parse(req_json);
-    // console.log(_parsed);
 }
-
 
 async function postData(url = "", data = "") {
     const response = await fetch(url, {

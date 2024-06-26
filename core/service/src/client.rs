@@ -1976,9 +1976,9 @@ pub fn num_blocks(fhe_type: FheType, params: &ClassicPBSParameters) -> usize {
     }
 }
 
-pub fn public_key_to_address(pk: &k256::ecdsa::VerifyingKey) -> anyhow::Result<Vec<u8>> {
+pub fn ecdsa_public_key_to_address(pk: &PublicSigKey) -> anyhow::Result<Vec<u8>> {
     use k256::elliptic_curve::sec1::ToEncodedPoint;
-    let affine = pk.as_ref();
+    let affine = pk.pk.as_ref();
     let encoded = affine.to_encoded_point(false);
     let pk_buf = &encoded.as_bytes()[1..];
     if pk_buf.len() != 64 {
@@ -1988,12 +1988,12 @@ pub fn public_key_to_address(pk: &k256::ecdsa::VerifyingKey) -> anyhow::Result<V
     Ok(digest[12..].to_vec())
 }
 
-pub fn recover_public_key_from_signature(
+pub fn recover_ecdsa_public_key_from_signature(
     sig: &[u8],
     pub_enc_key: &[u8],
     eip712: &Eip712DomainMsg,
     target_address: &[u8],
-) -> anyhow::Result<k256::ecdsa::VerifyingKey> {
+) -> anyhow::Result<PublicSigKey> {
     let signature = k256::ecdsa::Signature::try_from(sig)?;
 
     let sol_pk = ReencryptSol {
@@ -2009,7 +2009,8 @@ pub fn recover_public_key_from_signature(
         let recovered_key =
             k256::ecdsa::VerifyingKey::recover_from_msg(&signing_hash, &signature, recid);
         if let Ok(pk) = recovered_key {
-            let recovered_address = public_key_to_address(&pk)?;
+            let pk = PublicSigKey { pk };
+            let recovered_address = ecdsa_public_key_to_address(&pk)?;
             if recovered_address == target_address {
                 return Ok(pk);
             }
@@ -2230,7 +2231,7 @@ pub mod test_tools {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{public_key_to_address, recover_public_key_from_signature, Client};
+    use super::{ecdsa_public_key_to_address, recover_ecdsa_public_key_from_signature, Client};
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
     #[cfg(feature = "wasm_tests")]
@@ -2336,16 +2337,17 @@ pub(crate) mod tests {
         let sol_pk = crate::cryptography::signcryption::ReencryptSol {
             pub_enc_key: pub_enc_key.to_vec(),
         };
-        let mut rng = aes_prng::AesRng::from_entropy();
+        let mut rng = aes_prng::AesRng::seed_from_u64(12);
         let (client_pk, client_sk) = gen_sig_keys(&mut rng);
-        let target_address = public_key_to_address(&client_pk.pk).unwrap();
+        let target_address = ecdsa_public_key_to_address(&client_pk).unwrap();
         let sig = sign_eip712(&sol_pk, &alloy_domain, &client_sk)
             .unwrap()
             .sig
             .to_vec();
         let recovered_pk =
-            recover_public_key_from_signature(&sig, pub_enc_key, &domain, &target_address).unwrap();
-        assert_eq!(recovered_pk, client_pk.pk);
+            recover_ecdsa_public_key_from_signature(&sig, pub_enc_key, &domain, &target_address)
+                .unwrap();
+        assert_eq!(recovered_pk, client_pk);
     }
 
     #[tokio::test]

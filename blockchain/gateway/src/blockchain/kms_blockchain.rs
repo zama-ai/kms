@@ -7,7 +7,7 @@ use crate::util::footprint;
 use abi::FixedBytes;
 use anyhow::anyhow;
 use async_trait::async_trait;
-use bincode::deserialize;
+use bincode::{deserialize, serialize};
 use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
 use ethers::abi::Token;
 use ethers::prelude::*;
@@ -29,7 +29,7 @@ use kms_blockchain_client::query_client::OperationQuery;
 use kms_blockchain_client::query_client::QueryClient;
 use kms_blockchain_client::query_client::QueryClientBuilder;
 use kms_blockchain_client::query_client::QueryContractRequest;
-use kms_lib::client::recover_public_key_from_signature;
+use kms_lib::client::recover_ecdsa_public_key_from_signature;
 use kms_lib::kms::DecryptionResponsePayload;
 use kms_lib::kms::Eip712DomainMsg;
 use kms_lib::rpc::rpc_types::Plaintext;
@@ -261,7 +261,7 @@ impl Blockchain for KmsBlockchainImpl {
         let ptxt = match self.config.mode {
             KmsMode::Centralized => match results.first().unwrap() {
                 OperationValue::DecryptResponse(decrypt_response) => {
-                    let payload: DecryptionResponsePayload = bincode::deserialize(
+                    let payload: DecryptionResponsePayload = deserialize(
                         <&HexVector as Into<Vec<u8>>>::into(decrypt_response.payload()).as_slice(),
                     )
                     .unwrap();
@@ -280,7 +280,7 @@ impl Blockchain for KmsBlockchainImpl {
                 for value in results.iter() {
                     match value {
                         OperationValue::DecryptResponse(decrypt_response) => {
-                            let payload: DecryptionResponsePayload = bincode::deserialize(
+                            let payload: DecryptionResponsePayload = deserialize(
                                 <&HexVector as Into<Vec<u8>>>::into(decrypt_response.payload())
                                     .as_slice(),
                             )
@@ -387,6 +387,12 @@ impl Blockchain for KmsBlockchainImpl {
             .to_big_endian(&mut eip712_chain_id);
 
         // convert user_address to verification_key
+        if user_address.len() != 20 {
+            return Err(anyhow::anyhow!(
+                "user_address {} bytes but 20 bytes is expected",
+                user_address.len()
+            ));
+        }
         let domain = Eip712DomainMsg {
             name: eip712_name.clone(),
             version: eip712_version.clone(),
@@ -395,14 +401,13 @@ impl Blockchain for KmsBlockchainImpl {
             salt: eip712_salt.0.clone(),
         };
         let verification_key =
-            recover_public_key_from_signature(&signature, &enc_key, &domain, &user_address)?
-                .to_sec1_bytes();
+            recover_ecdsa_public_key_from_signature(&signature, &enc_key, &domain, &user_address)?;
 
         // NOTE: the ciphertext digest must be the real SHA3 digest
         let reencrypt_values = ReencryptValues::builder()
             .signature(signature)
             .version(CURRENT_FORMAT_VERSION)
-            .verification_key(verification_key.to_vec())
+            .verification_key(serialize(&verification_key)?)
             .randomness(randomness)
             .enc_key(enc_key)
             .fhe_type(fhe_type)
