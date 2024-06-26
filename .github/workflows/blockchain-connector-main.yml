@@ -40,6 +40,7 @@ jobs:
       image-dev: 'kms-blockchain-connector-dev'
       generate-dev-image: true
       image-dev-description: 'KMS Blockchain Connector Dev Docker Image'
+      arm-build: true
     needs:
       - build
     secrets:

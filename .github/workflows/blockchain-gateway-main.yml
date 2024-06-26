@@ -27,7 +27,7 @@ jobs:
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
 
   docker:
-    uses: ./.github/workflows/common-docker.yml
+    uses: ./.github/workflows/common-docker-big-instance.yml
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -39,11 +39,15 @@ jobs:
       image-dev: 'kms-blockchain-gateway-dev'
       generate-dev-image: true
       image-dev-description: 'KMS-Blockchain Gateway Dev Docker Image'
+      arm-build: true
     needs:
       - build
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
       GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
 
   done:
     runs-on: ubuntu-latest

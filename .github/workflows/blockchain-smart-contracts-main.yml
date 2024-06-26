@@ -48,6 +48,7 @@ jobs:
       generate-dev-image: true
       docker-file-dev: 'dev.dockerfile'
       image-dev-description: 'KMS ASC Dev Docker Image'
+      arm-build: true
     needs:
         - build-smart-contracts
         - optimize-smart-contracts

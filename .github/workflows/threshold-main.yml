@@ -38,6 +38,7 @@ jobs:
       image-dev: 'kms-core-threshold-dev'
       generate-dev-image: true
       image-dev-description: 'KMS Threshold Core Dev Docker Image'
+      arm-build: true
     needs:
       - build
     secrets:
