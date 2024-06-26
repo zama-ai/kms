@@ -27,12 +27,12 @@ kms = { path = "../../core/service", default-features = false, features = ["grpc
 kms-blockchain-client = { path = "../client" }
 kms-blockchain-connector = { path = "../connector" }
 lazy_static = "1.4"
-opentelemetry = { version = "0.22", features = ["metrics"] }
-opentelemetry-otlp = { version = "0.15.0", features = ["tokio"] }
-opentelemetry-prometheus = "0.15.0"
-opentelemetry-semantic-conventions = { version = "0.14.0" }
-opentelemetry-stdout = { version = "0.3.0", features = ["trace"] }
-opentelemetry_sdk = { version = "0.22", features = ["rt-tokio", "logs", "metrics"] }
+opentelemetry = { version = "0.23", features = ["metrics"] }
+opentelemetry-otlp = { version = "0.16.0", features = ["tokio"] }
+opentelemetry-prometheus = "0.16.0"
+opentelemetry-semantic-conventions = { version = "0.15.0" }
+opentelemetry-stdout = { version = "0.4.0", features = ["trace"] }
+opentelemetry_sdk = { version = "0.23", features = ["rt-tokio", "logs", "metrics"] }
 prometheus = "=0.13.4"
 prost = "0.12"
 rand = "0.8.5"
@@ -47,14 +47,14 @@ structopt = "0.3.26"
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
 tempfile = "3.10.1"
-tendermint = "0.35.0"
-tendermint-rpc = { version = "0.35.0", features = ["websocket-client"] }
+tendermint = "0.37.0"
+tendermint-rpc = { version = "0.37.0", features = ["websocket-client"] }
 thiserror = "1.0.61"
 tokio = { version = "1.37", features = ["full"] }
 tokio-stream = "0.1.15"
-tonic = "0.10"
+tonic = "0.11"
 tracing = { version = "0.1.40", features = ["log"] }
-tracing-opentelemetry = "0.23"
+tracing-opentelemetry = "0.24"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
 typed-builder = "0.18.1"
 

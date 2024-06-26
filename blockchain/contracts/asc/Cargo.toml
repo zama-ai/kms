@@ -25,7 +25,6 @@ serde = "1.0.197"
 sha3 = "0.10.8"
 sylvia = "1.0.2"
 sylvia-derive = "1.0.2"
-tendermint = "0.36.0"
 
 [dev-dependencies]
 cw-multi-test = "2.0.1"
