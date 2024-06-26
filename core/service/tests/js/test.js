@@ -23,7 +23,12 @@ const {
     new_fhe_type,
     make_reencryption_req,
     reencryption_request_to_flat_json_string,
-    default_client_for_centralized_kms
+    default_client_for_centralized_kms,
+    agg_resp_to_json,
+    get_client_public_key,
+    get_client_secret_key,
+    public_sig_key_to_u8vec,
+    private_sig_key_to_u8vec
 } = require("../../pkg");
 
 test('crypto_box', (_t) => {
@@ -89,6 +94,34 @@ test('threshold reencryption response', (_t) => {
     assert.deepEqual(42, pt2[0]);
 });
 
+test('print central transcript', (_t) => {
+    const transcript_buf = fs.readFileSync('temp/test-central-wasm-transcript.bin.8')
+    let client = client_from_transcript(transcript_buf);
+    let req_struct = centralized_reencryption_request_from_transcript(client, transcript_buf, 48);
+    let req = req_struct.inner_str;
+    let enc_pk = req_struct.enc_pk;
+    let enc_sk = req_struct.enc_sk;
+    let expected_pt = req_struct.pt;
+    console.log("pt:");
+    console.log(expected_pt);
+
+    console.log("request:");
+    console.log(req);
+
+    console.log("ethereum pk and sk (sk is bincoded):");
+    console.log(public_sig_key_to_u8vec(get_client_public_key(client)));
+    console.log(private_sig_key_to_u8vec(get_client_secret_key(client)));
+
+    console.log("ephemeral pk and sk:");
+    console.log(cryptobox_pk_to_u8vec(enc_pk));
+    console.log(cryptobox_sk_to_u8vec(enc_sk));
+
+    let response = centralized_reencryption_response_from_transcript(transcript_buf);
+    console.log("response:");
+    console.log(agg_resp_to_json(response.agg_resp));
+
+});
+
 test('new client', (_t) => {
     const kms_key_buf = new Uint8Array([
         2, 202, 118, 214, 19, 106, 39, 216, 225, 169, 207, 51, 129, 179, 226, 0, 109, 197, 49, 143, 238, 4, 214, 34, 188, 182, 30,
@@ -105,9 +138,8 @@ test('new client', (_t) => {
     let client_key = u8vec_to_public_sig_key(client_key_buf);
     let generic_client = new_client(kms_keys, null, client_key, 0, 'default');
 
-    // make a centralized client
-    let central_client_key = u8vec_to_public_sig_key(client_key_buf);
-    let central_client = default_client_for_centralized_kms(central_client_key, 'default');
+    // make a default centralized client
+    let central_client = default_client_for_centralized_kms();
 
     // try creating requests
     generic_make_reenc(generic_client, make_reencryption_req);
@@ -129,7 +161,8 @@ function generic_make_reenc(client, reqf) {
 
     // turn the request into json
     let req_json = reencryption_request_to_flat_json_string(req);
-    console.log(JSON.parse(req_json));
+    let _parsed = JSON.parse(req_json);
+    // console.log(_parsed);
 }
 
 

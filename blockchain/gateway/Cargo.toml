@@ -59,8 +59,8 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
 typed-builder = "0.18.1"
 
 [dev-dependencies]
-alloy-primitives = "0.7.0"
-alloy-sol-types = "0.7.0"
+alloy-primitives = "0.7.6"
+alloy-sol-types = "0.7.6"
 rand = "0.8.5"
 serial_test = "3.1.1"
 temp-env = "0.3"

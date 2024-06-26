@@ -7,8 +7,8 @@ use crate::cryptography::signcryption::{
     insecure_decrypt_ignoring_signature, sign_eip712, ReencryptSol, RND_SIZE,
 };
 use crate::kms::{
-    AggregatedReencryptionResponse, FheType, ReencryptionRequest, ReencryptionRequestPayload,
-    ReencryptionResponse, RequestId,
+    AggregatedReencryptionResponse, Eip712DomainMsg, FheType, ReencryptionRequest,
+    ReencryptionRequestPayload, ReencryptionResponse, RequestId,
 };
 use crate::rpc::rpc_types::{
     allow_to_protobuf_domain, MetaResponse, Plaintext, CURRENT_FORMAT_VERSION,
@@ -235,20 +235,29 @@ pub mod js_api {
         })
     }
 
-    /// Instantiate a new client for use with the centralized KMS.
-    ///
-    /// * `client_pk` - the client (wallet) public key,
-    /// which can parsed using [u8vec_to_public_sig_key] also.
-    ///
-    /// * `param_choice` - the parameter choice, which can be either `"test"` or `"default"`.
-    /// The "default" parameter choice is selected if no matching string is found.
     #[wasm_bindgen]
-    pub fn default_client_for_centralized_kms(
-        client_pk: PublicSigKey,
-        param_choice: &str,
-    ) -> Result<Client, JsError> {
+    pub fn private_sig_key_to_u8vec(sk: &PrivateSigKey) -> Result<Vec<u8>, JsError> {
+        serialize(sk).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    #[wasm_bindgen]
+    pub fn u8vec_to_private_sig_key(v: &[u8]) -> Result<PrivateSigKey, JsError> {
+        deserialize(v).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Instantiate a new client for use with the centralized KMS.
+    #[wasm_bindgen]
+    pub fn default_client_for_centralized_kms() -> Result<Client, JsError> {
         console_error_panic_hook::set_once();
-        new_client(vec![], None, client_pk, 1, param_choice)
+        // TODO: we're just using a dummy public key here
+        // since it should not be used by wasm at the moment
+        // when using the insecure way of doing reconstruction
+        let clinet_pk_buf = vec![
+            2u8, 190, 131, 237, 176, 0, 13, 171, 152, 220, 41, 77, 205, 59, 208, 48, 37, 75, 0,
+            159, 68, 39, 28, 30, 76, 96, 11, 61, 38, 66, 2, 129, 0,
+        ];
+        let client_pk = u8vec_to_public_sig_key(&clinet_pk_buf)?;
+        new_client(vec![], None, client_pk, 1, "default")
     }
 
     /// Instantiate a new client.
@@ -324,6 +333,16 @@ pub mod js_api {
         client.server_pks.keys().cloned().collect()
     }
 
+    #[wasm_bindgen]
+    pub fn get_client_public_key(client: &Client) -> PublicSigKey {
+        client.client_pk.clone()
+    }
+
+    #[wasm_bindgen]
+    pub fn get_client_secret_key(client: &Client) -> Option<PrivateSigKey> {
+        client.client_sk.clone()
+    }
+
     #[wasm_bindgen(getter_with_clone)]
     #[cfg(feature = "wasm_tests")]
     pub struct DummyReencResponse {
@@ -332,6 +351,12 @@ pub mod js_api {
         pub agg_resp_ids: Vec<u32>,
         pub enc_pk: PublicEncKey,
         pub enc_sk: PrivateEncKey,
+    }
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn agg_resp_to_json(agg_resp: Vec<ReencryptionResponse>) -> Result<JsValue, JsError> {
+        resp_to_json(agg_resp)
     }
 
     #[wasm_bindgen]
@@ -385,9 +410,9 @@ pub mod js_api {
         let transcript: TestingReencryptionTranscript = bincode::deserialize(buf).unwrap();
 
         let domain = alloy_sol_types::eip712_domain!(
-            name: "dummy",
+            name: "Authorization token",
             version: "1",
-            chain_id: 0,
+            chain_id: 8006,
             verifying_contract: alloy_primitives::Address::ZERO,
         );
         let request_id = RequestId::derive("REENC_ID").unwrap();
@@ -623,17 +648,37 @@ pub mod js_api {
         }
     }
 
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct ReencryptionResponseHex {
+        version: u32,
+        servers_needed: u32,
+        verification_key: String,
+        digest: String,
+        fhe_type: String, // this is euint8, for example
+        signcrypted_ciphertext: String,
+    }
+
+    #[cfg(feature = "wasm_tests")]
+    fn resp_to_json(agg_resp: Vec<ReencryptionResponse>) -> Result<JsValue, JsError> {
+        let mut out = vec![];
+        for resp in agg_resp {
+            let r = ReencryptionResponseHex {
+                version: resp.version,
+                servers_needed: resp.servers_needed,
+                verification_key: hex::encode(&resp.verification_key),
+                digest: hex::encode(&resp.digest),
+                fhe_type: "unimplemented".to_string(),
+                signcrypted_ciphertext: hex::encode(&resp.signcrypted_ciphertext),
+            };
+            out.push(r);
+        }
+
+        let res = serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(res)
+    }
+
     fn json_to_resp(json: JsValue) -> Result<Vec<ReencryptionResponse>, JsError> {
         // first read the hex type
-        #[derive(serde::Deserialize)]
-        struct ReencryptionResponseHex {
-            version: u32,
-            servers_needed: u32,
-            verification_key: String,
-            digest: String,
-            fhe_type: String, // this is euint8, for example
-            signcrypted_ciphertext: String,
-        }
         let hex_resps: Vec<ReencryptionResponseHex> =
             serde_wasm_bindgen::from_value(json).map_err(|e| JsError::new(&e.to_string()))?;
 
@@ -1931,6 +1976,52 @@ pub fn num_blocks(fhe_type: FheType, params: &ClassicPBSParameters) -> usize {
     }
 }
 
+pub fn public_key_to_address(pk: &k256::ecdsa::VerifyingKey) -> anyhow::Result<Vec<u8>> {
+    use k256::elliptic_curve::sec1::ToEncodedPoint;
+    let affine = pk.as_ref();
+    let encoded = affine.to_encoded_point(false);
+    let pk_buf = &encoded.as_bytes()[1..];
+    if pk_buf.len() != 64 {
+        return Err(anyhow::anyhow!("incorrect public key buffer size"));
+    }
+    let digest = alloy_primitives::keccak256(pk_buf);
+    Ok(digest[12..].to_vec())
+}
+
+pub fn recover_public_key_from_signature(
+    sig: &[u8],
+    pub_enc_key: &[u8],
+    eip712: &Eip712DomainMsg,
+    target_address: &[u8],
+) -> anyhow::Result<k256::ecdsa::VerifyingKey> {
+    let signature = k256::ecdsa::Signature::try_from(sig)?;
+
+    let sol_pk = ReencryptSol {
+        pub_enc_key: pub_enc_key.to_vec(),
+    };
+    let domain = crate::rpc::rpc_types::protobuf_to_alloy_domain(eip712)?;
+
+    let signing_hash = alloy_sol_types::SolStruct::eip712_signing_hash(&sol_pk, &domain).to_vec();
+
+    for i in 0u8..4 {
+        let recid = k256::ecdsa::RecoveryId::try_from(i)?;
+
+        let recovered_key =
+            k256::ecdsa::VerifyingKey::recover_from_msg(&signing_hash, &signature, recid);
+        if let Ok(pk) = recovered_key {
+            let recovered_address = public_key_to_address(&pk)?;
+            if recovered_address == target_address {
+                return Ok(pk);
+            }
+        };
+    }
+
+    Err(anyhow::anyhow!(
+        "cannot find verification key for address {}",
+        hex::encode(target_address)
+    ))
+}
+
 // TODO this module should be behind cfg(test) normally
 // but we need it in other places such as the connector
 // and cfg(test) is not compiled by tests in other crates.
@@ -2139,7 +2230,7 @@ pub mod test_tools {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::Client;
+    use super::{public_key_to_address, recover_public_key_from_signature, Client};
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
     #[cfg(feature = "wasm_tests")]
@@ -2152,8 +2243,9 @@ pub(crate) mod tests {
     };
     #[cfg(feature = "slow_tests")]
     use crate::cryptography::central_kms::CentralizedTestingKeys;
-    use crate::cryptography::central_kms::{compute_handle, BaseKmsStruct};
+    use crate::cryptography::central_kms::{compute_handle, gen_sig_keys, BaseKmsStruct};
     use crate::cryptography::der_types::Signature;
+    use crate::cryptography::signcryption::sign_eip712;
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
     #[cfg(feature = "slow_tests")]
     use crate::kms::CrsGenResult;
@@ -2177,6 +2269,7 @@ pub(crate) mod tests {
     use alloy_sol_types::Eip712Domain;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use distributed_decryption::execution::zk::ceremony::PublicParameter;
+    use rand::SeedableRng;
     use serial_test::serial;
     use std::collections::HashMap;
     use tokio::task::{JoinHandle, JoinSet};
@@ -2232,6 +2325,27 @@ pub(crate) mod tests {
         .await
         .unwrap();
         (kms_servers, kms_clients, internal_client)
+    }
+
+    #[test]
+    fn test_public_key_from_signature() {
+        let alloy_domain = dummy_domain();
+        let domain = crate::rpc::rpc_types::allow_to_protobuf_domain(&alloy_domain).unwrap();
+
+        let pub_enc_key = b"dummypayload";
+        let sol_pk = crate::cryptography::signcryption::ReencryptSol {
+            pub_enc_key: pub_enc_key.to_vec(),
+        };
+        let mut rng = aes_prng::AesRng::from_entropy();
+        let (client_pk, client_sk) = gen_sig_keys(&mut rng);
+        let target_address = public_key_to_address(&client_pk.pk).unwrap();
+        let sig = sign_eip712(&sol_pk, &alloy_domain, &client_sk)
+            .unwrap()
+            .sig
+            .to_vec();
+        let recovered_pk =
+            recover_public_key_from_signature(&sig, pub_enc_key, &domain, &target_address).unwrap();
+        assert_eq!(recovered_pk, client_pk.pk);
     }
 
     #[tokio::test]
@@ -2988,9 +3102,9 @@ pub(crate) mod tests {
 
     fn dummy_domain() -> Eip712Domain {
         alloy_sol_types::eip712_domain!(
-            name: "dummy",
+            name: "Authorization token",
             version: "1",
-            chain_id: 1,
+            chain_id: 8006,
             verifying_contract: alloy_primitives::Address::ZERO,
         )
     }

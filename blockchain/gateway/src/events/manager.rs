@@ -38,7 +38,7 @@ pub struct DecryptionEvent {
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct ApiReencryptValues {
     pub(crate) signature: HexVector,
-    pub(crate) verification_key: HexVector,
+    pub(crate) user_address: HexVector,
     pub(crate) enc_key: HexVector,
     pub(crate) ciphertext_handle: HexVector,
     pub(crate) eip712_verifying_contract: String,
@@ -352,7 +352,7 @@ mod tests {
     fn test_serde() {
         let values = ApiReencryptValues {
             signature: HexVector::from(vec![1, 2, 3]),
-            verification_key: HexVector::from(vec![4, 5, 6]),
+            user_address: HexVector::from(vec![4, 5, 6]),
             enc_key: HexVector::from(vec![7, 8, 9]),
             ciphertext_handle: HexVector::from(vec![10, 11, 12]),
             eip712_verifying_contract: "0x1234567890abcdef".to_string(),

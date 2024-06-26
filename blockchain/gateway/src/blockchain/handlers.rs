@@ -107,7 +107,7 @@ pub(crate) async fn handle_reencryption_event(
         .await
         .reencrypt(
             event.signature.0.clone(),
-            event.verification_key.0.clone(),
+            event.user_address.0.clone(),
             event.enc_key.0.clone(),
             fhe_type,
             ciphertext,

@@ -29,7 +29,9 @@ use kms_blockchain_client::query_client::OperationQuery;
 use kms_blockchain_client::query_client::QueryClient;
 use kms_blockchain_client::query_client::QueryClientBuilder;
 use kms_blockchain_client::query_client::QueryContractRequest;
+use kms_lib::client::recover_public_key_from_signature;
 use kms_lib::kms::DecryptionResponsePayload;
+use kms_lib::kms::Eip712DomainMsg;
 use kms_lib::rpc::rpc_types::Plaintext;
 use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
 use sha3::Digest;
@@ -351,7 +353,7 @@ impl Blockchain for KmsBlockchainImpl {
     async fn reencrypt(
         &self,
         signature: Vec<u8>,
-        verification_key: Vec<u8>,
+        user_address: Vec<u8>,
         enc_key: Vec<u8>,
         fhe_type: FheType,
         ciphertext: Vec<u8>,
@@ -384,11 +386,23 @@ impl Blockchain for KmsBlockchainImpl {
             .chain_id
             .to_big_endian(&mut eip712_chain_id);
 
+        // convert user_address to verification_key
+        let domain = Eip712DomainMsg {
+            name: eip712_name.clone(),
+            version: eip712_version.clone(),
+            chain_id: eip712_chain_id.clone(),
+            verifying_contract: eip712_verifying_contract.clone(),
+            salt: eip712_salt.0.clone(),
+        };
+        let verification_key =
+            recover_public_key_from_signature(&signature, &enc_key, &domain, &user_address)?
+                .to_sec1_bytes();
+
         // NOTE: the ciphertext digest must be the real SHA3 digest
         let reencrypt_values = ReencryptValues::builder()
             .signature(signature)
             .version(CURRENT_FORMAT_VERSION)
-            .verification_key(verification_key)
+            .verification_key(verification_key.to_vec())
             .randomness(randomness)
             .enc_key(enc_key)
             .fhe_type(fhe_type)
