@@ -4,12 +4,13 @@ resolver = "2"
 members = [
     "blockchain/client",
     "blockchain/connector",
+    "blockchain/connector/utilities",
     "blockchain/contracts/asc",
     "blockchain/cosmos-proto",
     "blockchain/events",
+    "blockchain/gateway",
     "blockchain/proofs",
     "blockchain/simulator",
-    "blockchain/gateway",
     "core/service",
     "core/threshold",
 ]

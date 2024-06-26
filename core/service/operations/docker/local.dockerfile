@@ -1,6 +1,6 @@
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.78-slim-bookworm as base
+FROM rust:1.79-slim-bookworm as base
 
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
     apt install -y make protobuf-compiler iproute2 iputils-ping iperf net-tools dnsutils ssh git gcc libssl-dev libprotobuf-dev pkg-config libssl-dev

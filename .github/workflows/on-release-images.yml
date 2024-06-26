@@ -1,0 +1,84 @@
+name: "[Release KMS] Docker Images"
+
+on:
+  release:
+    types: [published]
+
+
+jobs:
+
+  docker-connector:
+    uses: ./.github/workflows/common-docker.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
+    with:
+      working-directory: "./blockchain/connector"
+      push_image: true
+      image-name: 'kms-blockchain-connector'
+      image-dev: 'kms-blockchain-connector-dev'
+      generate-dev-image: true
+      image-dev-description: 'KMS Blockchain Connector Dev Docker Image'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
+
+
+  docker-gateway:
+    uses: ./.github/workflows/common-docker.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
+    with:
+      working-directory: "./blockchain/gateway"
+      push_image: true
+      image-name: 'kms-blockchain-gateway'
+      image-dev: 'kms-blockchain-gateway-dev'
+      generate-dev-image: true
+      image-dev-description: 'KMS-Blockchain Gateway Dev Docker Image'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
+
+  docker-smart-contracts:
+    uses: ./.github/workflows/common-docker.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
+    with:
+      working-directory: './blockchain/contracts/asc'
+      push_image: true
+      image-name: 'kms-blockchain-asc'
+      image-dev: 'kms-blockchain-asc-dev'
+      generate-dev-image: true
+      docker-file-dev: 'dev.dockerfile'
+      image-dev-description: 'KMS ASC Dev Docker Image'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
+
+  docker-kms-service:
+    uses: ./.github/workflows/common-docker-big-instance.yml
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
+    with:
+      working-directory: "./core/service"
+      push_image: true
+      image-name: 'kms-service'
+      image-dev: 'kms-service-dev'
+      generate-dev-image: true
+      docker-file-dev: 'dev.dockerfile'
+      image-dev-description: 'KMS Service Dev Docker Image'
+      arm-build: true
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      GRAVITON_BUILDER_SSH_PRIVATE_KEY: ${{ secrets.GRAVITON_BUILDER_SSH_PRIVATE_KEY }}
+      SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
+      SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
+      JOB_SECRET: ${{ secrets.JOB_SECRET }}
+

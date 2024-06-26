@@ -9,7 +9,9 @@ pub(crate) trait ProofStrategy {
 
 #[cw_serde]
 pub enum ContractProofType {
+    #[serde(rename = "debug")]
     Debug,
+    #[serde(rename = "tendermint")]
     Tendermint,
 }
 

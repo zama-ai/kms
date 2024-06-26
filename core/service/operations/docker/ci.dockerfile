@@ -1,6 +1,6 @@
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.78-slim-bookworm as base
+FROM rust:1.79-slim-bookworm as base
 
 ARG BLOCKCHAIN_ACTIONS_TOKEN
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \

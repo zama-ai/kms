@@ -213,6 +213,7 @@ async fn check_event(
 
 #[retry(stop=(attempts(4)|duration(20)),wait=fixed(5))]
 async fn get_contract_address(client: &QueryClient) -> anyhow::Result<String> {
+    tracing::info!("Getting contract address....");
     let result = client.list_contracts().await.unwrap();
     if !result.contracts.is_empty() {
         Ok(result.contracts[0].clone())

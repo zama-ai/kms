@@ -1,4 +1,4 @@
-FROM rust:1.76-bookworm as builder
+FROM rust:1.79-bookworm as builder
 
 WORKDIR /usr/src/kms-server
 COPY . .

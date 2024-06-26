@@ -12,7 +12,7 @@ jobs:
   build-smart-contracts:
     uses: ./.github/workflows/common-build.yml
     with:
-      working-directory: './blockchain/contracts'
+      working-directory: './blockchain/contracts/asc'
       args-tests-fhe: ''
       package-name: 'asc'
     permissions:
@@ -26,8 +26,8 @@ jobs:
     with:
       working-directory: './blockchain/'
       # relative to working-directory
-      cargo-manifest-path: './contracts/'
-      target-path: 'contracts/'
+      cargo-manifest-path: './contracts/asc/'
+      target-path: 'contracts/asc/'
     permissions:
       contents: 'read'
       id-token: 'write'
@@ -40,7 +40,7 @@ jobs:
       contents: 'read'
       id-token: 'write'
     with:
-      working-directory: './blockchain/contracts'
+      working-directory: './blockchain/contracts/asc'
       push_image: false
       image-name: 'kms-blockchain-asc'
     secrets:

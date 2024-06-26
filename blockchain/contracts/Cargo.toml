@@ -1,9 +1,0 @@
-[workspace]
-resolver = "2"
-
-members = [
-    "asc",
-]
-
-[workspace.dependencies]
-events = { path = "../events" }

@@ -1,3 +1,4 @@
+use std::env;
 use std::io::Write;
 use std::process::Command;
 
@@ -14,13 +15,18 @@ impl DockerComposeCmd {
     }
 
     pub fn up(&self) {
-        let output = Command::new("docker")
+        let skip_build_docker = env::var("DOCKER_SKIP_BUILD").unwrap_or("".to_string());
+        let mut build = Command::new("docker");
+        build
             .arg("compose")
             .arg("-f")
             .arg(self.file.clone())
             .arg("up")
-            .arg("-d")
-            .arg("--build")
+            .arg("-d");
+        if skip_build_docker.is_empty() {
+            build.arg("--build");
+        }
+        let output = build
             .arg("--wait")
             .output()
             .expect("Failed to execute command");
