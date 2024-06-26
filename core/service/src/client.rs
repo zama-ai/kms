@@ -4,7 +4,7 @@ use crate::cryptography::der_types::{
 };
 use crate::cryptography::signcryption::{
     decrypt_signcryption, encryption_key_generation, hash_element,
-    insecure_decrypt_ignoring_signature, sign_eip712, ReencryptSol, RND_SIZE,
+    insecure_decrypt_ignoring_signature, sign_eip712, Reencrypt, RND_SIZE,
 };
 use crate::kms::{
     AggregatedReencryptionResponse, Eip712DomainMsg, FheType, ReencryptionRequest,
@@ -15,6 +15,7 @@ use crate::rpc::rpc_types::{
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
+use alloy_primitives::Bytes;
 use alloy_sol_types::Eip712Domain;
 use bincode::{deserialize, serialize};
 use distributed_decryption::algebra::base_ring::Z128;
@@ -1204,8 +1205,8 @@ impl Client {
             ciphertext: Some(ciphertext),
             ciphertext_digest,
         };
-        let sol_pk = ReencryptSol {
-            pub_enc_key: sig_payload.enc_key.clone(),
+        let sol_pk = Reencrypt {
+            publicKey: Bytes::copy_from_slice(&sig_payload.enc_key),
         };
         let sig = match &self.client_sk {
             Some(sk) => sign_eip712(&sol_pk, domain, sk)?,
@@ -1996,8 +1997,8 @@ pub fn recover_ecdsa_public_key_from_signature(
 ) -> anyhow::Result<PublicSigKey> {
     let signature = k256::ecdsa::Signature::try_from(sig)?;
 
-    let sol_pk = ReencryptSol {
-        pub_enc_key: pub_enc_key.to_vec(),
+    let sol_pk = Reencrypt {
+        publicKey: Bytes::copy_from_slice(pub_enc_key),
     };
     let domain = crate::rpc::rpc_types::protobuf_to_alloy_domain(eip712)?;
 
@@ -2267,6 +2268,7 @@ pub(crate) mod tests {
         kms::{Empty, RequestId},
     };
     use crate::{consts::TEST_THRESHOLD_KEY_ID, util::file_handling::read_as_json};
+    use alloy_primitives::Bytes;
     use alloy_sol_types::Eip712Domain;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use distributed_decryption::execution::zk::ceremony::PublicParameter;
@@ -2334,8 +2336,8 @@ pub(crate) mod tests {
         let domain = crate::rpc::rpc_types::allow_to_protobuf_domain(&alloy_domain).unwrap();
 
         let pub_enc_key = b"dummypayload";
-        let sol_pk = crate::cryptography::signcryption::ReencryptSol {
-            pub_enc_key: pub_enc_key.to_vec(),
+        let sol_pk = crate::cryptography::signcryption::Reencrypt {
+            publicKey: Bytes::copy_from_slice(pub_enc_key),
         };
         let mut rng = aes_prng::AesRng::seed_from_u64(12);
         let (client_pk, client_sk) = gen_sig_keys(&mut rng);

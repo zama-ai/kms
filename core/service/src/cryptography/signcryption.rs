@@ -56,9 +56,11 @@ where
     Ok(Signature { sig })
 }
 
+// This type (and its fields) should not be renamed
+// since it needs to match what is in fhevmjs!
 alloy_sol_types::sol! {
-    struct ReencryptSol {
-        uint8[] pub_enc_key;
+    struct Reencrypt {
+        bytes publicKey;
     }
 }
 

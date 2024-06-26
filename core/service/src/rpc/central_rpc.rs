@@ -23,7 +23,8 @@ use crate::storage::{store_at_request_id, Storage};
 use crate::util::file_handling::read_as_json;
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
-use crate::{cryptography::signcryption::ReencryptSol, storage::delete_at_request_id};
+use crate::{cryptography::signcryption::Reencrypt, storage::delete_at_request_id};
+use alloy_primitives::Bytes;
 use bincode::{deserialize, serialize};
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use std::collections::HashMap;
@@ -694,8 +695,8 @@ pub async fn validate_reencrypt_req(
         req.domain.as_ref(),
         "domain not found".to_string(),
     )?)?;
-    let pk_sol = ReencryptSol {
-        pub_enc_key: payload.enc_key.clone(),
+    let pk_sol = Reencrypt {
+        publicKey: Bytes::copy_from_slice(&payload.enc_key),
     };
     let client_verf_key: PublicSigKey = handle_potential_err(
         deserialize(&payload.verification_key),
@@ -711,7 +712,7 @@ pub async fn validate_reencrypt_req(
             "Could not validate signature {} using domain={:?}, payload={}, verf_key={:?}",
             hex::encode(&req.signature),
             domain,
-            hex::encode(&pk_sol.pub_enc_key),
+            hex::encode(&pk_sol.publicKey),
             client_verf_key,
         )));
     }

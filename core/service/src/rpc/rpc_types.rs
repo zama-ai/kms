@@ -4,14 +4,14 @@ use crate::consts::ID_LENGTH;
 use crate::cryptography::der_types::PrivateSigKey;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
-use crate::cryptography::signcryption::{hash_element, ReencryptSol};
+use crate::cryptography::signcryption::{hash_element, Reencrypt};
 use crate::kms::{
     DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType, ReencryptionResponse,
     RequestId,
 };
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::FhePrivateKey;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
 use bincode::deserialize;
@@ -196,8 +196,8 @@ impl crate::kms::ReencryptionRequest {
             .payload
             .as_ref()
             .ok_or_else(|| anyhow!("payload not found"))?;
-        let pk_sol = ReencryptSol {
-            pub_enc_key: payload.enc_key.clone(),
+        let pk_sol = Reencrypt {
+            publicKey: Bytes::copy_from_slice(&payload.enc_key),
         };
 
         let domain = protobuf_to_alloy_domain(
