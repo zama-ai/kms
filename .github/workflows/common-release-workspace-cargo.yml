@@ -40,7 +40,12 @@ jobs:
       - name: Install Cargo Workspaces
         run: cargo install cargo-workspaces
 
-      - name: Generating Release on Cargo Manifests
-        run: cargo workspaces version -y -m "[ci skip] Release Version ${{ inputs.version }}" --no-individual-tags --no-git-push custom ${{ inputs.version }}
+      - uses: oleksiyrudenko/gha-git-credentials@v2-latest
+        with:
+          token: '${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}'
+          name: 'kms-infra'
+          email: 'kms-infra@zama.ai'
 
-      - uses: stefanzweifel/git-auto-commit-action@v5
+      - name: Generating Release on Cargo Manifests
+        run: cargo workspaces version -y -m "[ci skip] Release Version ${{ inputs.version }}" --no-individual-tags custom ${{ inputs.version }}
+
