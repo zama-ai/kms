@@ -1,4 +1,4 @@
-name: "[Release KMS] - Versioning and GH Release"
+name: "[Release KMS] - Release"
 
 on:
   workflow_dispatch:
@@ -15,63 +15,17 @@ permissions:
 jobs:
   get-next-version:
     uses: semantic-release-action/next-release-version/.github/workflows/next-release-version.yml@v4
-  release:
-    runs-on: ubuntu-latest
+  cargo-release:
+    uses: ./.github/workflows/common-release-workspace-cargo.yml
     needs:
-      - get-next-version
+      - release
     permissions:
-      contents: write
-      issues: write
-      pull-requests: write
-      id-token: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install semantic-release-cargo
-        if: needs.get-next-version.outputs.new-release-published == 'true'
-        uses: taiki-e/install-action@v2
-        with:
-          tool: semantic-release-cargo@2
-
-      - name: Prepare semantic-release for Rust
-        if: needs.get-next-version.outputs.new-release-published == 'true'
-        run: semantic-release-cargo prepare ${{ needs.get-next-version.outputs.new-release-version }}
-
-      - name: Publish semantic-release for Rust
-        if: needs.get-next-version.outputs.new-release-published == 'true'
-        run: semantic-release-cargo publish
-
-      - name: Semantic Release
-        uses: cycjimmy/semantic-release-action@v4
-        id: semantic
-        with:
-          branch: ${{ inputs.branch }}
-          extra_plugins: |
-            @semantic-release/changelog@6.0.0
-            @semantic-release/git
-            @semantic-release/github
-        env:
-          GITHUB_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-
-      - name: Do something when a new release published
-        if: steps.semantic.outputs.new_release_published == 'true'
-        run: |
-          echo ${{ steps.semantic.outputs.new_release_version }}
-          echo ${{ steps.semantic.outputs.new_release_major_version }}
-          echo ${{ steps.semantic.outputs.new_release_minor_version }}
-          echo ${{ steps.semantic.outputs.new_release_patch_version }}
-          #cargo-release:
-          #  uses: ./.github/workflows/common-release-workspace-cargo.yml
-          #  needs:
-          #    - release
-          #  permissions:
-          #    contents: 'read'
-          #    id-token: 'write'
-          #    packages: 'write'
-          #  with:
-          #    version: ${{ needs.release.output.release-version }}
-          #  secrets:
-          #    BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      contents: 'read'
+      id-token: 'write'
+      packages: 'write'
+    with:
+      version: ${{ needs.release.output.release-version }}
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
 

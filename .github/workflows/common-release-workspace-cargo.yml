@@ -41,6 +41,6 @@ jobs:
         run: cargo install cargo-workspaces
 
       - name: Generating Release on Cargo Manifests
-        run: cargo workspaces version -y -m "[ci skip] Release Version ${{ inputs.version }}" --no-git-tag --no-individual-tags custom ${{ inputs.version }}
+        run: cargo workspaces version -y -m "[ci skip] Release Version ${{ inputs.version }}" --no-individual-tags custom ${{ inputs.version }}
 
 

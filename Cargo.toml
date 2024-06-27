@@ -17,7 +17,7 @@ members = [
 
 [workspace.package]
 authors = ["Zama"]
-publish = false
+publish = true
 edition = "2021"
 
 [profile.dev.package."*"]
