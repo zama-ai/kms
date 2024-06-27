@@ -15,6 +15,11 @@ members = [
     "core/threshold",
 ]
 
+[workspace.package]
+authors = ["Zama"]
+publish = false
+edition = "2021"
+
 [profile.dev.package."*"]
 # Set the default for dependencies in Development mode.
 opt-level = 3

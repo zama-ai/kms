@@ -1,17 +1,19 @@
 [package]
 name = "kms-blockchain-client"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 base64 = "0.22.1"
 bip32 = "0.5.1"
-cosmos-proto = { path = "../cosmos-proto" }
+cosmos-proto = { path = "../cosmos-proto" , version = "0.1.0" }
 deep_space = "2.24.1"
 ecdsa = { version = "0.16.9", features = ["alloc"] }
-events = { path = "../events" }
+events = { path = "../events" , version = "0.1.0" }
 hex = "0.4.3"
 hmac = "0.12.1"
 k256 = { version = "0.13.3" }
