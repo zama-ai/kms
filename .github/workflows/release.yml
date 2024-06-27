@@ -13,8 +13,12 @@ permissions:
   pull-requests: write
 
 jobs:
+  get-next-version:
+    uses: semantic-release-action/next-release-version/.github/workflows/next-release-version.yml@v4
   release:
     runs-on: ubuntu-latest
+    needs:
+      - get-next-version
     permissions:
       contents: write
       issues: write
@@ -23,25 +27,27 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Install semantic-release-cargo
+        if: needs.get-next-version.outputs.new-release-published == 'true'
+        uses: EricCrosson/install-github-release-binary@v2
         with:
-          fetch-depth: 0
-      - name: Release
-        uses: codfish/semantic-release-action@v3
-        with:
-          branches: ${{ inputs.branch }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-  cargo-release:
-    uses: ./.github/workflows/common-release-workspace-cargo.yml
-    needs:
-      - release
-    permissions:
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
-    with:
-      version: ${{ needs.release.output.release-version }}
-    secrets:
-      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+          targets: semantic-release-cargo@2
+
+      - name: Prepare semantic-release for Rust
+        if: needs.get-next-version.outputs.new-release-published == 'true'
+        run: semantic-release-cargo prepare ${{ needs.get-next-version.outputs.new-release-version }}
+
+          #cargo-release:
+          #  uses: ./.github/workflows/common-release-workspace-cargo.yml
+          #  needs:
+          #    - release
+          #  permissions:
+          #    contents: 'read'
+          #    id-token: 'write'
+          #    packages: 'write'
+          #  with:
+          #    version: ${{ needs.release.output.release-version }}
+          #  secrets:
+          #    BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
 

@@ -2,6 +2,7 @@
   "tagFormat": "v${version}",
   "verifyConditions": ["@semantic-release/github"],
   "plugins": [
+    "@semantic-release-cargo/semantic-release-cargo",
     "@semantic-release/commit-analyzer",
     "@semantic-release/release-notes-generator",
     [
