@@ -27,11 +27,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Install semantic-release-cargo
         if: needs.get-next-version.outputs.new-release-published == 'true'
-        uses: EricCrosson/install-github-release-binary@v2
+        uses: taiki-e/install-action@v2
         with:
-          targets: semantic-release-cargo@2
+          tool: semantic-release-cargo@2
 
       - name: Prepare semantic-release for Rust
         if: needs.get-next-version.outputs.new-release-published == 'true'
