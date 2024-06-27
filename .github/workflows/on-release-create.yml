@@ -2,7 +2,7 @@ name: "[Release KMS] - Create GH Release"
 on:
   push:
     tags:
-      - v*
+      - 'v*'
 
 jobs:
   deploy:
