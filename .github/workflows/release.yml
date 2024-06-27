@@ -38,14 +38,15 @@ jobs:
         if: needs.get-next-version.outputs.new-release-published == 'true'
         run: semantic-release-cargo prepare ${{ needs.get-next-version.outputs.new-release-version }}
 
-      - name: Prepare semantic-release for Rust
+      - name: Publish semantic-release for Rust
         if: needs.get-next-version.outputs.new-release-published == 'true'
-        run: semantic-release-cargo prepare ${{ needs.get-next-version.outputs.new-release-version }}
+        run: semantic-release-cargo publish ${{ needs.get-next-version.outputs.new-release-version }}
 
       - name: Semantic Release
         uses: cycjimmy/semantic-release-action@v4
         id: semantic
         with:
+          branch: ${{ inputs.branch }}
           extra_plugins: |
             @semantic-release/changelog@6.0.0
             @semantic-release/git
