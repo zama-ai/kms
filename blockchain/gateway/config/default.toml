@@ -1,4 +1,4 @@
-tick_interval_secs = 3
+tick_interval_secs = 1
 storage_path = "./temp/events.toml"
 
 [oracle]
@@ -39,14 +39,14 @@ retry_interval = 15000
 max_poll_count = 1150
 
 [core.timeout_config.decryption]
-initial_wait_time = 10
-retry_interval = 5
-max_poll_count = 24
+initial_wait_time = 0
+retry_interval = 0
+max_poll_count = 1
 
 [core.timeout_config.reencryption]
-initial_wait_time = 10
-retry_interval = 5
-max_poll_count = 24
+initial_wait_time = 0
+retry_interval = 0
+max_poll_count = 1
 
 [tracing]
 service_name = "kms-asc-connector"

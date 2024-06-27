@@ -252,7 +252,7 @@ mod tests {
                 .init_conf()
                 .unwrap();
 
-            assert_eq!(conf.tick_interval_secs, 3);
+            assert_eq!(conf.tick_interval_secs, 1);
             assert_eq!(conf.storage_path, "./temp/events.toml");
 
             // coordinator configs
@@ -261,8 +261,8 @@ mod tests {
             assert_eq!(
                 conf.core.timeout_config.decryption,
                 TimeoutTriple {
-                    initial_wait_time: 10,
-                    retry_interval: 5,
+                    initial_wait_time: 0,
+                    retry_interval: 0,
                     max_poll_count: 24,
                 }
             );

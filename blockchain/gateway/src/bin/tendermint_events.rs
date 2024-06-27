@@ -32,28 +32,15 @@ fn on_event(event: Event) -> Result<(), Error> {
             //println!("Tx: {:?}", tx_result.tx);
             for event in tx_result.result.events.iter() {
                 println!("\t - Event: {:?}", event.kind.as_str());
-                /*
-                match event.kind.as_str() {
-                    //"message" => {
-                    //    println!("\t Message Event Attributes: {:#?}", event.attributes);
-                    //}
-                    "wasm-decrypt" => {
-                        println!("\t ➡️ Wasm Decrypt");
-                        //println!(
-                        //    "\t\t ➡️ Wasm Decrypt Event Attributes: {:#?}",
-                        //    event.attributes
-                        //);
-                    }
-                    "wasm-decrypt_response" => {
-                        println!("\t ⬅️ Wasm Decrypt Response");
-                        //println!(
-                        //    "\t\t ⬅️ Wasm Decrypt Response Event Attributes: {:#?}",
-                        //    event.attributes
-                        //);
-                    }
-                    _ => {}
+
+                // match events that start with wasm-
+                if event.kind.as_str().starts_with("wasm-") {
+                    println!("\t - Event: {:?}", event.kind.as_str());
+                    println!(
+                        "\t\t ➡️ Wasm Decrypt Event Attributes: {:#?}",
+                        event.attributes
+                    );
                 }
-                 */
             }
         }
         EventData::NewBlock {

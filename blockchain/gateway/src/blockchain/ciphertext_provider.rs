@@ -89,7 +89,6 @@ impl CiphertextProvider for Fhevm1_1CiphertextProvider {
 }
 
 // Implementation for Coprocessor
-
 #[derive(Serialize, Deserialize)]
 struct RpcResponse {
     jsonrpc: String,

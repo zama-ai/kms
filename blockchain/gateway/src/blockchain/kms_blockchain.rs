@@ -137,7 +137,7 @@ impl<'a> KmsBlockchainImpl {
         }
     }
 
-    #[retrying::retry(stop=(attempts(5)|duration(10)),wait=fixed(0.25))]
+    //#[retrying::retry(stop=(attempts(5)|duration(10)),wait=fixed(0.25))]
     pub(crate) async fn call_execute_contract(
         &self,
         client: &mut Client,
@@ -312,6 +312,8 @@ impl Blockchain for KmsBlockchainImpl {
                 }
             }
         };
+
+        tracing::info!("FheType: {:#?}", fhe_type);
 
         let res = match fhe_type {
             FheType::Ebool => ptxt.as_bool().to_token(),

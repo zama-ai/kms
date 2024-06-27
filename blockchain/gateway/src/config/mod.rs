@@ -209,7 +209,7 @@ mod tests {
             assert_eq!(gateway_config.kms.address, "http://localhost:9090");
             assert_eq!(
                 gateway_config.kms.key_id,
-                "04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea424"
+                "408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
             );
         });
     }
@@ -255,7 +255,7 @@ mod tests {
             ("GATEWAY__KMS__ADDRESS", Some("http://test_with_var:9091")),
             (
                 "GATEWAY__KMS__KEY_ID",
-                Some("04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea400"),
+                Some("408d8cbaa51dece7f782fe04ba0b1c1d017b1088"),
             ),
         ];
         temp_env::with_vars(env_conf, || {
@@ -295,7 +295,7 @@ mod tests {
             assert_eq!(gateway_config.kms.address, "http://test_with_var:9091");
             assert_eq!(
                 gateway_config.kms.key_id,
-                "04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea400"
+                "408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
             );
         });
     }

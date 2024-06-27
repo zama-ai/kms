@@ -5,15 +5,36 @@ use eyre::Result;
 use gateway::common::provider::EventDecryptionFilter;
 use gateway::config::{GatewayConfig, Settings};
 use std::sync::Arc;
+use structopt::StructOpt;
+
+#[derive(StructOpt, Debug)]
+#[structopt(name = "eth_events")]
+struct Opts {
+    /// WebSocket URL to connect to the Ethereum node
+    #[structopt(short, long, default_value = "ws://localhost:8546")]
+    url: String,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let provider = Provider::<Ws>::connect_with_reconnects("ws://localhost:8546", 10).await?;
+    let opts = Opts::from_args();
+    let provider = Provider::<Ws>::connect_with_reconnects(&opts.url, 10).await?;
+    provider.get_chainid().await?;
     let config: GatewayConfig = Settings::builder()
         .path(Some("config/gateway"))
         .build()
         .init_conf()
         .unwrap();
+
+    let chain_id = provider.get_chainid().await?;
+    println!("chain_id: {}", chain_id);
+
+    println!("🔗 connected to Ethereum node: {}", opts.url);
+    println!(
+        "🔗 oracle_predeploy_address: {}",
+        &config.ethereum.oracle_predeploy_address,
+    );
+
     let provider = Arc::new(provider);
 
     let mut last_block = provider
@@ -42,9 +63,10 @@ async fn main() -> Result<()> {
             .await?;
 
         for log in events {
+            println!("\t🔍 log: {:?}", log);
             let event_decryption: EventDecryptionFilter = EthLogDecode::decode_log(&log.into())?;
             if event_decryption.request_id > last_request_id {
-                println!("\t⭐ event_decryption: {:?}", event_decryption.request_id);
+                println!("\t\t⭐ event_decryption: {:?}", event_decryption.request_id);
                 last_request_id = event_decryption.request_id;
             }
         }

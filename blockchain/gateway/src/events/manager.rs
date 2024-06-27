@@ -316,7 +316,6 @@ impl GatewaySubscriber {
                             info!("Received Message: {:?}", msg_event);
                         }
                         GatewayEvent::Reencryption(reencrypt_event) => {
-                            let start = std::time::Instant::now();
                             info!("🫐🫐🫐 Received Reencryption Event");
                             let reencrypt_response = handle_reencryption_event(
                                 &provider,
@@ -325,9 +324,6 @@ impl GatewaySubscriber {
                             )
                             .await
                             .unwrap();
-
-                            let duration = start.elapsed();
-                            info!("⏱️ Reencryption Event Time elapsed: {:?}", duration);
                             let _ = reencrypt_event.sender.send(reencrypt_response);
                         }
                         GatewayEvent::KmsEvent(kms_event) => {
@@ -336,7 +332,7 @@ impl GatewaySubscriber {
                         }
                     }
                     let duration = start.elapsed();
-                    info!("⏱️ Event Time elapsed: {:?}", duration);
+                    info!("⏱️ E2E Event Time elapsed: {:?}", duration);
                 });
             }
         });
