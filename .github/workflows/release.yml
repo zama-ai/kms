@@ -18,13 +18,13 @@ jobs:
   cargo-release:
     uses: ./.github/workflows/common-release-workspace-cargo.yml
     needs:
-      - release
+      - get-next-version
     permissions:
       contents: 'read'
       id-token: 'write'
       packages: 'write'
     with:
-      version: ${{ needs.release.output.release-version }}
+      version: ${{ needs.get-next-version.output.release-version }}
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
