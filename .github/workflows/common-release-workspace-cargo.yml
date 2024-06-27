@@ -47,5 +47,5 @@ jobs:
           email: 'kms-infra@zama.ai'
 
       - name: Generating Release on Cargo Manifests
-        run: cargo workspaces version -y -m "[ci skip] Release Version ${{ inputs.version }}" --no-individual-tags custom ${{ inputs.version }}
+        run: cargo workspaces version -y -m "Release Version ${{ inputs.version }}" --no-individual-tags custom ${{ inputs.version }}
 
