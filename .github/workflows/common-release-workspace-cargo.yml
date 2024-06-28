@@ -16,8 +16,6 @@ jobs:
     steps:
       - name: Checkout Project
         uses: actions/checkout@v4
-        with:
-          persist-credentials: false
 
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -31,7 +29,8 @@ jobs:
       - uses: oleksiyrudenko/gha-git-credentials@v2-latest
         with:
           token: '${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}'
-          name: 'kms-infra'
+          name: 'zama-bot'
+          actor: 'zama-bot'
           email: 'kms-infra@zama.ai'
 
       - name: Generating Release on Cargo Manifests
