@@ -1,5 +1,12 @@
 # KMS Changelog
 
+## [0.4.1](https://github.com/zama-ai/kms-core/compare/v0.4.0...v0.4.1) (2024-06-28)
+
+
+### Bug Fixes
+
+* add cargo version bump ([#782](https://github.com/zama-ai/kms-core/issues/782)) ([d1e359e](https://github.com/zama-ai/kms-core/commit/d1e359ec6108ccd982d8489da59dcfba63ba7d06))
+
 # [0.4.0](https://github.com/zama-ai/kms-core/compare/v0.3.2...v0.4.0) (2024-06-28)
 
 
