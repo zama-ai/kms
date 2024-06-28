@@ -8,6 +8,8 @@ use super::{
 };
 use crate::consts::ID_LENGTH;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
+use crate::cryptography::signcryption::Reencrypt;
+use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
 use crate::kms::{FheType, ParamChoice, SignedPubDataHandle};
@@ -22,7 +24,10 @@ use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
 use crate::util::meta_store::{HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
+use alloy_primitives::Address;
+use alloy_primitives::Bytes;
 use alloy_sol_types::{Eip712Domain, SolStruct};
+use anyhow::Context;
 use bincode::{deserialize, serialize};
 use der::zeroize::Zeroize;
 #[cfg(feature = "non-wasm")]
@@ -34,11 +39,13 @@ use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::{fmt, panic};
 use tfhe::integer::bigint::U2048;
 use tfhe::integer::U256;
 use tfhe::prelude::FheDecrypt;
+
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
     ClientKey, ConfigBuilder, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
@@ -221,6 +228,70 @@ impl BaseKms for BaseKmsStruct {
     ) -> anyhow::Result<Signature> {
         sign_eip712(msg, domain, &self.sig_key)
     }
+}
+
+pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<bool> {
+    let payload = request
+        .payload
+        .as_ref()
+        .context("Failed to get payload from ReencryptionRequest")?;
+    let signature_bytes = &request.signature;
+
+    // print out the req.signature in hex string
+    tracing::debug!("🔒 req.signature: {:?}", hex::encode(signature_bytes));
+
+    let expected_wrapped_verifying_key: PublicSigKey = handle_potential_err(
+        deserialize(&payload.verification_key),
+        format!("Invalid verification key in request {:?}", request),
+    )?;
+    let expected_verifying_key = expected_wrapped_verifying_key.pk;
+
+    // print out the verification key in hex string
+    tracing::debug!("🔒 expected_verifying_key: {:?}", expected_verifying_key);
+
+    let enc_key_bytes = payload.enc_key.clone();
+    // print out the hex string of the enc_key_bytes
+    tracing::debug!("🔒 enc_key_bytes: {:?}", hex::encode(&enc_key_bytes));
+
+    let message = Reencrypt {
+        publicKey: Bytes::copy_from_slice(&payload.enc_key),
+    };
+
+    let wrapped_domain = request
+        .domain
+        .as_ref()
+        .context("Failed to get domain message from request")?;
+    tracing::debug!("🔒 wrapped_domain: {:?}", wrapped_domain);
+    let chain_id = u64::from_be_bytes(
+        wrapped_domain.chain_id.as_slice()[24..32]
+            .try_into()
+            .context("Failed to convert chain id slice")?,
+    );
+
+    tracing::debug!("🔒 chain_id: {:?}", chain_id);
+    let verifying_contract_address = Address::from_str(wrapped_domain.verifying_contract.as_str())
+        .context("Failed to convert wrappted domain message into address")?;
+    let domain = alloy_sol_types::eip712_domain! {
+        name: wrapped_domain.name.clone(),
+        version: wrapped_domain.version.clone(),
+        chain_id: chain_id,
+        verifying_contract: verifying_contract_address,
+    };
+
+    // Derive the EIP-712 signing hash.
+    let message_hash = message.eip712_signing_hash(&domain);
+    let signature_bytes = signature_bytes.as_slice();
+    let signature = alloy_primitives::Signature::try_from(signature_bytes)?;
+
+    let recovered_address = signature.recover_address_from_prehash(&message_hash)?;
+    tracing::debug!("🔒 Recovered address: {:?}", recovered_address);
+
+    let recovered_verifying_key = signature.recover_from_prehash(&message_hash)?;
+    tracing::debug!("🔒 Recovered verifying key: {:?}", recovered_verifying_key);
+
+    let verified = recovered_verifying_key == expected_verifying_key;
+    tracing::debug!("🔒 Verified: {:?}", verified);
+    Ok(verified)
 }
 
 #[cfg(feature = "non-wasm")]

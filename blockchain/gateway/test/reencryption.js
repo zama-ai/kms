@@ -3,10 +3,10 @@ const { Wallet } = require('ethers');
 
 const PRIVATE_KEY = '0x7ec931411ad75a7c201469a385d6f18a325d4923f9f213bd882bbea87e160b67'; // User wallet private key
 const CONTRACT_ADDRESS = '0xc8c9303Cd7F337fab769686B593B87DC3403E0ce'; // Contract address allowed on the ciphertext
-const HANDLE = BigInt('0xaa9f8f90ebf0fa8e30caee92f0b97e158f1ec659b363101d07beac9b0cc90200'); // Ciphertext handle as BigInt
+const HANDLE = BigInt('0x59371e7af810e7ebd06ddd8d3b5d51d36b34fd2eeb9908f27d8d42442b970300'); // Ciphertext handle as BigInt
 
 const reencrypt = async () => {
-    const instance = await createInstance({ networkUrl: 'http://localhost:8545', gatewayUrl: 'http://localhost:7077', chainId: 9000 });
+    const instance = await createInstance({ networkUrl: 'http://localhost:8545', gatewayUrl: 'http://localhost:7077' });
     const { publicKey, privateKey } = instance.generateKeypair();
     const eip712 = instance.createEIP712(publicKey, CONTRACT_ADDRESS);
     const signer = new Wallet(PRIVATE_KEY);

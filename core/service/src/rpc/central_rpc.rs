@@ -1,11 +1,11 @@
 use super::rpc_types::{
-    protobuf_to_alloy_domain, BaseKms, DecryptionRequestSerializable, PrivDataType,
-    CURRENT_FORMAT_VERSION,
+    BaseKms, DecryptionRequestSerializable, PrivDataType, CURRENT_FORMAT_VERSION,
 };
 use crate::conf::centralized::CentralizedConfigNoStorage;
 #[cfg(any(test, feature = "testing"))]
 use crate::consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH};
 use crate::cryptography::central_kms::handle_potential_err;
+use crate::cryptography::central_kms::verify_eip712;
 use crate::cryptography::central_kms::{
     async_decrypt, async_generate_crs, async_generate_fhe_keys, async_reencrypt, BaseKmsStruct,
     SoftwareKms,
@@ -23,8 +23,8 @@ use crate::storage::{store_at_request_id, Storage};
 use crate::util::file_handling::read_as_json;
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
-use crate::{cryptography::signcryption::Reencrypt, storage::delete_at_request_id};
-use alloy_primitives::Bytes;
+
+use crate::storage::delete_at_request_id;
 use bincode::{deserialize, serialize};
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use std::collections::HashMap;
@@ -691,30 +691,26 @@ pub async fn validate_reencrypt_req(
             payload.version, CURRENT_FORMAT_VERSION
         )));
     }
-    let domain = protobuf_to_alloy_domain(tonic_some_ref_or_err(
-        req.domain.as_ref(),
-        "domain not found".to_string(),
-    )?)?;
-    let pk_sol = Reencrypt {
-        publicKey: Bytes::copy_from_slice(&payload.enc_key),
-    };
+
     let client_verf_key: PublicSigKey = handle_potential_err(
         deserialize(&payload.verification_key),
         format!("Invalid verification key in request {:?}", req),
     )?;
-    if !BaseKmsStruct::verify_sig_eip712(
-        &pk_sol,
-        &domain,
-        &deserialize(&req.signature)?,
-        &client_verf_key,
-    ) {
-        return Err(anyhow_error_and_log(format!(
-            "Could not validate signature {} using domain={:?}, payload={}, verf_key={:?}",
-            hex::encode(&req.signature),
-            domain,
-            hex::encode(&pk_sol.publicKey),
-            client_verf_key,
-        )));
+
+    match verify_eip712(req) {
+        Ok(true) => {
+            tracing::debug!("🔒 Signature verified successfully");
+        }
+        Ok(false) => {
+            tracing::warn!("🔒 Signature verification failed");
+        }
+        Err(e) => {
+            tracing::error!("🔒 Signature verification error: {:?}", e);
+            return Err(anyhow_error_and_log(format!(
+                "Could not validate signature, request: {:?}",
+                req
+            )));
+        }
     }
 
     let ciphertext = payload
