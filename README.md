@@ -57,6 +57,10 @@ The light client package handles the logic of sequentially verifying block heade
 
 Read this [section](./config/dev/README.md) for more information.
 
+## Release
+
+Read this [section](./docs/ci/release.md) for more information.
+
 ## Next steps
 - [ ] Full Node ->> KMS Reencryption request should contain user signature on `pubkey` and an `ACL` object.
 - [ ] KMS should verify the user signature on `pubkey` against the values of permissible decryptors in `ACL`.
