@@ -1,0 +1,30 @@
+{
+  "tagFormat": "v${version}",
+  "verifyConditions": ["@semantic-release/github"],
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/changelog",
+      {
+        "changelogFile": "CHANGELOG.md",
+        "changelogTitle": "# KMS Changelog"
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": ["CHANGELOG.md"]
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          {
+            "path": "CHANGELOG.md"
+          }
+        ]
+      }
+    ]
+]}
