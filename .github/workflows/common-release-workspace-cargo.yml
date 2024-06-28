@@ -18,13 +18,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - uses: oleksiyrudenko/gha-git-credentials@v2-latest
-        with:
-          token: '${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}'
-          name: 'zama-bot'
-          actor: 'zama-bot'
-          email: 'kms-infra@zama.ai'
+          token: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
       - name: Force git update
         run: |
@@ -43,5 +37,7 @@ jobs:
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "[ci skip] Apply new verion ${{ inputs.version }} to Cargo.toml files"
-
+          commit_user_name: zama-bot
+          commit_user_email: kms-infra@zama.ai
+          push_options: --force
 
