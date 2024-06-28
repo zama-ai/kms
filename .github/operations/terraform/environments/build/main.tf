@@ -9,6 +9,15 @@ locals {
     subnet_id     = "subnet-a886b4c1"
     vpc_id        = "vpc-24988f4d"
   }
+  arm_2xl = {
+    # Buildkite Elastic Stack (Amazon Linux 2023 w/ docker)
+    ami           = "ami-0c27d0db6baadedc5"
+    instance_type = "t4g.2xlarge"
+    name          = "kms-core-docker-builder-arm"
+    key_name      = "docker_builder_arm"
+    subnet_id     = "subnet-a886b4c1"
+    vpc_id        = "vpc-24988f4d"
+  }
 }
 
 terraform {
@@ -19,7 +28,6 @@ terraform {
     workspace_key_prefix = "build"
   }
 }
-
 
 provider "aws" {
   region = local.region
@@ -49,6 +57,33 @@ module "ec2_docker_builder_arm" {
     Environment = "build"
     Platform    = "arm"
     Name        = local.arm.name
+  }
+}
+
+module "ec2_docker_builder_arm_2xl" {
+  source = "terraform-aws-modules/ec2-instance/aws"
+
+  name = local.arm_2xl.name
+
+  ami                    = local.arm_2xl.ami
+  instance_type          = local.arm_2xl.instance_type
+  key_name               = local.arm_2xl.key_name
+  monitoring             = true
+  vpc_security_group_ids = [module.sg_remote_docker_builder.security_group_id]
+  subnet_id              = local.arm_2xl.subnet_id
+
+  root_block_device = [{
+    volume_size           = "500"
+    volume_type           = "gp3"
+    encrypted             = true
+    delete_on_termination = true
+  }]
+
+  tags = {
+    Terraform   = "true"
+    Environment = "build"
+    Platform    = "arm"
+    Name        = local.arm_2xl.name
   }
 }
 
