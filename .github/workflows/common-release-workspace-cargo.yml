@@ -19,15 +19,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
-
-      - name: Install Cargo Workspaces
-        run: cargo install cargo-workspaces
-
       - uses: oleksiyrudenko/gha-git-credentials@v2-latest
         with:
           token: '${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}'
@@ -41,6 +32,16 @@ jobs:
           git fetch origin
           git merge origin/main
 
-      - name: Generating Release on Cargo Manifests
-        run: cargo workspaces version -y -m "Release Version ${{ inputs.version }}" --no-git-tag custom ${{ inputs.version }}
+      - name: Install semantic-release-cargo
+        uses: taiki-e/install-action@v2
+        with:
+          tool: semantic-release-cargo@2
+
+      - name: Prepare semantic-release for Rust
+        run: semantic-release-cargo prepare ${{ inputs.version }}
+
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "[ci skip] Apply new verion ${{ inputs.version }} to Cargo.toml files"
+
 
