@@ -1,5 +1,12 @@
 # KMS Changelog
 
+## [0.4.3](https://github.com/zama-ai/kms-core/compare/v0.4.2...v0.4.3) (2024-06-28)
+
+
+### Bug Fixes
+
+* ci ([#786](https://github.com/zama-ai/kms-core/issues/786)) ([e00c5c8](https://github.com/zama-ai/kms-core/commit/e00c5c8c2e7659d4476a0aa621b75b97be06cd01))
+
 ## [0.4.2](https://github.com/zama-ai/kms-core/compare/v0.4.1...v0.4.2) (2024-06-28)
 
 
