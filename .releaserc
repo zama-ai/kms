@@ -1,5 +1,8 @@
 {
   "tagFormat": "v${version}",
+  "branches": [
+      "main",
+  ],
   "verifyConditions": ["@semantic-release/github"],
   "plugins": [
     "@semantic-release/commit-analyzer",
