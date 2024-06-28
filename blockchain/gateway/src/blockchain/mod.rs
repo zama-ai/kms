@@ -58,5 +58,6 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         fhe_type: FheType,
         ciphertext: Vec<u8>,
         eip712_verifying_contract: String,
+        chain_id: U256,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>>;
 }

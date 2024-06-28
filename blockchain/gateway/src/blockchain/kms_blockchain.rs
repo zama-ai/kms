@@ -5,6 +5,7 @@ use crate::config::KmsMode;
 use crate::util::conversion::TokenizableFrom;
 use crate::util::footprint;
 use abi::FixedBytes;
+use alloy_primitives::Address;
 use anyhow::anyhow;
 use async_trait::async_trait;
 use bincode::{deserialize, serialize};
@@ -31,12 +32,12 @@ use kms_blockchain_client::query_client::QueryClientBuilder;
 use kms_blockchain_client::query_client::QueryContractRequest;
 use kms_lib::client::recover_ecdsa_public_key_from_signature;
 use kms_lib::kms::DecryptionResponsePayload;
-use kms_lib::kms::Eip712DomainMsg;
 use kms_lib::rpc::rpc_types::Plaintext;
 use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
 use sha3::Digest;
 use sha3::Sha3_256;
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
@@ -326,7 +327,7 @@ impl Blockchain for KmsBlockchainImpl {
             FheType::Euint160 => {
                 let mut cake = vec![0u8; 32];
                 ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
-                Address::from_slice(&cake[12..]).to_token()
+                ethers::types::Address::from_slice(&cake[12..]).to_token()
             }
             FheType::Euint256 => {
                 let mut cake = vec![0u8; 32];
@@ -360,7 +361,20 @@ impl Blockchain for KmsBlockchainImpl {
         fhe_type: FheType,
         ciphertext: Vec<u8>,
         eip712_verifying_contract: String,
+        chain_id: U256,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
+        //let mut signature = signature.clone();
+        //signature.reverse();
+        tracing::info!(
+            "🔒 Reencrypting ciphertext with signature: {:?}, user_address: {:?}, enc_key: {:?}, fhe_type: {:?}, eip712_verifying_contract: {:?}, chain_id: {:?}",
+            hex::encode(&signature),
+            hex::encode(&user_address),
+            hex::encode(&enc_key),
+            fhe_type,
+            eip712_verifying_contract,
+            chain_id
+        );
+
         let ctxt_handle = self.store_ciphertext(ciphertext.clone()).await?;
         let mut hasher = Sha3_256::new();
         hasher.update(&ciphertext);
@@ -383,10 +397,11 @@ impl Blockchain for KmsBlockchainImpl {
 
         // chain ID is 32 bytes
         let mut eip712_chain_id = vec![0u8; 32];
-        self.config
-            .ethereum
-            .chain_id
-            .to_big_endian(&mut eip712_chain_id);
+        //self.config
+        //   .ethereum
+        //    .chain_id
+        //    .to_big_endian(&mut eip712_chain_id);
+        chain_id.to_big_endian(&mut eip712_chain_id);
 
         // convert user_address to verification_key
         if user_address.len() != 20 {
@@ -395,13 +410,14 @@ impl Blockchain for KmsBlockchainImpl {
                 user_address.len()
             ));
         }
-        let domain = Eip712DomainMsg {
+
+        let domain = alloy_sol_types::eip712_domain! {
             name: eip712_name.clone(),
             version: eip712_version.clone(),
-            chain_id: eip712_chain_id.clone(),
-            verifying_contract: eip712_verifying_contract.clone(),
-            salt: eip712_salt.0.clone(),
+            chain_id: chain_id.as_u64(),
+            verifying_contract: Address::from_str(eip712_verifying_contract.as_str()).unwrap(),
         };
+
         let verification_key =
             recover_ecdsa_public_key_from_signature(&signature, &enc_key, &domain, &user_address)?;
 

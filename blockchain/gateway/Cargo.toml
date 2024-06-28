@@ -8,6 +8,10 @@ authors.workspace = true
 [dependencies]
 actix-web = "4.6.0"
 aes-prng = "0.2.1"
+alloy-primitives = "0.7.6"
+alloy-signer = "0.1.3"
+alloy-signer-local = "0.1.3"
+alloy-sol-types = "0.7.6"
 anyhow = "~1.0"
 async-trait = "~0.1"
 backtrace = "0.3.72"
@@ -25,6 +29,7 @@ eyre = "0.6.12"
 futures = "0.3"
 hex = "0.4.3"
 hmac = "0.12.1"
+k256 = "0.13.3"
 kms = { path = "../../core/service", default-features = false, features = ["grpc-client"] , version = "0.1.0" }
 kms-blockchain-client = { path = "../client" , version = "0.1.0" }
 kms-blockchain-connector = { path = "../connector" , version = "0.1.0" }

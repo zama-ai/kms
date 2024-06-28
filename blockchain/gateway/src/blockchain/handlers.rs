@@ -97,6 +97,9 @@ pub(crate) async fn handle_reencryption_event(
     config: &GatewayConfig,
 ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
     let start = std::time::Instant::now();
+
+    let chain_id = client.provider().get_chainid().await?;
+
     let ethereum_ct_handle = event.ciphertext_handle.0.clone();
     let (ciphertext, fhe_type) =
         <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
@@ -111,6 +114,7 @@ pub(crate) async fn handle_reencryption_event(
             fhe_type,
             ciphertext,
             event.eip712_verifying_contract.clone(),
+            chain_id,
         )
         .await;
     let duration = start.elapsed();

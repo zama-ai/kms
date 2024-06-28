@@ -7,8 +7,8 @@ use crate::cryptography::signcryption::{
     insecure_decrypt_ignoring_signature, sign_eip712, Reencrypt, RND_SIZE,
 };
 use crate::kms::{
-    AggregatedReencryptionResponse, Eip712DomainMsg, FheType, ReencryptionRequest,
-    ReencryptionRequestPayload, ReencryptionResponse, RequestId,
+    AggregatedReencryptionResponse, FheType, ReencryptionRequest, ReencryptionRequestPayload,
+    ReencryptionResponse, RequestId,
 };
 use crate::rpc::rpc_types::{
     allow_to_protobuf_domain, MetaResponse, Plaintext, CURRENT_FORMAT_VERSION,
@@ -17,6 +17,7 @@ use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_primitives::Bytes;
 use alloy_sol_types::Eip712Domain;
+use alloy_sol_types::SolStruct;
 use bincode::{deserialize, serialize};
 use distributed_decryption::algebra::base_ring::Z128;
 use distributed_decryption::algebra::residue_poly::ResiduePoly;
@@ -1992,36 +1993,36 @@ pub fn ecdsa_public_key_to_address(pk: &PublicSigKey) -> anyhow::Result<Vec<u8>>
 pub fn recover_ecdsa_public_key_from_signature(
     sig: &[u8],
     pub_enc_key: &[u8],
-    eip712: &Eip712DomainMsg,
+    domain: &Eip712Domain,
     target_address: &[u8],
 ) -> anyhow::Result<PublicSigKey> {
-    let signature = k256::ecdsa::Signature::try_from(sig)?;
+    tracing::info!("Recovering public key from signature");
+    // trace all inputs
+    tracing::debug!("Signature: {:?}", hex::encode(sig));
+    tracing::debug!("Public encryption key: {:?}", hex::encode(pub_enc_key));
+    tracing::debug!("EIP712: {:?}", domain);
+    tracing::debug!("Target address: {:?}", hex::encode(target_address));
 
-    let sol_pk = Reencrypt {
+    let signature = alloy_primitives::Signature::try_from(sig)?;
+
+    // Define the EIP-712 domain
+    let message = Reencrypt {
         publicKey: Bytes::copy_from_slice(pub_enc_key),
     };
-    let domain = crate::rpc::rpc_types::protobuf_to_alloy_domain(eip712)?;
 
-    let signing_hash = alloy_sol_types::SolStruct::eip712_signing_hash(&sol_pk, &domain).to_vec();
+    // Derive the EIP-712 signing hash.
+    let message_hash = message.eip712_signing_hash(domain);
+    tracing::debug!("Message hash: {:?}", message_hash);
 
-    for i in 0u8..4 {
-        let recid = k256::ecdsa::RecoveryId::try_from(i)?;
+    let recovered_key = signature.recover_from_msg(message_hash)?;
+    tracing::debug!("Recovered key: {:?}", recovered_key);
+    tracing::debug!("Signature: {:?}", signature);
 
-        let recovered_key =
-            k256::ecdsa::VerifyingKey::recover_from_msg(&signing_hash, &signature, recid);
-        if let Ok(pk) = recovered_key {
-            let pk = PublicSigKey { pk };
-            let recovered_address = ecdsa_public_key_to_address(&pk)?;
-            if recovered_address == target_address {
-                return Ok(pk);
-            }
-        };
-    }
-
-    Err(anyhow::anyhow!(
-        "cannot find verification key for address {}",
-        hex::encode(target_address)
-    ))
+    let recovered_address = signature.recover_address_from_prehash(&message_hash)?;
+    tracing::debug!("Recovered address: {:?}", recovered_address);
+    Ok(PublicSigKey {
+        pk: signature.recover_from_prehash(&message_hash)?,
+    })
 }
 
 // TODO this module should be behind cfg(test) normally
@@ -2232,7 +2233,7 @@ pub mod test_tools {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use super::{ecdsa_public_key_to_address, recover_ecdsa_public_key_from_signature, Client};
+    use super::{recover_ecdsa_public_key_from_signature, Client};
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
     #[cfg(feature = "wasm_tests")]
@@ -2247,7 +2248,7 @@ pub(crate) mod tests {
     use crate::cryptography::central_kms::CentralizedTestingKeys;
     use crate::cryptography::central_kms::{compute_handle, gen_sig_keys, BaseKmsStruct};
     use crate::cryptography::der_types::Signature;
-    use crate::cryptography::signcryption::sign_eip712;
+    use crate::cryptography::signcryption::Reencrypt;
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
     #[cfg(feature = "slow_tests")]
     use crate::kms::CrsGenResult;
@@ -2269,7 +2270,10 @@ pub(crate) mod tests {
     };
     use crate::{consts::TEST_THRESHOLD_KEY_ID, util::file_handling::read_as_json};
     use alloy_primitives::Bytes;
+    use alloy_signer::Signer;
+    use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::Eip712Domain;
+    use alloy_sol_types::SolStruct;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use distributed_decryption::execution::zk::ceremony::PublicParameter;
     use rand::SeedableRng;
@@ -2330,25 +2334,35 @@ pub(crate) mod tests {
         (kms_servers, kms_clients, internal_client)
     }
 
-    #[test]
-    fn test_public_key_from_signature() {
-        let alloy_domain = dummy_domain();
-        let domain = crate::rpc::rpc_types::allow_to_protobuf_domain(&alloy_domain).unwrap();
-
-        let pub_enc_key = b"dummypayload";
-        let sol_pk = crate::cryptography::signcryption::Reencrypt {
-            publicKey: Bytes::copy_from_slice(pub_enc_key),
+    #[tokio::test]
+    async fn test_public_key_from_signature() {
+        let domain = dummy_domain();
+        let pub_enc_key = b"408d8cbaa51dece7f782fe04ba0b1c1d017b1088";
+        let message = Reencrypt {
+            publicKey: Bytes::from(pub_enc_key),
         };
         let mut rng = aes_prng::AesRng::seed_from_u64(12);
         let (client_pk, client_sk) = gen_sig_keys(&mut rng);
-        let target_address = ecdsa_public_key_to_address(&client_pk).unwrap();
-        let sig = sign_eip712(&sol_pk, &alloy_domain, &client_sk)
-            .unwrap()
-            .sig
-            .to_vec();
-        let recovered_pk =
-            recover_ecdsa_public_key_from_signature(&sig, pub_enc_key, &domain, &target_address)
-                .unwrap();
+        //let target_address = ecdsa_public_key_to_address(&client_pk).unwrap();
+
+        let signer = PrivateKeySigner::from_signing_key(client_sk.sk);
+        let target_address = signer.address();
+        println!("Signer address: {:?}", target_address);
+
+        let message_hash = message.eip712_signing_hash(&domain);
+        println!("Message hash: {:?}", message_hash);
+
+        // Sign the hash asynchronously with the wallet.
+        let signature = signer.sign_hash(&message_hash).await.unwrap().as_bytes();
+
+        println!("Signature: {:?}", hex::encode(signature));
+        let recovered_pk = recover_ecdsa_public_key_from_signature(
+            &signature,
+            pub_enc_key,
+            &domain,
+            target_address.as_ref(),
+        )
+        .unwrap();
         assert_eq!(recovered_pk, client_pk);
     }
 

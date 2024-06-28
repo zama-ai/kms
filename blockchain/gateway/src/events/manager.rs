@@ -223,6 +223,7 @@ impl Publisher<ReencryptionEvent> for ReencryptionEventPublisher {
     async fn run(&self) -> anyhow::Result<()> {
         let publisher = Arc::new(self.clone());
         let api_url = self.config.api_url.clone();
+        tracing::info!("🍓🍓🍓 Starting reencryption event publisher");
         let payload_limit = 10 * 1024 * 1024; // 10 MB
         let _handle = HttpServer::new(move || {
             App::new()
@@ -246,6 +247,10 @@ async fn reencrypt_payload(
     publisher: web::Data<Arc<ReencryptionEventPublisher>>,
 ) -> HttpResponse {
     info!("🍓🍓🍓 => Received reencryption request");
+    info!(
+        "🍓🍓🍓 Payload handle: {:?}",
+        payload.ciphertext_handle.to_hex()
+    );
 
     let (sender, receiver) = oneshot::channel();
 
