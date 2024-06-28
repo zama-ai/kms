@@ -10,6 +10,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.sem-release.outputs.new_release_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,7 +19,23 @@ jobs:
           persist-credentials: false
 
       - name: Semantic Release
+        id: sem-release
         uses: cycjimmy/semantic-release-action@v4
         env:
           GITHUB_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
+  cargo-versions:
+    uses: ./.github/workflows/common-release-workspace-cargo.yml
+    needs:
+      - release
+    permissions:
+      contents: 'write'
+      id-token: 'write'
+      packages: 'write'
+    with:
+      version: ${{ needs.release.outputs.version }}
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
+
 
