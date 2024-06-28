@@ -363,8 +363,6 @@ impl Blockchain for KmsBlockchainImpl {
         eip712_verifying_contract: String,
         chain_id: U256,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
-        //let mut signature = signature.clone();
-        //signature.reverse();
         tracing::info!(
             "🔒 Reencrypting ciphertext with signature: {:?}, user_address: {:?}, enc_key: {:?}, fhe_type: {:?}, eip712_verifying_contract: {:?}, chain_id: {:?}",
             hex::encode(&signature),
@@ -397,11 +395,7 @@ impl Blockchain for KmsBlockchainImpl {
 
         // chain ID is 32 bytes
         let mut eip712_chain_id = vec![0u8; 32];
-        //self.config
-        //   .ethereum
-        //    .chain_id
-        //    .to_big_endian(&mut eip712_chain_id);
-        chain_id.to_big_endian(&mut eip712_chain_id);
+        chain_id.to_little_endian(&mut eip712_chain_id);
 
         // convert user_address to verification_key
         if user_address.len() != 20 {

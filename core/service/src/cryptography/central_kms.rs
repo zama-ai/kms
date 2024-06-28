@@ -262,8 +262,8 @@ pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<boo
         .as_ref()
         .context("Failed to get domain message from request")?;
     tracing::debug!("🔒 wrapped_domain: {:?}", wrapped_domain);
-    let chain_id = u64::from_be_bytes(
-        wrapped_domain.chain_id.as_slice()[24..32]
+    let chain_id = u64::from_le_bytes(
+        wrapped_domain.chain_id.as_slice()[0..8]
             .try_into()
             .context("Failed to convert chain id slice")?,
     );

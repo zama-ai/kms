@@ -4,7 +4,7 @@ use crate::cryptography::der_types::{
 };
 use crate::cryptography::signcryption::{
     decrypt_signcryption, encryption_key_generation, hash_element,
-    insecure_decrypt_ignoring_signature, sign_eip712, Reencrypt, RND_SIZE,
+    insecure_decrypt_ignoring_signature, Reencrypt, RND_SIZE,
 };
 use crate::kms::{
     AggregatedReencryptionResponse, FheType, ReencryptionRequest, ReencryptionRequestPayload,
@@ -1185,6 +1185,8 @@ impl Client {
         request_id: &RequestId,
         key_id: &RequestId,
     ) -> anyhow::Result<(ReencryptionRequest, PublicEncKey, PrivateEncKey)> {
+        use alloy_signer::Signer;
+
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
                 "The request id format is not valid {request_id}"
@@ -1206,17 +1208,29 @@ impl Client {
             ciphertext: Some(ciphertext),
             ciphertext_digest,
         };
-        let sol_pk = Reencrypt {
+        let message = Reencrypt {
             publicKey: Bytes::copy_from_slice(&sig_payload.enc_key),
         };
-        let sig = match &self.client_sk {
-            Some(sk) => sign_eip712(&sol_pk, domain, sk)?,
-            None => return Err(anyhow_error_and_log("client signing key is None")),
-        };
+        // Derive the EIP-712 signing hash.
+        let message_hash = message.eip712_signing_hash(domain);
+        let signer = alloy_signer_local::PrivateKeySigner::from_signing_key(
+            self.client_sk.clone().unwrap().sk,
+        );
+
+        // let signature = signer.sign_hash(&message_hash).await?;
+
+        // Spawn a thread to run the async function
+        let handle = std::thread::spawn(move || {
+            futures::executor::block_on(async { signer.sign_hash(&message_hash).await })
+        });
+
+        // Wait for the thread to complete and get the result
+        let signature = handle.join().unwrap()?;
+
         let domain_msg = allow_to_protobuf_domain(domain)?;
         Ok((
             ReencryptionRequest {
-                signature: serialize(&sig)?,
+                signature: signature.as_bytes().to_vec(),
                 payload: Some(sig_payload),
                 domain: Some(domain_msg),
                 request_id: Some(request_id.clone()),
