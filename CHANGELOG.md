@@ -1,5 +1,14 @@
 # KMS Changelog
 
+## [0.4.2](https://github.com/zama-ai/kms-core/compare/v0.4.1...v0.4.2) (2024-06-28)
+
+
+### Bug Fixes
+
+* adding doc ([#784](https://github.com/zama-ai/kms-core/issues/784)) ([c2569b3](https://github.com/zama-ai/kms-core/commit/c2569b33133489bc8855906062aa8f5cbfb88aba))
+* small fix on pipeline ([#783](https://github.com/zama-ai/kms-core/issues/783)) ([173ab58](https://github.com/zama-ai/kms-core/commit/173ab5887b3874c2c4b87937cd7bfcc84b6342f6))
+* update Cargo.lock ([#785](https://github.com/zama-ai/kms-core/issues/785)) ([ba9ec8b](https://github.com/zama-ai/kms-core/commit/ba9ec8b3b330b084e7f9d82a6a344863455c9e9f))
+
 ## [0.4.1](https://github.com/zama-ai/kms-core/compare/v0.4.0...v0.4.1) (2024-06-28)
 
 
