@@ -2,17 +2,12 @@ name: "[Release KMS] - Release"
 
 on:
   workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Select Target Branch (default: main)'
-        required: true
-        default: 'main'
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  release:
+  semantic-release:
     uses: semantic-release-action/github-actions/.github/workflows/release.yml@v5
 
