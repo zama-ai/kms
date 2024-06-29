@@ -16,6 +16,7 @@ use crate::rpc::rpc_types::{
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use alloy_primitives::Bytes;
+use alloy_signer::SignerSync;
 use alloy_sol_types::Eip712Domain;
 use alloy_sol_types::SolStruct;
 use bincode::{deserialize, serialize};
@@ -1185,8 +1186,6 @@ impl Client {
         request_id: &RequestId,
         key_id: &RequestId,
     ) -> anyhow::Result<(ReencryptionRequest, PublicEncKey, PrivateEncKey)> {
-        use alloy_signer::Signer;
-
         if !request_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
                 "The request id format is not valid {request_id}"
@@ -1217,15 +1216,7 @@ impl Client {
             self.client_sk.clone().unwrap().sk,
         );
 
-        // let signature = signer.sign_hash(&message_hash).await?;
-
-        // Spawn a thread to run the async function
-        let handle = std::thread::spawn(move || {
-            futures::executor::block_on(async { signer.sign_hash(&message_hash).await })
-        });
-
-        // Wait for the thread to complete and get the result
-        let signature = handle.join().unwrap()?;
+        let signature = signer.sign_hash_sync(&message_hash)?;
 
         let domain_msg = allow_to_protobuf_domain(domain)?;
         Ok((
