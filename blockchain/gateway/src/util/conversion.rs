@@ -1,4 +1,3 @@
-use ethers::abi::FixedBytes;
 use ethers::abi::Token;
 use ethers::types::{Address, U256};
 use thiserror::Error;
@@ -95,12 +94,6 @@ impl TokenizableFrom for u128 {
 impl TokenizableFrom for U256 {
     fn to_token(self) -> Token {
         Token::Uint(self)
-    }
-}
-
-impl TokenizableFrom for FixedBytes {
-    fn to_token(self) -> Token {
-        Token::FixedBytes(self)
     }
 }
 
@@ -232,18 +225,6 @@ impl TryTokenizable for Address {
 
     fn from_token(token: Token) -> Result<Self, Self::Error> {
         if let Token::Address(value) = token {
-            Ok(value)
-        } else {
-            Err(ConversionError::InvalidConversion)
-        }
-    }
-}
-
-impl TryTokenizable for FixedBytes {
-    type Error = ConversionError;
-
-    fn from_token(token: Token) -> Result<Self, Self::Error> {
-        if let Token::FixedBytes(value) = token {
             Ok(value)
         } else {
             Err(ConversionError::InvalidConversion)

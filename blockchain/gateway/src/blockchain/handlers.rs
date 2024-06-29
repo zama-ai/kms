@@ -10,6 +10,7 @@ use crate::util::wallet::WalletManager;
 use anyhow::Context;
 use ethers::abi::encode;
 use ethers::abi::Token;
+use ethers::middleware::gas_escalator::*;
 use ethers::prelude::*;
 use events::kms::ReencryptResponseValues;
 use std::sync::Arc;
@@ -46,8 +47,15 @@ pub(crate) async fn handle_event_decryption(
     let signatures = vec![Bytes::from(vec![0u8; 65])];
     tracing::info!("Fulfilling request: {:?}", event.filter.request_id);
 
+    let encoded_bytes: Bytes = encode(&tokens).into();
+    tracing::info!("Encoded bytes: {:?}", encoded_bytes);
+
+    let encoded_packed_bytes: Bytes = abi::encode_packed(&tokens)?.into();
+    tracing::info!("Encoded packed bytes: {:?}", encoded_packed_bytes);
+
     match contract
-        .fulfill_request(event.filter.request_id, encode(&tokens).into(), signatures)
+        .fulfill_request(event.filter.request_id, encoded_bytes, signatures)
+        .gas_price(config.ethereum.gas_price)
         .send()
         .await
     {
@@ -70,7 +78,7 @@ pub(crate) async fn handle_event_decryption(
 }
 
 async fn decrypt(
-    client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
+    client: &Arc<SignerMiddleware<GasEscalatorMiddleware<Provider<Http>>, Wallet<SigningKey>>>,
     config: &GatewayConfig,
     request_id: U256,
     ct_handle: U256,
@@ -127,20 +135,36 @@ pub(crate) async fn handle_reencryption_event(
 
 async fn http_provider(
     config: &GatewayConfig,
-) -> anyhow::Result<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>> {
+) -> anyhow::Result<SignerMiddleware<GasEscalatorMiddleware<Provider<Http>>, Wallet<SigningKey>>> {
+    let gas_escalator = gas_escalator(
+        config.ethereum.gas_escalator_retry_interval,
+        config.ethereum.gas_escalator_increase as f64,
+    );
     let wallet = WalletManager::default().wallet;
     let provider = Provider::<Http>::connect(&config.ethereum.http_url).await;
+    let provider = GasEscalatorMiddleware::new(provider, gas_escalator, Frequency::PerBlock);
     let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
     Ok(provider)
 }
 
 async fn _ws_provider(
     config: &GatewayConfig,
-) -> anyhow::Result<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>> {
+) -> anyhow::Result<SignerMiddleware<GasEscalatorMiddleware<Provider<Ws>>, Wallet<SigningKey>>> {
+    let gas_escalator = gas_escalator(
+        config.ethereum.gas_escalator_retry_interval,
+        config.ethereum.gas_escalator_increase as f64,
+    );
     let wallet = WalletManager::default().wallet;
     let provider = Provider::<Ws>::connect(&config.ethereum.wss_url)
         .await
         .context("Failed to connect to WSS")?;
+    let provider = GasEscalatorMiddleware::new(provider, gas_escalator, Frequency::PerBlock);
     let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
     Ok(provider)
+}
+
+fn gas_escalator(every_secs: u64, percentage_increase: f64) -> GeometricGasPrice {
+    let max_price: Option<i32> = None;
+    let coefficient = 1.0 + (percentage_increase / 100.0);
+    GeometricGasPrice::new(coefficient, every_secs, max_price)
 }

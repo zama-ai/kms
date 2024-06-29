@@ -2,7 +2,7 @@ use std::env;
 use std::str::FromStr;
 
 use config::{Config, ConfigError, File};
-use ethers::types::{H160, U256};
+use ethers::types::H160;
 use serde::{Deserialize, Serialize};
 use strum_macros::{AsRefStr, Display, EnumString};
 use typed_builder::TypedBuilder;
@@ -75,8 +75,10 @@ pub struct EthereumConfig {
     pub oracle_predeploy_address: H160,
     pub test_async_decrypt_address: H160,
     pub coprocessor_url: String,
-    pub chain_id: U256,
     pub relayer_key: String,
+    pub gas_price: u64,
+    pub gas_escalator_retry_interval: u64,
+    pub gas_escalator_increase: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
@@ -155,7 +157,7 @@ mod tests {
 
     #[test]
     fn test_gateway_config() {
-        let env_conf: [(&str, Option<&str>); 14] = [
+        let env_conf: [(&str, Option<&str>); 17] = [
             ("GATEWAY__DEBUG", None),
             ("GATEWAY__MODE", None),
             ("GATEWAY__ETHEREUM__LISTENER_TYPE", None),
@@ -166,6 +168,9 @@ mod tests {
             ("GATEWAY__ETHEREUM__ORACLE_PREDEPLOY_ADDRESS", None),
             ("GATEWAY__ETHEREUM__TEST_ASYNC_DECRYPT_ADDRESS", None),
             ("GATEWAY__ETHEREUM__RELAYER_KEY", None),
+            ("GATEWAY__ETHEREUM__GAS_PRICE", None),
+            ("GATEWAY__ETHEREUM__GAS_ESCALATOR_RETRY_INTERVAL", None),
+            ("GATEWAY__ETHEREUM__GAS_ESCALATOR_INCREASE", None),
             ("GATEWAY__KMS__CONTRACT_ADDRESS", None),
             ("GATEWAY__KMS__MNEMONIC", None),
             ("GATEWAY__KMS__ADDRESS", None),
@@ -201,6 +206,9 @@ mod tests {
                 gateway_config.ethereum.relayer_key,
                 "7ec931411ad75a7c201469a385d6f18a325d4923f9f213bd882bbea87e160b67"
             );
+            assert_eq!(gateway_config.ethereum.gas_price, 1_000_000_000);
+            assert_eq!(gateway_config.ethereum.gas_escalator_retry_interval, 5);
+            assert_eq!(gateway_config.ethereum.gas_escalator_increase, 12);
             assert_eq!(
                 gateway_config.kms.contract_address,
                 "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
@@ -251,6 +259,9 @@ mod tests {
                 "GATEWAY__ETHEREUM__RELAYER_KEY",
                 Some("1095a3b5efa0cbd54b9c840e3881fa62d74b793d01f091c292ce916cb2e7757a"),
             ),
+            ("GATEWAY__ETHEREUM__GAS_PRICE", Some("1000000000")),
+            ("GATEWAY__ETHEREUM__GAS_ESCALATOR_RETRY_INTERVAL", Some("5")),
+            ("GATEWAY__ETHEREUM__GAS_ESCALATOR_INCREASE", Some("12")),
             (
                 "GATEWAY__KMS__CONTRACT_ADDRESS",
                 Some("wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4f"),
@@ -295,6 +306,9 @@ mod tests {
                 gateway_config.ethereum.relayer_key,
                 "1095a3b5efa0cbd54b9c840e3881fa62d74b793d01f091c292ce916cb2e7757a"
             );
+            assert_eq!(gateway_config.ethereum.gas_price, 1_000_000_000);
+            assert_eq!(gateway_config.ethereum.gas_escalator_retry_interval, 5);
+            assert_eq!(gateway_config.ethereum.gas_escalator_increase, 12);
             assert_eq!(
                 gateway_config.kms.contract_address,
                 "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4f"

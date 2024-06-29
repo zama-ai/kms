@@ -4,7 +4,6 @@ use crate::config::GatewayConfig;
 use crate::config::KmsMode;
 use crate::util::conversion::TokenizableFrom;
 use crate::util::footprint;
-use abi::FixedBytes;
 use alloy_primitives::Address;
 use anyhow::anyhow;
 use async_trait::async_trait;
@@ -343,7 +342,12 @@ impl Blockchain for KmsBlockchainImpl {
             FheType::Euint2048 => {
                 let mut cake = vec![0u8; 256];
                 ptxt.as_u2048().copy_to_be_byte_slice(cake.as_mut_slice());
-                FixedBytes::from(cake).to_token()
+                let token = Token::Bytes(cake);
+                info!(
+                    "🍰 Euint2048 Token: {:#?}, ",
+                    hex::encode(token.clone().into_bytes().unwrap())
+                );
+                token
             }
             FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
         };

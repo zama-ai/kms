@@ -125,8 +125,8 @@ fn intro(config: &GatewayConfig) {
     );
     tracing::info!(
         "{:<width$}{}",
-        "🎉 Ethereum chain ID:",
-        &config.ethereum.chain_id,
+        "🎉 Coprocessor URL:",
+        &config.ethereum.coprocessor_url,
         width = width
     );
     tracing::info!(

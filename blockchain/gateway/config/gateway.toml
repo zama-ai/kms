@@ -40,8 +40,14 @@ test_async_decrypt_address = "99F460504563579922352932A42172B3c04a1420"
 # Address of the coprocessor to query for ciphertexts
 coprocessor_url = "http://127.0.0.1:8745/"
 
-# The chain ID, 0x2328 is 9000 in base 10
-chain_id = "1377"
+# gas price
+gas_price = 1_000_000_000
+
+# gas escalator retry interval in seconds
+gas_escalator_retry_interval = 5
+
+# gas escalator increase % for each retry
+gas_escalator_increase = 12
 
 # relayer private key
 relayer_key = "7ec931411ad75a7c201469a385d6f18a325d4923f9f213bd882bbea87e160b67"
