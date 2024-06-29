@@ -78,8 +78,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("KmsEventPublisher created");
 
     // Create and run GatewaySubscriber
-    let subscriber =
-        GatewaySubscriber::new(Arc::new(Mutex::new(receiver)), &provider, config.clone()).await;
+    let subscriber = GatewaySubscriber::new(Arc::new(Mutex::new(receiver)), config.clone()).await;
     subscriber.listen();
     tracing::info!("GatewaySubscriber started");
 

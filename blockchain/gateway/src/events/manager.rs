@@ -267,7 +267,6 @@ async fn reencrypt_payload(
 
 // Subscriber
 pub struct GatewaySubscriber {
-    provider: Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
     config: GatewayConfig,
     receiver: Arc<Mutex<mpsc::Receiver<GatewayEvent>>>,
     kms: Arc<dyn Blockchain>,
@@ -276,13 +275,11 @@ pub struct GatewaySubscriber {
 impl GatewaySubscriber {
     pub async fn new(
         receiver: Arc<Mutex<mpsc::Receiver<GatewayEvent>>>,
-        provider: &Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
         config: GatewayConfig,
     ) -> Self {
         let blockchain_instance = blockchain_impl(&config).await;
         Self {
             receiver,
-            provider: Arc::clone(provider),
             config,
             kms: blockchain_instance,
         }
@@ -290,7 +287,6 @@ impl GatewaySubscriber {
 
     pub fn listen(&self) {
         let receiver = Arc::clone(&self.receiver);
-        let provider = Arc::clone(&self.provider);
         let config = self.config.clone();
         let kms = Arc::clone(&self.kms);
         tokio::spawn(async move {
