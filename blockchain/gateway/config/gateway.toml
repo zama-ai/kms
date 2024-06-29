@@ -23,6 +23,9 @@ listener_type = "FHEVM_V1_1"
 # Used for establishing a WebSocket connection to an Ethereum node.
 wss_url = "ws://localhost:8546"
 
+# Used for establishing an http connection to an Ethereum node.
+http_url = "http://localhost:8545"
+
 # Address of the FHE library smart contract on the Ethereum blockchain.
 # Used for interactions with the FHE library contract.
 fhe_lib_address = "000000000000000000000000000000000000005d"

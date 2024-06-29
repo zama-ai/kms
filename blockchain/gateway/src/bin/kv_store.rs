@@ -28,7 +28,7 @@ async fn main() -> std::io::Result<()> {
 
     tokio::spawn(evictor(storage));
 
-    let payload_limit = 10 * 1024 * 1024; // 10 MB
+    let payload_limit = 50 * 1024 * 1024; // 50 MB
 
     actix_web::HttpServer::new(move || {
         actix_web::App::new()

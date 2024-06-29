@@ -6,6 +6,8 @@ use crate::config::EthereumConfig;
 use crate::config::GatewayConfig;
 use crate::events::manager::ApiReencryptValues;
 use crate::events::manager::DecryptionEvent;
+use crate::util::wallet::WalletManager;
+use anyhow::Context;
 use ethers::abi::encode;
 use ethers::abi::Token;
 use ethers::prelude::*;
@@ -13,18 +15,20 @@ use events::kms::ReencryptResponseValues;
 use std::sync::Arc;
 
 pub(crate) async fn handle_event_decryption(
-    client: &Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
     event: &Arc<DecryptionEvent>,
     config: &GatewayConfig,
 ) -> anyhow::Result<()> {
     tracing::debug!("🍻 handle_event_decryption enter");
+
+    let client = Arc::new(http_provider(config).await?);
+    let oracle_predeploy_address = config.ethereum.oracle_predeploy_address;
+    let contract = GatewayContract::new(oracle_predeploy_address, client.clone());
+
     let start = std::time::Instant::now();
     let mut tokens: Vec<Token> = Vec::with_capacity(event.filter.cts.len());
-    //let ethereum_wss_url = config.ethereum.wss_url.clone();
-    let oracle_predeploy_address = config.ethereum.oracle_predeploy_address;
     for ct_handle in event.filter.cts.iter() {
         let token = decrypt(
-            client,
+            &client,
             &config.clone(),
             event.filter.request_id,
             *ct_handle,
@@ -38,7 +42,6 @@ pub(crate) async fn handle_event_decryption(
     let duration = start.elapsed();
     tracing::info!("⏱️ KMS Response Time elapsed: {:?}", duration);
 
-    let contract = GatewayContract::new(oracle_predeploy_address, Arc::clone(client));
     // Fake signatures for now
     let signatures = vec![Bytes::from(vec![0u8; 65])];
     tracing::info!("Fulfilling request: {:?}", event.filter.request_id);
@@ -67,7 +70,7 @@ pub(crate) async fn handle_event_decryption(
 }
 
 async fn decrypt(
-    client: &Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
+    client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
     config: &GatewayConfig,
     request_id: U256,
     ct_handle: U256,
@@ -92,10 +95,10 @@ async fn decrypt(
 }
 
 pub(crate) async fn handle_reencryption_event(
-    client: &Arc<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>>,
     event: &ApiReencryptValues,
     config: &GatewayConfig,
 ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
+    let client = Arc::new(http_provider(config).await?);
     let start = std::time::Instant::now();
 
     let chain_id = client.provider().get_chainid().await?;
@@ -103,7 +106,7 @@ pub(crate) async fn handle_reencryption_event(
     let ethereum_ct_handle = event.ciphertext_handle.0.clone();
     let (ciphertext, fhe_type) =
         <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
-            .get_ciphertext(client, ethereum_ct_handle.clone(), None)
+            .get_ciphertext(&client, ethereum_ct_handle.clone(), None)
             .await?;
     let response = blockchain_impl(config)
         .await
@@ -120,4 +123,24 @@ pub(crate) async fn handle_reencryption_event(
     let duration = start.elapsed();
     tracing::info!("⏱️ KMS Response Time elapsed: {:?}", duration);
     response
+}
+
+async fn http_provider(
+    config: &GatewayConfig,
+) -> anyhow::Result<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>> {
+    let wallet = WalletManager::default().wallet;
+    let provider = Provider::<Http>::connect(&config.ethereum.http_url).await;
+    let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
+    Ok(provider)
+}
+
+async fn _ws_provider(
+    config: &GatewayConfig,
+) -> anyhow::Result<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>> {
+    let wallet = WalletManager::default().wallet;
+    let provider = Provider::<Ws>::connect(&config.ethereum.wss_url)
+        .await
+        .context("Failed to connect to WSS")?;
+    let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
+    Ok(provider)
 }

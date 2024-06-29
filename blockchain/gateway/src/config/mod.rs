@@ -70,6 +70,7 @@ pub enum ListenerType {
 pub struct EthereumConfig {
     pub listener_type: ListenerType,
     pub wss_url: String,
+    pub http_url: String,
     pub fhe_lib_address: H160,
     pub oracle_predeploy_address: H160,
     pub test_async_decrypt_address: H160,
@@ -154,11 +155,12 @@ mod tests {
 
     #[test]
     fn test_gateway_config() {
-        let env_conf: [(&str, Option<&str>); 13] = [
+        let env_conf: [(&str, Option<&str>); 14] = [
             ("GATEWAY__DEBUG", None),
             ("GATEWAY__MODE", None),
             ("GATEWAY__ETHEREUM__LISTENER_TYPE", None),
             ("GATEWAY__ETHEREUM__WSS_URL", None),
+            ("GATEWAY__ETHEREUM__HTTP_URL", None),
             ("GATEWAY__ETHEREUM__FHE_LIB_ADDRESS", None),
             ("GATEWAY__ETHEREUM__RELAYER_ADDRESS", None),
             ("GATEWAY__ETHEREUM__ORACLE_PREDEPLOY_ADDRESS", None),
@@ -182,6 +184,7 @@ mod tests {
                 ListenerType::Fhevm1_1
             );
             assert_eq!(gateway_config.ethereum.wss_url, "ws://localhost:8546");
+            assert_eq!(gateway_config.ethereum.http_url, "http://localhost:8545");
             assert_eq!(
                 gateway_config.ethereum.fhe_lib_address,
                 H160::from_str("000000000000000000000000000000000000005d").unwrap()
@@ -223,6 +226,10 @@ mod tests {
             (
                 "GATEWAY__ETHEREUM__WSS_URL",
                 Some("ws://test_with_var:8546"),
+            ),
+            (
+                "GATEWAY__ETHEREUM__HTTP_URL",
+                Some("http://test_with_var:8545"),
             ),
             (
                 "GATEWAY__ETHEREUM__FHE_LIB_ADDRESS",
@@ -268,6 +275,10 @@ mod tests {
             assert_eq!(gateway_config.mode, KmsMode::Threshold);
             assert_eq!(gateway_config.ethereum.listener_type, ListenerType::Fhevm1);
             assert_eq!(gateway_config.ethereum.wss_url, "ws://test_with_var:8546");
+            assert_eq!(
+                gateway_config.ethereum.http_url,
+                "http://test_with_var:8545"
+            );
             assert_eq!(
                 gateway_config.ethereum.fhe_lib_address,
                 H160::from_str("000000000000000000000000000000000000005e").unwrap()

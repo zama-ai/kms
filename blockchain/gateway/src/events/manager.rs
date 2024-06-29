@@ -223,7 +223,6 @@ impl Publisher<ReencryptionEvent> for ReencryptionEventPublisher {
     async fn run(&self) -> anyhow::Result<()> {
         let publisher = Arc::new(self.clone());
         let api_url = self.config.api_url.clone();
-        tracing::info!("🍓🍓🍓 Starting reencryption event publisher");
         let payload_limit = 10 * 1024 * 1024; // 10 MB
         let _handle = HttpServer::new(move || {
             App::new()
@@ -247,10 +246,6 @@ async fn reencrypt_payload(
     publisher: web::Data<Arc<ReencryptionEventPublisher>>,
 ) -> HttpResponse {
     info!("🍓🍓🍓 => Received reencryption request");
-    info!(
-        "🍓🍓🍓 Payload handle: {:?}",
-        payload.ciphertext_handle.to_hex()
-    );
 
     let (sender, receiver) = oneshot::channel();
 
@@ -301,7 +296,6 @@ impl GatewaySubscriber {
         tokio::spawn(async move {
             loop {
                 let event = receiver.lock().await.recv().await.unwrap();
-                let provider = Arc::clone(&provider);
                 let config = config.clone();
                 let kms = Arc::clone(&kms);
 
@@ -309,12 +303,8 @@ impl GatewaySubscriber {
                     let start = std::time::Instant::now();
                     match event {
                         GatewayEvent::Decryption(msg_event) => {
-                            if let Err(e) = handle_event_decryption(
-                                &provider,
-                                &Arc::new(msg_event.clone()),
-                                &config,
-                            )
-                            .await
+                            if let Err(e) =
+                                handle_event_decryption(&Arc::new(msg_event.clone()), &config).await
                             {
                                 error!("Error handling event decryption: {:?}", e);
                             }
@@ -322,13 +312,10 @@ impl GatewaySubscriber {
                         }
                         GatewayEvent::Reencryption(reencrypt_event) => {
                             info!("🫐🫐🫐 Received Reencryption Event");
-                            let reencrypt_response = handle_reencryption_event(
-                                &provider,
-                                &reencrypt_event.values,
-                                &config,
-                            )
-                            .await
-                            .unwrap();
+                            let reencrypt_response =
+                                handle_reencryption_event(&reencrypt_event.values, &config)
+                                    .await
+                                    .unwrap();
                             let _ = reencrypt_event.sender.send(reencrypt_response);
                         }
                         GatewayEvent::KmsEvent(kms_event) => {
