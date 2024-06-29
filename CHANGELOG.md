@@ -1,5 +1,13 @@
 # KMS Changelog
 
+## [0.4.6](https://github.com/zama-ai/kms-core/compare/v0.4.5...v0.4.6) (2024-06-29)
+
+
+### Bug Fixes
+
+* Add chain ID to reencryption request and update gateway configur… ([#791](https://github.com/zama-ai/kms-core/issues/791)) ([fb10760](https://github.com/zama-ai/kms-core/commit/fb107604b190051de31dea4987136779a6436892))
+* updated reenc tests and endianness in chain_id ([#792](https://github.com/zama-ai/kms-core/issues/792)) ([24f35a5](https://github.com/zama-ai/kms-core/commit/24f35a53869e599d274e74a8b254a90cd585178e))
+
 ## [0.4.5](https://github.com/zama-ai/kms-core/compare/v0.4.4...v0.4.5) (2024-06-28)
 
 
