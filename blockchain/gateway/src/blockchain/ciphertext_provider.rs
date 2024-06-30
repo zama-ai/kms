@@ -12,12 +12,12 @@ use serde_json::json;
 use std::sync::Arc;
 
 // Trait to define the interface for getting ciphertext
-// SignerMiddleware<GasEscalatorMiddleware<Provider<Http>>, Wallet<SigningKey>>
+// SignerMiddleware<Provider<Http>, Wallet<SigningKey>>
 #[async_trait]
 pub trait CiphertextProvider: Send {
     async fn get_ciphertext(
         &self,
-        client: &Arc<SignerMiddleware<GasEscalatorMiddleware<Provider<Http>>, Wallet<SigningKey>>>,
+        client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
         ct_handle: Vec<u8>,
         block_id: Option<BlockId>,
     ) -> anyhow::Result<(Vec<u8>, FheType)>;
@@ -32,7 +32,7 @@ struct Fhevm1CiphertextProvider {
 impl CiphertextProvider for Fhevm1CiphertextProvider {
     async fn get_ciphertext(
         &self,
-        client: &Arc<SignerMiddleware<GasEscalatorMiddleware<Provider<Http>>, Wallet<SigningKey>>>,
+        client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
         ct_handle: Vec<u8>,
         block_id: Option<BlockId>,
     ) -> anyhow::Result<(Vec<u8>, FheType)> {
@@ -64,7 +64,7 @@ struct Fhevm1_1CiphertextProvider {
 impl CiphertextProvider for Fhevm1_1CiphertextProvider {
     async fn get_ciphertext(
         &self,
-        client: &Arc<SignerMiddleware<GasEscalatorMiddleware<Provider<Http>>, Wallet<SigningKey>>>,
+        client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
         ct_handle: Vec<u8>,
         block_id: Option<BlockId>,
     ) -> anyhow::Result<(Vec<u8>, FheType)> {
@@ -112,7 +112,7 @@ struct CoprocessorCiphertextProvider {
 impl CiphertextProvider for CoprocessorCiphertextProvider {
     async fn get_ciphertext(
         &self,
-        _client: &Arc<SignerMiddleware<GasEscalatorMiddleware<Provider<Http>>, Wallet<SigningKey>>>,
+        _client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
         ct_handle: Vec<u8>,
         _block_id: Option<BlockId>,
     ) -> anyhow::Result<(Vec<u8>, FheType)> {

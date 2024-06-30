@@ -40,14 +40,17 @@ test_async_decrypt_address = "99F460504563579922352932A42172B3c04a1420"
 # Address of the coprocessor to query for ciphertexts
 coprocessor_url = "http://127.0.0.1:8745/"
 
-# gas price
-gas_price = 1_000_000_000
+# optionally explicitly set the gas price
+# gas_price = 1_000_000_000
 
-# gas escalator retry interval in seconds
-gas_escalator_retry_interval = 5
+# optionally explicitly set transaction gas limit
+gas_limit = 5_000_000
 
-# gas escalator increase % for each retry
-gas_escalator_increase = 12
+# base gas price, one of current_gas_price or eip1559_max_priority_fee_per_gas
+base_gas = "eip1559_max_priority_fee_per_gas"
+
+# gas escalator increase in % of base_gas 
+gas_escalator_increase = 20
 
 # relayer private key
 relayer_key = "7ec931411ad75a7c201469a385d6f18a325d4923f9f213bd882bbea87e160b67"

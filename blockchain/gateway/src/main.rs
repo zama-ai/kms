@@ -141,4 +141,33 @@ fn intro(config: &GatewayConfig) {
         &config.storage.url,
         width = width
     );
+    if config.ethereum.gas_limit.is_some() {
+        tracing::info!(
+            "{:<width$}{:?}",
+            "⛽ Ethereum gas limit:",
+            &config.ethereum.gas_limit,
+            width = width
+        );
+    }
+    if config.ethereum.gas_price.is_some() {
+        tracing::info!(
+            "{:<width$}{:?}",
+            "⛽ Ethereum gas price:",
+            &config.ethereum.gas_price,
+            width = width
+        );
+    } else {
+        tracing::info!(
+            "{:<width$}{:?}",
+            "⛽ Ethereum base gas:",
+            &config.ethereum.base_gas,
+            width = width
+        );
+        tracing::info!(
+            "{:<width$}{:?}",
+            "⛽ Ethereum escalator %:",
+            &config.ethereum.gas_escalator_increase,
+            width = width
+        );
+    }
 }

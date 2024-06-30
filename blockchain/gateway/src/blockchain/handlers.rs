@@ -2,6 +2,7 @@ use crate::blockchain::blockchain_impl;
 use crate::blockchain::ciphertext_provider::CiphertextProvider;
 use crate::blockchain::handlers::k256::ecdsa::SigningKey;
 use crate::common::provider::GatewayContract;
+use crate::config::BaseGasPrice;
 use crate::config::EthereumConfig;
 use crate::config::GatewayConfig;
 use crate::events::manager::ApiReencryptValues;
@@ -10,9 +11,9 @@ use crate::util::wallet::WalletManager;
 use anyhow::Context;
 use ethers::abi::encode;
 use ethers::abi::Token;
-use ethers::middleware::gas_escalator::*;
 use ethers::prelude::*;
 use events::kms::ReencryptResponseValues;
+use std::ops::Mul;
 use std::sync::Arc;
 
 pub(crate) async fn handle_event_decryption(
@@ -52,20 +53,58 @@ pub(crate) async fn handle_event_decryption(
     let signatures = vec![Bytes::from(vec![0u8; 65])];
     tracing::info!("Fulfilling Ethereum request: {:?}", event.filter.request_id);
 
-    let encoded_packed_bytes: Bytes = abi::encode_packed(&tokens)?.into();
-    tracing::debug!("Encoded packed bytes: {:?}", encoded_packed_bytes);
+    // prepend a uint256 placeholder token to the tokens vec
+    let mut tok = vec![Token::Uint(U256::from(42))];
+    tok.extend(tokens.clone());
 
-    let encoded_bytes: Bytes = encode(&tokens).into();
-    tracing::info!("Encoded bytes: {:?}", encoded_bytes);
+    let encoded_bytes: Bytes = encode(&tok).into();
+    let encoded_bytes = encoded_bytes.as_ref()[32..].to_vec();
+    println!("Encoded bytes: {:?}", hex::encode(encoded_bytes.clone()));
 
     let client = Arc::new(http_provider(config).await.unwrap());
+    let current_gas_price = client.provider().get_gas_price().await.unwrap();
+    tracing::debug!("Current gas price: {:?}", current_gas_price);
+
+    let (max_fee_per_gas, max_priority_fee_per_gas) =
+        client.provider().estimate_eip1559_fees(None).await.unwrap();
+    tracing::debug!("Max fee per gas: {:?}", max_fee_per_gas);
+    tracing::debug!("Max priority fee per gas: {:?}", max_priority_fee_per_gas);
+
+    let gas_price = match config.ethereum.gas_price {
+        Some(gas_price) => {
+            tracing::debug!("⛽ Using configured gas price: {:?}", gas_price);
+            U256::from(gas_price)
+        }
+        None => match config.ethereum.base_gas {
+            BaseGasPrice::CurrentGasPrice => {
+                let gas_price = client.provider().get_gas_price().await?;
+                let gas_price = gas_price.mul(1 + (config.ethereum.gas_escalator_increase / 100));
+
+                tracing::debug!("⛽ Calculated CurrentGasPrice gas price: {:?}", gas_price);
+                gas_price
+            }
+            BaseGasPrice::Eip1559MaxPriorityFeePerGas => {
+                let (_, max_priority_fee_per_gas) =
+                    client.provider().estimate_eip1559_fees(None).await?;
+                let gas_price = max_priority_fee_per_gas
+                    .mul(1 + (config.ethereum.gas_escalator_increase / 100));
+                tracing::debug!(
+                    "⛽ Calculated Eip1559MaxPriorityFeePerGas gas price: {:?}",
+                    gas_price
+                );
+                gas_price
+            }
+        },
+    };
+    tracing::debug!("⛽ Using calculated gas price: {:?}", gas_price);
+
     let contract = GatewayContract::new(config.ethereum.oracle_predeploy_address, client);
-    match contract
-        .fulfill_request(event.filter.request_id, encoded_bytes, signatures)
-        .gas_price(config.ethereum.gas_price)
-        .send()
-        .await
-    {
+    let fullfillment = contract
+        .fulfill_request(event.filter.request_id, encoded_bytes.into(), signatures)
+        .gas_price(gas_price)
+        .gas(config.ethereum.gas_limit.unwrap_or(1_000_000));
+
+    match fullfillment.send().await {
         Ok(pending_tx) => match pending_tx.await {
             Ok(receipt) => {
                 tracing::info!(
@@ -88,7 +127,7 @@ pub(crate) async fn handle_event_decryption(
 }
 
 async fn decrypt(
-    client: &Arc<SignerMiddleware<GasEscalatorMiddleware<Provider<Http>>, Wallet<SigningKey>>>,
+    client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
     config: &GatewayConfig,
     ct_handle: U256,
     block_number: u64,
@@ -142,36 +181,44 @@ pub(crate) async fn handle_reencryption_event(
 
 async fn http_provider(
     config: &GatewayConfig,
-) -> anyhow::Result<SignerMiddleware<GasEscalatorMiddleware<Provider<Http>>, Wallet<SigningKey>>> {
-    let gas_escalator = gas_escalator(
-        config.ethereum.gas_escalator_retry_interval,
-        config.ethereum.gas_escalator_increase as f64,
-    );
+) -> anyhow::Result<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>> {
     let wallet = WalletManager::default().wallet;
     let provider = Provider::<Http>::connect(&config.ethereum.http_url).await;
-    let provider = GasEscalatorMiddleware::new(provider, gas_escalator, Frequency::PerBlock);
     let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
     Ok(provider)
 }
 
 async fn _ws_provider(
     config: &GatewayConfig,
-) -> anyhow::Result<SignerMiddleware<GasEscalatorMiddleware<Provider<Ws>>, Wallet<SigningKey>>> {
-    let gas_escalator = gas_escalator(
-        config.ethereum.gas_escalator_retry_interval,
-        config.ethereum.gas_escalator_increase as f64,
-    );
+) -> anyhow::Result<SignerMiddleware<Provider<Ws>, Wallet<SigningKey>>> {
     let wallet = WalletManager::default().wallet;
     let provider = Provider::<Ws>::connect(&config.ethereum.wss_url)
         .await
         .context("Failed to connect to WSS")?;
-    let provider = GasEscalatorMiddleware::new(provider, gas_escalator, Frequency::PerBlock);
     let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
     Ok(provider)
 }
 
-fn gas_escalator(every_secs: u64, percentage_increase: f64) -> GeometricGasPrice {
-    let max_price: Option<i32> = None;
-    let coefficient = 1.0 + (percentage_increase / 100.0);
-    GeometricGasPrice::new(coefficient, every_secs, max_price)
+#[cfg(test)]
+mod tests {
+
+    use ethers::abi::encode;
+    use ethers::abi::Token;
+    use ethers::prelude::*;
+
+    // test encoding
+    #[tokio::test]
+    async fn test_handle_event_decryption() {
+        let tok = vec![
+            Token::Uint(U256::from(31)),
+            Token::Address("76e1e8877b40973B9A269100F1C97Df9B78ac407".parse().unwrap()),
+            Token::Bytes(hex::decode("0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000fffffffffffff9c6").unwrap()),
+            Token::Uint(U256::from(19)),
+            Token::Bytes(hex::decode("0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a").unwrap()),
+        ];
+
+        let encoded_bytes: Bytes = encode(&tok).into();
+        let encoded_bytes = encoded_bytes.as_ref()[32..].to_vec();
+        println!("Encoded bytes: {:?}", hex::encode(encoded_bytes.clone()));
+    }
 }
