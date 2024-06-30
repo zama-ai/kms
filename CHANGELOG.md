@@ -1,5 +1,12 @@
 # KMS Changelog
 
+# [0.6.0](https://github.com/zama-ai/kms-core/compare/v0.5.0...v0.6.0) (2024-06-30)
+
+
+### Features
+
+* **gateway:** Add support for concurrent ciphertext decryptions ([81dedb2](https://github.com/zama-ai/kms-core/commit/81dedb2215ba0f78038bea4ebf1cc24977c4c88b))
+
 # [0.5.0](https://github.com/zama-ai/kms-core/compare/v0.4.6...v0.5.0) (2024-06-30)
 
 
