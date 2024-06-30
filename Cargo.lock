@@ -805,7 +805,7 @@ checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
 
 [[package]]
 name = "asc"
-version = "0.4.6"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -2499,7 +2499,7 @@ checksum = "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f"
 
 [[package]]
 name = "cosmos-proto"
-version = "0.4.6"
+version = "0.5.0"
 dependencies = [
  "glob",
  "prost",
@@ -3119,7 +3119,7 @@ dependencies = [
 
 [[package]]
 name = "distributed-decryption"
-version = "0.4.6"
+version = "0.5.0"
 dependencies = [
  "aes",
  "aes-prng",
@@ -3801,7 +3801,7 @@ dependencies = [
 
 [[package]]
 name = "events"
-version = "0.4.6"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4188,7 +4188,7 @@ checksum = "af6a86e750338603ea2c14b1c0bfe58cd61f87ca67a0021d9334996024608e12"
 
 [[package]]
 name = "gateway"
-version = "0.4.6"
+version = "0.5.0"
 dependencies = [
  "actix-web",
  "aes-prng",
@@ -5237,7 +5237,7 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.4.6"
+version = "0.5.0"
 dependencies = [
  "aes",
  "aes-gcm-siv",
@@ -5315,7 +5315,7 @@ dependencies = [
 
 [[package]]
 name = "kms-blockchain-client"
-version = "0.4.6"
+version = "0.5.0"
 dependencies = [
  "base64 0.22.1",
  "bip32",
@@ -5347,7 +5347,7 @@ dependencies = [
 
 [[package]]
 name = "kms-blockchain-connector"
-version = "0.4.6"
+version = "0.5.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -6794,7 +6794,7 @@ dependencies = [
 
 [[package]]
 name = "proofs"
-version = "0.4.6"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -8242,7 +8242,7 @@ dependencies = [
 
 [[package]]
 name = "simulator"
-version = "0.4.6"
+version = "0.5.0"
 dependencies = [
  "bincode",
  "clap 4.5.7",
@@ -8884,7 +8884,7 @@ dependencies = [
 
 [[package]]
 name = "test-utilities"
-version = "0.4.6"
+version = "0.5.0"
 
 [[package]]
 name = "textwrap"
