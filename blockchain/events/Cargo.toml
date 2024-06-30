@@ -1,6 +1,6 @@
 [package]
 name = "events"
-version = "0.6.0"
+version = "0.7.0"
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
@@ -10,7 +10,7 @@ anyhow = "~1.0"
 async-trait = {version = "~0.1", optional = true}
 cosmwasm-std = { version = "2.0.2" }
 cosmwasm-schema = "2.0.2"
-cosmos-proto = { path = "../cosmos-proto", optional = true , version = "0.6.0" }
+cosmos-proto = { path = "../cosmos-proto", optional = true , version = "0.7.0" }
 hex = "0.4.3"
 koit-toml = { version = "=0.2.1", optional = true }
 opentelemetry = { version = "0.23", features = ["metrics" ], optional = true }
