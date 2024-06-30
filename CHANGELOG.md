@@ -1,5 +1,12 @@
 # KMS Changelog
 
+# [0.7.0](https://github.com/zama-ai/kms-core/compare/v0.6.0...v0.7.0) (2024-06-30)
+
+
+### Features
+
+* Update gas limit and gas escalator increase in GatewayConfig ([2fd5310](https://github.com/zama-ai/kms-core/commit/2fd5310530f42d5dab75791ffa0587d46a3df599))
+
 # [0.6.0](https://github.com/zama-ai/kms-core/compare/v0.5.0...v0.6.0) (2024-06-30)
 
 
