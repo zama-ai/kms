@@ -24,7 +24,7 @@ where
         &self,
         message: TransactionEvent,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-        tracing::info!("Responding to Oracle with message: {:?}", message);
+        tracing::debug!("Responding to Oracle with message: {:?}", message);
         self.oracle.respond(message.event).await.map_err(|e| {
             self.observability
                 .increment(MetricType::OracleError, 1, &[("error", &e.to_string())]);

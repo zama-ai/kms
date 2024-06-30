@@ -182,12 +182,12 @@ where
             .flatten()
             .collect::<Vec<TransactionEvent>>();
         let results_size = events.len();
-        tracing::info!("Sending events to be processed to handler {}", results_size);
+        tracing::debug!("Sending events to be processed to handler {}", results_size);
         for result in events {
             let handler = handler.clone();
             let handle = async move {
                 let enter = tracing::span!(
-                    tracing::Level::INFO,
+                    tracing::Level::DEBUG,
                     "on_message",
                     payload = ?result,
                     "Received message from Event Server"

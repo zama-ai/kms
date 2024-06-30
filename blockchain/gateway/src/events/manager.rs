@@ -166,7 +166,7 @@ pub struct KmsEventPublisher {
 #[async_trait]
 impl Oracle for KmsEventPublisher {
     async fn respond(&self, event: KmsEvent) -> anyhow::Result<()> {
-        info!("🚀🚀🚀🚀🚀🚀 Oracle event: {:?}", event.txn_id());
+        debug!("🚀🚀🚀🚀🚀🚀 Oracle event: {:?}", event.txn_id());
         self.publish(event);
         Ok(())
     }
@@ -299,15 +299,16 @@ impl GatewaySubscriber {
                     let start = std::time::Instant::now();
                     match event {
                         GatewayEvent::Decryption(msg_event) => {
+                            debug!("🫐🫐🫐 Received Decryption Event");
                             if let Err(e) =
                                 handle_event_decryption(&Arc::new(msg_event.clone()), &config).await
                             {
                                 error!("Error handling event decryption: {:?}", e);
                             }
-                            info!("Received Message: {:?}", msg_event);
+                            debug!("Received Message: {:?}", msg_event);
                         }
                         GatewayEvent::Reencryption(reencrypt_event) => {
-                            info!("🫐🫐🫐 Received Reencryption Event");
+                            debug!("🫐🫐🫐 Received Reencryption Event");
                             let reencrypt_response =
                                 handle_reencryption_event(&reencrypt_event.values, &config)
                                     .await
@@ -315,7 +316,7 @@ impl GatewaySubscriber {
                             let _ = reencrypt_event.sender.send(reencrypt_response);
                         }
                         GatewayEvent::KmsEvent(kms_event) => {
-                            info!("🤠 Received KmsEvent: {:?}", kms_event);
+                            debug!("🫐🫐🫐 Received KmsEvent: {:?}", kms_event);
                             kms.receive(kms_event).await.unwrap();
                         }
                     }

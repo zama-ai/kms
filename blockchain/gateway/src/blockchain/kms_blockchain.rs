@@ -56,7 +56,7 @@ pub(crate) struct KmsBlockchainImpl {
 #[async_trait]
 impl KmsEventSubscriber for KmsBlockchainImpl {
     async fn receive(&self, event: KmsEvent) -> anyhow::Result<()> {
-        tracing::info!("🤠 Received KmsEvent: {:?}", event);
+        tracing::debug!("🤠 Received KmsEvent: {:?}", event);
         self.event_sender
             .send(event)
             .await
