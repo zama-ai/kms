@@ -1,5 +1,12 @@
 # KMS Changelog
 
+# [0.5.0](https://github.com/zama-ai/kms-core/compare/v0.4.6...v0.5.0) (2024-06-30)
+
+
+### Features
+
+* Update coprocessor URL in GatewayConfig, extra logging for ebytes256, added gas escalation logic addressing mempool locks ([402ff61](https://github.com/zama-ai/kms-core/commit/402ff61edcedbf2e1e30d1794d582752ab650335))
+
 ## [0.4.6](https://github.com/zama-ai/kms-core/compare/v0.4.5...v0.4.6) (2024-06-29)
 
 
