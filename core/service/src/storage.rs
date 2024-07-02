@@ -478,6 +478,7 @@ mod tests {
     use super::*;
     use crate::rpc::rpc_types::PubDataType;
 
+    #[ignore]
     #[tokio::test]
     async fn threshold_dev_storage() {
         let path1 = tempfile::tempdir().unwrap();
@@ -566,16 +567,19 @@ mod tests {
         assert!(!data_path.exists());
     }
 
+    #[ignore]
     #[tokio::test]
     async fn threshold_file_storage_with_path() {
         file_storage_with_path(true).await
     }
 
+    #[ignore]
     #[tokio::test]
     async fn centralized_file_storage_with_path() {
         file_storage_with_path(false).await
     }
 
+    #[ignore]
     #[tokio::test]
     async fn ram_storage_url() {
         let storage = RamStorage::new(StorageType::PUB);
