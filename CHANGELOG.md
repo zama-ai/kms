@@ -1,5 +1,12 @@
 # KMS Changelog
 
+## [0.7.1](https://github.com/zama-ai/kms-core/compare/v0.7.0...v0.7.1) (2024-07-02)
+
+
+### Bug Fixes
+
+* merge issue ([73454b4](https://github.com/zama-ai/kms-core/commit/73454b4e14033399906e71b4b7d3ef1fa24f9943))
+
 # [0.7.0](https://github.com/zama-ai/kms-core/compare/v0.6.0...v0.7.0) (2024-06-30)
 
 
