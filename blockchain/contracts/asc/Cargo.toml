@@ -1,6 +1,6 @@
 [package]
 name = "asc"
-version = "0.7.0"
+version = "0.7.1"
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
@@ -19,7 +19,7 @@ cosmwasm-std = { version = "2.0.2", features = ["staking"] }
 cw-controllers = "2.0.0"
 cw-storage-plus = "2.0.0"
 cw-utils = "2.0.0"
-events = { path = "../../events" , version = "0.7.0" }
+events = { path = "../../events" , version = "0.7.1" }
 hex = "0.4.3"
 ibc-clients = "0.53.0"
 schemars = "0.8.16"
