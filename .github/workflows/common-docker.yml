@@ -133,7 +133,7 @@ jobs:
           echo "DOCKER_TAG_IMAGE=${{  github.ref_name }}" >> $GITHUB_ENV
 
       - name: Docker Build and Push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ${{ inputs.docker-context }}
           build-args: |
@@ -161,7 +161,7 @@ jobs:
 
       - name: Docker Build and Push Dev Image
         if: ${{ inputs.generate-dev-image }}
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         timeout-minutes: 360
         with:
           context: ${{ inputs.docker-context }}

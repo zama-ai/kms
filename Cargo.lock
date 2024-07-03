@@ -805,7 +805,7 @@ checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
 
 [[package]]
 name = "asc"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "bincode",
@@ -1182,9 +1182,9 @@ checksum = "0c4b4d0bd25bd0b74681c0ad21497610ce1b7c91b1022cd21c80c6fbdd9476b0"
 
 [[package]]
 name = "aws-config"
-version = "1.5.1"
+version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ac9889352d632214df943e26740c46a0f3da6e329fbd28164fe7ae1b061da7b"
+checksum = "2368fb843e9eec932f7789d64d0e05850f4a79067188c657e572f1f5a7589df0"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -1320,9 +1320,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-sso"
-version = "1.29.0"
+version = "1.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da75cf91cbb46686a27436d639a720a3a198b148efa76dc2467b7e5374a67fc0"
+checksum = "b8aee358b755b2738b3ffb8a5b54ee991b28c8a07483a0ff7d49a58305cc2609"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -1342,9 +1342,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-ssooidc"
-version = "1.30.0"
+version = "1.34.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf2ec8a6687299685ed0a4a3137c129cdb132b5235bc3aa3443f6cffe468b9ff"
+checksum = "1d5ce026f0ae73e06b20be5932150dd0e9b063417fd7c3acf5ca97018b9cbd64"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -1364,9 +1364,9 @@ dependencies = [
 
 [[package]]
 name = "aws-sdk-sts"
-version = "1.29.0"
+version = "1.33.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "458f1031e094b1411b59b49b19e4118f069e1fe13a9c5b8888e933daaf7ffdd6"
+checksum = "c820248cb02e4ea83630ad2e43d0721cdbccedba5ac902cd0b6fb84d7271f205"
 dependencies = [
  "aws-credential-types",
  "aws-runtime",
@@ -1499,9 +1499,9 @@ dependencies = [
 
 [[package]]
 name = "aws-smithy-runtime"
-version = "1.5.5"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0d3965f6417a92a6d1009c5958a67042f57e46342afb37ca58f9ad26744ec73"
+checksum = "db83b08939838d18e33b5dbaf1a0f048f28c10bd28071ab7ce6f245451855414"
 dependencies = [
  "aws-smithy-async",
  "aws-smithy-http",
@@ -1513,6 +1513,7 @@ dependencies = [
  "http 0.2.12",
  "http-body 0.4.6",
  "http-body 1.0.0",
+ "httparse",
  "hyper 0.14.29",
  "hyper-rustls 0.24.2",
  "once_cell",
@@ -2188,9 +2189,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.7"
+version = "4.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5db83dced34638ad474f39f250d7fea9598bdd239eaced1bdf45d597da0f433f"
+checksum = "84b3edb18336f4df585bc9aa31dd99c036dfa5dc5e9a2939a722a188f3a8970d"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -2207,9 +2208,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.7"
+version = "4.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7e204572485eb3fbf28f871612191521df159bc3e15a9f5064c66dba3a8c05f"
+checksum = "c1c09dd5ada6c6c78075d6fd0da3f90d8080651e2d6cc8eb2f1aaa4034ced708"
 dependencies = [
  "anstream",
  "anstyle",
@@ -2219,9 +2220,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.5"
+version = "4.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c780290ccf4fb26629baa7a1081e68ced113f1d3ec302fa5948f1c381ebf06c6"
+checksum = "2bac35c6dafb060fd4d275d9a4ffae97917c13a6327903a8be2153cd964f7085"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -2499,7 +2500,7 @@ checksum = "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f"
 
 [[package]]
 name = "cosmos-proto"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "glob",
  "prost",
@@ -2633,7 +2634,7 @@ dependencies = [
  "anes",
  "cast",
  "ciborium",
- "clap 4.5.7",
+ "clap 4.5.8",
  "criterion-plot",
  "is-terminal",
  "itertools 0.10.5",
@@ -3119,7 +3120,7 @@ dependencies = [
 
 [[package]]
 name = "distributed-decryption"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "aes",
  "aes-prng",
@@ -3131,7 +3132,7 @@ dependencies = [
  "backoff",
  "bincode",
  "cfg-if",
- "clap 4.5.7",
+ "clap 4.5.8",
  "concrete-csprng",
  "config",
  "const_format",
@@ -3801,7 +3802,7 @@ dependencies = [
 
 [[package]]
 name = "events"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4188,7 +4189,7 @@ checksum = "af6a86e750338603ea2c14b1c0bfe58cd61f87ca67a0021d9334996024608e12"
 
 [[package]]
 name = "gateway"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "actix-web",
  "aes-prng",
@@ -4201,7 +4202,7 @@ dependencies = [
  "backtrace",
  "bincode",
  "byteorder",
- "clap 4.5.7",
+ "clap 4.5.8",
  "config",
  "cosmos-proto",
  "cosmwasm-std",
@@ -4546,9 +4547,9 @@ checksum = "add0ab9360ddbd88cfeb3bd9574a1d85cfdfa14db10b3e21d3700dbc4328758f"
 
 [[package]]
 name = "httparse"
-version = "1.9.4"
+version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fcc0b4a115bf80b728eb8ea024ad5bd707b615bfed49e0665b6e0f86fd082d9"
+checksum = "d897f394bad6a705d5f4104762e116a75639e470d80901eed05a860a95cb1904"
 
 [[package]]
 name = "httpdate"
@@ -5237,7 +5238,7 @@ dependencies = [
 
 [[package]]
 name = "kms"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "aes",
  "aes-gcm-siv",
@@ -5256,7 +5257,7 @@ dependencies = [
  "bincode",
  "cbc",
  "cfg-if",
- "clap 4.5.7",
+ "clap 4.5.8",
  "cms",
  "config",
  "console_error_panic_hook",
@@ -5315,11 +5316,11 @@ dependencies = [
 
 [[package]]
 name = "kms-blockchain-client"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "base64 0.22.1",
  "bip32",
- "clap 4.5.7",
+ "clap 4.5.8",
  "cosmos-proto",
  "deep_space",
  "ecdsa 0.16.9",
@@ -5347,7 +5348,7 @@ dependencies = [
 
 [[package]]
 name = "kms-blockchain-connector"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
@@ -5355,7 +5356,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "byteorder",
- "clap 4.5.7",
+ "clap 4.5.8",
  "config",
  "dashmap",
  "enum_dispatch",
@@ -6794,7 +6795,7 @@ dependencies = [
 
 [[package]]
 name = "proofs"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -8047,9 +8048,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.118"
+version = "1.0.120"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d947f6b3163d8857ea16c4fa0dd4840d52f3041039a85decd46867eb1abef2e4"
+checksum = "4e0d21c9a8cae1235ad58a00c11cb40d4b1e5c784f1ef2c537876ed6ffd8b7c5"
 dependencies = [
  "itoa",
  "ryu",
@@ -8242,10 +8243,10 @@ dependencies = [
 
 [[package]]
 name = "simulator"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "bincode",
- "clap 4.5.7",
+ "clap 4.5.8",
  "clap-stdin",
  "config",
  "cosmos-proto",
@@ -8884,7 +8885,7 @@ dependencies = [
 
 [[package]]
 name = "test-utilities"
-version = "0.7.0"
+version = "0.7.1"
 
 [[package]]
 name = "textwrap"

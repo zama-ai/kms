@@ -101,9 +101,9 @@ jobs:
           publish_dir: ./target/doc
           destination_dir: ${{ inputs.working-directory }}
 
-      - name: Install wasm-pack
+      - name: Install
         if: ${{ inputs.run-wasm }}
-        run: wasm-pack --version > /dev/null 2>&1 || cargo install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Build wasm with tests
         if: ${{ inputs.run-wasm }}

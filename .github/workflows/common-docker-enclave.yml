@@ -77,7 +77,7 @@ jobs:
           echo "DOCKER_TAG_IMAGE=${{  github.ref_name }}" >> $GITHUB_ENV
 
       - name: Docker Build and Push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |

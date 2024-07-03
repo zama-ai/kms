@@ -8,6 +8,7 @@ on:
       - 'core/threshold/**'
       - '.github/workflows/service-pr.yml'
 
+
 jobs:
   build:
     uses: ./.github/workflows/common-build-big-instance.yml
