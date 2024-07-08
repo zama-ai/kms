@@ -6,8 +6,8 @@ publish.workspace = true
 authors.workspace = true
 
 [dependencies]
-bincode = "1.3.3"
-clap = { version = "4.5.8", features = ["derive"] }
+bincode.workspace = true
+clap = { workspace = true, features = ["derive"] }
 conf-trace = { path = "../../conf-trace" }
 cosmos-proto = { path = "../cosmos-proto" , version = "0.7.1" }
 cosmwasm-std = { version = "2.0.2" }
@@ -15,8 +15,8 @@ events = { path = "../events" , version = "0.7.1" }
 hex = "0.4.3"
 kms = { path = "../../core/service", default-features = false, features = ["grpc-client", "non-wasm", "testing"] , version = "0.7.1" }
 kms-blockchain-client = { path = "../client" , version = "0.7.1" }
-serde = { version = "1.0.197", features = ["derive"] }
+serde = { workspace = true , features = ["derive"] }
 strum = "0.26"
 strum_macros = "0.26"
-tokio = { version = "1.37", features = ["rt-multi-thread"] }
-tracing = { version = "~0.1", features = ["log"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+tracing = { workspace = true, features = ["log"] }

@@ -7,40 +7,40 @@ authors.workspace = true
 
 
 [dependencies]
-anyhow = "~1.0"
-async-trait = "~0.1"
-bincode = "1.3.3"
-clap = { version = "~4", features = ["derive", "env"] }
-kms = { path = "../../core/service", default-features = false, features = ["grpc-client"] , version = "0.7.1" }
+anyhow.workspace = true
+async-trait.workspace = true
+bincode.workspace = true
+byteorder = "1.5.0"
+clap = { workspace = true, features = ["derive", "env"] }
 conf-trace = { path = "../../conf-trace" }
 dashmap = "6"
 enum_dispatch = "0.3.12"
 events = { path = "../events", features = ["subscription"] , version = "0.7.1" }
+hex = "0.4.3"
+kms = { path = "../../core/service", default-features = false, features = ["grpc-client"] , version = "0.7.1" }
 kms-blockchain-client = { path = "../client" , version = "0.7.1" }
 opentelemetry = { version = "0.23", features = ["metrics"] }
+reqwest = "0.12.4"
 retrying = { version = "0.1.0", features = ["tokio"] }
-serde = { version = "1.0.197", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+sha2 = "0.10.8"
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
-tokio = { version = "1.37", features = ["full"] }
-tonic = { version = "0.11", features = ["transport","tls","tls-roots"] }
-tracing = { version = "0.1.40", features = ["log"] }
-typed-builder = "0.18.1"
-hex = "0.4.3"
-reqwest = "0.12.4"
-sha2 = "0.10.8"
-byteorder = "1.5.0"
+tokio = { workspace = true , features = ["full"] }
+tonic = { workspace = true, features = ["transport","tls","tls-roots"] }
+tracing = { workspace = true, features = ["log"] }
+typed-builder = { workspace = true }
 
 [dev-dependencies]
-kms = { path = "../../core/service", features = ["testing"] , version = "0.7.1" }
-alloy-sol-types = "0.7.6"
 alloy-primitives = "0.7.6"
+alloy-sol-types = "0.7.6"
+kms = { path = "../../core/service", features = ["testing"] , version = "0.7.1" }
+rand.workspace = true
 serial_test = "3.1.1"
 temp-env = "0.3"
 test-context = "0.3.0"
 test-utilities = { path = "./utilities" }
 tracing-test = "0.2.4"
-rand = "0.8.5"
 
 [features]
 slow_tests = []

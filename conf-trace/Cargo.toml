@@ -6,7 +6,7 @@ publish.workspace = true
 edition.workspace = true
 
 [dependencies]
-anyhow = "1.0.86"
+anyhow.workspace = true
 config = "0.14.0"
 lazy_static = "1.5"
 opentelemetry = "0.23"
@@ -17,14 +17,13 @@ opentelemetry-semantic-conventions = "0.15.0"
 opentelemetry-stdout = { version = "0.4.0", features = ["trace"] }
 opentelemetry_sdk = { version = "0.23", features = ["rt-tokio","logs"]}
 prometheus = "=0.13.4"
-serde = { version = "1.0.203", features = ["derive", "rc"] }
+serde = { workspace = true, features = ["derive", "rc"] }
 strum = "0.26"
 strum_macros = "0.26"
-tonic = "0.11"
-tracing = { version = "0.1.40", features = ["log"] }
+tonic.workspace = true
+tracing = { workspace = true, features = ["log"] }
 tracing-opentelemetry = "0.24"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
-typed-builder = "0.18.1"
-
+typed-builder.workspace = true
 
 

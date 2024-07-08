@@ -12,8 +12,8 @@ crate-type = ["cdylib", "rlib"]
 schema = []
 
 [dependencies]
-anyhow = "1.0.83"
-bincode = "1.3.3"
+anyhow.workspace = true
+bincode.workspace = true
 cosmwasm-schema = "2.0.2"
 cosmwasm-std = { version = "2.0.2", features = ["staking"] }
 cw-controllers = "2.0.0"
@@ -23,13 +23,13 @@ events = { path = "../../events" , version = "0.7.1" }
 hex = "0.4.3"
 ibc-clients = "0.53.0"
 schemars = "0.8.16"
-serde = "1.0.197"
+serde.workspace = true
 sha3 = "0.10.8"
 sylvia = "1.0.2"
 sylvia-derive = "1.0.2"
 
 [dev-dependencies]
-cw-multi-test = "2.0.1"
+byteorder = "1.5.0"
+cw-multi-test = "=2.0.1"
 sylvia = { version = "1.0.2", features = ["mt"] }
 test-context = "0.3.0"
-byteorder = "1.5.0"
