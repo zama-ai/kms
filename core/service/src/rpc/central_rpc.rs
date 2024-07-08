@@ -19,13 +19,15 @@ use crate::kms::{
     SignedPubDataHandle,
 };
 use crate::rpc::rpc_types::PubDataType;
+use crate::storage::delete_at_request_id;
 use crate::storage::{store_at_request_id, Storage};
 use crate::util::file_handling::read_as_json;
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
-
-use crate::storage::delete_at_request_id;
 use bincode::{deserialize, serialize};
+use conf_trace::telemetry::accept_trace;
+use conf_trace::telemetry::make_span;
+use conf_trace::telemetry::record_trace_id;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use std::collections::HashMap;
 use std::fmt;
@@ -33,6 +35,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
+use tower_http::trace::TraceLayer;
 
 pub async fn server_handle<
     PubS: Storage + Sync + Send + 'static,
@@ -50,7 +53,13 @@ pub async fn server_handle<
         .set_serving::<CoreServiceEndpointServer<SoftwareKms<PubS, PrivS>>>()
         .await;
 
+    let trace_request = tower::ServiceBuilder::new()
+        .layer(TraceLayer::new_for_grpc().make_span_with(make_span))
+        .map_request(accept_trace)
+        .map_request(record_trace_id);
+
     Server::builder()
+        .layer(trace_request)
         .add_service(
             CoreServiceEndpointServer::new(kms)
                 .max_decoding_message_size(config.grpc_max_message_size)
@@ -75,6 +84,7 @@ impl<
         )
     }
 
+    #[tracing::instrument(skip(self, _request))]
     async fn key_gen_preproc(
         &self,
         _request: Request<KeyGenPreprocRequest>,
@@ -85,6 +95,7 @@ impl<
         )
     }
 
+    #[tracing::instrument(skip(self, _request))]
     async fn get_preproc_status(
         &self,
         _request: Request<KeyGenPreprocRequest>,
@@ -96,6 +107,7 @@ impl<
     }
 
     /// starts the centralized KMS key generation
+    #[tracing::instrument(skip(self, request))]
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(
@@ -234,6 +246,7 @@ impl<
     }
 
     /// tries to retrieve the result of a previously started key generation
+    #[tracing::instrument(skip(self, request))]
     async fn get_key_gen_result(
         &self,
         request: Request<RequestId>,
@@ -339,6 +352,7 @@ impl<
         Ok(Response::new(Empty {}))
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn get_reencrypt_result(
         &self,
         request: Request<RequestId>,
@@ -370,6 +384,7 @@ impl<
         }))
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn decrypt(
         &self,
         request: Request<DecryptionRequest>,
@@ -431,6 +446,7 @@ impl<
         Ok(Response::new(Empty {}))
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn get_decrypt_result(
         &self,
         request: Request<RequestId>,
@@ -473,6 +489,7 @@ impl<
     }
 
     /// starts the centralized CRS generation
+    #[tracing::instrument(skip(self, request))]
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(inner.request_id, "Request ID is not set".to_string())?;
@@ -570,6 +587,7 @@ impl<
     }
 
     /// tries to retrieve a previously generated CRS
+    #[tracing::instrument(skip(self, request))]
     async fn get_crs_gen_result(
         &self,
         request: Request<RequestId>,

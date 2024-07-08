@@ -1,5 +1,6 @@
 use bincode::deserialize;
 use clap::Parser;
+use conf_trace::conf::Settings;
 use cosmwasm_std::Event;
 use events::kms::{DecryptValues, FheType, KmsEvent, KmsMessage, KmsOperation, OperationValue};
 use events::HexVector;
@@ -10,7 +11,7 @@ use kms_blockchain_client::query_client::{
 use kms_lib::kms::DecryptionResponsePayload;
 use kms_lib::rpc::rpc_types::Plaintext;
 use kms_lib::util::key_setup::test_tools::{compute_cipher_from_storage, TypedPlaintext};
-use simulator::conf::{Settings, SimConfig};
+use simulator::conf::SimConfig;
 use std::error::Error;
 use std::path::Path;
 use strum::IntoEnumIterator;
@@ -154,18 +155,16 @@ async fn query_contract(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + 'static>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_line_number(true)
-        .with_file(true)
-        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-        .init();
-
     let config = Config::parse();
-    let settings = Settings {
-        path: config.file_conf.as_deref(),
-    };
-    let sim_conf = settings.init_conf()?;
+    let sim_conf: SimConfig = Settings::builder()
+        .path(
+            &config
+                .file_conf
+                .unwrap_or_else(|| "config/default.toml".to_string()),
+        )
+        .env_prefix("SIMULATOR")
+        .build()
+        .init_conf()?;
     let grpc_addresses = sim_conf
         .addresses
         .iter()

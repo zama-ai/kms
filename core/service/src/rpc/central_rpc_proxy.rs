@@ -8,10 +8,12 @@ use crate::kms::{
 };
 use backoff::future::retry;
 use backoff::ExponentialBackoff;
+use conf_trace::telemetry::{accept_trace, make_span, record_trace_id};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tonic::transport::{Channel, Server};
 use tonic::{Request, Response, Status};
+use tower_http::trace::TraceLayer;
 
 pub struct KmsProxy {
     kms_client: Arc<Mutex<CoreServiceEndpointClient<Channel>>>,
@@ -35,7 +37,13 @@ pub async fn server_handle(
     let kms_proxy = KmsProxy {
         kms_client: Arc::new(Mutex::new(kms_client)),
     };
+    let trace_request = tower::ServiceBuilder::new()
+        .layer(TraceLayer::new_for_grpc().make_span_with(make_span))
+        .map_request(accept_trace)
+        .map_request(record_trace_id);
+
     Server::builder()
+        .layer(trace_request)
         .add_service(CoreServiceEndpointServer::new(kms_proxy))
         .serve(server_socket)
         .await?;
@@ -47,12 +55,14 @@ pub async fn server_handle(
 /// communicate with the outside world.
 #[tonic::async_trait]
 impl CoreServiceEndpoint for KmsProxy {
+    #[tracing::instrument(skip(self, request))]
     async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         let mut kms_client = self.kms_client.lock().await;
         let response = kms_client.init(request).await?;
         Ok(response)
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
@@ -62,6 +72,7 @@ impl CoreServiceEndpoint for KmsProxy {
         Ok(response)
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn get_preproc_status(
         &self,
         request: Request<KeyGenPreprocRequest>,
@@ -71,6 +82,7 @@ impl CoreServiceEndpoint for KmsProxy {
         Ok(response)
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn reencrypt(
         &self,
         request: Request<ReencryptionRequest>,
@@ -80,6 +92,7 @@ impl CoreServiceEndpoint for KmsProxy {
         Ok(response)
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn get_reencrypt_result(
         &self,
         request: Request<RequestId>,
@@ -89,6 +102,7 @@ impl CoreServiceEndpoint for KmsProxy {
         Ok(response)
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn decrypt(
         &self,
         request: Request<DecryptionRequest>,
@@ -98,6 +112,7 @@ impl CoreServiceEndpoint for KmsProxy {
         Ok(response)
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn get_decrypt_result(
         &self,
         request: Request<RequestId>,
@@ -107,12 +122,14 @@ impl CoreServiceEndpoint for KmsProxy {
         Ok(response)
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         let mut kms_client = self.kms_client.lock().await;
         let response = kms_client.key_gen(request).await?;
         Ok(response)
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn get_key_gen_result(
         &self,
         request: Request<RequestId>,
@@ -122,12 +139,14 @@ impl CoreServiceEndpoint for KmsProxy {
         Ok(response)
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         let mut kms_client = self.kms_client.lock().await;
         let response = kms_client.crs_gen(request).await?;
         Ok(response)
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn get_crs_gen_result(
         &self,
         request: Request<RequestId>,

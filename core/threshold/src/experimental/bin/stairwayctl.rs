@@ -3,9 +3,13 @@ use std::time::Duration;
 
 use aes_prng::AesRng;
 use clap::{Args, Parser, Subcommand};
+use conf_trace::{
+    conf::{Settings, Tracing},
+    telemetry::init_tracing,
+};
 use distributed_decryption::{
     choreography::choreographer::ChoreoRuntime,
-    conf::{choreo::ChoreoConf, telemetry::init_tracing, Settings},
+    conf::choreo::ChoreoConf,
     execution::runtime::party::RoleAssignment,
     experimental::{
         algebra::{
@@ -295,6 +299,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let conf: ChoreoConf = Settings::builder()
         .path(&args.conf_file)
+        .env_prefix("DDEC")
         .build()
         .init_conf()?;
 
@@ -321,7 +326,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => None,
     };
 
-    init_tracing(conf.tracing.clone())?;
+    let tracing = conf
+        .tracing
+        .clone()
+        .unwrap_or(Tracing::builder().service_name("stairwayctl").build());
+
+    init_tracing(tracing)?;
 
     let topology = &conf.threshold_topology;
 

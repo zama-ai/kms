@@ -1,3 +1,5 @@
+use conf_trace::conf::Tracing;
+use conf_trace::telemetry::init_tracing;
 use events::kms::{
     DecryptResponseValues, DecryptValues, FheType, KmsCoreConf, KmsEvent, KmsMessage, Transaction,
 };
@@ -10,9 +12,8 @@ use kms_blockchain_connector::application::kms_core_sync::{
     KmsCoreEventHandler, KmsCoreSyncHandler,
 };
 use kms_blockchain_connector::application::SyncHandler;
-use kms_blockchain_connector::conf::telemetry::init_tracing;
 use kms_blockchain_connector::conf::{
-    BlockchainConfig, ConnectorConfig, ContractFee, SignKeyConfig, Tracing,
+    BlockchainConfig, ConnectorConfig, ContractFee, SignKeyConfig,
 };
 use kms_blockchain_connector::domain::blockchain::{
     BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse,
@@ -83,7 +84,8 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
     option_env!("RUST_LOG")
         .map(|_| ())
         .unwrap_or_else(|| set_var("RUST_LOG", "error"));
-    init_tracing(Some(Tracing::default())).unwrap();
+    init_tracing(Tracing::builder().service_name("connector_test").build()).unwrap();
+
     let mnemonic = Some("whisper stereo great helmet during hollow nominee skate frown daughter donor pool ozone few find risk cigar practice essay sketch rhythm novel dumb host".to_string());
     let addresses = vec!["http://localhost:9090"];
 

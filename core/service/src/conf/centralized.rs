@@ -1,11 +1,11 @@
+use conf_trace::conf::Tracing;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
-
-use serde::{Deserialize, Serialize};
 use url::Url;
 
-use super::Tracing;
+use super::ConfigTracing;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct CentralizedConfig {
@@ -14,6 +14,12 @@ pub struct CentralizedConfig {
     #[serde(flatten)]
     pub rest: CentralizedConfigNoStorage,
     pub tracing: Option<Tracing>,
+}
+
+impl ConfigTracing for CentralizedConfig {
+    fn tracing(&self) -> Option<Tracing> {
+        self.tracing.clone()
+    }
 }
 
 impl CentralizedConfig {

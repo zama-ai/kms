@@ -1130,12 +1130,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async_cell"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "834eee9ce518130a3b4d5af09ecc43e9d6b57ee76613f227a1ddd6b77c7a62bc"
-
-[[package]]
 name = "async_io_stream"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2198,15 +2192,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "clap-stdin"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc126d12a0930c94c3548581294d5f19360ac02e408600b4d7619d7234e8b505"
-dependencies = [
- "thiserror",
-]
-
-[[package]]
 name = "clap_builder"
 version = "4.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2347,6 +2332,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
+]
+
+[[package]]
+name = "conf-trace"
+version = "0.7.1"
+dependencies = [
+ "anyhow",
+ "config",
+ "lazy_static",
+ "opentelemetry",
+ "opentelemetry-http",
+ "opentelemetry-otlp",
+ "opentelemetry-prometheus",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry-stdout",
+ "opentelemetry_sdk",
+ "prometheus",
+ "serde",
+ "strum",
+ "strum_macros",
+ "tonic 0.11.0",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "typed-builder",
 ]
 
 [[package]]
@@ -3128,12 +3138,12 @@ dependencies = [
  "anyhow",
  "async-channel 2.3.1",
  "async-trait",
- "async_cell",
  "backoff",
  "bincode",
  "cfg-if",
  "clap 4.5.8",
  "concrete-csprng",
+ "conf-trace",
  "config",
  "const_format",
  "criterion",
@@ -3156,11 +3166,6 @@ dependencies = [
  "num-integer",
  "num-traits",
  "opentelemetry",
- "opentelemetry-http",
- "opentelemetry-otlp",
- "opentelemetry-semantic-conventions",
- "opentelemetry-stdout",
- "opentelemetry_sdk",
  "paste",
  "pprof",
  "proptest",
@@ -3180,17 +3185,13 @@ dependencies = [
  "tfhe",
  "tfhe-zk-pok",
  "tokio",
- "toml 0.8.14",
  "tonic 0.11.0",
  "tonic-build",
  "tonic-health",
  "tower",
  "tower-http",
  "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
  "tracing-test",
- "typed-builder",
  "x509-parser",
  "zeroize",
 ]
@@ -3813,7 +3814,6 @@ dependencies = [
  "koit-toml",
  "mockall",
  "opentelemetry",
- "opentelemetry_sdk",
  "quickcheck",
  "quickcheck_macros",
  "retrying",
@@ -3827,7 +3827,6 @@ dependencies = [
  "tonic 0.11.0",
  "tonic-build",
  "tracing",
- "tracing-subscriber",
  "typed-builder",
 ]
 
@@ -4199,16 +4198,13 @@ dependencies = [
  "alloy-sol-types",
  "anyhow",
  "async-trait",
- "backtrace",
  "bincode",
  "byteorder",
- "clap 4.5.8",
- "config",
+ "conf-trace",
  "cosmos-proto",
  "cosmwasm-std",
  "deep_space",
  "ethers",
- "ethers-solc",
  "events",
  "eyre",
  "futures",
@@ -4218,18 +4214,9 @@ dependencies = [
  "kms",
  "kms-blockchain-client",
  "kms-blockchain-connector",
- "lazy_static",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry-prometheus",
- "opentelemetry-semantic-conventions",
- "opentelemetry-stdout",
- "opentelemetry_sdk",
- "prometheus",
  "prost",
  "rand",
  "reqwest 0.12.5",
- "retrying",
  "secp256k1 0.29.0",
  "serde",
  "serde_json",
@@ -4240,16 +4227,11 @@ dependencies = [
  "strum",
  "strum_macros",
  "temp-env",
- "tempfile",
  "tendermint 0.37.0",
  "tendermint-rpc",
  "thiserror",
  "tokio",
- "tokio-stream",
- "tonic 0.11.0",
  "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
  "typed-builder",
 ]
 
@@ -5259,7 +5241,7 @@ dependencies = [
  "cfg-if",
  "clap 4.5.8",
  "cms",
- "config",
+ "conf-trace",
  "console_error_panic_hook",
  "crypto_box",
  "ctor",
@@ -5272,18 +5254,10 @@ dependencies = [
  "k256",
  "lazy_static",
  "nom",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry-prometheus",
- "opentelemetry-semantic-conventions",
- "opentelemetry-stdout",
- "opentelemetry_sdk",
- "prometheus",
  "prost",
  "rand",
  "rayon",
  "rcgen",
- "reqwest 0.12.5",
  "rsa",
  "rstest",
  "rustls 0.23.10",
@@ -5304,11 +5278,10 @@ dependencies = [
  "tonic 0.11.0",
  "tonic-build",
  "tonic-health",
+ "tower",
+ "tower-http",
  "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
  "tracing-test",
- "typed-builder",
  "url",
  "wasm-bindgen",
  "webpki",
@@ -5342,7 +5315,6 @@ dependencies = [
  "tokio",
  "tonic 0.11.0",
  "tracing",
- "tracing-subscriber",
  "typed-builder",
 ]
 
@@ -5357,26 +5329,18 @@ dependencies = [
  "bincode",
  "byteorder",
  "clap 4.5.8",
- "config",
+ "conf-trace",
  "dashmap",
  "enum_dispatch",
  "events",
  "hex",
  "kms",
  "kms-blockchain-client",
- "lazy_static",
  "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry-prometheus",
- "opentelemetry-semantic-conventions",
- "opentelemetry-stdout",
- "opentelemetry_sdk",
- "prometheus",
  "rand",
  "reqwest 0.12.5",
  "retrying",
  "serde",
- "serde_json",
  "serial_test",
  "sha2 0.10.8",
  "strum",
@@ -5387,8 +5351,6 @@ dependencies = [
  "tokio",
  "tonic 0.11.0",
  "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
  "tracing-test",
  "typed-builder",
 ]
@@ -8247,8 +8209,7 @@ version = "0.7.1"
 dependencies = [
  "bincode",
  "clap 4.5.8",
- "clap-stdin",
- "config",
+ "conf-trace",
  "cosmos-proto",
  "cosmwasm-std",
  "events",
@@ -8256,12 +8217,10 @@ dependencies = [
  "kms",
  "kms-blockchain-client",
  "serde",
- "serde_json",
  "strum",
  "strum_macros",
  "tokio",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

@@ -1,7 +1,6 @@
 use clap::Parser;
 use kms_blockchain_connector::application::Mode;
-use kms_blockchain_connector::conf::telemetry::init_tracing;
-use kms_blockchain_connector::conf::{ConnectorConfig, Settings};
+use kms_blockchain_connector::conf::{init_conf_with_trace, ConnectorConfig};
 
 #[derive(Parser, Debug)]
 #[clap(name = "kms-asc-connector")]
@@ -17,12 +16,7 @@ pub struct Cli {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let mode = cli.mode.unwrap_or(Mode::KmsCore);
-    let settings = Settings::builder().path(cli.conf_file.as_deref()).build();
-    let config: ConnectorConfig = settings
-        .init_conf()
-        .map_err(|e| anyhow::anyhow!("Error on inititalizing config {:?}", e))?;
-    init_tracing(config.tracing.clone())
-        .map_err(|e| anyhow::anyhow!("Error initializing tracing and metrics {:?}", e))?;
+    let config: ConnectorConfig = init_conf_with_trace(cli.conf_file.as_deref().unwrap())?;
 
     tracing::info!(
         "Starting kms-asc-connector in mode '{:?}' - config {:?}",

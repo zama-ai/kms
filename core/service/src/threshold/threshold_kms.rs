@@ -29,6 +29,7 @@ use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
 use anyhow::anyhow;
 use bincode::serialize;
+use conf_trace::telemetry::{accept_trace, make_span, record_trace_id};
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
 use distributed_decryption::choreography::NetworkingStrategy;
 use distributed_decryption::conf::party::CertificatePaths;
@@ -74,6 +75,7 @@ use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use tokio::time::Instant;
 use tonic::transport::{Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
+use tower_http::trace::TraceLayer;
 
 const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 
@@ -165,7 +167,13 @@ pub async fn threshold_server_start<
 
     let socket: std::net::SocketAddr = format!("{}:{}", listen_address, listen_port).parse()?;
     tracing::info!("Starting threshold KMS server on socket {socket}");
+    let trace_request = tower::ServiceBuilder::new()
+        .layer(TraceLayer::new_for_grpc().make_span_with(make_span))
+        .map_request(accept_trace)
+        .map_request(record_trace_id);
+
     Server::builder()
+        .layer(trace_request)
         .timeout(tokio::time::Duration::from_secs(timeout_secs))
         .add_service(
             CoreServiceEndpointServer::new(kms_server)

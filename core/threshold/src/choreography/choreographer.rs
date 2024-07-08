@@ -3,7 +3,6 @@ use crate::choreography::grpc::gen::{
     ThresholdKeyGenResultRequest,
 };
 use crate::choreography::requests::CrsGenParams;
-use crate::conf::telemetry::ContextPropagator;
 use crate::execution::endpoints::keygen::FhePubKeySet;
 use crate::execution::runtime::session::DecryptionMode;
 use crate::execution::tfhe_internals::parameters::{Ciphertext64, DkgParamsAvailable};
@@ -18,6 +17,7 @@ use crate::{
     networking::constants::{MAX_EN_DECODE_MESSAGE_SIZE, NETWORK_TIMEOUT_LONG},
     session_id::SessionId,
 };
+use conf_trace::telemetry::ContextPropagator;
 use std::thread;
 use std::{collections::HashMap, time::Duration};
 use tokio::task::JoinSet;

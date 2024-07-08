@@ -8,6 +8,7 @@ use crate::domain::storage::Storage;
 use crate::infrastructure::metrics::{MetricType, Metrics};
 use anyhow::anyhow;
 use async_trait::async_trait;
+use conf_trace::grpc::make_request;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
     DecryptResponseValues, DecryptValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
@@ -264,9 +265,10 @@ where
             ));
         }
 
-        let req_id = RequestId {
-            request_id: self.operation_val.tx_id.to_hex(),
-        };
+        let request_id = self.operation_val.tx_id.to_hex();
+
+        let req_id: RequestId = request_id.clone().try_into()?;
+
         let version = self.decrypt.version();
         let servers_needed = config_contract
             .ok_or_else(|| anyhow!("config contract missing"))?
@@ -295,16 +297,14 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
+        let request = make_request(req.clone(), Some(request_id.clone()))?;
         // the response should be empty
-        let _resp = client
-            .decrypt(tonic::Request::new(req.clone()))
-            .await
-            .map_err(|e| {
-                let err_msg = e.to_string();
-                tracing::error!(err_msg);
-                metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-                e
-            })?;
+        let _resp = client.decrypt(request).await.map_err(|e| {
+            let err_msg = e.to_string();
+            tracing::error!(err_msg);
+            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+            e
+        })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "Decrypt")]);
 
         let g =
@@ -338,7 +338,7 @@ where
             .decryption
             .clone();
         poller!(
-            client.get_decrypt_result(tonic::Request::new(req_id.clone())),
+            client.get_decrypt_result(make_request(req_id.clone(), Some(request_id.clone()))?),
             g,
             timeout_triple,
             "(Decrypt)",
@@ -395,9 +395,9 @@ where
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoreServiceEndpointClient::new(chan.clone());
 
-        let req_id = RequestId {
-            request_id: self.operation_val.tx_id.to_hex(),
-        };
+        let request_id = self.operation_val.tx_id.to_hex();
+
+        let req_id: RequestId = request_id.clone().try_into()?;
 
         if CURRENT_FORMAT_VERSION != self.reencrypt.version() {
             return Err(anyhow!(
@@ -445,16 +445,15 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
+        let request = make_request(req.clone(), Some(request_id.clone()))?;
+
         // the response should be empty
-        let _resp = client
-            .reencrypt(tonic::Request::new(req.clone()))
-            .await
-            .map_err(|e| {
-                let err_msg = e.to_string();
-                tracing::error!(err_msg);
-                metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-                e
-            })?;
+        let _resp = client.reencrypt(request).await.map_err(|e| {
+            let err_msg = e.to_string();
+            tracing::error!(err_msg);
+            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+            e
+        })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "Reencrypt")]);
 
         let g =
@@ -496,7 +495,7 @@ where
 
         // loop to get response
         poller!(
-            client.get_reencrypt_result(tonic::Request::new(req_id.clone())),
+            client.get_reencrypt_result(make_request(req_id.clone(), Some(request_id.clone()))?),
             g,
             timeout_triple,
             "(Reencrypt)",
@@ -528,7 +527,9 @@ where
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoreServiceEndpointClient::new(chan.clone());
 
-        let req_id: RequestId = self.operation_val.tx_id.to_hex().try_into()?;
+        let request_id = self.operation_val.tx_id.to_hex();
+
+        let req_id: RequestId = request_id.clone().try_into()?;
         let req = KeyGenPreprocRequest {
             config: Some(Config {}),
             params: param_choice.into(),
@@ -537,16 +538,15 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
+        let request = make_request(req.clone(), Some(request_id.clone()))?;
+
         // the response should be empty
-        let _resp = client
-            .key_gen_preproc(tonic::Request::new(req.clone()))
-            .await
-            .map_err(|e| {
-                let err_msg = e.to_string();
-                tracing::error!(err_msg);
-                metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-                e
-            })?;
+        let _resp = client.key_gen_preproc(request).await.map_err(|e| {
+            let err_msg = e.to_string();
+            tracing::error!(err_msg);
+            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+            e
+        })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "KeyGenPreproc")]);
 
         let g =
@@ -584,7 +584,7 @@ where
         // loop to get response
         let timeout_triple = self.operation_val.kms_client.timeout_config.preproc.clone();
         poller!(
-            client.get_preproc_status(tonic::Request::new(req.clone())),
+            client.get_preproc_status(make_request(req.clone(), Some(request_id.clone()))?),
             g,
             timeout_triple,
             "(KeyGenPreproc)",
@@ -616,7 +616,9 @@ where
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoreServiceEndpointClient::new(chan.clone());
 
-        let req_id: RequestId = self.operation_val.tx_id.to_hex().try_into()?;
+        let request_id = self.operation_val.tx_id.to_hex();
+
+        let req_id: RequestId = request_id.clone().try_into()?;
         let preproc_id = self.keygen.preproc_id().to_hex().try_into()?;
         let req = KeyGenRequest {
             config: Some(Config {}),
@@ -627,16 +629,15 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
+        let request = make_request(req.clone(), Some(request_id.clone()))?;
+
         // the response should be empty
-        let _resp = client
-            .key_gen(tonic::Request::new(req))
-            .await
-            .map_err(|e| {
-                let err_msg = e.to_string();
-                tracing::error!(err_msg);
-                metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-                e
-            })?;
+        let _resp = client.key_gen(request).await.map_err(|e| {
+            let err_msg = e.to_string();
+            tracing::error!(err_msg);
+            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+            e
+        })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "KeyGen")]);
 
         let g =
@@ -677,7 +678,7 @@ where
         // loop to get response
         let timeout_triple = self.operation_val.kms_client.timeout_config.keygen.clone();
         poller!(
-            client.get_key_gen_result(tonic::Request::new(req_id.clone())),
+            client.get_key_gen_result(make_request(req_id.clone(), Some(request_id.clone()))?),
             g,
             timeout_triple,
             "(KeyGen)",
@@ -709,7 +710,9 @@ where
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoreServiceEndpointClient::new(chan.clone());
 
-        let req_id: RequestId = self.operation_val.tx_id.to_hex().try_into()?;
+        let request_id = self.operation_val.tx_id.to_hex();
+
+        let req_id: RequestId = request_id.clone().try_into()?;
         let req = CrsGenRequest {
             config: Some(Config {}),
             params: param_choice.into(),
@@ -718,16 +721,15 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
+        let request = make_request(req.clone(), Some(request_id.clone()))?;
+
         // the response should be empty
-        let _resp = client
-            .crs_gen(tonic::Request::new(req))
-            .await
-            .map_err(|e| {
-                let err_msg = e.to_string();
-                tracing::error!(err_msg);
-                metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-                e
-            })?;
+        let _resp = client.crs_gen(request).await.map_err(|e| {
+            let err_msg = e.to_string();
+            tracing::error!(err_msg);
+            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+            e
+        })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "CRS")]);
 
         let g =
@@ -757,7 +759,7 @@ where
 
         let timeout_triple = self.operation_val.kms_client.timeout_config.crs.clone();
         poller!(
-            client.get_crs_gen_result(tonic::Request::new(req_id.clone())),
+            client.get_crs_gen_result(make_request(req_id.clone(), Some(request_id.clone()))?),
             g,
             timeout_triple,
             "(CRS)",

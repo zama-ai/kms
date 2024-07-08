@@ -1,8 +1,7 @@
 use clap::Parser;
+use kms_lib::conf::init_trace;
 use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_lib::kms::{Config, InitRequest};
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{filter, layer::SubscriberExt, Layer};
 
 /// This CLI initializes the threshold KMS core nodes.
 /// After the KMS servers are up and running (using the kms-server)
@@ -24,10 +23,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let stdout_log = tracing_subscriber::fmt::layer().pretty();
-    tracing_subscriber::registry()
-        .with(stdout_log.with_filter(filter::LevelFilter::INFO))
-        .init();
+    init_trace()?;
     let args = Args::parse();
 
     let mut handles = Vec::new();

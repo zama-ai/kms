@@ -1,8 +1,7 @@
 use events::kms::KmsEvent;
+use gateway::config::init_conf_with_trace_connector;
 use kms_blockchain_connector::application::oracle_sync::OracleSyncHandler;
 use kms_blockchain_connector::application::SyncHandler;
-use kms_blockchain_connector::conf::ConnectorConfig;
-use kms_blockchain_connector::conf::Settings;
 use kms_blockchain_connector::domain::oracle::Oracle;
 use tracing::info;
 
@@ -23,12 +22,7 @@ impl Oracle for GatewayClient {
 pub async fn listen() -> anyhow::Result<()> {
     let gateway = GatewayClient {};
 
-    let settings = Settings::builder()
-        .path(Some("config/default.toml"))
-        .build();
-    let config: ConnectorConfig = settings
-        .init_conf()
-        .map_err(|e| anyhow::anyhow!("Error on inititalizing config {:?}", e))?;
+    let config = init_conf_with_trace_connector("config/default.toml")?;
 
     OracleSyncHandler::new_with_config_and_listener(config, gateway)
         .await?
@@ -38,14 +32,6 @@ pub async fn listen() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing subscriber with env filter
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_line_number(true)
-        .with_file(true)
-        //.with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-        .init();
-
     listen().await?;
     Ok(())
 }

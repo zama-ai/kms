@@ -3,7 +3,7 @@ use ethers::providers::{Middleware, Provider, StreamExt, Ws};
 use ethers::types::BlockNumber;
 use eyre::Result;
 use gateway::common::provider::EventDecryptionFilter;
-use gateway::config::{GatewayConfig, Settings};
+use gateway::config::{init_conf_with_trace_gateway, GatewayConfig};
 use std::sync::Arc;
 use structopt::StructOpt;
 
@@ -20,11 +20,8 @@ async fn main() -> Result<()> {
     let opts = Opts::from_args();
     let provider = Provider::<Ws>::connect_with_reconnects(&opts.url, 10).await?;
     provider.get_chainid().await?;
-    let config: GatewayConfig = Settings::builder()
-        .path(Some("config/gateway"))
-        .build()
-        .init_conf()
-        .unwrap();
+    let config: GatewayConfig =
+        init_conf_with_trace_gateway("config/gateway").map_err(|e| eyre::eyre!(e))?;
 
     let chain_id = provider.get_chainid().await?;
     println!("chain_id: {}", chain_id);

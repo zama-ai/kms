@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use kms_lib::conf::init_trace;
 use kms_lib::consts::AMOUNT_PARTIES;
 use kms_lib::rpc::rpc_types::{PrivDataType, PubDataType};
 use kms_lib::storage::StorageReader;
@@ -15,8 +16,6 @@ use kms_lib::{
 };
 use std::path::Path;
 use strum::IntoEnumIterator;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{filter, layer::SubscriberExt, Layer};
 
 #[derive(Parser)]
 #[clap(name = "Zama KMS Key Material Generator")]
@@ -115,10 +114,7 @@ enum Mode {
 /// ```
 #[tokio::main]
 async fn main() {
-    let stdout_log = tracing_subscriber::fmt::layer().pretty();
-    tracing_subscriber::registry()
-        .with(stdout_log.with_filter(filter::LevelFilter::INFO))
-        .init();
+    init_trace().unwrap();
     let args = Args::parse();
     match args.mode {
         Mode::Centralized {

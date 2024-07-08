@@ -111,6 +111,7 @@ impl<
         self.initiator.init(request).await
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn key_gen_preproc(
         &self,
         request: Request<KeyGenPreprocRequest>,
@@ -118,6 +119,7 @@ impl<
         self.keygen_preprocessor.key_gen_preproc(request).await
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn get_preproc_status(
         &self,
         request: Request<KeyGenPreprocRequest>,
@@ -125,10 +127,12 @@ impl<
         self.keygen_preprocessor.get_result(request).await
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn key_gen(&self, request: Request<KeyGenRequest>) -> Result<Response<Empty>, Status> {
         self.key_generator.key_gen(request).await
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn get_key_gen_result(
         &self,
         request: Request<RequestId>,
@@ -136,6 +140,7 @@ impl<
         self.key_generator.get_result(request).await
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn reencrypt(
         &self,
         request: Request<ReencryptionRequest>,
@@ -143,6 +148,7 @@ impl<
         self.reencryptor.reencrypt(request).await
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn get_reencrypt_result(
         &self,
         request: Request<RequestId>,
@@ -150,6 +156,7 @@ impl<
         self.reencryptor.get_result(request).await
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn decrypt(
         &self,
         request: Request<DecryptionRequest>,
@@ -157,6 +164,7 @@ impl<
         self.decryptor.decrypt(request).await
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn get_decrypt_result(
         &self,
         request: Request<RequestId>,
@@ -164,10 +172,12 @@ impl<
         self.decryptor.get_result(request).await
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn crs_gen(&self, request: Request<CrsGenRequest>) -> Result<Response<Empty>, Status> {
         self.crs_generator.crs_gen(request).await
     }
 
+    #[tracing::instrument(skip(self, request))]
     async fn get_crs_gen_result(
         &self,
         request: Request<RequestId>,

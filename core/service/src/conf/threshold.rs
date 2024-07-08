@@ -1,13 +1,13 @@
-use std::collections::HashMap;
-use std::path::Path;
-
+use conf_trace::conf::Tracing;
 use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::online::preprocessing::redis::RedisConf;
 use distributed_decryption::execution::runtime::party::{Identity, Role};
 use distributed_decryption::networking::grpc::CoreToCoreNetworkConfig;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
 
-use super::Tracing;
+use super::ConfigTracing;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ThresholdConfig {
@@ -16,6 +16,12 @@ pub struct ThresholdConfig {
     #[serde(flatten)]
     pub rest: ThresholdConfigNoStorage,
     pub tracing: Option<Tracing>,
+}
+
+impl ConfigTracing for ThresholdConfig {
+    fn tracing(&self) -> Option<Tracing> {
+        self.tracing.clone()
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone)]

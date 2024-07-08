@@ -3,8 +3,8 @@ use crate::blockchain::handlers::handle_event_decryption;
 use crate::blockchain::handlers::handle_reencryption_event;
 use crate::blockchain::Blockchain;
 use crate::common::provider::EventDecryptionFilter;
+use crate::config::init_conf_with_trace_connector;
 use crate::config::GatewayConfig;
-use crate::config::Settings;
 use crate::events::manager::k256::ecdsa::SigningKey;
 use crate::util::height::AtomicBlockHeight;
 use actix_web::App;
@@ -185,12 +185,7 @@ impl Publisher<KmsEvent> for KmsEventPublisher {
     }
 
     async fn run(&self) -> anyhow::Result<()> {
-        let settings = Settings::builder()
-            .path(Some("config/default.toml"))
-            .build();
-        let config: ConnectorConfig = settings
-            .init_conf()
-            .map_err(|e| anyhow::anyhow!("Error on initializing config {:?}", e))?;
+        let config: ConnectorConfig = init_conf_with_trace_connector("config/default.toml")?;
 
         let _ = OracleSyncHandler::new_with_config_and_listener(config, self.clone())
             .await?

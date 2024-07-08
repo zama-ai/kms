@@ -1,47 +1,10 @@
-use std::env;
-use std::str::FromStr;
-
-use config::{Config, ConfigError, File};
+use conf_trace::conf::{Settings, Tracing};
+use conf_trace::telemetry::init_tracing;
 use ethers::types::H160;
+use kms_blockchain_connector::conf::ConnectorConfig;
 use serde::{Deserialize, Serialize};
-use strum_macros::{AsRefStr, Display, EnumString};
+use strum_macros::{Display, EnumString};
 use typed_builder::TypedBuilder;
-
-lazy_static::lazy_static! {
-    pub(crate) static ref ENVIRONMENT: ExecutionEnvironment = mode();
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder, Default)]
-pub struct Tracing {
-    service_name: String,
-    endpoint: String,
-}
-
-impl Tracing {
-    /// Returns the service name.
-    pub fn service_name(&self) -> &str {
-        &self.service_name
-    }
-
-    /// Returns the endpoint.
-    pub fn endpoint(&self) -> &str {
-        &self.endpoint
-    }
-}
-
-#[derive(Default, Display, Deserialize, Serialize, Clone, EnumString, AsRefStr, Eq, PartialEq)]
-#[strum(serialize_all = "snake_case")]
-pub(crate) enum ExecutionEnvironment {
-    #[default]
-    Local,
-    #[strum(serialize = "dev")]
-    Development,
-    Stage,
-    #[strum(serialize = "prod")]
-    Production,
-    #[cfg(test)]
-    Test,
-}
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, EnumString, Display)]
 pub enum KmsMode {
@@ -117,54 +80,33 @@ pub struct GatewayConfig {
     pub tracing: Option<Tracing>,
 }
 
-#[derive(TypedBuilder)]
-pub struct Settings<'a> {
-    path: Option<&'a str>,
+pub fn init_conf_gateway(config_file: &str) -> anyhow::Result<GatewayConfig> {
+    Settings::builder()
+        .path(config_file)
+        .env_prefix("GATEWAY")
+        .build()
+        .init_conf()
+        .map_err(|e| e.into())
 }
 
-fn mode() -> ExecutionEnvironment {
-    env::var("RUN_MODE")
-        .map(|enum_str| ExecutionEnvironment::from_str(enum_str.as_str()).unwrap_or_default())
-        .unwrap_or_else(|_| ExecutionEnvironment::Local)
+pub fn init_conf_with_trace_gateway(config_file: &str) -> anyhow::Result<GatewayConfig> {
+    let conf = init_conf_gateway(config_file)?;
+    let tracing = conf
+        .tracing
+        .clone()
+        .unwrap_or_else(|| Tracing::builder().service_name("gateway").build());
+    init_tracing(tracing)?;
+    Ok(conf)
 }
 
-impl<'a> Settings<'a> {
-    /// Creates a new instance of `Settings`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the configuration cannot be created or deserialized.
-    pub fn init_conf<'de, T: Deserialize<'de>>(&self) -> Result<T, ConfigError> {
-        let mut s = Config::builder()
-            .add_source(File::with_name("config/gateway").required(cfg!(not(test))))
-            .add_source(File::with_name("config/default").required(false))
-            .add_source(
-                File::with_name(&format!("config/gateway-{}", *ENVIRONMENT)).required(false),
-            )
-            .add_source(File::with_name("/etc/config/gateway.toml").required(false));
-
-        if let Some(path) = self.path {
-            s = s.add_source(File::with_name(path).required(false))
-        };
-
-        let s = s
-            .add_source(
-                config::Environment::default()
-                    .prefix("GATEWAY")
-                    .separator("__"),
-            )
-            .build()?;
-
-        let settings: T = s.try_deserialize()?;
-
-        Ok(settings)
-    }
+pub fn init_conf_with_trace_connector(config_file: &str) -> anyhow::Result<ConnectorConfig> {
+    kms_blockchain_connector::conf::init_conf_with_trace(config_file)
 }
-
-pub mod telemetry;
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
 
     #[test]
@@ -190,11 +132,7 @@ mod tests {
             ("GATEWAY__KMS__KEY_ID", None),
         ];
         temp_env::with_vars(env_conf, || {
-            let gateway_config: GatewayConfig = Settings::builder()
-                .path(Some("config/gateway"))
-                .build()
-                .init_conf()
-                .unwrap();
+            let gateway_config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
             assert!(!gateway_config.debug);
             assert_eq!(gateway_config.mode, KmsMode::Centralized);
             assert_eq!(
@@ -298,11 +236,7 @@ mod tests {
             ),
         ];
         temp_env::with_vars(env_conf, || {
-            let gateway_config: GatewayConfig = Settings::builder()
-                .path(Some("config/gateway"))
-                .build()
-                .init_conf()
-                .unwrap();
+            let gateway_config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
             assert!(gateway_config.debug);
             assert_eq!(gateway_config.mode, KmsMode::Threshold);
             assert_eq!(gateway_config.ethereum.listener_type, ListenerType::Fhevm1);

@@ -4,9 +4,6 @@ use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_lib::kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse};
 use std::collections::HashMap;
 use std::env;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{filter, Layer};
 
 /// Retries a function a given number of times with a given interval between retries.
 macro_rules! retry {
@@ -48,16 +45,13 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use kms_lib::{
+        conf::init_trace,
         consts::{DEFAULT_DEC_ID, DEFAULT_PARAM_PATH},
         storage::{FileStorage, StorageType},
         util::key_setup::test_tools::compute_cipher_from_storage,
     };
 
-    // TODO ensure the keys exist
-    let stdout_log = tracing_subscriber::fmt::layer().pretty();
-    tracing_subscriber::registry()
-        .with(stdout_log.with_filter(filter::LevelFilter::WARN))
-        .init();
+    init_trace()?;
 
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {

@@ -35,7 +35,6 @@ typed-builder = { version = "0.18.1" }
 
 [dev-dependencies]
 clap = { version = "4.5.8", features = ["derive"] }
-tracing-subscriber = { version = "~0.3.16", features = ["env-filter", "fmt"] }
 
 
 [[example]]

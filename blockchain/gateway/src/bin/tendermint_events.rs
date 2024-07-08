@@ -1,5 +1,5 @@
 use gateway::{
-    config::{GatewayConfig, Settings},
+    config::{init_conf_with_trace_gateway, GatewayConfig},
     events::tendermint::event_manager::EventManager,
 };
 use std::str::FromStr;
@@ -9,17 +9,14 @@ use tendermint_rpc::{
 };
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     let url = Url::from_str("ws://localhost:36657/websocket").unwrap();
-    let config: GatewayConfig = Settings::builder()
-        .path(Some("config/gateway"))
-        .build()
-        .init_conf()
-        .unwrap();
+    let config: GatewayConfig = init_conf_with_trace_gateway("config/gateway")?;
     let contract_addr = config.kms.contract_address.to_string();
 
     let event_manager = EventManager::new(url, &contract_addr);
-    event_manager.start(on_event).await.unwrap();
+    event_manager.start(on_event).await?;
+    Ok(())
 }
 
 fn on_event(event: Event) -> Result<(), Error> {

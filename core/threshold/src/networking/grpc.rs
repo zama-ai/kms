@@ -13,7 +13,6 @@ use super::constants::{
     NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
 };
 use crate::conf::party::CertificatePaths;
-use crate::conf::telemetry::ContextPropagator;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::networking::Networking;
@@ -21,6 +20,7 @@ use crate::session_id::SessionId;
 use async_trait::async_trait;
 use backoff::future::retry_notify;
 use backoff::ExponentialBackoff;
+use conf_trace::telemetry::ContextPropagator;
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};

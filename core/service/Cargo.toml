@@ -36,9 +36,8 @@ required-features = ["testing"]
 aes = "0.8.4"
 aes-gcm-siv = "0.11.1"
 aes-prng = "0.2.1"
-alloy-sol-types = { version = "0.7.6", features = ["eip712-serde"] }
 alloy-primitives = { version = "0.7.6", features = ["k256"] }
-
+alloy-sol-types = { version = "0.7.6", features = ["eip712-serde"] }
 anyhow = "1.0.86"
 aws-config = { version = "1.5.3", optional = true }
 aws-nitro-enclaves-nsm-api = { version = "0.4.0", optional = true }
@@ -46,11 +45,11 @@ aws-sdk-kms = { version = "1.18.0", optional = true }
 aws-sdk-s3 = { version = "1.18.0", optional = true }
 backoff = { version = "0.4.0", features = ["tokio"], optional = true }
 bincode = "1.3.3"
-clap = { version = "4.5.8", features = ["derive"] }
 cbc = { version = "0.1.2", features = ["alloc"] }
 cfg-if = "1.0.0"
-config = "0.14"
+clap = { version = "4.5.8", features = ["derive"] }
 cms = "0.2.3"
+conf-trace = { path = "../../conf-trace", optional = true}
 crypto_box = { version = "0.9.1", features = ["salsa20"] }
 der = "0.7.8"
 distributed-decryption = { path = "../threshold/", default-features = false , version = "0.7.1" }
@@ -59,62 +58,37 @@ itertools = "0.13"
 k256 = "0.13.3"
 lazy_static = "1.4.0"
 nom = "7.1.3"
-opentelemetry = { version = "0.23", features = ["metrics"], optional = true }
-opentelemetry-otlp = { version = "0.16.0", features = [
-    "tokio",
-], optional = true }
-opentelemetry-prometheus = { version = "0.16.0", optional = true }
-opentelemetry-semantic-conventions = { version = "0.15.0", optional = true }
-opentelemetry-stdout = { version = "0.4.0", features = [
-    "trace",
-], optional = true }
-opentelemetry_sdk = { version = "0.23", features = [
-    "rt-tokio",
-    "logs",
-    "metrics",
-], optional = true }
-prometheus = { version = "=0.13.4", optional = true }
 prost = "0.12.3"
 rand = { version = "0.8.5", features = ["std", "std_rng"] }
 rayon = "1.10"
 rcgen = { version = "0.13", optional = true }
-reqwest = { version = "0.12.4", features = ["json"], optional = true }
 rsa = { version = "0.9.6", features = ["sha2"] }
 serde = { version = "1.0.203", features = ["derive", "rc"] }
-serde_json = "1.0"
 serde_bytes = "0.11"
+serde_json = "1.0"
 serial_test = "3.0.0"
 sha3 = "0.10.8"
 signature = "2.2.0"
 strum = "0.26"
 strum_macros = "0.26"
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", features = [ "boolean", "shortint", "integer", "zk-pok-experimental" ] } # == tfhe-rs v0.6.3
+tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", optional = true } # == tfhe-rs v0.6.3
+tokio = { version = "1.38", features = ["macros","rt-multi-thread"], optional = true }
 tonic = { version = "0.11", optional = true }
 tonic-health = { version = "0.11", optional = true }
-tokio = { version = "1.37", features = [
-    "macros",
-    "rt-multi-thread",
-], optional = true }
-tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", features = [
-    "boolean",
-    "shortint",
-    "integer",
-    "zk-pok-experimental",
-] } # == tfhe-rs v0.6.3
+tower = { version = "0.4", features = ["retry", "timeout"], optional = true }
+tower-http = { version = "0.4", features = ["trace"], optional = true }
 tracing = { version = "0.1.40", features = ["log"] }
-tracing-opentelemetry = { version = "0.24", optional = true }
-tracing-subscriber = "0.3.18"
-typed-builder = "0.18.1"
 url = "2.5.0"
-tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", optional = true } # == tfhe-rs v0.6.3
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = { version = "0.2.86", features = ["serde-serialize"] }
-console_error_panic_hook = { version = "0.1.7" }
-serde-wasm-bindgen = { version = "0.6.0" }
-ethers = "2.0.14"
-alloy-signer-local = "0.1.3"
 alloy-signer = "0.1.3"
+alloy-signer-local = "0.1.3"
+console_error_panic_hook = { version = "0.1.7" }
+ethers = "2.0.14"
 futures = "0.3.30"
+serde-wasm-bindgen = { version = "0.6.0" }
+wasm-bindgen = { version = "0.2.86", features = ["serde-serialize"] }
 
 [target.'cfg(unix)'.dependencies]
 tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", features = [
@@ -146,20 +120,14 @@ non-wasm = [
     "dep:aws-sdk-kms",
     "dep:aws-sdk-s3",
     "dep:backoff",
+    "dep:conf-trace",
     "dep:tokio",
-    "dep:reqwest",
     "dep:rcgen",
     "dep:tonic",
     "dep:tonic-health",
     "dep:tfhe-zk-pok",
-    "dep:tracing-opentelemetry",
-    "dep:opentelemetry",
-    "dep:opentelemetry-otlp",
-    "dep:opentelemetry-prometheus",
-    "dep:opentelemetry-semantic-conventions",
-    "dep:opentelemetry-stdout",
-    "dep:opentelemetry_sdk",
-    "dep:prometheus",
+    "dep:tower",
+    "dep:tower-http",
 ]
 slow_tests = ["testing"]
 sequential_sns = ["distributed-decryption/sequential_sns"]

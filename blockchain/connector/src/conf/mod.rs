@@ -1,46 +1,7 @@
-use std::env;
-use std::str::FromStr;
-
-use config::{Config, ConfigError, File};
+use conf_trace::conf::{Settings, Tracing};
+use conf_trace::telemetry::init_tracing;
 use serde::{Deserialize, Serialize};
-use strum_macros::{AsRefStr, Display, EnumString};
 use typed_builder::TypedBuilder;
-
-lazy_static::lazy_static! {
-    pub static ref ENVIRONMENT: Mode = mode();
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder, Default)]
-pub struct Tracing {
-    service_name: String,
-    endpoint: String,
-}
-
-impl Tracing {
-    /// Returns the service name.
-    pub fn service_name(&self) -> &str {
-        &self.service_name
-    }
-
-    /// Returns the endpoint.
-    pub fn endpoint(&self) -> &str {
-        &self.endpoint
-    }
-}
-
-#[derive(Default, Display, Deserialize, Serialize, Clone, EnumString, AsRefStr, Eq, PartialEq)]
-#[strum(serialize_all = "snake_case")]
-pub enum Mode {
-    #[default]
-    Local,
-    #[strum(serialize = "dev")]
-    Development,
-    Stage,
-    #[strum(serialize = "prod")]
-    Production,
-    #[cfg(test)]
-    Test,
-}
 
 #[derive(TypedBuilder, Deserialize, Serialize, Clone, Default, Debug)]
 pub struct ContractFee {
@@ -187,52 +148,25 @@ impl CoreConfig {
     }
 }
 
-#[derive(TypedBuilder)]
-pub struct Settings<'a> {
-    path: Option<&'a str>,
+pub fn init_conf(config_file: &str) -> anyhow::Result<ConnectorConfig> {
+    Settings::builder()
+        .path(config_file)
+        .env_prefix("ASC_CONN")
+        .parse_keys(vec!["blockchain.addresses", "core.addresses"])
+        .build()
+        .init_conf()
+        .map_err(|e| e.into())
 }
 
-fn mode() -> Mode {
-    env::var("RUN_MODE")
-        .map(|enum_str| Mode::from_str(enum_str.as_str()).unwrap_or_default())
-        .unwrap_or_else(|_| Mode::Local)
+pub fn init_conf_with_trace(config_file: &str) -> anyhow::Result<ConnectorConfig> {
+    let conf = init_conf(config_file)?;
+    let tracing = conf
+        .tracing
+        .clone()
+        .unwrap_or_else(|| Tracing::builder().service_name("asc_connector").build());
+    init_tracing(tracing)?;
+    Ok(conf)
 }
-
-impl<'a> Settings<'a> {
-    /// Creates a new instance of `Settings`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the configuration cannot be created or deserialized.
-    pub fn init_conf<'de, T: Deserialize<'de>>(&self) -> Result<T, ConfigError> {
-        let env_conf = config::Environment::default()
-            .prefix("ASC_CONN")
-            .separator("__")
-            .list_separator(",")
-            .try_parsing(true)
-            .with_list_parse_key("blockchain.addresses")
-            .with_list_parse_key("core.addresses");
-        let mut s = Config::builder()
-            .add_source(File::with_name("config/default").required(cfg!(not(test))))
-            .add_source(File::with_name("config/asc-connector").required(false))
-            .add_source(
-                File::with_name(&format!("config/asc-connector-{}", *ENVIRONMENT)).required(false),
-            )
-            .add_source(File::with_name("/etc/config/asc-connector.toml").required(false));
-
-        if let Some(path) = self.path {
-            s = s.add_source(File::with_name(path).required(false))
-        };
-
-        let s = s.add_source(env_conf).build()?;
-
-        let settings: T = s.try_deserialize()?;
-
-        Ok(settings)
-    }
-}
-
-pub mod telemetry;
 
 #[cfg(test)]
 mod tests {
@@ -246,11 +180,7 @@ mod tests {
         ];
 
         temp_env::with_vars(envs, || {
-            let conf: ConnectorConfig = Settings::builder()
-                .path(Some("config/default"))
-                .build()
-                .init_conf()
-                .unwrap();
+            let conf: ConnectorConfig = init_conf("config/default").unwrap();
 
             assert_eq!(conf.tick_interval_secs, 1);
             assert_eq!(conf.storage_path, "./temp/events.toml");
@@ -290,11 +220,7 @@ mod tests {
             ),
         ];
         temp_env::with_vars(envs, || {
-            let conf: ConnectorConfig = Settings::builder()
-                .path(Some("config/default"))
-                .build()
-                .init_conf()
-                .unwrap();
+            let conf: ConnectorConfig = init_conf("config/default").unwrap();
 
             // coordinator configs
             assert_eq!(

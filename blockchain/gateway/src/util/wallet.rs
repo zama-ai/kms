@@ -1,5 +1,4 @@
-use crate::config::GatewayConfig;
-use crate::config::Settings;
+use crate::config::{init_conf_gateway, GatewayConfig};
 use crate::util::wallet::k256::ecdsa::SigningKey;
 use ethers::prelude::*;
 
@@ -9,11 +8,7 @@ pub struct WalletManager {
 
 impl Default for WalletManager {
     fn default() -> Self {
-        let config: GatewayConfig = Settings::builder()
-            .path(Some("config/gateway"))
-            .build()
-            .init_conf()
-            .unwrap();
+        let config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
 
         let wallet = config
             .ethereum

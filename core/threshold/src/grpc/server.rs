@@ -1,13 +1,13 @@
 #[cfg(not(feature = "experimental"))]
 use crate::choreography::grpc::GrpcChoreography;
 use crate::conf::party::PartyConf;
-use crate::conf::telemetry::{accept_trace, make_span};
 use crate::execution::online::preprocessing::{create_memory_factory, create_redis_factory};
 use crate::execution::runtime::party::{Identity, RoleAssignment};
 #[cfg(feature = "experimental")]
 use crate::experimental::choreography::grpc::ExperimentalGrpcChoreography;
 use crate::networking::constants::NETWORK_TIMEOUT_LONG;
 use crate::networking::grpc::{GrpcNetworkingManager, GrpcServer};
+use conf_trace::telemetry::{accept_trace, make_span, record_trace_id};
 use tonic::transport::{Server, ServerTlsConfig};
 use tower_http::trace::TraceLayer;
 
@@ -83,7 +83,8 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
     let choreo_grpc_layer = tower::ServiceBuilder::new()
         .timeout(*NETWORK_TIMEOUT_LONG)
         .layer(TraceLayer::new_for_grpc().make_span_with(make_span))
-        .map_request(accept_trace);
+        .map_request(accept_trace)
+        .map_request(record_trace_id);
 
     let choreo_router = make_server(settings.choreo_use_tls)?
         .layer(choreo_grpc_layer)

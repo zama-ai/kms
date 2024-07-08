@@ -12,29 +12,19 @@ async-trait = "~0.1"
 bincode = "1.3.3"
 clap = { version = "~4", features = ["derive", "env"] }
 kms = { path = "../../core/service", default-features = false, features = ["grpc-client"] , version = "0.7.1" }
-config = "0.14.0"
+conf-trace = { path = "../../conf-trace" }
 dashmap = "6"
 enum_dispatch = "0.3.12"
 events = { path = "../events", features = ["subscription"] , version = "0.7.1" }
 kms-blockchain-client = { path = "../client" , version = "0.7.1" }
-lazy_static = "1.5"
 opentelemetry = { version = "0.23", features = ["metrics"] }
-opentelemetry-otlp = { version = "0.16.0", features = ["tokio"] }
-opentelemetry-prometheus = "0.16.0"
-opentelemetry-semantic-conventions = { version = "0.15.0" }
-opentelemetry-stdout = { version = "0.4.0", features = ["trace"] }
-opentelemetry_sdk = { version = "0.23", features = ["rt-tokio", "logs", "metrics"] }
-prometheus = "=0.13.4"
 retrying = { version = "0.1.0", features = ["tokio"] }
 serde = { version = "1.0.197", features = ["derive"] }
-serde_json = "1.0"
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
 tokio = { version = "1.37", features = ["full"] }
 tonic = { version = "0.11", features = ["transport","tls","tls-roots"] }
 tracing = { version = "0.1.40", features = ["log"] }
-tracing-opentelemetry = "0.24"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
 typed-builder = "0.18.1"
 hex = "0.4.3"
 reqwest = "0.12.4"

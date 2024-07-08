@@ -1,6 +1,5 @@
 use actix_web::web;
-use gateway::config::telemetry::init_tracing;
-use gateway::config::{GatewayConfig, Settings};
+use gateway::config::{init_conf_with_trace_gateway, GatewayConfig};
 use gateway::service::kvstore::evictor;
 use gateway::service::kvstore::initialize_storage;
 use gateway::service::kvstore::Storage;
@@ -11,12 +10,13 @@ use tokio::sync::Mutex;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let config: GatewayConfig = Settings::builder()
-        .path(Some("config/gateway"))
-        .build()
-        .init_conf()
-        .unwrap();
-    init_tracing(config.tracing.to_owned()).unwrap();
+    let _config: GatewayConfig = init_conf_with_trace_gateway("config/gateway").map_err(|e| {
+        tracing::error!("Failed to initialize gateway config: {:?}", e);
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Failed to initialize gateway config",
+        )
+    })?;
 
     tokio::fs::create_dir_all(".store").await.unwrap();
 

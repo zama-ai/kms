@@ -11,6 +11,7 @@ members = [
     "blockchain/gateway",
     "blockchain/proofs",
     "blockchain/simulator",
+    "conf-trace",
     "core/service",
     "core/threshold",
 ]

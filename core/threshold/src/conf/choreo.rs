@@ -1,13 +1,11 @@
 //! Settings based on [`config-rs`] crate which follows 12-factor configuration model.
 //! Configuration file by default is under `config` folder.
 //!
-use serde::{Deserialize, Serialize};
-use tonic::transport::Uri;
-
 use crate::choreography::choreographer::NetworkTopology;
 use crate::execution::runtime::party::{Identity, Role, RoleAssignment};
-
-use super::Tracing;
+use conf_trace::conf::Tracing;
+use serde::{Deserialize, Serialize};
+use tonic::transport::Uri;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChoreoParty {

@@ -1,3 +1,4 @@
+use super::metrics::OpenTelemetryMetrics;
 use crate::conf::BlockchainConfig;
 use crate::domain::blockchain::{Blockchain, KmsOperationResponse};
 use crate::infrastructure::metrics::{MetricType, Metrics};
@@ -11,8 +12,6 @@ use retrying::retry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use typed_builder::TypedBuilder;
-
-use super::metrics::OpenTelemetryMetrics;
 
 #[derive(Clone, TypedBuilder)]
 pub struct KmsBlockchain {

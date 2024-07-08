@@ -1,88 +1,105 @@
+use crate::conf::{ExecutionEnvironment, Tracing, ENVIRONMENT};
 use opentelemetry::propagation::Injector;
-use opentelemetry::trace::TracerProvider as _;
+use opentelemetry::trace::{TraceContextExt, TracerProvider as _};
 use opentelemetry::{global, KeyValue};
 use opentelemetry_http::{HeaderExtractor, Request};
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::metrics::SdkMeterProvider;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::runtime::Tokio;
-use opentelemetry_sdk::trace::{BatchSpanProcessor, Config, Tracer, TracerProvider};
+use opentelemetry_sdk::trace::{Config, Tracer, TracerProvider};
 use opentelemetry_sdk::Resource;
 use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 use tonic::service::Interceptor;
 use tonic::transport::Body;
 use tonic::Status;
-use tracing::{info_span, warn, Span};
+use tracing::{field, info_span, warn, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::{layer, Layer};
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::{EnvFilter, Registry};
 
-use super::constants::{
-    TRACER_MAX_CONCURRENT_EXPORTS, TRACER_MAX_EXPORT_BATCH_SIZE, TRACER_MAX_QUEUE_SIZE,
-    TRACER_SCHEDULED_DELAY,
-};
-use super::{Mode, Tracing, ENVIRONMENT};
+/// This is the HEADER key that will be used to store the request ID in the tracing context.
+pub const TRACER_REQUEST_ID: &str = "x-zama-kms-request-id";
 
 impl From<Tracing> for Tracer {
     fn from(settings: Tracing) -> Self {
-        let batch_config = opentelemetry_sdk::trace::BatchConfigBuilder::default()
-            .with_max_queue_size(TRACER_MAX_QUEUE_SIZE)
-            .with_scheduled_delay(*TRACER_SCHEDULED_DELAY)
-            .with_max_export_batch_size(TRACER_MAX_EXPORT_BATCH_SIZE)
-            .with_max_concurrent_exports(TRACER_MAX_CONCURRENT_EXPORTS)
-            .build();
-
-        opentelemetry_otlp::new_pipeline()
-            .tracing()
-            .with_exporter(
-                opentelemetry_otlp::new_exporter()
-                    .tonic()
-                    .with_endpoint(settings.endpoint()),
-            )
-            .with_trace_config(
-                opentelemetry_sdk::trace::config().with_resource(Resource::new(vec![
-                    KeyValue::new(
+        if *ENVIRONMENT == ExecutionEnvironment::Local {
+            stdout_pipeline(settings.service_name())
+        } else if let Some(endpoint) = settings.endpoint() {
+            let mut pipeline = opentelemetry_otlp::new_pipeline()
+                .tracing()
+                .with_exporter(
+                    opentelemetry_otlp::new_exporter()
+                        .tonic()
+                        .with_endpoint(endpoint),
+                )
+                .with_trace_config(opentelemetry_sdk::trace::config().with_resource(
+                    Resource::new(vec![KeyValue::new(
                         opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
                         settings.service_name().to_string(),
-                    ),
-                ])),
-            )
-            .with_batch_config(batch_config)
-            .install_batch(Tokio)
-            .expect("Failed to install OpenTelemetry tracer.")
+                    )]),
+                ));
+            if let Some(batch) = settings.batch() {
+                let batch_config = opentelemetry_sdk::trace::BatchConfigBuilder::default()
+                    .with_max_queue_size(batch.max_queue_size())
+                    .with_scheduled_delay(batch.scheduled_delay())
+                    .with_max_export_batch_size(batch.max_export_batch_size())
+                    .with_max_concurrent_exports(batch.max_concurrent_exports())
+                    .build();
+                pipeline = pipeline.with_batch_config(batch_config);
+            }
+
+            pipeline
+                .install_batch(Tokio)
+                .expect("Failed to install OpenTelemetry tracer.")
+        } else {
+            stdout_pipeline(settings.service_name())
+        }
     }
 }
 
-fn stdout_pipeline() -> Tracer {
+fn init_metrics(settings: Tracing) -> SdkMeterProvider {
+    let registry = prometheus::Registry::new();
+    let exporter = opentelemetry_prometheus::exporter()
+        .with_registry(registry.clone())
+        .build()
+        .expect("Failed to create Prometheus exporter.");
+    SdkMeterProvider::builder()
+        .with_reader(exporter)
+        .with_resource(Resource::new(vec![KeyValue::new(
+            opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
+            settings.service_name().to_string(),
+        )]))
+        .build()
+}
+
+fn stdout_pipeline(service_name: &str) -> Tracer {
     let exporter = opentelemetry_stdout::SpanExporter::default();
-    let processor = BatchSpanProcessor::builder(exporter, Tokio).build();
     let config = Config::default().with_resource(Resource::new(vec![KeyValue::new(
         opentelemetry_semantic_conventions::resource::SERVICE_NAME.to_string(),
-        "distributed-decryption".to_string(),
+        service_name.to_string(),
     )]));
     TracerProvider::builder()
-        .with_span_processor(processor)
+        .with_simple_exporter(exporter)
         .with_config(config)
         .build()
-        .tracer("distributed-decryption")
+        .tracer(service_name.to_string())
 }
 
 fn fmt_layer<S>() -> Layer<S> {
     match *ENVIRONMENT {
-        Mode::Production | Mode::Development | Mode::Stage => {
-            layer().with_span_events(FmtSpan::CLOSE)
-        }
+        ExecutionEnvironment::Production
+        | ExecutionEnvironment::Development
+        | ExecutionEnvironment::Stage => layer().with_span_events(FmtSpan::CLOSE),
         _ => layer(),
     }
 }
 
-pub fn init_tracing(settings: Option<Tracing>) -> Result<(), anyhow::Error> {
+pub fn init_tracing(settings: Tracing) -> Result<(), anyhow::Error> {
     // Define Tracer
-    let tracer: Tracer = settings
-        .clone()
-        .map(Into::into)
-        .unwrap_or_else(stdout_pipeline);
+    let tracer: Tracer = settings.clone().into();
 
     // Layer to filter traces based on level - trace, debug, info, warn, error.
     let fmt_layer = fmt_layer();
@@ -97,13 +114,25 @@ pub fn init_tracing(settings: Option<Tracing>) -> Result<(), anyhow::Error> {
     global::set_text_map_propagator(TraceContextPropagator::new());
     global::set_error_handler(|error| eprintln!("OpenTelemetry error {:}", error)).unwrap();
     let last_layer = subscriber.with(env_filter).with(fmt_layer);
-    tracing::subscriber::set_global_default(last_layer).map_err(|e| anyhow::anyhow!("{e:?}"))
+    tracing::subscriber::set_global_default(last_layer).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    let metrics = init_metrics(settings);
+    global::set_meter_provider(metrics);
+    Ok(())
 }
 
 pub fn make_span(request: &Request<Body>) -> Span {
     let headers = request.headers();
     let endpoint = request.uri().path();
-    info_span!("grpc_request", ?endpoint, ?headers)
+    let request_id = headers
+        .get(TRACER_REQUEST_ID)
+        .map(|r| r.to_str().map(|x| x.to_string()));
+
+    match request_id {
+        Some(Ok(request_id)) => {
+            info_span!("grpc_request", ?endpoint, ?headers, trace_id = %request_id)
+        }
+        _ => info_span!("grpc_request", ?endpoint, ?headers, trace_id = field::Empty),
+    }
 }
 
 /// Trace context propagation: associate the current span with the OTel trace of the given request,
@@ -114,6 +143,15 @@ pub fn accept_trace(request: Request<Body>) -> Request<Body> {
         propagator.extract(&HeaderExtractor(request.headers()))
     });
     Span::current().set_parent(parent_context);
+
+    request
+}
+
+/// Recorcd the OTel trace ID of the given request as "trace_id" field in the current span.
+pub fn record_trace_id(request: Request<Body>) -> Request<Body> {
+    let span = Span::current(); // Tokio tracing span.
+    let trace_id = span.context().span().span_context().trace_id(); // OpenTelemetry trace ID.
+    span.record("trace_id", trace_id.to_string());
 
     request
 }

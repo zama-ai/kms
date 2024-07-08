@@ -1,5 +1,6 @@
 use anyhow::anyhow;
 use clap::Parser;
+use kms_lib::conf::init_trace;
 use kms_lib::util::file_handling::write_bytes;
 use rcgen::BasicConstraints::Constrained;
 use rcgen::{
@@ -216,8 +217,7 @@ async fn write_certs_and_keys(
 /// Execute TLS certificate generation.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // initialize tracing subscriber, so we get tracing logs to stdout
-    tracing_subscriber::fmt::init();
+    init_trace()?;
 
     let args = Cli::parse();
 

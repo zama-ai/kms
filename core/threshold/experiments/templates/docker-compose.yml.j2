@@ -12,17 +12,17 @@ services:
       - RUN_MODE=dev
       - RUST_LOG=distributed_decryption=debug,moby=info
       - NO_COLOR=true
-      - DDEC-PROTOCOL-HOST-ADDRESS=p{{ i+1 }}
-      - DDEC-PROTOCOL-HOST-PORT=50000
-      - DDEC-PROTOCOL-HOST-ID={{ i+1 }}
-      - DDEC-PROTOCOL-HOST-CHOREOPORT=60000
-      - DDEC-TRACING-SERVICE_NAME=moby-party-{{ i+1 }}
-      - DDEC-TRACING-ENDPOINT=http://otel-collector:4317
-      - DDEC-REDIS-HOST=redis://redis-p{{ i+1 }}:6379
-      - DDEC-CERTPATHS-CERT=/app/ddec/certs/cert_p{{ i+1 }}.pem
-      - DDEC-CERTPATHS-KEY=/app/ddec/certs/key_p{{ i+1 }}.pem
-      - DDEC-CERTPATHS-CALIST={% for j in range(n_parties) %}/app/ddec/certs/cert_p{{ j+1 }}.pem,{% endfor %}
-      - DDEC-CHOREO_USE_TLS=false
+      - DDEC__PROTOCOL__HOST__ADDRESS=p{{ i+1 }}
+      - DDEC__PROTOCOL__HOST__PORT=50000
+      - DDEC__PROTOCOL__HOST__ID={{ i+1 }}
+      - DDEC__PROTOCOL__HOST__CHOREOPORT=60000
+      - DDEC__TRACING__SERVICE_NAME=moby-party-{{ i+1 }}
+      - DDEC__TRACING__ENDPOINT=http://otel-collector:4317
+      - DDEC__REDIS__HOST=redis://redis-p{{ i+1 }}:6379
+      - DDEC__CERTPATHS__CERT=/app/ddec/certs/cert_p{{ i+1 }}.pem
+      - DDEC__CERTPATHS__KEY=/app/ddec/certs/key_p{{ i+1 }}.pem
+      - DDEC__CERTPATHS__CALIST={% for j in range(n_parties) %}/app/ddec/certs/cert_p{{ j+1 }}.pem,{% endfor %}
+      - DDEC__CHOREO_USE_TLS=false
     volumes:
       - ../parameters:/app/ddec/parameters
       - ../test_certs:/app/ddec/certs

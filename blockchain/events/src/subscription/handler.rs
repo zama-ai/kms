@@ -250,7 +250,6 @@ mod tests {
     use crate::subscription::blockchain::*;
     use crate::subscription::storage::MockStorageService;
     use cosmwasm_std::{Attribute, Event};
-    use std::error::Error;
     use std::sync::Arc;
     use test_context::{test_context, AsyncTestContext};
     use tokio::sync::oneshot;
@@ -266,15 +265,6 @@ mod tests {
             async fn on_message(&self, _message: TransactionEvent) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
         }
 
-    }
-
-    fn init_tracing() -> Result<(), Box<dyn Error + Sync + Send>> {
-        tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .with_line_number(true)
-            .with_file(true)
-            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
-            .try_init()
     }
 
     mock! {
@@ -294,7 +284,6 @@ mod tests {
     impl AsyncTestContext for SubscriptionContext {
         async fn setup() -> SubscriptionContext {
             async {
-                init_tracing().unwrap_or(());
                 let blockchain = MockBlockchainService::new();
                 let storage = MockStorageService::new();
                 SubscriptionContext {

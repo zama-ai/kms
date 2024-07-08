@@ -1,102 +1,41 @@
-use std::env;
-use std::str::FromStr;
-
-use config::{Config, ConfigError, File};
-use serde::{Deserialize, Serialize};
-use strum_macros::{AsRefStr, Display, EnumString};
-use typed_builder::TypedBuilder;
-
-lazy_static::lazy_static! {
-    pub(crate) static ref ENVIRONMENT: ExecutionEnvironment = mode();
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder, Default)]
-pub struct Tracing {
-    service_name: String,
-    endpoint: String,
-}
-
-impl Tracing {
-    /// Returns the service name.
-    pub fn service_name(&self) -> &str {
-        &self.service_name
-    }
-
-    /// Returns the endpoint.
-    pub fn endpoint(&self) -> &str {
-        &self.endpoint
-    }
-}
-
-#[derive(Default, Display, Deserialize, Serialize, Clone, EnumString, AsRefStr, Eq, PartialEq)]
-#[strum(serialize_all = "snake_case")]
-pub(crate) enum ExecutionEnvironment {
-    #[default]
-    Local,
-    #[strum(serialize = "dev")]
-    Development,
-    Stage,
-    #[strum(serialize = "prod")]
-    Production,
-    #[cfg(test)]
-    Test,
-}
-
-#[derive(TypedBuilder)]
-pub struct Settings<'a> {
-    path: Option<&'a str>,
-}
-
-impl<'a> Settings<'a> {
-    /// Creates a new instance of `Settings`.
-    pub fn new(path: Option<&'a str>) -> Self {
-        Self { path }
-    }
-}
-
-fn mode() -> ExecutionEnvironment {
-    env::var("RUN_MODE")
-        .map(|enum_str| ExecutionEnvironment::from_str(enum_str.as_str()).unwrap_or_default())
-        .unwrap_or_else(|_| ExecutionEnvironment::Local)
-}
-
-impl<'a> Settings<'a> {
-    /// Creates a new instance of `Settings`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the configuration cannot be created or deserialized.
-    pub fn init_conf<'de, T: Deserialize<'de>>(&self) -> Result<T, ConfigError> {
-        let mut s = Config::builder()
-            .add_source(File::with_name("config/default").required(false))
-            .add_source(File::with_name("config/kms-core").required(false))
-            .add_source(
-                File::with_name(&format!("config/kms-core-{}", *ENVIRONMENT)).required(false),
-            )
-            .add_source(File::with_name("/etc/config/kms-core.toml").required(false));
-
-        if let Some(path) = self.path {
-            s = s.add_source(File::with_name(path).required(false))
-        };
-
-        let s = s
-            .add_source(
-                config::Environment::default()
-                    .prefix("KMS_CORE")
-                    .separator("_")
-                    .list_separator(","),
-            )
-            .build()?;
-
-        let settings: T = s.try_deserialize()?;
-
-        Ok(settings)
-    }
-}
+use conf_trace::conf::{Settings, Tracing};
+use conf_trace::telemetry::init_tracing;
+use serde::Deserialize;
 
 pub mod centralized;
-pub mod telemetry;
 pub mod threshold;
+
+pub trait ConfigTracing {
+    fn tracing(&self) -> Option<Tracing>;
+}
+
+/// Initialize the configuration from the given file.
+pub fn init_conf<'a, T: Deserialize<'a>>(config_file: &str) -> anyhow::Result<T> {
+    Settings::builder()
+        .path(config_file)
+        .env_prefix("KMS_CORE")
+        .build()
+        .init_conf()
+        .map_err(|e| e.into())
+}
+
+/// Initialize the configuration from the given file and initialize tracing.
+pub fn init_conf_trace<'a, T: Deserialize<'a> + ConfigTracing>(
+    config_file: &str,
+) -> anyhow::Result<T> {
+    let full_config: T = init_conf(config_file)?;
+    let tracing = full_config
+        .tracing()
+        .unwrap_or_else(|| Tracing::builder().service_name("kms_core").build());
+    init_tracing(tracing)?;
+    Ok(full_config)
+}
+
+/// Initialize the tracing configuration with default values
+pub fn init_trace() -> anyhow::Result<()> {
+    let tracing = Tracing::builder().service_name("kms_core").build();
+    init_tracing(tracing)
+}
 
 #[cfg(test)]
 mod tests {
@@ -106,7 +45,7 @@ mod tests {
 
     #[test]
     fn test_threshold_config() {
-        let config: ThresholdConfig = Settings::new(Some("config/default_1")).init_conf().unwrap();
+        let config: ThresholdConfig = init_conf("config/default_1").unwrap();
         assert_eq!(config.rest.listen_address_client, "0.0.0.0");
         assert_eq!(config.rest.listen_port_client, 50100);
         assert_eq!(config.rest.listen_address_core, "127.0.0.1");
@@ -156,9 +95,7 @@ mod tests {
 
     #[test]
     fn test_centralized_config() {
-        let config: CentralizedConfig = Settings::new(Some("config/default_centralized"))
-            .init_conf()
-            .unwrap();
+        let config: CentralizedConfig = init_conf("config/default_centralized").unwrap();
         assert_eq!(config.rest.url, "http://0.0.0.0:50051");
         assert_eq!(config.rest.param_file_map.len(), 2);
         assert_eq!(

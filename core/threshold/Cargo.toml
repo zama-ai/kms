@@ -10,64 +10,51 @@ authors.workspace = true
 [dependencies]
 aes = "0.8.2"
 aes-prng = "0.2.1"
-aligned-vec = "~0.5"
-anyhow = "~1.0"
-async-channel = "~2.3"
-async-trait = "~0.1"
-async_cell = "~0.2"
-backoff = { version = "~0.4", features = ["tokio"], optional = true }
-bincode = "~1.3"
+aligned-vec = "0.5"
+anyhow = "1.0"
+async-channel = "2.3"
+async-trait = "0.1"
+backoff = { version = "0.4", features = ["tokio"], optional = true }
+bincode = "1.3"
 cfg-if = "1.0.0"
-clap = { version = "~4", features = ["derive", "env"] }
+clap = { version = "4", features = ["derive", "env"] }
 concrete-csprng = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456" } # == tfhe-rs v0.6.3
 config = "0.14.0"
+conf-trace = { path = "../../conf-trace", optional = true }
 const_format = "0.2.32"
-crypto-bigint = { version = "~0.6.0-pre.12", features = [
+crypto-bigint = { version = "0.6.0-pre.12", features = [
     "serde",
     "rand_core",
     "extra-sizes",
 ], optional = true }
-crypto_box = { version = "~0.9.1", features = ["salsa20"] }
+crypto_box = { version = "0.9.1", features = ["salsa20"] }
 dashmap = "6"
-derive_more = "~0.99"
+derive_more = "0.99"
 enum_dispatch = "0.3.12"
-futures = "~0.3"
+futures = "0.3"
 g2p = "1.0.1"
 itertools = "0.13"
 k256 = "0.13.1"
 lazy_static = "1.5"
 minijinja = { version = "2.0", features = ["loader"], optional = true }
-mockall = "~0.12.1"
-ndarray = { version = "~0.15", features = ["serde"] }
+mockall = "0.12.1"
+ndarray = { version = "0.15", features = ["serde"] }
 nom = "7.1.3"
 num-integer = "0.1.45"
 num-traits = "0.2"
 opentelemetry = { version = "0.23", optional = true }
-opentelemetry-otlp = { version = "0.16.0", features = [
-    "tokio",
-], optional = true }
-opentelemetry-semantic-conventions = { version = "0.15.0", optional = true }
-opentelemetry-stdout = { version = "0.4.0", features = [
-    "trace",
-], optional = true }
-opentelemetry_sdk = { version = "0.23", features = [
-    "rt-tokio",
-    "logs",
-], optional = true }
-opentelemetry-http = { version = "0.12", optional = true }
 paste = "1.0.12"
 prost = "0.12"
-rand = "~0.8"
+rand = "0.8"
 rayon = "1.10"
 redis = { version = "0.25.3", optional = true }
-serde = { version = "~1.0", features = ["derive", "rc"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-sha3 = "~0.10.8"
-signature = "~2.2"
+sha3 = "0.10.8"
+signature = "2.2"
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
 tokio = { version = "1.37", features = ["full", "sync"], optional = true }
-toml = "~0.8"
 tonic = { version = "0.11", features = ["tls"], optional = true }
 tonic-health = { version = "0.11", optional = true }
 tower = { version = "0.4", features = ["retry", "timeout"], optional = true }
@@ -79,11 +66,8 @@ tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89
     "zk-pok-experimental",
 ] } # == tfhe-rs v0.6.3
 tracing = { version = "0.1.40", features = ["log"] }
-tracing-opentelemetry = "0.24"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
-typed-builder = "0.18.1"
-x509-parser = "~0.16"
-zeroize = { version = "~1.8", features = ["zeroize_derive"] }
+x509-parser = "0.16"
+zeroize = { version = "1.8", features = ["zeroize_derive"] }
 tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456", optional = true } # == tfhe-rs v0.6.3
 
 # we need getrandom to have the js feature so that it can target wasm
@@ -99,8 +83,8 @@ tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89
 ] } # == tfhe-rs v0.6.3
 
 [dev-dependencies]
-criterion = "~0.5"
-ctor = "~0.2"
+criterion = "0.5"
+ctor = "0.2"
 proptest = "1.5"
 pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
 rstest = "0.21"
@@ -192,6 +176,7 @@ choreographer = []
 # namely libraries that doesn't work on 32-bit architectures
 # or uses tokio
 non-wasm = [
+    "dep:conf-trace",
     "dep:tokio",
     "dep:tonic",
     "dep:tonic-health",
@@ -199,11 +184,6 @@ non-wasm = [
     "dep:tower",
     "dep:tower-http",
     "dep:opentelemetry",
-    "dep:opentelemetry-otlp",
-    "dep:opentelemetry-semantic-conventions",
-    "dep:opentelemetry-stdout",
-    "dep:opentelemetry_sdk",
-    "dep:opentelemetry-http",
     "dep:redis",
     "dep:tfhe-zk-pok",
 ]

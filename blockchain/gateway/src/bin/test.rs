@@ -1,5 +1,5 @@
 use ethers::prelude::*;
-use gateway::config::{GatewayConfig, Settings};
+use gateway::config::{init_conf_with_trace_gateway, GatewayConfig};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
@@ -11,11 +11,7 @@ abigen!(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config: GatewayConfig = Settings::builder()
-        .path(Some("config/gateway"))
-        .build()
-        .init_conf()
-        .unwrap();
+    let config: GatewayConfig = init_conf_with_trace_gateway("config/gateway")?;
 
     // Generate a new wallet with a random private key
     let wallet = LocalWallet::new(&mut rand::thread_rng());
