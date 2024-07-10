@@ -17,7 +17,7 @@ RUN mkdir -p /app/kms/bin
 RUN --mount=type=ssh --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
     CARGO_HOME=/var/cache/buildkit/cargo \
     CARGO_TARGET_DIR=/var/cache/buildkit/target \
-    cargo install --path . --root . --bin kms-server
+    cargo install --path core/service --root . --bin kms-server
 
 # Second stage builds the runtime image.
 # This stage will be the final image
@@ -52,4 +52,3 @@ COPY --from=base /app/kms/bin/ /app/kms/bin/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
 
 CMD ["kms-server", "dev"]
-

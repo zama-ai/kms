@@ -1,18 +1,21 @@
 [config]
 unstable_features = ["CTRL_C_HANDLING"]
 
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+
 ###Generic commands to be used for local deployment with docker
 #Build the image for TFHE parties, with testing feature to allow centralized DKG
 #NOTE(Titouan): I believe testing feature doesn't have any real impact on performances, it's mostly to avoid having testing code silently spill
 #into production.
 [tasks.tfhe-docker-image]
 command = "docker"
-args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features testing", "-t", "tfhe-core", "."]
+args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features testing", "-t", "tfhe-core", "../../"]
 
 #Build the image for BGV parties (with centralized DKG available)
 [tasks.bgv-docker-image]
 command = "docker"
-args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features experimental", "-t", "bgv-core", "."]
+args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features experimental", "-t", "bgv-core", "../../"]
 
 #Generate the certificate for TLS communication of the parties
 [tasks.gen-test-certs]
@@ -143,7 +146,7 @@ run_task = { name = ["setup", "bgv-gen-experiment", "experiment-name", "start-pa
 #Build the docker image based on bench.dockerfile (which has the testing feature for centralized dkg)
 [tasks.docker-image-ci]
 command = "docker"
-args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "operations/docker/bench.dockerfile", "-t", "tfhe-core", "."]
+args = ["build", "--build-arg=CONCRETE_ACTIONS_TOKEN=${CONCRETE_ACTIONS_TOKEN}", "-f", "operations/docker/bench.dockerfile", "-t", "tfhe-core", "../../"]
 
 [tasks.ci-test]
 run_task = { name = ["docker-image-ci", "grpc-bench"] }
