@@ -16,7 +16,11 @@ use anyhow::Context;
 use async_trait::async_trait;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
-use sha3::{Digest, Sha3_256};
+use sha3::{
+    digest::ExtendableOutput,
+    digest::{Update, XofReader},
+    Shake256,
+};
 use std::collections::HashMap;
 use tracing::instrument;
 
@@ -393,16 +397,13 @@ impl AgreeRandom for DummyAgreeRandom {
             .iter()
             .map(|set| {
                 // hash party IDs contained in this set as dummy value for r_a
-                let mut bytes: Vec<u8> = Vec::new();
-                for &p in set {
-                    bytes.extend_from_slice(&p.to_le_bytes());
-                }
-
-                let mut hasher = Sha3_256::new();
+                let mut hasher = Shake256::default();
                 hasher.update(DSEP_AR);
-                hasher.update(&bytes);
-                let or = hasher.finalize();
-                r_a.copy_from_slice(&or.as_slice()[0..KEY_BYTE_LEN]);
+                for &p in set {
+                    hasher.update(&p.to_le_bytes());
+                }
+                let mut or = hasher.finalize_xof();
+                or.read(&mut r_a);
                 PrfKey(r_a)
             })
             .collect();

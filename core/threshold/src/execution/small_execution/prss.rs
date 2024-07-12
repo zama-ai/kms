@@ -29,7 +29,11 @@ use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
-use sha3::{Digest, Sha3_256};
+use sha3::{
+    digest::ExtendableOutput,
+    digest::{Update, XofReader},
+    Shake256,
+};
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
 use tracing::instrument;
@@ -667,13 +671,13 @@ async fn agree_random_robust<
     let s_vec = r_vec
         .iter()
         .map(|cur_r| {
-            let mut inner = [0u8; KEY_BYTE_LEN];
-            let mut hasher = Sha3_256::new();
+            let mut digest = [0u8; KEY_BYTE_LEN];
+            let mut hasher = Shake256::default();
             hasher.update(DSEP_AR);
             hasher.update(&cur_r.to_byte_vec());
-            let digest = hasher.finalize();
-            inner.copy_from_slice(&digest.as_slice()[0..KEY_BYTE_LEN]);
-            PrfKey(inner)
+            let mut or = hasher.finalize_xof();
+            or.read(&mut digest);
+            PrfKey(digest)
         })
         .collect_vec();
     Ok(s_vec)
@@ -1127,16 +1131,13 @@ mod tests {
             .map(|set| {
                 let mut r_a = [0u8; KEY_BYTE_LEN];
 
-                let mut bytes: Vec<u8> = Vec::new();
-                for &p in set {
-                    bytes.extend_from_slice(&p.to_le_bytes());
-                }
-
-                let mut hasher = Sha3_256::new();
+                let mut hasher = Shake256::default();
                 hasher.update(DSEP_AR);
-                hasher.update(&bytes);
-                let or = hasher.finalize();
-                r_a.copy_from_slice(&or.as_slice()[0..KEY_BYTE_LEN]);
+                for &p in set {
+                    hasher.update(&p.to_le_bytes());
+                }
+                let mut or = hasher.finalize_xof();
+                or.read(&mut r_a);
                 PrfKey(r_a)
             })
             .collect();
