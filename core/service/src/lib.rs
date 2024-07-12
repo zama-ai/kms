@@ -48,10 +48,9 @@ pub mod rpc {
 #[cfg(feature = "non-wasm")]
 pub mod conf;
 
-/// Take the max(20, s.len()) characters of s.
+/// Truncate s to a maximum of 20 chars.
 pub(crate) fn top_n_chars(mut s: String) -> String {
-    let n = std::cmp::max(s.len(), 20);
-    _ = s.split_off(n);
+    s.truncate(20);
     s
 }
 

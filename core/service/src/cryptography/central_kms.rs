@@ -155,15 +155,20 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
 #[derive(Clone)]
 pub struct BaseKmsStruct {
     pub(crate) sig_key: Arc<PrivateSigKey>,
+    pub(crate) serialized_verf_key: Arc<Vec<u8>>,
     pub(crate) rng: Arc<Mutex<AesRng>>,
 }
 
 impl BaseKmsStruct {
-    pub fn new(sig_key: PrivateSigKey) -> Self {
-        BaseKmsStruct {
+    pub fn new(sig_key: PrivateSigKey) -> anyhow::Result<Self> {
+        let serialized_verf_key = Arc::new(serialize(&PublicSigKey {
+            pk: SigningKey::verifying_key(&sig_key.sk).to_owned(),
+        })?);
+        Ok(BaseKmsStruct {
             sig_key: Arc::new(sig_key),
+            serialized_verf_key,
             rng: Arc::new(Mutex::new(AesRng::from_entropy())),
-        }
+        })
     }
 
     pub async fn new_rng(&self) -> anyhow::Result<AesRng> {
@@ -199,10 +204,8 @@ impl BaseKms for BaseKmsStruct {
         sign(msg, &self.sig_key)
     }
 
-    fn get_verf_key(&self) -> PublicSigKey {
-        PublicSigKey {
-            pk: SigningKey::verifying_key(&self.sig_key.sk).to_owned(),
-        }
+    fn get_serialized_verf_key(&self) -> Vec<u8> {
+        self.serialized_verf_key.as_ref().clone()
     }
 
     fn digest<T>(msg: &T) -> anyhow::Result<Vec<u8>>
@@ -468,9 +471,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         self.base_kms.sign(msg)
     }
 
-    // TODO should just return reference
-    fn get_verf_key(&self) -> PublicSigKey {
-        self.base_kms.get_verf_key()
+    fn get_serialized_verf_key(&self) -> Vec<u8> {
+        self.base_kms.get_serialized_verf_key()
     }
 
     fn digest<T: ?Sized + AsRef<[u8]>>(msg: &T) -> anyhow::Result<Vec<u8>> {
@@ -611,6 +613,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     ) -> anyhow::Result<Self> {
         let sks: HashMap<RequestId, PrivateSigKey> =
             read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
+
+        if sks.len() != 1 {
+            return Err(anyhow_error_and_log(
+                "Server signing key map should only contain one entry",
+            ));
+        }
+
         let sk = some_or_err(
             sks.values().collect_vec().first(),
             format!(
@@ -651,7 +660,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
         )));
         Ok(SoftwareKms {
-            base_kms: BaseKmsStruct::new(sk),
+            base_kms: BaseKmsStruct::new(sk)?,
             public_storage: Arc::new(Mutex::new(public_storage)),
             private_storage: Arc::new(Mutex::new(private_storage)),
             fhe_keys: Arc::new(RwLock::new(key_info)),

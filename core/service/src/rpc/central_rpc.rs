@@ -24,7 +24,7 @@ use crate::storage::{store_at_request_id, Storage};
 use crate::util::file_handling::read_as_json;
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
-use bincode::{deserialize, serialize};
+use bincode::deserialize;
 use conf_trace::telemetry::accept_trace;
 use conf_trace::telemetry::make_span;
 use conf_trace::telemetry::record_trace_id;
@@ -304,11 +304,11 @@ impl<
         // we do not need to hold the handle,
         // the result of the computation is tracked by the reenc_meta_store
         let _handle = tokio::spawn(async move {
-            let mut guarded_meta_store = meta_store.write().await;
             let fhe_keys_rlock = fhe_keys.read().await;
             let keys = match fhe_keys_rlock.get(&key_id) {
                 Some(keys) => keys,
                 None => {
+                    let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
                         &request_id,
                         HandlerStatus::Error(format!(
@@ -336,12 +336,14 @@ impl<
             .await
             {
                 Ok(raw_decryption) => {
+                    let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
                         &request_id,
                         HandlerStatus::Done((servers_needed, fhe_type, link, raw_decryption)),
                     );
                 }
                 Result::Err(e) => {
+                    let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
                         &request_id,
                         HandlerStatus::Error(format!("Failed reencryption: {e}")),
@@ -369,10 +371,7 @@ impl<
             )?
         };
 
-        let server_verf_key = tonic_handle_potential_err(
-            serialize(&self.get_verf_key()),
-            "Could not serialize server verification key".to_string(),
-        )?;
+        let server_verf_key = self.get_serialized_verf_key();
 
         Ok(Response::new(ReencryptionResponse {
             version: CURRENT_FORMAT_VERSION,
@@ -461,10 +460,7 @@ impl<
                 "Decryption",
             )?
         };
-        let server_verf_key = tonic_handle_potential_err(
-            serialize(&self.get_verf_key()),
-            "Could not serialize server verification key".to_string(),
-        )?;
+        let server_verf_key = self.get_serialized_verf_key();
         let sig_payload = DecryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
             servers_needed: 1,

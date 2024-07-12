@@ -443,7 +443,7 @@ where
         Arc::new(RwLock::new(Box::new(move |session_id, roles| {
             networking_manager.make_session(session_id, roles)
         })));
-    let base_kms = BaseKmsStruct::new(sk);
+    let base_kms = BaseKmsStruct::new(sk)?;
 
     let fhe_keys = Arc::new(RwLock::new(key_info));
     let prss_setup = Arc::new(RwLock::new(None));
@@ -899,10 +899,7 @@ impl Reencryptor for RealReencryptor {
                 "Reencryption",
             )?
         };
-        let server_verf_key = tonic_handle_potential_err(
-            serialize(&self.base_kms.get_verf_key()),
-            "Could not serialize server verification key".to_string(),
-        )?;
+        let server_verf_key = self.base_kms.get_serialized_verf_key();
         Ok(Response::new(ReencryptionResponse {
             version: CURRENT_FORMAT_VERSION,
             servers_needed,
@@ -1144,10 +1141,7 @@ impl Decryptor for RealDecryptor {
                 request_id
             ),
         )?;
-        let server_verf_key = tonic_handle_potential_err(
-            serialize(&self.base_kms.get_verf_key()),
-            "Could not serialize server verification key".to_string(),
-        )?;
+        let server_verf_key = self.base_kms.get_serialized_verf_key();
         let sig_payload = DecryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
             servers_needed,
