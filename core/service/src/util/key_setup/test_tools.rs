@@ -17,6 +17,7 @@ use distributed_decryption::execution::tfhe_internals::test_feature::{
     gen_key_set, keygen_all_party_shares,
 };
 use itertools::Itertools;
+use kms_core_common::Versionize;
 use rand::SeedableRng;
 use std::path::Path;
 use strum::IntoEnumIterator;
@@ -318,7 +319,7 @@ pub async fn ensure_threshold_keys_exist(
         store_at_request_id(
             &mut priv_storage,
             key_id,
-            &threshold_fhe_keys,
+            &threshold_fhe_keys.versionize(),
             &PrivDataType::FheKeyInfo.to_string(),
         )
         .await

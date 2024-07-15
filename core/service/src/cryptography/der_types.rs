@@ -1,9 +1,11 @@
 use super::signcryption::SIG_SIZE;
 use crypto_box::SecretKey;
 use k256::ecdsa::{SigningKey, VerifyingKey};
+use kms_core_common::{Unversionize, Versioned, Versionize};
 use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::borrow::Cow;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 // Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server
@@ -98,12 +100,37 @@ impl<'de> Visitor<'de> for PrivateEncKeyVisitor {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum PublicSigKeyVersioned<'a> {
+    V0(Cow<'a, PublicSigKey>),
+}
+impl Versioned for PublicSigKeyVersioned<'_> {}
+
 // Struct wrapping signature verification key used by both the user's wallet and server
 #[wasm_bindgen]
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct PublicSigKey {
     pub(crate) pk: k256::ecdsa::VerifyingKey,
 }
+
+impl Versionize for PublicSigKey {
+    type Versioned<'vers> = PublicSigKeyVersioned<'vers>
+    where
+        Self: 'vers;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        PublicSigKeyVersioned::V0(Cow::Borrowed(self))
+    }
+}
+
+impl Unversionize for PublicSigKey {
+    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
+        match versioned {
+            PublicSigKeyVersioned::V0(v0) => Ok(v0.into_owned()),
+        }
+    }
+}
+
 /// Serialize the public key as a SEC1 point, which is what is used in Ethereum
 impl Serialize for PublicSigKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -155,6 +182,13 @@ impl<'de> Visitor<'de> for PublicSigKeyVisitor {
         }
     }
 }
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum PrivateSigKeyVersioned<'a> {
+    V0(Cow<'a, PrivateSigKey>),
+}
+impl Versioned for PrivateSigKeyVersioned<'_> {}
+
 // Struct wrapping signature signing key used by both the client and server to authenticate their
 // messages to one another
 #[wasm_bindgen]
@@ -162,6 +196,24 @@ impl<'de> Visitor<'de> for PublicSigKeyVisitor {
 pub struct PrivateSigKey {
     pub(crate) sk: k256::ecdsa::SigningKey,
 }
+impl Versionize for PrivateSigKey {
+    type Versioned<'vers> = PrivateSigKeyVersioned<'vers>
+    where
+        Self: 'vers;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        PrivateSigKeyVersioned::V0(Cow::Borrowed(self))
+    }
+}
+
+impl Unversionize for PrivateSigKey {
+    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
+        match versioned {
+            PrivateSigKeyVersioned::V0(v0) => Ok(v0.into_owned()),
+        }
+    }
+}
+
 impl Serialize for PrivateSigKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

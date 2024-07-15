@@ -5,6 +5,7 @@ use crate::cryptography::der_types::PrivateSigKey;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::{hash_element, Reencrypt};
+use crate::kms::SignedPubDataHandle;
 use crate::kms::{
     DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType, ReencryptionResponse,
     RequestId,
@@ -15,11 +16,12 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{Eip712Domain, SolStruct};
 use anyhow::anyhow;
 use bincode::deserialize;
+use kms_core_common::{Unversionize, Versioned, Versionize};
 #[cfg(feature = "non-wasm")]
 use rand::{CryptoRng, RngCore};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::fmt;
+use std::{borrow::Cow, fmt};
 use strum_macros::EnumIter;
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -28,6 +30,65 @@ pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
 pub static CRS_GEN_REQUEST_NAME: &str = "crs_gen_request";
 pub static DEC_REQUEST_NAME: &str = "dec_request";
 pub static REENC_REQUEST_NAME: &str = "reenc_request";
+
+/// The format of what will be stored, and returned in gRPC, as a result of CRS generation in the KMS
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CrsMetaDataVersioned<'a> {
+    V0(Cow<'a, CrsMetaData>),
+}
+impl Versioned for CrsMetaDataVersioned<'_> {}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CrsMetaData {
+    // Digest (the 160-bit hex-encoded value, computed using compute_info/handle)
+    pub key_handle: String,
+    // The signature on the handle
+    pub signature: Vec<u8>,
+}
+
+impl Versionize for CrsMetaData {
+    type Versioned<'vers> = CrsMetaDataVersioned<'vers>
+    where
+        Self: 'vers;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        CrsMetaDataVersioned::V0(Cow::Borrowed(self))
+    }
+}
+
+impl Unversionize for CrsMetaData {
+    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
+        match versioned {
+            CrsMetaDataVersioned::V0(v0) => Ok(v0.into_owned()),
+        }
+    }
+}
+
+impl CrsMetaData {
+    pub fn new(key_handle: String, signature: Vec<u8>) -> CrsMetaData {
+        CrsMetaData {
+            key_handle,
+            signature,
+        }
+    }
+}
+
+impl From<SignedPubDataHandle> for CrsMetaData {
+    fn from(handle: SignedPubDataHandle) -> Self {
+        CrsMetaData {
+            key_handle: handle.key_handle,
+            signature: handle.signature,
+        }
+    }
+}
+impl From<CrsMetaData> for SignedPubDataHandle {
+    fn from(crs: CrsMetaData) -> Self {
+        SignedPubDataHandle {
+            key_handle: crs.key_handle,
+            signature: crs.signature,
+        }
+    }
+}
 
 /// Enum which represents the different kinds of public information that can be stored as part of
 /// key generation. In practice this means the CRS and different types of public keys.

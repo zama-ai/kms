@@ -1,7 +1,5 @@
 #[cfg(any(test, feature = "testing"))]
 pub mod test_tools;
-
-use crate::client::ClientDataType;
 use crate::cryptography::central_kms::{
     compute_handle, gen_centralized_crs, gen_sig_keys, generate_fhe_keys,
 };
@@ -13,9 +11,11 @@ use crate::storage::Storage;
 use crate::storage::{read_all_data, StorageReader};
 use crate::storage::{store_at_request_id, FileStorage, StorageType};
 use crate::util::file_handling::read_as_json;
+use crate::{client::ClientDataType, cryptography::der_types::PrivateSigKeyVersioned};
 use aes_prng::AesRng;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use itertools::Itertools;
+use kms_core_common::{Unversionize, Versionize};
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;
@@ -26,7 +26,7 @@ pub type FhePrivateKey = tfhe::ClientKey;
 pub async fn ensure_client_keys_exist(optional_path: Option<&Path>, deterministic: bool) {
     let mut client_storage =
         FileStorage::new_centralized(optional_path, StorageType::CLIENT).unwrap();
-    let temp: HashMap<RequestId, PrivateSigKey> =
+    let temp: HashMap<RequestId, PrivateSigKeyVersioned> =
         read_all_data(&client_storage, &ClientDataType::SigningKey.to_string())
             .await
             .unwrap();
@@ -45,7 +45,7 @@ pub async fn ensure_client_keys_exist(optional_path: Option<&Path>, deterministi
     store_at_request_id(
         &mut client_storage,
         &compute_handle(&client_sk).unwrap().try_into().unwrap(),
-        &client_sk,
+        &client_sk.versionize(),
         &ClientDataType::SigningKey.to_string(),
     )
     .await
@@ -53,7 +53,7 @@ pub async fn ensure_client_keys_exist(optional_path: Option<&Path>, deterministi
     store_at_request_id(
         &mut client_storage,
         &compute_handle(&client_pk).unwrap().try_into().unwrap(),
-        &client_pk,
+        &client_pk.versionize(),
         &ClientDataType::VerfKey.to_string(),
     )
     .await
@@ -69,7 +69,7 @@ pub async fn ensure_central_server_signing_keys_exist(
 ) -> bool {
     let mut priv_storage = FileStorage::new_centralized(priv_path, StorageType::PRIV).unwrap();
     let mut pub_storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
-    let temp: HashMap<RequestId, PrivateSigKey> =
+    let temp: HashMap<RequestId, PrivateSigKeyVersioned> =
         read_all_data(&priv_storage, &PrivDataType::SigningKey.to_string())
             .await
             .unwrap();
@@ -86,7 +86,7 @@ pub async fn ensure_central_server_signing_keys_exist(
     store_at_request_id(
         &mut pub_storage,
         &compute_handle(&sk).unwrap().try_into().unwrap(),
-        &pk,
+        &pk.versionize(),
         &PubDataType::VerfKey.to_string(),
     )
     .await
@@ -94,7 +94,7 @@ pub async fn ensure_central_server_signing_keys_exist(
     store_at_request_id(
         &mut priv_storage,
         &compute_handle(&sk).unwrap().try_into().unwrap(),
-        &sk,
+        &sk.versionize(),
         &PrivDataType::SigningKey.to_string(),
     )
     .await
@@ -108,17 +108,21 @@ pub async fn ensure_threshold_server_signing_keys_exist(
     deterministic: bool,
     amount: usize,
 ) -> Vec<HashMap<RequestId, PrivateSigKey>> {
-    let mut signing_keys = Vec::with_capacity(amount);
+    let mut signing_keys: Vec<HashMap<RequestId, PrivateSigKey>> = Vec::with_capacity(amount);
     for i in 1..=amount {
         let mut priv_storage = FileStorage::new_threshold(priv_path, StorageType::PRIV, i).unwrap();
         let mut pub_storage = FileStorage::new_threshold(pub_path, StorageType::PUB, i).unwrap();
-        let temp: HashMap<RequestId, PrivateSigKey> =
+        let temp: HashMap<RequestId, PrivateSigKeyVersioned> =
             read_all_data(&priv_storage, &PrivDataType::SigningKey.to_string())
                 .await
                 .unwrap();
         if !temp.is_empty() {
             // If signing keys already exit, then do nothing
-            signing_keys.push(temp);
+            let mut temp_map = HashMap::new();
+            for (id, versioned_handles) in temp {
+                temp_map.insert(id, PrivateSigKey::unversionize(versioned_handles).unwrap());
+            }
+            signing_keys.push(temp_map);
             continue;
         }
         let mut rng = if deterministic {
@@ -131,7 +135,7 @@ pub async fn ensure_threshold_server_signing_keys_exist(
         store_at_request_id(
             &mut pub_storage,
             &handle,
-            &pk,
+            &pk.versionize(),
             &PubDataType::VerfKey.to_string(),
         )
         .await
@@ -139,7 +143,7 @@ pub async fn ensure_threshold_server_signing_keys_exist(
         store_at_request_id(
             &mut priv_storage,
             &handle,
-            &sk,
+            &sk.versionize(),
             &PrivDataType::SigningKey.to_string(),
         )
         .await
@@ -194,20 +198,23 @@ where
         return false;
     }
     println!("Generating new CRS store",);
-    let sk_map: HashMap<RequestId, PrivateSigKey> =
+    let sk_map: HashMap<RequestId, PrivateSigKeyVersioned> =
         read_all_data(priv_storage, &PrivDataType::SigningKey.to_string())
             .await
             .unwrap();
     if sk_map.values().cloned().collect_vec().len() != 1 {
         panic!("Server signing key map should only contain one entry");
     }
-    let sk = sk_map
-        .values()
-        .cloned()
-        .collect_vec()
-        .first()
-        .unwrap()
-        .to_owned();
+    let sk = PrivateSigKey::unversionize(
+        sk_map
+            .values()
+            .cloned()
+            .collect_vec()
+            .first()
+            .unwrap()
+            .to_owned(),
+    )
+    .unwrap();
 
     let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
     let mut rng = if deterministic {
@@ -220,14 +227,19 @@ where
     store_at_request_id(
         priv_storage,
         crs_handle,
-        &crs_info,
+        &crs_info.versionize(),
         &PrivDataType::CrsInfo.to_string(),
     )
     .await
     .unwrap();
-    store_at_request_id(pub_storage, crs_handle, &pp, &PubDataType::CRS.to_string())
-        .await
-        .unwrap();
+    store_at_request_id(
+        pub_storage,
+        crs_handle,
+        &pp.versionize(),
+        &PubDataType::CRS.to_string(),
+    )
+    .await
+    .unwrap();
     true
 }
 
@@ -258,7 +270,7 @@ pub async fn ensure_central_keys_exist(
     }
     println!("Generating new centralized multiple keys. The default key has handle {key_id}");
     let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
-    let sk_map: HashMap<RequestId, PrivateSigKey> =
+    let sk_map: HashMap<RequestId, PrivateSigKeyVersioned> =
         read_all_data(&priv_storage, &PrivDataType::SigningKey.to_string())
             .await
             .unwrap();
@@ -268,13 +280,7 @@ pub async fn ensure_central_keys_exist(
             sk_map.values().len()
         );
     }
-    let sk = sk_map
-        .values()
-        .cloned()
-        .collect_vec()
-        .first()
-        .unwrap()
-        .to_owned();
+    let sk = PrivateSigKey::unversionize(sk_map.values().last().unwrap().to_owned()).unwrap();
 
     let (fhe_pub_keys_1, key_info_1) = generate_fhe_keys(&sk, params).unwrap();
     let (fhe_pub_keys_2, key_info_2) = generate_fhe_keys(&sk, params).unwrap();
@@ -290,7 +296,7 @@ pub async fn ensure_central_keys_exist(
         store_at_request_id(
             &mut priv_storage,
             req_id,
-            key_info,
+            &key_info.versionize(),
             &PrivDataType::FheKeyInfo.to_string(),
         )
         .await

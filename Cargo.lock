@@ -3157,6 +3157,7 @@ dependencies = [
  "getrandom",
  "itertools 0.13.0",
  "k256",
+ "kms-core-common",
  "lazy_static",
  "minijinja",
  "mockall",
@@ -5251,6 +5252,7 @@ dependencies = [
  "hex",
  "itertools 0.13.0",
  "k256",
+ "kms-core-common",
  "lazy_static",
  "nom",
  "prost",
@@ -5352,6 +5354,15 @@ dependencies = [
  "tracing",
  "tracing-test",
  "typed-builder",
+]
+
+[[package]]
+name = "kms-core-common"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "tfhe",
 ]
 
 [[package]]

@@ -20,6 +20,7 @@ backoff = { version = "0.4", features = ["tokio"], optional = true }
 bincode.workspace = true
 cfg-if = "1.0.0"
 clap = { workspace = true, features = ["derive", "env"] }
+kms-core-common = { path = "../common"}
 concrete-csprng = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "f3b89e83d741cf89a8277a98eb0f2665987ee456" } # == tfhe-rs v0.6.3
 conf-trace = { path = "../../conf-trace", optional = true }
 const_format = "0.2.32"

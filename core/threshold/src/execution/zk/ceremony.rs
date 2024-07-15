@@ -8,10 +8,14 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
+use kms_core_common::{Unversionize, Versioned, Versionize};
 use rand::{CryptoRng, Rng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::ops::{Add, Mul, Neg};
+use std::{
+    borrow::Cow,
+    ops::{Add, Mul, Neg},
+};
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe_zk_pok::{curve_api::bls12_446 as curve, proofs::pke};
 use tracing::instrument;
@@ -82,11 +86,34 @@ fn compute_meta_parameter(params: &ClassicPBSParameters) -> anyhow::Result<MetaP
 pub fn compute_witness_dim(params: &ClassicPBSParameters) -> anyhow::Result<usize> {
     Ok(compute_meta_parameter(params)?.n)
 }
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
+pub enum PublicParameterVersioned<'a> {
+    V0(Cow<'a, PublicParameter>),
+}
+impl Versioned for PublicParameterVersioned<'_> {}
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct PublicParameter {
     round: usize,
     inner: (Vec<curve::G1>, Vec<curve::G2>),
+}
+
+impl Versionize for PublicParameter {
+    type Versioned<'vers> = PublicParameterVersioned<'vers>
+    where
+        Self: 'vers;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        PublicParameterVersioned::V0(Cow::Borrowed(self))
+    }
+}
+
+impl Unversionize for PublicParameter {
+    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
+        match versioned {
+            PublicParameterVersioned::V0(v0) => Ok(v0.into_owned()),
+        }
+    }
 }
 
 impl PublicParameter {
@@ -278,7 +305,6 @@ fn verify_proof(
             "crs length check failed (g)".to_string(),
         ));
     }
-
     if new_pp.witness_dim() != witness_dim {
         return Err(anyhow_error_and_log(
             "crs length check failed (g_hat)".to_string(),
@@ -625,8 +651,10 @@ mod tests {
 
         // check that we can use pp to make a proof
         let mut rng = AesRng::from_entropy();
-        let public_params =
-            proofs::range::PublicParams::<Bls12_446>::from_vec(pp.inner.0, pp.inner.1);
+        let public_params = proofs::range::PublicParams::<Bls12_446>::from_vec(
+            pp.inner.0.to_owned(),
+            pp.inner.1.to_owned(),
+        );
         let l = 6;
         let x = rng.gen::<u64>() % (1 << l);
         let (public_commit, private_commit) = proofs::range::commit(x, l, &public_params, &mut rng);

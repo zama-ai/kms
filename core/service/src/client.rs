@@ -55,6 +55,10 @@ cfg_if::cfg_if! {
         use serde::de::DeserializeOwned;
         use std::fmt;
         use tfhe::ServerKey;
+        use kms_core_common::Unversionize;
+        use crate::cryptography::der_types::{PrivateSigKeyVersioned, PublicSigKeyVersioned};
+        use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+        use distributed_decryption::execution::zk::ceremony::PublicParameterVersioned;
     }
 }
 
@@ -869,11 +873,11 @@ impl Client {
             let cur_map = read_all_data(&cur_storage, &PubDataType::VerfKey.to_string()).await?;
             for (cur_req_id, cur_pk) in cur_map {
                 // ensure that the inserted pk did not exist before / is not inserted twice
-                ensure!(pks.insert(cur_req_id, cur_pk) == None);
+                ensure!(pks.insert(cur_req_id, PublicSigKey::unversionize(cur_pk)?) == None);
             }
         }
         let server_keys = pks.values().cloned().collect_vec();
-        let client_pk_map: HashMap<RequestId, PublicSigKey> =
+        let client_pk_map: HashMap<RequestId, PublicSigKeyVersioned> =
             read_all_data(&client_storage, &ClientDataType::VerfKey.to_string()).await?;
         if client_pk_map.values().len() != 1 {
             return Err(anyhow_error_and_log(format!(
@@ -881,29 +885,35 @@ impl Client {
                 client_pk_map.values().len(),
             )));
         }
-        let client_pk = some_or_err(
-            client_pk_map.values().next().cloned(),
-            "Client public key map did not contain a key".to_string(),
+        let client_pk = PublicSigKey::unversionize(
+            some_or_err(
+                client_pk_map.values().next(),
+                "Client public key map did not contain a key".to_string(),
+            )?
+            .to_owned(),
         )?;
-        let client_sk_map: HashMap<RequestId, PrivateSigKey> =
+        let client_sk_map: HashMap<RequestId, PrivateSigKeyVersioned> =
             read_all_data(&client_storage, &ClientDataType::SigningKey.to_string()).await?;
         if client_sk_map.values().len() != 1 {
             return Err(anyhow_error_and_log(
                 "Client signing key map should only contain one entry",
             ));
         }
-        let client_sk = client_sk_map.values().next().cloned();
+        let client_sk = PrivateSigKey::unversionize(
+            some_or_err(
+                client_sk_map.values().next(),
+                "Client private key could not be unversioned".to_string(),
+            )?
+            .to_owned(),
+        )?;
 
-        // This import need to be within this scope otherwise
-        // it is considered unused with certain features
-        use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
         let params: NoiseFloodParameters = read_as_json(param_path).await?;
 
         let n = server_keys.len() as u8;
         Ok(Client::new(
             HashMap::from_iter(server_keys.into_iter().zip(1..=n)),
             client_pk,
-            client_sk,
+            Some(client_sk),
             shares_needed,
             num_servers,
             params.ciphertext_parameters,
@@ -1058,8 +1068,8 @@ impl Client {
             let (pp, info) = if let Some(info) = result.crs_results {
                 let url =
                     storage.compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())?;
-                let pp: PublicParameter = storage.read_data(&url).await?;
-                (pp, info)
+                let pp: PublicParameterVersioned = storage.read_data(&url).await?;
+                (PublicParameter::unversionize(pp)?, info)
             } else {
                 tracing::warn!("empty SignedPubDataHandle");
                 continue;
@@ -1329,7 +1339,8 @@ impl Client {
             "No request id".to_string(),
         )?;
         let url = storage.compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())?;
-        let crs: PublicParameter = storage.read_data(&url).await?;
+        let crs_versioned: PublicParameterVersioned = storage.read_data(&url).await?;
+        let crs = PublicParameter::unversionize(crs_versioned)?;
         let serialized_crs = bincode::serialize(&crs)?;
         let crs_handle = compute_handle(&serialized_crs)?;
         if crs_handle != crs_info.key_handle {
@@ -2259,8 +2270,11 @@ pub(crate) mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::Eip712Domain;
     use alloy_sol_types::SolStruct;
-    use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use distributed_decryption::execution::zk::ceremony::PublicParameter;
+    use distributed_decryption::execution::{
+        tfhe_internals::parameters::NoiseFloodParameters, zk::ceremony::PublicParameterVersioned,
+    };
+    use kms_core_common::Unversionize;
     use rand::SeedableRng;
     use serial_test::serial;
     use std::collections::HashMap;
@@ -2488,9 +2502,12 @@ pub(crate) mod tests {
         assert!(crs_path.starts_with("file://"));
         crs_path.replace_range(0..7, ""); // remove leading "file:/" from URI, so we can read the file
 
-        // check that CRS signature is verified correctly
-        let crs_raw = read_element::<PublicParameter>(&crs_path).await.unwrap();
-        let crs_serialized = bincode::serialize(&crs_raw).unwrap();
+        // check that CRS signature is verified correctly for the current version
+        let crs_raw = read_element::<PublicParameterVersioned>(&crs_path)
+            .await
+            .unwrap();
+        let crs_serialized =
+            bincode::serialize(&PublicParameter::unversionize(crs_raw).unwrap()).unwrap();
         let client_handle = compute_handle(&crs_serialized).unwrap();
         assert_eq!(&client_handle, &crs_info.key_handle);
 

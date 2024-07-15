@@ -29,6 +29,7 @@ use conf_trace::telemetry::accept_trace;
 use conf_trace::telemetry::make_span;
 use conf_trace::telemetry::record_trace_id;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+use kms_core_common::Versionize;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -170,7 +171,7 @@ impl<
                 if store_at_request_id(
                     &mut (*priv_storage),
                     &request_id,
-                    &key_info,
+                    &key_info.versionize(),
                     &PrivDataType::FheKeyInfo.to_string(),
                 )
                 .await
@@ -199,8 +200,10 @@ impl<
                     };
                     {
                         let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store
-                            .update(&request_id, HandlerStatus::Done(key_info.public_key_info));
+                        let _ = guarded_meta_store.update(
+                            &request_id,
+                            HandlerStatus::Done(key_info.public_key_info.to_owned()),
+                        );
                     }
                 } else {
                     tracing::error!("Could not store all the key data from request ID {request_id}. Deleting any dangling data.");
@@ -532,7 +535,7 @@ impl<
                 if store_at_request_id(
                     &mut (*priv_storage),
                     &request_id,
-                    &crs_info,
+                    &crs_info.versionize(),
                     &PrivDataType::CrsInfo.to_string(),
                 )
                 .await
@@ -540,7 +543,7 @@ impl<
                     && store_at_request_id(
                         &mut (*pub_storage),
                         &request_id,
-                        &pp,
+                        &pp.versionize(),
                         &PubDataType::CRS.to_string(),
                     )
                     .await
@@ -601,7 +604,7 @@ impl<
 
         Ok(Response::new(CrsGenResult {
             request_id: Some(request_id),
-            crs_results: Some(crs_info),
+            crs_results: Some(crs_info.into()),
         }))
     }
 }

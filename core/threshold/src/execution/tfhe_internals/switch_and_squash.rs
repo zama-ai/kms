@@ -1,11 +1,12 @@
 use aligned_vec::ABox;
 use core::fmt;
 use core::fmt::Debug;
+use kms_core_common::{Unversionize, Versioned, Versionize};
 use num_traits::AsPrimitive;
 #[cfg(not(feature = "sequential_sns"))]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
-use std::num::Wrapping;
+use std::{borrow::Cow, num::Wrapping};
 use tfhe::{
     core_crypto::{
         algorithms::{
@@ -36,9 +37,33 @@ use super::parameters::{
 };
 
 /// Key used for switch-and-squash to convert a ciphertext over u64 to one over u128
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum SwitchAndSquashKeyVersioned<'a> {
+    V0(Cow<'a, SwitchAndSquashKey>),
+}
+impl Versioned for SwitchAndSquashKeyVersioned<'_> {}
+
+/// Key used for switch-and-squash to convert a ciphertext over u64 to one over u128
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct SwitchAndSquashKey {
     pub fbsk_out: Fourier128LweBootstrapKey<ABox<[f64]>>,
+}
+impl Versionize for SwitchAndSquashKey {
+    type Versioned<'vers> = SwitchAndSquashKeyVersioned<'vers>
+    where
+        Self: 'vers;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        SwitchAndSquashKeyVersioned::V0(Cow::Borrowed(self))
+    }
+}
+
+impl Unversionize for SwitchAndSquashKey {
+    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
+        match versioned {
+            SwitchAndSquashKeyVersioned::V0(v0) => Ok(v0.into_owned()),
+        }
+    }
 }
 
 impl Debug for SwitchAndSquashKey {

@@ -26,14 +26,16 @@ use crate::{
 };
 use anyhow::Context;
 use itertools::Itertools;
+use kms_core_common::{Unversionize, Versioned, Versionize};
 use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha3::{
     digest::ExtendableOutput,
     digest::{Update, XofReader},
     Shake256,
 };
+use std::borrow::Cow;
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
 use tracing::instrument;
@@ -72,10 +74,32 @@ type ValueVotes<Z> = HashMap<Vec<Z>, HashSet<Role>>;
 
 /// PRSS object that holds info in a certain epoch for a single party Pi
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PRSSSetupVersioned<'a, Z: Default + Clone + Serialize> {
+    V0(Cow<'a, PRSSSetup<Z>>),
+}
+impl<Z: Default + Clone + Serialize> Versioned for PRSSSetupVersioned<'_, Z> {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PRSSSetup<Z: Default + Clone> {
     /// all possible subsets of n-t parties (A) that contain Pi and their shared PRF keys
     sets: Vec<PrssSet<Z>>,
     alpha_powers: Vec<Vec<Z>>,
+}
+
+impl<Z: Default + Clone + Serialize + DeserializeOwned> Versionize for PRSSSetup<Z> {
+    type Versioned<'a> = PRSSSetupVersioned<'a, Z> where Z: 'a;
+
+    fn versionize(&self) -> PRSSSetupVersioned<'_, Z> {
+        PRSSSetupVersioned::V0(Cow::Borrowed(self))
+    }
+}
+
+impl<Z: Default + Clone + Serialize + DeserializeOwned> Unversionize for PRSSSetup<Z> {
+    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
+        match versioned {
+            PRSSSetupVersioned::V0(v0) => Ok(v0.into_owned()),
+        }
+    }
 }
 
 /// PRSS state for use within a given session.

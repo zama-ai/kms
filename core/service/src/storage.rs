@@ -5,6 +5,7 @@ use crate::rpc::rpc_types::PrivDataType;
 use crate::util::file_handling::{read_element, write_element};
 use crate::{anyhow_error_and_log, some_or_err};
 use anyhow::anyhow;
+use kms_core_common::{Versioned, Versionize};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -42,6 +43,7 @@ pub trait StorageReader {
 }
 
 // Trait for KMS public storage reading and writing
+// Warning: There is no compiler validation that the data being stored are of a versioned type!
 #[tonic::async_trait]
 pub trait Storage: StorageReader {
     async fn store_data<Ser: Serialize + Send + Sync + ?Sized>(
@@ -54,7 +56,7 @@ pub trait Storage: StorageReader {
 
 // Helper method for storing data based on a data type and request ID.
 // An error will be returned if the data already exists.
-pub async fn store_at_request_id<S: Storage, Ser: Serialize + Send + Sync + ?Sized>(
+pub async fn store_at_request_id<S: Storage, Ser: Versioned + Serialize + Send + Sync + ?Sized>(
     storage: &mut S,
     request_id: &RequestId,
     data: &Ser,
@@ -85,7 +87,7 @@ pub async fn delete_at_request_id<S: Storage>(
 }
 
 /// Helper method for reading data based on a data type and request ID.
-pub async fn read_at_request_id<S: Storage, Ser: DeserializeOwned + Send>(
+pub async fn read_at_request_id<S: Storage, Ser: Versioned + DeserializeOwned + Send>(
     storage: &S,
     request_id: &RequestId,
     data_type: &str,
@@ -95,7 +97,10 @@ pub async fn read_at_request_id<S: Storage, Ser: DeserializeOwned + Send>(
 }
 
 /// Helper method for reading all data of a specific type.
-pub async fn read_all_data<S: StorageReader, Ser: DeserializeOwned + Serialize + Send>(
+pub async fn read_all_data<
+    S: StorageReader,
+    Ser: Versioned + DeserializeOwned + Serialize + Send,
+>(
     storage: &S,
     data_type: &str,
 ) -> anyhow::Result<HashMap<RequestId, Ser>> {
@@ -375,14 +380,14 @@ impl RamStorage {
             store_at_request_id(
                 &mut res,
                 cur_req_id,
-                &cur_keys,
+                &cur_keys.versionize(),
                 &PrivDataType::FheKeyInfo.to_string(),
             )
             .await?;
         }
         let sk_handle = compute_handle(&keys.sig_sk)?;
         res.store_data(
-            &keys.sig_sk,
+            &keys.sig_sk.versionize(),
             &res.compute_url(&sk_handle, &PrivDataType::SigningKey.to_string())?,
         )
         .await?;

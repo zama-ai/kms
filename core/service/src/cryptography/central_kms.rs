@@ -8,11 +8,12 @@ use super::{
 };
 use crate::consts::ID_LENGTH;
 use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
+use crate::cryptography::der_types::PrivateSigKeyVersioned;
 use crate::cryptography::signcryption::Reencrypt;
 use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
-use crate::kms::{FheType, ParamChoice, SignedPubDataHandle};
+use crate::rpc::rpc_types::CrsMetaData;
 use crate::rpc::rpc_types::{
     BaseKms, Kms, Plaintext, PrivDataType, PubDataType, SigncryptionPayload,
 };
@@ -23,6 +24,10 @@ use crate::storage::Storage;
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
 use crate::util::meta_store::{HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, some_or_err};
+use crate::{
+    kms::{FheType, ParamChoice, SignedPubDataHandle},
+    rpc::rpc_types::CrsMetaDataVersioned,
+};
 use aes_prng::AesRng;
 use alloy_primitives::Address;
 use alloy_primitives::Bytes;
@@ -36,11 +41,12 @@ use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodPar
 use distributed_decryption::execution::zk::ceremony::{make_proof_deterministic, PublicParameter};
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
+use kms_core_common::{Unversionize, Versioned, Versionize};
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::{borrow::Cow, collections::HashMap};
 use std::{fmt, panic};
 use tfhe::integer::bigint::U2048;
 use tfhe::integer::U256;
@@ -88,7 +94,7 @@ pub async fn async_generate_crs(
     sk: &PrivateSigKey,
     rng: AesRng,
     params: NoiseFloodParameters,
-) -> anyhow::Result<(PublicParameter, SignedPubDataHandle)> {
+) -> anyhow::Result<(PublicParameter, CrsMetaData)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     rayon::spawn(move || {
@@ -136,7 +142,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
     params: &NoiseFloodParameters,
     mut rng: R,
-) -> anyhow::Result<(PublicParameter, SignedPubDataHandle)> {
+) -> anyhow::Result<(PublicParameter, CrsMetaData)> {
     use distributed_decryption::execution::zk::ceremony::compute_witness_dim;
     let witness_dim = compute_witness_dim(&params.ciphertext_parameters)?;
     tracing::info!("Generating CRS with witness dimension {}.", witness_dim);
@@ -149,7 +155,7 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     r.zeroize();
 
     let crs_info = compute_info(sk, &pproof.new_pp)?;
-    Ok((pproof.new_pp, crs_info))
+    Ok((pproof.new_pp, crs_info.into()))
 }
 
 #[derive(Clone)]
@@ -317,14 +323,40 @@ pub struct CentralizedTestingKeys {
     pub server_keys: Vec<PublicSigKey>,
 }
 
-pub type CrsInfoHashMap = HashMap<RequestId, SignedPubDataHandle>;
 pub type KeysInfoHashMap = HashMap<RequestId, KmsFheKeyHandles>;
+
+#[cfg(feature = "non-wasm")]
+#[derive(Clone, Serialize, Deserialize)]
+pub enum KmsFheKeyHandlesVersioned<'a> {
+    V0(Cow<'a, KmsFheKeyHandles>),
+}
+impl Versioned for KmsFheKeyHandlesVersioned<'_> {}
 
 #[cfg(feature = "non-wasm")]
 #[derive(Clone, Serialize, Deserialize)]
 pub struct KmsFheKeyHandles {
     pub client_key: FhePrivateKey,
     pub public_key_info: HashMap<PubDataType, SignedPubDataHandle>, // Mapping key type to information
+}
+
+#[cfg(feature = "non-wasm")]
+impl Versionize for KmsFheKeyHandles {
+    type Versioned<'vers> = KmsFheKeyHandlesVersioned<'vers>
+    where
+        Self: 'vers;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        KmsFheKeyHandlesVersioned::V0(Cow::Borrowed(self))
+    }
+}
+
+#[cfg(feature = "non-wasm")]
+impl Unversionize for KmsFheKeyHandles {
+    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
+        match versioned {
+            KmsFheKeyHandlesVersioned::V0(v0) => Ok(v0.into_owned()),
+        }
+    }
 }
 
 #[cfg(feature = "non-wasm")]
@@ -388,7 +420,7 @@ pub struct SoftwareKms<PubS: Storage, PrivS: Storage> {
     // Map storing ongoing reencryption requests.
     pub(crate) reenc_meta_map: Arc<RwLock<MetaStore<ReencCallValues>>>,
     // Map storing ongoing CRS generation requests.
-    pub(crate) crs_meta_map: Arc<RwLock<MetaStore<SignedPubDataHandle>>>,
+    pub(crate) crs_meta_map: Arc<RwLock<MetaStore<CrsMetaData>>>,
     // Map storing the identity of parameters and the parameter file paths
     pub(crate) param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>, // TODO this should be loaded once during boot
 }
@@ -616,26 +648,31 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         public_storage: PubS,
         private_storage: PrivS,
     ) -> anyhow::Result<Self> {
-        let sks: HashMap<RequestId, PrivateSigKey> =
+        let sks: HashMap<RequestId, PrivateSigKeyVersioned> =
             read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
-
         if sks.len() != 1 {
             return Err(anyhow_error_and_log(
                 "Server signing key map should only contain one entry",
             ));
         }
 
-        let sk = some_or_err(
-            sks.values().collect_vec().first(),
-            format!(
-                "There is no private signing key stored in {}",
-                private_storage.info()
-            ),
-        )?
-        .to_owned()
-        .to_owned();
-        let key_info: KeysInfoHashMap =
+        let sk = PrivateSigKey::unversionize(
+            some_or_err(
+                sks.values().collect_vec().first(),
+                format!(
+                    "There is no private signing key stored in {}",
+                    private_storage.info()
+                ),
+            )?
+            .to_owned()
+            .to_owned(),
+        )?;
+        let key_info_versioned: HashMap<RequestId, KmsFheKeyHandlesVersioned> =
             read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+        let mut key_info = HashMap::new();
+        for (id, versioned_handles) in key_info_versioned {
+            key_info.insert(id, KmsFheKeyHandles::unversionize(versioned_handles)?);
+        }
         tracing::info!(
             "loaded key_info with key_ids: {:?}",
             key_info
@@ -652,12 +689,15 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 )
             })
             .collect();
-        let cs: CrsInfoHashMap =
+        let cs: HashMap<RequestId, CrsMetaDataVersioned> =
             read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-        let cs_w_status: HashMap<RequestId, HandlerStatus<SignedPubDataHandle>> = cs
-            .iter()
-            .map(|(id, crs)| (id.to_owned(), HandlerStatus::Done(crs.to_owned())))
-            .collect();
+        let mut cs_w_status: HashMap<RequestId, HandlerStatus<CrsMetaData>> = HashMap::new();
+        for (id, crs) in cs {
+            cs_w_status.insert(
+                id.to_owned(),
+                HandlerStatus::Done(CrsMetaData::unversionize(crs.to_owned())?),
+            );
+        }
 
         let param_file_map = Arc::new(RwLock::new(HashMap::from_iter(
             param_file_map
