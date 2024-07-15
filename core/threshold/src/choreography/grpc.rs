@@ -27,7 +27,7 @@ use crate::choreography::{
 };
 use crate::execution::endpoints::decryption::{
     init_prep_bitdec_large, init_prep_bitdec_small, run_decryption_bitdec,
-    run_decryption_noiseflood_64, ProtocolDecryption,
+    run_decryption_noiseflood_64, NoiseFloodPreparation,
 };
 use crate::execution::endpoints::decryption::{Large, Small};
 use crate::execution::endpoints::keygen::FhePubKeySet;

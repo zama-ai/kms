@@ -364,6 +364,8 @@ where
 
 /// Validates a signcryption and decrypts the payload if everything validates correctly.
 /// Returns None if validation fails.
+///
+/// TODO: The return type should probably be anyhow::Result<Vec<u8>>, which means we should return an Error instead of Ok(None) when something goes wrong.
 pub fn validate_and_decrypt(
     cipher: &Cipher,
     client_keys: &SigncryptionPair,
@@ -424,6 +426,9 @@ fn parse_msg(
 
 /// Helper method for performing the necesary checks on a signcryption signature.
 /// Returns true if the signature is ok and false otherwise
+///
+/// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
+/// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
 fn check_signature(
     msg: Vec<u8>,
     sig: &Signature,
@@ -456,6 +461,8 @@ fn check_signature(
     true
 }
 
+/// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
+/// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
 fn check_normalized(sig: &Signature) -> bool {
     if sig.sig.normalize_s().is_some() {
         tracing::warn!(

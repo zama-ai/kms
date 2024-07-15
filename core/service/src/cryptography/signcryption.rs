@@ -6,8 +6,8 @@
 //! can validate this against the server's public key.
 //!
 //! For encryption a hybrid encryption is used based on ECIES using Libsodium. More specifically
-//! using ECDH with curve 25519 and Salsa. NOTE This may change in the future to be more compatible
-//! with NIST standardized schemes.
+//! using ECDH with curve 25519 and Salsa.
+//! NOTE: This may change in the future to be more compatible with NIST standardized schemes.
 
 use super::der_types::{
     Cipher, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
@@ -36,22 +36,22 @@ pub const RND_SIZE: usize = 128 / 8; // the amount of bytes used for sampling ra
 ///
 /// Concretely it involves generating ECDH keys for curve 25519 to be used in ECIES for hybrid
 /// encryption using Salsa.
-pub fn encryption_key_generation(
+pub fn ephemeral_encryption_key_generation(
     rng: &mut (impl CryptoRng + RngCore),
 ) -> (PublicEncKey, PrivateEncKey) {
     let sk = SecretKey::generate(rng);
     (PublicEncKey(sk.public_key()), PrivateEncKey(sk))
 }
 
-/// Computing the signature on message based on the server's signing key.
+/// Compute the signature on message based on the server's signing key.
 ///
-/// Returns the signed message as a vector of bytes. Concretely r || s.
+/// Returns the [Signature]. Concretely r || s.
 pub fn sign<T>(msg: &T, server_sig_key: &PrivateSigKey) -> anyhow::Result<Signature>
 where
     T: Serialize + AsRef<[u8]>,
 {
     let sig: k256::ecdsa::Signature = server_sig_key.sk.try_sign(msg.as_ref())?;
-    // Normalize s value to ensure a consistant signature and protect against malleability
+    // Normalize s value to ensure a consistent signature and protect against malleability
     sig.normalize_s();
     Ok(Signature { sig })
 }
@@ -64,6 +64,9 @@ alloy_sol_types::sol! {
     }
 }
 
+/// Compute the signature on message based on the server's signing key for a given EIP712 domain.
+///
+/// Returns the [Signature]. Concretely r || s.
 pub fn sign_eip712<T: SolStruct>(
     msg: &T,
     domain: &alloy_sol_types::Eip712Domain,
@@ -71,7 +74,7 @@ pub fn sign_eip712<T: SolStruct>(
 ) -> anyhow::Result<Signature> {
     let signing_hash = msg.eip712_signing_hash(domain);
     let sig: k256::ecdsa::Signature = server_sig_key.sk.try_sign(&signing_hash[..])?;
-    // Normalize s value to ensure a consistant signature and protect against malleability
+    // Normalize s value to ensure a consistent signature and protect against malleability
     sig.normalize_s();
     Ok(Signature { sig })
 }
@@ -79,6 +82,9 @@ pub fn sign_eip712<T: SolStruct>(
 /// Verify a plain signature.
 ///
 /// Returns true if the signature is ok and false otherwise.
+///
+/// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
+/// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
 #[cfg(feature = "non-wasm")]
 pub(crate) fn internal_verify_sig<T>(
     payload: &T,
@@ -106,6 +112,12 @@ where
     true
 }
 
+/// Verify an EIP712 signature.
+///
+/// Returns true if the signature is ok and false otherwise.
+///
+/// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
+/// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
 #[cfg(feature = "non-wasm")]
 pub(crate) fn internal_verify_sig_eip712<T: SolStruct>(
     msg: &T,
@@ -123,15 +135,15 @@ pub(crate) fn internal_verify_sig_eip712<T: SolStruct>(
         .verify(&signing_hash[..], &sig.sig)
         .is_err()
     {
-        tracing::warn!("Signature {:X?} is not valid", sig.sig);
+        tracing::warn!("EIP712 Signature {:X?} is not valid", sig.sig);
         return false;
     }
 
     true
 }
 
-/// Compute the signcryption of a message based on the public keys received from a client and the
-/// server's signing key.
+/// Compute the signcryption of a message encrypted under the public keys received from a client and
+/// signed by the server's signing key.
 ///
 /// Returns the signcrypted message.
 ///
@@ -141,7 +153,7 @@ pub(crate) fn internal_verify_sig_eip712<T: SolStruct>(
 pub fn signcrypt<T>(
     rng: &mut (impl CryptoRng + RngCore),
     msg: &T,
-    client_pk: &PublicEncKey,
+    client_pub_key: &PublicEncKey,
     client_verf_key: &PublicSigKey,
     server_sig_key: &PrivateSigKey,
 ) -> anyhow::Result<Cipher>
@@ -153,55 +165,57 @@ where
     let to_sign = [
         msg.as_ref(),
         &serialize_hash_element(client_verf_key)?,
-        &serialize_hash_element(client_pk)?,
+        &serialize_hash_element(client_pub_key)?,
     ]
     .concat();
     let sig: k256::ecdsa::Signature = server_sig_key.sk.sign(to_sign.as_ref());
-    // Normalize s value to ensure a consistant signature and protect against malleability
+    // Normalize s value to ensure a consistent signature and protect against malleability
     sig.normalize_s();
 
     // Generate the server part of the key agreement
-    // Oberve that we don't need to keep the secret key as we don't need the client to send the
+    // Observe that we don't need to keep the secret key as we don't need the client to send the
     // server messages
-    let (server_enc_pk, server_enc_sk) = encryption_key_generation(rng);
-    // Encrypt msg || sig || H(server_verification_key) || H(server_enc_key)
-    // OBSERVE: serialization is simply r concatenated with s. That is, NOT an Ethereum compatible
-    // signature since we preclude the v value The verification key is serialized based on the
-    // SEC1 standard
+    let (server_enc_pub_key, server_enc_sk) = ephemeral_encryption_key_generation(rng);
+    // Encrypt msg || sig || H(server_verification_key) || H(server_enc_pub_key)
+    // OBSERVE: serialization is simply r concatenated with s. That is NOT an Ethereum compatible
+    // signature since we preclude the v value.
+    // The verification key is serialized based on the SEC1 standard.
     let to_encrypt = [
         msg.as_ref(),
         &sig.to_bytes(),
         &serialize_hash_element(&PublicSigKey {
             pk: SigningKey::verifying_key(&server_sig_key.sk).to_owned(),
         })?,
-        &serialize_hash_element(&server_enc_pk)?,
+        &serialize_hash_element(&server_enc_pub_key)?,
     ]
     .concat();
 
-    let enc_box = SalsaBox::new(&client_pk.0, &server_enc_sk.0);
+    let enc_box = SalsaBox::new(&client_pub_key.0, &server_enc_sk.0);
     let nonce = SalsaBox::generate_nonce(rng);
     let ciphertext = match enc_box.encrypt(&nonce, &to_encrypt[..]) {
         Ok(ciphertext) => ciphertext,
         Err(_) => {
-            return Err(anyhow_error_and_log("Could not encrypt message"));
+            return Err(anyhow_error_and_log(
+                "Could not encrypt message using SalsaBox.",
+            ));
         }
     };
 
     Ok(Cipher {
         bytes: ciphertext,
         nonce: nonce.to_vec(),
-        server_enc_key: server_enc_pk,
+        server_enc_key: server_enc_pub_key,
     })
 }
 
 /// Validate a signcryption and decrypt the payload if everything validates correctly.
 ///
-/// Returns None if validation fails.
+/// Returns Err if validation fails and Ok(message) if validation succeeds.
 pub fn validate_and_decrypt(
     cipher: &Cipher,
     client_keys: &SigncryptionPair,
     server_verf_key: &PublicSigKey,
-) -> anyhow::Result<Option<Vec<u8>>> {
+) -> anyhow::Result<Vec<u8>> {
     let nonce = Nonce::from_slice(cipher.nonce.as_bytes());
     let dec_box = SalsaBox::new(&cipher.server_enc_key.0, &client_keys.sk.decryption_key.0);
     let decrypted_plaintext = match dec_box.decrypt(nonce, cipher.bytes.as_ref()) {
@@ -213,16 +227,12 @@ pub fn validate_and_decrypt(
             )));
         }
     };
-    let (msg, sig) = match parse_msg(decrypted_plaintext, &cipher.server_enc_key, server_verf_key) {
-        Ok((msg, sig)) => (msg, sig),
-        Err(_) => return Ok(None),
-    };
+    let (msg, sig) = parse_msg(decrypted_plaintext, &cipher.server_enc_key, server_verf_key)?;
 
     if !check_signature(msg.clone(), &sig, server_verf_key, &client_keys.pk) {
-        tracing::warn!("The signature did not validate");
-        return Ok(None);
+        return Err(anyhow_error_and_warn_log("Could not verify signature!"));
     }
-    Ok(Some(msg))
+    Ok(msg)
 }
 
 /// Helper method for parsing a signcrypted message consisting of the _true_ msg || sig ||
@@ -258,8 +268,11 @@ fn parse_msg(
     Ok((msg.to_vec(), Signature { sig }))
 }
 
-/// Helper method for performing the necesary checks on a signcryption signature.
+/// Helper method for performing the necessary checks on a signcryption signature.
 /// Returns true if the signature is ok and false otherwise
+///
+/// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
+/// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
 fn check_signature(
     msg: Vec<u8>,
     sig: &Signature,
@@ -309,6 +322,10 @@ fn check_signature(
     true
 }
 
+/// Check if a signature is normalized in "low S" form as described in
+/// [BIP 0062: Dealing with Malleability][1].
+///
+/// [1]: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
 pub(crate) fn check_normalized(sig: &Signature) -> bool {
     if sig.sig.normalize_s().is_some() {
         tracing::warn!(
@@ -320,6 +337,7 @@ pub(crate) fn check_normalized(sig: &Signature) -> bool {
     true
 }
 
+/// Compute the SHA3-256 has of an element. Returns the hash as a vector of bytes.
 pub(crate) fn hash_element<T>(element: &T) -> Vec<u8>
 where
     T: ?Sized + AsRef<[u8]>,
@@ -331,7 +349,7 @@ where
     digest.to_vec()
 }
 
-/// Serialize an element and hash it using a cryptographic hash function.
+/// Serialize an element and hash it using SHA3-256. Returns the hash as a vector of bytes.
 pub(crate) fn serialize_hash_element<T>(msg: &T) -> anyhow::Result<Vec<u8>>
 where
     T: Serialize,
@@ -348,39 +366,39 @@ where
     Ok(hash_element(&to_hash))
 }
 
-/// decrypt a signcrypted message and verify the signature
+/// Decrypt a signcrypted message and verify the signature.
 ///
-/// this fn also checks that the provided link parameter corresponds to the link in the signcryption payload
+/// This fn also checks that the provided link parameter corresponds to the link in the signcryption
+/// payload.
+///
+/// TODO: The return type should probably be anyhow::Result<Plaintext>, which means we should return an Error instead of Ok(None) when something goes wrong.
 pub(crate) fn decrypt_signcryption(
     cipher: &[u8],
     link: &[u8],
     client_keys: &SigncryptionPair,
     server_verf_key: &PublicSigKey,
-) -> anyhow::Result<Option<Plaintext>> {
+) -> anyhow::Result<Plaintext> {
     let cipher: Cipher = deserialize(cipher)?;
-    let decrypted_signcryption = match validate_and_decrypt(&cipher, client_keys, server_verf_key)?
-    {
-        Some(decrypted_signcryption) => decrypted_signcryption,
-        None => {
-            tracing::warn!("Signcryption validation failed");
-            return Ok(None);
-        }
-    };
+    let decrypted_signcryption = validate_and_decrypt(&cipher, client_keys, server_verf_key)?;
+
     let signcrypted_msg: SigncryptionPayload = bincode::deserialize(&decrypted_signcryption)?;
     if link != signcrypted_msg.link {
-        tracing::warn!("Link validation for signcryption failed");
-        return Ok(None);
+        return Err(anyhow_error_and_warn_log(
+            "Signcryption link does not match!",
+        ));
     }
-    Ok(Some(signcrypted_msg.plaintext))
+    Ok(signcrypted_msg.plaintext)
 }
 
 /// Decrypt a signcrypted message and ignore the signature
-/// This function does *not* do any verification and is thus insecure and should be used only for testing.
+///
+/// This function does *not* do any verification and is thus insecure and should be used only for
+/// testing.
 /// TODO hide behind flag for insecure function?
 pub(crate) fn insecure_decrypt_ignoring_signature(
     cipher: &[u8],
     client_keys: &SigncryptionPair,
-) -> anyhow::Result<Option<Plaintext>> {
+) -> anyhow::Result<Plaintext> {
     let cipher: Cipher = deserialize(cipher)?;
 
     let nonce = Nonce::from_slice(cipher.nonce.as_bytes());
@@ -395,23 +413,25 @@ pub(crate) fn insecure_decrypt_ignoring_signature(
         }
     };
 
-    // strip off the signature bytes
+    // strip off the signature bytes (these are ignored here)
     let msg_len = decrypted_plaintext.len() - 2 * DIGEST_BYTES - SIG_SIZE;
     let msg = &decrypted_plaintext[..msg_len];
+
     let signcrypted_msg: SigncryptionPayload = deserialize(msg)?;
 
-    Ok(Some(signcrypted_msg.plaintext))
+    Ok(signcrypted_msg.plaintext)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{PrivateSigKey, PublicSigKey, SigncryptionPair};
+    use crate::cryptography::der_types::Signature;
     use crate::cryptography::request::{ephemeral_key_generation, ClientRequest};
     use crate::cryptography::signcryption::{
-        check_signature, encryption_key_generation, internal_verify_sig, parse_msg, sign,
-        signcrypt, validate_and_decrypt, DIGEST_BYTES, RND_SIZE, SIG_SIZE,
+        check_signature, ephemeral_encryption_key_generation, internal_verify_sig, parse_msg,
+        serialize_hash_element, sign, signcrypt, validate_and_decrypt, DIGEST_BYTES, RND_SIZE,
+        SIG_SIZE,
     };
-    use crate::cryptography::{der_types::Signature, signcryption::serialize_hash_element};
     use aes_prng::AesRng;
     use bincode::{deserialize, serialize};
     use k256::ecdsa::SigningKey;
@@ -429,7 +449,7 @@ mod tests {
     }
 
     /// Helper method that creates an rng, a valid client request (on a dummy fhe cipher) and client
-    /// singcryption keys SigncryptionPair Returns the rng, client request, client signcryption
+    /// signcryption keys SigncryptionPair Returns the rng, client request, client signcryption
     /// keys and the dummy fhe cipher the request is made for.
     fn test_setup() -> (AesRng, ClientRequest, SigncryptionPair, Vec<u8>) {
         let cipher = [42_u8; 1];
@@ -456,9 +476,7 @@ mod tests {
         )
         .unwrap();
         let decrypted_msg =
-            validate_and_decrypt(&cipher, &client_signcryption_keys, &server_verf_key)
-                .unwrap()
-                .unwrap();
+            validate_and_decrypt(&cipher, &client_signcryption_keys, &server_verf_key).unwrap();
         assert_eq!(msg, decrypted_msg);
     }
 
@@ -559,7 +577,7 @@ mod tests {
     fn incorrect_server_verf_key() {
         let mut rng = AesRng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
-        let (sever_enc_key, _server_dec_key) = encryption_key_generation(&mut rng);
+        let (sever_enc_key, _server_dec_key) = ephemeral_encryption_key_generation(&mut rng);
         let to_encrypt = [0_u8; 1 + 2 * DIGEST_BYTES + SIG_SIZE];
         let res = parse_msg(to_encrypt.to_vec(), &sever_enc_key, &server_verf_key);
         assert!(logs_contain("Unexpected verification key digest"));
@@ -572,7 +590,7 @@ mod tests {
     fn incorrect_server_enc_key() {
         let mut rng = AesRng::seed_from_u64(42);
         let (server_verf_key, _server_sig_key) = signing_key_generation(&mut rng);
-        let (server_enc_key, _server_dec_key) = encryption_key_generation(&mut rng);
+        let (server_enc_key, _server_dec_key) = ephemeral_encryption_key_generation(&mut rng);
         let mut to_encrypt = [0_u8; 1 + 2 * DIGEST_BYTES + SIG_SIZE].to_vec();
         let key_digest = serialize_hash_element(&server_verf_key).unwrap();
         // Set the correct verification key so that part of `parse_msg` won't fail
@@ -596,7 +614,7 @@ mod tests {
             sig: server_sig_key.sk.sign(msg),
             // pk: client_signcryption_keys.pk.clone().verification_key,
         };
-        // Fails as the correct key digets are not included in the message whose signature gets
+        // Fails as the correct key digests are not included in the message whose signature gets
         // checked
         let res = check_signature(
             msg.to_vec(),

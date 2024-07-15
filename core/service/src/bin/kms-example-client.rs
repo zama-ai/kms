@@ -137,7 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         responses: HashMap::from([(1, response?.into_inner())]),
     };
     match internal_client.process_reencryption_resp(Some(req), &responses, &enc_pk, &enc_sk) {
-        Ok(Some(plaintext)) => {
+        Ok(plaintext) => {
             tracing::info!(
                 "Reencryption response is ok: {:?} of type {:?}",
                 plaintext.as_u32(),

@@ -1201,7 +1201,6 @@ mod test {
             };
             let pt = kms_client
                 .process_reencryption_resp(Some(kms_req), &agg_resp, &enc_pk, &enc_sk)
-                .unwrap()
                 .unwrap();
             assert_eq!(pt.as_u8(), msg);
         } else {

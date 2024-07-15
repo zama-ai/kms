@@ -26,7 +26,10 @@ fn commitment_inner_hash(msg: &[u8], o: &Opening) -> Commitment {
     let digest = hasher.finalize();
 
     // the try_into should never fail because our tests will guarantee the lengths are correct
-    let com: [u8; COMMITMENT_BYTE_LEN] = digest.as_slice().try_into().expect("wrong length");
+    let com: [u8; COMMITMENT_BYTE_LEN] = digest
+        .as_slice()
+        .try_into()
+        .expect("wrong length in commmitment hash");
     Commitment(com)
 }
 
@@ -41,10 +44,14 @@ pub fn commit<R: Rng + CryptoRng>(msg: &[u8], rng: &mut R) -> (Commitment, Openi
     (com, o)
 }
 
-/// verify that commitment c can be opened with o to retrieve msg
-pub fn verify(msg: &[u8], com_to_check: &Commitment, o: &Opening) -> bool {
+/// verify that commitment c can be opened with o and that it matches msg
+pub fn verify(msg: &[u8], com_to_check: &Commitment, o: &Opening) -> anyhow::Result<()> {
     let computed_commitment = commitment_inner_hash(msg, o);
-    computed_commitment == *com_to_check
+    if computed_commitment == *com_to_check {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Commitment verification failed!"))
+    }
 }
 
 #[cfg(test)]
@@ -58,7 +65,7 @@ mod tests {
         let msg = b"Let's commit to this message!";
         let mut rng = AesRng::seed_from_u64(0);
         let (com, opening) = commit(msg, &mut rng);
-        assert!(verify(msg, &com, &opening));
+        assert!(verify(msg, &com, &opening).is_ok());
     }
 
     #[test]
@@ -67,15 +74,15 @@ mod tests {
         let mut rng = AesRng::seed_from_u64(1);
         let (com, opening) = commit(msg, &mut rng);
 
-        assert!(verify(msg, &com, &opening));
+        assert!(verify(msg, &com, &opening).is_ok());
 
         // check that verification fails for wrong values.
-        let msg2 = b"wrong message here...";
-        let com2 = Commitment(*b"00000000000000001111111111111111");
-        let op2 = Opening(*b"0000000000000000");
+        let msg_wrong = b"Wrong message here...";
+        let com_wrong = Commitment([42u8; COMMITMENT_BYTE_LEN]);
+        let opening_wrong = Opening([23u8; KEY_BYTE_LEN]);
 
-        assert!(!verify(msg2, &com, &opening));
-        assert!(!verify(msg, &com2, &opening));
-        assert!(!verify(msg, &com, &op2));
+        assert!(verify(msg_wrong, &com, &opening).is_err());
+        assert!(verify(msg, &com_wrong, &opening).is_err());
+        assert!(verify(msg, &com, &opening_wrong).is_err());
     }
 }

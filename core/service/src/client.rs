@@ -3,7 +3,7 @@ use crate::cryptography::der_types::{
     SigncryptionPrivKey, SigncryptionPubKey,
 };
 use crate::cryptography::signcryption::{
-    decrypt_signcryption, encryption_key_generation, hash_element,
+    decrypt_signcryption, ephemeral_encryption_key_generation, hash_element,
     insecure_decrypt_ignoring_signature, Reencrypt, RND_SIZE,
 };
 use crate::kms::{
@@ -804,10 +804,7 @@ pub mod js_api {
             client.insecure_process_reencryption_resp(&hm, enc_pk, enc_sk)
         };
         match reenc_resp {
-            Ok(resp) => match resp {
-                Some(out) => Ok(out.bytes),
-                None => Err(JsError::new("no response")),
-            },
+            Ok(resp) => Ok(resp.bytes),
             Err(e) => Err(JsError::new(&e.to_string())),
         }
     }
@@ -915,6 +912,9 @@ impl Client {
 
     /// Verify the signature received from the server on keys or other data objects.
     /// This verification will pass if one of the public keys can verify the signature.
+    ///
+    /// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
+    /// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
     #[cfg(feature = "non-wasm")]
     pub fn verify_server_signature<T: serde::Serialize + AsRef<[u8]>>(
         &self,
@@ -1193,7 +1193,7 @@ impl Client {
         }
 
         let ciphertext_digest = hash_element(&ciphertext);
-        let (enc_pk, enc_sk) = encryption_key_generation(&mut self.rng);
+        let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(&mut self.rng);
         let mut randomness = vec![0; RND_SIZE];
         self.rng.fill_bytes(&mut randomness);
         let sig_payload = ReencryptionRequestPayload {
@@ -1418,7 +1418,7 @@ impl Client {
         agg_resp: &AggregatedReencryptionResponse,
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
-    ) -> anyhow::Result<Option<Plaintext>> {
+    ) -> anyhow::Result<Plaintext> {
         let client_keys = SigncryptionPair {
             sk: SigncryptionPrivKey {
                 signing_key: self.client_sk.clone(),
@@ -1454,7 +1454,7 @@ impl Client {
         agg_resp: &AggregatedReencryptionResponse,
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
-    ) -> anyhow::Result<Option<Plaintext>> {
+    ) -> anyhow::Result<Plaintext> {
         let client_keys = SigncryptionPair {
             sk: SigncryptionPrivKey {
                 signing_key: self.client_sk.clone(),
@@ -1666,7 +1666,7 @@ impl Client {
         request: ReencryptionRequest,
         agg_resp: &AggregatedReencryptionResponse,
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Option<Plaintext>> {
+    ) -> anyhow::Result<Plaintext> {
         let resp = some_or_err(
             agg_resp.responses.values().last(),
             "Response does not exist".to_owned(),
@@ -1683,18 +1683,13 @@ impl Client {
         }
 
         let cur_verf_key: PublicSigKey = deserialize(&resp.verification_key)?;
-        match decrypt_signcryption(
+
+        decrypt_signcryption(
             &resp.signcrypted_ciphertext,
             &link,
             client_keys,
             &cur_verf_key,
-        )? {
-            Some(decryption_share) => Ok(Some(decryption_share)),
-            None => {
-                tracing::warn!("Could decrypt or validate signcrypted response");
-                Ok(None)
-            }
-        }
+        )
     }
 
     /// Decrypt the reencryption response from the centralized KMS.
@@ -1704,22 +1699,16 @@ impl Client {
         &self,
         agg_resp: &AggregatedReencryptionResponse,
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Option<Plaintext>> {
+    ) -> anyhow::Result<Plaintext> {
         let resp = some_or_err(
             agg_resp.responses.values().last(),
             "Response does not exist".to_owned(),
         )?;
 
-        match crate::cryptography::signcryption::insecure_decrypt_ignoring_signature(
+        crate::cryptography::signcryption::insecure_decrypt_ignoring_signature(
             &resp.signcrypted_ciphertext,
             client_keys,
-        )? {
-            Some(decryption_share) => Ok(Some(decryption_share)),
-            None => {
-                tracing::warn!("Could decrypt or validate signcrypted response");
-                Ok(None)
-            }
-        }
+        )
     }
 
     /// Decrypt the reencryption responses from the threshold KMS and verify that the signatures are valid
@@ -1728,7 +1717,7 @@ impl Client {
         request: ReencryptionRequest,
         agg_resp: &AggregatedReencryptionResponse,
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Option<Plaintext>> {
+    ) -> anyhow::Result<Plaintext> {
         let (req_payload, validated_resps) = some_or_err(
             self.validate_agg_reenc_resp(request, agg_resp)?,
             "Could not validate request".to_owned(),
@@ -1751,11 +1740,7 @@ impl Client {
             }
         }
         let recon_blocks = reconstruct_message(Some(decrypted_blocks), &self.params)?;
-        Ok(Some(decrypted_blocks_to_plaintext(
-            &self.params,
-            req_payload.fhe_type(),
-            recon_blocks,
-        )?))
+        decrypted_blocks_to_plaintext(&self.params, req_payload.fhe_type(), recon_blocks)
     }
 
     /// Decrypt the reencryption response from the threshold KMS.
@@ -1765,7 +1750,7 @@ impl Client {
         &self,
         agg_resp: &AggregatedReencryptionResponse,
         client_keys: &SigncryptionPair,
-    ) -> anyhow::Result<Option<Plaintext>> {
+    ) -> anyhow::Result<Plaintext> {
         //Do not actually validate responses
         let validated_resps = &agg_resp.responses;
 
@@ -1776,26 +1761,25 @@ impl Client {
         for (cur_role_id, cur_resp) in validated_resps {
             let shares =
                 insecure_decrypt_ignoring_signature(&cur_resp.signcrypted_ciphertext, client_keys)?;
-            if let Some(shares) = shares {
-                let cipher_blocks_share: Vec<ResiduePoly<Z128>> = deserialize(&shares.bytes)?;
-                let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
-                for cur_block_share in cipher_blocks_share {
-                    cur_blocks.push(cur_block_share);
-                }
-                if opt_sharings.is_none() {
-                    opt_sharings = Some(Vec::new());
-                    for _i in 0..cur_blocks.len() {
-                        (opt_sharings.as_mut()).unwrap().push(ShamirSharings::new());
-                    }
-                }
-                let num_values = cur_blocks.len();
-                fill_indexed_shares(
-                    opt_sharings.as_mut().unwrap(),
-                    cur_blocks,
-                    num_values,
-                    Role::indexed_by_one(*cur_role_id as usize),
-                )?;
+
+            let cipher_blocks_share: Vec<ResiduePoly<Z128>> = deserialize(&shares.bytes)?;
+            let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
+            for cur_block_share in cipher_blocks_share {
+                cur_blocks.push(cur_block_share);
             }
+            if opt_sharings.is_none() {
+                opt_sharings = Some(Vec::new());
+                for _i in 0..cur_blocks.len() {
+                    (opt_sharings.as_mut()).unwrap().push(ShamirSharings::new());
+                }
+            }
+            let num_values = cur_blocks.len();
+            fill_indexed_shares(
+                opt_sharings.as_mut().unwrap(),
+                cur_blocks,
+                num_values,
+                Role::indexed_by_one(*cur_role_id as usize),
+            )?;
         }
         let sharings = opt_sharings.unwrap();
         let num_parties = validated_resps.len();
@@ -1843,11 +1827,7 @@ impl Client {
             panic!("Unexpected type: total_num_bits {total_num_bits}")
         };
 
-        Ok(Some(decrypted_blocks_to_plaintext(
-            &self.params,
-            fhe_type,
-            recon_blocks,
-        )?))
+        decrypted_blocks_to_plaintext(&self.params, fhe_type, recon_blocks)
     }
 
     /// Decrypts the reencryption responses and decodes the responses onto the Shamir shares
@@ -1875,8 +1855,8 @@ impl Client {
                 &cur_resp.digest,
                 client_keys,
                 &cur_verf_key,
-            )? {
-                Some(decryption_share) => {
+            ) {
+                Ok(decryption_share) => {
                     let cipher_blocks_share: Vec<ResiduePoly<Z128>> =
                         deserialize(&decryption_share.bytes)?;
                     let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
@@ -1890,8 +1870,8 @@ impl Client {
                         Role::indexed_by_one(*cur_role_id as usize),
                     )?;
                 }
-                None => {
-                    tracing::warn!("Could decrypt or validate signcrypted response");
+                _ => {
+                    tracing::warn!("Could not decrypt or validate signcrypted response from party {cur_role_id}.");
                     fill_indexed_shares(
                         &mut sharings,
                         Vec::new(),
@@ -3294,12 +3274,10 @@ pub(crate) mod tests {
                 internal_client
                     .process_reencryption_resp(Some(req.clone()), &responses, enc_pk, enc_sk)
                     .unwrap()
-                    .unwrap()
             } else {
                 internal_client.server_pks = HashMap::new();
                 internal_client
                     .insecure_process_reencryption_resp(&responses, enc_pk, enc_sk)
-                    .unwrap()
                     .unwrap()
             };
 
@@ -3728,12 +3706,10 @@ pub(crate) mod tests {
                 internal_client
                     .process_reencryption_resp(Some(req.clone()), &agg, enc_pk, enc_sk)
                     .unwrap()
-                    .unwrap()
             } else {
                 internal_client.server_pks = HashMap::new();
                 internal_client
                     .insecure_process_reencryption_resp(&agg, enc_pk, enc_sk)
-                    .unwrap()
                     .unwrap()
             };
             assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());

@@ -183,6 +183,8 @@ impl BaseKmsStruct {
 }
 
 impl BaseKms for BaseKmsStruct {
+    /// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
+    /// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
     fn verify_sig<T>(
         payload: &T,
         signature: &super::der_types::Signature,
@@ -191,10 +193,7 @@ impl BaseKms for BaseKmsStruct {
     where
         T: Serialize + AsRef<[u8]>,
     {
-        if !internal_verify_sig(&payload, signature, key) {
-            return false;
-        }
-        true
+        internal_verify_sig(&payload, signature, key)
     }
 
     fn sign<T>(&self, msg: &T) -> anyhow::Result<super::der_types::Signature>
@@ -215,6 +214,8 @@ impl BaseKms for BaseKmsStruct {
         Ok(hash_element(msg))
     }
 
+    /// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
+    /// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
     fn verify_sig_eip712<T: SolStruct>(
         payload: &T,
         domain: &Eip712Domain,
@@ -456,6 +457,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> BaseKms
     for SoftwareKms<PubS, PrivS>
 {
+    /// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
+    /// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
         signature: &super::der_types::Signature,
@@ -479,6 +482,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         BaseKmsStruct::digest(&msg)
     }
 
+    /// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
+    /// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
     fn verify_sig_eip712<T: SolStruct>(
         payload: &T,
         domain: &Eip712Domain,
@@ -880,7 +885,7 @@ mod tests {
     }
 
     async fn simulate_decrypt(sim_type: SimulationType, kms_key_path: &str, key_id: &RequestId) {
-        let msg = 111u8;
+        let msg = 523u64;
         let keys: CentralizedTestingKeys = read_element(kms_key_path).await.unwrap();
         let (ct, fhe_type) = compute_cipher(
             msg.into(),
@@ -919,10 +924,12 @@ mod tests {
             raw_plaintext.unwrap()
         };
         if sim_type == SimulationType::BadFheKey {
-            assert_ne!(plaintext.as_u8(), msg);
+            assert_ne!(plaintext.as_u64(), msg);
         } else {
-            assert_eq!(plaintext.as_u8(), msg);
+            assert_eq!(plaintext.as_u64(), msg);
         }
+
+        assert_eq!(plaintext.fhe_type(), FheType::Euint64);
     }
 
     #[tokio::test]
@@ -1023,7 +1030,7 @@ mod tests {
         kms_key_path: &str,
         key_handle: &RequestId,
     ) {
-        let msg = 112u8;
+        let msg = 42305u64;
         let mut rng = AesRng::seed_from_u64(1);
         let keys: CentralizedTestingKeys = read_element(kms_key_path).await.unwrap();
         let (ct, fhe_type) = compute_cipher(
@@ -1040,8 +1047,6 @@ mod tests {
             )
             .await
             .unwrap();
-            // TODO this should be updated since things might fail with probability 1/256
-            // if the key sampled randomly gives the message chosen (since it is only 8 bit)
             if sim_type == SimulationType::BadFheKey {
                 set_wrong_client_key(&inner, key_handle, keys.params).await;
             }
@@ -1102,18 +1107,17 @@ mod tests {
                 .contains("Could not decrypt message"));
             return;
         }
-        let decrypted = decrypted.unwrap();
         if sim_type == SimulationType::BadSigKey {
-            assert!(decrypted.is_none());
+            assert!(decrypted.is_err());
             return;
         }
         let plaintext = decrypted.unwrap();
         if sim_type == SimulationType::BadFheKey {
-            assert_ne!(plaintext.as_u8(), msg);
+            assert_ne!(plaintext.as_u64(), msg);
         } else {
-            assert_eq!(plaintext.as_u8(), msg);
+            assert_eq!(plaintext.as_u64(), msg);
         }
-        assert_eq!(plaintext.fhe_type(), FheType::Euint8);
+        assert_eq!(plaintext.fhe_type(), FheType::Euint64);
     }
 
     #[tokio::test]

@@ -234,6 +234,8 @@ where
     if degree + 2 * threshold >= num_parties {
         return Err(anyhow_error_and_warn_log(format!("Can NOT reconstruct with {} shares, degree {degree}, threshold {threshold} and num_parties {num_parties}", sharing.shares.len())));
     }
+
+    // Not enough shares to reconstruct (yet)
     Ok(None)
 }
 

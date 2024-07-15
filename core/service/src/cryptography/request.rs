@@ -4,7 +4,9 @@ use super::der_types::{
     PrivateSigKey, PublicSigKey, Signature, SigncryptionPair, SigncryptionPrivKey,
     SigncryptionPubKey,
 };
-use super::signcryption::{check_normalized, encryption_key_generation, hash_element, RND_SIZE};
+use super::signcryption::{
+    check_normalized, ephemeral_encryption_key_generation, hash_element, RND_SIZE,
+};
 use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -108,7 +110,7 @@ pub(crate) fn ephemeral_key_generation(
     let verification_key = PublicSigKey {
         pk: *SigningKey::verifying_key(&sig_key.sk),
     };
-    let (enc_pk, enc_sk) = encryption_key_generation(rng);
+    let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(rng);
     SigncryptionPair {
         sk: SigncryptionPrivKey {
             signing_key: Some(sig_key.clone()),

@@ -49,7 +49,6 @@ use crate::{
 #[cfg(any(test, feature = "testing"))]
 use aes_prng::AesRng;
 use async_trait::async_trait;
-use enum_dispatch::enum_dispatch;
 #[cfg(any(test, feature = "testing"))]
 use rand::SeedableRng;
 use rand::{CryptoRng, Rng};
@@ -66,13 +65,6 @@ use tracing::instrument;
 
 use super::keygen::PrivateKeySet;
 use super::reconstruct::{combine_decryptions, reconstruct_message};
-
-#[enum_dispatch]
-#[allow(clippy::large_enum_variant)]
-enum ProtocolType {
-    Small(Small),
-    Large(Large),
-}
 
 pub struct Small {
     session: RefCell<SmallSession<ResiduePoly128>>,
@@ -99,8 +91,7 @@ impl Large {
 }
 
 #[async_trait]
-#[enum_dispatch(ProtocolType)]
-pub trait ProtocolDecryption {
+pub trait NoiseFloodPreparation {
     async fn init_prep_noiseflooding(
         &mut self,
         num_ctxt: usize,
@@ -108,7 +99,10 @@ pub trait ProtocolDecryption {
 }
 
 #[async_trait]
-impl ProtocolDecryption for Small {
+impl NoiseFloodPreparation for Small {
+    /// Load precomputed init data for noise flooding.
+    ///
+    /// Note: this is actually a synchronous function. It just needs to be async to implement the trait (which is async in the Large case)
     async fn init_prep_noiseflooding(
         &mut self,
         num_ctxt: usize,
@@ -123,7 +117,8 @@ impl ProtocolDecryption for Small {
 }
 
 #[async_trait]
-impl ProtocolDecryption for Large {
+impl NoiseFloodPreparation for Large {
+    /// Compute precomputed init data for noise flooding.
     async fn init_prep_noiseflooding(
         &mut self,
         num_ctxt: usize,
@@ -153,7 +148,9 @@ impl ProtocolDecryption for Large {
     }
 }
 
-/// Decrypts a ciphertext using the noise flooding `ProtocolType`
+/// Decrypts a ciphertext noise flooding.
+///
+/// Returns the plaintext plus some timing information.
 ///
 /// This is the entry point of the decryption protocol.
 ///
@@ -192,7 +189,7 @@ pub async fn decrypt_using_noiseflooding<S, P, R, T>(
 where
     R: Rng + CryptoRng + Send,
     S: BaseSessionHandles<R>,
-    P: ProtocolDecryption,
+    P: NoiseFloodPreparation,
     T: tfhe::integer::block_decomposition::Recomposable
         + tfhe::core_crypto::commons::traits::CastFrom<u128>,
 {
@@ -215,8 +212,10 @@ where
     Ok((results, elapsed_time))
 }
 
-/// Partially decrypt a ciphertext using the noise flooding `ProtocolType`.
+/// Partially decrypt a ciphertext using noise flooding.
 /// Partially here means that each party outputs a share of the decrypted result.
+///
+/// Returns this party's share of the plaintext plus some timing information.
 ///
 /// This is the entry point of the reencryption protocol.
 ///
@@ -254,7 +253,7 @@ pub async fn partial_decrypt_using_noiseflooding<S, P, R>(
 where
     R: Rng + CryptoRng + Send,
     S: BaseSessionHandles<R>,
-    P: ProtocolDecryption,
+    P: NoiseFloodPreparation,
 {
     let execution_start_timer = Instant::now();
     let ct_large = ck.to_large_ciphertext(&ct)?;

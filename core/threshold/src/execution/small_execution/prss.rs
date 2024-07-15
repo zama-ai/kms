@@ -664,8 +664,7 @@ async fn agree_random_robust<
     session: &mut L,
     shares: Vec<Z>,
 ) -> anyhow::Result<Vec<PrfKey>> {
-    let converted_shares = shares.iter().map(|s| s.to_owned()).collect_vec();
-    let r_vec = robust_opens_to_all(session, &converted_shares, session.threshold() as usize)
+    let r_vec = robust_opens_to_all(session, shares.as_slice(), session.threshold() as usize)
         .await?
         .with_context(|| log_error_wrapper("No valid result from open"))?;
     let s_vec = r_vec

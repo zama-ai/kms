@@ -78,20 +78,18 @@ pub struct Cli {
 /// Validates if a user-specified CA name is valid.
 /// By valid we mean if it is alphanumeric plus '-' and '.'.
 /// This should be changed to check CA names, that we actually want to allow.
-fn validate_ca_name(input: &str) -> bool {
+fn validate_ca_name(input: &str) -> anyhow::Result<()> {
     for cur_char in input.chars() {
         if !cur_char.is_ascii_alphanumeric() && cur_char != '-' && cur_char != '.' {
-            return false;
+            return Err(anyhow!("Error: invalid CA name: {}", input));
         }
     }
-    true
+    Ok(())
 }
 
 /// create the keypair and self-signed certificate for the CA identified by the given name
 fn create_ca_cert(ca_name: &str, is_ca: &IsCa) -> anyhow::Result<(KeyPair, Certificate)> {
-    if !validate_ca_name(ca_name) {
-        return Err(anyhow!("Error: invalid CA name: {}", ca_name));
-    }
+    validate_ca_name(ca_name)?;
     let keypair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)?;
     let mut cp = CertificateParams::new(vec![
         ca_name.to_string(),
@@ -371,11 +369,11 @@ mod tests {
     #[test]
     fn test_ca_name_validation() {
         assert!(
-            validate_ca_name("party"),
+            validate_ca_name("party").is_ok(),
             "this should have been a valid CA name."
         );
         assert!(
-            !validate_ca_name("party/is#bad!"),
+            validate_ca_name("party/is#bad!").is_err(),
             "this should have been an invalid CA name."
         );
     }

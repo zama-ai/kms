@@ -207,10 +207,13 @@ fn verify_and_xor_keys(
                 })?;
 
                 // check that randomnes was properly committed to in the first round
-                if !verify(&ko.0 .0, &com, &ko.1) {
-                    return Err(anyhow_error_and_log(format!(
-                        "Commitment verification has failed for party {p}!"
-                    )));
+                match verify(&ko.0 .0, &com, &ko.1) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        return Err(anyhow_error_and_log(format!(
+                            "Commitment verification has failed for party {p}!"
+                        )));
+                    }
                 }
 
                 // XOR verified external value
