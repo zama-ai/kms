@@ -1,6 +1,7 @@
 use super::generic::{
     CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
 };
+use crate::conf::threshold::{PeerConf, ThresholdConfig};
 use crate::cryptography::der_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
 use crate::cryptography::signcryption::signcrypt;
 use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -14,6 +15,7 @@ use crate::rpc::central_rpc::{
     convert_key_response, retrieve_parameters_sync, tonic_handle_potential_err, tonic_some_or_err,
     validate_decrypt_req, validate_reencrypt_req, validate_request_id,
 };
+use crate::rpc::rpc_types::CrsMetaData;
 use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::{
     BaseKms, Plaintext, PubDataType, SigncryptionPayload, CURRENT_FORMAT_VERSION,
@@ -23,10 +25,6 @@ use crate::storage::{
 };
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, some_or_err};
-use crate::{
-    conf::threshold::{PeerConf, ThresholdConfigNoStorage},
-    rpc::rpc_types::CrsMetaData,
-};
 use crate::{
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID, SEC_PAR},
     cryptography::der_types::PrivateSigKeyVersioned,
@@ -108,7 +106,7 @@ pub async fn threshold_server_init<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 >(
-    config: ThresholdConfigNoStorage,
+    config: ThresholdConfig,
     public_storage: PubS,
     private_storage: PrivS,
     run_prss: bool,

@@ -1,18 +1,21 @@
 use clap::{Parser, Subcommand};
 use kms_lib::conf::init_trace;
-use kms_lib::consts::AMOUNT_PARTIES;
 use kms_lib::rpc::rpc_types::{PrivDataType, PubDataType};
-use kms_lib::storage::StorageReader;
 use kms_lib::util::key_setup::test_tools::ensure_threshold_keys_exist;
 use kms_lib::{
     consts::{
-        DEFAULT_CENTRAL_KEY_ID, DEFAULT_CRS_ID, DEFAULT_THRESHOLD_KEY_ID, OTHER_CENTRAL_DEFAULT_ID,
+        AMOUNT_PARTIES, DEFAULT_CENTRAL_KEY_ID, DEFAULT_CRS_ID, DEFAULT_THRESHOLD_KEY_ID,
+        OTHER_CENTRAL_DEFAULT_ID,
     },
-    storage::{FileStorage, StorageType},
-    util::key_setup::{
-        ensure_central_crs_store_exists, ensure_central_keys_exist,
-        ensure_central_server_signing_keys_exist,
+    storage::{FileStorage, Storage, StorageReader, StorageType},
+    util::{
+        aws::S3Storage,
+        key_setup::{
+            ensure_central_crs_store_exists, ensure_central_keys_exist,
+            ensure_central_server_signing_keys_exist,
+        },
     },
+    StorageProxy,
 };
 use std::path::Path;
 use strum::IntoEnumIterator;
@@ -42,14 +45,15 @@ enum Mode {
         /// Path to the parameters file.
         #[clap(long, default_value = "parameters/default_params.json")]
         param_path: String,
-        /// Optional parameter for the private storage path,
-        /// only use this argument when using file-based storage.
+        /// AWS region to use for S3 storage
+        #[clap(long, default_value = "eu-west-3")]
+        aws_region: String,
+        /// Optional parameter for the private storage URL
         #[clap(long, default_value = None)]
-        priv_path: Option<String>,
-        /// Optional parameter for the public storage path,
-        /// only use this argument when using file-based storage.
+        priv_url: Option<String>,
+        /// Optional parameter for the public storage URL
         #[clap(long, default_value = None)]
-        pub_path: Option<String>,
+        pub_url: Option<String>,
         /// Whether to generate keys deterministically,
         /// only use this option for testing.
         /// The determinism is not guaranteed to be the same between releases.
@@ -73,14 +77,15 @@ enum Mode {
         /// Path to the parameters file
         #[clap(long, default_value = "parameters/default_params.json")]
         param_path: String,
-        /// Optional parameter for the private storage path,
-        /// only use this argument when using file-based storage.
+        /// AWS region to use for S3 storage
+        #[clap(long, default_value = "eu-west-3")]
+        aws_region: String,
+        /// Optional parameter for the private storage URL
         #[clap(long, default_value = None)]
-        priv_path: Option<String>,
-        /// Optional parameter for the public storage path,
-        /// only use this argument when using file-based storage.
+        priv_url: Option<String>,
+        /// Optional parameter for the public storage URL
         #[clap(long, default_value = None)]
-        pub_path: Option<String>,
+        pub_url: Option<String>,
         /// Whether to generate keys deterministically,
         /// only use this option for testing.
         /// The determinism is not guaranteed to be the same between releases.
@@ -119,30 +124,140 @@ async fn main() {
     match args.mode {
         Mode::Centralized {
             param_path,
-            priv_path,
-            pub_path,
+            aws_region,
+            priv_url,
+            pub_url,
             deterministic,
             overwrite,
             write_privkey,
             show_existing,
         } => {
-            let pub_path = pub_path.as_ref().map(Path::new);
-            let priv_path = priv_path.as_ref().map(Path::new);
+            let pub_url = pub_url
+                .as_deref()
+                .map(url::Url::parse)
+                .transpose()
+                .expect("Could not parse public storage URL");
+            let priv_url = priv_url
+                .as_deref()
+                .map(url::Url::parse)
+                .transpose()
+                .expect("Could not parse private storage URL");
+            let mut pub_storage: StorageProxy = match pub_url {
+                Some(url) => match url.scheme() {
+                    "s3" => {
+                        let blob_key_prefix = S3Storage::centralized_prefix(
+                            Some(url.path().to_string()),
+                            StorageType::PUB,
+                        );
+                        let mut storage = StorageProxy::S3(
+                            S3Storage::new(
+                                aws_region.clone(),
+                                "".to_string(),
+                                url.host_str().unwrap().to_string(),
+                                blob_key_prefix.clone(),
+                            )
+                            .await,
+                        );
+                        if overwrite {
+                            let urls = storage.all_urls(blob_key_prefix.as_str()).await.unwrap();
+                            for url in urls.values() {
+                                storage.delete_data(url).await.unwrap();
+                            }
+                        }
+                        storage
+                    }
+                    _ => {
+                        if overwrite {
+                            FileStorage::purge_centralized(
+                                Some(Path::new(url.path())),
+                                StorageType::PUB,
+                            )
+                            .unwrap();
+                        }
+                        StorageProxy::File(
+                            FileStorage::new_centralized(
+                                Some(Path::new(url.path())),
+                                StorageType::PUB,
+                            )
+                            .unwrap(),
+                        )
+                    }
+                },
+                None => {
+                    if overwrite {
+                        FileStorage::purge_centralized(None, StorageType::PUB).unwrap();
+                    }
+                    StorageProxy::File(
+                        FileStorage::new_centralized(None, StorageType::PUB).unwrap(),
+                    )
+                }
+            };
+            let mut priv_storage = match priv_url {
+                Some(url) => match url.scheme() {
+                    "s3" => {
+                        let blob_key_prefix = S3Storage::centralized_prefix(
+                            Some(url.path().to_string()),
+                            StorageType::PRIV,
+                        );
+                        let mut storage = StorageProxy::S3(
+                            S3Storage::new(
+                                aws_region.clone(),
+                                "".to_string(),
+                                url.host_str().unwrap().to_string(),
+                                blob_key_prefix.clone(),
+                            )
+                            .await,
+                        );
+                        if overwrite {
+                            let urls = storage.all_urls(blob_key_prefix.as_str()).await.unwrap();
+                            for url in urls.values() {
+                                storage.delete_data(url).await.unwrap();
+                            }
+                        }
+                        storage
+                    }
+                    _ => {
+                        if overwrite {
+                            FileStorage::purge_centralized(
+                                Some(Path::new(url.path())),
+                                StorageType::PRIV,
+                            )
+                            .unwrap();
+                        }
+                        StorageProxy::File(
+                            FileStorage::new_centralized(
+                                Some(Path::new(url.path())),
+                                StorageType::PRIV,
+                            )
+                            .unwrap(),
+                        )
+                    }
+                },
+                None => {
+                    if overwrite {
+                        FileStorage::purge_centralized(None, StorageType::PRIV).unwrap();
+                    }
+                    StorageProxy::File(
+                        FileStorage::new_centralized(None, StorageType::PRIV).unwrap(),
+                    )
+                }
+            };
             if show_existing {
-                show_keys_centralized(pub_path, priv_path).await;
+                show_keys(&pub_storage, &priv_storage).await;
                 return;
             }
-            if overwrite {
-                // Remove any existing keys
-                let _ = FileStorage::purge_centralized(pub_path, StorageType::PUB);
-                let _ = FileStorage::purge_centralized(priv_path, StorageType::PRIV);
-            }
-            if !ensure_central_server_signing_keys_exist(priv_path, pub_path, deterministic).await {
+            if !ensure_central_server_signing_keys_exist(
+                &mut pub_storage,
+                &mut priv_storage,
+                deterministic,
+            )
+            .await
+            {
                 tracing::warn!("Signing keys already exist, skipping generation");
             }
             if !ensure_central_keys_exist(
-                priv_path,
-                pub_path,
+                &mut pub_storage,
+                &mut priv_storage,
                 &param_path,
                 &DEFAULT_CENTRAL_KEY_ID,
                 &OTHER_CENTRAL_DEFAULT_ID,
@@ -157,8 +272,8 @@ async fn main() {
                 );
             }
             if !ensure_central_crs_store_exists(
-                priv_path,
-                pub_path,
+                &mut pub_storage,
+                &mut priv_storage,
                 &param_path,
                 &DEFAULT_CRS_ID,
                 deterministic,
@@ -178,27 +293,146 @@ async fn main() {
         }
         Mode::Threshold {
             param_path,
-            priv_path,
-            pub_path,
+            aws_region,
+            priv_url,
+            pub_url,
             deterministic,
             overwrite,
             show_existing,
         } => {
-            let pub_path = pub_path.as_ref().map(Path::new);
-            let priv_path = priv_path.as_ref().map(Path::new);
-            if show_existing {
-                unimplemented!();
-            }
-            if overwrite {
-                // Remove any existing keys
-                for i in 1..=AMOUNT_PARTIES {
-                    let _ = FileStorage::purge_threshold(pub_path, StorageType::PUB, i);
-                    let _ = FileStorage::purge_threshold(priv_path, StorageType::PRIV, i);
+            let pub_url = pub_url
+                .as_deref()
+                .map(url::Url::parse)
+                .transpose()
+                .expect("Could not parse public storage URL");
+            let priv_url = priv_url
+                .as_deref()
+                .map(url::Url::parse)
+                .transpose()
+                .expect("Could not parse private storage URL");
+            let mut pub_storages = Vec::with_capacity(AMOUNT_PARTIES);
+            for i in 1..=AMOUNT_PARTIES {
+                match pub_url {
+                    Some(ref url) => match url.scheme() {
+                        "s3" => {
+                            let blob_key_prefix = S3Storage::threshold_prefix(
+                                Some(url.path().to_string()),
+                                StorageType::PUB,
+                                i,
+                            );
+                            let mut storage = StorageProxy::S3(
+                                S3Storage::new(
+                                    aws_region.clone(),
+                                    "".to_string(),
+                                    url.host_str().unwrap().to_string(),
+                                    blob_key_prefix.clone(),
+                                )
+                                .await,
+                            );
+                            if overwrite {
+                                let urls =
+                                    storage.all_urls(blob_key_prefix.as_str()).await.unwrap();
+                                for url in urls.values() {
+                                    storage.delete_data(url).await.unwrap();
+                                }
+                            }
+                            pub_storages.push(storage);
+                        }
+                        _ => {
+                            if overwrite {
+                                FileStorage::purge_threshold(
+                                    Some(Path::new(url.path())),
+                                    StorageType::PUB,
+                                    i,
+                                )
+                                .unwrap();
+                            }
+                            pub_storages.push(StorageProxy::File(
+                                FileStorage::new_threshold(
+                                    Some(Path::new(url.path())),
+                                    StorageType::PUB,
+                                    i,
+                                )
+                                .unwrap(),
+                            ));
+                        }
+                    },
+                    None => {
+                        if overwrite {
+                            FileStorage::purge_threshold(None, StorageType::PUB, i).unwrap();
+                        }
+                        pub_storages.push(StorageProxy::File(
+                            FileStorage::new_threshold(None, StorageType::PUB, i).unwrap(),
+                        ));
+                    }
                 }
             }
+            let mut priv_storages = Vec::with_capacity(AMOUNT_PARTIES);
+            for i in 1..=AMOUNT_PARTIES {
+                match priv_url {
+                    Some(ref url) => match url.scheme() {
+                        "s3" => {
+                            let blob_key_prefix = S3Storage::threshold_prefix(
+                                Some(url.path().to_string()),
+                                StorageType::PRIV,
+                                i,
+                            );
+                            let mut storage = StorageProxy::S3(
+                                S3Storage::new(
+                                    aws_region.clone(),
+                                    "".to_string(),
+                                    url.host_str().unwrap().to_string(),
+                                    blob_key_prefix.clone(),
+                                )
+                                .await,
+                            );
+                            if overwrite {
+                                let urls =
+                                    storage.all_urls(blob_key_prefix.as_str()).await.unwrap();
+                                for url in urls.values() {
+                                    storage.delete_data(url).await.unwrap();
+                                }
+                            }
+                            priv_storages.push(storage);
+                        }
+                        _ => {
+                            if overwrite {
+                                FileStorage::purge_threshold(
+                                    Some(Path::new(url.path())),
+                                    StorageType::PRIV,
+                                    i,
+                                )
+                                .unwrap();
+                            }
+                            priv_storages.push(StorageProxy::File(
+                                FileStorage::new_threshold(
+                                    Some(Path::new(url.path())),
+                                    StorageType::PRIV,
+                                    i,
+                                )
+                                .unwrap(),
+                            ));
+                        }
+                    },
+                    None => {
+                        if overwrite {
+                            FileStorage::purge_threshold(None, StorageType::PRIV, i).unwrap();
+                        }
+                        priv_storages.push(StorageProxy::File(
+                            FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap(),
+                        ));
+                    }
+                }
+            }
+            if show_existing {
+                for i in 1..=AMOUNT_PARTIES {
+                    show_keys(&pub_storages[i - 1], &priv_storages[i - 1]).await;
+                }
+                return;
+            }
             ensure_threshold_keys_exist(
-                priv_path,
-                pub_path,
+                &mut pub_storages,
+                &mut priv_storages,
                 &param_path,
                 &DEFAULT_THRESHOLD_KEY_ID,
                 deterministic,
@@ -212,8 +446,10 @@ async fn main() {
     }
 }
 
-async fn show_keys_centralized(priv_path: Option<&Path>, pub_path: Option<&Path>) {
-    let pub_storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
+async fn show_keys<S>(pub_storage: &S, priv_storage: &S)
+where
+    S: Storage,
+{
     for data_type in PubDataType::iter() {
         let data_type = data_type.to_string();
         let urlmap = pub_storage.all_urls(&data_type).await.unwrap();
@@ -224,7 +460,6 @@ async fn show_keys_centralized(priv_path: Option<&Path>, pub_path: Option<&Path>
         }
     }
 
-    let priv_storage = FileStorage::new_centralized(priv_path, StorageType::PRIV).unwrap();
     for data_type in PrivDataType::iter() {
         let data_type = data_type.to_string();
         let urlmap = priv_storage.all_urls(&data_type).await.unwrap();

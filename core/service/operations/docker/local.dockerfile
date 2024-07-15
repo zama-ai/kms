@@ -51,4 +51,5 @@ ENV PATH="$PATH:/app/kms/bin"
 COPY --from=base /app/kms/bin/ /app/kms/bin/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/bin/
 
-CMD ["kms-server", "dev"]
+CMD ["kms-server", "centralized"]
+

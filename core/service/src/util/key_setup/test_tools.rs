@@ -232,13 +232,15 @@ pub async fn ensure_dir_exist() {
 }
 
 /// NOTE: this is insecure!
-pub async fn ensure_threshold_keys_exist(
-    priv_path: Option<&Path>,
-    pub_path: Option<&Path>,
+pub async fn ensure_threshold_keys_exist<S>(
+    pub_storages: &mut [S],
+    priv_storages: &mut [S],
     param_path: &str,
     key_id: &RequestId,
     deterministic: bool,
-) {
+) where
+    S: Storage,
+{
     // TODO generalize setup for multiple keys
     let mut rng = if deterministic {
         AesRng::seed_from_u64(AMOUNT_PARTIES as u64)
@@ -246,16 +248,15 @@ pub async fn ensure_threshold_keys_exist(
         AesRng::from_entropy()
     };
     let signing_keys = super::ensure_threshold_server_signing_keys_exist(
-        priv_path,
-        pub_path,
+        pub_storages,
+        priv_storages,
         deterministic,
         AMOUNT_PARTIES,
     )
     .await;
-    let pub_storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
-    if pub_storage
+    if pub_storages[0]
         .data_exists(
-            &pub_storage
+            &pub_storages[0]
                 .compute_url(&key_id.to_string(), &PubDataType::PublicKey.to_string())
                 .unwrap(),
         )
@@ -298,9 +299,8 @@ pub async fn ensure_threshold_keys_exist(
             sns_key: sns_key.clone(),
             pk_meta_data: info,
         };
-        let mut pub_storage = FileStorage::new_threshold(pub_path, StorageType::PUB, i).unwrap();
         store_at_request_id(
-            &mut pub_storage,
+            &mut pub_storages[i - 1],
             key_id,
             &key_set.public_keys.public_key,
             &PubDataType::PublicKey.to_string(),
@@ -308,16 +308,15 @@ pub async fn ensure_threshold_keys_exist(
         .await
         .unwrap();
         store_at_request_id(
-            &mut pub_storage,
+            &mut pub_storages[i - 1],
             key_id,
             &key_set.public_keys.server_key,
             &PubDataType::ServerKey.to_string(),
         )
         .await
         .unwrap();
-        let mut priv_storage = FileStorage::new_threshold(priv_path, StorageType::PRIV, i).unwrap();
         store_at_request_id(
-            &mut priv_storage,
+            &mut priv_storages[i - 1],
             key_id,
             &threshold_fhe_keys.versionize(),
             &PrivDataType::FheKeyInfo.to_string(),
@@ -330,10 +329,11 @@ pub async fn ensure_threshold_keys_exist(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::consts::TEST_CENTRAL_KEY_ID;
     use crate::consts::{
-        OTHER_CENTRAL_TEST_ID, TEST_CRS_ID, TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID,
+        AMOUNT_PARTIES, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_CRS_ID, TEST_PARAM_PATH,
+        TEST_THRESHOLD_KEY_ID,
     };
+    use crate::storage::{FileStorage, StorageType};
     use crate::util::key_setup::{
         ensure_central_crs_store_exists, ensure_central_keys_exist, ensure_client_keys_exist,
     };
@@ -343,9 +343,23 @@ mod tests {
     async fn ensure_testing_material_exists() {
         ensure_dir_exist().await;
         ensure_client_keys_exist(None, true).await;
+        let mut central_pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
+        let mut central_priv_storage =
+            FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
+        let mut threshold_pub_storages = Vec::with_capacity(AMOUNT_PARTIES);
+        for i in 1..=AMOUNT_PARTIES {
+            threshold_pub_storages
+                .push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
+        }
+        let mut threshold_priv_storages = Vec::with_capacity(AMOUNT_PARTIES);
+        for i in 1..=AMOUNT_PARTIES {
+            threshold_priv_storages
+                .push(FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap());
+        }
+
         ensure_central_keys_exist(
-            None,
-            None,
+            &mut central_pub_storage,
+            &mut central_priv_storage,
             TEST_PARAM_PATH,
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,
@@ -353,9 +367,22 @@ mod tests {
             false,
         )
         .await;
-        ensure_central_crs_store_exists(None, None, TEST_PARAM_PATH, &TEST_CRS_ID, true).await;
-        ensure_threshold_keys_exist(None, None, TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID, true)
-            .await;
+        ensure_central_crs_store_exists(
+            &mut central_pub_storage,
+            &mut central_priv_storage,
+            TEST_PARAM_PATH,
+            &TEST_CRS_ID,
+            true,
+        )
+        .await;
+        ensure_threshold_keys_exist(
+            &mut threshold_pub_storages,
+            &mut threshold_priv_storages,
+            TEST_PARAM_PATH,
+            &TEST_THRESHOLD_KEY_ID,
+            true,
+        )
+        .await;
     }
 
     #[cfg(feature = "slow_tests")]
@@ -367,11 +394,25 @@ mod tests {
             OTHER_CENTRAL_DEFAULT_ID,
         };
 
+        let mut central_pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
+        let mut central_priv_storage =
+            FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
+        let mut threshold_pub_storages = Vec::with_capacity(AMOUNT_PARTIES);
+        for i in 1..=AMOUNT_PARTIES {
+            threshold_pub_storages
+                .push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
+        }
+        let mut threshold_priv_storages = Vec::with_capacity(AMOUNT_PARTIES);
+        for i in 1..=AMOUNT_PARTIES {
+            threshold_priv_storages
+                .push(FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap());
+        }
+
         ensure_dir_exist().await;
         ensure_client_keys_exist(None, true).await;
         ensure_central_keys_exist(
-            None,
-            None,
+            &mut central_pub_storage,
+            &mut central_priv_storage,
             DEFAULT_PARAM_PATH,
             &DEFAULT_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_DEFAULT_ID,
@@ -379,11 +420,17 @@ mod tests {
             false,
         )
         .await;
-        ensure_central_crs_store_exists(None, None, DEFAULT_PARAM_PATH, &DEFAULT_CRS_ID, true)
-            .await;
+        ensure_central_crs_store_exists(
+            &mut central_pub_storage,
+            &mut central_priv_storage,
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_CRS_ID,
+            true,
+        )
+        .await;
         ensure_threshold_keys_exist(
-            None,
-            None,
+            &mut threshold_pub_storages,
+            &mut threshold_priv_storages,
             DEFAULT_PARAM_PATH,
             &DEFAULT_THRESHOLD_KEY_ID,
             true,

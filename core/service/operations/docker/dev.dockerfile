@@ -62,4 +62,4 @@ COPY ./core/service/config/default_centralized.toml /app/kms/core/service/config
 
 RUN /app/kms/core/service/bin/kms-gen-keys centralized --param-path /app/kms/core/service/parameters/default_params.json --overwrite --write-privkey
 
-CMD ["kms-server", "dev", "centralized"]
+CMD ["kms-server", "centralized"]

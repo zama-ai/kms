@@ -1,7 +1,7 @@
 use super::rpc_types::{
     BaseKms, DecryptionRequestSerializable, PrivDataType, CURRENT_FORMAT_VERSION,
 };
-use crate::conf::centralized::CentralizedConfigNoStorage;
+use crate::conf::centralized::CentralizedConfig;
 #[cfg(any(test, feature = "testing"))]
 use crate::consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH};
 use crate::cryptography::central_kms::handle_potential_err;
@@ -42,7 +42,7 @@ pub async fn server_handle<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 >(
-    config: CentralizedConfigNoStorage,
+    config: CentralizedConfig,
     public_storage: PubS,
     private_storage: PrivS,
 ) -> anyhow::Result<()> {

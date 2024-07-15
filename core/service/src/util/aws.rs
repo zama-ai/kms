@@ -3,7 +3,7 @@ use crate::cryptography::nitro_enclave::{
     decrypt_ciphertext_for_recipient, decrypt_on_data_key, encrypt_on_data_key,
     gen_nitro_enclave_keys, nitro_enclave_get_random, NitroEnclaveKeys, APP_BLOB_NONCE_SIZE,
 };
-use crate::storage::{Storage, StorageReader};
+use crate::storage::{Storage, StorageReader, StorageType};
 use anyhow::ensure;
 use aws_config::Region;
 use aws_sdk_kms::primitives::Blob;
@@ -23,14 +23,42 @@ const PREALLOCATED_BLOB_SIZE: usize = 32768;
 pub struct S3Storage {
     pub s3_client: S3Client,
     pub blob_bucket: String,
+    pub blob_key_prefix: String,
 }
 
 impl S3Storage {
-    pub async fn new(aws_region: String, aws_s3_proxy: String, blob_bucket: String) -> Self {
+    pub fn centralized_prefix(
+        optional_prefix: Option<String>,
+        storage_type: StorageType,
+    ) -> String {
+        match optional_prefix {
+            Some(prefix) => format!("{prefix}/{storage_type}"),
+            None => format!("{storage_type}"),
+        }
+    }
+
+    pub fn threshold_prefix(
+        optional_prefix: Option<String>,
+        storage_type: StorageType,
+        party_id: usize,
+    ) -> String {
+        match optional_prefix {
+            Some(prefix) => format!("{prefix}/{storage_type}-p{party_id}"),
+            None => format!("{storage_type}-p{party_id}"),
+        }
+    }
+
+    pub async fn new(
+        aws_region: String,
+        aws_s3_proxy: String,
+        blob_bucket: String,
+        blob_key_prefix: String,
+    ) -> Self {
         let s3_client = build_s3_client(aws_region, aws_s3_proxy).await;
         S3Storage {
             s3_client,
             blob_bucket,
+            blob_key_prefix,
         }
     }
 }
@@ -82,7 +110,11 @@ impl StorageReader for S3Storage {
             ));
         }
         Ok(Url::parse(
-            format!("s3://{}/{}/{}.key", self.blob_bucket, data_type, data_id).as_str(),
+            format!(
+                "s3://{}/{}/{}/{}",
+                self.blob_bucket, self.blob_key_prefix, data_type, data_id
+            )
+            .as_str(),
         )?)
     }
 
@@ -172,9 +204,16 @@ impl EnclaveS3Storage {
         aws_s3_proxy: String,
         aws_kms_proxy: String,
         blob_bucket: String,
+        blob_key_prefix: String,
         root_key_id: String,
     ) -> anyhow::Result<Self> {
-        let s3_storage = S3Storage::new(aws_region.clone(), aws_s3_proxy, blob_bucket).await;
+        let s3_storage = S3Storage::new(
+            aws_region.clone(),
+            aws_s3_proxy,
+            blob_bucket,
+            blob_key_prefix,
+        )
+        .await;
         let aws_kms_client = build_aws_kms_client(aws_region, aws_kms_proxy).await;
         let enclave_keys = gen_nitro_enclave_keys()?;
         Ok(EnclaveS3Storage {
@@ -445,11 +484,15 @@ async fn aws_storage_url() {
         "aws_region".to_string(),
         "aws_kms_proxy".to_string(),
         "blob_bucket".to_string(),
+        "blob_key_prefix".to_string(),
     )
     .await;
 
     let url = storage.compute_url("id", "type").unwrap();
-    assert_eq!(url, Url::parse("s3://blob_bucket/type/id.key").unwrap());
+    assert_eq!(
+        url,
+        Url::parse("s3://blob_bucket/blob_key_prefix/type/id").unwrap()
+    );
 
     assert!(storage.compute_url("as/df", "type").is_err());
     assert!(storage.compute_url("id", "as/df").is_err());

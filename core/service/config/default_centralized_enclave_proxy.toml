@@ -1,0 +1,8 @@
+url = "http://127.0.0.1:50051"
+enclave_vsock = "vsock://16:5000"
+
+# The keys must match the keys of the ParamChoice type, in kms.proto.
+# More specifically, names must all be lower-case; e.g. "test" or "default"
+[param_file_map]
+test =  "parameters/small_test_params.json"
+default = "parameters/default_params.json"

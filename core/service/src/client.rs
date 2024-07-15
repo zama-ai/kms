@@ -2029,8 +2029,8 @@ pub fn recover_ecdsa_public_key_from_signature(
 #[cfg(feature = "non-wasm")]
 pub mod test_tools {
     use super::*;
-    use crate::conf::centralized::CentralizedConfigNoStorage;
-    use crate::conf::threshold::{PeerConf, ThresholdConfigNoStorage};
+    use crate::conf::centralized::CentralizedConfig;
+    use crate::conf::threshold::{PeerConf, ThresholdConfig};
     use crate::consts::{BASE_PORT, DEC_CAPACITY, DEFAULT_PROT, DEFAULT_URL, MIN_DEC_CACHE};
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
     use crate::rpc::central_rpc::{default_param_file_map, server_handle};
@@ -2070,7 +2070,7 @@ pub mod test_tools {
             let cur_priv_storage = priv_storage[i - 1].to_owned();
             let peer_configs = default_peer_configs(amount);
             handles.push(tokio::spawn(async move {
-                let config = ThresholdConfigNoStorage {
+                let config = ThresholdConfig {
                     listen_address_client: DEFAULT_URL.to_owned(),
                     listen_port_client: BASE_PORT + i as u16 * 100,
                     listen_address_core: peer_configs[i - 1].address.clone(),
@@ -2168,7 +2168,7 @@ pub mod test_tools {
     ) -> JoinHandle<()> {
         let server_handle = tokio::spawn(async move {
             let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
-            let config = CentralizedConfigNoStorage {
+            let config = CentralizedConfig {
                 url,
                 param_file_map: default_param_file_map(),
                 grpc_max_message_size: 10 * 1024 * 1024, // 10 MiB to allow for 2048 bit encryptions

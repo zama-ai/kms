@@ -1,12 +1,15 @@
 use clap::{Parser, Subcommand};
 use kms_lib::conf::centralized::CentralizedConfig;
 use kms_lib::conf::init_conf_trace;
+use kms_lib::conf::storage::StorageConfigWith;
 use kms_lib::conf::threshold::ThresholdConfig;
 use kms_lib::rpc::central_rpc::server_handle as kms_server_handle;
 use kms_lib::rpc::central_rpc_proxy::server_handle as kms_proxy_server_handle;
 use kms_lib::storage::{FileStorage, StorageType};
 use kms_lib::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
 use kms_lib::util::aws::{EnclaveS3Storage, S3Storage};
+use kms_lib::StorageProxy;
+use std::path::Path;
 
 pub const SIG_SK_BLOB_KEY: &str = "private_sig_key";
 pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
@@ -14,20 +17,18 @@ pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
 #[derive(Parser)]
 #[clap(name = "KMS server")]
 #[clap(
-    about = "We support three different storage modes, `dev`, `proxy` or `enclave`. \
-    For each storage mode, we support two types of execution modes, `centralized` or `threshold`. \
-    Not every combination is supported. \
-    Namely, the `threshold` mode only works when the storage mode is `dev`. \
+    about = "We support two types of execution modes, `centralized` or `threshold`. \
     See the help page for additional details (`kms-server --help`). \n
-    For example, use the following to run a threshold KMS node with the default configuration \
+    Use the following to run a threshold KMS node with the default configuration \
     (from `core/service/config/default_1.toml`): \n
-    ./kms-server dev centralized \n
+    ./kms-server centralized \n
     or using cargo from the `core/service` directory: \n
-    cargo run --bin kms-server dev centralized \n
-    Oberserve that some optional arugments may be added. More specifically for both the centralized and threshold \
-    execution modes, the configuration file used can be specified with the `--config-file` argument. \
+    cargo run --bin kms-server centralized \n
+    Observe that some optional arguments may be added, in particular the location for key material storage. \
+    More specifically for both the centralized and threshold  execution modes, \
+    the configuration file used can be specified with the `--config-file` argument. \
     E.g.\n
-    ./kms-server dev centralized --config-file config/default_centralized.toml \n
+    ./kms-server centralized --config-file config/default_centralized.toml \n
     If no configuration file is specified, the default configuration will be used \
     (e.g. config/default_centralized.toml for the centralize case). \n
     Note that key material and TLS certificates MUST exist when starting the server and be stored in the path specified by the configuration file. \n
@@ -35,55 +36,7 @@ pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
 )]
 struct KmsArgs {
     #[clap(subcommand)]
-    mode: StorageMode,
-}
-
-#[derive(Clone, Subcommand)]
-enum StorageMode {
-    /// Start the KMS in the development mode.
-    /// This mode does not use the Nitro secure enclave to protect private keys, but instead relies on the local file system.
-    Dev {
-        /// Select one of the two execution modes between threshold and centralized.
-        #[clap(subcommand)]
-        exec_mode: ExecutionMode,
-    },
-    /// Run as a gRPC proxy for the Nitro secure enclave application
-    Proxy {
-        /// Select one of the two execution modes between threshold and centralized.
-        #[clap(subcommand)]
-        exec_mode: ExecutionMode,
-        /// Enclave application CID for proxying
-        #[clap(long, default_value = "vsock://16:5000")]
-        enclave_vsock: String,
-    },
-    /// Run as a Nitro secure enclave application
-    Enclave {
-        /// Select one of the two execution modes between threshold and centralized.
-        #[clap(subcommand)]
-        exec_mode: ExecutionMode,
-        /// S3 bucket for storing public key blobs
-        #[arg(long)]
-        #[clap(default_value = "zama_kms_public_blobs")]
-        pub_blob_bucket: String,
-        /// S3 bucket for storing encrypted private key blobs
-        #[arg(long)]
-        #[clap(default_value = "zama_kms_private_blobs")]
-        priv_blob_bucket: String,
-        /// AWS KMS symmetric key ID for encrypting key blobs
-        #[arg(long)]
-        #[clap(default_value = "zama_kms_root_key")]
-        root_key_id: String,
-        /// AWS region that the enclave application must use
-        #[arg(long)]
-        #[clap(default_value = "eu-west-3")]
-        aws_region: String,
-        /// TCP-vsock proxy for AWS S3
-        #[clap(default_value = "https://localhost:7000")]
-        aws_s3_proxy: String,
-        /// TCP-vsock proxy for AWS KMS
-        #[clap(default_value = "https://localhost:8000")]
-        aws_kms_proxy: String,
-    },
+    mode: ExecutionMode,
 }
 
 #[derive(Subcommand, Clone)]
@@ -107,29 +60,35 @@ enum ExecutionMode {
         )]
         config_file: String,
     },
+    NitroEnclaveProxy {
+        /// Enclave application CID for proxying
+        #[clap(
+            long,
+            default_value = "config/default_centralized_enclave_proxy.toml",
+            help = "path to the configuration file"
+        )]
+        config_file: String,
+    },
 }
 
 /// Starts a KMS server.
-/// We support different three different storage modes, `dev`, `proxy` or `enclave`.
-/// For each storage mode, we support two types of execution modes, `centralized` or `threshold`.
-/// Not every combination is supported.
-/// Namely, the `threshold` mode only worked when the storage mode is `dev`.
+/// We support two execution modes, `centralized` or `threshold`.
 /// See the help page for additional details.
 /// For example, use the following to run a threshold KMS node with the default configuration
 /// (from `core/service/config/default_1.toml`):
 /// ```
-/// ./kms-server dev centralized
+/// ./kms-server centralized
 /// ```
 /// or using cargo from the `core/service` directory:
 /// ```
-/// cargo run --bin kms-server dev centralized
+/// cargo run --bin kms-server centralized
 /// ```
 ///
-/// Oberserve that some optional arugments may be added. More specifically for both the centralized and threshold
+/// Observe that some optional arguments may be added, in particular the location for key material storage.. More specifically for both the centralized and threshold
 /// execution modes, the configuration file used can be specified with the `--config-file` argument.
 /// E.g.
 /// ```
-/// cargo run --bin kms-server dev centralized --config-file config/default_centralized.toml
+/// cargo run --bin kms-server centralized --config-file config/default_centralized.toml
 /// ```
 /// If no configuration file is specified, the default configuration will be used
 /// (e.g. config/default_centralized.toml for the centralize case).
@@ -139,86 +98,139 @@ enum ExecutionMode {
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let args = KmsArgs::parse();
-
     match args.mode {
-        StorageMode::Dev { exec_mode } => match exec_mode {
-            ExecutionMode::Threshold { config_file } => {
-                let full_config: ThresholdConfig = init_conf_trace(&config_file)?;
-                let pub_storage = FileStorage::new_threshold(
-                    full_config.public_storage_path(),
-                    StorageType::PUB,
-                    full_config.rest.my_id,
-                )
-                .unwrap();
-                let priv_storage = FileStorage::new_threshold(
-                    full_config.private_storage_path(),
-                    StorageType::PRIV,
-                    full_config.rest.my_id,
-                )
-                .unwrap();
-                let config = full_config.rest;
+        ExecutionMode::Threshold { config_file } => {
+            let config: StorageConfigWith<ThresholdConfig> = init_conf_trace(&config_file)?;
 
-                let server =
-                    threshold_server_init(config.clone(), pub_storage, priv_storage, false).await?;
-                threshold_server_start(
-                    config.listen_address_client,
-                    config.listen_port_client,
-                    config.timeout_secs,
-                    config.grpc_max_message_size,
-                    server,
-                )
-                .await
-            }
-            ExecutionMode::Centralized { config_file } => {
-                let config: CentralizedConfig = init_conf_trace(&config_file)?;
-                let pub_storage =
-                    FileStorage::new_centralized(config.public_storage_path(), StorageType::PUB)
-                        .unwrap();
-                let priv_storage =
-                    FileStorage::new_centralized(config.private_storage_path(), StorageType::PRIV)
-                        .unwrap();
-                kms_server_handle(config.into(), pub_storage, priv_storage).await
-            }
-        },
-        StorageMode::Proxy {
-            enclave_vsock,
-            exec_mode,
-        } => match exec_mode {
-            ExecutionMode::Threshold { .. } => {
-                unimplemented!("this mode is not implemented")
-            }
-            ExecutionMode::Centralized { config_file } => {
-                let config: CentralizedConfig = init_conf_trace(&config_file)?;
-                kms_proxy_server_handle(config.into(), &enclave_vsock).await
-            }
-        },
-        StorageMode::Enclave {
-            aws_region,
-            aws_s3_proxy,
-            aws_kms_proxy,
-            pub_blob_bucket,
-            priv_blob_bucket,
-            root_key_id,
-            exec_mode,
-        } => match exec_mode {
-            ExecutionMode::Threshold { .. } => {
-                unimplemented!("this mode is not implemented")
-            }
-            ExecutionMode::Centralized { config_file } => {
-                let config: CentralizedConfig = init_conf_trace(&config_file)?;
-                let pub_storage =
-                    S3Storage::new(aws_region.clone(), aws_s3_proxy.clone(), pub_blob_bucket).await;
-                let priv_storage = EnclaveS3Storage::new(
-                    aws_region,
-                    aws_s3_proxy,
-                    aws_kms_proxy,
-                    priv_blob_bucket,
-                    root_key_id,
-                )
-                .await?;
-                kms_server_handle(config.into(), pub_storage, priv_storage).await
-            }
-        },
+            let pub_storage = match config.public_storage_url()? {
+                Some(url) => match url.scheme() {
+                    "s3" => StorageProxy::S3(
+                        S3Storage::new(
+                            config.aws_region.clone().unwrap(),
+                            config.aws_s3_proxy.clone().unwrap(),
+                            url.host_str().unwrap().to_string(),
+                            S3Storage::threshold_prefix(
+                                Some(url.path().to_string()),
+                                StorageType::PUB,
+                                config.rest.my_id,
+                            ),
+                        )
+                        .await,
+                    ),
+                    _ => StorageProxy::File(FileStorage::new_threshold(
+                        Some(Path::new(
+                            format!("{}{}", url.host_str().unwrap(), url.path()).as_str(),
+                        )),
+                        StorageType::PUB,
+                        config.rest.my_id,
+                    )?),
+                },
+                None => StorageProxy::File(FileStorage::new_threshold(
+                    None,
+                    StorageType::PUB,
+                    config.rest.my_id,
+                )?),
+            };
+            let priv_storage = match config.private_storage_url()? {
+                Some(url) => match url.scheme() {
+                    "s3" => StorageProxy::EnclaveS3(
+                        EnclaveS3Storage::new(
+                            config.aws_region.clone().unwrap(),
+                            config.aws_s3_proxy.clone().unwrap(),
+                            config.aws_kms_proxy.clone().unwrap(),
+                            url.host_str().unwrap().to_string(),
+                            S3Storage::threshold_prefix(
+                                Some(url.path().to_string()),
+                                StorageType::PRIV,
+                                config.rest.my_id,
+                            ),
+                            config.root_key_id.clone().unwrap(),
+                        )
+                        .await?,
+                    ),
+                    _ => StorageProxy::File(FileStorage::new_threshold(
+                        Some(Path::new(
+                            format!("{}{}", url.host_str().unwrap(), url.path()).as_str(),
+                        )),
+                        StorageType::PRIV,
+                        config.rest.my_id,
+                    )?),
+                },
+                None => StorageProxy::File(FileStorage::new_threshold(
+                    None,
+                    StorageType::PRIV,
+                    config.rest.my_id,
+                )?),
+            };
+
+            let server =
+                threshold_server_init(config.clone().into(), pub_storage, priv_storage, false)
+                    .await?;
+            threshold_server_start(
+                config.rest.listen_address_client,
+                config.rest.listen_port_client,
+                config.rest.timeout_secs,
+                config.rest.grpc_max_message_size,
+                server,
+            )
+            .await
+        }
+        ExecutionMode::Centralized { config_file } => {
+            let config: StorageConfigWith<CentralizedConfig> = init_conf_trace(&config_file)?;
+            let pub_storage = match config.public_storage_url()? {
+                Some(url) => match url.scheme() {
+                    "s3" => StorageProxy::S3(
+                        S3Storage::new(
+                            config.aws_region.clone().unwrap(),
+                            config.aws_s3_proxy.clone().unwrap(),
+                            url.host_str().unwrap().to_string(),
+                            S3Storage::centralized_prefix(
+                                Some(url.path().to_string()),
+                                StorageType::PUB,
+                            ),
+                        )
+                        .await,
+                    ),
+                    _ => StorageProxy::File(FileStorage::new_centralized(
+                        Some(Path::new(
+                            format!("{}{}", url.host_str().unwrap(), url.path()).as_str(),
+                        )),
+                        StorageType::PUB,
+                    )?),
+                },
+                None => StorageProxy::File(FileStorage::new_centralized(None, StorageType::PUB)?),
+            };
+            let priv_storage = match config.private_storage_url()? {
+                Some(url) => match url.scheme() {
+                    "s3" => StorageProxy::EnclaveS3(
+                        EnclaveS3Storage::new(
+                            config.aws_region.clone().unwrap(),
+                            config.aws_s3_proxy.clone().unwrap(),
+                            config.aws_kms_proxy.clone().unwrap(),
+                            url.host_str().unwrap().to_string(),
+                            S3Storage::centralized_prefix(
+                                Some(url.path().to_string()),
+                                StorageType::PRIV,
+                            ),
+                            config.root_key_id.clone().unwrap(),
+                        )
+                        .await?,
+                    ),
+                    _ => StorageProxy::File(FileStorage::new_centralized(
+                        Some(Path::new(
+                            format!("{}{}", url.host_str().unwrap(), url.path()).as_str(),
+                        )),
+                        StorageType::PRIV,
+                    )?),
+                },
+                None => StorageProxy::File(FileStorage::new_centralized(None, StorageType::PRIV)?),
+            };
+            kms_server_handle(config.into(), pub_storage, priv_storage).await
+        }
+        ExecutionMode::NitroEnclaveProxy { config_file } => {
+            let config: StorageConfigWith<CentralizedConfig> = init_conf_trace(&config_file)?;
+            kms_proxy_server_handle(config.clone().into(), config.enclave_vsock.unwrap()).await
+        }
     }?;
     Ok(())
 }

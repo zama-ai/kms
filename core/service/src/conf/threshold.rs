@@ -1,31 +1,13 @@
-use conf_trace::conf::Tracing;
+use crate::conf::storage::StorageConfigWith;
 use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::online::preprocessing::redis::RedisConf;
 use distributed_decryption::execution::runtime::party::{Identity, Role};
 use distributed_decryption::networking::grpc::CoreToCoreNetworkConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
-
-use super::ConfigTracing;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ThresholdConfig {
-    pub public_storage_path: Option<String>,
-    pub private_storage_path: Option<String>,
-    #[serde(flatten)]
-    pub rest: ThresholdConfigNoStorage,
-    pub tracing: Option<Tracing>,
-}
-
-impl ConfigTracing for ThresholdConfig {
-    fn tracing(&self) -> Option<Tracing> {
-        self.tracing.clone()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct ThresholdConfigNoStorage {
     pub listen_address_client: String,
     pub listen_port_client: u16,
     pub listen_address_core: String,
@@ -45,7 +27,7 @@ pub struct ThresholdConfigNoStorage {
     pub param_file_map: HashMap<String, String>, // TODO parameters should be loaded once during boot
 }
 
-impl ThresholdConfigNoStorage {
+impl ThresholdConfig {
     pub fn get_tls_cert_paths(&self) -> Option<CertificatePaths> {
         let cert_paths: Option<Vec<String>> = self
             .peer_confs
@@ -86,18 +68,8 @@ impl PeerConf {
     }
 }
 
-impl From<ThresholdConfig> for ThresholdConfigNoStorage {
-    fn from(value: ThresholdConfig) -> Self {
+impl From<StorageConfigWith<ThresholdConfig>> for ThresholdConfig {
+    fn from(value: StorageConfigWith<ThresholdConfig>) -> Self {
         value.rest
-    }
-}
-
-impl ThresholdConfig {
-    pub fn private_storage_path(&self) -> Option<&Path> {
-        self.private_storage_path.as_ref().map(Path::new)
-    }
-
-    pub fn public_storage_path(&self) -> Option<&Path> {
-        self.public_storage_path.as_ref().map(Path::new)
     }
 }

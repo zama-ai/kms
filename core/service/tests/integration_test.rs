@@ -159,10 +159,10 @@ mod kms_gen_keys_binary_test {
             .arg(arg)
             .arg("--param-path")
             .arg("parameters/small_test_params.json")
-            .arg("--priv-path")
-            .arg(temp_dir_priv.path())
-            .arg("--pub-path")
-            .arg(temp_dir_pub.path())
+            .arg("--priv-url")
+            .arg(format!("file://{}", temp_dir_priv.path().display()))
+            .arg("--pub-url")
+            .arg(format!("file://{}", temp_dir_pub.path().display()))
             .output()
             .unwrap()
             .assert()
@@ -211,7 +211,7 @@ mod kms_server_binary_test {
         // check the subcommands
         Command::cargo_bin(KMS_SERVER)
             .unwrap()
-            .arg("dev")
+            .arg("threshold")
             .arg("--help")
             .output()
             .unwrap()
@@ -219,7 +219,7 @@ mod kms_server_binary_test {
             .success();
         Command::cargo_bin(KMS_SERVER)
             .unwrap()
-            .arg("proxy")
+            .arg("centralized")
             .arg("--help")
             .output()
             .unwrap()
@@ -227,7 +227,7 @@ mod kms_server_binary_test {
             .success();
         Command::cargo_bin(KMS_SERVER)
             .unwrap()
-            .arg("enclave")
+            .arg("nitro-enclave-proxy")
             .arg("--help")
             .output()
             .unwrap()
@@ -235,7 +235,7 @@ mod kms_server_binary_test {
             .success();
     }
 
-    fn run_subcommand_no_args(storage_mode: &str, exec_mode: &str) {
+    fn run_subcommand_no_args(config_file: &str, exec_mode: &str) {
         purge_all();
         if exec_mode == "threshold" {
             Command::cargo_bin(KMS_GEN_KEYS)
@@ -277,13 +277,16 @@ mod kms_server_binary_test {
         // Note that the join handle cannot kill the thread,
         // so we need [kill_kms_server] for it.
         let exec_mode = exec_mode.to_string(); // clone this to pass into thread
-        let storage_mode = storage_mode.to_string();
+        let config_file = config_file.to_string();
         let h = thread::spawn(|| {
-            let _ = Command::cargo_bin(KMS_SERVER)
+            let out = Command::cargo_bin(KMS_SERVER)
                 .unwrap()
-                .arg(storage_mode)
                 .arg(exec_mode)
+                .arg("--config-file")
+                .arg(config_file)
                 .output();
+            // Debug output of failing tests
+            println!("Command output: {:?}", out);
         });
 
         thread::sleep(Duration::from_secs(5));
@@ -300,32 +303,13 @@ mod kms_server_binary_test {
     #[test]
     #[serial_test::serial]
     fn subcommand_dev_centralized() {
-        run_subcommand_no_args("dev", "centralized");
+        run_subcommand_no_args("config/default_centralized.toml", "centralized");
     }
 
     #[test]
     #[serial_test::serial]
     fn subcommand_dev_threshold() {
-        run_subcommand_no_args("dev", "threshold");
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn subcommand_proxy_centralized() {
-        run_subcommand_no_args("proxy", "centralized");
-    }
-
-    #[test]
-    fn subcommand_proxy_threshold() {
-        // we expect this test to fail since it's not implemented
-        Command::cargo_bin(KMS_SERVER)
-            .unwrap()
-            .arg("proxy")
-            .arg("threshold")
-            .output()
-            .unwrap()
-            .assert()
-            .failure();
+        run_subcommand_no_args("config/default_1.toml", "threshold");
     }
 
     #[test]

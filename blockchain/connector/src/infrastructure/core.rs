@@ -812,15 +812,36 @@ mod test {
     const MOCK_CT_HANDLE: &[u8; 3] = &[1, 2, 3];
 
     async fn setup_threshold_keys() {
-        ensure_threshold_keys_exist(None, None, TEST_PARAM_PATH, &TEST_THRESHOLD_KEY_ID, true)
-            .await;
+        let mut threshold_pub_storages = Vec::with_capacity(AMOUNT_PARTIES);
+        for i in 1..=AMOUNT_PARTIES {
+            threshold_pub_storages
+                .push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
+        }
+        let mut threshold_priv_storages = Vec::with_capacity(AMOUNT_PARTIES);
+        for i in 1..=AMOUNT_PARTIES {
+            threshold_priv_storages
+                .push(FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap());
+        }
+
+        ensure_threshold_keys_exist(
+            &mut threshold_pub_storages,
+            &mut threshold_priv_storages,
+            TEST_PARAM_PATH,
+            &TEST_THRESHOLD_KEY_ID,
+            true,
+        )
+        .await;
         ensure_client_keys_exist(None, true).await;
     }
 
     async fn setup_central_keys() {
+        let mut central_pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
+        let mut central_priv_storage =
+            FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
+
         ensure_central_keys_exist(
-            None,
-            None,
+            &mut central_pub_storage,
+            &mut central_priv_storage,
             TEST_PARAM_PATH,
             &TEST_CENTRAL_KEY_ID,
             &OTHER_CENTRAL_TEST_ID,

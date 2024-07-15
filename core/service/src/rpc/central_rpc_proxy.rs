@@ -1,4 +1,3 @@
-use crate::conf::centralized::CentralizedConfigNoStorage;
 use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
 use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
@@ -15,19 +14,18 @@ use tonic::transport::{Channel, Server};
 use tonic::{Request, Response, Status};
 use tower_http::trace::TraceLayer;
 
+use crate::conf::centralized::CentralizedConfig;
+
 pub struct KmsProxy {
     kms_client: Arc<Mutex<CoreServiceEndpointClient<Channel>>>,
 }
 
-pub async fn server_handle(
-    config: CentralizedConfigNoStorage,
-    client_uri: &str,
-) -> anyhow::Result<()> {
+pub async fn server_handle(config: CentralizedConfig, client_uri: String) -> anyhow::Result<()> {
     let server_socket = config.get_socket_addr()?;
     tracing::info!(
         "Starting KMS proxy on {} for {} ...",
         server_socket.to_string(),
-        client_uri.to_string()
+        client_uri,
     );
     let backoff = ExponentialBackoff::default();
     let kms_client = retry(backoff, || async {

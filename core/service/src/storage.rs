@@ -149,9 +149,47 @@ impl FileStorage {
     fn default_path_with_prefix(extra_prefix: &str) -> anyhow::Result<PathBuf> {
         let cur = env::current_dir()?;
         let path = cur.join(KEY_PATH_PREFIX).join(extra_prefix);
-        // ensure the directory exists
-        fs::create_dir_all(&path)?;
         Ok(path)
+    }
+
+    fn centralized_path(
+        optional_path: Option<&Path>,
+        storage_type: StorageType,
+    ) -> anyhow::Result<PathBuf> {
+        Ok(match optional_path {
+            Some(path) => {
+                let path = path.join(storage_type.to_string());
+                fs::create_dir_all(&path)?;
+                path.canonicalize()?
+            }
+            None => Self::default_path_with_prefix(&storage_type.to_string())?,
+        })
+    }
+
+    fn threshold_path(
+        optional_path: Option<&Path>,
+        storage_type: StorageType,
+        party_id: usize,
+    ) -> anyhow::Result<PathBuf> {
+        Ok(match optional_path {
+            Some(path) => {
+                let path = path.join(format!("{storage_type}-p{party_id}"));
+                fs::create_dir_all(&path)?;
+                path.canonicalize()?
+            }
+            None => Self::default_path_with_prefix(&format!("{storage_type}-p{party_id}"))?,
+        })
+    }
+
+    fn new(path: PathBuf) -> anyhow::Result<Self> {
+        fs::create_dir_all(&path)?;
+        Ok(Self { path })
+    }
+
+    fn purge(path: PathBuf) -> anyhow::Result<()> {
+        tracing::warn!("Purging storage at {:?}", path);
+        fs::remove_dir_all(path)?;
+        Ok(())
     }
 
     /// Create a new directory for centralized storage.
@@ -165,15 +203,7 @@ impl FileStorage {
         optional_path: Option<&Path>,
         storage_type: StorageType,
     ) -> anyhow::Result<Self> {
-        let path = match optional_path {
-            Some(path) => {
-                let path = path.join(storage_type.to_string());
-                fs::create_dir_all(&path)?;
-                path.canonicalize()?
-            }
-            None => Self::default_path_with_prefix(&storage_type.to_string())?,
-        };
-        Ok(Self { path })
+        FileStorage::new(FileStorage::centralized_path(optional_path, storage_type)?)
     }
 
     /// Create a new directory for threshold storage.
@@ -188,15 +218,11 @@ impl FileStorage {
         storage_type: StorageType,
         party_id: usize,
     ) -> anyhow::Result<Self> {
-        let path = match optional_path {
-            Some(path) => {
-                let path = path.join(format!("{storage_type}-p{party_id}"));
-                fs::create_dir_all(&path)?;
-                path.canonicalize()?
-            }
-            None => Self::default_path_with_prefix(&format!("{storage_type}-p{party_id}"))?,
-        };
-        Ok(Self { path })
+        FileStorage::new(FileStorage::threshold_path(
+            optional_path,
+            storage_type,
+            party_id,
+        )?)
     }
 
     /// Delete everything stored in the file storage system at the given path for a centralized system's storage.
@@ -204,19 +230,7 @@ impl FileStorage {
         optional_path: Option<&Path>,
         storage_type: StorageType,
     ) -> anyhow::Result<()> {
-        match optional_path {
-            Some(path) => {
-                let full_path = path.join(storage_type.to_string());
-                tracing::warn!("Purging storage at {:?}", full_path);
-                fs::remove_dir_all(full_path)?;
-            }
-            None => {
-                let full_path = Self::default_path_with_prefix(&storage_type.to_string())?;
-                tracing::warn!("Purging storage at {:?}", full_path);
-                fs::remove_dir_all(full_path)?;
-            }
-        }
-        Ok(())
+        FileStorage::purge(FileStorage::centralized_path(optional_path, storage_type)?)
     }
 
     /// Delete everything stored in the file storage system at the given path for a threshold system's storage.
@@ -225,20 +239,11 @@ impl FileStorage {
         storage_type: StorageType,
         party_id: usize,
     ) -> anyhow::Result<()> {
-        match optional_path {
-            Some(path) => {
-                let full_path = path.join(format!("{storage_type}-p{party_id}"));
-                tracing::warn!("Purging storage at {:?}", full_path);
-                fs::remove_dir_all(full_path)?;
-            }
-            None => {
-                let full_path =
-                    Self::default_path_with_prefix(&format!("{storage_type}-p{party_id}"))?;
-                tracing::warn!("Purging storage at {:?}", full_path);
-                fs::remove_dir_all(full_path)?;
-            }
-        }
-        Ok(())
+        FileStorage::purge(FileStorage::threshold_path(
+            optional_path,
+            storage_type,
+            party_id,
+        )?)
     }
 }
 

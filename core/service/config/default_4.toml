@@ -19,10 +19,11 @@ min_dec_cache = 6000
 timeout_secs = 360
 num_sessions_preproc = 2
 
-# The two settings below are optional and are only used for file storage.
-# The paths can be the same for the different storage types and for diffrent parties.
-public_storage_path = "keys"
-private_storage_path = "keys"
+# The two settings below are optional. Two URL schemas are supported: file://
+# and s3://. The paths can be the same for the different storage types and for
+# different parties.
+public_storage_url = "file://./keys"
+private_storage_url = "file://./keys"
 
 # The setting below is optional and used for TLS certificates
 tls_cert_path = "certs/cert_p4.pem"

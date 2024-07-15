@@ -3,6 +3,7 @@ use conf_trace::telemetry::init_tracing;
 use serde::Deserialize;
 
 pub mod centralized;
+pub mod storage;
 pub mod threshold;
 
 pub trait ConfigTracing {
@@ -40,12 +41,13 @@ pub fn init_trace() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use self::tests::centralized::CentralizedConfig;
+    use self::tests::storage::StorageConfigWith;
     use self::tests::threshold::ThresholdConfig;
     use super::*;
 
     #[test]
     fn test_threshold_config() {
-        let config: ThresholdConfig = init_conf("config/default_1").unwrap();
+        let config: StorageConfigWith<ThresholdConfig> = init_conf("config/default_1").unwrap();
         assert_eq!(config.rest.listen_address_client, "0.0.0.0");
         assert_eq!(config.rest.listen_port_client, 50100);
         assert_eq!(config.rest.listen_address_core, "127.0.0.1");
@@ -77,8 +79,8 @@ mod tests {
             "parameters/default_params.json"
         );
         assert!(config.rest.preproc_redis_conf.is_none());
-        assert_eq!(config.private_storage_path.unwrap(), "keys");
-        assert_eq!(config.public_storage_path.unwrap(), "keys");
+        assert_eq!(config.private_storage_url.unwrap(), "file://./keys");
+        assert_eq!(config.public_storage_url.unwrap(), "file://./keys");
 
         let core_to_core_net_conf = config.rest.core_to_core_net_conf;
         assert!(core_to_core_net_conf.is_some());
@@ -95,7 +97,8 @@ mod tests {
 
     #[test]
     fn test_centralized_config() {
-        let config: CentralizedConfig = init_conf("config/default_centralized").unwrap();
+        let config: StorageConfigWith<CentralizedConfig> =
+            init_conf("config/default_centralized").unwrap();
         assert_eq!(config.rest.url, "http://0.0.0.0:50051");
         assert_eq!(config.rest.param_file_map.len(), 2);
         assert_eq!(
@@ -106,7 +109,7 @@ mod tests {
             config.rest.param_file_map.get("default").unwrap(),
             "parameters/default_params.json"
         );
-        assert_eq!(config.private_storage_path.unwrap(), "keys");
-        assert_eq!(config.public_storage_path.unwrap(), "keys");
+        assert_eq!(config.private_storage_url.unwrap(), "file://./keys");
+        assert_eq!(config.public_storage_url.unwrap(), "file://./keys");
     }
 }
