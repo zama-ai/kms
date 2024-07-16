@@ -72,10 +72,8 @@ impl EmitEventVerifier for OperationValue {
             return true;
         }
         match self {
-            OperationValue::ReencryptResponse(values) => {
-                self.reach(transaction, values.servers_needed() as usize, |t| {
-                    t.is_reencrypt_response()
-                })
+            OperationValue::ReencryptResponse(_) => {
+                self.reach_threshold(core_conf, transaction, |t| t.is_reencrypt_response())
             }
             OperationValue::DecryptResponse(_) => {
                 self.reach_threshold(core_conf, transaction, |t| t.is_decrypt_response())

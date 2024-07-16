@@ -509,7 +509,6 @@ impl From<KeyGenResponseValues> for OperationValue {
 #[derive(Default, Eq, TypedBuilder)]
 pub struct ReencryptResponseValues {
     version: u32,
-    servers_needed: u32,
     #[builder(setter(into))]
     verification_key: HexVector,
     #[builder(setter(into))]
@@ -522,10 +521,6 @@ pub struct ReencryptResponseValues {
 impl ReencryptResponseValues {
     pub fn version(&self) -> u32 {
         self.version
-    }
-
-    pub fn servers_needed(&self) -> u32 {
-        self.servers_needed
     }
 
     pub fn verification_key(&self) -> &HexVector {
@@ -1071,7 +1066,6 @@ mod tests {
         fn arbitrary(g: &mut Gen) -> ReencryptResponseValues {
             ReencryptResponseValues {
                 version: u32::arbitrary(g),
-                servers_needed: u32::arbitrary(g),
                 verification_key: HexVector::arbitrary(g),
                 digest: HexVector::arbitrary(g),
                 fhe_type: FheType::arbitrary(g),
@@ -1263,7 +1257,6 @@ mod tests {
     fn test_reencrypt_response_event_to_json() {
         let reencrypt_response_values = ReencryptResponseValues::builder()
             .version(1)
-            .servers_needed(2)
             .verification_key(vec![1])
             .digest(vec![2])
             .fhe_type(FheType::Ebool)
@@ -1279,7 +1272,6 @@ mod tests {
             "reencrypt_response": {
                 "reencrypt_response": {
                     "version": 1,
-                    "servers_needed": 2,
                     "verification_key": hex::encode([1]),
                     "digest": hex::encode([2]),
                     "fhe_type": "ebool",

@@ -294,10 +294,10 @@ impl Unversionize for ThresholdFheKeys {
     }
 }
 
-// Servers needed, request digest, and resultant plaintext
-type DecMetaStore = (u32, Vec<u8>, Plaintext);
-// Servers needed, request digest, fhe type of encryption and resultant partial decryption
-type ReencMetaStore = (u32, Vec<u8>, FheType, Vec<u8>);
+// Request digest, and resultant plaintext
+type DecMetaStore = (Vec<u8>, Plaintext);
+// Request digest, fhe type of encryption and resultant partial decryption
+type ReencMetaStore = (Vec<u8>, FheType, Vec<u8>);
 // Hashmap of `PubDataType` to the corresponding `SignedPubDataHandle` information for all the different
 // public keys
 type DkgMetaStore = HashMap<PubDataType, SignedPubDataHandle>;
@@ -824,19 +824,11 @@ impl Reencryptor for RealReencryptor {
             self.session_preparer.own_identity(),
             inner.request_id
         );
-        let (
-            ciphertext,
-            fhe_type,
-            link,
-            client_enc_key,
-            client_verf_key,
-            servers_needed,
-            key_id,
-            req_id,
-        ) = tonic_handle_potential_err(
-            validate_reencrypt_req(&inner).await,
-            format!("Invalid reencryption request {:?}", inner),
-        )?;
+        let (ciphertext, fhe_type, link, client_enc_key, client_verf_key, key_id, req_id) =
+            tonic_handle_potential_err(
+                validate_reencrypt_req(&inner).await,
+                format!("Invalid reencryption request {:?}", inner),
+            )?;
 
         let mut session = tonic_handle_potential_err(
             self.session_preparer
@@ -888,10 +880,8 @@ impl Reencryptor for RealReencryptor {
             match tmp {
                 Ok(partial_dec) => {
                     // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_store.update(
-                        &req_id,
-                        HandlerStatus::Done((servers_needed, link, fhe_type, partial_dec)),
-                    );
+                    let _ = guarded_meta_store
+                        .update(&req_id, HandlerStatus::Done((link, fhe_type, partial_dec)));
                 }
                 Result::Err(e) => {
                     // We cannot do much if updating the storage fails at this point...
@@ -922,7 +912,7 @@ impl Reencryptor for RealReencryptor {
         }
 
         // Retrieve the ReencMetaStore object
-        let (servers_needed, link, fhe_type, signcrypted_ciphertext) = {
+        let (link, fhe_type, signcrypted_ciphertext) = {
             let guarded_meta_store = self.reenc_meta_store.read().await;
             handle_res_mapping(
                 guarded_meta_store.retrieve(&request_id).cloned(),
@@ -933,7 +923,6 @@ impl Reencryptor for RealReencryptor {
         let server_verf_key = self.base_kms.get_serialized_verf_key();
         Ok(Response::new(ReencryptionResponse {
             version: CURRENT_FORMAT_VERSION,
-            servers_needed,
             signcrypted_ciphertext,
             fhe_type: fhe_type.into(),
             digest: link,
@@ -1020,11 +1009,10 @@ impl Decryptor for RealDecryptor {
             self.session_preparer.own_identity(),
             inner.request_id
         );
-        let (ciphertext, fhe_type, req_digest, servers_needed, key_id, req_id) =
-            tonic_handle_potential_err(
-                validate_decrypt_req(&inner),
-                format!("Invalid key in request {:?}", inner),
-            )?;
+        let (ciphertext, fhe_type, req_digest, key_id, req_id) = tonic_handle_potential_err(
+            validate_decrypt_req(&inner),
+            format!("Invalid key in request {:?}", inner),
+        )?;
 
         let mut session = tonic_handle_potential_err(
             self.session_preparer
@@ -1123,11 +1111,7 @@ impl Decryptor for RealDecryptor {
                     // We cannot do much if updating the storage fails at this point...
                     let _ = guarded_meta_store.update(
                         &req_id,
-                        HandlerStatus::Done((
-                            servers_needed,
-                            req_digest.clone(),
-                            plaintext.clone(),
-                        )),
+                        HandlerStatus::Done((req_digest.clone(), plaintext.clone())),
                     );
                 }
                 Result::Err(e) => {
@@ -1157,7 +1141,7 @@ impl Decryptor for RealDecryptor {
                 format!("The value {} is not a valid request ID!", request_id),
             ));
         }
-        let (servers_needed, req_digest, plaintext) = {
+        let (req_digest, plaintext) = {
             let guarded_meta_store = self.dec_meta_store.read().await;
             handle_res_mapping(
                 guarded_meta_store.retrieve(&request_id).cloned(),
@@ -1175,7 +1159,6 @@ impl Decryptor for RealDecryptor {
         let server_verf_key = self.base_kms.get_serialized_verf_key();
         let sig_payload = DecryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
-            servers_needed,
             plaintext: decrypted_bytes,
             verification_key: server_verf_key,
             digest: req_digest,

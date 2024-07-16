@@ -1,6 +1,4 @@
-use super::rpc_types::{
-    BaseKms, DecryptionRequestSerializable, PrivDataType, CURRENT_FORMAT_VERSION,
-};
+use super::rpc_types::{BaseKms, PrivDataType, CURRENT_FORMAT_VERSION};
 use crate::conf::centralized::CentralizedConfig;
 #[cfg(any(test, feature = "testing"))]
 use crate::consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH};
@@ -275,19 +273,11 @@ impl<
         request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
-        let (
-            ciphertext,
-            fhe_type,
-            link,
-            client_enc_key,
-            client_verf_key,
-            servers_needed,
-            key_id,
-            request_id,
-        ) = tonic_handle_potential_err(
-            validate_reencrypt_req(&inner).await,
-            format!("Invalid key in request {:?}", inner),
-        )?;
+        let (ciphertext, fhe_type, link, client_enc_key, client_verf_key, key_id, request_id) =
+            tonic_handle_potential_err(
+                validate_reencrypt_req(&inner).await,
+                format!("Invalid key in request {:?}", inner),
+            )?;
         {
             let mut guarded_meta_store = self.reenc_meta_map.write().await;
             tonic_handle_potential_err(
@@ -342,7 +332,7 @@ impl<
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
                         &request_id,
-                        HandlerStatus::Done((servers_needed, fhe_type, link, raw_decryption)),
+                        HandlerStatus::Done((fhe_type, link, raw_decryption)),
                     );
                 }
                 Result::Err(e) => {
@@ -365,7 +355,7 @@ impl<
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
 
-        let (servers_needed, fhe_type, req_digest, partial_dec) = {
+        let (fhe_type, req_digest, partial_dec) = {
             let guarded_meta_store = self.reenc_meta_map.read().await;
             handle_res_mapping(
                 guarded_meta_store.retrieve(&request_id).cloned(),
@@ -378,7 +368,6 @@ impl<
 
         Ok(Response::new(ReencryptionResponse {
             version: CURRENT_FORMAT_VERSION,
-            servers_needed,
             signcrypted_ciphertext: partial_dec,
             fhe_type: fhe_type.into(),
             digest: req_digest,
@@ -394,11 +383,10 @@ impl<
         tracing::info!("Received a new request!");
         let inner = request.into_inner();
         tracing::info!("Request ID: {:?}", inner.request_id);
-        let (ciphertext, fhe_type, req_digest, _servers_needed, key_id, request_id) =
-            tonic_handle_potential_err(
-                validate_decrypt_req(&inner),
-                format!("Invalid key in request {:?}", inner),
-            )?;
+        let (ciphertext, fhe_type, req_digest, key_id, request_id) = tonic_handle_potential_err(
+            validate_decrypt_req(&inner),
+            format!("Invalid key in request {:?}", inner),
+        )?;
 
         {
             let mut guarded_meta_store = self.dec_meta_store.write().await;
@@ -466,7 +454,6 @@ impl<
         let server_verf_key = self.get_serialized_verf_key();
         let sig_payload = DecryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
-            servers_needed: 1,
             plaintext,
             verification_key: server_verf_key,
             digest: req_digest,
@@ -674,7 +661,8 @@ pub(crate) async fn retrieve_parameters_sync(
 }
 
 /// Validates a reencryption request and returns ciphertext, FheType, request digest, client
-/// encryption key, client verification key, servers_needed key_id and request_id if valid.
+/// encryption key, client verification key, key_id and request_id if valid.
+///
 /// Observe that the key handle is NOT checked for existence here.
 /// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
 /// is needed.
@@ -686,7 +674,6 @@ pub async fn validate_reencrypt_req(
     Vec<u8>,
     PublicEncKey,
     PublicSigKey,
-    u32,
     RequestId,
     RequestId,
 )> {
@@ -747,21 +734,21 @@ pub async fn validate_reencrypt_req(
         link,
         client_enc_key,
         client_verf_key,
-        payload.servers_needed,
         key_id,
         request_id,
     ))
 }
 
 /// Validates a decryption request and unpacks and returns
-/// the ciphertext, FheType, digest, servers_needed, key_id and request_id if it is valid.
+/// the ciphertext, FheType, digest, key_id and request_id if it is valid.
+///
 /// Observe that the key handle is NOT checked for existence here.
 /// This is instead currently handled in `decrypt`` where the retrival of the secret decryption key
 /// is needed.
 #[allow(clippy::type_complexity)]
 pub(crate) fn validate_decrypt_req(
     req: &DecryptionRequest,
-) -> anyhow::Result<(Vec<u8>, FheType, Vec<u8>, u32, RequestId, RequestId)> {
+) -> anyhow::Result<(Vec<u8>, FheType, Vec<u8>, RequestId, RequestId)> {
     let key_id = tonic_some_or_err(
         req.key_id.clone(),
         format!("The request {:?} does not have a key_id", req),
@@ -774,15 +761,8 @@ pub(crate) fn validate_decrypt_req(
         )));
     }
     let fhetype = req.fhe_type();
-    let req_serialized: DecryptionRequestSerializable = tonic_handle_potential_err(
-        req.clone().try_into(),
-        format!(
-            "Could not make signature payload from protobuf request {:?}",
-            req
-        ),
-    )?;
     let serialized_req = tonic_handle_potential_err(
-        bincode::serialize(&req_serialized),
+        bincode::serialize(&req),
         format!("Could not serialize payload {:?}", req),
     )?;
     let req_digest = tonic_handle_potential_err(
@@ -797,14 +777,7 @@ pub(crate) fn validate_decrypt_req(
             request_id
         )));
     }
-    Ok((
-        ciphertext,
-        fhetype,
-        req_digest,
-        req.servers_needed,
-        key_id,
-        request_id,
-    ))
+    Ok((ciphertext, fhetype, req_digest, key_id, request_id))
 }
 
 pub fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Result<T, Status> {

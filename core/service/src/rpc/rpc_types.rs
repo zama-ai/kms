@@ -7,8 +7,7 @@ use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::{hash_element, Reencrypt};
 use crate::kms::SignedPubDataHandle;
 use crate::kms::{
-    DecryptionRequest, DecryptionResponsePayload, Eip712DomainMsg, FheType, ReencryptionResponse,
-    RequestId,
+    DecryptionResponsePayload, Eip712DomainMsg, FheType, ReencryptionResponse, RequestId,
 };
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::FhePrivateKey;
@@ -585,52 +584,6 @@ impl From<bool> for Plaintext {
         Self::from_bool(value)
     }
 }
-// TODO these serializable types can be removed by using the type_attribute additions on protobuf
-/// Observe that this seemingly redundant types are required since the Protobuf compiled types do
-/// not implement the serializable and deserializable traits. Hence [DecryptionRequestSerializable]
-/// implement data to be serialized and hashed.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DecryptionRequestSerializable {
-    pub version: u32,
-    pub servers_needed: u32,
-    pub fhe_type: FheType,
-    pub randomness: Vec<u8>,
-    pub key_id: RequestId,
-    pub ciphertext: Vec<u8>,
-    pub request_id: RequestId,
-}
-impl From<DecryptionRequestSerializable> for DecryptionRequest {
-    fn from(val: DecryptionRequestSerializable) -> DecryptionRequest {
-        DecryptionRequest {
-            version: val.version,
-            servers_needed: val.servers_needed,
-            fhe_type: val.fhe_type.into(),
-            randomness: val.randomness,
-            key_id: Some(val.key_id),
-            ciphertext: val.ciphertext,
-            request_id: Some(val.request_id),
-        }
-    }
-}
-impl TryFrom<DecryptionRequest> for DecryptionRequestSerializable {
-    type Error = anyhow::Error;
-
-    fn try_from(val: DecryptionRequest) -> Result<Self, Self::Error> {
-        let (key_id, req_id) = match (val.key_id, val.request_id) {
-            (Some(key_id), Some(req_id)) => (key_id, req_id),
-            _ => return Err(anyhow::anyhow!("No request_id found")),
-        };
-        Ok(DecryptionRequestSerializable {
-            version: val.version,
-            servers_needed: val.servers_needed,
-            fhe_type: val.fhe_type.try_into()?,
-            randomness: val.randomness,
-            ciphertext: val.ciphertext,
-            key_id,
-            request_id: req_id,
-        })
-    }
-}
 
 impl serde::Serialize for FheType {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -668,17 +621,12 @@ impl<'de> Visitor<'de> for FheTypeVisitor {
 }
 pub trait MetaResponse {
     fn version(&self) -> u32;
-    fn servers_needed(&self) -> u32;
     fn verification_key(&self) -> Vec<u8>;
     fn fhe_type(&self) -> anyhow::Result<FheType>;
     fn digest(&self) -> Vec<u8>;
 }
 
 impl MetaResponse for ReencryptionResponse {
-    fn servers_needed(&self) -> u32 {
-        self.servers_needed
-    }
-
     fn verification_key(&self) -> Vec<u8> {
         self.verification_key.to_owned()
     }
@@ -697,10 +645,6 @@ impl MetaResponse for ReencryptionResponse {
 }
 
 impl MetaResponse for DecryptionResponsePayload {
-    fn servers_needed(&self) -> u32 {
-        self.servers_needed
-    }
-
     fn verification_key(&self) -> Vec<u8> {
         self.verification_key.to_owned()
     }

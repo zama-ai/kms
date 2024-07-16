@@ -87,7 +87,6 @@ impl Reencryptor for DummyReencryptor {
     ) -> Result<Response<ReencryptionResponse>, Status> {
         Ok(Response::new(ReencryptionResponse {
             version: CURRENT_FORMAT_VERSION,
-            servers_needed: 0,
             verification_key: vec![],
             digest: "dummy digest".as_bytes().to_vec(),
             fhe_type: crate::kms::FheType::Euint8.into(),
@@ -115,7 +114,6 @@ impl Decryptor for DummyDecryptor {
             signature: vec![],
             payload: Some(DecryptionResponsePayload {
                 version: CURRENT_FORMAT_VERSION,
-                servers_needed: 0,
                 verification_key: vec![],
                 digest: "dummy digest".as_bytes().to_vec(),
                 plaintext: serialize(&Plaintext::new(42, crate::kms::FheType::Euint8)).unwrap(),

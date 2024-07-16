@@ -759,7 +759,6 @@ mod tests {
 
         let response_values = ReencryptResponseValues::builder()
             .version(1)
-            .servers_needed(2)
             .verification_key(vec![1])
             .digest(vec![2])
             .fhe_type(FheType::Ebool)
@@ -770,7 +769,15 @@ mod tests {
             .reencrypt_response(txn_id.clone(), response_values.clone(), proof.clone())
             .call(&owner)
             .unwrap();
-        assert_eq!(response.events.len(), 1);
+        assert_eq!(response.events.len(), 2);
+
+        let expected_event = KmsEvent::builder()
+            .operation(OperationValue::ReencryptResponse(response_values))
+            .txn_id(txn_id.clone())
+            .proof(proof.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
     }
 
     #[test]

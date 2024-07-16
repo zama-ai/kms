@@ -44,7 +44,7 @@ cfg_if::cfg_if! {
             AggregatedDecryptionResponse, CrsGenRequest, CrsGenResult, DecryptionRequest,
             DecryptionResponsePayload, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
         };
-        use crate::rpc::rpc_types::{DecryptionRequestSerializable, PubDataType};
+        use crate::rpc::rpc_types::PubDataType;
         use crate::storage::read_all_data;
         use crate::storage::Storage;
         use crate::util::file_handling::read_as_json;
@@ -117,6 +117,7 @@ pub struct Client {
     server_pks: HashMap<PublicSigKey, u8>,
     client_pk: PublicSigKey,
     client_sk: Option<PrivateSigKey>,
+    // We use the same threshold for all operations.
     shares_needed: u32,
     // we allow it because num_servers is used in only certain features
     #[allow(dead_code)]
@@ -609,7 +610,6 @@ pub mod js_api {
         let payload = ReencryptionRequestPayload {
             version: CURRENT_FORMAT_VERSION,
             randomness,
-            servers_needed: client.shares_needed,
             enc_key: serialize(&enc_pk)?,
             verification_key: serialize(&client.client_pk)?,
             fhe_type: fhe_type as i32,
@@ -658,7 +658,6 @@ pub mod js_api {
     #[derive(serde::Deserialize, serde::Serialize)]
     struct ReencryptionResponseHex {
         version: u32,
-        servers_needed: u32,
         verification_key: String,
         digest: String,
         fhe_type: String, // this is euint8, for example
@@ -671,7 +670,6 @@ pub mod js_api {
         for resp in agg_resp {
             let r = ReencryptionResponseHex {
                 version: resp.version,
-                servers_needed: resp.servers_needed,
                 verification_key: hex::encode(&resp.verification_key),
                 digest: hex::encode(&resp.digest),
                 fhe_type: "unimplemented".to_string(),
@@ -700,7 +698,6 @@ pub mod js_api {
             )))?;
             out.push(ReencryptionResponse {
                 version: hex_resp.version,
-                servers_needed: hex_resp.servers_needed,
                 verification_key: hex::decode(&hex_resp.verification_key)
                     .map_err(|e| JsError::new(&e.to_string()))?,
                 digest: hex::decode(&hex_resp.digest).map_err(|e| JsError::new(&e.to_string()))?,
@@ -1170,16 +1167,15 @@ impl Client {
         // security. TODO this argument should be validated
         let mut randomness: Vec<u8> = vec![0; RND_SIZE];
         self.rng.fill_bytes(&mut randomness);
-        let serialized_req = DecryptionRequestSerializable {
+        let serialized_req = DecryptionRequest {
             version: CURRENT_FORMAT_VERSION,
-            servers_needed: self.shares_needed,
-            fhe_type,
+            fhe_type: fhe_type as i32,
             ciphertext: ct,
             randomness,
-            key_id: key_id.clone(),
-            request_id: request_id.clone(),
+            key_id: Some(key_id.clone()),
+            request_id: Some(request_id.clone()),
         };
-        Ok(serialized_req.into())
+        Ok(serialized_req)
     }
 
     /// Creates a reencryption request to send to the KMS servers. This generates
@@ -1208,7 +1204,6 @@ impl Client {
         self.rng.fill_bytes(&mut randomness);
         let sig_payload = ReencryptionRequestPayload {
             version: CURRENT_FORMAT_VERSION,
-            servers_needed: self.shares_needed,
             enc_key: serialize(&enc_pk)?,
             verification_key: serialize(&self.client_pk)?,
             fhe_type: fhe_type as i32,
@@ -1397,7 +1392,6 @@ impl Client {
             if cur_payload.digest != pivot_payload.digest
                 || cur_payload.fhe_type()? != pivot_payload.fhe_type()?
                 || cur_payload.plaintext != pivot_payload.plaintext
-                || cur_payload.servers_needed != pivot_payload.servers_needed
             {
                 tracing::warn!("Some server did not provide the proper response!");
                 return Ok(None);
@@ -1504,7 +1498,7 @@ impl Client {
         match request {
             Some(req) => {
                 let resp_parsed_payloads = some_or_err(
-                    self.validate_individual_dec_resp(req.servers_needed, agg_resp)?,
+                    self.validate_individual_dec_resp(agg_resp)?,
                     "Could not validate the aggregated responses".to_string(),
                 )?;
                 let pivot_payload = resp_parsed_payloads[0].clone();
@@ -1516,10 +1510,7 @@ impl Client {
                     tracing::warn!("Fhe type in the decryption response is incorrect");
                     return Ok(false);
                 }
-                let sig_payload: DecryptionRequestSerializable = req.try_into()?;
-                if BaseKmsStruct::digest(&bincode::serialize(&sig_payload)?)?
-                    != pivot_payload.digest
-                {
+                if BaseKmsStruct::digest(&bincode::serialize(&req)?)? != pivot_payload.digest {
                     tracing::warn!("The decryption response is not linked to the correct request");
                     return Ok(false);
                 }
@@ -1535,7 +1526,6 @@ impl Client {
     #[cfg(feature = "non-wasm")]
     fn validate_individual_dec_resp(
         &self,
-        shares_needed: u32,
         agg_resp: &AggregatedDecryptionResponse,
     ) -> anyhow::Result<Option<Vec<DecryptionResponsePayload>>> {
         if agg_resp.responses.is_empty() {
@@ -1583,7 +1573,7 @@ impl Client {
             resp_parsed_payloads.push(cur_payload);
         }
 
-        if resp_parsed_payloads.len() < shares_needed as usize {
+        if resp_parsed_payloads.len() < self.shares_needed as usize {
             tracing::warn!("Not enough correct responses to decrypt the data!");
             return Ok(None);
         }
@@ -1607,7 +1597,7 @@ impl Client {
         match request.payload {
             Some(req_payload) => {
                 let resp_parsed = some_or_err(
-                    self.validate_individual_agg_reenc_resp(req_payload.servers_needed, agg_resp)?,
+                    self.validate_individual_agg_reenc_resp(agg_resp)?,
                     "Could not validate the aggregated responses".to_string(),
                 )?;
                 let pivot_resp = resp_parsed.values().collect_vec()[0];
@@ -1636,7 +1626,6 @@ impl Client {
 
     fn validate_individual_agg_reenc_resp(
         &self,
-        shares_needed: u32,
         agg_resp: &AggregatedReencryptionResponse,
     ) -> anyhow::Result<Option<HashMap<u32, ReencryptionResponse>>> {
         if agg_resp.responses.is_empty() {
@@ -1664,7 +1653,7 @@ impl Client {
             }
             resp_parsed.insert(*cur_role, cur_resp.clone());
         }
-        if resp_parsed.len() < shares_needed as usize {
+        if resp_parsed.len() < self.shares_needed as usize {
             tracing::warn!("Not enough correct responses to reencrypt the data!");
             return Ok(None);
         }
@@ -1741,8 +1730,8 @@ impl Client {
             // NOTE: this performs optimistic reconstruction
             if let Ok(Some(r)) = reconstruct_w_errors_sync(
                 amount_shares,
-                (req_payload.servers_needed - 1) as usize,
-                (req_payload.servers_needed - 1) as usize,
+                (self.shares_needed - 1) as usize,
+                (self.shares_needed - 1) as usize,
                 &cur_block_shares,
             ) {
                 decrypted_blocks.push(r);
@@ -1920,22 +1909,12 @@ impl Client {
                 );
             return Ok(false);
         }
-        if pivot_resp.servers_needed() != other_resp.servers_needed() {
-            tracing::warn!(
-                    "Response from server with verification key {:?} say {:?} shares are needed for reconstruction, whereas the pivot server says {:?} shares are needed for reconstruction, and its verification key is {:?}",
-                    pivot_resp.verification_key(),
-                    pivot_resp.servers_needed(),
-                    other_resp.servers_needed(),
-                    other_resp.verification_key()
-                );
-            return Ok(false);
-        }
         if pivot_resp.digest() != other_resp.digest() {
             tracing::warn!(
                     "Response from server with verification key {:?} gave digest {:?}, whereas the pivot server gave digest {:?}, and its verification key is {:?}",
                     pivot_resp.verification_key(),
-                    pivot_resp.servers_needed(),
-                    other_resp.servers_needed(),
+                    pivot_resp.digest(),
+                    other_resp.digest(),
                     other_resp.verification_key()
                 );
             return Ok(false);
@@ -1945,11 +1924,6 @@ impl Client {
             tracing::warn!("Server key is incorrect in reencryption request");
             return Ok(false);
         }
-        if pivot_resp.servers_needed() != self.shares_needed {
-            tracing::warn!("Response says only {:?} shares are needed for reconstruction, but client is setup to require {:?} shares", pivot_resp.servers_needed(), self.shares_needed);
-            return Ok(false);
-        }
-
         Ok(true)
     }
 }

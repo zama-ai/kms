@@ -395,9 +395,9 @@ type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandle>;
 pub type DecCallValues = (Vec<u8>, Vec<u8>);
 
 // Values that need to be stored temporarily as part of an async reencryption call.
-// Represents the server_needed, FHE type, the digest of the request and the partial decryption.
+// Represents the FHE type, the digest of the request and the partial decryption.
 #[cfg(feature = "non-wasm")]
-pub type ReencCallValues = (u32, FheType, Vec<u8>, Vec<u8>);
+pub type ReencCallValues = (FheType, Vec<u8>, Vec<u8>);
 
 /// Software based KMS where keys are stored in a local file
 /// Observe that the order of write access MUST be as follows to avoid dead locks:

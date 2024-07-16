@@ -252,7 +252,7 @@ where
 {
     async fn run_operation(
         &self,
-        config_contract: Option<KmsCoreConf>,
+        _config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoreServiceEndpointClient::new(chan.clone());
@@ -270,9 +270,6 @@ where
         let req_id: RequestId = request_id.clone().try_into()?;
 
         let version = self.decrypt.version();
-        let servers_needed = config_contract
-            .ok_or_else(|| anyhow!("config contract missing"))?
-            .shares_needed() as u32;
         let key_id = self.decrypt.key_id().to_hex();
         let fhe_type = self.decrypt.fhe_type() as i32;
         let ciphertext_handle: Vec<u8> = self.decrypt.ciphertext_handle().deref().into();
@@ -287,7 +284,6 @@ where
 
         let req = DecryptionRequest {
             version,
-            servers_needed,
             randomness,
             fhe_type,
             key_id: Some(RequestId { request_id: key_id }),
@@ -390,7 +386,7 @@ where
 {
     async fn run_operation(
         &self,
-        config_contract: Option<KmsCoreConf>,
+        _config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoreServiceEndpointClient::new(chan.clone());
@@ -415,14 +411,10 @@ where
             .storage
             .get_ciphertext(ciphertext_handle)
             .await?;
-        let servers_needed = config_contract
-            .ok_or_else(|| anyhow!("config contract is missing"))?
-            .shares_needed() as u32;
         let req = ReencryptionRequest {
             signature: self.reencrypt.signature().into(),
             payload: Some(ReencryptionRequestPayload {
                 version: reencrypt.version(),
-                servers_needed,
                 verification_key: reencrypt.verification_key().deref().into(),
                 randomness: reencrypt.randomness().deref().into(),
                 enc_key: reencrypt.enc_key().deref().into(),
@@ -466,7 +458,6 @@ where
                         ReencryptResponseVal {
                             reencrypt_response: ReencryptResponseValues::builder()
                                 .version(inner.version)
-                                .servers_needed(inner.servers_needed)
                                 .verification_key(inner.verification_key.clone())
                                 .digest(inner.digest.clone())
                                 .fhe_type(fhe_type.0)
@@ -1212,7 +1203,6 @@ mod test {
                     .reencrypt_response;
                     ReencryptionResponse {
                         version: r.version(),
-                        servers_needed: r.servers_needed(),
                         verification_key: r.verification_key().into(),
                         digest: r.digest().into(),
                         fhe_type: r.fhe_type() as i32,
