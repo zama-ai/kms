@@ -33,18 +33,9 @@ pub enum FheParameter {
 #[cw_serde]
 pub struct KmsCoreThresholdConf {
     pub parties: Vec<KmsCoreParty>,
-    pub shares_needed: usize,
+    pub response_count_for_majority_vote: usize,
+    pub response_count_for_reconstruction: usize,
     pub param_choice: FheParameter,
-}
-
-impl KmsCoreThresholdConf {
-    fn calculate_threshold(&self) -> usize {
-        (self.parties.len().saturating_sub(1) as u8 / 3) as usize
-    }
-
-    fn shares_needed_is_ok(&self) -> bool {
-        self.shares_needed > self.calculate_threshold()
-    }
 }
 
 impl KmsCoreConf {
@@ -63,26 +54,23 @@ impl KmsCoreConf {
             .to_string()
     }
 
-    /// The number of shares (or responses in general)
-    /// that are needed to process the result from KMS core.
+    /// The number of responses to perform majority voting.
     ///
-    /// In the centralized setting, [shares_needed] is always 1.
-    pub fn shares_needed(&self) -> usize {
+    /// In the centralized setting, this is always 1.
+    pub fn response_count_for_majority_vote(&self) -> usize {
         match self {
             KmsCoreConf::Centralized(_) => 1,
-            KmsCoreConf::Threshold(x) => x.shares_needed,
+            KmsCoreConf::Threshold(x) => x.response_count_for_majority_vote,
         }
     }
 
-    /// Check whether [shares_needed] is configured correctly.
+    /// The number of shares needed to perform reconstruction.
     ///
-    /// At the moment we're under the optimistic assumption,
-    /// where there are no corruption, so only t+1 shares
-    /// are needed to reconstruct.
-    pub fn shares_needed_is_ok(&self) -> bool {
+    /// In the centralized setting, this is always 1.
+    pub fn response_count_for_reconstruction(&self) -> usize {
         match self {
-            KmsCoreConf::Centralized(_) => true,
-            KmsCoreConf::Threshold(x) => x.shares_needed_is_ok(),
+            KmsCoreConf::Centralized(_) => 1,
+            KmsCoreConf::Threshold(x) => x.response_count_for_reconstruction,
         }
     }
 }
@@ -212,9 +200,6 @@ impl Transaction {
     }
 
     pub fn add_operation(&mut self, operation: OperationValue) -> Result<(), anyhow::Error> {
-        if self.operations.iter().any(|op| op == &operation) {
-            return Err(anyhow::anyhow!("Operation already exists"));
-        }
         self.operations.push(operation);
         Ok(())
     }
@@ -923,59 +908,6 @@ mod tests {
     use strum::IntoEnumIterator;
 
     use super::*;
-
-    #[test]
-    fn test_calculate_threshold() {
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![],
-            shares_needed: 1,
-            param_choice: FheParameter::Test,
-        };
-        assert_eq!(core_conf.calculate_threshold(), 0);
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![KmsCoreParty::default()],
-            shares_needed: 1,
-            param_choice: FheParameter::Test,
-        };
-        assert_eq!(core_conf.calculate_threshold(), 0);
-
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![KmsCoreParty::default(); 3],
-            shares_needed: 1,
-            param_choice: FheParameter::Test,
-        };
-        assert_eq!(core_conf.calculate_threshold(), 0);
-
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![KmsCoreParty::default(); 4],
-            shares_needed: 1,
-            param_choice: FheParameter::Test,
-        };
-        assert_eq!(core_conf.calculate_threshold(), 1);
-
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![KmsCoreParty::default(); 5],
-            shares_needed: 1,
-            param_choice: FheParameter::Test,
-        };
-        assert_eq!(core_conf.calculate_threshold(), 1);
-
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![KmsCoreParty::default(); 6],
-            shares_needed: 1,
-            param_choice: FheParameter::Test,
-        };
-
-        assert_eq!(core_conf.calculate_threshold(), 1);
-
-        let core_conf = KmsCoreThresholdConf {
-            parties: vec![KmsCoreParty::default(); 7],
-            shares_needed: 1,
-            param_choice: FheParameter::Test,
-        };
-
-        assert_eq!(core_conf.calculate_threshold(), 2);
-    }
 
     impl Arbitrary for FheType {
         fn arbitrary(g: &mut Gen) -> FheType {

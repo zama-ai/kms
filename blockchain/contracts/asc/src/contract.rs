@@ -423,7 +423,8 @@ mod tests {
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
-                    shares_needed: 1,
+                    response_count_for_majority_vote: 1,
+                    response_count_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -448,7 +449,8 @@ mod tests {
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
-                    shares_needed: 1,
+                    response_count_for_majority_vote: 1,
+                    response_count_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -457,7 +459,8 @@ mod tests {
 
         let value = KmsCoreConf::Threshold(KmsCoreThresholdConf {
             parties: vec![],
-            shares_needed: 1,
+            response_count_for_majority_vote: 1,
+            response_count_for_reconstruction: 1,
             param_choice: FheParameter::Test,
         });
 
@@ -498,7 +501,8 @@ mod tests {
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
-                    shares_needed: 1,
+                    response_count_for_majority_vote: 2,
+                    response_count_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -549,10 +553,18 @@ mod tests {
             .build();
 
         let response = contract
+            .decrypt_response(txn_id.clone(), decrypt_response.clone(), proof.clone())
+            .call(&owner)
+            .unwrap();
+        // one event because there's always an execute event
+        assert_eq!(response.events.len(), 1);
+
+        let response = contract
             .decrypt_response(txn_id.clone(), decrypt_response, proof.clone())
             .call(&owner)
             .unwrap();
-
+        // two events because there's always an execute event
+        // plus the decryption request since it reached the threshold
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
@@ -571,7 +583,8 @@ mod tests {
         let response = contract.get_transaction(txn_id.clone()).unwrap();
         assert_eq!(response.block_height(), 12345);
         assert_eq!(response.transaction_index(), 0);
-        assert_eq!(response.operations().len(), 2);
+        // three operations: one decrypt and two decrypt response
+        assert_eq!(response.operations().len(), 3);
     }
 
     #[test]
@@ -586,7 +599,8 @@ mod tests {
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
-                    shares_needed: 1,
+                    response_count_for_majority_vote: 2,
+                    response_count_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -634,7 +648,8 @@ mod tests {
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
-                    shares_needed: 1,
+                    response_count_for_majority_vote: 2,
+                    response_count_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -671,6 +686,13 @@ mod tests {
             .keygen_response(txn_id.clone(), keygen_response.clone(), proof.clone())
             .call(&owner)
             .unwrap();
+        assert_eq!(response.events.len(), 1);
+
+        let response = contract
+            .keygen_response(txn_id.clone(), keygen_response.clone(), proof.clone())
+            .call(&owner)
+            .unwrap();
+        // one exec and two response events
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
@@ -704,7 +726,8 @@ mod tests {
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
-                    shares_needed: 1,
+                    response_count_for_majority_vote: 1,
+                    response_count_for_reconstruction: 2,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -769,6 +792,13 @@ mod tests {
             .reencrypt_response(txn_id.clone(), response_values.clone(), proof.clone())
             .call(&owner)
             .unwrap();
+        assert_eq!(response.events.len(), 1);
+
+        let response = contract
+            .reencrypt_response(txn_id.clone(), response_values.clone(), proof.clone())
+            .call(&owner)
+            .unwrap();
+        // one exec and two response events
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
@@ -792,7 +822,8 @@ mod tests {
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
-                    shares_needed: 1,
+                    response_count_for_majority_vote: 2,
+                    response_count_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -822,7 +853,13 @@ mod tests {
             .crs_gen_response(txn_id.clone(), crs_gen_response.clone(), proof.clone())
             .call(&owner)
             .unwrap();
+        assert_eq!(response.events.len(), 1);
 
+        let response = contract
+            .crs_gen_response(txn_id.clone(), crs_gen_response, proof.clone())
+            .call(&owner)
+            .unwrap();
+        // one exec and two response events
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
@@ -869,7 +906,8 @@ mod tests {
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![],
-                    shares_needed: 1,
+                    response_count_for_majority_vote: 2,
+                    response_count_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )

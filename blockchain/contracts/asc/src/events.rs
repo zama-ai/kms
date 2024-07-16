@@ -58,11 +58,32 @@ trait EmitEventVerifier {
         tx.operations().iter().filter(check_type).count() >= amount
     }
 
-    fn reach_threshold<F>(&self, core_conf: &KmsCoreConf, tx: &Transaction, check_type: F) -> bool
+    fn reach_majority_vote_threshold<F>(
+        &self,
+        core_conf: &KmsCoreConf,
+        tx: &Transaction,
+        check_type: F,
+    ) -> bool
     where
         F: FnMut(&&OperationValue) -> bool,
     {
-        self.reach(tx, core_conf.shares_needed(), check_type)
+        self.reach(tx, core_conf.response_count_for_majority_vote(), check_type)
+    }
+
+    fn reach_reconstruction_threshold<F>(
+        &self,
+        core_conf: &KmsCoreConf,
+        tx: &Transaction,
+        check_type: F,
+    ) -> bool
+    where
+        F: FnMut(&&OperationValue) -> bool,
+    {
+        self.reach(
+            tx,
+            core_conf.response_count_for_reconstruction(),
+            check_type,
+        )
     }
 }
 
@@ -73,16 +94,24 @@ impl EmitEventVerifier for OperationValue {
         }
         match self {
             OperationValue::ReencryptResponse(_) => {
-                self.reach_threshold(core_conf, transaction, |t| t.is_reencrypt_response())
+                self.reach_reconstruction_threshold(core_conf, transaction, |t| {
+                    t.is_reencrypt_response()
+                })
             }
             OperationValue::DecryptResponse(_) => {
-                self.reach_threshold(core_conf, transaction, |t| t.is_decrypt_response())
+                self.reach_majority_vote_threshold(core_conf, transaction, |t| {
+                    t.is_decrypt_response()
+                })
             }
             OperationValue::KeyGenResponse(_) => {
-                self.reach_threshold(core_conf, transaction, |t| t.is_key_gen_response())
+                self.reach_majority_vote_threshold(core_conf, transaction, |t| {
+                    t.is_key_gen_response()
+                })
             }
             OperationValue::CrsGenResponse(_) => {
-                self.reach_threshold(core_conf, transaction, |t| t.is_crs_gen_response())
+                self.reach_majority_vote_threshold(core_conf, transaction, |t| {
+                    t.is_crs_gen_response()
+                })
             }
             OperationValue::KeyGenPreprocResponse(_) => true,
 

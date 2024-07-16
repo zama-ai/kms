@@ -59,7 +59,7 @@ pub(crate) async fn handle_event_decryption(
 
     let encoded_bytes: Bytes = encode(&tok).into();
     let encoded_bytes = encoded_bytes.as_ref()[32..].to_vec();
-    println!("Encoded bytes: {:?}", hex::encode(encoded_bytes.clone()));
+    tracing::debug!("Encoded bytes: {:?}", hex::encode(encoded_bytes.clone()));
 
     let client = Arc::new(http_provider(config).await.unwrap());
     let current_gas_price = client.provider().get_gas_price().await.unwrap();

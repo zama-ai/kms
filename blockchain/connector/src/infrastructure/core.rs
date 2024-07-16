@@ -1061,7 +1061,8 @@ mod test {
         for (i, (event, client)) in events.into_iter().zip(clients).enumerate() {
             let conf = KmsCoreConf::Threshold(KmsCoreThresholdConf {
                 parties: vec![KmsCoreParty::default(); AMOUNT_PARTIES],
-                shares_needed: THRESHOLD + 1,
+                response_count_for_majority_vote: 2 * THRESHOLD + 1,
+                response_count_for_reconstruction: THRESHOLD + 2,
                 param_choice: FheParameter::Test,
             });
             let op = client.create_kms_operation(event, op.clone()).unwrap();
