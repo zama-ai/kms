@@ -256,7 +256,10 @@ async fn reencrypt_payload(
             HttpResponse::Ok()
                 .json(json!({ "status": "success", "response": reencryption_response }))
         }
-        Err(_) => HttpResponse::InternalServerError().json(json!({ "status": "failure" })),
+        Err(e) => {
+            error!("Error receiving reencryption response: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({ "status": "failure" }))
+        }
     }
 }
 

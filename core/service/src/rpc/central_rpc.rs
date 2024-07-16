@@ -381,8 +381,11 @@ impl<
         request: Request<DecryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         tracing::info!("Received a new request!");
+        let start = std::time::Instant::now();
         let inner = request.into_inner();
         tracing::info!("Request ID: {:?}", inner.request_id);
+        tracing::debug!("Fhe Type: {:?}", inner.fhe_type);
+        
         let (ciphertext, fhe_type, req_digest, key_id, request_id) = tonic_handle_potential_err(
             validate_decrypt_req(&inner),
             format!("Invalid key in request {:?}", inner),
@@ -423,6 +426,7 @@ impl<
                         &request_id,
                         HandlerStatus::Done((req_digest.clone(), raw_decryption)),
                     );
+                    tracing::info!("⏱️ Core Event Time elapsed: {:?}", start.elapsed());
                 }
                 Result::Err(e) => {
                     let mut guarded_meta_store = meta_store.write().await;
@@ -433,6 +437,7 @@ impl<
                 }
             }
         });
+
         Ok(Response::new(Empty {}))
     }
 
