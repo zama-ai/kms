@@ -49,7 +49,7 @@ gas_limit = 5_000_000
 # base gas price, one of current_gas_price or eip1559_max_priority_fee_per_gas
 base_gas = "eip1559_max_priority_fee_per_gas"
 
-# gas escalator increase in % of base_gas 
+# gas escalator increase in % of base_gas
 gas_escalator_increase = 20
 
 # relayer private key
@@ -81,4 +81,3 @@ url = "http://localhost:8088"
 [tracing]
 service_name = "gateway"
 endpoint = "http://localhost:4317"
-

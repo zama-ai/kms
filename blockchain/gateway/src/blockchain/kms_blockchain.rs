@@ -12,6 +12,7 @@ use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::DecryptValues;
+use events::kms::KmsCoreConf;
 use events::kms::KmsEvent;
 use events::kms::KmsOperation;
 use events::kms::OperationValue;
@@ -51,6 +52,7 @@ pub(crate) struct KmsBlockchainImpl {
     pub(crate) responders: Arc<RwLock<HashMap<TransactionId, oneshot::Sender<KmsEvent>>>>,
     pub(crate) event_sender: mpsc::Sender<KmsEvent>,
     pub(crate) config: GatewayConfig,
+    pub(crate) kms_core_conf: Option<KmsCoreConf>,
 }
 
 #[async_trait]
@@ -107,20 +109,37 @@ impl<'a> KmsBlockchainImpl {
             responders,
             event_sender,
             config,
+            kms_core_conf: None, // needs to be fetched later using [fetch_kms_core_conf], if needed
         }
     }
 
-    pub(crate) fn new_from_config(config: GatewayConfig) -> Self {
+    pub(crate) async fn new_from_config(config: GatewayConfig) -> anyhow::Result<Self> {
         let mnemonic = Some(config.kms.mnemonic.to_string());
         let binding = config.kms.address.to_string();
         let addresses = vec![binding.as_str()];
         let contract_address = &config.kms.contract_address;
-        Self::new(
+        let mut kms_bc_impl = Self::new(
             mnemonic,
             addresses,
             contract_address.to_string().as_str(),
             config,
-        )
+        );
+
+        kms_bc_impl.fetch_kms_core_conf().await?;
+
+        Ok(kms_bc_impl)
+    }
+
+    // query KMS config contract to get/update KMS core conf (threshold values, etc.)
+    pub(crate) async fn fetch_kms_core_conf(&mut self) -> anyhow::Result<()> {
+        let query_client = Arc::clone(&self.query_client);
+        let request = QueryContractRequest::builder()
+            .contract_address(self.config.kms.contract_address.to_string())
+            .query(ContractQuery::GetKmsCoreConf {})
+            .build();
+        let kms_core_conf: KmsCoreConf = query_client.query_contract(request).await?;
+        self.kms_core_conf = Some(kms_core_conf);
+        Ok(())
     }
 
     pub(crate) async fn wait_for_callback(
@@ -276,6 +295,28 @@ impl Blockchain for KmsBlockchainImpl {
             },
             KmsMode::Threshold => {
                 let mut ptxts = Vec::new();
+
+                // Fetch threshold KMS core config (the config is read at start once, currently)
+                let threshold_kms_core_conf =
+                    if let Some(KmsCoreConf::Threshold(conf)) = &self.kms_core_conf {
+                        conf
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "Error reading KMS core config (wrong config type or config not set)."
+                        ));
+                    };
+
+                // We need at least 2t + 1 responses for secure majority voting (at most t could be malicious).
+                // The reason ist that the KMS ASC simply counts responses without checking equality, so we might receive up to t malicious responses.
+                // The value (2t + 1) comes from the KMS core config.
+                if results.len() < threshold_kms_core_conf.response_count_for_majority_vote {
+                    return Err(anyhow::anyhow!(
+                        "Have not received enough decryption results: received {}, needed at least {}",
+                        results.len(),
+                        threshold_kms_core_conf.response_count_for_majority_vote
+                    ));
+                }
+
                 // loop through the vector of results
                 for value in results.iter() {
                     match value {
@@ -300,14 +341,18 @@ impl Blockchain for KmsBlockchainImpl {
                     };
                 }
 
-                // check that all received plaintexts are identical (optimistic case)
-                // TODO: use majority vote to tolerate up to t malicious responses (unless we do that in an earlier step)
-                let pivot = &ptxts[0];
-                if ptxts.iter().all(|x| x == pivot) {
-                    pivot.clone() // all plaintext are identical, return the first one
+                let (majority_pt, majority_count) = most_common_element(&ptxts)
+                    .ok_or_else(|| anyhow::anyhow!("No plaintext found."))?; // this cannot happen, since we have some responses, but just to be sure
+
+                // We need at least t + 1 identical responses as majority, so we can return the majority plaintext (at most t others were corrupted)
+                let required_majority = threshold_kms_core_conf.degree_for_reconstruction + 1;
+                if majority_count >= required_majority {
+                    majority_pt
                 } else {
                     return Err(anyhow::anyhow!(
-                        "Threshold decryption failed: Received different plaintext values."
+                        "Have not received a large enough majority of decryptions: majority size is {}, needed at least {}",
+                        majority_count,
+                        required_majority
                     ));
                 }
             }
@@ -531,4 +576,37 @@ fn to_event(event: &cosmos_proto::messages::tendermint::abci::Event) -> cosmwasm
         result = result.add_attribute(key, value);
     }
     result
+}
+
+// Returns the most common element in the vector together with its count
+fn most_common_element<T: Eq + std::hash::Hash + Clone>(vec: &[T]) -> Option<(T, usize)> {
+    let mut counts = HashMap::new();
+
+    // Count occurrences of each element
+    for item in vec {
+        *counts.entry(item).or_insert(0) += 1;
+    }
+
+    // Find the element with the maximum count and returnt that element, together with its count
+    counts
+        .into_iter()
+        .max_by_key(|&(_, count)| count)
+        .map(|(item, count)| (item.clone(), count))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::blockchain::kms_blockchain::most_common_element;
+
+    #[test]
+    fn test_most_common_element() {
+        let (most_common_el, count) =
+            most_common_element(&[1, 1, 2, 3, 4, 5, 6, 5, 5, 5, 1, 678]).unwrap();
+        assert_eq!(most_common_el, 5);
+        assert_eq!(count, 4);
+
+        // empty vector returns None
+        let none = most_common_element(&Vec::<usize>::new());
+        assert_eq!(none, None);
+    }
 }

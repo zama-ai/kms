@@ -23,7 +23,7 @@ async fn setup_blockchain(config: &GatewayConfig) -> anyhow::Result<Arc<dyn Bloc
             tracing::info!("🐛 Running in debug mode with a mocked KMS backend 🐛");
             Arc::new(MockchainImpl)
         }
-        false => Arc::new(KmsBlockchainImpl::new_from_config(config.clone())),
+        false => Arc::new(KmsBlockchainImpl::new_from_config(config.clone()).await?),
     };
 
     Ok(strategy)
