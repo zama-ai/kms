@@ -2,6 +2,12 @@ name: "[Release KMS] - Release"
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        type: string
+        description: 'Branch, tag or SHA to generate the release from. (Default main)'
+        required: false
+        default: 'main'
 
 permissions:
   contents: write
@@ -17,6 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          ref: ${{ inputs.ref }}
 
       - name: Semantic Release
         id: sem-release
