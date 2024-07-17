@@ -50,7 +50,7 @@ impl S3Storage {
 
     pub async fn new(
         aws_region: String,
-        aws_s3_proxy: String,
+        aws_s3_proxy: Option<String>,
         blob_bucket: String,
         blob_key_prefix: String,
     ) -> Self {
@@ -209,7 +209,7 @@ impl EnclaveS3Storage {
     ) -> anyhow::Result<Self> {
         let s3_storage = S3Storage::new(
             aws_region.clone(),
-            aws_s3_proxy,
+            Some(aws_s3_proxy),
             blob_bucket,
             blob_key_prefix,
         )
@@ -292,12 +292,14 @@ pub struct AppKeyBlob {
 
 /// Given the address of a vsock-to-TCP proxy, constructs an S3 client for use inside of a Nitro
 /// enclave.
-pub async fn build_s3_client(region: String, proxy: String) -> S3Client {
-    let s3_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-        .region(Region::new(region))
-        .endpoint_url(proxy)
-        .load()
-        .await;
+pub async fn build_s3_client(region: String, proxy: Option<String>) -> S3Client {
+    let s3_config_loader =
+        aws_config::defaults(aws_config::BehaviorVersion::latest()).region(Region::new(region));
+    let s3_config_loader = match proxy {
+        Some(p) => s3_config_loader.endpoint_url(p),
+        None => s3_config_loader,
+    };
+    let s3_config = s3_config_loader.load().await;
     S3Client::new(&s3_config)
 }
 
@@ -482,7 +484,7 @@ pub async fn nitro_enclave_decrypt_app_key<T: DeserializeOwned>(
 async fn aws_storage_url() {
     let storage = S3Storage::new(
         "aws_region".to_string(),
-        "aws_kms_proxy".to_string(),
+        Some("aws_kms_proxy".to_string()),
         "blob_bucket".to_string(),
         "blob_key_prefix".to_string(),
     )

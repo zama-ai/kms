@@ -107,7 +107,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     "s3" => StorageProxy::S3(
                         S3Storage::new(
                             config.aws_region.clone().unwrap(),
-                            config.aws_s3_proxy.clone().unwrap(),
+                            config.aws_s3_proxy.clone(),
                             url.host_str().unwrap().to_string(),
                             S3Storage::threshold_prefix(
                                 Some(url.path().to_string()),
@@ -182,7 +182,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     "s3" => StorageProxy::S3(
                         S3Storage::new(
                             config.aws_region.clone().unwrap(),
-                            config.aws_s3_proxy.clone().unwrap(),
+                            config.aws_s3_proxy.clone(),
                             url.host_str().unwrap().to_string(),
                             S3Storage::centralized_prefix(
                                 Some(url.path().to_string()),

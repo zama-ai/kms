@@ -152,7 +152,7 @@ async fn main() {
                         let mut storage = StorageProxy::S3(
                             S3Storage::new(
                                 aws_region.clone(),
-                                "".to_string(),
+                                None,
                                 url.host_str().unwrap().to_string(),
                                 blob_key_prefix.clone(),
                             )
@@ -202,7 +202,7 @@ async fn main() {
                         let mut storage = StorageProxy::S3(
                             S3Storage::new(
                                 aws_region.clone(),
-                                "".to_string(),
+                                None,
                                 url.host_str().unwrap().to_string(),
                                 blob_key_prefix.clone(),
                             )
@@ -323,7 +323,7 @@ async fn main() {
                             let mut storage = StorageProxy::S3(
                                 S3Storage::new(
                                     aws_region.clone(),
-                                    "".to_string(),
+                                    None,
                                     url.host_str().unwrap().to_string(),
                                     blob_key_prefix.clone(),
                                 )
@@ -380,7 +380,7 @@ async fn main() {
                             let mut storage = StorageProxy::S3(
                                 S3Storage::new(
                                     aws_region.clone(),
-                                    "".to_string(),
+                                    None,
                                     url.host_str().unwrap().to_string(),
                                     blob_key_prefix.clone(),
                                 )
