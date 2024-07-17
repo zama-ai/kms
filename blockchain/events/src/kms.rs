@@ -35,6 +35,7 @@ pub struct KmsCoreThresholdConf {
     pub parties: Vec<KmsCoreParty>,
     pub response_count_for_majority_vote: usize,
     pub response_count_for_reconstruction: usize,
+    pub degree_for_reconstruction: usize,
     pub param_choice: FheParameter,
 }
 

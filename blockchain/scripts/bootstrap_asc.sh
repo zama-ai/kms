@@ -38,7 +38,7 @@ echo $PASSWORD | wasmd tx wasm upload /app/asc.wasm --from validator --chain-id 
 # Instantiate the ASC smart contract
 # run in threshold mode
 # sleep 10
-# echo $PASSWORD | wasmd tx wasm instantiate 1 '{"proof_type": "debug", "kms_core_conf": { "threshold": { "parties": [], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "param_choice": "default" }  }}' --label "configuration_0" --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 -y --no-admin
+# echo $PASSWORD | wasmd tx wasm instantiate 1 '{"proof_type": "debug", "kms_core_conf": { "threshold": { "parties": [], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "default" }  }}' --label "configuration_0" --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 -y --no-admin
 # run in centralized mode
 sleep 10
 echo $PASSWORD | wasmd tx wasm instantiate 1 '{"proof_type": "debug", "kms_core_conf": { "centralized": "default" }}' --label "configuration_0" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin

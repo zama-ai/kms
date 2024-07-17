@@ -120,8 +120,9 @@ mod tests {
         let storage = KmsContractStorage::default();
         let core_conf = KmsCoreConf::Threshold(KmsCoreThresholdConf {
             parties: vec![],
-            response_count_for_majority_vote: 1,
-            response_count_for_reconstruction: 1,
+            response_count_for_majority_vote: 3,
+            response_count_for_reconstruction: 3,
+            degree_for_reconstruction: 1,
             param_choice: FheParameter::Test,
         });
         storage

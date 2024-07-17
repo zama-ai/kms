@@ -112,6 +112,45 @@ impl KmsContract {
                 *self.proof_strategy.borrow_mut() = Box::new(DebugProofStrategy {})
             }
         }
+
+        if let KmsCoreConf::Threshold(conf) = &kms_core_conf {
+            // centralized setting should be used if there is only one party
+            if conf.parties.len() < 2 {
+                return Err(cosmwasm_std::StdError::verification_err(
+                    VerificationError::GenericErr,
+                ));
+            }
+
+            // check that degree is at least 1
+            if conf.degree_for_reconstruction < 1 {
+                return Err(cosmwasm_std::StdError::verification_err(
+                    VerificationError::GenericErr,
+                ));
+            }
+
+            // check that the number of shares needed for reconstruction is at least degree + 2
+            // this is the minimum value such that error detection is possible
+            if conf.response_count_for_reconstruction < conf.degree_for_reconstruction + 2 {
+                return Err(cosmwasm_std::StdError::verification_err(
+                    VerificationError::GenericErr,
+                ));
+            }
+
+            // there can not be enough responses for reconstruction
+            if conf.response_count_for_reconstruction > conf.parties.len() {
+                return Err(cosmwasm_std::StdError::verification_err(
+                    VerificationError::GenericErr,
+                ));
+            }
+
+            // there can not be enough responses for majority vote
+            if conf.response_count_for_majority_vote > conf.parties.len() {
+                return Err(cosmwasm_std::StdError::verification_err(
+                    VerificationError::GenericErr,
+                ));
+            }
+        };
+
         self.storage
             .update_core_conf(ctx.deps.storage, kms_core_conf)?;
         ADMIN.set(ctx.deps, Some(ctx.info.sender.clone()))?;
@@ -400,6 +439,7 @@ mod tests {
     use events::kms::KeyGenResponseValues;
     use events::kms::KeyGenValues;
     use events::kms::KmsCoreConf;
+    use events::kms::KmsCoreParty;
     use events::kms::KmsCoreThresholdConf;
     use events::kms::KmsEvent;
     use events::kms::KmsOperation;
@@ -418,13 +458,62 @@ mod tests {
         let app = App::default();
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
+
+        // first make a few tries that will fail
+        // `degree_for_reconstruction` is too high
+        assert!(code_id
+            .instantiate(
+                ContractProofType::Debug,
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![KmsCoreParty::default(); 4],
+                    response_count_for_majority_vote: 3,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 2,
+                    param_choice: FheParameter::Test,
+                }),
+            )
+            .call(&owner)
+            .is_err());
+
+        // `response_count_for_majority_vote` is greater than the no. of parties
+        assert!(code_id
+            .instantiate(
+                ContractProofType::Debug,
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![KmsCoreParty::default(); 4],
+                    response_count_for_majority_vote: 5,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
+                    param_choice: FheParameter::Test,
+                }),
+            )
+            .call(&owner)
+            .is_err());
+
+        // `response_count_for_reconstruction` is greater than the no. of parties
+        assert!(code_id
+            .instantiate(
+                ContractProofType::Debug,
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![KmsCoreParty::default(); 4],
+                    response_count_for_majority_vote: 3,
+                    response_count_for_reconstruction: 5,
+                    degree_for_reconstruction: 1,
+                    param_choice: FheParameter::Test,
+                }),
+            )
+            .call(&owner)
+            .is_err());
+
+        // finally we make a successful attempt
         let contract = code_id
             .instantiate(
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
-                    parties: vec![],
-                    response_count_for_majority_vote: 1,
-                    response_count_for_reconstruction: 1,
+                    parties: vec![KmsCoreParty::default(); 4],
+                    response_count_for_majority_vote: 3,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -448,9 +537,10 @@ mod tests {
             .instantiate(
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
-                    parties: vec![],
-                    response_count_for_majority_vote: 1,
-                    response_count_for_reconstruction: 1,
+                    parties: vec![KmsCoreParty::default(); 4],
+                    response_count_for_majority_vote: 3,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -458,9 +548,10 @@ mod tests {
             .unwrap();
 
         let value = KmsCoreConf::Threshold(KmsCoreThresholdConf {
-            parties: vec![],
-            response_count_for_majority_vote: 1,
-            response_count_for_reconstruction: 1,
+            parties: vec![KmsCoreParty::default(); 4],
+            response_count_for_majority_vote: 3,
+            response_count_for_reconstruction: 3,
+            degree_for_reconstruction: 1,
             param_choice: FheParameter::Test,
         });
 
@@ -500,9 +591,10 @@ mod tests {
             .instantiate(
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
-                    parties: vec![],
+                    parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 1,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -598,9 +690,10 @@ mod tests {
             .instantiate(
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
-                    parties: vec![],
+                    parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 1,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -647,9 +740,10 @@ mod tests {
             .instantiate(
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
-                    parties: vec![],
+                    parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 1,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -725,9 +819,10 @@ mod tests {
             .instantiate(
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
-                    parties: vec![],
+                    parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 1,
-                    response_count_for_reconstruction: 2,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -798,7 +893,13 @@ mod tests {
             .reencrypt_response(txn_id.clone(), response_values.clone(), proof.clone())
             .call(&owner)
             .unwrap();
-        // one exec and two response events
+        assert_eq!(response.events.len(), 1);
+
+        let response = contract
+            .reencrypt_response(txn_id.clone(), response_values.clone(), proof.clone())
+            .call(&owner)
+            .unwrap();
+        // one exec and one response event since we hit the threshold of 3
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
@@ -821,9 +922,10 @@ mod tests {
             .instantiate(
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
-                    parties: vec![],
+                    parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 1,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
@@ -905,9 +1007,10 @@ mod tests {
             .instantiate(
                 ContractProofType::Debug,
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
-                    parties: vec![],
+                    parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
-                    response_count_for_reconstruction: 1,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
                     param_choice: FheParameter::Test,
                 }),
             )
