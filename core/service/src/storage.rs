@@ -188,8 +188,13 @@ impl FileStorage {
 
     fn purge(path: PathBuf) -> anyhow::Result<()> {
         tracing::warn!("Purging storage at {:?}", path);
-        fs::remove_dir_all(path)?;
-        Ok(())
+        match fs::remove_dir_all(path) {
+            Ok(_) => Ok(()),
+            Err(e) => match e.kind() {
+                std::io::ErrorKind::NotFound => Ok(()),
+                _ => Err(e.into()),
+            },
+        }
     }
 
     /// Create a new directory for centralized storage.
