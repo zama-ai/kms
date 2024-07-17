@@ -42,7 +42,7 @@ RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
 # Third stage: Copy the binaries from the base stage and the go-runtime stage
 FROM debian:stable-slim as runtime
-RUN apt update && apt install -y libssl3
+RUN apt update && apt install -y libssl3 ca-certificates
 WORKDIR /app/kms
 
 # Set the path to include the binaries and not just the default /usr/local/bin
