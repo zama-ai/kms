@@ -63,10 +63,10 @@ pub async fn store_at_request_id<S: Storage, Ser: Versioned + Serialize + Send +
     data_type: &str,
 ) -> anyhow::Result<()> {
     let url = storage.compute_url(&request_id.to_string(), data_type)?;
-    storage.store_data(data, &url).await.map_err(|_| {
+    storage.store_data(data, &url).await.map_err(|e| {
         anyhow_error_and_log(format!(
-            "Could not store data with ID {} and type {}!",
-            request_id, data_type,
+            "Could not store data with ID {} and type {}: {}",
+            request_id, data_type, e
         ))
     })
 }
@@ -78,10 +78,10 @@ pub async fn delete_at_request_id<S: Storage>(
     data_type: &str,
 ) -> anyhow::Result<()> {
     let url = storage.compute_url(&request_id.to_string(), data_type)?;
-    storage.delete_data(&url).await.map_err(|_| {
+    storage.delete_data(&url).await.map_err(|e| {
         anyhow_error_and_log(format!(
-            "Could not delete data with ID {} and type {}!",
-            request_id, data_type,
+            "Could not delete data with ID {} and type {}: {}",
+            request_id, data_type, e
         ))
     })
 }
@@ -110,7 +110,7 @@ pub async fn read_all_data<
         let data: Ser = storage
             .read_data(url)
             .await
-            .map_err(|e| anyhow!("reading failed on url {url} with error {e}"))?;
+            .map_err(|e| anyhow!("reading failed on url {url}: {e}"))?;
         let req_id: RequestId = data_ptr.to_owned().try_into()?;
         if !req_id.is_valid() {
             return Err(anyhow_error_and_log(format!(
