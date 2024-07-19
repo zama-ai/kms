@@ -145,10 +145,6 @@ mod tests {
         },
     };
 
-    use crate::execution::{
-        sharing::shamir::{InputOp, RevealOp},
-        tfhe_internals::parameters::TUniformBound,
-    };
     use crate::{
         algebra::residue_poly::ResiduePoly64,
         execution::{
@@ -167,6 +163,13 @@ mod tests {
             },
         },
         tests::helper::tests_and_benches::execute_protocol_large,
+    };
+    use crate::{
+        execution::{
+            sharing::shamir::{InputOp, RevealOp},
+            tfhe_internals::parameters::TUniformBound,
+        },
+        networking::NetworkMode,
     };
 
     use super::{encrypt_lwe_ciphertext, LweCiphertextShare, LweSecretKeyShare};
@@ -233,8 +236,18 @@ mod tests {
 
         let parties = 5;
         let threshold = 1;
-        let results =
-            execute_protocol_large::<ResiduePoly64, _, _>(parties, threshold, None, &mut task);
+
+        //This is Async because triples are generated from dummy preprocessing
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = execute_protocol_large::<ResiduePoly64, _, _>(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
 
         //Reconstruct everything and decrypt using tfhe-rs
 

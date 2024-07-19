@@ -183,6 +183,7 @@ mod tests {
             runtime::party::Role,
             runtime::session::{ParameterHandles, SmallSession},
         },
+        networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_small,
     };
     use aes_prng::AesRng;
@@ -207,7 +208,10 @@ mod tests {
                     }
 
                     // expect 2 rounds: 1 for multiplication and 1 for opening
-                    let results = execute_protocol_small(parties, threshold, Some(2), &mut task);
+                    // Online phase so Async
+                    //Delay P1 by 1s every round
+                    let delay_vec = vec![std::time::Duration::from_secs(1)];
+                    let results = execute_protocol_small(parties, threshold, Some(2), NetworkMode::Async, Some(delay_vec), &mut task);
                     assert_eq!(results.len(), parties);
 
                     for cur_res in results {
@@ -248,7 +252,10 @@ mod tests {
                     }
 
                     // expect 4 rounds: 1 for bit multiplication and 3 for the separate openings
-                    let results = execute_protocol_small(parties, threshold, Some(4), &mut task);
+                    // Online phase so Async
+                    //Delay P1 by 1s every round
+                    let delay_vec = vec![std::time::Duration::from_secs(1)];
+                    let results = execute_protocol_small(parties, threshold, Some(4), NetworkMode::Async,Some(delay_vec), &mut task);
                     assert_eq!(results.len(), parties);
                     for (a_vec, b_vec, c_vec) in &results {
                         for i in 0..AMOUNT {
@@ -282,7 +289,10 @@ mod tests {
                         }
                     };
 
-                    let results = execute_protocol_small(parties, threshold, None, &mut task);
+                    // Online phase so Async
+                    //Delay P1 by 1s every round
+                    let delay_vec = vec![std::time::Duration::from_secs(1)];
+                    let results = execute_protocol_small(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
                     assert_eq!(results.len(), parties);
 
                     for (cur_role, cur_res) in results {
@@ -315,7 +325,10 @@ mod tests {
                         open_list(&[cur_a, cur_b, cur_c], &session).await.unwrap()
                     };
 
-                    let results = execute_protocol_small(parties, threshold, None, &mut task);
+                    // Online phase so Async
+                    //Delay P1 by 1s every round
+                    let delay_vec = vec![std::time::Duration::from_secs(1)];
+                    let results = execute_protocol_small(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
                     assert_eq!(results.len(), parties);
 
                     for cur_res in results {

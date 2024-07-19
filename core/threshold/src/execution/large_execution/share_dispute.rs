@@ -430,6 +430,7 @@ pub(crate) mod tests {
         send_and_receive_share_dispute_single, share_secrets,
     };
     use crate::execution::sharing::shamir::RevealOp;
+    use crate::networking::NetworkMode;
     use crate::{
         algebra::{
             poly::Poly,
@@ -745,6 +746,7 @@ pub(crate) mod tests {
         };
 
         //Execute the protocol with malicious parties and added disputes
+        //ShareDispute assumes Sync network
         let (result_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
             &params,
             &params.dispute_pairs,
@@ -754,6 +756,8 @@ pub(crate) mod tests {
             ]
             .concat(),
             malicious_share_dispute,
+            NetworkMode::Sync,
+            None,
             &mut task_honest,
             &mut task_malicious,
         );

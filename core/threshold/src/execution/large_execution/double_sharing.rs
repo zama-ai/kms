@@ -167,6 +167,7 @@ pub(crate) mod tests {
     use crate::algebra::structure_traits::RingEmbed;
     use crate::execution::runtime::session::BaseSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
+    use crate::networking::NetworkMode;
     use crate::{
         algebra::structure_traits::{Ring, Sample},
         execution::{
@@ -228,7 +229,15 @@ pub(crate) mod tests {
         //      We're doing one more sharing than pre-computed in the initial init (see num_output)
         //      Thus we have one more call to init, and therefore we double the rounds from above
         let rounds = (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) * 2;
-        let result = execute_protocol_large::<Z, _, _>(parties, threshold, Some(rounds), &mut task);
+        //DoubleSharing assumes Sync network
+        let result = execute_protocol_large::<Z, _, _>(
+            parties,
+            threshold,
+            Some(rounds),
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
 
         //Check we can reconstruct both degree t and 2t, and they are equal
         let ldl_batch_size = 10_usize;
@@ -298,8 +307,15 @@ pub(crate) mod tests {
             (session.my_role().unwrap(), res)
         }
 
-        let result =
-            execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
+        //DoubleSharing assumes Sync network
+        let result = execute_protocol_large::<ResiduePoly128, _, _>(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
 
         //Check we can reconstruct both degree t and 2t, and they are equal
         let ldl_batch_size = 10_usize;

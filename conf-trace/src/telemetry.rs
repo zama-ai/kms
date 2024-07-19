@@ -157,6 +157,7 @@ pub fn record_trace_id(request: Request<Body>) -> Request<Body> {
 }
 
 /// Propagate the current span context to the outgoing request.
+#[derive(Clone)]
 pub struct ContextPropagator;
 
 /// Implement the `Interceptor` trait to propagate the current span context to the outgoing request.

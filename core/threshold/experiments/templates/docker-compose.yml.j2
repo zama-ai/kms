@@ -41,7 +41,7 @@ services:
       - {{6379 + i+1}}:6379
 {% endfor %}
   jaeger:
-    image: jaegertracing/all-in-one:${JAEGER_VERSION:-latest}
+    image: jaegertracing/all-in-one:1.57
     ports:
       - "16686:16686"
     environment:

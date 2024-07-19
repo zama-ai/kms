@@ -1064,6 +1064,7 @@ mod tests {
     use crate::execution::sharing::shamir::{ShamirFieldPoly, ShamirSharings};
     use crate::execution::small_execution::agree_random::RealAgreeRandom;
     use crate::execution::small_execution::offline::SmallPreprocessing;
+    use crate::networking::NetworkMode;
     use crate::tests::helper::tests_and_benches::execute_protocol_small;
     use aes_prng::AesRng;
     use rand::SeedableRng;
@@ -1228,7 +1229,9 @@ mod tests {
                 prep.next_random_vec(100).unwrap(),
             )
         };
-        let results = execute_protocol_small(parties, threshold, None, &mut task);
+        //This is Sync because we are generating triples
+        let results =
+            execute_protocol_small(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         //Reconstruct everything and check triples are triples
         for idx in 0..100 {

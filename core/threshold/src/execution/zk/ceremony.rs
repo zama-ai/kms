@@ -559,6 +559,7 @@ mod tests {
             session::{LargeSession, ParameterHandles},
             test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         },
+        networking::NetworkMode,
         session_id::SessionId,
         tests::helper::tests::{
             execute_protocol_large_w_disputes_and_malicious, TestingParameters,
@@ -610,8 +611,9 @@ mod tests {
         let num_parties = 4usize;
         let witness_dim = 10usize;
         let identities = generate_fixed_identities(num_parties);
+        //CRS generation is round robin, so Sync by nature
         let runtime: DistributedTestRuntime<ResiduePoly64> =
-            DistributedTestRuntime::new(identities, threshold as u8);
+            DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         let session_id = SessionId(2);
 
@@ -794,11 +796,14 @@ mod tests {
             session.my_role().unwrap().zero_based()
         };
 
+        //CRS generation is round robin, so Sync by nature
         let (results_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
             &params,
             &[],
             &params.malicious_roles,
             malicious_party,
+            NetworkMode::Sync,
+            None,
             &mut task_honest,
             &mut task_malicious,
         );

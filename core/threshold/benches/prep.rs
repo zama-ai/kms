@@ -14,6 +14,7 @@ use distributed_decryption::execution::runtime::session::{LargeSession, SmallSes
 use distributed_decryption::execution::sharing::shamir::{InputOp, RevealOp};
 use distributed_decryption::execution::small_execution::agree_random::RealAgreeRandom;
 use distributed_decryption::execution::small_execution::offline::SmallPreprocessing;
+use distributed_decryption::networking::NetworkMode;
 use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_large;
 use distributed_decryption::tests::helper::tests_and_benches::execute_protocol_small;
 
@@ -71,9 +72,12 @@ fn triple_nsmall128(c: &mut Criterion) {
                         .await
                         .unwrap();
                     };
+                    //Executing offline, so require Sync network
                     let _result = execute_protocol_small::<ResiduePoly128, _, _>(
                         config.n,
                         config.t as u8,
+                        None,
+                        NetworkMode::Sync,
                         None,
                         &mut computation,
                     );
@@ -128,9 +132,12 @@ fn triple_z128(c: &mut Criterion) {
                         .await
                         .unwrap();
                     };
+                    //Executing offline, so require Sync network
                     let _result = execute_protocol_large::<ResiduePoly128, _, _>(
                         config.n,
                         config.t,
+                        None,
+                        NetworkMode::Sync,
                         None,
                         &mut computation,
                     );
@@ -185,9 +192,12 @@ fn triple_z64(c: &mut Criterion) {
                         .await
                         .unwrap();
                     };
+                    //Executing offline, so require Sync network
                     let _result = execute_protocol_large::<ResiduePoly64, _, _>(
                         config.n,
                         config.t,
+                        None,
+                        NetworkMode::Sync,
                         None,
                         &mut computation,
                     );
@@ -242,9 +252,12 @@ fn random_sharing(c: &mut Criterion) {
                         .await
                         .unwrap();
                     };
+                    //Executing offline, so require Sync network
                     let _result = execute_protocol_large::<ResiduePoly128, _, _>(
                         config.n,
                         config.t,
+                        None,
+                        NetworkMode::Sync,
                         None,
                         &mut computation,
                     );
@@ -285,9 +298,12 @@ fn double_sharing(c: &mut Criterion) {
                         let mut dsh = TrueDoubleSharing::<ResiduePoly128>::default();
                         dsh.init(&mut session, config.batch_size).await.unwrap();
                     };
+                    //Executing offline, so require Sync network
                     let _result = execute_protocol_large::<ResiduePoly128, _, _>(
                         config.n,
                         config.t,
+                        None,
+                        NetworkMode::Sync,
                         None,
                         &mut computation,
                     );
@@ -348,9 +364,12 @@ fn bitgen_nlarge(c: &mut Criterion) {
                         .await
                         .unwrap();
                     };
+                    //Executing offline, so require Sync network
                     let _result = execute_protocol_large::<ResiduePoly128, _, _>(
                         config.n,
                         config.t,
+                        None,
+                        NetworkMode::Sync,
                         None,
                         &mut computation,
                     );

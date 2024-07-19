@@ -84,7 +84,6 @@ impl<V: Vss> Coinflip for RealCoinflip<V> {
 pub(crate) mod tests {
 
     use super::{Coinflip, DummyCoinflip, RealCoinflip};
-    use crate::algebra::structure_traits::{ErrorCorrect, Ring, RingEmbed};
     #[cfg(feature = "slow_tests")]
     use crate::execution::large_execution::vss::tests::{
         DroppingVssAfterR1, DroppingVssAfterR2, DroppingVssFromStart, MaliciousVssR1,
@@ -107,6 +106,10 @@ pub(crate) mod tests {
             get_networkless_large_session_for_parties, TestingParameters,
         },
     };
+    use crate::{
+        algebra::structure_traits::{ErrorCorrect, Ring, RingEmbed},
+        networking::NetworkMode,
+    };
     use aes_prng::AesRng;
     use anyhow::anyhow;
     use async_trait::async_trait;
@@ -125,7 +128,13 @@ pub(crate) mod tests {
             Identity("localhost:5004".to_string()),
         ];
         let threshold = 1;
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities.clone(), threshold);
+        //Coinflip assumes Sync network
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+            identities.clone(),
+            threshold,
+            NetworkMode::Sync,
+            None,
+        );
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
@@ -262,11 +271,14 @@ pub(crate) mod tests {
             )
         };
 
+        //Coinflip assumes Sync network
         let (results_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
             &params,
             &[],
             &params.malicious_roles,
             malicious_coinflip,
+            NetworkMode::Sync,
+            None,
             &mut task_honest,
             &mut task_malicious,
         );

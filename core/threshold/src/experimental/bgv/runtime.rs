@@ -1,8 +1,11 @@
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::execution::runtime::party::Identity;
 use crate::execution::runtime::party::Role;
 use crate::networking::local::LocalNetworkingProducer;
+use crate::networking::NetworkMode;
 use crate::{execution::runtime::party::RoleAssignment, networking::local::LocalNetworking};
 
 pub struct BGVTestRuntime {
@@ -13,7 +16,12 @@ pub struct BGVTestRuntime {
 }
 
 impl BGVTestRuntime {
-    pub fn new(identities: Vec<Identity>, threshold: u8) -> Self {
+    pub fn new(
+        identities: Vec<Identity>,
+        threshold: u8,
+        network_mode: NetworkMode,
+        delayed_map: Option<HashMap<Identity, Duration>>,
+    ) -> Self {
         let role_assignments: RoleAssignment = identities
             .clone()
             .into_iter()
@@ -25,7 +33,12 @@ impl BGVTestRuntime {
         let user_nets: Vec<Arc<LocalNetworking>> = identities
             .iter()
             .map(|user_identity| {
-                let net = net_producer.user_net(user_identity.clone());
+                let delay = if let Some(delayed_map) = &delayed_map {
+                    delayed_map.get(user_identity).copied()
+                } else {
+                    None
+                };
+                let net = net_producer.user_net(user_identity.clone(), network_mode, delay);
                 Arc::new(net)
             })
             .collect();

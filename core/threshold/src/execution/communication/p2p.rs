@@ -66,14 +66,7 @@ pub async fn send_to_honest_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionH
     session: &B,
 ) -> anyhow::Result<()> {
     session.network().increase_round_counter()?;
-    let mut send_job = JoinSet::new();
-    internal_send_to_parties(
-        &mut send_job,
-        values_to_send,
-        session,
-        &check_talking_to_myself,
-    )?;
-    while (send_job.join_next().await).is_some() {}
+    internal_send_to_parties(values_to_send, session, &check_talking_to_myself).await?;
     Ok(())
 }
 
@@ -86,19 +79,16 @@ pub async fn send_to_parties_w_dispute<Z: Ring, R: Rng + CryptoRng, L: LargeSess
     session: &L,
 ) -> anyhow::Result<()> {
     session.network().increase_round_counter()?;
-    let mut send_job = JoinSet::new();
-    internal_send_to_parties(&mut send_job, values_to_send, session, &check_roles)?;
-    while (send_job.join_next().await).is_some() {}
+    internal_send_to_parties(values_to_send, session, &check_roles).await?;
     Ok(())
 }
 
 /// Add a job of sending specific values to specific parties.
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
-fn internal_send_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
-    jobs: &mut JoinSet<()>,
+async fn internal_send_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &B,
-    check_fn: &dyn Fn(&Role, &B) -> anyhow::Result<bool>,
+    check_fn: &(dyn Fn(&Role, &B) -> anyhow::Result<bool> + Sync),
 ) -> anyhow::Result<()> {
     for (cur_receiver, cur_value) in values_to_send.iter() {
         // Ensure the party we want to send to passes the check we specified
@@ -107,11 +97,9 @@ fn internal_send_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R
             let session_id = session.session_id();
             let receiver_identity = session.identity_from(cur_receiver)?;
             let value_to_send = cur_value.clone();
-            jobs.spawn(async move {
-                let _ = networking
-                    .send(value_to_send.to_network(), &receiver_identity, &session_id)
-                    .await;
-            });
+            networking
+                .send(value_to_send.to_network(), &receiver_identity, &session_id)
+                .await?;
         } else {
             tracing::info!(
                 "I am {:?} trying to send to receiver {:?}, who doesn't pass check",
@@ -131,21 +119,17 @@ pub async fn send_distinct_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessio
     sender: &Role,
     values_to_send: HashMap<&Role, NetworkValue<Z>>,
 ) -> anyhow::Result<()> {
-    let mut send_jobs = JoinSet::new();
     for (other_role, other_identity) in session.role_assignments().iter() {
         let networking = Arc::clone(session.network());
         let session_id = session.session_id();
         let other_id = other_identity.clone();
         let msg = values_to_send[other_role].clone();
         if sender != other_role {
-            send_jobs.spawn(async move {
-                let _ = networking
-                    .send(msg.to_network(), &other_id, &session_id)
-                    .await;
-            });
+            networking
+                .send(msg.to_network(), &other_id, &session_id)
+                .await?;
         }
     }
-    while (send_jobs.join_next().await).is_some() {}
     Ok(())
 }
 

@@ -448,7 +448,10 @@ mod tests {
                 prss::create_sets,
             },
         },
-        networking::value::{AgreeRandomValue, NetworkValue},
+        networking::{
+            value::{AgreeRandomValue, NetworkValue},
+            NetworkMode,
+        },
         session_id::SessionId,
         tests::helper::{
             tests::get_networkless_base_session_for_parties,
@@ -561,10 +564,13 @@ mod tests {
             (session.my_role().unwrap(), vd)
         }
 
+        // Sync because it is part of the offline phase
         let res = execute_protocol_small(
             num_parties,
             threshold,
             Some(expected_rounds),
+            NetworkMode::Sync,
+            None,
             &mut task::<A>,
         );
 
@@ -602,7 +608,9 @@ mod tests {
 
         assert_eq!(identities.len(), num_parties);
 
-        let runtime = DistributedTestRuntime::new(identities, threshold as u8);
+        // Sync because it is part of the offline phase
+        let runtime =
+            DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         // create sessions for each prss party, except party 0, which does not respond in this case
         let sessions: Vec<SmallSession<ResiduePoly128>> = (1..num_parties)

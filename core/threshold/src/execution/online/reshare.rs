@@ -269,6 +269,7 @@ mod tests {
     use super::*;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::test_feature::KeySet;
+    use crate::networking::NetworkMode;
     use crate::{
         algebra::{
             residue_poly::ResiduePoly128,
@@ -405,8 +406,9 @@ mod tests {
         .unwrap();
 
         let identities = generate_fixed_identities(num_parties);
+        //Reshare assumes Sync network
         let mut runtime: DistributedTestRuntime<ResiduePoly128> =
-            DistributedTestRuntime::new(identities, threshold as u8);
+            DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
         if !add_error {
             key_shares[0] = PrivateKeySet {
                 lwe_secret_key_share: LweSecretKeyShare {

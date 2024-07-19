@@ -417,6 +417,7 @@ mod test {
 
     use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed};
     use crate::execution::online::preprocessing::dummy::reconstruct;
+    use crate::networking::NetworkMode;
     use crate::{
         algebra::{
             residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
@@ -476,7 +477,15 @@ mod test {
         // pre-processing randomness is communication free
         let rounds = 0_usize;
 
-        let result = execute_protocol_small(parties, threshold, Some(rounds), &mut task);
+        // Does not really matter Sync or Async as there's no communication here, default to Sync
+        let result = execute_protocol_small(
+            parties,
+            threshold,
+            Some(rounds),
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
 
         let mut first_to_recon = Vec::new();
         for (_, res) in result.iter() {
@@ -531,7 +540,15 @@ mod test {
         // pre-processing without corruptions with Dummy AR does only do 1 reliable broadcast = 3 + t rounds
         let rounds = 3 + threshold as usize;
 
-        let result = execute_protocol_small(parties, threshold, Some(rounds), &mut task);
+        // Sync because it is triple generation
+        let result = execute_protocol_small(
+            parties,
+            threshold,
+            Some(rounds),
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
 
         //Check we can reconstruct everything and we do have multiplication triples
         for idx in 0..TRIPLE_BATCH_SIZE {
@@ -586,7 +603,15 @@ mod test {
         // pre-processing without corruptions with Dummy AR does only do 1 reliable broadcast = 3 + t rounds
         let rounds = 3 + threshold as usize;
 
-        let _result = execute_protocol_small(parties, threshold, Some(rounds), &mut task);
+        // Sync because it is triple generation
+        let _result = execute_protocol_small(
+            parties,
+            threshold,
+            Some(rounds),
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
     }
 
     // Test what happens when a party send a wrong type of value
@@ -657,7 +682,9 @@ mod test {
             (session, triple_res, rand_res)
         }
 
-        let result = execute_protocol_small(parties, threshold, None, &mut task);
+        // Sync because it is triple generation
+        let result =
+            execute_protocol_small(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         //Check we can reconstruct everything and we do have multiplication triples
         for idx in 0..TRIPLE_BATCH_SIZE {
@@ -738,7 +765,9 @@ mod test {
             (session, triple_res, rand_res)
         }
 
-        let result = execute_protocol_small(parties, threshold, None, &mut task);
+        // Sync because it is triple generation
+        let result =
+            execute_protocol_small(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         // Check that the malicious party has been added to the list
         for (cur_ses, _, _) in result.clone() {
@@ -815,7 +844,9 @@ mod test {
             session
         }
 
-        let result = execute_protocol_small(parties, threshold, None, &mut task);
+        // Sync because it is triple generation
+        let result =
+            execute_protocol_small(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         // Check that the malicious party has been added to the list
         for cur_ses in result.clone() {

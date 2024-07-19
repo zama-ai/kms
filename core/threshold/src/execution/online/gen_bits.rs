@@ -89,6 +89,7 @@ mod tests {
             runtime::session::{ParameterHandles, SmallSession},
             sharing::share::Share,
         },
+        networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_small,
     };
     use aes_prng::AesRng;
@@ -114,7 +115,10 @@ mod tests {
                     }
 
                     // expect 3 rounds: 2 for bit gen and 1 for opening
-                    let results = execute_protocol_small(parties, threshold, Some(3), &mut task);
+                    // Async because the triple gen is dummy
+                    //Delay P1 by 1s every round
+                    let delay_vec = vec![std::time::Duration::from_secs(1)];
+                    let results = execute_protocol_small(parties, threshold, Some(3), NetworkMode::Async, Some(delay_vec), &mut task);
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }
 
@@ -155,7 +159,10 @@ mod tests {
                         open_list(&bits, &session).await.unwrap()
                     };
 
-                    let results = execute_protocol_small(parties, threshold, None, &mut task);
+                    // Async because the triple gen is dummy
+                    //Delay P1 by 1s every round
+                    let delay_vec = vec![std::time::Duration::from_secs(1)];
+                    let results = execute_protocol_small(parties, threshold, None, NetworkMode::Async, Some(delay_vec), &mut task);
                     [<validate_res_ $z:lower>](results, AMOUNT, parties);
                 }
 

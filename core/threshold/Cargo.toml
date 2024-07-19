@@ -14,7 +14,6 @@ aes = "0.8.2"
 aes-prng = "0.2.1"
 aligned-vec = "0.5"
 anyhow.workspace = true
-async-channel = "2.3"
 async-trait.workspace = true
 backoff = { version = "0.4", features = ["tokio"], optional = true }
 bincode.workspace = true

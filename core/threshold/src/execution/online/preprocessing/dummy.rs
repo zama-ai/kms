@@ -480,6 +480,7 @@ mod tests {
             residue_poly::{ResiduePoly, ResiduePoly128},
             structure_traits::Zero,
         },
+        networking::NetworkMode,
         tests::helper::tests::{get_base_session, get_networkless_base_session_for_parties},
     };
     use aes_prng::AesRng;
@@ -503,7 +504,8 @@ mod tests {
 
     #[test]
     fn test_debug_dummy_rand() {
-        let session = get_base_session();
+        //Dummy do not care about network assumption, default to Sync
+        let session = get_base_session(NetworkMode::Sync);
         let mut preprocessing =
             DummyDebugPreprocessing::<ResiduePoly128, _, _>::new(42, session.clone());
         let rand = preprocessing.next_random_vec(2).unwrap();
@@ -518,7 +520,8 @@ mod tests {
 
     #[test]
     fn test_debug_dummy_triple() {
-        let session = get_base_session();
+        //Dummy do not care about network assumption, default to Sync
+        let session = get_base_session(NetworkMode::Sync);
         let mut preprocessing =
             DummyDebugPreprocessing::<ResiduePoly128, _, _>::new(42, session.clone());
         let trips: Vec<Triple<ResiduePoly128>> = preprocessing.next_triple_vec(2).unwrap();
@@ -536,7 +539,8 @@ mod tests {
 
     #[test]
     fn test_debug_dummy_multiple_calls() {
-        let session = get_base_session();
+        //Dummy do not care about network assumption, default to Sync
+        let session = get_base_session(NetworkMode::Sync);
         let mut preprocessing =
             DummyDebugPreprocessing::<ResiduePoly128, _, _>::new(42, session.clone());
         let rand_a: Share<ResiduePoly128> = preprocessing.next_random().unwrap();

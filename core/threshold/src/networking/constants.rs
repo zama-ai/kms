@@ -26,6 +26,9 @@ lazy_static! {
     /// __NOTE__ This value may need changing when running more parties (tested for (5,1))
     pub(crate) static ref NETWORK_TIMEOUT_BK: Duration = Duration::from_secs(300);
 
+    /// Set artificial timeout of 1year for async network
+    pub(crate) static ref NETWORK_TIMEOUT_ASYNC: Duration = Duration::from_secs(31536000);
+
     /// maximum number of seconds that a party waits for BK SNS round in DKG
     ///
     /// __NOTE__ This value may need changing when running more parties (tested for (5,1))

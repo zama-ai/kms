@@ -910,6 +910,7 @@ mod tests {
             },
             tfhe_internals::parameters::PARAMS_P8_SMALL_NO_SNS,
         },
+        networking::NetworkMode,
         session_id::SessionId,
     };
 
@@ -1137,8 +1138,16 @@ mod tests {
     ) -> (Vec<Identity>, Vec<ReceiverChannelCollection<ResiduePoly64>>) {
         //Create identities and runtime
         let identities = generate_fixed_identities(num_parties);
+        // Preprocessing assumes Sync network
         let runtimes = (0..num_sessions)
-            .map(|_| (DistributedTestRuntime::<ResiduePoly64>::new(identities.clone(), threshold)))
+            .map(|_| {
+                DistributedTestRuntime::<ResiduePoly64>::new(
+                    identities.clone(),
+                    threshold,
+                    NetworkMode::Sync,
+                    None,
+                )
+            })
             .collect_vec();
         let runtimes = Arc::new(runtimes);
 
@@ -1319,8 +1328,16 @@ mod tests {
     ) -> (Vec<Identity>, Vec<ReceiverChannelCollection<ResiduePoly64>>) {
         //Create identities and runtime
         let identities = generate_fixed_identities(num_parties);
+        // Preprocessing assumes Sync network
         let runtimes = (0..num_sessions)
-            .map(|_| (DistributedTestRuntime::<ResiduePoly64>::new(identities.clone(), threshold)))
+            .map(|_| {
+                DistributedTestRuntime::<ResiduePoly64>::new(
+                    identities.clone(),
+                    threshold,
+                    NetworkMode::Sync,
+                    None,
+                )
+            })
             .collect_vec();
         let runtimes = Arc::new(runtimes);
 

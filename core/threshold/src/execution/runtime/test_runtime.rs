@@ -9,12 +9,15 @@ use crate::{
         small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
         tfhe_internals::switch_and_squash::SwitchAndSquashKey,
     },
-    networking::local::{LocalNetworking, LocalNetworkingProducer},
+    networking::{
+        local::{LocalNetworking, LocalNetworkingProducer},
+        NetworkMode,
+    },
     session_id::SessionId,
 };
 use aes_prng::AesRng;
 use rand::SeedableRng;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 // TODO The name and use of unwrap hints that this is a struct only to be used for testing, but it is also used in production, e.g. in grpc.rs
 // Unsafe and test code should not be mixed with production code. See issue 173
@@ -39,7 +42,12 @@ pub fn generate_fixed_identities(parties: usize) -> Vec<Identity> {
 }
 
 impl<Z: Ring> DistributedTestRuntime<Z> {
-    pub fn new(identities: Vec<Identity>, threshold: u8) -> Self {
+    pub fn new(
+        identities: Vec<Identity>,
+        threshold: u8,
+        network_mode: NetworkMode,
+        delay_map: Option<HashMap<Identity, Duration>>,
+    ) -> Self {
         let role_assignments: RoleAssignment = identities
             .clone()
             .into_iter()
@@ -51,7 +59,12 @@ impl<Z: Ring> DistributedTestRuntime<Z> {
         let user_nets: Vec<Arc<LocalNetworking>> = identities
             .iter()
             .map(|user_identity| {
-                let net = net_producer.user_net(user_identity.clone());
+                let delay = if let Some(delay_map) = &delay_map {
+                    delay_map.get(user_identity).copied()
+                } else {
+                    None
+                };
+                let net = net_producer.user_net(user_identity.clone(), network_mode, delay);
                 Arc::new(net)
             })
             .collect();

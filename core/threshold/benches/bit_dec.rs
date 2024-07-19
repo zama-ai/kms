@@ -13,6 +13,7 @@ use distributed_decryption::execution::runtime::session::{LargeSession, SmallSes
 use distributed_decryption::execution::sharing::shamir::InputOp;
 use distributed_decryption::execution::sharing::shamir::ShamirSharings;
 use distributed_decryption::execution::sharing::share::Share;
+use distributed_decryption::networking::NetworkMode;
 use distributed_decryption::tests::helper::tests_and_benches::{
     execute_protocol_large, execute_protocol_small,
 };
@@ -88,9 +89,12 @@ fn bit_dec_online(c: &mut Criterion) {
                         .unwrap();
                     };
 
+                    //Async is fine because we use Dummy preprocessing
                     let _result = execute_protocol_large::<ResiduePoly64, _, _>(
                         config.n,
                         config.t,
+                        None,
+                        NetworkMode::Async,
                         None,
                         &mut computation,
                     );
@@ -142,9 +146,12 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                         .unwrap();
                     };
 
+                    //Need Sync network because we execute preprocessing
                     let _result = execute_protocol_small::<ResiduePoly64, _, _>(
                         config.n,
                         config.t as u8,
+                        None,
+                        NetworkMode::Sync,
                         None,
                         &mut computation,
                     );
@@ -195,9 +202,12 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                         .unwrap();
                     };
 
+                    //Need Sync network because we execute preprocessing
                     let _result = execute_protocol_large::<ResiduePoly64, _, _>(
                         config.n,
                         config.t,
+                        None,
+                        NetworkMode::Sync,
                         None,
                         &mut computation,
                     );

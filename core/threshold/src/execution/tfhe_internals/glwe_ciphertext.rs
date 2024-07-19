@@ -169,6 +169,7 @@ mod tests {
                 utils::tests::{reconstruct_bit_vec, reconstruct_glwe_body_vec},
             },
         },
+        networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_large,
     };
 
@@ -256,9 +257,18 @@ mod tests {
         };
         let parties = 5;
         let threshold = 1;
-        //Hopefully we should be able to reconstruct everything and decrypt using tfhe-rs ?
-        let results =
-            execute_protocol_large::<ResiduePoly64, _, _>(parties, threshold, None, &mut task);
+
+        //This is Async because triples are generated from dummy preprocessing
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = execute_protocol_large::<ResiduePoly64, _, _>(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
 
         let mut glwe_ctxt_shares: HashMap<Role, Vec<Share<_>>> = HashMap::new();
         let mut glwe_key_shares: HashMap<Role, Vec<Share<_>>> = HashMap::new();

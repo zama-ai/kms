@@ -124,6 +124,8 @@ pub fn bfv_to_bgv(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::execution::runtime::test_runtime::generate_fixed_identities;
     use crate::experimental::algebra::ntt::NTTConstants;
@@ -131,6 +133,7 @@ mod tests {
     use crate::experimental::bgv::endpoints::threshold_decrypt;
     use crate::experimental::bgv::runtime::BGVTestRuntime;
     use crate::experimental::{bgv::basics::bgv_dec, constants::PLAINTEXT_MODULUS};
+    use crate::networking::NetworkMode;
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
 
@@ -181,7 +184,13 @@ mod tests {
             .map(|k| k.as_ntt_repr(N65536::VALUE, N65536::THETA))
             .collect();
         let identities = generate_fixed_identities(n);
-        let runtime = BGVTestRuntime::new(identities.clone(), t);
+        //Delay P1 by 1s every round
+        let delay_map = HashMap::from([(
+            identities.first().unwrap().clone(),
+            std::time::Duration::from_secs(1),
+        )]);
+        let runtime =
+            BGVTestRuntime::new(identities.clone(), t, NetworkMode::Async, Some(delay_map));
         let outputs = threshold_decrypt(&runtime, &ntt_keyshares, &bgv_ct).unwrap();
         let out_dec = outputs[&identities[0]].clone();
         assert_eq!(out_dec, plaintext_vec);

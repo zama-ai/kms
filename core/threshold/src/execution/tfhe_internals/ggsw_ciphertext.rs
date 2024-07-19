@@ -375,7 +375,6 @@ mod tests {
         },
     };
 
-    use crate::execution::{sharing::shamir::InputOp, tfhe_internals::parameters::TUniformBound};
     use crate::{
         algebra::residue_poly::ResiduePoly64,
         execution::{
@@ -399,6 +398,10 @@ mod tests {
             },
         },
         tests::helper::tests_and_benches::execute_protocol_large,
+    };
+    use crate::{
+        execution::{sharing::shamir::InputOp, tfhe_internals::parameters::TUniformBound},
+        networking::NetworkMode,
     };
 
     use super::{encrypt_constant_ggsw_ciphertext, ggsw_encode_message, GgswCiphertextShare};
@@ -493,8 +496,17 @@ mod tests {
         let parties = 5;
         let threshold = 1;
 
-        let results =
-            execute_protocol_large::<ResiduePoly64, _, _>(parties, threshold, None, &mut task);
+        //This is Async because triples are generated from dummy preprocessing
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = execute_protocol_large::<ResiduePoly64, _, _>(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
 
         let mut glwe_key_shares: HashMap<Role, Vec<Share<_>>> = HashMap::new();
         let mut ggsw_ctxt_shares: HashMap<Role, Vec<Share<_>>> = HashMap::new();

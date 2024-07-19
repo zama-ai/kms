@@ -556,6 +556,7 @@ impl DisputeSet {
 mod tests {
     use super::SessionParameters;
     use crate::execution::runtime::party::Role;
+    use crate::networking::NetworkMode;
     use crate::{
         execution::runtime::session::BaseSessionHandles, tests::helper::tests::get_base_session,
     };
@@ -596,7 +597,8 @@ mod tests {
 
     #[test]
     fn wont_add_self_to_corrupt() {
-        let mut session = get_base_session();
+        //Network mode doesn't matter for this test, Sync by default
+        let mut session = get_base_session(NetworkMode::Sync);
         // Check that I cannot add myself to the corruption set directly
         assert!(!session.add_corrupt(session.my_role().unwrap()).unwrap());
         assert_eq!(0, session.corrupt_roles().len());

@@ -14,6 +14,7 @@ use distributed_decryption::experimental::bgv::ddec::keygen_shares;
 use distributed_decryption::experimental::bgv::endpoints::threshold_decrypt;
 use distributed_decryption::experimental::bgv::runtime::BGVTestRuntime;
 use distributed_decryption::experimental::constants::PLAINTEXT_MODULUS;
+use distributed_decryption::networking::NetworkMode;
 use pprof::criterion::Output;
 use pprof::criterion::PProfProfiler;
 use rand::RngCore;
@@ -102,7 +103,8 @@ fn bench_bgv_ddec(c: &mut Criterion) {
             .collect();
         let identities = generate_fixed_identities(config.n);
 
-        let runtime = BGVTestRuntime::new(identities, config.t);
+        //Using Async for online threshold decrypt
+        let runtime = BGVTestRuntime::new(identities, config.t, NetworkMode::Async, None);
         group.bench_with_input(
             BenchmarkId::from_parameter(config),
             &(config, ct.clone(), ntt_keyshares, runtime),

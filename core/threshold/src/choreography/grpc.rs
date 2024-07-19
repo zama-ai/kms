@@ -49,6 +49,7 @@ use crate::execution::tfhe_internals::parameters::DKGParams;
 use crate::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use crate::execution::zk::ceremony::{Ceremony, PublicParameter, RealCeremony};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
+use crate::networking::NetworkMode;
 use crate::{execution::small_execution::prss::PRSSSetup, session_id::SessionId};
 use aes_prng::AesRng;
 use async_trait::async_trait;
@@ -198,7 +199,9 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
-        let networking = (self.networking_strategy)(session_id, role_assignments);
+        //Requires Sync network because PRSS robust init relies on bcast
+        let networking =
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync);
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -315,7 +318,11 @@ impl Choreography for GrpcChoreography {
         let factory = self.factory.clone();
         let base_sessions = (start_sid.0..start_sid.0 + num_sessions as u128)
             .map(|session_id| {
-                let session_id = SessionId(session_id);
+                //Set the 126th bit to 1 to avoid collision with future session id
+                //this way a "normal user" sending request with id 1,2,3,...
+                //won't end up with a dirty sid because of preproc dkg spawning multiple sessions.
+                //An alternative would be to derive the other session IDs by using hash of given sid as seed to a PRG
+                let session_id = SessionId(session_id | (1u128 << 125));
                 let params = SessionParameters::new(
                     threshold,
                     session_id,
@@ -323,7 +330,12 @@ impl Choreography for GrpcChoreography {
                     role_assignments.clone(),
                 )
                 .unwrap();
-                let networking = (self.networking_strategy)(session_id, role_assignments.clone());
+                //We are executing offline phase, so requires Sync network
+                let networking = (self.networking_strategy)(
+                    session_id,
+                    role_assignments.clone(),
+                    NetworkMode::Sync,
+                );
                 BaseSessionStruct::new(params.clone(), networking, AesRng::from_entropy()).unwrap()
             })
             .collect_vec();
@@ -508,7 +520,9 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
-        let networking = (self.networking_strategy)(session_id, role_assignments);
+        //This is online phase of DKG, so can work in Async network
+        let networking =
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -655,7 +669,9 @@ impl Choreography for GrpcChoreography {
                     )
                 })?;
 
-                let networking = (self.networking_strategy)(session_id, role_assignments);
+                //We are running a fake dkg, network mode doesn't matter here
+                let networking =
+                    (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
 
                 //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
                 let mut base_session =
@@ -759,7 +775,9 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
-        let networking = (self.networking_strategy)(session_id, role_assignments);
+        //This is running offline phase for ddec, so requires Sync network
+        let networking =
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync);
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -920,7 +938,9 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
-        let networking = (self.networking_strategy)(session_id, role_assignments);
+        //This is running the online phase of ddec, so can work in Async network
+        let networking =
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -1115,7 +1135,9 @@ impl Choreography for GrpcChoreography {
             )
         })?;
 
-        let networking = (self.networking_strategy)(session_id, role_assignments);
+        //CRS gen is a round robin, so requires a Sync network
+        let networking =
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync);
 
         let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
             .map_err(|e| {

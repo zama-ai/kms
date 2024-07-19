@@ -324,9 +324,12 @@ pub(crate) mod tests {
         },
     };
 
-    use crate::algebra::residue_poly::{ResiduePoly128, ResiduePoly64};
     use crate::algebra::structure_traits::{Derive, ErrorCorrect, Invert, Ring, RingEmbed};
     use crate::execution::sharing::shamir::RevealOp;
+    use crate::{
+        algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
+        networking::NetworkMode,
+    };
     use crate::{
         execution::{
             large_execution::{
@@ -561,6 +564,7 @@ pub(crate) mod tests {
             )
         };
 
+        //LocalDoubleShare assumes Sync network
         let (result_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
             &params,
             &params.dispute_pairs,
@@ -570,6 +574,8 @@ pub(crate) mod tests {
             ]
             .concat(),
             malicious_ldl,
+            NetworkMode::Sync,
+            None,
             &mut task_honest,
             &mut task_malicious,
         );

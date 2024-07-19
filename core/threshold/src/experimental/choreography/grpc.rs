@@ -34,6 +34,7 @@ use crate::experimental::choreography::requests::{PreprocKeyGenParams, Threshold
 use crate::experimental::constants::INPUT_PARTY_ID;
 use crate::experimental::constants::PLAINTEXT_MODULUS;
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
+use crate::networking::NetworkMode;
 use crate::session_id::SessionId;
 use aes_prng::AesRng;
 use async_trait::async_trait;
@@ -176,7 +177,8 @@ impl Choreography for ExperimentalGrpcChoreography {
             )
         })?;
 
-        let networking = (self.networking_strategy)(session_id, role_assignments);
+        let networking =
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync);
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -273,7 +275,8 @@ impl Choreography for ExperimentalGrpcChoreography {
             )
         })?;
 
-        let networking = (self.networking_strategy)(session_id, role_assignments);
+        let networking =
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Sync);
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -378,7 +381,8 @@ impl Choreography for ExperimentalGrpcChoreography {
             )
         })?;
 
-        let networking = (self.networking_strategy)(session_id, role_assignments);
+        let networking =
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let mut base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())
@@ -497,7 +501,8 @@ impl Choreography for ExperimentalGrpcChoreography {
                 )
             })?;
 
-            let networking = (self.networking_strategy)(session_id, role_assignments);
+            let networking =
+                (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
 
             //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
             let mut base_session =
@@ -627,7 +632,8 @@ impl Choreography for ExperimentalGrpcChoreography {
             )
         })?;
 
-        let networking = (self.networking_strategy)(session_id, role_assignments);
+        let networking =
+            (self.networking_strategy)(session_id, role_assignments, NetworkMode::Async);
 
         //NOTE: Do we want to let the user specify a Rng seed for reproducibility ?
         let base_session = BaseSessionStruct::new(params, networking, AesRng::from_entropy())

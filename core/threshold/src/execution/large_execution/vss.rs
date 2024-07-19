@@ -893,6 +893,7 @@ pub(crate) mod tests {
         runtime::party::Role,
         runtime::session::{BaseSessionHandles, LargeSession, ParameterHandles},
     };
+    use crate::networking::NetworkMode;
     use crate::session_id::SessionId;
     #[cfg(feature = "slow_tests")]
     use crate::tests::helper::tests::roles_from_idxs;
@@ -937,7 +938,13 @@ pub(crate) mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities.clone(), threshold);
+        // VSS assumes sync network
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+            identities.clone(),
+            threshold,
+            NetworkMode::Sync,
+            None,
+        );
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1009,7 +1016,13 @@ pub(crate) mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities.clone(), threshold);
+        // VSS assumes sync network
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+            identities.clone(),
+            threshold,
+            NetworkMode::Sync,
+            None,
+        );
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1320,10 +1333,13 @@ pub(crate) mod tests {
             )
         };
 
+        // VSS assumes sync network
         let res = execute_protocol_small(
             params.num_parties,
             params.threshold as u8,
             params.expected_rounds,
+            NetworkMode::Sync,
+            None,
             &mut task_honest,
         );
         let mut expected_secrets = vec![vec![Z::ZERO; num_secrets]; params.num_parties];
@@ -1401,12 +1417,15 @@ pub(crate) mod tests {
             (session.my_role().unwrap().zero_based(), secrets)
         };
 
+        // VSS assumes sync network
         let (results_honest, results_malicious) =
             execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
                 &params,
                 &[],
                 &params.malicious_roles,
                 malicious_vss,
+                NetworkMode::Sync,
+                None,
                 &mut task_honest,
                 &mut task_malicious,
             );

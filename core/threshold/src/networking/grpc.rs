@@ -5,32 +5,30 @@ mod gen {
     tonic::include_proto!("ddec_networking");
 }
 
-use self::gen::gnetworking_client::GnetworkingClient;
 use self::gen::gnetworking_server::{Gnetworking, GnetworkingServer};
 use self::gen::{SendValueRequest, SendValueResponse};
 use super::constants::{
     MAX_ELAPSED_TIME, MAX_EN_DECODE_MESSAGE_SIZE, MAX_INTERVAL, MESSAGE_LIMIT, MULTIPLIER,
-    NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
+    NETWORK_TIMEOUT_ASYNC, NETWORK_TIMEOUT_BK, NETWORK_TIMEOUT_BK_SNS, NETWORK_TIMEOUT_LONG,
 };
+use super::sending_service::{GrpcSendingService, NetworkSession, SendingService};
+use super::NetworkMode;
 use crate::conf::party::CertificatePaths;
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::runtime::party::{Identity, RoleAssignment};
 use crate::networking::Networking;
 use crate::session_id::SessionId;
 use async_trait::async_trait;
-use backoff::future::retry_notify;
-use backoff::ExponentialBackoff;
-use conf_trace::telemetry::ContextPropagator;
 use dashmap::DashMap;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::sync::Mutex;
+use std::sync::RwLock;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tokio::time::Instant;
-use tonic::codegen::http::Uri;
-use tonic::service::interceptor::InterceptedService;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::Mutex;
+use tonic::transport::Certificate;
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct CoreToCoreNetworkConfig {
@@ -45,12 +43,12 @@ pub struct CoreToCoreNetworkConfig {
 }
 
 #[derive(Debug, Clone)]
-struct OptionConfigWrapper {
-    conf: Option<CoreToCoreNetworkConfig>,
+pub struct OptionConfigWrapper {
+    pub conf: Option<CoreToCoreNetworkConfig>,
 }
 
 impl OptionConfigWrapper {
-    fn get_message_limit(&self) -> usize {
+    pub fn get_message_limit(&self) -> usize {
         if let Some(conf) = self.conf {
             conf.message_limit as usize
         } else {
@@ -58,7 +56,7 @@ impl OptionConfigWrapper {
         }
     }
 
-    fn get_multiplier(&self) -> f64 {
+    pub fn get_multiplier(&self) -> f64 {
         if let Some(conf) = self.conf {
             conf.multiplier
         } else {
@@ -66,7 +64,7 @@ impl OptionConfigWrapper {
         }
     }
 
-    fn get_max_interval(&self) -> Duration {
+    pub fn get_max_interval(&self) -> Duration {
         if let Some(conf) = self.conf {
             Duration::from_secs(conf.max_interval)
         } else {
@@ -74,7 +72,7 @@ impl OptionConfigWrapper {
         }
     }
 
-    fn get_max_elapsed_time(&self) -> Option<Duration> {
+    pub fn get_max_elapsed_time(&self) -> Option<Duration> {
         if let Some(conf) = self.conf {
             conf.max_elapsed_time.map(Duration::from_secs)
         } else {
@@ -82,7 +80,7 @@ impl OptionConfigWrapper {
         }
     }
 
-    fn get_network_timeout(&self) -> Duration {
+    pub fn get_network_timeout(&self) -> Duration {
         if let Some(conf) = self.conf {
             Duration::from_secs(conf.network_timeout)
         } else {
@@ -90,7 +88,7 @@ impl OptionConfigWrapper {
         }
     }
 
-    fn get_network_timeout_bk(&self) -> Duration {
+    pub fn get_network_timeout_bk(&self) -> Duration {
         if let Some(conf) = self.conf {
             Duration::from_secs(conf.network_timeout_bk)
         } else {
@@ -98,7 +96,7 @@ impl OptionConfigWrapper {
         }
     }
 
-    fn get_network_timeout_bk_sns(&self) -> Duration {
+    pub fn get_network_timeout_bk_sns(&self) -> Duration {
         if let Some(conf) = self.conf {
             Duration::from_secs(conf.network_timeout_bk_sns)
         } else {
@@ -106,7 +104,7 @@ impl OptionConfigWrapper {
         }
     }
 
-    fn get_max_en_decode_message_size(&self) -> usize {
+    pub fn get_max_en_decode_message_size(&self) -> usize {
         if let Some(conf) = self.conf {
             conf.max_en_decode_message_size as usize
         } else {
@@ -115,15 +113,16 @@ impl OptionConfigWrapper {
     }
 }
 
+//TODO: Most likely need this to create NetworkStack instead of GrpcNetworking
 /// GrpcNetworkingManager is responsible for managing
 /// channels and message queues between MPC parties.
 #[derive(Debug, Clone)]
 pub struct GrpcNetworkingManager {
-    channels: Arc<Channels>,
-    message_queues: Arc<MessageQueueStores>,
+    pub message_queues: Arc<MessageQueueStores>,
     owner: Identity,
-    cert_bundle: Arc<Option<CertificatePaths>>,
+    //cert_bundle: Arc<Option<CertificatePaths>>,
     conf: OptionConfigWrapper,
+    sending_service: GrpcSendingService,
 }
 
 pub type GrpcServer = GnetworkingServer<NetworkingImpl>;
@@ -146,11 +145,11 @@ impl GrpcNetworkingManager {
         conf: Option<CoreToCoreNetworkConfig>,
     ) -> Self {
         GrpcNetworkingManager {
-            channels: Default::default(),
             message_queues: Default::default(),
             owner,
-            cert_bundle: Arc::new(cert_bundle),
+            //cert_bundle: Arc::new(cert_bundle.clone()),
             conf: OptionConfigWrapper { conf },
+            sending_service: GrpcSendingService::new(cert_bundle, conf),
         }
     }
 
@@ -163,293 +162,64 @@ impl GrpcNetworkingManager {
         &self,
         session_id: SessionId,
         roles: RoleAssignment,
+        network_mode: NetworkMode,
     ) -> Arc<impl Networking> {
+        let others = roles
+            .iter()
+            .filter_map(|(_role, identity)| {
+                if identity != &self.owner {
+                    Some(identity.clone())
+                } else {
+                    None
+                }
+            })
+            .collect_vec();
+
+        // Tell the sending service to spawns network threads to communicate wit the others
+        let connection_channel = self.sending_service.add_connections(others).unwrap();
+
+        // Create the message queue for this session id (this queue will be written to by the grpc server and read by the NetworkSession)
         let message_store = DashMap::new();
         for (_role, identity) in roles {
-            let (tx, rx) = async_channel::bounded(self.conf.get_message_limit());
-            message_store.insert(identity, (Arc::new(tx), Arc::new(rx)));
+            let (tx, rx) = channel::<NetworkRoundValue>(self.conf.get_message_limit());
+            message_store.insert(identity, (Arc::new(tx), Arc::new(Mutex::new(rx))));
         }
+        let message_store = Arc::new(message_store);
         self.message_queues
-            .insert(session_id, Arc::new(message_store));
-        Arc::new(GrpcNetworking {
-            current_network_timeout: Mutex::new(self.conf.get_network_timeout()),
-            next_network_timeout: Mutex::new(self.conf.get_network_timeout()),
-            max_elapsed_time: Mutex::new(Duration::ZERO),
-            session_id,
-            channels: Arc::clone(&self.channels),
-            message_queues: Arc::clone(&self.message_queues),
-            network_round: Arc::new(Mutex::new(0)),
+            .insert(session_id, message_store.clone());
+
+        let timeout = match network_mode {
+            NetworkMode::Async => *NETWORK_TIMEOUT_ASYNC,
+            NetworkMode::Sync => self.conf.get_network_timeout(),
+        };
+        Arc::new(NetworkSession {
             owner: self.owner.clone(),
+            sending_channels: connection_channel,
+            receiving_channels: message_store,
+            round_counter: RwLock::new(0),
+            network_mode,
+            conf: self.conf.clone(),
             init_time: OnceLock::new(),
-            cert_bundle: self.cert_bundle.clone(),
-            conf: Arc::new(self.conf.clone()),
+            current_network_timeout: RwLock::new(timeout),
+            next_network_timeout: RwLock::new(timeout),
+            max_elapsed_time: RwLock::new(Duration::ZERO),
         })
-    }
-}
-
-//This is using mutexes for everything round related to be able to
-//mutate state without needing self to be mutable in functions' signature
-pub struct GrpcNetworking {
-    current_network_timeout: Mutex<Duration>,
-    next_network_timeout: Mutex<Duration>,
-    max_elapsed_time: Mutex<Duration>,
-    session_id: SessionId,
-    channels: Arc<Channels>,
-    message_queues: Arc<MessageQueueStores>,
-    network_round: Arc<Mutex<usize>>,
-    owner: Identity,
-    init_time: OnceLock<Instant>,
-    cert_bundle: Arc<Option<CertificatePaths>>,
-    conf: Arc<OptionConfigWrapper>,
-}
-
-impl GrpcNetworking {
-    fn channel(&self, receiver: &Identity) -> anyhow::Result<Channel> {
-        let channel: Channel = self
-            .channels
-            .entry(receiver.clone())
-            .or_try_insert_with(|| {
-                let proto = match *self.cert_bundle {
-                    Some(_) => "https",
-                    None => "http",
-                };
-                tracing::debug!("Creating {} channel to '{}'", proto, receiver);
-                let endpoint: Uri = format!("{}://{}", proto, receiver).parse().map_err(|_e| {
-                    anyhow_error_and_log(format!(
-                        "failed to parse identity as endpoint: {:?}",
-                        receiver
-                    ))
-                })?;
-                let network_timeout = self.current_network_timeout.lock().map_err(|e| {
-                    anyhow_error_and_log(format!("Can not lock network_timeout: {e}"))
-                })?;
-                let channel = match *self.cert_bundle {
-                    Some(ref cert_bundle) => {
-                        let host_port: Vec<_> = receiver.0.split(':').collect();
-                        if host_port.len() != 2 {
-                            return Err(anyhow_error_and_log(format!(
-                                "wrong receiver format: {:?}",
-                                receiver
-                            )));
-                        }
-                        let tls_config = ClientTlsConfig::new()
-                            // TODO when we run our network in production the correct
-                            // domain_name needs to be selected somehow
-                            // .domain_name(host_port[0])
-                            .domain_name("localhost")
-                            .ca_certificate(cert_bundle.get_flattened_ca_list()?)
-                            .identity(cert_bundle.get_identity()?);
-                        Channel::builder(endpoint)
-                            .tls_config(tls_config)?
-                            .timeout(*network_timeout)
-                    }
-                    None => Channel::builder(endpoint).timeout(*network_timeout),
-                };
-                drop(network_timeout);
-                Ok::<Channel, anyhow::Error>(channel.connect_lazy())
-            })?
-            .clone(); // cloning channels is cheap per tonic documentation
-        Ok(channel)
-    }
-
-    fn new_client(
-        &self,
-        identity: &Identity,
-    ) -> anyhow::Result<GnetworkingClient<InterceptedService<Channel, ContextPropagator>>> {
-        let channel = self.channel(identity)?;
-        let client = GnetworkingClient::with_interceptor(channel, ContextPropagator)
-            .max_decoding_message_size(self.conf.get_max_en_decode_message_size())
-            .max_encoding_message_size(self.conf.get_max_en_decode_message_size());
-        Ok(client)
-    }
-}
-
-#[async_trait]
-impl Networking for GrpcNetworking {
-    async fn send(
-        &self,
-        value: Vec<u8>,
-        receiver: &Identity,
-        _session_id: &SessionId,
-    ) -> anyhow::Result<(), anyhow::Error> {
-        let ctr: usize = *self
-            .network_round
-            .lock()
-            .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e)))?;
-
-        let send_fn = || async {
-            let tagged_value = Tag {
-                sender: self.owner.clone(),
-                session_id: self.session_id,
-                round_counter: ctr,
-            };
-
-            let tag = bincode::serialize(&tagged_value)
-                .map_err(|e| anyhow_error_and_log(format!("networking error: {:?}", e)))?;
-            let request = SendValueRequest {
-                tag,
-                value: value.clone(),
-            };
-            let mut client = self.new_client(receiver)?;
-            tracing::debug!(
-                "Sending '{:?} bytes' to {:?}, session_id {:?}",
-                value.len(),
-                receiver,
-                self.session_id
-            );
-
-            match client.send_value(request).await {
-                Ok(_) => Ok(()),
-                Err(e) => Err(anyhow_error_and_log(format!("networking error: {:?}", e)))
-                    .map_err(|e| e.into()),
-            }
-        };
-
-        let exponential_backoff = ExponentialBackoff {
-            max_elapsed_time: self.conf.get_max_elapsed_time(),
-            max_interval: self.conf.get_max_interval(),
-            multiplier: self.conf.get_multiplier(),
-            ..Default::default()
-        };
-
-        let notify = |e, duration: Duration| {
-            tracing::warn!(
-                "RETRY ERROR: Failed to send message: {:?} - Receiver {:?} - Duration {:?} secs",
-                e,
-                receiver,
-                duration.as_secs()
-            );
-        };
-
-        retry_notify(exponential_backoff, send_fn, notify).await
-    }
-
-    async fn receive(&self, sender: &Identity, _session_id: &SessionId) -> anyhow::Result<Vec<u8>> {
-        if !self.message_queues.contains_key(&self.session_id) {
-            return Err(anyhow_error_and_log(
-                "Did not have session id key for message storage inside receive call",
-            ));
-        }
-
-        let rx = self
-            .message_queues
-            .get(&self.session_id)
-            .ok_or_else(|| anyhow_error_and_log("couldn't retrieve channels from store"))
-            .map(|s| {
-                s.get(sender)
-                    .ok_or_else(|| {
-                        anyhow_error_and_log("couldn't retrieve session store from message stores")
-                    })
-                    .map(|s| s.value().1.clone())
-            })??;
-
-        tracing::debug!("Waiting to receive from {:?}", sender);
-
-        let network_round: usize = *self
-            .network_round
-            .lock()
-            .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e)))?;
-
-        let mut local_packet = rx.recv().await?;
-
-        // drop old messages
-        while local_packet.round_counter < network_round {
-            tracing::debug!(
-                "@ round {} - dropped value {:?} from round {}",
-                network_round,
-                local_packet.value[..16].to_vec(),
-                local_packet.round_counter
-            );
-            local_packet = rx.recv().await?;
-        }
-
-        Ok(local_packet.value)
-    }
-
-    fn increase_round_counter(&self) -> anyhow::Result<()> {
-        //Locking all mutexes in same place
-        //Update max_elapsed_time
-        if let (
-            Ok(mut max_elapsed_time),
-            Ok(mut current_round_timeout),
-            Ok(next_round_timeout),
-            Ok(mut net_round),
-        ) = (
-            self.max_elapsed_time.lock(),
-            self.current_network_timeout.lock(),
-            self.next_network_timeout.lock(),
-            self.network_round.lock(),
-        ) {
-            *max_elapsed_time += *current_round_timeout;
-
-            //Update next round timeout
-            *current_round_timeout = *next_round_timeout;
-
-            //Update round counter
-            *net_round += 1;
-            tracing::debug!(
-                "changed network round to: {:?} on party: {:?}, with timeout: {:?}",
-                *net_round,
-                self.owner,
-                *current_round_timeout
-            );
-        } else {
-            return Err(anyhow_error_and_log("Couldn't lock mutex"));
-        }
-        Ok(())
-    }
-
-    fn get_timeout_current_round(&self) -> anyhow::Result<Instant> {
-        // initialize init_time on first access
-        // this avoids running into timeouts when large computations happen after the test runtime is set up and before the first message is received.
-        let init_time = self.init_time.get_or_init(Instant::now);
-
-        if let (Ok(max_elapsed_time), Ok(network_timeout)) = (
-            self.max_elapsed_time.lock(),
-            self.current_network_timeout.lock(),
-        ) {
-            Ok(*init_time + *network_timeout + *max_elapsed_time)
-        } else {
-            Err(anyhow_error_and_log("Couldn't lock mutex"))
-        }
-    }
-
-    fn get_current_round(&self) -> anyhow::Result<usize> {
-        todo!("Need to implement get_current_round for grpc")
-    }
-
-    fn set_timeout_for_next_round(&self, timeout: Duration) -> anyhow::Result<()> {
-        if let Ok(mut next_network_timeout) = self.next_network_timeout.lock() {
-            *next_network_timeout = timeout;
-        } else {
-            return Err(anyhow_error_and_log("Couldn't lock mutex"));
-        }
-        Ok(())
-    }
-
-    fn set_timeout_for_bk(&self) -> anyhow::Result<()> {
-        self.set_timeout_for_next_round(self.conf.get_network_timeout_bk())
-    }
-
-    fn set_timeout_for_bk_sns(&self) -> anyhow::Result<()> {
-        self.set_timeout_for_next_round(self.conf.get_network_timeout_bk_sns())
     }
 }
 
 // we need a counter for each value sent over the local queues
 // so that messages that haven't been pickup up using receive() calls will get dropped
 #[derive(Debug)]
-struct NetworkRoundValue {
+pub struct NetworkRoundValue {
     pub value: Vec<u8>,
     pub round_counter: usize,
 }
 
-type Channels = DashMap<Identity, Channel>;
-type MessageQueueStore = DashMap<
+pub(crate) type MessageQueueStore = DashMap<
     Identity,
     (
-        Arc<async_channel::Sender<NetworkRoundValue>>,
-        Arc<async_channel::Receiver<NetworkRoundValue>>,
+        Arc<Sender<NetworkRoundValue>>,
+        Arc<Mutex<Receiver<NetworkRoundValue>>>,
     ),
 >;
 type MessageQueueStores = DashMap<SessionId, Arc<MessageQueueStore>>;
@@ -461,6 +231,7 @@ pub struct NetworkingImpl {
 
 #[async_trait]
 impl Gnetworking for NetworkingImpl {
+    ///NOTE: Are we really doing enough checks here ? Kinda wondering where this server checks the client's certificate (seems like there the client checks the server's TLS certificate in [`GrpcSendingService::connect_to_party`] but not here? )
     async fn send_value(
         &self,
         request: tonic::Request<SendValueRequest>,

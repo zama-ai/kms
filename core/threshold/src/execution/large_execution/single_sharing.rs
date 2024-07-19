@@ -149,6 +149,7 @@ pub(crate) mod tests {
     use super::{init_vdm, RealSingleSharing};
     use crate::execution::runtime::session::BaseSessionHandles;
     use crate::execution::sharing::shamir::RevealOp;
+    use crate::networking::NetworkMode;
     use crate::{
         algebra::{
             residue_poly::ResiduePoly,
@@ -216,8 +217,16 @@ pub(crate) mod tests {
         // next() calls for the batch
         //      We're doing one more sharing than pre-computed in the initial init (see num_output)
         //      Thus we have one more call to init, and therefore we double the rounds from above
+        // SingleSharing assumes Sync network
         let rounds = (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) * 2;
-        let result = execute_protocol_large::<Z, _, _>(parties, threshold, Some(rounds), &mut task);
+        let result = execute_protocol_large::<Z, _, _>(
+            parties,
+            threshold,
+            Some(rounds),
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
 
         //Check we can reconstruct
         let lsl_batch_size = 10_usize;
@@ -279,8 +288,15 @@ pub(crate) mod tests {
             (session.my_role().unwrap(), res)
         }
 
-        let result =
-            execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
+        // SingleSharing assumes Sync network
+        let result = execute_protocol_large::<ResiduePoly128, _, _>(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
 
         //Check we can reconstruct
         let lsl_batch_size = 10_usize;

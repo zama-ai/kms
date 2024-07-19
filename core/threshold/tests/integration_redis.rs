@@ -178,6 +178,8 @@ fn test_dkg_orchestrator_large(
     threshold: u8,
     params: DKGParams,
 ) {
+    use distributed_decryption::networking::NetworkMode;
+
     let params_basics_handles = params.get_params_basics_handle();
     params_basics_handles
         .write_to_file(format!(
@@ -187,8 +189,16 @@ fn test_dkg_orchestrator_large(
         .unwrap();
 
     let identities = generate_fixed_identities(num_parties);
+    //Executing offline, so require Sync network
     let runtimes = (0..num_sessions)
-        .map(|_| (DistributedTestRuntime::<ResiduePoly64>::new(identities.clone(), threshold)))
+        .map(|_| {
+            DistributedTestRuntime::<ResiduePoly64>::new(
+                identities.clone(),
+                threshold,
+                NetworkMode::Sync,
+                None,
+            )
+        })
         .collect_vec();
     let runtimes = Arc::new(runtimes);
 

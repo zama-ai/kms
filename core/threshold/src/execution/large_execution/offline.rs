@@ -258,6 +258,7 @@ mod tests {
     use crate::execution::online::preprocessing::memory::InMemoryBasePreprocessing;
     use crate::execution::online::preprocessing::{RandomPreprocessing, TriplePreprocessing};
     use crate::execution::sharing::shamir::RevealOp;
+    use crate::networking::NetworkMode;
     use crate::{
         algebra::{
             residue_poly::{ResiduePoly128, ResiduePoly64},
@@ -383,6 +384,7 @@ mod tests {
             session.my_role().unwrap()
         };
 
+        //Preprocessing assumes Sync network
         let (result_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
             &params,
             &params.dispute_pairs,
@@ -392,6 +394,8 @@ mod tests {
             ]
             .concat(),
             malicious_offline,
+            NetworkMode::Sync,
+            None,
             &mut task_honest,
             &mut task_malicious,
         );
@@ -1011,8 +1015,15 @@ mod tests {
             (session, triple_res, rand_res)
         }
 
-        let result =
-            execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
+        //Preprocessing assumes Sync network
+        let result = execute_protocol_large::<ResiduePoly128, _, _>(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
 
         for (_session, res_trip, res_rand) in result.iter() {
             assert_eq!(res_trip.len(), TRIPLE_BATCH_SIZE);

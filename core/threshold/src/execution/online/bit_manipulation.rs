@@ -474,6 +474,7 @@ mod tests {
 
     use crate::algebra::structure_traits::Ring;
     use crate::execution::sharing::shamir::ShamirSharings;
+    use crate::networking::NetworkMode;
     use aes_prng::AesRng;
     use itertools::Itertools;
     use rand::SeedableRng;
@@ -545,7 +546,17 @@ mod tests {
         };
 
         // we expect 2 rounds: one for the opening during multiplication, one for the opening of the output.
-        let results = execute_protocol_small(parties, threshold as u8, Some(2), &mut task);
+        // Async because preprocessing is Dummy
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = execute_protocol_small(
+            parties,
+            threshold as u8,
+            Some(2),
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
 
         for cur_res in results {
             for (i, cur_ref) in plain_ref.iter().enumerate() {
@@ -573,7 +584,17 @@ mod tests {
         };
 
         // we expect 1 round: the opening of the output.
-        let results = execute_protocol_small(parties, threshold as u8, Some(1), &mut task);
+        // Async because no preprocessing
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = execute_protocol_small(
+            parties,
+            threshold as u8,
+            Some(1),
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
 
         for cur_res in results {
             assert_eq!(ResiduePoly::<Z64>::from_scalar(Wrapping(ref_val)), cur_res);
@@ -621,7 +642,17 @@ mod tests {
 
         // we expect 2 rounds for each bit of the type (log_2(64)=6), 1 for the final adder XOR and 1 final opening = 2*6 + 1 + 1 = 20 in total.
         let rounds = 2_usize * Z64::CHAR_LOG2.ilog2() as usize + 1 + 1;
-        let results = execute_protocol_small(parties, threshold as u8, Some(rounds), &mut task);
+        // Async because preprocessing is Dummy
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = execute_protocol_small(
+            parties,
+            threshold as u8,
+            Some(rounds),
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
 
         for cur_res in results {
             assert_eq!(ResiduePoly::<Z64>::from_scalar(ref_val), cur_res);
@@ -725,7 +756,17 @@ mod tests {
             (opened1, opened1_target, opened2, opened2_target)
         };
 
-        let results = &execute_protocol_small(parties, threshold as u8, None, &mut task)[0];
+        // Async because preprocessing is Dummy
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = &execute_protocol_small(
+            parties,
+            threshold as u8,
+            None,
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        )[0];
         let (xor1, xor2, and1, and2) = results;
         assert_eq!(xor1, xor2);
 
@@ -784,8 +825,18 @@ mod tests {
 
         //Comment for reviewer, removing 2 rounds because
         //generating bits from DummyPreprocessing is now communication-free
+        // Async because preprocessing is Dummy
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
         let rounds = 2_usize + 1 + 2_usize * Z64::CHAR_LOG2.ilog2() as usize;
-        let results = &execute_protocol_small(parties, threshold as u8, Some(rounds), &mut task)[0];
+        let results = &execute_protocol_small(
+            parties,
+            threshold as u8,
+            Some(rounds),
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        )[0];
         assert_eq!(results.len(), ref_val.len());
         for i in 0..results.len() {
             assert_eq!(

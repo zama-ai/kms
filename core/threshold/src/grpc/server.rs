@@ -42,7 +42,9 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
     #[cfg(not(feature = "experimental"))]
     let choreography = GrpcChoreography::new(
         own_identity,
-        Box::new(move |session_id, roles| networking.make_session(session_id, roles)),
+        Box::new(move |session_id, roles, network_mode| {
+            networking.make_session(session_id, roles, network_mode)
+        }),
         factory,
     )
     .into_server();
@@ -50,7 +52,9 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
     #[cfg(feature = "experimental")]
     let choreography = ExperimentalGrpcChoreography::new(
         own_identity,
-        Box::new(move |session_id, roles| networking.make_session(session_id, roles)),
+        Box::new(move |session_id, roles, network_mode| {
+            networking.make_session(session_id, roles, network_mode)
+        }),
         factory,
     )
     .into_server();

@@ -172,6 +172,7 @@ mod tests {
                 utils::tests::reconstruct_bit_vec,
             },
         },
+        networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_large,
     };
 
@@ -268,8 +269,17 @@ mod tests {
         let parties = 5;
         let threshold = 1;
 
-        let results =
-            execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
+        //This is Async because triples are generated from dummy preprocessing
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = execute_protocol_large::<ResiduePoly128, _, _>(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
 
         let mut lwe_key_shares = HashMap::new();
         let mut glwe_key_shares = HashMap::new();

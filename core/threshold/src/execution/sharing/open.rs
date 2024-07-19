@@ -18,11 +18,19 @@ use crate::{
 };
 
 use super::{
-    shamir::{fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings},
+    shamir::{
+        fill_indexed_shares, reconstruct_w_errors_async, reconstruct_w_errors_sync, ShamirSharings,
+    },
     share::Share,
 };
 
 type JobResultType<Z> = (Role, anyhow::Result<Vec<Z>>);
+type ReconsFunc<Z> = fn(
+    num_parties: usize,
+    degree: usize,
+    threshold: usize,
+    sharing: &ShamirSharings<Z>,
+) -> anyhow::Result<Option<Z>>;
 /// Helper function of robust reconstructions which collect the shares and tries to reconstruct
 /// Takes as input:
 /// - the session_parameters
@@ -36,6 +44,7 @@ async fn try_reconstruct_from_shares<Z: Ring + ErrorCorrect, P: ParameterHandles
     degree: usize,
     threshold: usize,
     jobs: &mut JoinSet<Result<JobResultType<Z>, Elapsed>>,
+    reconstruct_fn: ReconsFunc<Z>,
 ) -> anyhow::Result<Option<Vec<Z>>> {
     let num_parties = session_parameters.num_parties();
     let own_role = session_parameters.my_role()?;
@@ -69,18 +78,16 @@ async fn try_reconstruct_from_shares<Z: Ring + ErrorCorrect, P: ParameterHandles
         let res: Option<Vec<_>> = sharings
             .iter()
             .map(|sharing| {
-                if let Ok(Some(r)) =
-                    reconstruct_w_errors_sync(num_parties, degree, threshold, sharing)
-                {
-                    Some(r)
+                if let Ok(r) = reconstruct_fn(num_parties, degree, threshold, sharing) {
+                    r
                 } else {
                     None
                 }
             })
             .collect();
-        if let Some(r) = res {
+        if res.is_some() {
             jobs.shutdown().await;
-            return Ok(Some(r));
+            return Ok(res);
         }
     }
 
@@ -104,17 +111,15 @@ async fn try_reconstruct_from_shares<Z: Ring + ErrorCorrect, P: ParameterHandles
         let res: Option<Vec<_>> = sharings
             .iter()
             .map(|sharing| {
-                if let Ok(Some(r)) =
-                    reconstruct_w_errors_sync(num_parties, degree, updated_threshold, sharing)
-                {
-                    Some(r)
+                if let Ok(r) = reconstruct_fn(num_parties, degree, updated_threshold, sharing) {
+                    r
                 } else {
                     None
                 }
             })
             .collect();
-        if let Some(r) = res {
-            return Ok(Some(r));
+        if res.is_some() {
+            return Ok(res);
         }
     }
     Err(anyhow_error_and_log(
@@ -193,8 +198,20 @@ pub async fn robust_opens_to_all<
         //Note: We are not even considering shares for the already known corrupt parties,
         //thus the effective threshold at this point is the "real" threshold - the number of known corrupt parties
         let threshold = session.threshold() as usize - session.corrupt_roles().len();
-        match try_reconstruct_from_shares(session, &mut sharings, degree, threshold, &mut jobs)
-            .await?
+        let reconstruct_fn = match session.network().get_network_mode() {
+            crate::networking::NetworkMode::Sync => reconstruct_w_errors_sync,
+            crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
+        };
+
+        match try_reconstruct_from_shares(
+            session,
+            &mut sharings,
+            degree,
+            threshold,
+            &mut jobs,
+            reconstruct_fn,
+        )
+        .await?
         {
             Some(res) => result.extend(res),
             None => return Ok(None),
@@ -258,7 +275,19 @@ pub async fn robust_opens_to<
         //Note: We are not even considering shares for the already known corrupt parties,
         //thus the effective threshold at this point is the "real" threshold - the number of known corrupt parties
         let threshold = session.threshold() as usize - session.corrupt_roles().len();
-        try_reconstruct_from_shares(session, &mut sharings, degree, threshold, &mut set).await
+        let reconstruct_fn = match session.network().get_network_mode() {
+            crate::networking::NetworkMode::Sync => reconstruct_w_errors_sync,
+            crate::networking::NetworkMode::Async => reconstruct_w_errors_async,
+        };
+        try_reconstruct_from_shares(
+            session,
+            &mut sharings,
+            degree,
+            threshold,
+            &mut set,
+            reconstruct_fn,
+        )
+        .await
     } else {
         let receiver = session.identity_from(&Role::indexed_by_one(output_party_id))?;
 
@@ -289,6 +318,7 @@ mod test {
     use rand::SeedableRng;
 
     use crate::execution::sharing::shamir::InputOp;
+    use crate::networking::NetworkMode;
     use crate::{
         algebra::{residue_poly::ResiduePoly, residue_poly::ResiduePoly128},
         execution::{
@@ -298,43 +328,67 @@ mod test {
         tests::helper::tests_and_benches::execute_protocol_large,
     };
 
-    #[test]
-    fn test_robust_open_all() {
+    async fn open_task(session: LargeSession) -> Vec<ResiduePoly128> {
         let parties = 4;
         let threshold = 1;
-
-        async fn task(session: LargeSession) -> Vec<ResiduePoly128> {
-            let parties = 4;
-            let threshold = 1;
-            let num_secrets = 10;
-            let mut rng = AesRng::seed_from_u64(0);
-            let shares = (0..num_secrets)
-                .map(|idx| {
-                    ShamirSharings::share(
-                        &mut rng,
-                        ResiduePoly::from_scalar(Wrapping(idx)),
-                        parties,
-                        threshold,
-                    )
-                    .unwrap()
-                    .shares
-                    .get(session.my_role().unwrap().zero_based())
-                    .unwrap()
-                    .value()
-                })
-                .collect_vec();
-            let res = robust_opens_to_all(&session, &shares, threshold)
-                .await
+        let num_secrets = 10;
+        let mut rng = AesRng::seed_from_u64(0);
+        let shares = (0..num_secrets)
+            .map(|idx| {
+                ShamirSharings::share(
+                    &mut rng,
+                    ResiduePoly::from_scalar(Wrapping(idx)),
+                    parties,
+                    threshold,
+                )
                 .unwrap()
-                .unwrap();
-            for (idx, r) in res.clone().into_iter().enumerate() {
-                assert_eq!(r.to_scalar().unwrap(), Wrapping::<u128>(idx as u128));
-            }
-            res
+                .shares
+                .get(session.my_role().unwrap().zero_based())
+                .unwrap()
+                .value()
+            })
+            .collect_vec();
+        let res = robust_opens_to_all(&session, &shares, threshold)
+            .await
+            .unwrap()
+            .unwrap();
+        for (idx, r) in res.clone().into_iter().enumerate() {
+            assert_eq!(r.to_scalar().unwrap(), Wrapping::<u128>(idx as u128));
         }
+        res
+    }
 
+    #[test]
+    fn test_robust_open_all_sync() {
+        let parties = 4;
+        let threshold = 1;
         // expect a single round for opening
-        let _ =
-            execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, Some(1), &mut task);
+
+        let _ = execute_protocol_large::<ResiduePoly128, _, _>(
+            parties,
+            threshold,
+            Some(1),
+            NetworkMode::Sync,
+            None,
+            &mut open_task,
+        );
+    }
+
+    #[test]
+    fn test_robust_open_all_async() {
+        let parties = 4;
+        let threshold = 1;
+        // expect a single round for opening
+
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let _ = execute_protocol_large::<ResiduePoly128, _, _>(
+            parties,
+            threshold,
+            Some(1),
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut open_task,
+        );
     }
 }

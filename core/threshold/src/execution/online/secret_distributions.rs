@@ -94,6 +94,7 @@ mod tests {
             online::{preprocessing::dummy::DummyPreprocessing, triple::open_list},
             runtime::session::{LargeSession, ParameterHandles, SmallSession},
         },
+        networking::NetworkMode,
         tests::helper::tests_and_benches::{execute_protocol_large, execute_protocol_small},
     };
 
@@ -114,7 +115,17 @@ mod tests {
             open_list(&res_vec, &session).await.unwrap()
         };
 
-        let results = execute_protocol_small(parties, threshold, None, &mut task);
+        // Online phase so Async because offline is dummy
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = execute_protocol_small(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
 
         //Ensure all values fall within bound
         let ref_res = results.first().unwrap();
@@ -165,8 +176,17 @@ mod tests {
         // opening of the final output = 1 round
         //let rounds = 2 * (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) + 1 + 2 + 1;
         //This is now a unit test as we use DummyPreprocessing, so only 1 round (for openeing at the end)
-        let results =
-            execute_protocol_large::<ResiduePoly128, _, _>(parties, threshold, Some(1), &mut task);
+        // Online phase so Async because offline is dummy
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = execute_protocol_large::<ResiduePoly128, _, _>(
+            parties,
+            threshold,
+            Some(1),
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
 
         //Check all parties agree and fall within expected bounds
         let ref_res = results[0].1.clone();
@@ -230,8 +250,17 @@ mod tests {
         // opening of the final output = 1 round
         //let rounds = 2 * (1 + 1 + (1 + 3 + threshold) + 1 + (3 + threshold)) + 1 + 2 + 1;
         //This is now a unit test as we use DummyPreprocessing, so only 1 round (for openeing at the end)
-        let results =
-            execute_protocol_large::<ResiduePoly64, _, _>(parties, threshold, Some(1), &mut task);
+        // Online phase so Async because offline is dummy
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = execute_protocol_large::<ResiduePoly64, _, _>(
+            parties,
+            threshold,
+            Some(1),
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
 
         //Check all parties agree and fall within expected bounds
         let ref_res = results[0].1.clone();

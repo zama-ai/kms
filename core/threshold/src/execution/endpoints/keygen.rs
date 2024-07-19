@@ -738,14 +738,6 @@ pub mod tests {
     };
 
     use crate::execution::{
-        endpoints::keygen::RawPubKeySet,
-        tfhe_internals::{
-            parameters::{PARAMS_P32_REAL_WITH_SNS, PARAMS_P8_REAL_WITH_SNS},
-            test_feature::SnsClientKey,
-            utils::tests::reconstruct_lwe_secret_key_from_file,
-        },
-    };
-    use crate::execution::{
         random::{get_rng, seed_from_rng},
         tfhe_internals::{
             parameters::PARAMS_TEST_BK_SNS, switch_and_squash::SwitchAndSquashKey,
@@ -776,6 +768,17 @@ pub mod tests {
             glwe_key::GlweSecretKeyShare, utils::tests::read_secret_key_shares_from_file,
         },
         file_handling::{read_element, write_element},
+    };
+    use crate::{
+        execution::{
+            endpoints::keygen::RawPubKeySet,
+            tfhe_internals::{
+                parameters::{PARAMS_P32_REAL_WITH_SNS, PARAMS_P8_REAL_WITH_SNS},
+                test_feature::SnsClientKey,
+                utils::tests::reconstruct_lwe_secret_key_from_file,
+            },
+        },
+        networking::NetworkMode,
     };
 
     #[cfg(feature = "slow_tests")]
@@ -1029,8 +1032,15 @@ pub mod tests {
             )
         };
 
-        let results =
-            execute_protocol_small::<ResiduePoly128, _, _>(num_parties, threshold, None, &mut task);
+        // Sync network because we also init the PRSS in the task
+        let results = execute_protocol_small::<ResiduePoly128, _, _>(
+            num_parties,
+            threshold,
+            None,
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
 
         let pk_ref = results[0].1.clone();
 
@@ -1078,8 +1088,17 @@ pub mod tests {
             )
         };
 
-        let results =
-            execute_protocol_large::<ResiduePoly128, _, _>(num_parties, threshold, None, &mut task);
+        //Async because the preprocessing is Dummy
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = execute_protocol_large::<ResiduePoly128, _, _>(
+            num_parties,
+            threshold,
+            None,
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
 
         let pk_ref = results[0].1.clone();
 
@@ -1126,8 +1145,17 @@ pub mod tests {
             (my_role, bsk)
         };
 
-        let results =
-            execute_protocol_large::<ResiduePoly128, _, _>(num_parties, threshold, None, &mut task);
+        //Async because the preprocessing is Dummy
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let results = execute_protocol_large::<ResiduePoly128, _, _>(
+            num_parties,
+            threshold,
+            None,
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
 
         let bsk_ref = results[0].1.clone();
 

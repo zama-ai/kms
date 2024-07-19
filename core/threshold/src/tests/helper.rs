@@ -4,7 +4,12 @@
 /// TODO(Dragos) Investigate this afterwards.
 pub mod tests_and_benches {
 
-    use crate::algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed};
+    use std::time::Duration;
+
+    use crate::{
+        algebra::structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
+        networking::NetworkMode,
+    };
     use aes_prng::AesRng;
     use futures::Future;
     use rand::SeedableRng;
@@ -28,6 +33,8 @@ pub mod tests_and_benches {
         parties: usize,
         threshold: u8,
         expected_rounds: Option<usize>,
+        network_mode: NetworkMode,
+        delay_vec: Option<Vec<Duration>>,
         task: &mut dyn FnMut(SmallSession<Z>) -> TaskOutputT,
     ) -> Vec<OutputT>
     where
@@ -36,7 +43,17 @@ pub mod tests_and_benches {
         OutputT: Send + 'static,
     {
         let identities = generate_fixed_identities(parties);
-        let test_runtime = DistributedTestRuntime::new(identities.clone(), threshold);
+        let delay_map = delay_vec.map(|delay_vec| {
+            identities
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, identity)| {
+                    delay_vec.get(idx).map(|delay| (identity.clone(), *delay))
+                })
+                .collect()
+        });
+        let test_runtime =
+            DistributedTestRuntime::new(identities.clone(), threshold, network_mode, delay_map);
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -82,6 +99,8 @@ pub mod tests_and_benches {
         parties: usize,
         threshold: usize,
         expected_rounds: Option<usize>,
+        network_mode: NetworkMode,
+        delay_vec: Option<Vec<Duration>>,
         task: &mut dyn FnMut(LargeSession) -> TaskOutputT,
     ) -> Vec<OutputT>
     where
@@ -90,7 +109,21 @@ pub mod tests_and_benches {
         OutputT: Send + 'static,
     {
         let identities = generate_fixed_identities(parties);
-        let test_runtime = DistributedTestRuntime::<Z>::new(identities.clone(), threshold as u8);
+        let delay_map = delay_vec.map(|delay_vec| {
+            identities
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, identity)| {
+                    delay_vec.get(idx).map(|delay| (identity.clone(), *delay))
+                })
+                .collect()
+        });
+        let test_runtime = DistributedTestRuntime::<Z>::new(
+            identities.clone(),
+            threshold as u8,
+            network_mode,
+            delay_map,
+        );
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -153,7 +186,7 @@ pub mod tests {
             },
         },
         file_handling::read_element,
-        networking::{local::LocalNetworkingProducer, Networking},
+        networking::{local::LocalNetworkingProducer, NetworkMode, Networking},
         session_id::SessionId,
         tests::test_data_setup::tests::DEFAULT_SEED,
     };
@@ -331,13 +364,15 @@ pub mod tests {
     }
 
     /// Returns a base session to be used with a single party, with role 1, suitable for testing with dummy constructs
-    pub fn get_base_session() -> BaseSessionStruct<AesRng, SessionParameters> {
+    pub fn get_base_session(
+        network_mode: NetworkMode,
+    ) -> BaseSessionStruct<AesRng, SessionParameters> {
         let parameters = get_dummy_parameters();
         let id = parameters.own_identity.clone();
         let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
         BaseSessionStruct {
             parameters,
-            network: Arc::new(net_producer.user_net(id)),
+            network: Arc::new(net_producer.user_net(id, network_mode, None)),
             rng: AesRng::seed_from_u64(42),
             corrupt_roles: HashSet::new(),
         }
@@ -354,15 +389,15 @@ pub mod tests {
         let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
         BaseSessionStruct {
             parameters,
-            network: Arc::new(net_producer.user_net(id)),
+            network: Arc::new(net_producer.user_net(id, NetworkMode::Sync, None)),
             rng: AesRng::seed_from_u64(role.zero_based() as u64),
             corrupt_roles: HashSet::new(),
         }
     }
 
     /// Return a large session to be used with a single party, with role 1
-    pub fn get_large_session() -> LargeSession {
-        let base_session = get_base_session();
+    pub fn get_large_session(network_mode: NetworkMode) -> LargeSession {
+        let base_session = get_base_session(network_mode);
         LargeSession::new(base_session)
     }
 
@@ -384,6 +419,7 @@ pub mod tests {
     /// interactive computation.
     ///
     ///**NOTE: FOR ALL TESTS THE RNG SEED OF A PARTY IS ITS PARTY_ID, THIS IS ACTUALLY USED IN SOME TESTS TO CHECK CORRECTNESS.**
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_protocol_large_w_disputes_and_malicious<
         Z: Ring,
         TaskOutputT,
@@ -396,6 +432,8 @@ pub mod tests {
         dispute_pairs: &[(Role, Role)],
         malicious_roles: &[Role],
         malicious_strategy: P,
+        network_mode: NetworkMode,
+        delay_vec: Option<Vec<std::time::Duration>>,
         task_honest: &mut dyn FnMut(LargeSession) -> TaskOutputT,
         task_malicious: &mut dyn FnMut(LargeSession, P) -> TaskOutputM,
     ) -> (Vec<OutputT>, Vec<Result<OutputM, JoinError>>)
@@ -411,7 +449,21 @@ pub mod tests {
         let threshold = params.threshold as u8;
 
         let identities = generate_fixed_identities(parties);
-        let test_runtime = DistributedTestRuntime::<Z>::new(identities.clone(), threshold);
+        let delay_map = delay_vec.map(|delay_vec| {
+            identities
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, identity)| {
+                    delay_vec.get(idx).map(|delay| (identity.clone(), *delay))
+                })
+                .collect()
+        });
+        let test_runtime = DistributedTestRuntime::<Z>::new(
+            identities.clone(),
+            threshold,
+            network_mode,
+            delay_map,
+        );
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();

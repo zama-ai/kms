@@ -166,6 +166,7 @@ mod tests {
     use crate::experimental::bgv::basics::keygen;
     use crate::experimental::bgv::ddec::keygen_shares;
     use crate::experimental::bgv::ddec::LevelEll;
+    use crate::networking::NetworkMode;
     use crate::session_id::SessionId;
     use aes_prng::AesRng;
     use std::collections::HashMap;
@@ -230,8 +231,14 @@ mod tests {
         );
 
         let identities = generate_fixed_identities(num_parties);
+        //This is Async because we only do DDec, which is "online only"
+        //Delay P1 by 1s every round
+        let delay_map = HashMap::from([(
+            identities.first().unwrap().clone(),
+            std::time::Duration::from_secs(1),
+        )]);
         let runtime: DistributedTestRuntime<LevelOne> =
-            DistributedTestRuntime::new(identities, threshold);
+            DistributedTestRuntime::new(identities, threshold, NetworkMode::Async, Some(delay_map));
 
         let session_id = SessionId(1);
 

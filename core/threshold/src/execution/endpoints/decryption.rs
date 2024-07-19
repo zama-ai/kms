@@ -691,6 +691,7 @@ pub fn partial_decrypt64(
 mod tests {
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::test_feature::KeySet;
+    use crate::networking::NetworkMode;
     use crate::{
         algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
         execution::tfhe_internals::test_feature::keygen_all_party_shares,
@@ -775,8 +776,13 @@ mod tests {
         let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
-        let mut runtime =
-            DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold as u8);
+        //Assumes Sync because preprocessing is part of the task
+        let mut runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+            identities,
+            threshold as u8,
+            NetworkMode::Sync,
+            None,
+        );
 
         runtime.setup_conversion_key(Arc::new(keyset.public_keys.sns_key.clone().unwrap()));
         runtime.setup_sks(key_shares);
@@ -815,8 +821,13 @@ mod tests {
         let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
-        let mut runtime =
-            DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold as u8);
+        //Assumes Sync because preprocessing is part of the task
+        let mut runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+            identities,
+            threshold as u8,
+            NetworkMode::Sync,
+            None,
+        );
 
         runtime.setup_conversion_key(Arc::new(keyset.public_keys.sns_key.clone().unwrap()));
         runtime.setup_sks(key_shares);
@@ -855,7 +866,13 @@ mod tests {
         let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
-        let mut runtime = DistributedTestRuntime::<ResiduePoly64>::new(identities, threshold as u8);
+        //Assumes Sync because preprocessing is part of the task
+        let mut runtime = DistributedTestRuntime::<ResiduePoly64>::new(
+            identities,
+            threshold as u8,
+            NetworkMode::Sync,
+            None,
+        );
 
         runtime.setup_sks(key_shares);
 
@@ -894,7 +911,13 @@ mod tests {
         let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
-        let mut runtime = DistributedTestRuntime::<ResiduePoly64>::new(identities, threshold as u8);
+        //Assumes Sync because preprocessing is part of the task
+        let mut runtime = DistributedTestRuntime::<ResiduePoly64>::new(
+            identities,
+            threshold as u8,
+            NetworkMode::Sync,
+            None,
+        );
 
         runtime.setup_sks(key_shares);
 

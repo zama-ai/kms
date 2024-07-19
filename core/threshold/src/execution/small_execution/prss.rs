@@ -713,6 +713,7 @@ mod tests {
     use super::*;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::test_feature::KeySet;
+    use crate::networking::NetworkMode;
     use crate::{
         algebra::{
             residue_poly::{ResiduePoly, ResiduePoly128, ResiduePoly64},
@@ -931,7 +932,9 @@ mod tests {
         let ct = FheUint8::encrypt(msg, &keys.public_keys.public_key);
         let (raw_ct, _id) = ct.into_raw_parts();
 
-        let mut runtime = DistributedTestRuntime::new(identities, threshold as u8);
+        //Could probably be run Async, but NIST doc says all offline is Sync
+        let mut runtime =
+            DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
 
         runtime.setup_sks(key_shares);
         runtime.setup_conversion_key(Arc::new(keys.public_keys.sns_key.clone().unwrap()));
@@ -1184,7 +1187,13 @@ mod tests {
         let threshold = 2;
         let identities = generate_fixed_identities(parties);
 
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold);
+        //Could probably be run Async, but NIST doc says all offline is Sync
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+            identities,
+            threshold,
+            NetworkMode::Sync,
+            None,
+        );
         let session_id = SessionId(23);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1253,7 +1262,13 @@ mod tests {
         let threshold = 2;
         let identities = generate_fixed_identities(parties);
 
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold);
+        //Could probably be run Async, but NIST doc says all offline is Sync
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+            identities,
+            threshold,
+            NetworkMode::Sync,
+            None,
+        );
         let session_id = SessionId(17);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1550,7 +1565,15 @@ mod tests {
         };
 
         // init with Dummy AR does not send anything = 0 expected rounds
-        let result = execute_protocol_small(parties, threshold, Some(0), &mut task);
+        //Could probably be run Async, but NIST doc says all offline is Sync
+        let result = execute_protocol_small(
+            parties,
+            threshold,
+            Some(0),
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
 
         validate_prss_init(ShamirSharings::create(result), parties, threshold as usize);
     }
@@ -1610,10 +1633,13 @@ mod tests {
         let c = 1;
         let rounds = c * (1 + 3 + threshold) + 1;
 
+        // Sync because robust init relies on VSS which requires Sync
         let result = execute_protocol_small::<ResiduePoly128, _, _>(
             parties,
             threshold,
             Some(rounds.into()),
+            NetworkMode::Sync,
+            None,
             &mut task,
         );
         let sharing = ShamirSharings::create(result);
@@ -1639,8 +1665,15 @@ mod tests {
             }
         };
 
-        let result =
-            execute_protocol_small::<ResiduePoly128, _, _>(parties, threshold, None, &mut task);
+        // Sync because robust init relies on VSS which requires Sync
+        let result = execute_protocol_small::<ResiduePoly128, _, _>(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Sync,
+            None,
+            &mut task,
+        );
 
         let sharing = ShamirSharings::create(result);
         validate_prss_init::<ResiduePoly128>(sharing, parties, threshold.into());

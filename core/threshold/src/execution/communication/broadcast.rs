@@ -26,24 +26,17 @@ pub async fn send_to_all<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     msg: NetworkValue<Z>,
 ) -> anyhow::Result<()> {
     session.network().increase_round_counter()?;
-    let mut jobs = JoinSet::new();
     for (other_role, other_identity) in session.role_assignments().iter() {
         let networking = Arc::clone(session.network());
         let session_id = session.session_id();
         let msg = msg.clone();
         let other_id = other_identity.clone();
         if sender != other_role {
-            jobs.spawn(
-                async move {
-                    let _ = networking
-                        .send(msg.to_network(), &other_id, &session_id)
-                        .await;
-                }
-                .instrument(tracing::Span::current()),
-            );
+            networking
+                .send(msg.to_network(), &other_id, &session_id)
+                .await?;
         }
     }
-    while (jobs.join_next().await).is_some() {}
     Ok(())
 }
 
@@ -617,6 +610,7 @@ mod tests {
     use crate::execution::runtime::test_runtime::{
         generate_fixed_identities, DistributedTestRuntime,
     };
+    use crate::networking::NetworkMode;
     use crate::session_id::SessionId;
     use aes_prng::AesRng;
     use itertools::Itertools;
@@ -644,7 +638,13 @@ mod tests {
         let _guard = rt.enter();
 
         let mut set = JoinSet::new();
-        let test_runtime = DistributedTestRuntime::<Z>::new(identities.clone(), threshold);
+        //Broadcast assumes Sync network
+        let test_runtime = DistributedTestRuntime::<Z>::new(
+            identities.clone(),
+            threshold,
+            NetworkMode::Sync,
+            None,
+        );
         if identities.len() == sender_parties.len() {
             for (party_no, my_data) in input_values.iter().cloned().enumerate() {
                 let session = test_runtime.base_session_for_party(session_id, party_no, None);
@@ -764,7 +764,13 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities, threshold);
+        //Broadcast assumes Sync network
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+            identities,
+            threshold,
+            NetworkMode::Sync,
+            None,
+        );
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -817,7 +823,13 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities.clone(), threshold);
+        //Broadcast assumes Sync network
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+            identities.clone(),
+            threshold,
+            NetworkMode::Sync,
+            None,
+        );
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -907,7 +919,6 @@ mod tests {
             (Some(vec_vi), true) => {
                 bcast_data.insert(my_role, vec_vi[1].clone());
                 round1_data.insert(my_role, bcast_data[&my_role].clone());
-                let mut jobs = JoinSet::new();
                 for (other_role, other_identity) in session.role_assignments().iter() {
                     let networking = Arc::clone(session.network());
                     let session_id = session.session_id();
@@ -918,14 +929,11 @@ mod tests {
                     );
                     let other_id = other_identity.clone();
                     if &my_role != other_role {
-                        jobs.spawn(async move {
-                            let _ = networking
-                                .send(msg.to_network(), &other_id, &session_id)
-                                .await;
-                        });
+                        networking
+                            .send(msg.to_network(), &other_id, &session_id)
+                            .await?;
                     }
                 }
-                while (jobs.join_next().await).is_some() {}
             }
             (None, false) => (),
             (_, _) => {
@@ -1012,7 +1020,13 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities.clone(), threshold);
+        //Broadcast assumes Sync network
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+            identities.clone(),
+            threshold,
+            NetworkMode::Sync,
+            None,
+        );
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1106,28 +1120,22 @@ mod tests {
             (Some(vec_vi), true) => {
                 bcast_data.insert(my_role, vec_vi[1].clone());
                 round1_data.insert(my_role, bcast_data[&my_role].clone());
-                let mut jobs = JoinSet::new();
                 for (other_role, other_identity) in session.role_assignments().iter() {
                     let networking = Arc::clone(session.network());
                     let session_id = session.session_id();
                     let other_id = other_identity.clone();
                     if &my_role != other_role && other_role.one_based() > 2 {
                         let msg = NetworkValue::Send(vec_vi[1].clone());
-                        jobs.spawn(async move {
-                            let _ = networking
-                                .send(msg.to_network(), &other_id, &session_id)
-                                .await;
-                        });
+                        networking
+                            .send(msg.to_network(), &other_id, &session_id)
+                            .await?;
                     } else if other_role.one_based() == 2 {
                         let msg = NetworkValue::Send(vec_vi[0].clone());
-                        jobs.spawn(async move {
-                            let _ = networking
-                                .send(msg.to_network(), &other_id, &session_id)
-                                .await;
-                        });
+                        networking
+                            .send(msg.to_network(), &other_id, &session_id)
+                            .await?;
                     }
                 }
-                while (jobs.join_next().await).is_some() {}
             }
             (None, false) => (),
             (_, _) => {
@@ -1154,28 +1162,22 @@ mod tests {
         let mut msg_to_p2 = round1_data.clone();
         msg_to_p2.insert(my_role, vec_vi.clone().unwrap()[0].clone());
         let msg_to_others = round1_data;
-        let mut jobs = JoinSet::new();
         for (other_role, other_identity) in session.role_assignments().iter() {
             let networking = Arc::clone(session.network());
             let session_id = session.session_id();
             let other_id = other_identity.clone();
             if &my_role != other_role && other_role.one_based() > 2 {
                 let msg = NetworkValue::EchoBatch(msg_to_others.clone());
-                jobs.spawn(async move {
-                    let _ = networking
-                        .send(msg.to_network(), &other_id, &session_id)
-                        .await;
-                });
+                networking
+                    .send(msg.to_network(), &other_id, &session_id)
+                    .await?;
             } else if other_role.one_based() == 2 {
                 let msg = NetworkValue::EchoBatch(msg_to_p2.clone());
-                jobs.spawn(async move {
-                    let _ = networking
-                        .send(msg.to_network(), &other_id, &session_id)
-                        .await;
-                });
+                networking
+                    .send(msg.to_network(), &other_id, &session_id)
+                    .await?;
             }
         }
-        while (jobs.join_next().await).is_some() {}
         let msg = msg_to_others;
         // adding own echo to the map
         let mut echos: HashMap<(Role, BroadcastValue<Z>), u32> =
@@ -1203,7 +1205,13 @@ mod tests {
 
         // code for session setup
         let threshold = 1;
-        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(identities.clone(), threshold);
+        //Broadcast assumes Sync network
+        let runtime = DistributedTestRuntime::<ResiduePoly128>::new(
+            identities.clone(),
+            threshold,
+            NetworkMode::Sync,
+            None,
+        );
         let session_id = SessionId(1);
 
         let rt = tokio::runtime::Runtime::new().unwrap();

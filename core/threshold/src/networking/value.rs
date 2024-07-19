@@ -91,7 +91,7 @@ mod tests {
             tfhe_internals::test_feature::KeySet,
         },
         file_handling::read_element,
-        networking::{local::LocalNetworkingProducer, Networking},
+        networking::{local::LocalNetworkingProducer, NetworkMode, Networking},
     };
 
     use super::*;
@@ -105,8 +105,8 @@ mod tests {
         let pk = keys.public_keys.clone();
         let value = NetworkValue::<Z128>::PubKeySet(Box::new(keys.public_keys));
 
-        let net_alice = net_producer.user_net("alice".into());
-        let net_bob = net_producer.user_net("bob".into());
+        let net_alice = net_producer.user_net("alice".into(), NetworkMode::Sync, None);
+        let net_bob = net_producer.user_net("bob".into(), NetworkMode::Sync, None);
 
         let task1 = tokio::spawn(async move {
             let recv = net_bob.receive(&"alice".into(), &123_u128.into()).await;

@@ -11,7 +11,7 @@ use distributed_decryption::{
         },
         small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
     },
-    networking::local::LocalNetworkingProducer,
+    networking::{local::LocalNetworkingProducer, NetworkMode},
     session_id::SessionId,
 };
 use rand::SeedableRng;
@@ -25,7 +25,13 @@ fn bench_prss(c: &mut Criterion) {
 
     let sid = SessionId::from(42);
 
-    let mut sess = get_base_session_for_parties(num_parties, threshold, Role::indexed_by_one(1));
+    //Going with sync although PRSS init_with_abort can work in both
+    let mut sess = get_base_session_for_parties(
+        num_parties,
+        threshold,
+        Role::indexed_by_one(1),
+        NetworkMode::Sync,
+    );
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
@@ -53,13 +59,14 @@ pub fn get_base_session_for_parties(
     amount: usize,
     threshold: u8,
     role: Role,
+    network_mode: NetworkMode,
 ) -> BaseSessionStruct<AesRng, SessionParameters> {
     let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
     let id = parameters.own_identity.clone();
     let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
     BaseSessionStruct::new(
         parameters,
-        Arc::new(net_producer.user_net(id)),
+        Arc::new(net_producer.user_net(id, network_mode, None)),
         AesRng::seed_from_u64(42),
     )
     .unwrap()

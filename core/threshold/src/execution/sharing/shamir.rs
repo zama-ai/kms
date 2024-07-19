@@ -211,12 +211,13 @@ pub fn fill_indexed_shares<Z: Ring>(
 }
 
 /// Core algorithm for robust reconstructions which tries to reconstruct from a collection of shares
+/// in a sync network
 /// Takes as input:
 /// - num_parties as number of parties
 /// - degree as the degree of the sharing (usually either t or 2t)
 /// - threshold as the threshold of maximum corruptions
 /// - indexed_shares as the indexed shares of the parties
-/// NOTE: When needed, inplement the async version
+/// Returns either the result or None if there are not enough shares to do reconstruction yet
 pub fn reconstruct_w_errors_sync<Z>(
     num_parties: usize,
     degree: usize,
@@ -237,6 +238,73 @@ where
 
     // Not enough shares to reconstruct (yet)
     Ok(None)
+}
+
+/// Core algorithm for robust reconstructions which tries to reconstruct from a collection of shares
+/// in an async network
+/// Takes as input:
+/// - num_parties as number of parties
+/// - degree as the degree of the sharing (i.e. the corruption threshold)
+/// - threshold as the threshold of maximum corruptions
+/// - indexed_shares as the indexed shares of the parties
+/// Returns either the result or None if there are not enough shares to do reconstruction yet
+pub fn reconstruct_w_errors_async<Z>(
+    num_parties: usize,
+    degree: usize,
+    threshold: usize,
+    sharing: &ShamirSharings<Z>,
+) -> anyhow::Result<Option<Z>>
+where
+    Z: Ring + ErrorCorrect,
+    ShamirSharings<Z>: RevealOp<Z>,
+{
+    if degree + 3 * threshold < num_parties {
+        if sharing.shares.len() > degree + 2 * threshold {
+            let opened = sharing.err_reconstruct(degree, threshold)?;
+            Ok(Some(opened))
+        } else {
+            //We do not have enough shares yet
+            Ok(None)
+        }
+    } else if degree + 2 * threshold < num_parties {
+        if sharing.shares.len() > degree + threshold {
+            let r = sharing.shares.len() - (degree + threshold + 1);
+            let opened_poly = Z::error_correct(sharing, degree, r);
+            if let Ok(opened_poly) = opened_poly {
+                if opened_poly.deg() <= degree {
+                    //Note: Not entirely certain we really need all this checking mechanism.
+                    //If error_correct succeeded, why isnt it enough?
+
+                    //Check how many shares lie on the polynomial
+                    let mut num_shares_on_poly = 0;
+                    for share in sharing.shares.iter() {
+                        if share.value()
+                            == opened_poly
+                                .eval(&Z::embed_exceptional_set(share.owner().one_based())?)
+                        {
+                            num_shares_on_poly += 1;
+                        }
+
+                        //If enough, return the result
+                        if num_shares_on_poly > degree + threshold {
+                            return Ok(Some(opened_poly.eval(&(Z::ZERO))));
+                        }
+                    }
+                    //If we havent returned, we do not have enough shares yet
+                    Ok(None)
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+        } else {
+            //We do not have enough shares yet
+            Ok(None)
+        }
+    } else {
+        Err(anyhow_error_and_warn_log(format!("Can NOT reconstruct with degree {degree}, threshold {threshold} and num_parties {num_parties}")))
+    }
 }
 
 #[cfg(test)]
@@ -324,4 +392,70 @@ mod tests {
     use crate::algebra::base_ring::{Z128, Z64};
     tests_poly_shamir!(Z64, u64);
     tests_poly_shamir!(Z128, u128);
+
+    #[test]
+    fn test_async_reconstruct() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let num_parties = 10;
+        let threshold = 3;
+
+        let secret = ResiduePoly::<Z128>::from_scalar(Wrapping(23));
+
+        let sharings =
+            ShamirSharings::<ResiduePoly<Z128>>::share(&mut rng, secret, num_parties, threshold)
+                .unwrap();
+
+        let opened = reconstruct_w_errors_async(num_parties, threshold, threshold, &sharings)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(opened, secret);
+    }
+
+    #[test]
+    fn test_adversarial_async_reconstruct() {
+        let mut rng = AesRng::seed_from_u64(0);
+        let num_parties = 10;
+        let threshold = 3;
+
+        let secret = ResiduePoly::<Z128>::from_scalar(Wrapping(23));
+
+        let sharings =
+            ShamirSharings::<ResiduePoly<Z128>>::share(&mut rng, secret, num_parties, threshold)
+                .unwrap();
+
+        let adv_target = ResiduePoly::<Z128>::from_scalar(Wrapping(32));
+        let adv_sharings = ShamirSharings::<ResiduePoly<Z128>>::share(
+            &mut rng,
+            adv_target,
+            num_parties,
+            threshold,
+        )
+        .unwrap();
+
+        //Start with all adversary contributions
+        let mut contribution = adv_sharings.shares[0..threshold].to_vec();
+
+        //Gradually add honest contributions
+        //We expect not to be able to decode without all the shares
+        //as the adversary as contributed as much as it can
+        for i in threshold..3 * threshold {
+            contribution.push(sharings.shares[i]);
+            let faulty_shares = ShamirSharings::create(contribution.clone());
+            let opened =
+                reconstruct_w_errors_async(num_parties, threshold, threshold, &faulty_shares)
+                    .unwrap();
+
+            assert!(opened.is_none());
+        }
+
+        //With all shares we should be able to decode
+        contribution.push(*sharings.shares.last().unwrap());
+        let shares = ShamirSharings::create(contribution.clone());
+        let opened = reconstruct_w_errors_async(num_parties, threshold, threshold, &shares)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(opened, secret);
+    }
 }

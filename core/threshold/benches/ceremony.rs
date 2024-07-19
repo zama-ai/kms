@@ -10,6 +10,7 @@ use distributed_decryption::{
         },
         zk::ceremony::{Ceremony, RealCeremony},
     },
+    networking::NetworkMode,
     session_id::SessionId,
 };
 use itertools::Itertools;
@@ -31,8 +32,13 @@ fn bench_ceremony(c: &mut Criterion) {
             &witness_dim,
             |b, dim| {
                 let identities = generate_fixed_identities(num_parties);
-                let runtime: DistributedTestRuntime<ResiduePoly64> =
-                    DistributedTestRuntime::new(identities, threshold as u8);
+                //CRS generation requires sync network
+                let runtime: DistributedTestRuntime<ResiduePoly64> = DistributedTestRuntime::new(
+                    identities,
+                    threshold as u8,
+                    NetworkMode::Sync,
+                    None,
+                );
 
                 let session_id = SessionId(2);
                 let rt = tokio::runtime::Runtime::new().unwrap();

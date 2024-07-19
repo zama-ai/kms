@@ -10,7 +10,14 @@ use tokio::time::Instant;
 pub mod constants;
 pub mod grpc;
 pub mod local;
+pub mod sending_service;
 pub mod value;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NetworkMode {
+    Sync,
+    Async,
+}
 
 /// Requirements for networking interface.
 #[async_trait]
@@ -35,6 +42,8 @@ pub trait Networking {
     fn get_current_round(&self) -> anyhow::Result<usize>;
 
     /// Method to set a different timeout than the one set at construction, effective for the next round.
+    ///
+    /// __NOTE__: If the network mode is Async, this has no effect
     fn set_timeout_for_next_round(&self, timeout: Duration) -> anyhow::Result<()>;
 
     /// Method to set the timeout for distributed generation of the TFHE bootstrapping key
@@ -48,4 +57,6 @@ pub trait Networking {
     /// Useful mostly to use parameters given by config file in grpc networking
     /// Rely on [`Networking::set_timeout_for_next_round`]
     fn set_timeout_for_bk_sns(&self) -> anyhow::Result<()>;
+
+    fn get_network_mode(&self) -> NetworkMode;
 }

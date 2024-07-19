@@ -178,6 +178,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use aes_prng::AesRng;
     use rand::{RngCore, SeedableRng};
 
@@ -186,7 +188,7 @@ mod tests {
         algebra::structure_traits::{One, ZConsts, Zero},
         execution::{
             online::{preprocessing::dummy::DummyPreprocessing, triple::open_list},
-            runtime::session::SmallSession,
+            runtime::session::{BaseSessionHandles, SmallSession},
         },
         experimental::{
             algebra::{
@@ -200,6 +202,7 @@ mod tests {
             },
             constants::PLAINTEXT_MODULUS,
         },
+        networking::NetworkMode,
         tests::helper::tests_and_benches::execute_protocol_small,
     };
 
@@ -265,7 +268,17 @@ mod tests {
             (pk, sk_opened)
         };
 
-        let mut results = execute_protocol_small(parties, threshold, None, &mut task);
+        //This is Async because preproc is completely dummy, so we only do the DKG
+        //Delay P1 by 1s every round
+        let delay_vec = vec![std::time::Duration::from_secs(1)];
+        let mut results = execute_protocol_small(
+            parties,
+            threshold,
+            None,
+            NetworkMode::Async,
+            Some(delay_vec),
+            &mut task,
+        );
         test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);
     }
 
@@ -286,6 +299,10 @@ mod tests {
                 .await
                 .unwrap();
 
+            session
+                .network()
+                .set_timeout_for_next_round(Duration::from_secs(600))
+                .unwrap();
             let (pk, sk) = bgv_distributed_keygen::<N65536, _, _, _>(
                 &mut session,
                 &mut bgv_preproc,
@@ -299,7 +316,9 @@ mod tests {
             (pk, sk_opened)
         };
 
-        let mut results = execute_protocol_small(parties, threshold, None, &mut task);
+        //This is Sync because Sync of the preproc takes priority over Async of the actual DKG
+        let mut results =
+            execute_protocol_small(parties, threshold, None, NetworkMode::Sync, None, &mut task);
 
         test_dkg(&mut results, PLAINTEXT_MODULUS.get().0);
     }

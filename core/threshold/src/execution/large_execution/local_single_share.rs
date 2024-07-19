@@ -377,6 +377,7 @@ pub(crate) mod tests {
         },
     };
     use crate::execution::sharing::shamir::RevealOp;
+    use crate::networking::NetworkMode;
     use crate::{
         execution::{
             large_execution::{
@@ -583,6 +584,7 @@ pub(crate) mod tests {
             )
         };
 
+        // LocalSingleShare assumes Sync network
         let (result_honest, _) = execute_protocol_large_w_disputes_and_malicious::<Z, _, _, _, _, _>(
             &params,
             &params.dispute_pairs,
@@ -592,6 +594,8 @@ pub(crate) mod tests {
             ]
             .concat(),
             malicious_lsl,
+            NetworkMode::Sync,
+            None,
             &mut task_honest,
             &mut task_malicious,
         );

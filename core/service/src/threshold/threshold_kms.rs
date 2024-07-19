@@ -65,6 +65,7 @@ use distributed_decryption::execution::zk::ceremony::{
     compute_witness_dim, Ceremony, RealCeremony,
 };
 use distributed_decryption::networking::grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager};
+use distributed_decryption::networking::NetworkMode;
 use distributed_decryption::session_id::SessionId;
 use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;
@@ -470,10 +471,11 @@ where
             .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
     )));
 
-    let networking_strategy: Arc<RwLock<NetworkingStrategy>> =
-        Arc::new(RwLock::new(Box::new(move |session_id, roles| {
-            networking_manager.make_session(session_id, roles)
-        })));
+    let networking_strategy: Arc<RwLock<NetworkingStrategy>> = Arc::new(RwLock::new(Box::new(
+        move |session_id, roles, network_mode| {
+            networking_manager.make_session(session_id, roles, network_mode)
+        },
+    )));
     let base_kms = BaseKmsStruct::new(sk)?;
 
     let fhe_keys = Arc::new(RwLock::new(key_info));
@@ -596,16 +598,18 @@ impl SessionPreparer {
     async fn get_networking(
         &self,
         session_id: SessionId,
+        network_mode: NetworkMode,
     ) -> distributed_decryption::execution::runtime::session::NetworkingImpl {
         let strat = self.networking_strategy.read().await;
-        (strat)(session_id, self.role_assignments.clone())
+        (strat)(session_id, self.role_assignments.clone(), network_mode)
     }
 
     async fn make_base_session(
         &self,
         session_id: SessionId,
+        network_mode: NetworkMode,
     ) -> anyhow::Result<BaseSessionStruct<AesRng, SessionParameters>> {
-        let networking = self.get_networking(session_id).await;
+        let networking = self.get_networking(session_id, network_mode).await;
         let own_identity = self.own_identity()?;
 
         let parameters = SessionParameters::new(
@@ -631,7 +635,10 @@ impl SessionPreparer {
         &self,
         session_id: SessionId,
     ) -> anyhow::Result<SmallSession<ResiduePoly128>> {
-        let base_session = self.make_base_session(session_id).await?;
+        //DDec for small session is only online, so requires only Async network
+        let base_session = self
+            .make_base_session(session_id, NetworkMode::Async)
+            .await?;
         let prss_setup = tonic_some_or_err(
             self.prss_setup.read().await.clone(),
             "No PRSS setup exists".to_string(),
@@ -698,7 +705,11 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
         // Assume we only have one epoch and start with session 1
         let epoch_id = PRSS_EPOCH_ID;
         let session_id = SessionId(epoch_id);
-        let mut base_session = self.session_preparer.make_base_session(session_id).await?;
+        //PRSS robust init requires broadcast, which is implemented with Sync network assumption
+        let mut base_session = self
+            .session_preparer
+            .make_base_session(session_id, NetworkMode::Sync)
+            .await?;
 
         tracing::info!("Starting PRSS for identity {}.", own_identity);
         let prss_setup_obj: PRSSSetup<ResiduePoly128> =
@@ -1217,7 +1228,9 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         // Create the base session necessary to run the DKG
         let mut base_session = {
             let session_id = SessionId(req_id.clone().try_into()?);
-            self.session_preparer.make_base_session(session_id).await?
+            self.session_preparer
+                .make_base_session(session_id, NetworkMode::Async)
+                .await?
         };
 
         // Clone all the Arcs to give them to the tokio thread
@@ -1539,7 +1552,7 @@ impl RealPreprocessor {
             for sid in sids {
                 let base_session = self
                     .session_preparer
-                    .make_base_session(SessionId(sid))
+                    .make_base_session(SessionId(sid), NetworkMode::Sync)
                     .await?;
                 res.push(base_session)
             }

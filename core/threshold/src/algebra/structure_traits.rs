@@ -107,7 +107,7 @@ pub trait RingEmbed: Sized {
     fn embed_exceptional_set(idx: usize) -> anyhow::Result<Self>;
 }
 
-pub trait ErrorCorrect: Ring {
+pub trait ErrorCorrect: Ring + RingEmbed {
     fn error_correct(
         sharing: &ShamirSharings<Self>,
         threshold: usize,
