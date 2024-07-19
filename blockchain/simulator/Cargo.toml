@@ -1,6 +1,6 @@
 [package]
 name = "simulator"
-version = "0.7.1"
+version = "0.8.0"
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
@@ -8,13 +8,13 @@ authors.workspace = true
 [dependencies]
 bincode.workspace = true
 clap = { workspace = true, features = ["derive"] }
-conf-trace = { path = "../../conf-trace" }
-cosmos-proto = { path = "../cosmos-proto" , version = "0.7.1" }
+conf-trace = { path = "../../conf-trace" , version = "0.8.0" }
+cosmos-proto = { path = "../cosmos-proto" , version = "0.8.0" }
 cosmwasm-std = { version = "2.0.2" }
-events = { path = "../events" , version = "0.7.1" }
+events = { path = "../events" , version = "0.8.0" }
 hex = "0.4.3"
-kms = { path = "../../core/service", default-features = false, features = ["grpc-client", "non-wasm", "testing"] , version = "0.7.1" }
-kms-blockchain-client = { path = "../client" , version = "0.7.1" }
+kms = { path = "../../core/service", default-features = false, features = ["grpc-client", "non-wasm", "testing"] , version = "0.8.0" }
+kms-blockchain-client = { path = "../client" , version = "0.8.0" }
 serde = { workspace = true , features = ["derive"] }
 strum = "0.26"
 strum_macros = "0.26"
