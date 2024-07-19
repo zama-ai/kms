@@ -32,6 +32,7 @@ impl S3Storage {
         storage_type: StorageType,
     ) -> String {
         match optional_prefix {
+            Some(prefix) if prefix.ends_with('/') => format!("{prefix}{storage_type}"),
             Some(prefix) => format!("{prefix}/{storage_type}"),
             None => format!("{storage_type}"),
         }
@@ -43,6 +44,7 @@ impl S3Storage {
         party_id: usize,
     ) -> String {
         match optional_prefix {
+            Some(prefix) if prefix.ends_with('/') => format!("{prefix}{storage_type}-p{party_id}"),
             Some(prefix) => format!("{prefix}/{storage_type}-p{party_id}"),
             None => format!("{storage_type}-p{party_id}"),
         }
@@ -66,19 +68,29 @@ impl S3Storage {
 #[tonic::async_trait]
 impl StorageReader for S3Storage {
     async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
-        let s3_bucket = url
-            .host_str()
-            .ok_or_else(|| anyhow_error_and_log("No S3 bucket specified"))?;
-        let s3_key = url
-            .path_segments()
-            .ok_or_else(|| anyhow_error_and_log("URL cannot be a base"))?
-            .last()
-            .ok_or_else(|| anyhow_error_and_log("No S3 key specified"))?;
+        ensure!(url.scheme() == "s3", "Storage URL is not an S3 URL");
+        ensure!(
+            url.host().is_some(),
+            "Storage URL does not have an S3 bucket name"
+        );
+        ensure!(
+            url.path() != "/",
+            "Storage URL does not have an S3 key name"
+        );
+        let bucket = url.host().unwrap().to_string();
+        let key = url.path().trim_start_matches('/').to_string();
+
+        tracing::info!(
+            "Checking if object exists in bucket {} under key {}",
+            bucket,
+            key
+        );
+
         let result = self
             .s3_client
             .head_object()
-            .bucket(s3_bucket)
-            .key(s3_key)
+            .bucket(bucket)
+            .key(key)
             .send()
             .await;
         match result {
@@ -96,9 +108,14 @@ impl StorageReader for S3Storage {
             url.host().is_some(),
             "Storage URL does not have an S3 bucket name"
         );
-        ensure!(url.path() != "", "Storage URL does not have an S3 key name");
+        ensure!(
+            url.path() != "/",
+            "Storage URL does not have an S3 key name"
+        );
         let bucket = url.host().unwrap().to_string();
-        let key = url.path().to_string();
+        let key = url.path().trim_start_matches('/').to_string();
+
+        tracing::info!("Reading object from bucket {} under key {}", bucket, key);
 
         s3_get_blob(&self.s3_client, &bucket, &key).await
     }
@@ -158,27 +175,38 @@ impl Storage for S3Storage {
             url.host().is_some(),
             "Storage URL does not have an S3 bucket name"
         );
-        ensure!(url.path() != "", "Storage URL does not have an S3 key name");
+        ensure!(
+            url.path() != "/",
+            "Storage URL does not have an S3 key name"
+        );
         let bucket = url.host().unwrap().to_string();
-        let key = url.path().to_string();
+        let key = url.path().trim_start_matches('/').to_string();
+
+        tracing::info!("Storing object in bucket {} under key {}", bucket, key);
 
         s3_put_blob(&self.s3_client, &bucket, &key, data).await
     }
 
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
-        let s3_bucket = url
-            .host_str()
-            .ok_or_else(|| anyhow_error_and_log("No S3 bucket specified"))?;
-        let s3_key = url
-            .path_segments()
-            .ok_or_else(|| anyhow_error_and_log("URL cannot be a base"))?
-            .last()
-            .ok_or_else(|| anyhow_error_and_log("No S3 key specified"))?;
+        ensure!(url.scheme() == "s3", "Storage URL is not an S3 URL");
+        ensure!(
+            url.host().is_some(),
+            "Storage URL does not have an S3 bucket name"
+        );
+        ensure!(
+            url.path() != "/",
+            "Storage URL does not have an S3 key name"
+        );
+        let bucket = url.host().unwrap().to_string();
+        let key = url.path().trim_start_matches('/').to_string();
+
+        tracing::info!("Deleting object from bucket {} under key {}", bucket, key);
+
         let _ = self
             .s3_client
             .delete_object()
-            .bucket(s3_bucket)
-            .key(s3_key)
+            .bucket(bucket)
+            .key(key)
             .send()
             .await;
         Ok(())

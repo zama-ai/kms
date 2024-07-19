@@ -109,7 +109,7 @@ async fn main() -> Result<(), anyhow::Error> {
                             config.aws_s3_proxy.clone(),
                             url.host_str().unwrap().to_string(),
                             S3Storage::threshold_prefix(
-                                Some(url.path().to_string()),
+                                Some(url.path().trim_start_matches('/').to_string()),
                                 StorageType::PUB,
                                 config.rest.my_id,
                             ),
@@ -137,7 +137,7 @@ async fn main() -> Result<(), anyhow::Error> {
                             config.aws_kms_proxy.clone().unwrap(),
                             url.host_str().unwrap().to_string(),
                             S3Storage::threshold_prefix(
-                                Some(url.path().to_string()),
+                                Some(url.path().trim_start_matches('/').to_string()),
                                 StorageType::PRIV,
                                 config.rest.my_id,
                             ),
@@ -180,7 +180,7 @@ async fn main() -> Result<(), anyhow::Error> {
                             config.aws_s3_proxy.clone(),
                             url.host_str().unwrap().to_string(),
                             S3Storage::centralized_prefix(
-                                Some(url.path().to_string()),
+                                Some(url.path().trim_start_matches('/').to_string()),
                                 StorageType::PUB,
                             ),
                         )
@@ -202,7 +202,7 @@ async fn main() -> Result<(), anyhow::Error> {
                             config.aws_kms_proxy.clone().unwrap(),
                             url.host_str().unwrap().to_string(),
                             S3Storage::centralized_prefix(
-                                Some(url.path().to_string()),
+                                Some(url.path().trim_start_matches('/').to_string()),
                                 StorageType::PRIV,
                             ),
                             config.root_key_id.clone().unwrap(),

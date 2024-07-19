@@ -145,7 +145,7 @@ async fn main() {
                 Some(url) => match url.scheme() {
                     "s3" => {
                         let blob_key_prefix = S3Storage::centralized_prefix(
-                            Some(url.path().to_string()),
+                            Some(url.path().trim_start_matches('/').to_string()),
                             StorageType::PUB,
                         );
                         let mut storage = StorageProxy::S3(
@@ -196,7 +196,7 @@ async fn main() {
                 Some(url) => match url.scheme() {
                     "s3" => {
                         let blob_key_prefix = S3Storage::centralized_prefix(
-                            Some(url.path().to_string()),
+                            Some(url.path().trim_start_matches('/').to_string()),
                             StorageType::PRIV,
                         );
                         let mut storage = StorageProxy::S3(
@@ -317,7 +317,7 @@ async fn main() {
                     Some(ref url) => match url.scheme() {
                         "s3" => {
                             let blob_key_prefix = S3Storage::threshold_prefix(
-                                Some(url.path().to_string()),
+                                Some(url.path().trim_start_matches('/').to_string()),
                                 StorageType::PUB,
                                 i,
                             );
@@ -375,7 +375,7 @@ async fn main() {
                     Some(ref url) => match url.scheme() {
                         "s3" => {
                             let blob_key_prefix = S3Storage::threshold_prefix(
-                                Some(url.path().to_string()),
+                                Some(url.path().trim_start_matches('/').to_string()),
                                 StorageType::PRIV,
                                 i,
                             );
