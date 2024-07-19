@@ -1,5 +1,29 @@
 # KMS Changelog
 
+# [0.8.0](https://github.com/zama-ai/kms-core/compare/v0.7.1...v0.8.0) (2024-07-19)
+
+
+### Bug Fixes
+
+* Add dashmap and retrying dependencies ([#860](https://github.com/zama-ai/kms-core/issues/860)) ([0f109f9](https://github.com/zama-ai/kms-core/commit/0f109f9251c8a7ecf6db88917a2344b35531f28a))
+* bump versions and move some to workspace ([#814](https://github.com/zama-ai/kms-core/issues/814)) ([8921c44](https://github.com/zama-ai/kms-core/commit/8921c44fd2104175ff5f0dcc07f96b23f96c1c70))
+* change sha3 to shake256 for H_AR according to NIST spec ([#816](https://github.com/zama-ai/kms-core/issues/816)) ([c794d09](https://github.com/zama-ai/kms-core/commit/c794d0965698e72cc85610f8bd96c9b3d795f764))
+* ci and bump versions ([#800](https://github.com/zama-ai/kms-core/issues/800)) ([4d33477](https://github.com/zama-ai/kms-core/commit/4d33477dc50be6d5e9a4d9b5e5e52426e31177e5))
+* File storage purge should not fail if directory is not found ([#844](https://github.com/zama-ai/kms-core/issues/844)) ([d2cff84](https://github.com/zama-ai/kms-core/commit/d2cff8473abdf8d122719a328d57ed08b1b12e29))
+* Make S3 proxy setting optional outside of the enclave ([#845](https://github.com/zama-ai/kms-core/issues/845)) ([951767d](https://github.com/zama-ai/kms-core/commit/951767dd8b2a8c825b9c7e5f868e079ab808ccd6))
+* relative filepath parsing in kms-gen-keys ([#858](https://github.com/zama-ai/kms-core/issues/858)) ([6c87cee](https://github.com/zama-ai/kms-core/commit/6c87ceefd0e2811654820f440d63d327594f9e43))
+* StorageReader::all_urls() behaviour with empty S3 buckets ([#859](https://github.com/zama-ai/kms-core/issues/859)) ([6e058c8](https://github.com/zama-ai/kms-core/commit/6e058c8e452abd9d0c2202486a713252ed7a3b5c))
+
+
+### Features
+
+* Add versioning compatibility with structs stored ([#743](https://github.com/zama-ai/kms-core/issues/743)) ([aac6fba](https://github.com/zama-ai/kms-core/commit/aac6fba04cb1eb2f2677e6c56e6e14e932ccac11))
+* adding support for generate release from branch, tag or SHA ([9f0a558](https://github.com/zama-ai/kms-core/commit/9f0a558095ea45c2f823bde766eb467f22342504))
+* **gateway:** threshold decryption majority vote ([#839](https://github.com/zama-ai/kms-core/issues/839)) ([eff4d74](https://github.com/zama-ai/kms-core/commit/eff4d74efc4c8230bfb5502cbc373faeee56bcfd))
+* Granular selection of storage backends ([#761](https://github.com/zama-ai/kms-core/issues/761)) ([a539bf6](https://github.com/zama-ai/kms-core/commit/a539bf62c272e02f1c54dfad9d0f22525c7d5e5b))
+* implement distributing tracing ([#802](https://github.com/zama-ai/kms-core/issues/802)) ([3a1dc8e](https://github.com/zama-ai/kms-core/commit/3a1dc8eefc2f8fc6620fa411ed8834df19ae44b1))
+* **network:** Clear Async/Sync distinction + make send non-blocking from Party pov ([#710](https://github.com/zama-ai/kms-core/issues/710)) ([9708936](https://github.com/zama-ai/kms-core/commit/9708936e7b476447321526b5179493a394765153))
+
 ## [0.7.1](https://github.com/zama-ai/kms-core/compare/v0.7.0...v0.7.1) (2024-07-02)
 
 
