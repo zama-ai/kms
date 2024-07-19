@@ -125,22 +125,21 @@ impl StorageReader for S3Storage {
             .list_objects_v2()
             .bucket(&self.blob_bucket)
             .delimiter("/")
-            .prefix(format!("{}/", data_type))
+            .prefix(format!("{}/{}/", self.blob_key_prefix, data_type))
             .send()
             .await?;
-        let contents = result
-            .contents
-            .ok_or_else(|| anyhow_error_and_log("No S3 bucket contents returned"))?;
-        for obj in contents {
-            if let Some(key) = obj.key {
-                urls.insert(key.clone(), self.compute_url(&key, data_type)?);
+        if let Some(contents) = result.contents {
+            for obj in contents {
+                if let Some(key) = obj.key {
+                    urls.insert(key.clone(), self.compute_url(&key, data_type)?);
+                }
             }
         }
         Ok(urls)
     }
 
     fn info(&self) -> String {
-        format!("enclave storage with bucket {}", self.blob_bucket)
+        format!("S3 storage with bucket {}", self.blob_bucket)
     }
 }
 
@@ -250,7 +249,10 @@ impl StorageReader for EnclaveS3Storage {
     }
 
     fn info(&self) -> String {
-        self.s3_storage.info()
+        format!(
+            "Nitro enclave storage with bucket {}",
+            self.s3_storage.blob_bucket
+        )
     }
 }
 
