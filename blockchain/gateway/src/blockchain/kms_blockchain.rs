@@ -9,6 +9,7 @@ use anyhow::anyhow;
 use async_trait::async_trait;
 use bincode::{deserialize, serialize};
 use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
+use dashmap::DashMap;
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::DecryptValues;
@@ -45,12 +46,11 @@ use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 use tracing::info;
 
-#[derive(Clone)]
 pub(crate) struct KmsBlockchainImpl {
     pub(crate) client: Arc<RwLock<Client>>,
     pub(crate) query_client: Arc<QueryClient>,
-    pub(crate) responders: Arc<RwLock<HashMap<TransactionId, oneshot::Sender<KmsEvent>>>>,
-    pub(crate) event_sender: mpsc::Sender<KmsEvent>,
+    pub(crate) responders: Arc<DashMap<TransactionId, oneshot::Sender<KmsEvent>>>,
+    pub(crate) event_sender: Arc<mpsc::Sender<KmsEvent>>,
     pub(crate) config: GatewayConfig,
     pub(crate) kms_core_conf: Option<KmsCoreConf>,
 }
@@ -73,18 +73,20 @@ impl<'a> KmsBlockchainImpl {
         contract_address: &'a str,
         config: GatewayConfig,
     ) -> Self {
-        let (event_sender, mut event_receiver): (mpsc::Sender<KmsEvent>, mpsc::Receiver<KmsEvent>) =
-            mpsc::channel(100);
-        let responders = Arc::new(RwLock::new(HashMap::<
-            TransactionId,
-            oneshot::Sender<KmsEvent>,
-        >::new()));
-        let responders_clone = responders.clone();
+        let (tx, mut rx) = mpsc::channel::<KmsEvent>(100);
+        let responders: Arc<DashMap<TransactionId, oneshot::Sender<KmsEvent>>> =
+            Arc::new(DashMap::new());
 
-        tokio::spawn(async move {
-            while let Some(event) = event_receiver.recv().await {
-                if let Some(tx) = responders_clone.write().await.remove(event.txn_id()) {
-                    let _ = tx.send(event);
+        tokio::spawn({
+            let responders_clone = responders.clone();
+            async move {
+                while let Some(event) = rx.recv().await {
+                    tracing::info!("🤠🤠🤠 Received KmsEvent: {:?}", event);
+                    let txn_id = event.txn_id.clone();
+                    if let Some((_, sender)) = responders_clone.remove(&txn_id) {
+                        tracing::info!("🤠🤠🤠 Notifying waiting task");
+                        let _ = sender.send(event); // Notify the waiting task
+                    }
                 }
             }
         });
@@ -107,7 +109,7 @@ impl<'a> KmsBlockchainImpl {
                     .unwrap(),
             ),
             responders,
-            event_sender,
+            event_sender: tx.into(),
             config,
             kms_core_conf: None, // needs to be fetched later using [fetch_kms_core_conf], if needed
         }
@@ -142,21 +144,17 @@ impl<'a> KmsBlockchainImpl {
         Ok(())
     }
 
-    pub(crate) async fn wait_for_callback(
+    #[retrying::retry(stop=(attempts(5)|duration(30)),wait=fixed(1))]
+    pub(crate) async fn wait_for_transaction(
         &self,
         txn_id: &TransactionId,
     ) -> anyhow::Result<KmsEvent> {
         let (tx, rx) = oneshot::channel();
-        self.responders.write().await.insert(txn_id.clone(), tx);
-
-        match tokio::time::timeout(tokio::time::Duration::from_secs(100), rx).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(anyhow!("Failed to receive response")),
-            Err(_) => Err(anyhow!("Request timed out")),
-        }
+        tracing::info!("🤠🤠🤠 Waiting for transaction: {:?}", txn_id);
+        self.responders.insert(txn_id.clone(), tx);
+        rx.await.map_err(|e| anyhow!(e.to_string()))
     }
 
-    //#[retrying::retry(stop=(attempts(5)|duration(10)),wait=fixed(0.25))]
     pub(crate) async fn call_execute_contract(
         &self,
         client: &mut Client,
@@ -267,7 +265,7 @@ impl Blockchain for KmsBlockchainImpl {
             "🍊 Waiting for callback from KMS, txn_id: {:?}",
             ev.txn_id().to_hex()
         );
-        let event = self.wait_for_callback(ev.txn_id()).await?;
+        let event = self.wait_for_transaction(ev.txn_id()).await?;
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
         let request = QueryContractRequest::builder()
             .contract_address(self.config.kms.contract_address.to_string())
@@ -515,7 +513,7 @@ impl Blockchain for KmsBlockchainImpl {
             "🍊 Waiting for callback from KMS, txn_id: {:?}",
             ev.txn_id().to_hex()
         );
-        let event = self.wait_for_callback(ev.txn_id()).await?;
+        let event = self.wait_for_transaction(ev.txn_id()).await?;
         tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
         let request = QueryContractRequest::builder()
             .contract_address(self.config.kms.contract_address.to_string())

@@ -104,7 +104,7 @@ pub async fn evictor(storage: Storage) {
             tracing::info!("🗑️ Evicted ciphertext: {}", key);
         }
 
-        tokio::time::sleep(Duration::from_secs(60)).await;
+        tokio::time::sleep(Duration::from_secs(300)).await;
     }
 }
 

@@ -1,7 +1,7 @@
 use ethers::prelude::*;
 use ethers::utils::to_checksum;
 use gateway::common::provider::get_provider;
-use gateway::config::{init_conf_with_trace_gateway, GatewayConfig};
+use gateway::config::{init_conf_gateway, GatewayConfig};
 use gateway::events::manager::DecryptionEventPublisher;
 use gateway::events::manager::GatewaySubscriber;
 use gateway::events::manager::KmsEventPublisher;
@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config: GatewayConfig = init_conf_with_trace_gateway("config/gateway")?;
+    let config: GatewayConfig = init_conf_gateway("config/gateway")?;
     intro(&config);
     let provider = get_provider(&config.ethereum).await.unwrap_or_else(|e| {
         tracing::error!("Failed to set up provider: {:?}", e);
