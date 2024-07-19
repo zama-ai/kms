@@ -268,14 +268,20 @@ impl StorageReader for FileStorage {
     }
 
     async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
-        let res = Path::new(&url.path())
+        let res = url_to_pathbuf(url)
+            .as_path()
             .try_exists()
             .map_err(|_| anyhow_error_and_log(format!("The url {} does not exist", url)))?;
         Ok(res)
     }
 
     async fn read_data<T: DeserializeOwned + Send>(&self, url: &Url) -> anyhow::Result<T> {
-        let res: T = read_element(url.path()).await?;
+        let res: T = read_element(
+            url_to_pathbuf(url)
+                .to_str()
+                .ok_or(anyhow!("Could not convert path to string"))?,
+        )
+        .await?;
         Ok(res)
     }
 
@@ -335,12 +341,14 @@ impl Storage for FileStorage {
         data: &T,
         url: &Url,
     ) -> anyhow::Result<()> {
-        let url_path = Path::new(url.path());
+        let url_path = url_to_pathbuf(url);
         if url_path.try_exists().is_ok_and(|res| res) {
             // If the path exists, then trace a warning
             tracing::warn!(
                 "The path {} already exists. Keeping the data without overwriting",
-                url.path()
+                url_path
+                    .to_str()
+                    .ok_or(anyhow!("Could not convert path to string"))?
             );
             return Ok(());
         }
@@ -348,22 +356,34 @@ impl Storage for FileStorage {
             .await
             .map_err(|e| {
                 tracing::warn!(
-                    "Could not create directory {}, error {}",
+                    "Could not create directory {}: {}",
                     self.root_dir().display(),
                     e
                 );
                 e
             })?;
-        write_element(url.path(), &data).await.map_err(|e| {
-            tracing::warn!("Could not write to URL {}, error {}", url, e);
+        write_element(
+            url_path
+                .to_str()
+                .ok_or(anyhow!("Could not convert path to string"))?,
+            &data,
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!("Could not write to URL {}: {}", url, e);
             e
         })?;
         Ok(())
     }
 
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
-        let url_path = Path::new(url.path());
-        Ok(tokio::fs::remove_file(url_path).await?)
+        let url_path = url_to_pathbuf(url);
+        Ok(tokio::fs::remove_file(
+            url_path
+                .to_str()
+                .ok_or(anyhow!("Could not convert path to string"))?,
+        )
+        .await?)
     }
 }
 
@@ -447,6 +467,13 @@ impl StorageReader for RamStorage {
     fn info(&self) -> String {
         "memory storage".to_string()
     }
+}
+
+/// Converts a file:// URL into a PathBuf. Doesn't check the URL scheme though,
+/// if it's not file://, it won't make a lot of sense to use this
+/// function. Unlike Url::to_file_path, it accepts relative paths.
+pub fn url_to_pathbuf(url: &Url) -> PathBuf {
+    PathBuf::from(format!("{}{}", url.host_str().map_or("", |x| { x }), url.path()).as_str())
 }
 
 #[tonic::async_trait]

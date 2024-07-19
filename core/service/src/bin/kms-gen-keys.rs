@@ -7,7 +7,7 @@ use kms_lib::{
         AMOUNT_PARTIES, DEFAULT_CENTRAL_KEY_ID, DEFAULT_CRS_ID, DEFAULT_THRESHOLD_KEY_ID,
         OTHER_CENTRAL_DEFAULT_ID,
     },
-    storage::{FileStorage, Storage, StorageReader, StorageType},
+    storage::{url_to_pathbuf, FileStorage, Storage, StorageReader, StorageType},
     util::{
         aws::S3Storage,
         key_setup::{
@@ -17,7 +17,6 @@ use kms_lib::{
     },
     StorageProxy,
 };
-use std::path::Path;
 use strum::IntoEnumIterator;
 
 #[derive(Parser)]
@@ -167,16 +166,17 @@ async fn main() {
                         storage
                     }
                     _ => {
+                        let optional_path = url_to_pathbuf(&url);
                         if overwrite {
                             FileStorage::purge_centralized(
-                                Some(Path::new(url.path())),
+                                Some(optional_path.as_path()),
                                 StorageType::PUB,
                             )
                             .unwrap();
                         }
                         StorageProxy::File(
                             FileStorage::new_centralized(
-                                Some(Path::new(url.path())),
+                                Some(optional_path.as_path()),
                                 StorageType::PUB,
                             )
                             .unwrap(),
@@ -217,16 +217,17 @@ async fn main() {
                         storage
                     }
                     _ => {
+                        let optional_path = url_to_pathbuf(&url);
                         if overwrite {
                             FileStorage::purge_centralized(
-                                Some(Path::new(url.path())),
+                                Some(optional_path.as_path()),
                                 StorageType::PRIV,
                             )
                             .unwrap();
                         }
                         StorageProxy::File(
                             FileStorage::new_centralized(
-                                Some(Path::new(url.path())),
+                                Some(optional_path.as_path()),
                                 StorageType::PRIV,
                             )
                             .unwrap(),
@@ -339,9 +340,10 @@ async fn main() {
                             pub_storages.push(storage);
                         }
                         _ => {
+                            let optional_path = url_to_pathbuf(url);
                             if overwrite {
                                 FileStorage::purge_threshold(
-                                    Some(Path::new(url.path())),
+                                    Some(optional_path.as_path()),
                                     StorageType::PUB,
                                     i,
                                 )
@@ -349,7 +351,7 @@ async fn main() {
                             }
                             pub_storages.push(StorageProxy::File(
                                 FileStorage::new_threshold(
-                                    Some(Path::new(url.path())),
+                                    Some(optional_path.as_path()),
                                     StorageType::PUB,
                                     i,
                                 )
@@ -396,9 +398,10 @@ async fn main() {
                             priv_storages.push(storage);
                         }
                         _ => {
+                            let optional_path = url_to_pathbuf(url);
                             if overwrite {
                                 FileStorage::purge_threshold(
-                                    Some(Path::new(url.path())),
+                                    Some(optional_path.as_path()),
                                     StorageType::PRIV,
                                     i,
                                 )
@@ -406,7 +409,7 @@ async fn main() {
                             }
                             priv_storages.push(StorageProxy::File(
                                 FileStorage::new_threshold(
-                                    Some(Path::new(url.path())),
+                                    Some(optional_path.as_path()),
                                     StorageType::PRIV,
                                     i,
                                 )

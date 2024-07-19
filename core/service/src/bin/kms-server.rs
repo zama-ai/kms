@@ -5,11 +5,10 @@ use kms_lib::conf::storage::StorageConfigWith;
 use kms_lib::conf::threshold::ThresholdConfig;
 use kms_lib::rpc::central_rpc::server_handle as kms_server_handle;
 use kms_lib::rpc::central_rpc_proxy::server_handle as kms_proxy_server_handle;
-use kms_lib::storage::{FileStorage, StorageType};
+use kms_lib::storage::{url_to_pathbuf, FileStorage, StorageType};
 use kms_lib::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
 use kms_lib::util::aws::{EnclaveS3Storage, S3Storage};
 use kms_lib::StorageProxy;
-use std::path::Path;
 
 pub const SIG_SK_BLOB_KEY: &str = "private_sig_key";
 pub const SIG_PK_BLOB_KEY: &str = "public_sig_key";
@@ -118,9 +117,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         .await,
                     ),
                     _ => StorageProxy::File(FileStorage::new_threshold(
-                        Some(Path::new(
-                            format!("{}{}", url.host_str().unwrap(), url.path()).as_str(),
-                        )),
+                        Some(url_to_pathbuf(&url).as_path()),
                         StorageType::PUB,
                         config.rest.my_id,
                     )?),
@@ -149,9 +146,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         .await?,
                     ),
                     _ => StorageProxy::File(FileStorage::new_threshold(
-                        Some(Path::new(
-                            format!("{}{}", url.host_str().unwrap(), url.path()).as_str(),
-                        )),
+                        Some(url_to_pathbuf(&url).as_path()),
                         StorageType::PRIV,
                         config.rest.my_id,
                     )?),
@@ -192,9 +187,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         .await,
                     ),
                     _ => StorageProxy::File(FileStorage::new_centralized(
-                        Some(Path::new(
-                            format!("{}{}", url.host_str().unwrap(), url.path()).as_str(),
-                        )),
+                        Some(url_to_pathbuf(&url).as_path()),
                         StorageType::PUB,
                     )?),
                 },
@@ -217,9 +210,7 @@ async fn main() -> Result<(), anyhow::Error> {
                         .await?,
                     ),
                     _ => StorageProxy::File(FileStorage::new_centralized(
-                        Some(Path::new(
-                            format!("{}{}", url.host_str().unwrap(), url.path()).as_str(),
-                        )),
+                        Some(url_to_pathbuf(&url).as_path()),
                         StorageType::PRIV,
                     )?),
                 },
