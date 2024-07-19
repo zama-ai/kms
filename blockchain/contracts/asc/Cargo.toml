@@ -25,11 +25,11 @@ ibc-clients = "0.53.0"
 schemars = "0.8.16"
 serde.workspace = true
 sha3 = "0.10.8"
-sylvia = "1.0.2"
-sylvia-derive = "1.0.2"
+sylvia = "=1.1.0"
+sylvia-derive = "=1.1.0"
 
 [dev-dependencies]
 byteorder = "1.5.0"
-cw-multi-test = "=2.0.1"
-sylvia = { version = "1.0.2", features = ["mt"] }
+cw-multi-test = "=2.1.0"
+sylvia = { version = "=1.1.0", features = ["mt"] }
 test-context = "0.3.0"

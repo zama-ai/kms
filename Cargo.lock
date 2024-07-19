@@ -2875,9 +2875,9 @@ dependencies = [
 
 [[package]]
 name = "cw-multi-test"
-version = "2.0.1"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e403ad6ec62c8bcbcb75f7f4940712d0142b6103310da2a9375252b942358caa"
+checksum = "e0034bfb4c06dfc8b50f0b1a06c3fc0f2312a1bae568a97db65930de071288ba"
 dependencies = [
  "anyhow",
  "bech32 0.11.0",
@@ -2885,7 +2885,7 @@ dependencies = [
  "cw-storage-plus",
  "cw-utils",
  "derivative",
- "itertools 0.12.1",
+ "itertools 0.13.0",
  "prost",
  "schemars",
  "serde",
@@ -8482,9 +8482,9 @@ dependencies = [
 
 [[package]]
 name = "sylvia"
-version = "1.0.2"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1b4ce088d9f8ed96dcd28941ffac196f1ef6fecd35a894595522c30ea7e6eaf"
+checksum = "3d4a178c389333ad028354626f908be6b987649082d00983f96a16f8498f1a5a"
 dependencies = [
  "anyhow",
  "cosmwasm-schema",

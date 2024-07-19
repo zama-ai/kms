@@ -39,8 +39,7 @@ impl EventEmitStrategy for KmsContract {
                     .txn_id(txn_id.to_vec())
                     .operation(operation)
                     .proof(proof)
-                    .build()
-                    .into(),
+                    .build(),
             );
         }
 
