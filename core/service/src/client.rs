@@ -2063,6 +2063,28 @@ pub mod test_tools {
         server_handles
     }
 
+    async fn connect_with_retry(uri: Uri) -> Channel {
+        const RETRY_COUNT: usize = 10;
+        let mut channel = Channel::builder(uri.clone()).connect().await;
+        let mut tries = 0usize;
+        loop {
+            match channel {
+                Ok(_) => {
+                    break;
+                }
+                Err(_) => {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    channel = Channel::builder(uri.clone()).connect().await;
+                    tries += 1;
+                    if tries > RETRY_COUNT {
+                        break;
+                    }
+                }
+            }
+        }
+        channel.unwrap()
+    }
+
     pub async fn setup_threshold<
         PubS: Storage + Clone + Sync + Send + 'static,
         PrivS: Storage + Clone + Sync + Send + 'static,
@@ -2083,7 +2105,7 @@ pub mod test_tools {
             let port = BASE_PORT + i as u16 * 100;
             let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{port}");
             let uri = Uri::from_str(&url).unwrap();
-            let channel = Channel::builder(uri).connect().await.unwrap();
+            let channel = connect_with_retry(uri).await;
             client_handles.insert(i as u32, CoreServiceEndpointClient::new(channel));
         }
         tracing::info!("Client connected to servers");
@@ -2125,7 +2147,7 @@ pub mod test_tools {
         let server_handle = setup_centralized_no_client(pub_storage, priv_storage).await;
         let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
         let uri = Uri::from_str(&url).unwrap();
-        let channel = Channel::builder(uri).connect().await.unwrap();
+        let channel = connect_with_retry(uri).await;
         let client = CoreServiceEndpointClient::new(channel);
         (server_handle, client)
     }
