@@ -186,10 +186,6 @@ message DecryptionResponse {
   DecryptionResponsePayload payload = 2;
 }
 
-message AggregatedDecryptionResponse {
-  repeated DecryptionResponse responses = 1;
-}
-
 message ReencryptionRequestPayload {
   // Version of the request format.
   uint32 version = 1;
@@ -254,8 +250,8 @@ message ReencryptionResponse {
   // The signcrypted payload, using a hybrid encryption approach in
   // sign-then-encrypt.
   bytes signcrypted_ciphertext = 5;
-}
-
-message AggregatedReencryptionResponse {
-  map<uint32, ReencryptionResponse> responses = 1;
+  // The ID of the MPC party doing the reencryption. Used for polynomial reconstruction.
+  uint32 party_id = 6;
+  // The degree of the sharing scheme used.
+  uint32 degree = 7;
 }

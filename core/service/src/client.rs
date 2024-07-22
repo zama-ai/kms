@@ -7,8 +7,7 @@ use crate::cryptography::signcryption::{
     insecure_decrypt_ignoring_signature, Reencrypt, RND_SIZE,
 };
 use crate::kms::{
-    AggregatedReencryptionResponse, FheType, ReencryptionRequest, ReencryptionRequestPayload,
-    ReencryptionResponse, RequestId,
+    FheType, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse, RequestId,
 };
 use crate::rpc::rpc_types::{
     allow_to_protobuf_domain, MetaResponse, Plaintext, CURRENT_FORMAT_VERSION,
@@ -32,16 +31,17 @@ use distributed_decryption::execution::sharing::shamir::{
 use distributed_decryption::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
 use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tfhe::shortint::ClassicPBSParameters;
 use wasm_bindgen::prelude::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
+        use crate::kms::DecryptionResponse;
         use crate::cryptography::{central_kms::compute_handle, der_types::Signature};
         use crate::kms::ParamChoice;
         use crate::kms::{
-            AggregatedDecryptionResponse, CrsGenRequest, CrsGenResult, DecryptionRequest,
+             CrsGenRequest, CrsGenResult, DecryptionRequest,
             DecryptionResponsePayload, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
         };
         use crate::rpc::rpc_types::PubDataType;
@@ -117,11 +117,6 @@ pub struct Client {
     server_pks: HashMap<PublicSigKey, u8>,
     client_pk: PublicSigKey,
     client_sk: Option<PrivateSigKey>,
-    // We use the same threshold for all operations.
-    shares_needed: u32,
-    // we allow it because num_servers is used in only certain features
-    #[allow(dead_code)]
-    num_servers: u32,
     params: ClassicPBSParameters,
 }
 
@@ -135,7 +130,7 @@ pub struct TestingReencryptionTranscript {
     server_pks: HashMap<PublicSigKey, u8>,
     client_pk: PublicSigKey,
     client_sk: Option<PrivateSigKey>,
-    shares_needed: u32,
+    degree: u32,
     params: ClassicPBSParameters,
     // example pt and ct
     fhe_type: FheType,
@@ -146,7 +141,7 @@ pub struct TestingReencryptionTranscript {
     eph_sk: PrivateEncKey,
     eph_pk: PublicEncKey,
     // response
-    agg_resp: HashMap<u32, ReencryptionResponse>,
+    agg_resp: Vec<ReencryptionResponse>,
 }
 
 // TODO it would make sense to seperate the wasm specific stuff into a seperate file
@@ -200,7 +195,8 @@ pub struct TestingReencryptionTranscript {
 /// nvm install 20
 /// ```
 /// Observe that if you are using Brew you might also need to run the following command to get
-/// access to nvm: ```
+/// access to nvm:
+/// ```
 /// source ~/.nvm/nvm.sh
 /// ```
 ///
@@ -265,7 +261,7 @@ pub mod js_api {
             159, 68, 39, 28, 30, 76, 96, 11, 61, 38, 66, 2, 129, 0,
         ];
         let client_pk = u8vec_to_public_sig_key(&clinet_pk_buf)?;
-        new_client(vec![], None, client_pk, 1, "default")
+        new_client(vec![], None, client_pk, "default")
     }
 
     /// Instantiate a new client.
@@ -280,9 +276,6 @@ pub mod js_api {
     /// * `client_pk` - the client (wallet) public key,
     /// which can parsed using [u8vec_to_public_sig_key] also.
     ///
-    /// * `shares_needed` - number of shares needed for reconstruction.
-    /// In the centralized setting this is 1.
-    ///
     /// * `param_choice` - the parameter choice, which can be either `"test"` or `"default"`.
     /// The "default" parameter choice is selected if no matching string is found.
     #[wasm_bindgen]
@@ -290,7 +283,6 @@ pub mod js_api {
         server_pks: Vec<PublicSigKey>,
         server_pks_ids: Option<Vec<u8>>,
         client_pk: PublicSigKey,
-        shares_needed: u32,
         param_choice: &str,
     ) -> Result<Client, JsError> {
         console_error_panic_hook::set_once();
@@ -322,16 +314,11 @@ pub mod js_api {
 
         let server_pks = HashMap::from_iter(server_pks.into_iter().zip(server_pks_ids));
 
-        // Note: This may fail if there are multiple possible signing keys for each server
-        let num_servers = server_pks.len() as u32;
-
         Ok(Client {
             rng: Box::new(AesRng::from_entropy()),
             server_pks,
             client_pk,
             client_sk: None,
-            shares_needed,
-            num_servers,
             params: params.ciphertext_parameters,
         })
     }
@@ -356,7 +343,6 @@ pub mod js_api {
     pub struct DummyReencResponse {
         pub req: Option<ReencryptionRequest>,
         pub agg_resp: Vec<ReencryptionResponse>,
-        pub agg_resp_ids: Vec<u32>,
         pub enc_pk: PublicEncKey,
         pub enc_sk: PrivateEncKey,
     }
@@ -373,8 +359,7 @@ pub mod js_api {
         let transcript: TestingReencryptionTranscript = bincode::deserialize(buf).unwrap();
         DummyReencResponse {
             req: transcript.request,
-            agg_resp: vec![transcript.agg_resp.get(&1).unwrap().clone()],
-            agg_resp_ids: vec![1],
+            agg_resp: transcript.agg_resp,
             enc_pk: transcript.eph_pk.clone(),
             enc_sk: transcript.eph_sk.clone(),
         }
@@ -449,17 +434,9 @@ pub mod js_api {
     #[cfg(feature = "wasm_tests")]
     pub fn threshold_reencryption_response_from_transcript(buf: &[u8]) -> DummyReencResponse {
         let transcript: TestingReencryptionTranscript = bincode::deserialize(buf).unwrap();
-
-        let agg_resp_ids: Vec<_> = (1..=transcript.agg_resp.len() as u32).collect();
-        let agg_resp: Vec<_> = agg_resp_ids
-            .iter()
-            .map(|k| transcript.agg_resp.get(k).unwrap().clone())
-            .collect();
-
         DummyReencResponse {
             req: transcript.request,
-            agg_resp,
-            agg_resp_ids,
+            agg_resp: transcript.agg_resp.clone(),
             enc_pk: transcript.eph_pk.clone(),
             enc_sk: transcript.eph_sk.clone(),
         }
@@ -470,15 +447,11 @@ pub mod js_api {
     pub fn client_from_transcript(buf: &[u8]) -> Client {
         console_error_panic_hook::set_once();
         let transcript: TestingReencryptionTranscript = bincode::deserialize(buf).unwrap();
-        // Note: This may fail if there are multiple possible signing keys for each server
-        let num_servers = transcript.server_pks.len() as u32;
         Client {
             rng: Box::new(AesRng::from_entropy()),
             server_pks: transcript.server_pks,
             client_pk: transcript.client_pk,
             client_sk: transcript.client_sk,
-            shares_needed: transcript.shares_needed,
-            num_servers,
             params: transcript.params,
         }
     }
@@ -618,7 +591,7 @@ pub mod js_api {
             ciphertext_digest,
         };
         Ok(ReencryptionRequest {
-            signature: signature,
+            signature,
             payload: Some(payload),
             domain: Some(domain),
             // the request_id needs to be filled by the gateway/connector
@@ -662,6 +635,8 @@ pub mod js_api {
         digest: String,
         fhe_type: String, // this is euint8, for example
         signcrypted_ciphertext: String,
+        party_id: u32,
+        degree: u32,
     }
 
     #[cfg(feature = "wasm_tests")]
@@ -674,6 +649,8 @@ pub mod js_api {
                 digest: hex::encode(&resp.digest),
                 fhe_type: "unimplemented".to_string(),
                 signcrypted_ciphertext: hex::encode(&resp.signcrypted_ciphertext),
+                party_id: resp.party_id,
+                degree: resp.degree,
             };
             out.push(r);
         }
@@ -704,6 +681,8 @@ pub mod js_api {
                 fhe_type: fhe_type as i32,
                 signcrypted_ciphertext: hex::decode(&hex_resp.signcrypted_ciphertext)
                     .map_err(|e| JsError::new(&e.to_string()))?,
+                party_id: hex_resp.party_id,
+                degree: hex_resp.degree,
             });
         }
         Ok(out)
@@ -718,10 +697,6 @@ pub mod js_api {
     ///
     /// * `agg_resp - the response JSON object from the gateway.
     ///
-    /// * `agg_resp_ids - the KMS server identities that correspond to each request.
-    /// If this is not given, the initial configuration is used
-    /// from when the client is instantiated.
-    ///
     /// * `enc_pk` - The ephemeral public key.
     ///
     /// * `enc_sk` - The ephemeral secret key.
@@ -733,21 +708,12 @@ pub mod js_api {
         client: &mut Client,
         request: Option<ReencryptionRequest>,
         agg_resp: JsValue,
-        agg_resp_ids: Option<Vec<u32>>,
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
         verify: bool,
     ) -> Result<Vec<u8>, JsError> {
         let agg_resp = json_to_resp(agg_resp)?;
-        process_reencryption_resp(
-            client,
-            request,
-            agg_resp,
-            agg_resp_ids,
-            enc_pk,
-            enc_sk,
-            verify,
-        )
+        process_reencryption_resp(client, request, agg_resp, enc_pk, enc_sk, verify)
     }
 
     /// Process the reencryption response from a JSON object.
@@ -758,10 +724,6 @@ pub mod js_api {
     /// * `request` - the initial reencryption request.
     ///
     /// * `agg_resp - the vector of reencryption responses.
-    ///
-    /// * `agg_resp_ids - the KMS server identities that correspond to each request.
-    /// If this is not given, the initial configuration is used
-    /// from when the client is instantiated.
     ///
     /// * `enc_pk` - The ephemeral public key.
     ///
@@ -774,35 +736,14 @@ pub mod js_api {
         client: &mut Client,
         request: Option<ReencryptionRequest>,
         agg_resp: Vec<ReencryptionResponse>,
-        agg_resp_ids: Option<Vec<u32>>,
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
         verify: bool,
     ) -> Result<Vec<u8>, JsError> {
-        // In the centralized case, agg_resp_ids is ignored and is always set to vec![1]
-        // in the threshold case, if agg_resp_ids is given then we use it,
-        // otherwise we derive it from the client's knowledge of the public keys.
-        let agg_resp_ids = if agg_resp.len() == 1 {
-            vec![1u32]
-        } else {
-            match agg_resp_ids {
-                Some(ids) => ids,
-                None => {
-                    unimplemented!()
-                }
-            }
-        };
-
-        let mut hm = AggregatedReencryptionResponse {
-            responses: HashMap::new(),
-        };
-        for (k, v) in agg_resp_ids.into_iter().zip(agg_resp) {
-            hm.responses.insert(k, v);
-        }
         let reenc_resp = if verify {
-            client.process_reencryption_resp(request, &hm, enc_pk, enc_sk)
+            client.process_reencryption_resp(request, &agg_resp, enc_pk, enc_sk)
         } else {
-            client.insecure_process_reencryption_resp(&hm, enc_pk, enc_sk)
+            client.insecure_process_reencryption_resp(&agg_resp, enc_pk, enc_sk)
         };
         match reenc_resp {
             Ok(resp) => Ok(resp.bytes),
@@ -839,8 +780,6 @@ impl Client {
         server_pks: HashMap<PublicSigKey, u8>,
         client_pk: PublicSigKey,
         client_sk: Option<PrivateSigKey>,
-        shares_needed: u32,
-        num_servers: u32,
         params: ClassicPBSParameters,
     ) -> Self {
         Client {
@@ -848,8 +787,6 @@ impl Client {
             server_pks,
             client_pk,
             client_sk,
-            shares_needed,
-            num_servers,
             params,
         }
     }
@@ -862,8 +799,6 @@ impl Client {
         client_storage: ClientS,
         pub_storages: Vec<PubS>,
         param_path: &str,
-        shares_needed: u32,
-        num_servers: u32,
     ) -> anyhow::Result<Client> {
         let mut pks: HashMap<RequestId, PublicSigKey> = HashMap::new();
         for cur_storage in pub_storages {
@@ -911,8 +846,6 @@ impl Client {
             HashMap::from_iter(server_keys.into_iter().zip(1..=n)),
             client_pk,
             Some(client_sk),
-            shares_needed,
-            num_servers,
             params.ciphertext_parameters,
         ))
     }
@@ -1039,15 +972,15 @@ impl Client {
     /// for all parties. But if there are adversaries, this might not
     /// be the case. In addition to checking the digests and signatures,
     /// This function takes care of finding the CRS that is returned by
-    /// the majority. The majority value must be greater or equal to
-    /// the number of honest parties, that is n - t, where n is the number
-    /// of parties and t is the threshold.
+    /// the majority and ensuring that this involves agreement by at least
+    /// `min_agree_count` of the parties.
     #[cfg(feature = "non-wasm")]
     pub async fn process_distributed_crs_result<S: StorageReader>(
         &self,
         request_id: &RequestId,
         results: Vec<CrsGenResult>,
         storage_readers: &[S],
+        min_agree_count: u32,
     ) -> anyhow::Result<PublicParameter> {
         let mut verifying_pks = std::collections::HashSet::new();
         // counter of digest (digest -> usize)
@@ -1119,21 +1052,18 @@ impl Client {
             .max_by(|a, b| a.1.cmp(&b.1))
             .ok_or_else(|| anyhow_error_and_log("logic error: hash_counter_map is empty"))?;
 
-        // shares_needed gives us t+1, enough to reconstruct
-        // this means there are n - t honest parties, which should return the same result
-        let honest_parties_count = self.num_servers - self.shares_needed + 1;
-        if c < honest_parties_count as usize {
+        if c < min_agree_count as usize {
             return Err(anyhow_error_and_log(format!(
-                "No consensus on CRS digest! {} >= {}",
-                c, honest_parties_count
+                "No consensus on CRS digest! {} < {}",
+                c, min_agree_count
             )));
         }
 
-        if verifying_pks.len() < honest_parties_count as usize {
+        if verifying_pks.len() < min_agree_count as usize {
             Err(anyhow_error_and_log(format!(
-                "Not enough signatures on CRS results! {} >= {}",
+                "Not enough signatures on CRS results! {} < {}",
                 verifying_pks.len(),
-                honest_parties_count
+                min_agree_count
             )))
         } else {
             Ok(some_or_err(
@@ -1358,27 +1288,29 @@ impl Client {
 
     /// Validates the aggregated decryption response `agg_resp` against the
     /// original `DecryptionRequest` `request`, and returns the decrypted
-    /// plaintext if valid. Returns `None` if validation fails.
+    /// plaintext if valid and at least [min_agree_count] agree on the result.
+    /// Returns `None` if validation fails.
     #[cfg(feature = "non-wasm")]
     pub fn process_decryption_resp(
         &self,
         request: Option<DecryptionRequest>,
-        agg_resp: &AggregatedDecryptionResponse,
+        agg_resp: &[DecryptionResponse],
+        min_agree_count: u32,
     ) -> anyhow::Result<Option<Plaintext>> {
-        if !self.validate_decryption_resp(request, agg_resp)? {
+        if !self.validate_decryption_req_resp(request, agg_resp, min_agree_count)? {
             return Ok(None);
         }
         // TODO pivot should actually be picked as the most common response instead of just an
         // arbitrary one. The same in reencryption
         let pivot = some_or_err(
-            agg_resp.responses.iter().last(),
+            agg_resp.last(),
             "No elements in decryption response".to_string(),
         )?;
         let pivot_payload = some_or_err(
             pivot.payload.to_owned(),
             "No payload in pivot response".to_string(),
         )?;
-        for cur_resp in &agg_resp.responses {
+        for cur_resp in agg_resp {
             let cur_payload = some_or_err(
                 cur_resp.payload.to_owned(),
                 "No payload in current response!".to_string(),
@@ -1420,7 +1352,7 @@ impl Client {
     pub fn process_reencryption_resp(
         &self,
         request: Option<ReencryptionRequest>,
-        agg_resp: &AggregatedReencryptionResponse,
+        agg_resp: &[ReencryptionResponse],
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
     ) -> anyhow::Result<Plaintext> {
@@ -1443,7 +1375,7 @@ impl Client {
         // distributed case. For the centralized case we directly encode the [Plaintext]
         // object whereas for the distributed we encode the plain text as a
         // Vec<ResiduePoly<Z128>>
-        if agg_resp.responses.len() <= 1 {
+        if agg_resp.len() <= 1 {
             self.centralized_reencryption_resp(request, agg_resp, &client_keys)
         } else {
             self.threshold_reencryption_resp(request, agg_resp, &client_keys)
@@ -1456,7 +1388,7 @@ impl Client {
     /// TODO hide behind flag for insecure function?
     pub fn insecure_process_reencryption_resp(
         &self,
-        agg_resp: &AggregatedReencryptionResponse,
+        agg_resp: &[ReencryptionResponse],
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
     ) -> anyhow::Result<Plaintext> {
@@ -1476,7 +1408,7 @@ impl Client {
         // distributed case. For the centralized case we directly encode the [Plaintext]
         // object whereas for the distributed we encode the plain text as a
         // Vec<ResiduePoly<Z128>>
-        if agg_resp.responses.len() <= 1 {
+        if agg_resp.len() <= 1 {
             self.insecure_centralized_reencryption_resp(agg_resp, &client_keys)
         } else {
             self.insecure_threshold_reencryption_resp(agg_resp, &client_keys)
@@ -1487,20 +1419,26 @@ impl Client {
     /// - The responses agree on metadata like shares needed
     /// - The response matches the original request
     /// - Signatures on responses are valid
+    /// - That at least [min_agree_count] agree on the same payload
     ///
     /// Returns true if the response is valid, false otherwise
     #[cfg(feature = "non-wasm")]
-    fn validate_decryption_resp(
+    fn validate_decryption_req_resp(
         &self,
         request: Option<DecryptionRequest>,
-        agg_resp: &AggregatedDecryptionResponse,
+        agg_resp: &[DecryptionResponse],
+        min_agree_count: u32,
     ) -> anyhow::Result<bool> {
         match request {
             Some(req) => {
                 let resp_parsed_payloads = some_or_err(
-                    self.validate_individual_dec_resp(agg_resp)?,
+                    self.validate_dec_resp(agg_resp)?,
                     "Could not validate the aggregated responses".to_string(),
                 )?;
+                if resp_parsed_payloads.len() < min_agree_count as usize {
+                    tracing::warn!("Not enough correct responses to decrypt the data!");
+                    return Ok(false);
+                }
                 let pivot_payload = resp_parsed_payloads[0].clone();
                 if req.version != pivot_payload.version() {
                     tracing::warn!("Version in the decryption request is incorrect");
@@ -1524,18 +1462,18 @@ impl Client {
     }
 
     #[cfg(feature = "non-wasm")]
-    fn validate_individual_dec_resp(
+    fn validate_dec_resp(
         &self,
-        agg_resp: &AggregatedDecryptionResponse,
+        agg_resp: &[DecryptionResponse],
     ) -> anyhow::Result<Option<Vec<DecryptionResponsePayload>>> {
-        if agg_resp.responses.is_empty() {
+        if agg_resp.is_empty() {
             tracing::warn!("AggregatedDecryptionResponse is empty!");
             return Ok(None);
         }
-        // Pick a pivot response, in this case the last one
+        // Pick a pivot response
         let mut option_pivot_payload: Option<DecryptionResponsePayload> = None;
-        let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.responses.len());
-        for cur_resp in &agg_resp.responses {
+        let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
+        for cur_resp in agg_resp {
             let cur_payload = match cur_resp.payload.clone() {
                 Some(cur_payload) => cur_payload,
                 None => {
@@ -1572,35 +1510,25 @@ impl Client {
             }
             resp_parsed_payloads.push(cur_payload);
         }
-
-        if resp_parsed_payloads.len() < self.shares_needed as usize {
-            tracing::warn!("Not enough correct responses to decrypt the data!");
-            return Ok(None);
-        }
         Ok(Some(resp_parsed_payloads))
     }
 
     /// Validates the aggregated reencryption responses received from the servers
     /// against the given reencryption request. Returns the validated responses
     /// mapped to the server ID on success.
-    fn validate_agg_reenc_resp(
+    fn validate_reenc_req_resp(
         &self,
         request: ReencryptionRequest,
-        agg_resp: &AggregatedReencryptionResponse,
-    ) -> anyhow::Result<
-        Option<(
-            ReencryptionRequestPayload,
-            HashMap<u32, ReencryptionResponse>,
-        )>,
-    > {
+        agg_resp: &[ReencryptionResponse],
+    ) -> anyhow::Result<Option<(ReencryptionRequestPayload, Vec<ReencryptionResponse>)>> {
         let expected_link = request.compute_link_checked()?;
         match request.payload {
             Some(req_payload) => {
                 let resp_parsed = some_or_err(
-                    self.validate_individual_agg_reenc_resp(agg_resp)?,
+                    self.validate_reenc_resp(agg_resp)?,
                     "Could not validate the aggregated responses".to_string(),
                 )?;
-                let pivot_resp = resp_parsed.values().collect_vec()[0];
+                let pivot_resp = resp_parsed[0].clone();
                 if req_payload.version != pivot_resp.version() {
                     tracing::warn!("Version in the reencryption request is incorrect");
                     return Ok(None);
@@ -1624,36 +1552,70 @@ impl Client {
         }
     }
 
-    fn validate_individual_agg_reenc_resp(
+    fn validate_reenc_resp(
         &self,
-        agg_resp: &AggregatedReencryptionResponse,
-    ) -> anyhow::Result<Option<HashMap<u32, ReencryptionResponse>>> {
-        if agg_resp.responses.is_empty() {
+        agg_resp: &[ReencryptionResponse],
+    ) -> anyhow::Result<Option<Vec<ReencryptionResponse>>> {
+        if agg_resp.is_empty() {
             tracing::warn!("AggregatedDecryptionResponse is empty!");
             return Ok(None);
         }
-        // Pick a pivot response, in this case the last one
+        // TODO pivot should actually be picked as the most common response instead of just an
+        // arbitrary one. The same in decryption
+        // Pick a pivot response
         let mut option_pivot: Option<&ReencryptionResponse> = None;
-        let mut resp_parsed = HashMap::with_capacity(agg_resp.responses.len());
-        for (cur_role, cur_resp) in &agg_resp.responses {
+        let mut resp_parsed = Vec::with_capacity(agg_resp.len());
+        let mut party_ids = HashSet::new();
+        for cur_resp in agg_resp {
             // Set the first existing element as pivot
             let pivot_resp = match option_pivot {
                 Some(pivot_resp) => pivot_resp,
                 None => {
                     option_pivot = Some(cur_resp);
-                    resp_parsed.insert(*cur_role, cur_resp.clone());
+                    resp_parsed.push(cur_resp.clone());
                     continue;
                 }
             };
             // Validate that all the responses agree with the pivot on the static parts of the
             // response
             if !self.validate_meta_data(pivot_resp, cur_resp)? {
-                tracing::warn!("Server {cur_role} did not provide the proper response!");
+                tracing::warn!(
+                    "Server who gave ID {} did not provide the proper response!",
+                    cur_resp.party_id
+                );
                 continue;
             }
-            resp_parsed.insert(*cur_role, cur_resp.clone());
+            if pivot_resp.degree != cur_resp.degree {
+                tracing::warn!(
+                    "Server who gave ID {} gave degree {} which is inconsistent with the pivot response",
+                    cur_resp.party_id, cur_resp.degree
+                );
+                continue;
+            }
+            // Sanitiy check the ID of the server.
+            // However, this will not catch all cheating since a server could claim the ID of another server
+            // and we can't know who lies without consulting the verification key to ID mapping on the blockchain.
+            // Furhtermore, observe that we assume the optimal threshold is set.
+            if cur_resp.party_id > cur_resp.degree * 3 + 1 {
+                tracing::warn!(
+                    "Server who gave ID {} is too large. The largest allowed id {}",
+                    cur_resp.party_id,
+                    cur_resp.degree * 3 + 1
+                );
+                continue;
+            }
+            if cur_resp.party_id == 0 {
+                tracing::warn!("A server ID is set to 0");
+                continue;
+            }
+            if party_ids.contains(&cur_resp.party_id) {
+                tracing::warn!("At least two servers gave ID {}", cur_resp.party_id,);
+                continue;
+            }
+            party_ids.insert(cur_resp.party_id);
+            resp_parsed.push(cur_resp.clone());
         }
-        if resp_parsed.len() < self.shares_needed as usize {
+        if option_pivot.is_some_and(|x| resp_parsed.len() < x.degree as usize) {
             tracing::warn!("Not enough correct responses to reencrypt the data!");
             return Ok(None);
         }
@@ -1664,13 +1626,10 @@ impl Client {
     fn centralized_reencryption_resp(
         &self,
         request: ReencryptionRequest,
-        agg_resp: &AggregatedReencryptionResponse,
+        agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Plaintext> {
-        let resp = some_or_err(
-            agg_resp.responses.values().last(),
-            "Response does not exist".to_owned(),
-        )?;
+        let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
 
         let link = request.compute_link_checked()?;
         if link != resp.digest {
@@ -1697,13 +1656,10 @@ impl Client {
     /// TODO hide behind flag for insecure function?
     fn insecure_centralized_reencryption_resp(
         &self,
-        agg_resp: &AggregatedReencryptionResponse,
+        agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Plaintext> {
-        let resp = some_or_err(
-            agg_resp.responses.values().last(),
-            "Response does not exist".to_owned(),
-        )?;
+        let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
 
         crate::cryptography::signcryption::insecure_decrypt_ignoring_signature(
             &resp.signcrypted_ciphertext,
@@ -1715,25 +1671,27 @@ impl Client {
     fn threshold_reencryption_resp(
         &self,
         request: ReencryptionRequest,
-        agg_resp: &AggregatedReencryptionResponse,
+        agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Plaintext> {
         let (req_payload, validated_resps) = some_or_err(
-            self.validate_agg_reenc_resp(request, agg_resp)?,
+            self.validate_reenc_req_resp(request, agg_resp)?,
             "Could not validate request".to_owned(),
         )?;
+        let degree = some_or_err(
+            validated_resps.first(),
+            "No valid repsonses parsed".to_string(),
+        )?
+        .degree as usize;
         let sharings =
-            self.recover_sharings(validated_resps, req_payload.fhe_type(), client_keys)?;
+            self.recover_sharings(&validated_resps, req_payload.fhe_type(), client_keys)?;
         let amount_shares = sharings.len();
         let mut decrypted_blocks = Vec::new();
         for cur_block_shares in sharings {
             // NOTE: this performs optimistic reconstruction
-            if let Ok(Some(r)) = reconstruct_w_errors_sync(
-                amount_shares,
-                (self.shares_needed - 1) as usize,
-                (self.shares_needed - 1) as usize,
-                &cur_block_shares,
-            ) {
+            if let Ok(Some(r)) =
+                reconstruct_w_errors_sync(amount_shares, degree, degree, &cur_block_shares)
+            {
                 decrypted_blocks.push(r);
             } else {
                 return Err(anyhow_error_and_log("Could not reconstruct all blocks"));
@@ -1748,17 +1706,14 @@ impl Client {
     /// TODO hide behind flag for insecure function?
     fn insecure_threshold_reencryption_resp(
         &self,
-        agg_resp: &AggregatedReencryptionResponse,
+        agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Plaintext> {
-        //Do not actually validate responses
-        let validated_resps = &agg_resp.responses;
-
         //Recover sharings
         let mut opt_sharings = None;
 
         //Trust all responses have all expected blocks
-        for (cur_role_id, cur_resp) in validated_resps {
+        for cur_resp in agg_resp {
             let shares =
                 insecure_decrypt_ignoring_signature(&cur_resp.signcrypted_ciphertext, client_keys)?;
 
@@ -1778,11 +1733,11 @@ impl Client {
                 opt_sharings.as_mut().unwrap(),
                 cur_blocks,
                 num_values,
-                Role::indexed_by_one(*cur_role_id as usize),
+                Role::indexed_by_one(cur_resp.party_id as usize),
             )?;
         }
         let sharings = opt_sharings.unwrap();
-        let num_parties = validated_resps.len();
+        let num_parties = agg_resp.len();
         let mut decrypted_blocks = Vec::new();
         let degree = num_parties / 3;
         for cur_block_shares in sharings {
@@ -1834,7 +1789,7 @@ impl Client {
     /// that the servers should have encrypted.
     fn recover_sharings(
         &self,
-        agg_resp: HashMap<u32, ReencryptionResponse>,
+        agg_resp: &[ReencryptionResponse],
         fhe_type: FheType,
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<ShamirSharings<ResiduePoly<Z128>>>> {
@@ -1843,7 +1798,7 @@ impl Client {
         for _i in 0..num_blocks {
             sharings.push(ShamirSharings::new());
         }
-        for (cur_role_id, cur_resp) in &agg_resp {
+        for cur_resp in agg_resp {
             // Observe that it has already been verified in [validate_meta_data] that server
             // verification key is in the set of permissible keys
             //
@@ -1867,16 +1822,19 @@ impl Client {
                         &mut sharings,
                         cur_blocks,
                         num_blocks,
-                        Role::indexed_by_one(*cur_role_id as usize),
+                        Role::indexed_by_one(cur_resp.party_id as usize),
                     )?;
                 }
                 _ => {
-                    tracing::warn!("Could not decrypt or validate signcrypted response from party {cur_role_id}.");
+                    tracing::warn!(
+                        "Could not decrypt or validate signcrypted response from party {}.",
+                        cur_resp.party_id
+                    );
                     fill_indexed_shares(
                         &mut sharings,
                         Vec::new(),
                         num_blocks,
-                        Role::indexed_by_one(*cur_role_id as usize),
+                        Role::indexed_by_one(cur_resp.party_id as usize),
                     )?;
                 }
             };
@@ -2194,7 +2152,7 @@ pub mod test_tools {
         // TODO why are these FileStorage and not depend on the StorageVersion?
         let pub_storage = vec![FileStorage::new_centralized(None, StorageType::PUB).unwrap()];
         let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
-        let internal_client = Client::new_client(client_storage, pub_storage, param_path, 1, 1)
+        let internal_client = Client::new_client(client_storage, pub_storage, param_path)
             .await
             .unwrap();
         (kms_server, kms_client, internal_client)
@@ -2208,7 +2166,6 @@ pub(crate) mod tests {
     use crate::client::TestingReencryptionTranscript;
     #[cfg(feature = "wasm_tests")]
     use crate::consts::TEST_CENTRAL_KEY_ID;
-    use crate::consts::{AMOUNT_PARTIES, TEST_PARAM_PATH, THRESHOLD};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
         DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM_PATH,
@@ -2222,9 +2179,7 @@ pub(crate) mod tests {
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
     #[cfg(feature = "slow_tests")]
     use crate::kms::CrsGenResult;
-    use crate::kms::{
-        AggregatedDecryptionResponse, AggregatedReencryptionResponse, FheType, ParamChoice,
-    };
+    use crate::kms::{FheType, ParamChoice};
     use crate::rpc::central_rpc::default_param_file_map;
     use crate::rpc::rpc_types::{BaseKms, PubDataType};
     use crate::storage::StorageReader;
@@ -2239,6 +2194,10 @@ pub(crate) mod tests {
         kms::{Empty, RequestId},
     };
     use crate::{consts::TEST_THRESHOLD_KEY_ID, util::file_handling::read_as_json};
+    use crate::{
+        consts::{AMOUNT_PARTIES, TEST_PARAM_PATH, THRESHOLD},
+        kms::ReencryptionResponse,
+    };
     use alloy_primitives::Bytes;
     use alloy_signer::Signer;
     use alloy_signer_local::PrivateKeySigner;
@@ -2251,7 +2210,7 @@ pub(crate) mod tests {
     use kms_core_common::Unversionize;
     use rand::SeedableRng;
     use serial_test::serial;
-    use std::collections::HashMap;
+    use std::collections::{hash_map::Entry, HashMap};
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::Channel;
 
@@ -2295,15 +2254,9 @@ pub(crate) mod tests {
             pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
         }
         let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
-        let internal_client = Client::new_client(
-            client_storage,
-            pub_storage,
-            param_path,
-            (THRESHOLD as u32) + 1,
-            AMOUNT_PARTIES as u32,
-        )
-        .await
-        .unwrap();
+        let internal_client = Client::new_client(client_storage, pub_storage, param_path)
+            .await
+            .unwrap();
         (kms_servers, kms_clients, internal_client)
     }
 
@@ -2731,8 +2684,15 @@ pub(crate) mod tests {
                 })
                 .unzip();
 
+            let min_count_agree = (THRESHOLD + 1) as u32;
+
             let _pp = internal_client
-                .process_distributed_crs_result(&req_id, final_responses.clone(), &storage_readers)
+                .process_distributed_crs_result(
+                    &req_id,
+                    final_responses.clone(),
+                    &storage_readers,
+                    min_count_agree,
+                )
                 .await
                 .unwrap();
 
@@ -2742,16 +2702,18 @@ pub(crate) mod tests {
                     &req_id,
                     final_responses[0..final_responses.len() - THRESHOLD].to_vec(),
                     &storage_readers,
+                    min_count_agree,
                 )
                 .await
                 .unwrap();
 
-            // if there are [THRESHOLD+1] results missing, then we do not have consensus
+            // if there are only THRESHOLD results then we do not have consensus as at least THRESHOLD+1 is needed
             assert!(internal_client
                 .process_distributed_crs_result(
                     &req_id,
-                    final_responses[0..final_responses.len() - (THRESHOLD + 1)].to_vec(),
-                    &storage_readers
+                    final_responses[0..THRESHOLD].to_vec(),
+                    &storage_readers,
+                    min_count_agree
                 )
                 .await
                 .is_err());
@@ -2762,7 +2724,8 @@ pub(crate) mod tests {
                 .process_distributed_crs_result(
                     &bad_request_id,
                     final_responses.clone(),
-                    &storage_readers
+                    &storage_readers,
+                    min_count_agree
                 )
                 .await
                 .is_err());
@@ -2782,26 +2745,32 @@ pub(crate) mod tests {
                     &req_id,
                     final_responses_with_bad_sig.clone(),
                     &storage_readers,
+                    min_count_agree,
                 )
                 .await
                 .unwrap();
 
-            // having [THRESHOLD+1] wrong signatures won't work
-            set_signatures(&mut final_responses_with_bad_sig, THRESHOLD + 1, &bad_sig);
+            // having [AMOUNT-THRESHOLD] wrong signatures won't work
+            set_signatures(
+                &mut final_responses_with_bad_sig,
+                AMOUNT_PARTIES - THRESHOLD,
+                &bad_sig,
+            );
             assert!(internal_client
                 .process_distributed_crs_result(
                     &req_id,
                     final_responses_with_bad_sig,
-                    &storage_readers
+                    &storage_readers,
+                    min_count_agree
                 )
                 .await
                 .is_err());
 
-            // having [THRESHOLD] wrong digests still works
+            // having [AMOUNT_PARTIES-(THRESHOLD+1)] wrong digests still works
             let mut final_responses_with_bad_digest = final_responses.clone();
             set_digests(
                 &mut final_responses_with_bad_digest,
-                THRESHOLD,
+                AMOUNT_PARTIES - (THRESHOLD + 1),
                 "9fdca770403e2eed9dacb4cdd405a14fc6df7226",
             );
             let _pp = internal_client
@@ -2809,21 +2778,23 @@ pub(crate) mod tests {
                     &req_id,
                     final_responses_with_bad_digest.clone(),
                     &storage_readers,
+                    min_count_agree,
                 )
                 .await
                 .unwrap();
 
-            // having [THRESHOLD+1] wrong digests will fail
+            // having [AMOUNT_PARTIES-THRESHOLD] wrong digests will fail
             set_digests(
                 &mut final_responses_with_bad_digest,
-                THRESHOLD + 1,
+                AMOUNT_PARTIES - THRESHOLD,
                 "9fdca770403e2eed9dacb4cdd405a14fc6df7226",
             );
             assert!(internal_client
                 .process_distributed_crs_result(
                     &req_id,
                     final_responses_with_bad_digest,
-                    &storage_readers
+                    &storage_readers,
+                    min_count_agree
                 )
                 .await
                 .is_err());
@@ -2974,10 +2945,9 @@ pub(crate) mod tests {
 
             // we only have single response per request in the centralized case
             assert_eq!(responses.len(), 1);
-            let responses = AggregatedDecryptionResponse { responses };
 
             let plaintext = internal_client
-                .process_decryption_resp(Some(req.clone()), &responses)
+                .process_decryption_resp(Some(req.clone()), &responses, 1)
                 .unwrap()
                 .unwrap();
 
@@ -3218,7 +3188,7 @@ pub(crate) mod tests {
                     server_pks: internal_client.server_pks.clone(),
                     client_pk: internal_client.client_pk.clone(),
                     client_sk: internal_client.client_sk.clone(),
-                    shares_needed: 0,
+                    degree: 0,
                     params: internal_client.params,
                     fhe_type: msg.to_fhe_type(),
                     pt: msg.to_plaintext().bytes.clone(),
@@ -3226,7 +3196,7 @@ pub(crate) mod tests {
                     request: Some(reqs[0].clone().0),
                     eph_sk: reqs[0].clone().2,
                     eph_pk: reqs[0].clone().1,
-                    agg_resp: HashMap::from([(1, resp_response_vec.first().unwrap().1.clone())]),
+                    agg_resp: vec![resp_response_vec.first().unwrap().1.clone()],
                 };
 
                 let path_prefix = if param_path.contains("default") {
@@ -3257,9 +3227,7 @@ pub(crate) mod tests {
             // we only have single response per request in the centralized case
             assert_eq!(responses.len(), 1);
             let inner_response = responses.first().unwrap();
-            let responses = AggregatedReencryptionResponse {
-                responses: HashMap::from([(1, inner_response.clone())]),
-            };
+            let responses = vec![inner_response.clone()];
 
             let plaintext = if secure {
                 internal_client
@@ -3431,9 +3399,9 @@ pub(crate) mod tests {
                     }
                 })
                 .collect();
-            let agg = AggregatedDecryptionResponse { responses };
+            let min_count_agree = (THRESHOLD + 1) as u32;
             let plaintext = internal_client
-                .process_decryption_resp(Some(req.clone()), &agg)
+                .process_decryption_resp(Some(req.clone()), &responses, min_count_agree)
                 .unwrap()
                 .unwrap();
             assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
@@ -3627,16 +3595,23 @@ pub(crate) mod tests {
                             .await;
                     }
 
-                    (i, req_id_clone, response)
+                    (req_id_clone, response)
                 });
             }
         }
-        let mut response_map = HashMap::new();
+        let mut response_map: HashMap<RequestId, Vec<ReencryptionResponse>> = HashMap::new();
         while let Some(res) = resp_tasks.join_next().await {
             let res = res.unwrap();
             tracing::info!("Client got a response from {}", res.0);
-            let (i, req_id, resp) = res;
-            response_map.insert((i, req_id), resp.unwrap().into_inner());
+            let (req_id, resp) = res;
+            if let Entry::Vacant(e) = response_map.entry(req_id.clone()) {
+                e.insert(vec![resp.unwrap().into_inner()]);
+            } else {
+                response_map
+                    .get_mut(&req_id)
+                    .unwrap()
+                    .push(resp.unwrap().into_inner());
+            }
         }
 
         for handle in kms_servers.values() {
@@ -3654,14 +3629,15 @@ pub(crate) mod tests {
                 // for tfhe encryption on the wasm side since it cannot
                 // be instantiated easily without a seeder and we don't
                 // want to introduce extra npm dependency.
-                let agg_resp =
-                    HashMap::from_iter(response_map.iter().map(|((i, _req), v)| (*i, v.clone())));
+
+                // Observe there should only be one element in `response_map`
+                let agg_resp = response_map.values().last().unwrap().clone();
 
                 let transcript = TestingReencryptionTranscript {
                     server_pks: internal_client.server_pks.clone(),
                     client_pk: internal_client.client_pk.clone(),
                     client_sk: internal_client.client_sk.clone(),
-                    shares_needed: THRESHOLD as u32 + 1,
+                    degree: THRESHOLD as u32,
                     params: internal_client.params,
                     fhe_type: msg.to_fhe_type(),
                     pt: msg.to_plaintext().bytes.clone(),
@@ -3683,26 +3659,19 @@ pub(crate) mod tests {
 
         for req in &reqs {
             let (req, enc_pk, enc_sk) = req;
-            let responses =
-                HashMap::from_iter(response_map.iter().filter_map(|((i, req_id), v)| {
-                    if req_id == req.request_id.as_ref().unwrap() {
-                        Some((*i, v.clone()))
-                    } else {
-                        None
-                    }
-                }));
-            let agg = AggregatedReencryptionResponse { responses };
+            let responses = response_map.get(req.request_id.as_ref().unwrap()).unwrap();
 
             let plaintext = if secure {
                 internal_client
-                    .process_reencryption_resp(Some(req.clone()), &agg, enc_pk, enc_sk)
+                    .process_reencryption_resp(Some(req.clone()), responses, enc_pk, enc_sk)
                     .unwrap()
             } else {
                 internal_client.server_pks = HashMap::new();
                 internal_client
-                    .insecure_process_reencryption_resp(&agg, enc_pk, enc_sk)
+                    .insecure_process_reencryption_resp(responses, enc_pk, enc_sk)
                     .unwrap()
             };
+            println!("dsfds");
             assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
             match msg {
                 TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
@@ -3738,8 +3707,6 @@ pub(crate) mod tests {
             HashMap::from_iter(keys.server_keys.iter().cloned().zip(0..n)),
             keys.client_pk,
             Some(keys.client_sk),
-            1,
-            1,
             keys.params.ciphertext_parameters,
         );
         let request_id = RequestId::derive("TEST_REENC_ID_123").unwrap();

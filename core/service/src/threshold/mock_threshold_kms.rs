@@ -52,7 +52,7 @@ fn new_dummy_threshold_kms() -> DummyThresholdKms {
     let handle = tokio::spawn(async {});
     DummyThresholdKms::new(
         DummyInitiator {},
-        DummyReencryptor {},
+        DummyReencryptor { degree: 1 },
         DummyDecryptor {},
         DummyKeyGenerator {},
         DummyPreprocessor {},
@@ -70,7 +70,9 @@ impl Initiator for DummyInitiator {
     }
 }
 
-struct DummyReencryptor;
+struct DummyReencryptor {
+    pub degree: u32,
+}
 
 #[tonic::async_trait]
 impl Reencryptor for DummyReencryptor {
@@ -91,6 +93,8 @@ impl Reencryptor for DummyReencryptor {
             digest: "dummy digest".as_bytes().to_vec(),
             fhe_type: crate::kms::FheType::Euint8.into(),
             signcrypted_ciphertext: "signcrypted_ciphertext".as_bytes().to_vec(),
+            party_id: self.degree + 1,
+            degree: self.degree,
         }))
     }
 }

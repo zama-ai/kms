@@ -372,6 +372,8 @@ impl<
             fhe_type: fhe_type.into(),
             digest: req_digest,
             verification_key: server_verf_key,
+            party_id: 1, // In the centralized KMS, the server ID is always 1
+            degree: 0, // In the centralized KMS, the degree is always 0 since result is a constant
         }))
     }
 

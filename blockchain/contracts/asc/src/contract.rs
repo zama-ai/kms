@@ -881,6 +881,8 @@ mod tests {
             .digest(vec![2])
             .fhe_type(FheType::Ebool)
             .signcrypted_ciphertext(vec![3])
+            .party_id(2u32)
+            .degree(1u32)
             .build();
 
         let response = contract

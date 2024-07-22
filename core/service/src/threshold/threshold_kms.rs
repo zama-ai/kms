@@ -938,6 +938,8 @@ impl Reencryptor for RealReencryptor {
             fhe_type: fhe_type.into(),
             digest: link,
             verification_key: server_verf_key,
+            party_id: self.session_preparer.my_id as u32,
+            degree: self.session_preparer.threshold as u32,
         }))
     }
 }

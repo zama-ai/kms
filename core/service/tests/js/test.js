@@ -74,10 +74,10 @@ test('centralized reencryption response', (_t) => {
 
     let response = centralized_reencryption_response_from_transcript(transcript_buf);
 
-    let pt = process_reencryption_resp(client, response.req, response.agg_resp, response.agg_resp_ids, response.enc_pk, response.enc_sk, false);
+    let pt = process_reencryption_resp(client, response.req, response.agg_resp, response.enc_pk, response.enc_sk, false);
     assert.deepEqual(48, pt[0]);
 
-    let pt2 = process_reencryption_resp(client, response.req, response.agg_resp, response.agg_resp_ids, response.enc_pk, response.enc_sk, true);
+    let pt2 = process_reencryption_resp(client, response.req, response.agg_resp, response.enc_pk, response.enc_sk, true);
     assert.deepEqual(48, pt2[0]);
 });
 
@@ -87,10 +87,10 @@ test('threshold reencryption response', (_t) => {
     let client = client_from_transcript(transcript_buf);
     let response = threshold_reencryption_response_from_transcript(transcript_buf);
 
-    let pt = process_reencryption_resp(client, response.req, response.agg_resp, response.agg_resp_ids, response.enc_pk, response.enc_sk, false);
+    let pt = process_reencryption_resp(client, response.req, response.agg_resp, response.enc_pk, response.enc_sk, false);
     assert.deepEqual(42, pt[0]);
 
-    let pt2 = process_reencryption_resp(client, response.req, response.agg_resp, response.agg_resp_ids, response.enc_pk, response.enc_sk, true);
+    let pt2 = process_reencryption_resp(client, response.req, response.agg_resp, response.enc_pk, response.enc_sk, true);
     assert.deepEqual(42, pt2[0]);
 });
 
@@ -136,7 +136,7 @@ test('new client', (_t) => {
 
     // make a generic client
     let client_key = u8vec_to_public_sig_key(client_key_buf);
-    let generic_client = new_client(kms_keys, null, client_key, 0, 'default');
+    let generic_client = new_client(kms_keys, null, client_key, 'default');
 
     // make a default centralized client
     let central_client = default_client_for_centralized_kms();

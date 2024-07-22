@@ -5,7 +5,7 @@ use cosmwasm_schema::schemars;
 use cosmwasm_schema::schemars::JsonSchema;
 use serde::{Deserialize, Serialize, Serializer};
 
-#[derive(Eq, PartialEq, Default, Clone, Debug, JsonSchema)]
+#[derive(Eq, Hash, PartialEq, Default, Clone, Debug, JsonSchema)]
 pub struct HexVector(pub Vec<u8>);
 
 impl Deref for HexVector {

@@ -462,6 +462,8 @@ where
                                 .digest(inner.digest.clone())
                                 .fhe_type(fhe_type.0)
                                 .signcrypted_ciphertext(inner.signcrypted_ciphertext.clone())
+                                .party_id(inner.party_id)
+                                .degree(inner.degree)
                                 .build(),
                             operation_val: BlockchainOperationVal {
                                 tx_id: self.operation_val.tx_id.clone(),
@@ -784,10 +786,7 @@ mod test {
             AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID,
             TEST_CENTRAL_KEY_ID, TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID, THRESHOLD,
         },
-        kms::{
-            AggregatedReencryptionResponse, DecryptionResponsePayload, ReencryptionResponse,
-            RequestId,
-        },
+        kms::{DecryptionResponsePayload, ReencryptionResponse, RequestId},
         rpc::rpc_types::{Plaintext, CURRENT_FORMAT_VERSION},
         storage::{FileStorage, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
@@ -1071,7 +1070,6 @@ mod test {
         }
         let mut results = vec![];
         let mut ids = vec![];
-        // tasks.join_next().await.unwrap().unwrap().1.unwrap();
         while let Some(Ok((i, Ok(res)))) = tasks.join_next().await {
             results.push(res);
             ids.push(i);
@@ -1144,15 +1142,9 @@ mod test {
             pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
         }
         let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
-        let mut kms_client = Client::new_client(
-            client_storage,
-            pub_storage,
-            TEST_PARAM_PATH,
-            THRESHOLD as u32 + 1,
-            AMOUNT_PARTIES as u32,
-        )
-        .await
-        .unwrap();
+        let mut kms_client = Client::new_client(client_storage, pub_storage, TEST_PARAM_PATH)
+            .await
+            .unwrap();
 
         fn dummy_domain() -> alloy_sol_types::Eip712Domain {
             alloy_sol_types::eip712_domain!(
@@ -1190,14 +1182,15 @@ mod test {
                 .eip712_salt(eip712.salt)
                 .build(),
         );
-        let (results, txn_id, ids) = generic_sunshine_test(slow, ct, op).await;
+        let (results, txn_id, _) = generic_sunshine_test(slow, ct, op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
         if slow {
             // process the result using the kms client when we're running in the slow mode
             // i.e., it is an integration test
-            let agg_resp = AggregatedReencryptionResponse {
-                responses: HashMap::from_iter(ids.into_iter().zip(results.into_iter().map(|r| {
+            let agg_resp: Vec<ReencryptionResponse> = results
+                .into_iter()
+                .map(|r| {
                     let r = match r {
                         KmsOperationResponse::ReencryptResponse(resp) => resp,
                         _ => panic!("invalid response"),
@@ -1209,9 +1202,11 @@ mod test {
                         digest: r.digest().into(),
                         fhe_type: r.fhe_type() as i32,
                         signcrypted_ciphertext: r.signcrypted_ciphertext().into(),
+                        party_id: r.party_id(),
+                        degree: r.degree(),
                     }
-                }))),
-            };
+                })
+                .collect();
             let pt = kms_client
                 .process_reencryption_resp(Some(kms_req), &agg_resp, &enc_pk, &enc_sk)
                 .unwrap();

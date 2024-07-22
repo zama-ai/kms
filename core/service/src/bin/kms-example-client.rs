@@ -1,8 +1,6 @@
 use kms_lib::client::Client;
 use kms_lib::consts::DEFAULT_CENTRAL_KEY_ID;
 use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_lib::kms::{AggregatedDecryptionResponse, AggregatedReencryptionResponse};
-use std::collections::HashMap;
 use std::env;
 
 /// Retries a function a given number of times with a given interval between retries.
@@ -46,7 +44,7 @@ fn dummy_domain() -> alloy_sol_types::Eip712Domain {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use kms_lib::{
         conf::init_trace,
-        consts::{DEFAULT_DEC_ID, DEFAULT_PARAM_PATH},
+        consts::{DEFAULT_DEC_ID, DEFAULT_PARAM_PATH, THRESHOLD},
         storage::{FileStorage, StorageType},
         util::key_setup::test_tools::compute_cipher_from_storage,
     };
@@ -66,10 +64,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let pub_storage = vec![FileStorage::new_centralized(None, StorageType::PUB).unwrap()];
     let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
-    let mut internal_client =
-        Client::new_client(client_storage, pub_storage, DEFAULT_PARAM_PATH, 1, 1)
-            .await
-            .unwrap();
+    let mut internal_client = Client::new_client(client_storage, pub_storage, DEFAULT_PARAM_PATH)
+        .await
+        .unwrap();
     let msg = 50u8;
     let (ct, fhe_type) =
         compute_cipher_from_storage(None, msg.into(), &DEFAULT_CENTRAL_KEY_ID.to_string()).await;
@@ -95,10 +92,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await;
     }
     tracing::debug!("GET DECRYPT RESPONSE={:?}", response);
-    let responses = AggregatedDecryptionResponse {
-        responses: vec![response?.into_inner()],
-    };
-    match internal_client.process_decryption_resp(Some(req), &responses) {
+    let responses = vec![response?.into_inner()];
+    match internal_client.process_decryption_resp(Some(req), &responses, (THRESHOLD + 1) as u32) {
         Ok(Some(plaintext)) => {
             tracing::info!(
                 "Decryption response is ok: {:?} of type {:?}",
@@ -133,9 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await;
     }
     tracing::debug!("GET REENCRYPT RESPONSE={:?}", response);
-    let responses = AggregatedReencryptionResponse {
-        responses: HashMap::from([(1, response?.into_inner())]),
-    };
+    let responses = vec![response?.into_inner()];
     match internal_client.process_reencryption_resp(Some(req), &responses, &enc_pk, &enc_sk) {
         Ok(plaintext) => {
             tracing::info!(

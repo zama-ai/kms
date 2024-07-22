@@ -130,11 +130,6 @@ impl OperationValue {
 
     /// Returns true if this operation needs information
     /// from the configuration smart contract to operate.
-    ///
-    /// At the moment only decrypt and reencrypt needs
-    /// the `shares_needed` attribute from the configuration contract.
-    /// Later we may add the role assignment (for the threshold setup)
-    /// into the configuration contract and this method needs to be updated.
     pub fn needs_kms_config(&self) -> bool {
         matches!(
             self,
@@ -498,6 +493,10 @@ pub struct ReencryptResponseValues {
     #[builder(setter(into))]
     verification_key: HexVector,
     #[builder(setter(into))]
+    party_id: u32,
+    #[builder(setter(into))]
+    degree: u32,
+    #[builder(setter(into))]
     digest: HexVector,
     fhe_type: FheType,
     #[builder(setter(into))]
@@ -523,6 +522,14 @@ impl ReencryptResponseValues {
 
     pub fn signcrypted_ciphertext(&self) -> &HexVector {
         &self.signcrypted_ciphertext
+    }
+
+    pub fn party_id(&self) -> u32 {
+        self.party_id
+    }
+
+    pub fn degree(&self) -> u32 {
+        self.degree
     }
 }
 
@@ -1003,6 +1010,8 @@ mod tests {
                 digest: HexVector::arbitrary(g),
                 fhe_type: FheType::arbitrary(g),
                 signcrypted_ciphertext: HexVector::arbitrary(g),
+                party_id: u32::arbitrary(g),
+                degree: u32::arbitrary(g),
             }
         }
     }
@@ -1194,6 +1203,8 @@ mod tests {
             .digest(vec![2])
             .fhe_type(FheType::Ebool)
             .signcrypted_ciphertext(vec![3])
+            .party_id(2u32)
+            .degree(1u32)
             .build();
         let message = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
@@ -1209,6 +1220,8 @@ mod tests {
                     "digest": hex::encode([2]),
                     "fhe_type": "ebool",
                     "signcrypted_ciphertext": hex::encode([3]),
+                    "party_id": 2,
+                    "degree": 1,
                 },
                 "proof": hex::encode([1, 2, 3]),
                 "txn_id": hex::encode(vec![1])
