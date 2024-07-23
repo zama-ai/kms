@@ -1867,7 +1867,7 @@ impl Client {
         }
         let resp_verf_key: PublicSigKey = deserialize(&other_resp.verification_key())?;
         if !&self.server_pks.contains(&resp_verf_key) {
-            tracing::warn!("Server key is incorrect in reencryption request");
+            tracing::warn!("Server key is unknown or incorrect.");
             return Ok(false);
         }
         Ok(true)

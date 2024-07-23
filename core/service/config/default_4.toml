@@ -61,11 +61,11 @@ tls_cert_path = "certs/cert_p4.pem"
 [core_to_core_net_conf]
 message_limit = 70
 multiplier = 1.1
-max_interval = 5 
-max_elapsed_time = 300 
+max_interval = 5
+max_elapsed_time = 300
 network_timeout = 10
-network_timeout_bk = 300 
-network_timeout_bk_sns = 1200 
+network_timeout_bk = 300
+network_timeout_bk_sns = 1200
 max_en_decode_message_size = 2147483648
 
 # The keys must match the keys of the ParamChoice type, in kms.proto.
@@ -78,5 +78,5 @@ default = "parameters/default_params.json"
 # host = "redis://127.0.0.1"
 
 [tracing]
-service_name = "kms-threshold-3"
+service_name = "kms-threshold-4"
 endpoint = "http://localhost:4317"
