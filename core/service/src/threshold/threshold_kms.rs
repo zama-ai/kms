@@ -2,7 +2,7 @@ use super::generic::{
     CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
 };
 use crate::conf::threshold::{PeerConf, ThresholdConfig};
-use crate::cryptography::der_types::{PrivateSigKey, PublicEncKey, PublicSigKey};
+use crate::cryptography::der_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt;
 use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
 use crate::kms::{
@@ -767,7 +767,7 @@ impl RealReencryptor {
         link: Vec<u8>,
         key_handle: &RequestId,
         client_enc_key: &PublicEncKey,
-        client_verf_key: &PublicSigKey,
+        client_address: &alloy_primitives::Address,
         sig_key: Arc<PrivateSigKey>,
         fhe_keys: RwLockReadGuard<'_, HashMap<RequestId, ThresholdFheKeys>>,
     ) -> anyhow::Result<Vec<u8>> {
@@ -797,9 +797,9 @@ impl RealReencryptor {
                             };
                             let enc_res = signcrypt(
                                 rng,
-                                &bincode::serialize(&signcryption_msg)?,
+                                &serialize(&signcryption_msg)?,
                                 client_enc_key,
-                                client_verf_key,
+                                client_address,
                                 &sig_key,
                             )?;
                             serialize(&enc_res)?
@@ -835,7 +835,7 @@ impl Reencryptor for RealReencryptor {
             self.session_preparer.own_identity(),
             inner.request_id
         );
-        let (ciphertext, fhe_type, link, client_enc_key, client_verf_key, key_id, req_id) =
+        let (ciphertext, fhe_type, link, client_enc_key, client_address, key_id, req_id) =
             tonic_handle_potential_err(
                 validate_reencrypt_req(&inner).await,
                 format!("Invalid reencryption request {:?}", inner),
@@ -882,7 +882,7 @@ impl Reencryptor for RealReencryptor {
                 link.clone(),
                 &key_id,
                 &client_enc_key,
-                &client_verf_key,
+                &client_address,
                 sig_key,
                 fhe_keys_rlock,
             )
@@ -1178,7 +1178,7 @@ impl Decryptor for RealDecryptor {
         };
 
         let sig_payload_vec = tonic_handle_potential_err(
-            bincode::serialize(&sig_payload),
+            serialize(&sig_payload),
             format!("Could not convert payload to bytes {:?}", sig_payload),
         )?;
 

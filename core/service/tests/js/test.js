@@ -23,11 +23,9 @@ const {
     new_fhe_type,
     make_reencryption_req,
     reencryption_request_to_flat_json_string,
-    default_client_for_centralized_kms,
     agg_resp_to_json,
-    get_client_public_key,
     get_client_secret_key,
-    public_sig_key_to_u8vec,
+    get_client_address,
     private_sig_key_to_u8vec
 } = require("../../pkg");
 
@@ -108,8 +106,10 @@ test('print central transcript', (_t) => {
     console.log("request:");
     console.log(req);
 
-    console.log("ethereum pk and sk (sk is bincoded):");
-    console.log(public_sig_key_to_u8vec(get_client_public_key(client)));
+    console.log("ethereum address:");
+    console.log(get_client_address(client))
+
+    console.log("ethereum sk (bincoded):");
     console.log(private_sig_key_to_u8vec(get_client_secret_key(client)));
 
     console.log("ephemeral pk and sk:");
@@ -128,22 +128,14 @@ test('new client', (_t) => {
         67, 235, 13, 224, 104, 147
 
     ]);
-    const client_key_buf = new Uint8Array([
-        2, 190, 131, 237, 176, 0, 13, 171, 152, 220, 41, 77, 205, 59, 208, 48, 37, 75, 0, 159, 68, 39, 28, 30, 76, 96, 11, 61, 38,
-        66, 2, 129, 0
-    ]);
     let kms_keys = [u8vec_to_public_sig_key(kms_key_buf)];
 
     // make a generic client
-    let client_key = u8vec_to_public_sig_key(client_key_buf);
-    let generic_client = new_client(kms_keys, null, client_key, 'default');
-
-    // make a default centralized client
-    let central_client = default_client_for_centralized_kms();
+    let address = "0x4838B106FCe9647Bdf1E7877BF73cE8B0BAD5f97";
+    let generic_client = new_client(kms_keys, address, 'default');
 
     // try creating requests
     generic_make_reenc(generic_client, make_reencryption_req);
-    generic_make_reenc(central_client, make_reencryption_req);
 });
 
 function generic_make_reenc(client, reqf) {

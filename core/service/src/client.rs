@@ -29,9 +29,8 @@ use distributed_decryption::execution::sharing::shamir::{
     fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
 };
 use distributed_decryption::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
-use itertools::Itertools;
 use rand::{RngCore, SeedableRng};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use tfhe::shortint::ClassicPBSParameters;
 use wasm_bindgen::prelude::*;
 
@@ -49,14 +48,16 @@ cfg_if::cfg_if! {
         use crate::storage::Storage;
         use crate::util::file_handling::read_as_json;
         use crate::{cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms};
+        use crate::cryptography::der_types::{PrivateSigKeyVersioned, PublicSigKeyVersioned};
         use crate::{storage::StorageReader, util::key_setup::FhePublicKey};
         use anyhow::ensure;
         use distributed_decryption::execution::zk::ceremony::PublicParameter;
+        use itertools::Itertools;
         use serde::de::DeserializeOwned;
         use std::fmt;
+        use std::collections::HashMap;
         use tfhe::ServerKey;
         use kms_core_common::Unversionize;
-        use crate::cryptography::der_types::{PrivateSigKeyVersioned, PublicSigKeyVersioned};
         use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
         use distributed_decryption::execution::zk::ceremony::PublicParameterVersioned;
     }
@@ -114,8 +115,8 @@ fn decrypted_blocks_to_plaintext(
 #[wasm_bindgen]
 pub struct Client {
     rng: Box<AesRng>,
-    server_pks: HashMap<PublicSigKey, u8>,
-    client_pk: PublicSigKey,
+    server_pks: Vec<PublicSigKey>,
+    client_address: alloy_primitives::Address,
     client_sk: Option<PrivateSigKey>,
     params: ClassicPBSParameters,
 }
@@ -127,8 +128,8 @@ pub struct Client {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct TestingReencryptionTranscript {
     // client
-    server_pks: HashMap<PublicSigKey, u8>,
-    client_pk: PublicSigKey,
+    server_pks: Vec<PublicSigKey>,
+    client_address: alloy_primitives::Address,
     client_sk: Option<PrivateSigKey>,
     degree: u32,
     params: ClassicPBSParameters,
@@ -249,40 +250,20 @@ pub mod js_api {
         deserialize(v).map_err(|e| JsError::new(&e.to_string()))
     }
 
-    /// Instantiate a new client for use with the centralized KMS.
-    #[wasm_bindgen]
-    pub fn default_client_for_centralized_kms() -> Result<Client, JsError> {
-        console_error_panic_hook::set_once();
-        // TODO: we're just using a dummy public key here
-        // since it should not be used by wasm at the moment
-        // when using the insecure way of doing reconstruction
-        let clinet_pk_buf = vec![
-            2u8, 190, 131, 237, 176, 0, 13, 171, 152, 220, 41, 77, 205, 59, 208, 48, 37, 75, 0,
-            159, 68, 39, 28, 30, 76, 96, 11, 61, 38, 66, 2, 129, 0,
-        ];
-        let client_pk = u8vec_to_public_sig_key(&clinet_pk_buf)?;
-        new_client(vec![], None, client_pk, "default")
-    }
-
     /// Instantiate a new client.
     ///
     /// * `server_pks` - a list of KMS server signature public keys,
     /// which can parsed using [u8vec_to_public_sig_key].
     ///
-    /// * `server_pks_ids` - a list of the IDs that are associated to the
-    /// server public keys. If None is given, then the IDs default to
-    /// 1..n, where n is the length of `server_pks`.
-    ///
-    /// * `client_pk` - the client (wallet) public key,
-    /// which can parsed using [u8vec_to_public_sig_key] also.
+    /// * `client_address_hex` - the client (wallet) address in hex,
+    /// must be prefixed with "0x".
     ///
     /// * `param_choice` - the parameter choice, which can be either `"test"` or `"default"`.
     /// The "default" parameter choice is selected if no matching string is found.
     #[wasm_bindgen]
     pub fn new_client(
         server_pks: Vec<PublicSigKey>,
-        server_pks_ids: Option<Vec<u8>>,
-        client_pk: PublicSigKey,
+        client_address_hex: &str,
         param_choice: &str,
     ) -> Result<Client, JsError> {
         console_error_panic_hook::set_once();
@@ -303,21 +284,13 @@ pub mod js_api {
             serde_json::from_str::<NoiseFloodParameters>(params_json)
                 .map_err(|e| JsError::new(&e.to_string()))?;
 
-        let server_pks_ids = match server_pks_ids {
-            Some(inner) => inner,
-            None => (1..=server_pks.len() as u8).collect_vec(),
-        };
-
-        if server_pks.len() != server_pks_ids.len() {
-            return Err(JsError::new("server_pks.len() != server_pks_ids.len()"));
-        }
-
-        let server_pks = HashMap::from_iter(server_pks.into_iter().zip(server_pks_ids));
+        let client_address = alloy_primitives::Address::parse_checksummed(client_address_hex, None)
+            .map_err(|e| JsError::new(&e.to_string()))?;
 
         Ok(Client {
             rng: Box::new(AesRng::from_entropy()),
             server_pks,
-            client_pk,
+            client_address,
             client_sk: None,
             params: params.ciphertext_parameters,
         })
@@ -325,17 +298,18 @@ pub mod js_api {
 
     #[wasm_bindgen]
     pub fn get_server_public_keys(client: &Client) -> Vec<PublicSigKey> {
-        client.server_pks.keys().cloned().collect()
-    }
-
-    #[wasm_bindgen]
-    pub fn get_client_public_key(client: &Client) -> PublicSigKey {
-        client.client_pk.clone()
+        client.server_pks.clone()
     }
 
     #[wasm_bindgen]
     pub fn get_client_secret_key(client: &Client) -> Option<PrivateSigKey> {
         client.client_sk.clone()
+    }
+
+    #[wasm_bindgen]
+    pub fn get_client_address(client: &Client) -> String {
+        let checksumed = client.client_address.to_checksum_buffer(None);
+        checksumed.to_string()
     }
 
     #[wasm_bindgen(getter_with_clone)]
@@ -450,7 +424,7 @@ pub mod js_api {
         Client {
             rng: Box::new(AesRng::from_entropy()),
             server_pks: transcript.server_pks,
-            client_pk: transcript.client_pk,
+            client_address: transcript.client_address,
             client_sk: transcript.client_sk,
             params: transcript.params,
         }
@@ -584,7 +558,7 @@ pub mod js_api {
             version: CURRENT_FORMAT_VERSION,
             randomness,
             enc_key: serialize(&enc_pk)?,
-            verification_key: serialize(&client.client_pk)?,
+            client_address: client.client_address.to_vec(),
             fhe_type: fhe_type as i32,
             key_id: Some(key_id),
             ciphertext,
@@ -605,7 +579,7 @@ pub mod js_api {
         let mut json = serde_json::json!(
         {
             "signature": hex::encode(&req.signature),
-            "verification_key": hex::encode(&req.payload.as_ref().unwrap().verification_key),
+            "verification_key": hex::encode(&req.payload.as_ref().unwrap().client_address),
             "enc_key": hex::encode(&req.payload.as_ref().unwrap().enc_key),
             "ciphertext_digest": hex::encode(&req.payload.as_ref().unwrap().ciphertext_digest),
             "eip712_verifying_contract": domain.verifying_contract,
@@ -777,15 +751,15 @@ impl Client {
     /// Constructor method to be used for WASM and other situations where data cannot be directly loaded
     /// from a [PublicStorage]
     pub fn new(
-        server_pks: HashMap<PublicSigKey, u8>,
-        client_pk: PublicSigKey,
+        server_pks: Vec<PublicSigKey>,
+        client_address: alloy_primitives::Address,
         client_sk: Option<PrivateSigKey>,
         params: ClassicPBSParameters,
     ) -> Self {
         Client {
             rng: Box::new(AesRng::from_entropy()), // todo should be argument
             server_pks,
-            client_pk,
+            client_address,
             client_sk,
             params,
         }
@@ -824,6 +798,8 @@ impl Client {
             )?
             .to_owned(),
         )?;
+        let client_address = alloy_primitives::Address::from_public_key(&client_pk.pk);
+
         let client_sk_map: HashMap<RequestId, PrivateSigKeyVersioned> =
             read_all_data(&client_storage, &ClientDataType::SigningKey.to_string()).await?;
         if client_sk_map.values().len() != 1 {
@@ -841,10 +817,9 @@ impl Client {
 
         let params: NoiseFloodParameters = read_as_json(param_path).await?;
 
-        let n = server_keys.len() as u8;
         Ok(Client::new(
-            HashMap::from_iter(server_keys.into_iter().zip(1..=n)),
-            client_pk,
+            server_keys,
+            client_address,
             Some(client_sk),
             params.ciphertext_parameters,
         ))
@@ -880,7 +855,7 @@ impl Client {
             }
         };
 
-        for verf_key in self.server_pks.keys() {
+        for verf_key in &self.server_pks {
             let ok = BaseKmsStruct::verify_sig(&data, &signature_struct, verf_key);
             if ok {
                 return Some(verf_key.clone());
@@ -1135,7 +1110,7 @@ impl Client {
         let sig_payload = ReencryptionRequestPayload {
             version: CURRENT_FORMAT_VERSION,
             enc_key: serialize(&enc_pk)?,
-            verification_key: serialize(&self.client_pk)?,
+            client_address: self.client_address.to_vec(),
             fhe_type: fhe_type as i32,
             randomness,
             key_id: Some(key_id.clone()),
@@ -1150,10 +1125,23 @@ impl Client {
         let signer = alloy_signer_local::PrivateKeySigner::from_signing_key(
             self.client_sk.clone().unwrap().sk,
         );
+        // sanity check
+        if signer.address() != self.client_address {
+            return Err(anyhow_error_and_log(
+                "Sanity check failed: derived address does not equal to client address",
+            ));
+        }
 
         let signature = signer.sign_hash_sync(&message_hash)?;
 
         let domain_msg = allow_to_protobuf_domain(domain)?;
+        tracing::debug!(
+            "reencryption request payload - \
+            address: {:?} \
+            domain: {:?}",
+            sig_payload.client_address,
+            domain
+        );
         Ok((
             ReencryptionRequest {
                 signature: signature.as_bytes().to_vec(),
@@ -1362,7 +1350,7 @@ impl Client {
                 decryption_key: enc_sk.clone(),
             },
             pk: SigncryptionPubKey {
-                verification_key: self.client_pk.clone(),
+                client_address: self.client_address,
                 enc_key: enc_pk.clone(),
             },
         };
@@ -1398,7 +1386,7 @@ impl Client {
                 decryption_key: enc_sk.clone(),
             },
             pk: SigncryptionPubKey {
-                verification_key: self.client_pk.clone(),
+                client_address: self.client_address,
                 enc_key: enc_pk.clone(),
             },
         };
@@ -1878,7 +1866,7 @@ impl Client {
             return Ok(false);
         }
         let resp_verf_key: PublicSigKey = deserialize(&other_resp.verification_key())?;
-        if !&self.server_pks.keys().contains(&resp_verf_key) {
+        if !&self.server_pks.contains(&resp_verf_key) {
             tracing::warn!("Server key is incorrect in reencryption request");
             return Ok(false);
         }
@@ -2463,7 +2451,7 @@ pub(crate) mod tests {
         // try verification with each of the server keys; at least one must pass
         let crs_sig: Signature = bincode::deserialize(&crs_info.signature).unwrap();
         let mut verified = false;
-        for vk in internal_client.server_pks.keys() {
+        for vk in &internal_client.server_pks {
             let v = BaseKmsStruct::verify_sig(&client_handle, &crs_sig, vk);
             verified = verified || v;
         }
@@ -3001,7 +2989,7 @@ pub(crate) mod tests {
             &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
             false,
             TypedPlaintext::U8(48),
-            7,
+            4,
             secure,
         )
         .await;
@@ -3208,7 +3196,7 @@ pub(crate) mod tests {
                 // want to introduce extra npm dependency.
                 let transcript = TestingReencryptionTranscript {
                     server_pks: internal_client.server_pks.clone(),
-                    client_pk: internal_client.client_pk.clone(),
+                    client_address: internal_client.client_address,
                     client_sk: internal_client.client_sk.clone(),
                     degree: 0,
                     params: internal_client.params,
@@ -3256,7 +3244,7 @@ pub(crate) mod tests {
                     .process_reencryption_resp(Some(req.clone()), &responses, enc_pk, enc_sk)
                     .unwrap()
             } else {
-                internal_client.server_pks = HashMap::new();
+                internal_client.server_pks = Vec::new();
                 internal_client
                     .insecure_process_reencryption_resp(&responses, enc_pk, enc_sk)
                     .unwrap()
@@ -3657,7 +3645,7 @@ pub(crate) mod tests {
 
                 let transcript = TestingReencryptionTranscript {
                     server_pks: internal_client.server_pks.clone(),
-                    client_pk: internal_client.client_pk.clone(),
+                    client_address: internal_client.client_address,
                     client_sk: internal_client.client_sk.clone(),
                     degree: THRESHOLD as u32,
                     params: internal_client.params,
@@ -3688,7 +3676,7 @@ pub(crate) mod tests {
                     .process_reencryption_resp(Some(req.clone()), responses, enc_pk, enc_sk)
                     .unwrap()
             } else {
-                internal_client.server_pks = HashMap::new();
+                internal_client.server_pks = Vec::new();
                 internal_client
                     .insecure_process_reencryption_resp(responses, enc_pk, enc_sk)
                     .unwrap()
@@ -3724,10 +3712,10 @@ pub(crate) mod tests {
         .await;
         let ct = Vec::from([1_u8; 100000]);
         let fhe_type = FheType::Euint32;
-        let n = keys.server_keys.len() as u8;
+        let client_address = alloy_primitives::Address::from_public_key(&keys.client_pk.pk);
         let mut internal_client = Client::new(
-            HashMap::from_iter(keys.server_keys.iter().cloned().zip(0..n)),
-            keys.client_pk,
+            keys.server_keys.clone(),
+            client_address,
             Some(keys.client_sk),
             keys.params.ciphertext_parameters,
         );

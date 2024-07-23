@@ -5272,7 +5272,6 @@ dependencies = [
  "ctor",
  "der 0.7.9",
  "distributed-decryption",
- "ethers",
  "futures",
  "hex",
  "itertools 0.13.0",

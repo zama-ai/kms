@@ -205,18 +205,7 @@ pub trait BaseKms {
         signature: &Signature,
         verification_key: &PublicSigKey,
     ) -> bool;
-    fn verify_sig_eip712<T: SolStruct>(
-        payload: &T,
-        domain: &Eip712Domain,
-        signature: &Signature,
-        verification_key: &PublicSigKey,
-    ) -> bool;
     fn sign<T: Serialize + AsRef<[u8]>>(&self, msg: &T) -> anyhow::Result<Signature>;
-    fn sign_eip712<T: SolStruct>(
-        &self,
-        msg: &T,
-        domain: &Eip712Domain,
-    ) -> anyhow::Result<Signature>;
     fn get_serialized_verf_key(&self) -> Vec<u8>;
     fn digest<T: ?Sized + AsRef<[u8]>>(msg: &T) -> anyhow::Result<Vec<u8>>;
 }
@@ -237,7 +226,7 @@ pub trait Kms: BaseKms {
         ct_type: FheType,
         digest_link: &[u8],
         enc_key: &PublicEncKey,
-        pub_verf_key: &PublicSigKey,
+        client_address: &alloy_primitives::Address,
     ) -> anyhow::Result<Vec<u8>>;
 }
 

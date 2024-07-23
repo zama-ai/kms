@@ -316,7 +316,7 @@ pub struct ReencryptValues {
     // payload
     version: u32,
     #[builder(setter(into))]
-    verification_key: RedactedHexVector,
+    client_address: RedactedHexVector,
     #[builder(setter(into))]
     randomness: RedactedHexVector,
     #[builder(setter(into))]
@@ -348,8 +348,8 @@ impl ReencryptValues {
         self.version
     }
 
-    pub fn verification_key(&self) -> &RedactedHexVector {
-        &self.verification_key
+    pub fn client_address(&self) -> &RedactedHexVector {
+        &self.client_address
     }
 
     pub fn randomness(&self) -> &RedactedHexVector {
@@ -965,7 +965,7 @@ mod tests {
             ReencryptValues {
                 signature: HexVector::arbitrary(g),
                 version: u32::arbitrary(g),
-                verification_key: HexVector::arbitrary(g).into(),
+                client_address: HexVector::arbitrary(g).into(),
                 randomness: HexVector::arbitrary(g).into(),
                 enc_key: HexVector::arbitrary(g).into(),
                 fhe_type: FheType::arbitrary(g),
@@ -1152,7 +1152,7 @@ mod tests {
         let reencrypt_values = ReencryptValues::builder()
             .signature(vec![1])
             .version(1)
-            .verification_key(vec![2])
+            .client_address(vec![2])
             .randomness(vec![3])
             .enc_key(vec![4])
             .fhe_type(FheType::Ebool)
@@ -1176,7 +1176,7 @@ mod tests {
                 "reencrypt": {
                     "signature": hex::encode([1]),
                     "version": 1,
-                    "verification_key": hex::encode(vec![2]),
+                    "client_address": hex::encode(vec![2]),
                     "randomness": hex::encode(vec![3]),
                     "enc_key": hex::encode(vec![4]),
                     "fhe_type": "ebool",

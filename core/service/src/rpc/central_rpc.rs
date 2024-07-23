@@ -2,13 +2,12 @@ use super::rpc_types::{BaseKms, PrivDataType, CURRENT_FORMAT_VERSION};
 use crate::conf::centralized::CentralizedConfig;
 #[cfg(any(test, feature = "testing"))]
 use crate::consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH};
-use crate::cryptography::central_kms::handle_potential_err;
 use crate::cryptography::central_kms::verify_eip712;
 use crate::cryptography::central_kms::{
     async_decrypt, async_generate_crs, async_generate_fhe_keys, async_reencrypt, BaseKmsStruct,
     SoftwareKms,
 };
-use crate::cryptography::der_types::{PublicEncKey, PublicSigKey};
+use crate::cryptography::der_types::PublicEncKey;
 use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
@@ -273,7 +272,7 @@ impl<
         request: Request<ReencryptionRequest>,
     ) -> Result<Response<Empty>, Status> {
         let inner = request.into_inner();
-        let (ciphertext, fhe_type, link, client_enc_key, client_verf_key, key_id, request_id) =
+        let (ciphertext, fhe_type, link, client_enc_key, client_address, key_id, request_id) =
             tonic_handle_potential_err(
                 validate_reencrypt_req(&inner).await,
                 format!("Invalid key in request {:?}", inner),
@@ -324,7 +323,7 @@ impl<
                 fhe_type,
                 &link,
                 &client_enc_key,
-                &client_verf_key,
+                &client_address,
             )
             .await
             {
@@ -680,7 +679,7 @@ pub async fn validate_reencrypt_req(
     FheType,
     Vec<u8>,
     PublicEncKey,
-    PublicSigKey,
+    alloy_primitives::Address,
     RequestId,
     RequestId,
 )> {
@@ -703,23 +702,18 @@ pub async fn validate_reencrypt_req(
         )));
     }
 
-    let client_verf_key: PublicSigKey = handle_potential_err(
-        deserialize(&payload.verification_key),
-        format!("Invalid verification key in request {:?}", req),
-    )?;
+    if payload.client_address.len() != 20 {
+        return Err(anyhow::anyhow!("incorrect address length"));
+    }
+    let client_verf_key = alloy_primitives::Address::from_slice(&payload.client_address);
 
     match verify_eip712(req) {
-        Ok(true) => {
+        Ok(()) => {
             tracing::debug!("🔒 Signature verified successfully");
         }
-        Ok(false) => {
-            tracing::warn!("🔒 Signature verification failed");
-        }
         Err(e) => {
-            tracing::error!("🔒 Signature verification error: {:?}", e);
             return Err(anyhow_error_and_log(format!(
-                "Could not validate signature, request: {:?}",
-                req
+                "Signature verification failed with error {e} for request: {req:?}"
             )));
         }
     }

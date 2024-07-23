@@ -415,7 +415,7 @@ where
             signature: self.reencrypt.signature().into(),
             payload: Some(ReencryptionRequestPayload {
                 version: reencrypt.version(),
-                verification_key: reencrypt.verification_key().deref().into(),
+                client_address: reencrypt.client_address().deref().into(),
                 randomness: reencrypt.randomness().deref().into(),
                 enc_key: reencrypt.enc_key().deref().into(),
                 fhe_type: reencrypt.fhe_type() as i32,
@@ -1168,7 +1168,7 @@ mod test {
             ReencryptValues::builder()
                 .signature(kms_req.signature.clone())
                 .version(payload.version)
-                .verification_key(payload.verification_key)
+                .client_address(payload.client_address)
                 .randomness(payload.randomness)
                 .enc_key(payload.enc_key)
                 .fhe_type(WrappingFheType::try_from(payload.fhe_type).unwrap().0)

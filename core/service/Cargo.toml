@@ -86,7 +86,6 @@ url = "2.5.0"
 alloy-signer = "0.1.3"
 alloy-signer-local = "0.1.3"
 console_error_panic_hook = { version = "0.1.7" }
-ethers = "2.0.14"
 futures = "0.3.30"
 serde-wasm-bindgen = { version = "0.6.0" }
 wasm-bindgen = { version = "0.2.86", features = ["serde-serialize"] }

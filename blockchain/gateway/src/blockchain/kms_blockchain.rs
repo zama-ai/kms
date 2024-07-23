@@ -4,10 +4,9 @@ use crate::config::GatewayConfig;
 use crate::config::KmsMode;
 use crate::util::conversion::TokenizableFrom;
 use crate::util::footprint;
-use alloy_primitives::Address;
 use anyhow::anyhow;
 use async_trait::async_trait;
-use bincode::{deserialize, serialize};
+use bincode::deserialize;
 use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
 use dashmap::DashMap;
 use ethers::abi::Token;
@@ -31,14 +30,12 @@ use kms_blockchain_client::query_client::OperationQuery;
 use kms_blockchain_client::query_client::QueryClient;
 use kms_blockchain_client::query_client::QueryClientBuilder;
 use kms_blockchain_client::query_client::QueryContractRequest;
-use kms_lib::client::recover_ecdsa_public_key_from_signature;
 use kms_lib::kms::DecryptionResponsePayload;
 use kms_lib::rpc::rpc_types::Plaintext;
 use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
 use sha3::Digest;
 use sha3::Sha3_256;
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use tokio::sync::mpsc;
@@ -452,21 +449,11 @@ impl Blockchain for KmsBlockchainImpl {
             ));
         }
 
-        let domain = alloy_sol_types::eip712_domain! {
-            name: eip712_name.clone(),
-            version: eip712_version.clone(),
-            chain_id: chain_id.as_u64(),
-            verifying_contract: Address::from_str(eip712_verifying_contract.as_str()).unwrap(),
-        };
-
-        let verification_key =
-            recover_ecdsa_public_key_from_signature(&signature, &enc_key, &domain, &user_address)?;
-
         // NOTE: the ciphertext digest must be the real SHA3 digest
         let reencrypt_values = ReencryptValues::builder()
             .signature(signature)
             .version(CURRENT_FORMAT_VERSION)
-            .verification_key(serialize(&verification_key)?)
+            .client_address(user_address)
             .randomness(randomness)
             .enc_key(enc_key)
             .fhe_type(fhe_type)

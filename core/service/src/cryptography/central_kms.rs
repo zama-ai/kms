@@ -1,9 +1,6 @@
-use super::signcryption::{
-    internal_verify_sig, internal_verify_sig_eip712, serialize_hash_element, sign, sign_eip712,
-    signcrypt, RND_SIZE,
-};
+use super::signcryption::{internal_verify_sig, serialize_hash_element, sign, signcrypt, RND_SIZE};
 use super::{
-    der_types::{PrivateSigKey, PublicEncKey, PublicSigKey, Signature},
+    der_types::{PrivateSigKey, PublicEncKey, PublicSigKey},
     signcryption::hash_element,
 };
 use crate::consts::ID_LENGTH;
@@ -29,9 +26,7 @@ use crate::{
     rpc::rpc_types::CrsMetaDataVersioned,
 };
 use aes_prng::AesRng;
-use alloy_primitives::Address;
-use alloy_primitives::Bytes;
-use alloy_sol_types::{Eip712Domain, SolStruct};
+use alloy_sol_types::SolStruct;
 use anyhow::Context;
 use bincode::{deserialize, serialize};
 use der::zeroize::Zeroize;
@@ -219,28 +214,15 @@ impl BaseKms for BaseKmsStruct {
     {
         Ok(hash_element(msg))
     }
-
-    /// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
-    /// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
-    fn verify_sig_eip712<T: SolStruct>(
-        payload: &T,
-        domain: &Eip712Domain,
-        signature: &Signature,
-        verification_key: &PublicSigKey,
-    ) -> bool {
-        internal_verify_sig_eip712(payload, domain, signature, verification_key)
-    }
-
-    fn sign_eip712<T: SolStruct>(
-        &self,
-        msg: &T,
-        domain: &Eip712Domain,
-    ) -> anyhow::Result<Signature> {
-        sign_eip712(msg, domain, &self.sig_key)
-    }
 }
 
-pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<bool> {
+/// Verify the EIP-712 encoded payload in the request.
+///
+/// Fist we need to extract the client public key from the signature.
+/// Then the public key is converted into an address and we check
+/// whether the address matches the address in the request.
+/// We assume the `domain` is trusted since tkms core does not run a light client.
+pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<()> {
     let payload = request
         .payload
         .as_ref()
@@ -250,21 +232,21 @@ pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<boo
     // print out the req.signature in hex string
     tracing::debug!("🔒 req.signature: {:?}", hex::encode(signature_bytes));
 
-    let expected_wrapped_verifying_key: PublicSigKey = handle_potential_err(
-        deserialize(&payload.verification_key),
-        format!("Invalid verification key in request {:?}", request),
-    )?;
-    let expected_verifying_key = expected_wrapped_verifying_key.pk;
+    if payload.client_address.len() != 20 {
+        return Err(anyhow::anyhow!("incorrect address length"));
+    }
+    let client_address = alloy_primitives::Address::from_slice(&payload.client_address);
 
-    // print out the verification key in hex string
-    tracing::debug!("🔒 expected_verifying_key: {:?}", expected_verifying_key);
+    // print out the client address
+    // note that the alloy address should format to hex already
+    tracing::debug!("🔒 client address in payload: {:?}", client_address);
 
     let enc_key_bytes = payload.enc_key.clone();
     // print out the hex string of the enc_key_bytes
     tracing::debug!("🔒 enc_key_bytes: {:?}", hex::encode(&enc_key_bytes));
 
     let message = Reencrypt {
-        publicKey: Bytes::copy_from_slice(&payload.enc_key),
+        publicKey: alloy_primitives::Bytes::copy_from_slice(&payload.enc_key),
     };
 
     let wrapped_domain = request
@@ -279,8 +261,9 @@ pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<boo
     );
 
     tracing::debug!("🔒 chain_id: {:?}", chain_id);
-    let verifying_contract_address = Address::from_str(wrapped_domain.verifying_contract.as_str())
-        .context("Failed to convert wrappted domain message into address")?;
+    let verifying_contract_address =
+        alloy_primitives::Address::from_str(wrapped_domain.verifying_contract.as_str())
+            .context("Failed to convert wrappted domain message into address")?;
     let domain = alloy_sol_types::eip712_domain! {
         name: wrapped_domain.name.clone(),
         version: wrapped_domain.version.clone(),
@@ -290,18 +273,32 @@ pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<boo
 
     // Derive the EIP-712 signing hash.
     let message_hash = message.eip712_signing_hash(&domain);
-    let signature_bytes = signature_bytes.as_slice();
-    let signature = alloy_primitives::Signature::try_from(signature_bytes)?;
 
-    let recovered_address = signature.recover_address_from_prehash(&message_hash)?;
+    // We need to use the alloy signature type since
+    // it will let us call `recover_address_from_prehash` later
+    // but this signature cannot be wrapper into our own `Signature`
+    // type since our own type uses k256::ecdsa, which is not the same
+    // as the one in alloy.
+    let alloy_signature = alloy_primitives::Signature::try_from(signature_bytes.as_slice())
+        .map_err(|e| {
+            tracing::error!("Failed to parse alloy signature with error: {e}");
+            e
+        })?;
+
+    let recovered_address = alloy_signature.recover_address_from_prehash(&message_hash)?;
     tracing::debug!("🔒 Recovered address: {:?}", recovered_address);
 
-    let recovered_verifying_key = signature.recover_from_prehash(&message_hash)?;
+    // Note that `recover_from_prehash` also verifies the signature
+    let recovered_verifying_key = alloy_signature.recover_from_prehash(&message_hash)?;
     tracing::debug!("🔒 Recovered verifying key: {:?}", recovered_verifying_key);
+    let client_address_from_key =
+        alloy_primitives::Address::from_public_key(&recovered_verifying_key);
 
-    let verified = recovered_verifying_key == expected_verifying_key;
-    tracing::debug!("🔒 Verified: {:?}", verified);
-    Ok(verified)
+    let consistent_public_key = client_address_from_key == client_address;
+    if !consistent_public_key {
+        return Err(anyhow::anyhow!("address is not consistent"));
+    }
+    Ok(())
 }
 
 #[cfg(feature = "non-wasm")]
@@ -459,7 +456,7 @@ pub async fn async_reencrypt<
     fhe_type: FheType,
     req_digest: &[u8],
     client_enc_key: &PublicEncKey,
-    client_verf_key: &PublicSigKey,
+    client_address: &alloy_primitives::Address,
 ) -> anyhow::Result<Vec<u8>> {
     SoftwareKms::<PubS, PrivS>::reencrypt(
         client_key,
@@ -469,7 +466,7 @@ pub async fn async_reencrypt<
         fhe_type,
         req_digest,
         client_enc_key,
-        client_verf_key,
+        client_address,
     )
 }
 
@@ -512,25 +509,6 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 
     fn digest<T: ?Sized + AsRef<[u8]>>(msg: &T) -> anyhow::Result<Vec<u8>> {
         BaseKmsStruct::digest(&msg)
-    }
-
-    /// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
-    /// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
-    fn verify_sig_eip712<T: SolStruct>(
-        payload: &T,
-        domain: &Eip712Domain,
-        signature: &Signature,
-        verification_key: &PublicSigKey,
-    ) -> bool {
-        BaseKmsStruct::verify_sig_eip712(payload, domain, signature, verification_key)
-    }
-
-    fn sign_eip712<T: SolStruct>(
-        &self,
-        msg: &T,
-        domain: &Eip712Domain,
-    ) -> anyhow::Result<Signature> {
-        self.base_kms.sign_eip712(msg, domain)
     }
 }
 
@@ -617,7 +595,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         fhe_type: FheType,
         link: &[u8],
         client_enc_key: &PublicEncKey,
-        client_verf_key: &PublicSigKey,
+        client_address: &alloy_primitives::Address,
     ) -> anyhow::Result<Vec<u8>> {
         let plaintext = Self::decrypt(client_key, ct, fhe_type)?;
         // Observe that we encrypt the plaintext itself, this is different from the threshold case
@@ -630,7 +608,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             rng,
             &serialize(&signcryption_msg)?,
             client_enc_key,
-            client_verf_key,
+            client_address,
             sig_key,
         )?;
         let res = serialize(&enc_res)?;
@@ -760,8 +738,9 @@ mod tests {
     use crate::cryptography::central_kms::SoftwareKmsKeys;
     use crate::cryptography::central_kms::{gen_sig_keys, SoftwareKms};
     use crate::cryptography::der_types::PrivateSigKey;
-    use crate::cryptography::request::ephemeral_key_generation;
-    use crate::cryptography::signcryption::decrypt_signcryption;
+    use crate::cryptography::signcryption::{
+        decrypt_signcryption, ephemeral_signcryption_key_generation,
+    };
     use crate::kms::{FheType, RequestId};
     use crate::rpc::central_rpc::default_param_file_map;
     use crate::rpc::rpc_types::Kms;
@@ -1098,9 +1077,9 @@ mod tests {
         let link = vec![42_u8, 42, 42];
         let (_client_verf_key, client_sig_key) = gen_sig_keys(&mut rng);
         let client_keys = {
-            let mut keys = ephemeral_key_generation(&mut rng, &client_sig_key);
+            let mut keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
             if sim_type == SimulationType::BadEphemeralKey {
-                let bad_keys = ephemeral_key_generation(&mut rng, &client_sig_key);
+                let bad_keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
                 keys.sk = bad_keys.sk;
             }
             keys
@@ -1119,7 +1098,7 @@ mod tests {
             fhe_type,
             &link,
             &client_keys.pk.enc_key,
-            &client_keys.pk.verification_key,
+            &client_keys.pk.client_address,
         );
         // if bad FHE key is used, then it *might* panic
         let raw_cipher = if sim_type == SimulationType::BadFheKey {

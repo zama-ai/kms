@@ -25,8 +25,6 @@ pub mod cryptography {
     pub mod central_kms;
     pub mod der_types;
     pub mod nitro_enclave;
-    #[cfg(feature = "non-wasm")]
-    pub mod request;
     pub mod signcryption;
 }
 #[cfg(feature = "non-wasm")]

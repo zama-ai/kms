@@ -264,11 +264,11 @@ pub struct SigncryptionPrivKey {
 }
 
 /// Structure for public keys for signcryption that can get DER encoded as follows:
-///     verification_key, (SEC1 as an OCTET STRING)
+///     client_address, a 20-byte blockchain address, created from a public key
 ///     enc_key, (Montgomery point following libsodium serialization as OCTET STRING)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct SigncryptionPubKey {
-    pub verification_key: PublicSigKey,
+    pub client_address: alloy_primitives::Address,
     pub enc_key: PublicEncKey,
 }
 

@@ -189,10 +189,10 @@ message DecryptionResponse {
 message ReencryptionRequestPayload {
   // Version of the request format.
   uint32 version = 1;
-  // The server's signature verification key.
-  // Encoded using SEC1.
-  // TODO not needed in the request! Should be removed
-  bytes verification_key = 2;
+  // The client's (blockchain wallet) address.
+  // This is the keccak-256 hash of the uncompressed public key
+  // and then take the last 20 bytes of the hash.
+  bytes client_address = 2;
   // Randomness specified in the request to ensure EU-CMA of the signed response.
   // TODO check that we don't need two types of randomness. One for the reuqest and one for the response
   // TODO also check potential risk with repeated calls
