@@ -876,13 +876,8 @@ mod tests {
         assert_event(&response.events, &expected_event);
 
         let response_values = ReencryptResponseValues::builder()
-            .version(1)
-            .verification_key(vec![1])
-            .digest(vec![2])
-            .fhe_type(FheType::Ebool)
-            .signcrypted_ciphertext(vec![3])
-            .party_id(2u32)
-            .degree(1u32)
+            .signature(vec![4, 5, 6])
+            .payload(vec![6, 7, 8])
             .build();
 
         let response = contract

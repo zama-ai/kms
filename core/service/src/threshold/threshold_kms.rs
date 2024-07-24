@@ -9,7 +9,7 @@ use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
     KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ParamChoice, ReencryptionRequest,
-    ReencryptionResponse, RequestId, SignedPubDataHandle,
+    ReencryptionResponse, ReencryptionResponsePayload, RequestId, SignedPubDataHandle,
 };
 use crate::rpc::central_rpc::{
     convert_key_response, retrieve_parameters_sync, tonic_handle_potential_err, tonic_some_or_err,
@@ -932,7 +932,7 @@ impl Reencryptor for RealReencryptor {
             )?
         };
         let server_verf_key = self.base_kms.get_serialized_verf_key();
-        Ok(Response::new(ReencryptionResponse {
+        let payload = ReencryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
             signcrypted_ciphertext,
             fhe_type: fhe_type.into(),
@@ -940,6 +940,20 @@ impl Reencryptor for RealReencryptor {
             verification_key: server_verf_key,
             party_id: self.session_preparer.my_id as u32,
             degree: self.session_preparer.threshold as u32,
+        };
+
+        let sig_payload_vec = tonic_handle_potential_err(
+            serialize(&payload),
+            format!("Could not convert payload to bytes {:?}", payload),
+        )?;
+
+        let sig = tonic_handle_potential_err(
+            self.base_kms.sign(&sig_payload_vec),
+            format!("Could not sign payload {:?}", payload),
+        )?;
+        Ok(Response::new(ReencryptionResponse {
+            signature: sig.sig.to_vec(),
+            payload: Some(payload),
         }))
     }
 }

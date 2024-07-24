@@ -82,7 +82,6 @@ pub fn sign_eip712<T: alloy_sol_types::SolStruct>(
 ///
 /// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
 /// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
-#[cfg(feature = "non-wasm")]
 pub(crate) fn internal_verify_sig<T>(
     payload: &T,
     sig: &Signature,

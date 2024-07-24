@@ -235,6 +235,12 @@ message ReencryptionRequest {
 }
 
 message ReencryptionResponse {
+  bytes signature = 1;
+  // Signature of the serialization of [ReencryptionResponsePayload].
+  ReencryptionResponsePayload payload = 2;
+}
+
+message ReencryptionResponsePayload {
   // Version of the response format.
   uint32 version = 1;
   // The server's signature verification key.

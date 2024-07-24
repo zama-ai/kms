@@ -489,47 +489,22 @@ impl From<KeyGenResponseValues> for OperationValue {
 #[cw_serde]
 #[derive(Default, Eq, TypedBuilder)]
 pub struct ReencryptResponseValues {
-    version: u32,
     #[builder(setter(into))]
-    verification_key: HexVector,
+    signature: HexVector,
+    /// This is the response payload,
+    /// we keep it in the serialized form because
+    /// we need to use it to verify the signature.
     #[builder(setter(into))]
-    party_id: u32,
-    #[builder(setter(into))]
-    degree: u32,
-    #[builder(setter(into))]
-    digest: HexVector,
-    fhe_type: FheType,
-    #[builder(setter(into))]
-    signcrypted_ciphertext: HexVector,
+    payload: HexVector,
 }
 
 impl ReencryptResponseValues {
-    pub fn version(&self) -> u32 {
-        self.version
+    pub fn signature(&self) -> &HexVector {
+        &self.signature
     }
 
-    pub fn verification_key(&self) -> &HexVector {
-        &self.verification_key
-    }
-
-    pub fn digest(&self) -> &HexVector {
-        &self.digest
-    }
-
-    pub fn fhe_type(&self) -> FheType {
-        self.fhe_type
-    }
-
-    pub fn signcrypted_ciphertext(&self) -> &HexVector {
-        &self.signcrypted_ciphertext
-    }
-
-    pub fn party_id(&self) -> u32 {
-        self.party_id
-    }
-
-    pub fn degree(&self) -> u32 {
-        self.degree
+    pub fn payload(&self) -> &HexVector {
+        &self.payload
     }
 }
 
@@ -1005,13 +980,8 @@ mod tests {
     impl Arbitrary for ReencryptResponseValues {
         fn arbitrary(g: &mut Gen) -> ReencryptResponseValues {
             ReencryptResponseValues {
-                version: u32::arbitrary(g),
-                verification_key: HexVector::arbitrary(g),
-                digest: HexVector::arbitrary(g),
-                fhe_type: FheType::arbitrary(g),
-                signcrypted_ciphertext: HexVector::arbitrary(g),
-                party_id: u32::arbitrary(g),
-                degree: u32::arbitrary(g),
+                signature: HexVector::arbitrary(g),
+                payload: HexVector::arbitrary(g),
             }
         }
     }
@@ -1198,13 +1168,8 @@ mod tests {
     #[test]
     fn test_reencrypt_response_event_to_json() {
         let reencrypt_response_values = ReencryptResponseValues::builder()
-            .version(1)
-            .verification_key(vec![1])
-            .digest(vec![2])
-            .fhe_type(FheType::Ebool)
-            .signcrypted_ciphertext(vec![3])
-            .party_id(2u32)
-            .degree(1u32)
+            .signature(vec![1])
+            .payload(vec![2])
             .build();
         let message = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
@@ -1215,13 +1180,8 @@ mod tests {
         let json_str = serde_json::json!({
             "reencrypt_response": {
                 "reencrypt_response": {
-                    "version": 1,
-                    "verification_key": hex::encode([1]),
-                    "digest": hex::encode([2]),
-                    "fhe_type": "ebool",
-                    "signcrypted_ciphertext": hex::encode([3]),
-                    "party_id": 2,
-                    "degree": 1,
+                    "signature": hex::encode([1]),
+                    "payload": hex::encode([2]),
                 },
                 "proof": hex::encode([1, 2, 3]),
                 "txn_id": hex::encode(vec![1])

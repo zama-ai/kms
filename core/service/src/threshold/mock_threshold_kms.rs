@@ -12,8 +12,8 @@ use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
-    KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse, RequestId,
-    SignedPubDataHandle,
+    KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse,
+    ReencryptionResponsePayload, RequestId, SignedPubDataHandle,
 };
 use crate::rpc::rpc_types::{Plaintext, PubDataType, CURRENT_FORMAT_VERSION};
 
@@ -87,7 +87,7 @@ impl Reencryptor for DummyReencryptor {
         &self,
         _request: Request<RequestId>,
     ) -> Result<Response<ReencryptionResponse>, Status> {
-        Ok(Response::new(ReencryptionResponse {
+        let payload = ReencryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
             verification_key: vec![],
             digest: "dummy digest".as_bytes().to_vec(),
@@ -95,6 +95,10 @@ impl Reencryptor for DummyReencryptor {
             signcrypted_ciphertext: "signcrypted_ciphertext".as_bytes().to_vec(),
             party_id: self.degree + 1,
             degree: self.degree,
+        };
+        Ok(Response::new(ReencryptionResponse {
+            signature: vec![],
+            payload: Some(payload),
         }))
     }
 }

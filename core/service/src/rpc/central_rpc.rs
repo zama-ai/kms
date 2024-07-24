@@ -12,8 +12,8 @@ use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceE
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest,
-    KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse, RequestId,
-    SignedPubDataHandle,
+    KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse,
+    ReencryptionResponsePayload, RequestId, SignedPubDataHandle,
 };
 use crate::rpc::rpc_types::PubDataType;
 use crate::storage::delete_at_request_id;
@@ -364,8 +364,7 @@ impl<
         };
 
         let server_verf_key = self.get_serialized_verf_key();
-
-        Ok(Response::new(ReencryptionResponse {
+        let payload = ReencryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
             signcrypted_ciphertext: partial_dec,
             fhe_type: fhe_type.into(),
@@ -373,6 +372,11 @@ impl<
             verification_key: server_verf_key,
             party_id: 1, // In the centralized KMS, the server ID is always 1
             degree: 0, // In the centralized KMS, the degree is always 0 since result is a constant
+        };
+
+        Ok(Response::new(ReencryptionResponse {
+            signature: vec![],
+            payload: Some(payload),
         }))
     }
 

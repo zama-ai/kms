@@ -5,10 +5,8 @@ use crate::cryptography::der_types::PrivateSigKey;
 #[cfg(feature = "non-wasm")]
 use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
 use crate::cryptography::signcryption::{hash_element, Reencrypt};
-use crate::kms::SignedPubDataHandle;
-use crate::kms::{
-    DecryptionResponsePayload, Eip712DomainMsg, FheType, ReencryptionResponse, RequestId,
-};
+use crate::kms::{DecryptionResponsePayload, Eip712DomainMsg, FheType, RequestId};
+use crate::kms::{ReencryptionResponsePayload, SignedPubDataHandle};
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::FhePrivateKey;
 use alloy_primitives::{Address, Bytes, B256, U256};
@@ -615,7 +613,7 @@ pub trait MetaResponse {
     fn digest(&self) -> Vec<u8>;
 }
 
-impl MetaResponse for ReencryptionResponse {
+impl MetaResponse for ReencryptionResponsePayload {
     fn verification_key(&self) -> Vec<u8> {
         self.verification_key.to_owned()
     }

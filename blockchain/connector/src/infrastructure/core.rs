@@ -21,7 +21,7 @@ use kms_lib::kms::{
     Config, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
     DecryptionResponsePayload, Eip712DomainMsg, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
     KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionRequestPayload,
-    ReencryptionResponse,
+    ReencryptionResponse, ReencryptionResponsePayload,
 };
 use kms_lib::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
 use kms_lib::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
@@ -343,42 +343,6 @@ where
     }
 }
 
-struct WrappingFheType(events::kms::FheType);
-
-impl TryFrom<i32> for WrappingFheType {
-    type Error = anyhow::Error;
-    fn try_from(value: i32) -> anyhow::Result<Self> {
-        let fhe_type = if kms_lib::kms::FheType::Ebool as i32 == value {
-            events::kms::FheType::Ebool
-        } else if kms_lib::kms::FheType::Euint4 as i32 == value {
-            events::kms::FheType::Euint4
-        } else if kms_lib::kms::FheType::Euint8 as i32 == value {
-            events::kms::FheType::Euint8
-        } else if kms_lib::kms::FheType::Euint16 as i32 == value {
-            events::kms::FheType::Euint16
-        } else if kms_lib::kms::FheType::Euint32 as i32 == value {
-            events::kms::FheType::Euint32
-        } else if kms_lib::kms::FheType::Euint64 as i32 == value {
-            events::kms::FheType::Euint64
-        } else if kms_lib::kms::FheType::Euint128 as i32 == value {
-            events::kms::FheType::Euint128
-        } else if kms_lib::kms::FheType::Euint160 as i32 == value {
-            events::kms::FheType::Euint160
-        } else if kms_lib::kms::FheType::Euint256 as i32 == value {
-            events::kms::FheType::Euint256
-        } else if kms_lib::kms::FheType::Euint512 as i32 == value {
-            events::kms::FheType::Euint512
-        } else if kms_lib::kms::FheType::Euint1024 as i32 == value {
-            events::kms::FheType::Euint1024
-        } else if kms_lib::kms::FheType::Euint2048 as i32 == value {
-            events::kms::FheType::Euint2048
-        } else {
-            return Err(anyhow!("invalid fhe type"));
-        };
-        Ok(WrappingFheType(fhe_type))
-    }
-}
-
 #[async_trait]
 impl<S> KmsEventHandler for ReencryptVal<S>
 where
@@ -453,17 +417,12 @@ where
             match res {
                 Ok(res) => {
                     let inner = res.into_inner();
-                    let fhe_type: WrappingFheType = WrappingFheType::try_from(inner.fhe_type)?;
+                    let payload: ReencryptionResponsePayload = inner.payload.ok_or_else(||anyhow!("empty decryption payload"))?;
                     Ok(PollerStatus::Done(KmsOperationResponse::ReencryptResponse(
                         ReencryptResponseVal {
                             reencrypt_response: ReencryptResponseValues::builder()
-                                .version(inner.version)
-                                .verification_key(inner.verification_key.clone())
-                                .digest(inner.digest.clone())
-                                .fhe_type(fhe_type.0)
-                                .signcrypted_ciphertext(inner.signcrypted_ciphertext.clone())
-                                .party_id(inner.party_id)
-                                .degree(inner.degree)
+                                .signature(inner.signature)
+                                .payload(bincode::serialize(&payload)?)
                                 .build(),
                             operation_val: BlockchainOperationVal {
                                 tx_id: self.operation_val.tx_id.clone(),
@@ -767,10 +726,7 @@ mod test {
     use crate::{
         conf::{CoreConfig, TimeoutConfig},
         domain::{blockchain::KmsOperationResponse, storage::Storage},
-        infrastructure::{
-            core::{KmsCore, WrappingFheType},
-            metrics::OpenTelemetryMetrics,
-        },
+        infrastructure::{core::KmsCore, metrics::OpenTelemetryMetrics},
     };
     use events::kms::{
         CrsGenValues, FheParameter, KeyGenPreprocValues, KmsCoreConf, KmsCoreParty,
@@ -786,14 +742,16 @@ mod test {
             AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID,
             TEST_CENTRAL_KEY_ID, TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID, THRESHOLD,
         },
-        kms::{DecryptionResponsePayload, ReencryptionResponse, RequestId},
+        kms::{
+            DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
+        },
         rpc::rpc_types::{Plaintext, CURRENT_FORMAT_VERSION},
         storage::{FileStorage, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
-        util::key_setup::test_tools::{
-            compute_cipher_from_storage, ensure_threshold_keys_exist, purge,
+        util::key_setup::{
+            ensure_central_keys_exist, ensure_client_keys_exist,
+            test_tools::{compute_cipher_from_storage, ensure_threshold_keys_exist, purge},
         },
-        util::key_setup::{ensure_central_keys_exist, ensure_client_keys_exist},
     };
     use rand::RngCore;
     use std::collections::HashMap;
@@ -917,7 +875,7 @@ mod test {
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
                 .key_id(HexVector::from_hex(&TEST_CENTRAL_KEY_ID.request_id).unwrap())
-                .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
+                .fhe_type(events::kms::FheType::from(fhe_type as u8))
                 .ciphertext_handle(MOCK_CT_HANDLE.to_vec())
                 .randomness(vec![1, 2, 3])
                 .build(),
@@ -1095,7 +1053,7 @@ mod test {
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
                 .key_id(HexVector::from_hex(&TEST_THRESHOLD_KEY_ID.request_id).unwrap())
-                .fhe_type(WrappingFheType::try_from(fhe_type as i32).unwrap().0)
+                .fhe_type(events::kms::FheType::from(fhe_type as u8))
                 .ciphertext_handle(MOCK_CT_HANDLE.to_vec())
                 .randomness(vec![1, 2, 3])
                 .build(),
@@ -1171,7 +1129,7 @@ mod test {
                 .client_address(payload.client_address)
                 .randomness(payload.randomness)
                 .enc_key(payload.enc_key)
-                .fhe_type(WrappingFheType::try_from(payload.fhe_type).unwrap().0)
+                .fhe_type(events::kms::FheType::from(fhe_type as u8))
                 .key_id(HexVector::from_hex(payload.key_id.unwrap().request_id.as_str()).unwrap())
                 .ciphertext_handle(MOCK_CT_HANDLE.to_vec())
                 .ciphertext_digest(payload.ciphertext_digest)
@@ -1196,14 +1154,14 @@ mod test {
                         _ => panic!("invalid response"),
                     }
                     .reencrypt_response;
+
+                    let payload: ReencryptionResponsePayload = bincode::deserialize(
+                        <&HexVector as Into<Vec<u8>>>::into(r.payload()).as_slice(),
+                    )
+                    .unwrap();
                     ReencryptionResponse {
-                        version: r.version(),
-                        verification_key: r.verification_key().into(),
-                        digest: r.digest().into(),
-                        fhe_type: r.fhe_type() as i32,
-                        signcrypted_ciphertext: r.signcrypted_ciphertext().into(),
-                        party_id: r.party_id(),
-                        degree: r.degree(),
+                        signature: r.signature().to_vec(),
+                        payload: Some(payload),
                     }
                 })
                 .collect();
@@ -1216,13 +1174,12 @@ mod test {
             for result in results {
                 match result {
                     KmsOperationResponse::ReencryptResponse(resp) => {
-                        let payload = &resp.reencrypt_response;
+                        let resp_value = &resp.reencrypt_response;
                         assert_eq!(resp.operation_val.tx_id, txn_id);
-                        assert_eq!(payload.version(), CURRENT_FORMAT_VERSION);
-                        assert_eq!(
-                            payload.digest().clone(),
-                            <Vec<u8> as Into<HexVector>>::into("dummy digest".as_bytes().to_vec())
-                        );
+                        let payload: ReencryptionResponsePayload =
+                            bincode::deserialize(resp_value.payload().as_slice()).unwrap();
+                        assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
+                        assert_eq!(payload.digest, "dummy digest".as_bytes().to_vec());
                     }
                     _ => {
                         panic!("invalid response");

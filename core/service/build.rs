@@ -14,6 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("ReencryptionRequest", DERIVES)
         .type_attribute("ReencryptionRequestPayload", DERIVES)
         .type_attribute("ReencryptionResponse", DERIVES)
+        .type_attribute("ReencryptionResponsePayload", DERIVES)
         .type_attribute("Eip712DomainMsg", DERIVES)
         .type_attribute("KeyGenRequest", DERIVES)
         .type_attribute("KeyGenResult", DERIVES)
@@ -40,6 +41,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
         .type_attribute(
+            "ReencryptionResponsePayload",
+            "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
+        )
+        .type_attribute(
             "Eip712DomainMsg",
             "#[wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)]",
         )
@@ -55,6 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("ReencryptionRequest", DERIVES)
         .type_attribute("ReencryptionRequestPayload", DERIVES)
         .type_attribute("ReencryptionResponse", DERIVES)
+        .type_attribute("ReencryptionResponsePayload", DERIVES)
         .type_attribute("Eip712DomainMsg", DERIVES)
         .type_attribute("KeyGenRequest", DERIVES)
         .type_attribute("KeyGenResult", DERIVES)

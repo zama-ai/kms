@@ -1,13 +1,15 @@
+use crate::cryptography::der_types::Signature;
 use crate::cryptography::der_types::{
     PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair,
     SigncryptionPrivKey, SigncryptionPubKey,
 };
 use crate::cryptography::signcryption::{
     decrypt_signcryption, ephemeral_encryption_key_generation, hash_element,
-    insecure_decrypt_ignoring_signature, Reencrypt, RND_SIZE,
+    insecure_decrypt_ignoring_signature, internal_verify_sig, Reencrypt, RND_SIZE,
 };
 use crate::kms::{
-    FheType, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse, RequestId,
+    FheType, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
+    ReencryptionResponsePayload, RequestId,
 };
 use crate::rpc::rpc_types::{
     allow_to_protobuf_domain, MetaResponse, Plaintext, CURRENT_FORMAT_VERSION,
@@ -36,30 +38,30 @@ use wasm_bindgen::prelude::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
+        use crate::cryptography::central_kms::{compute_handle, BaseKmsStruct};
+        use crate::cryptography::der_types::{PrivateSigKeyVersioned, PublicSigKeyVersioned};
         use crate::kms::DecryptionResponse;
-        use crate::cryptography::{central_kms::compute_handle, der_types::Signature};
         use crate::kms::ParamChoice;
         use crate::kms::{
-             CrsGenRequest, CrsGenResult, DecryptionRequest,
-            DecryptionResponsePayload, KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
+            CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponsePayload,
+            KeyGenPreprocRequest, KeyGenRequest, KeyGenResult,
         };
+        use crate::rpc::rpc_types::BaseKms;
         use crate::rpc::rpc_types::PubDataType;
         use crate::storage::read_all_data;
         use crate::storage::Storage;
         use crate::util::file_handling::read_as_json;
-        use crate::{cryptography::central_kms::BaseKmsStruct, rpc::rpc_types::BaseKms};
-        use crate::cryptography::der_types::{PrivateSigKeyVersioned, PublicSigKeyVersioned};
         use crate::{storage::StorageReader, util::key_setup::FhePublicKey};
         use anyhow::ensure;
-        use distributed_decryption::execution::zk::ceremony::PublicParameter;
-        use itertools::Itertools;
-        use serde::de::DeserializeOwned;
-        use std::fmt;
-        use std::collections::HashMap;
-        use tfhe::ServerKey;
-        use kms_core_common::Unversionize;
         use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
+        use distributed_decryption::execution::zk::ceremony::PublicParameter;
         use distributed_decryption::execution::zk::ceremony::PublicParameterVersioned;
+        use itertools::Itertools;
+        use kms_core_common::Unversionize;
+        use serde::de::DeserializeOwned;
+        use std::collections::HashMap;
+        use std::fmt;
+        use tfhe::ServerKey;
     }
 }
 
@@ -604,13 +606,8 @@ pub mod js_api {
 
     #[derive(serde::Deserialize, serde::Serialize)]
     struct ReencryptionResponseHex {
-        version: u32,
-        verification_key: String,
-        digest: String,
-        fhe_type: String, // this is euint8, for example
-        signcrypted_ciphertext: String,
-        party_id: u32,
-        degree: u32,
+        signature: String,
+        payload: Option<String>,
     }
 
     #[cfg(feature = "wasm_tests")]
@@ -618,13 +615,13 @@ pub mod js_api {
         let mut out = vec![];
         for resp in agg_resp {
             let r = ReencryptionResponseHex {
-                version: resp.version,
-                verification_key: hex::encode(&resp.verification_key),
-                digest: hex::encode(&resp.digest),
-                fhe_type: "unimplemented".to_string(),
-                signcrypted_ciphertext: hex::encode(&resp.signcrypted_ciphertext),
-                party_id: resp.party_id,
-                degree: resp.degree,
+                signature: hex::encode(&resp.signature),
+                payload: match resp.payload {
+                    Some(inner) => Some(hex::encode(
+                        serialize(&inner).map_err(|e| JsError::new(&e.to_string()))?,
+                    )),
+                    None => None,
+                },
             };
             out.push(r);
         }
@@ -641,22 +638,16 @@ pub mod js_api {
         // then convert the hex type into the type we need
         let mut out = vec![];
         for hex_resp in hex_resps {
-            // convert fhe_type String into an i32
-            let mut fhe_type_str = hex_resp.fhe_type.clone();
-            make_ascii_titlecase(&mut fhe_type_str);
-            let fhe_type = FheType::from_str_name(&fhe_type_str).ok_or(JsError::new(&format!(
-                "fhe_type conversion failed for {fhe_type_str}"
-            )))?;
             out.push(ReencryptionResponse {
-                version: hex_resp.version,
-                verification_key: hex::decode(&hex_resp.verification_key)
+                signature: hex::decode(&hex_resp.signature)
                     .map_err(|e| JsError::new(&e.to_string()))?,
-                digest: hex::decode(&hex_resp.digest).map_err(|e| JsError::new(&e.to_string()))?,
-                fhe_type: fhe_type as i32,
-                signcrypted_ciphertext: hex::decode(&hex_resp.signcrypted_ciphertext)
-                    .map_err(|e| JsError::new(&e.to_string()))?,
-                party_id: hex_resp.party_id,
-                degree: hex_resp.degree,
+                payload: match hex_resp.payload {
+                    Some(inner) => {
+                        let buf = hex::decode(inner).map_err(|e| JsError::new(&e.to_string()))?;
+                        deserialize(&buf).map_err(|e| JsError::new(&e.to_string()))?
+                    }
+                    None => None,
+                },
             });
         }
         Ok(out)
@@ -1455,14 +1446,15 @@ impl Client {
         agg_resp: &[DecryptionResponse],
     ) -> anyhow::Result<Option<Vec<DecryptionResponsePayload>>> {
         if agg_resp.is_empty() {
-            tracing::warn!("AggregatedDecryptionResponse is empty!");
+            tracing::warn!("There are no decryption responses!");
             return Ok(None);
         }
         // Pick a pivot response
         let mut option_pivot_payload: Option<DecryptionResponsePayload> = None;
         let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
+        let mut verification_keys = HashSet::new();
         for cur_resp in agg_resp {
-            let cur_payload = match cur_resp.payload.clone() {
+            let cur_payload = match &cur_resp.payload {
                 Some(cur_payload) => cur_payload,
                 None => {
                     tracing::warn!("No payload in current response from server!");
@@ -1474,29 +1466,31 @@ impl Client {
             let pivot_payload = match &option_pivot_payload {
                 Some(pivot_payload) => pivot_payload,
                 None => {
+                    // need to clone here because `option_pivot_payload` is larger scope
                     option_pivot_payload = Some(cur_payload.clone());
-                    resp_parsed_payloads.push(cur_payload);
-                    continue;
+                    cur_payload
                 }
             };
-            let sig = Signature {
-                sig: k256::ecdsa::Signature::from_slice(&cur_resp.signature)?,
-            };
-            // Validate the signature on the response
-            // Observe that it has already been verified in [self.validate_meta_data] that server
-            // verification key is in the set of permissible keys
-            let cur_verf_key: PublicSigKey = deserialize(&cur_payload.verification_key)?;
-            if !BaseKmsStruct::verify_sig(&bincode::serialize(&cur_payload)?, &sig, &cur_verf_key) {
-                tracing::warn!("Signature on received response is not valid!");
+
+            // check the uniqueness of verification key
+            if verification_keys.contains(&cur_payload.verification_key) {
+                tracing::warn!(
+                    "At least two servers gave the same verification key {}",
+                    hex::encode(&cur_payload.verification_key),
+                );
                 continue;
             }
+
             // Validate that all the responses agree with the pivot on the static parts of the
             // response
-            if !self.validate_meta_data(pivot_payload, &cur_payload)? {
+            if !self.validate_meta_data(pivot_payload, cur_payload, &cur_resp.signature)? {
                 tracing::warn!("Some server did not provide the proper response!");
                 continue;
             }
-            resp_parsed_payloads.push(cur_payload);
+
+            // add the verified response
+            verification_keys.insert(cur_payload.verification_key.clone());
+            resp_parsed_payloads.push(cur_payload.clone());
         }
         Ok(Some(resp_parsed_payloads))
     }
@@ -1508,7 +1502,8 @@ impl Client {
         &self,
         request: ReencryptionRequest,
         agg_resp: &[ReencryptionResponse],
-    ) -> anyhow::Result<Option<(ReencryptionRequestPayload, Vec<ReencryptionResponse>)>> {
+    ) -> anyhow::Result<Option<(ReencryptionRequestPayload, Vec<ReencryptionResponsePayload>)>>
+    {
         let expected_link = request.compute_link_checked()?;
         match request.payload {
             Some(req_payload) => {
@@ -1543,40 +1538,51 @@ impl Client {
     fn validate_reenc_resp(
         &self,
         agg_resp: &[ReencryptionResponse],
-    ) -> anyhow::Result<Option<Vec<ReencryptionResponse>>> {
+    ) -> anyhow::Result<Option<Vec<ReencryptionResponsePayload>>> {
         if agg_resp.is_empty() {
-            tracing::warn!("AggregatedDecryptionResponse is empty!");
+            tracing::warn!("There are no responses");
             return Ok(None);
         }
         // TODO pivot should actually be picked as the most common response instead of just an
         // arbitrary one. The same in decryption
         // Pick a pivot response
-        let mut option_pivot: Option<&ReencryptionResponse> = None;
-        let mut resp_parsed = Vec::with_capacity(agg_resp.len());
+        let mut option_pivot_payloads: Option<ReencryptionResponsePayload> = None;
+        let mut resp_parsed_payloads = Vec::with_capacity(agg_resp.len());
         let mut party_ids = HashSet::new();
+        let mut verification_keys = HashSet::new();
+
         for cur_resp in agg_resp {
-            // Set the first existing element as pivot
-            let pivot_resp = match option_pivot {
-                Some(pivot_resp) => pivot_resp,
+            let cur_payload = match &cur_resp.payload {
+                Some(cur_payload) => cur_payload,
                 None => {
-                    option_pivot = Some(cur_resp);
-                    resp_parsed.push(cur_resp.clone());
+                    tracing::warn!("No payload in current response from server!");
                     continue;
                 }
             };
+
+            // Set the first existing element as pivot
+            let pivot_payload = match &option_pivot_payloads {
+                Some(pivot_resp) => pivot_resp,
+                None => {
+                    // need to clone here because `option_pivot_payload` is larger scope
+                    option_pivot_payloads = Some(cur_payload.clone());
+                    cur_payload
+                }
+            };
+
             // Validate that all the responses agree with the pivot on the static parts of the
             // response
-            if !self.validate_meta_data(pivot_resp, cur_resp)? {
+            if !self.validate_meta_data(pivot_payload, cur_payload, &cur_resp.signature)? {
                 tracing::warn!(
                     "Server who gave ID {} did not provide the proper response!",
-                    cur_resp.party_id
+                    cur_payload.party_id
                 );
                 continue;
             }
-            if pivot_resp.degree != cur_resp.degree {
+            if pivot_payload.degree != cur_payload.degree {
                 tracing::warn!(
                     "Server who gave ID {} gave degree {} which is inconsistent with the pivot response",
-                    cur_resp.party_id, cur_resp.degree
+                    cur_payload.party_id, cur_payload.degree
                 );
                 continue;
             }
@@ -1584,30 +1590,45 @@ impl Client {
             // However, this will not catch all cheating since a server could claim the ID of another server
             // and we can't know who lies without consulting the verification key to ID mapping on the blockchain.
             // Furhtermore, observe that we assume the optimal threshold is set.
-            if cur_resp.party_id > cur_resp.degree * 3 + 1 {
+            if cur_payload.party_id > cur_payload.degree * 3 + 1 {
                 tracing::warn!(
                     "Server who gave ID {} is too large. The largest allowed id {}",
-                    cur_resp.party_id,
-                    cur_resp.degree * 3 + 1
+                    cur_payload.party_id,
+                    cur_payload.degree * 3 + 1
                 );
                 continue;
             }
-            if cur_resp.party_id == 0 {
+            if cur_payload.party_id == 0 {
                 tracing::warn!("A server ID is set to 0");
                 continue;
             }
-            if party_ids.contains(&cur_resp.party_id) {
-                tracing::warn!("At least two servers gave ID {}", cur_resp.party_id,);
+            if party_ids.contains(&cur_payload.party_id) {
+                tracing::warn!(
+                    "At least two servers gave the same ID {}",
+                    cur_payload.party_id,
+                );
                 continue;
             }
-            party_ids.insert(cur_resp.party_id);
-            resp_parsed.push(cur_resp.clone());
+
+            // Check that verification keys are unique
+            party_ids.insert(cur_payload.party_id);
+            if verification_keys.contains(&cur_payload.verification_key) {
+                tracing::warn!(
+                    "At least two servers gave the same verification key {}",
+                    hex::encode(&cur_payload.verification_key),
+                );
+                continue;
+            }
+
+            // only add the verified keys and responses at the end
+            verification_keys.insert(cur_payload.verification_key.clone());
+            resp_parsed_payloads.push(cur_payload.clone());
         }
-        if option_pivot.is_some_and(|x| resp_parsed.len() < x.degree as usize) {
+        if option_pivot_payloads.is_some_and(|x| resp_parsed_payloads.len() < x.degree as usize) {
             tracing::warn!("Not enough correct responses to reencrypt the data!");
             return Ok(None);
         }
-        Ok(Some(resp_parsed))
+        Ok(Some(resp_parsed_payloads))
     }
 
     /// Decrypt the reencryption response from the centralized KMS and verify that the signatures are valid
@@ -1618,21 +1639,22 @@ impl Client {
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Plaintext> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
+        let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
 
         let link = request.compute_link_checked()?;
-        if link != resp.digest {
+        if link != payload.digest {
             return Err(anyhow_error_and_log(format!(
                 "link mismatch ({} != {}) for domain {:?}",
                 hex::encode(&link),
-                hex::encode(&resp.digest),
+                hex::encode(&payload.digest),
                 request.domain
             )));
         }
 
-        let cur_verf_key: PublicSigKey = deserialize(&resp.verification_key)?;
+        let cur_verf_key: PublicSigKey = deserialize(&payload.verification_key)?;
 
         decrypt_signcryption(
-            &resp.signcrypted_ciphertext,
+            &payload.signcrypted_ciphertext,
             &link,
             client_keys,
             &cur_verf_key,
@@ -1648,9 +1670,10 @@ impl Client {
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Plaintext> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
+        let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
 
         crate::cryptography::signcryption::insecure_decrypt_ignoring_signature(
-            &resp.signcrypted_ciphertext,
+            &payload.signcrypted_ciphertext,
             client_keys,
         )
     }
@@ -1697,13 +1720,17 @@ impl Client {
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Plaintext> {
-        //Recover sharings
+        // Recover sharings
         let mut opt_sharings = None;
 
-        //Trust all responses have all expected blocks
+        // Trust all responses have all expected blocks
         for cur_resp in agg_resp {
+            let payload = some_or_err(
+                cur_resp.payload.clone(),
+                "Payload does not exist".to_owned(),
+            )?;
             let shares =
-                insecure_decrypt_ignoring_signature(&cur_resp.signcrypted_ciphertext, client_keys)?;
+                insecure_decrypt_ignoring_signature(&payload.signcrypted_ciphertext, client_keys)?;
 
             let cipher_blocks_share: Vec<ResiduePoly<Z128>> = deserialize(&shares.bytes)?;
             let mut cur_blocks = Vec::with_capacity(cipher_blocks_share.len());
@@ -1721,7 +1748,7 @@ impl Client {
                 opt_sharings.as_mut().unwrap(),
                 cur_blocks,
                 num_values,
-                Role::indexed_by_one(cur_resp.party_id as usize),
+                Role::indexed_by_one(payload.party_id as usize),
             )?;
         }
         let sharings = opt_sharings.unwrap();
@@ -1777,7 +1804,7 @@ impl Client {
     /// that the servers should have encrypted.
     fn recover_sharings(
         &self,
-        agg_resp: &[ReencryptionResponse],
+        agg_resp: &[ReencryptionResponsePayload],
         fhe_type: FheType,
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Vec<ShamirSharings<ResiduePoly<Z128>>>> {
@@ -1830,10 +1857,11 @@ impl Client {
         Ok(sharings)
     }
 
-    fn validate_meta_data<T: MetaResponse>(
+    fn validate_meta_data<T: MetaResponse + serde::Serialize>(
         &self,
         pivot_resp: &T,
         other_resp: &T,
+        signature: &[u8],
     ) -> anyhow::Result<bool> {
         if pivot_resp.version() != other_resp.version() {
             tracing::warn!(
@@ -1868,6 +1896,16 @@ impl Client {
         let resp_verf_key: PublicSigKey = deserialize(&other_resp.verification_key())?;
         if !&self.server_pks.contains(&resp_verf_key) {
             tracing::warn!("Server key is unknown or incorrect.");
+            return Ok(false);
+        }
+
+        let sig = Signature {
+            sig: k256::ecdsa::Signature::from_slice(signature)?,
+        };
+        // NOTE that we cannot use `BaseKmsStruct::verify_sig`
+        // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
+        if !internal_verify_sig(&bincode::serialize(&other_resp)?, &sig, &resp_verf_key) {
+            tracing::warn!("Signature on received response is not valid!");
             return Ok(false);
         }
         Ok(true)

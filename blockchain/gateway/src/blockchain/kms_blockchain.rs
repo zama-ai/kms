@@ -514,9 +514,9 @@ impl Blockchain for KmsBlockchainImpl {
         match self.config.mode {
             KmsMode::Centralized => match results.first().unwrap() {
                 OperationValue::ReencryptResponse(reencrypt_response) => {
-                    tracing::info!(
-                        "🍇🥐🍇🥐🍇🥐 Centralized Gateway signcrypted ct: {:?}",
-                        reencrypt_response.signcrypted_ciphertext().to_hex()
+                    tracing::debug!(
+                        "🍇🥐🍇🥐🍇🥐 Centralized Gateway signature: {:?}",
+                        reencrypt_response.signature().to_hex()
                     );
 
                     // the output needs to have type Vec<ReencryptionResponse>
