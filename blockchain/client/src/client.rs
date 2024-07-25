@@ -177,7 +177,7 @@ impl Client {
             None => {
                 let account = self.query_account().await?;
                 let account_number = account.account_number;
-                let sequence_number = account.sequence;
+                let sequence_number = account.sequence + 1;
                 self.client_state = Some(ClientState {
                     account_number,
                     sequence_number: Arc::new(AtomicU64::new(sequence_number)),
