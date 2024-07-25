@@ -747,10 +747,15 @@ mod tests {
     use crate::storage::{FileStorage, RamStorage, StorageType};
     use crate::util::file_handling::read_element;
     use crate::util::key_setup::test_tools::compute_cipher;
+    use crate::{
+        cryptography::central_kms::generate_fhe_keys,
+        util::file_handling::{read_as_json, write_element},
+    };
     use aes_prng::AesRng;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use rand::{RngCore, SeedableRng};
     use serial_test::serial;
+    use std::collections::HashMap;
     use std::{path::Path, sync::Arc};
     use tfhe::shortint::ClassicPBSParameters;
     use tfhe::ConfigBuilder;
@@ -764,42 +769,35 @@ mod tests {
         BadEphemeralKey,
     }
 
-    #[cfg(test)]
-    #[tokio::test]
-    #[ctor::ctor]
-    async fn ensure_kms_test_keys() {
+    async fn ensure_kms_test_keys() -> CentralizedTestingKeys {
         setup(
             TEST_PARAM_PATH,
             &TEST_CENTRAL_KEY_ID.to_string(),
             &OTHER_CENTRAL_TEST_ID.to_string(),
             TEST_CENTRAL_KEYS_PATH,
         )
-        .await;
+        .await
     }
 
     #[cfg(feature = "slow_tests")]
-    #[cfg(test)]
-    #[tokio::test]
-    #[ctor::ctor]
-    async fn ensure_kms_default_keys() {
+    async fn ensure_kms_default_keys() -> CentralizedTestingKeys {
         setup(
             DEFAULT_PARAM_PATH,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),
             &OTHER_CENTRAL_DEFAULT_ID.to_string(),
             DEFAULT_CENTRAL_KEYS_PATH,
         )
-        .await;
+        .await
     }
 
-    async fn setup(param_path: &str, key_id: &str, other_key_id: &str, key_path: &str) {
-        use crate::{
-            cryptography::central_kms::generate_fhe_keys,
-            util::file_handling::{read_as_json, write_element},
-        };
-        use std::collections::HashMap;
-
+    async fn setup(
+        param_path: &str,
+        key_id: &str,
+        other_key_id: &str,
+        key_path: &str,
+    ) -> CentralizedTestingKeys {
         if Path::new(key_path).exists() {
-            return;
+            return read_element(key_path).await.unwrap();
         }
 
         let mut rng = AesRng::seed_from_u64(100);
@@ -836,12 +834,12 @@ mod tests {
         assert!(write_element(key_path, &centralized_test_keys)
             .await
             .is_ok());
+        centralized_test_keys
     }
 
     #[tokio::test]
     async fn multiple_test_keys_access() {
-        let central_keys: CentralizedTestingKeys =
-            read_element(TEST_CENTRAL_KEYS_PATH).await.unwrap();
+        let central_keys = ensure_kms_test_keys().await;
 
         // try to get keys with the default handle
         let default_key = central_keys
@@ -868,14 +866,14 @@ mod tests {
 
     #[tokio::test]
     async fn sunshine_test_decrypt() {
-        sunshine_decrypt(TEST_CENTRAL_KEYS_PATH, &TEST_CENTRAL_KEY_ID).await;
+        sunshine_decrypt(ensure_kms_test_keys().await, &TEST_CENTRAL_KEY_ID).await;
     }
 
     #[tokio::test]
     async fn decrypt_with_bad_client_key() {
         simulate_decrypt(
             SimulationType::BadFheKey,
-            TEST_CENTRAL_KEYS_PATH,
+            ensure_kms_test_keys().await,
             &TEST_CENTRAL_KEY_ID,
         )
         .await;
@@ -884,28 +882,31 @@ mod tests {
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn sunshine_default_decrypt() {
-        sunshine_decrypt(DEFAULT_CENTRAL_KEYS_PATH, &DEFAULT_CENTRAL_KEY_ID).await;
+        sunshine_decrypt(ensure_kms_default_keys().await, &DEFAULT_CENTRAL_KEY_ID).await;
     }
 
     #[tokio::test]
     #[serial]
     async fn multiple_test_keys_decrypt() {
-        sunshine_decrypt(TEST_CENTRAL_KEYS_PATH, &OTHER_CENTRAL_TEST_ID).await;
+        sunshine_decrypt(ensure_kms_test_keys().await, &OTHER_CENTRAL_TEST_ID).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn multiple_default_keys_decrypt() {
-        sunshine_decrypt(DEFAULT_CENTRAL_KEYS_PATH, &OTHER_CENTRAL_DEFAULT_ID).await;
+        sunshine_decrypt(ensure_kms_default_keys().await, &OTHER_CENTRAL_DEFAULT_ID).await;
     }
 
-    async fn sunshine_decrypt(kms_key_path: &str, key_id: &RequestId) {
-        simulate_decrypt(SimulationType::NoError, kms_key_path, key_id).await;
+    async fn sunshine_decrypt(keys: CentralizedTestingKeys, key_id: &RequestId) {
+        simulate_decrypt(SimulationType::NoError, keys, key_id).await;
     }
 
-    async fn simulate_decrypt(sim_type: SimulationType, kms_key_path: &str, key_id: &RequestId) {
+    async fn simulate_decrypt(
+        sim_type: SimulationType,
+        keys: CentralizedTestingKeys,
+        key_id: &RequestId,
+    ) {
         let msg = 523u64;
-        let keys: CentralizedTestingKeys = read_element(kms_key_path).await.unwrap();
         let (ct, fhe_type) = compute_cipher(
             msg.into(),
             &keys.pub_fhe_keys.get(key_id).unwrap().public_key,
@@ -953,14 +954,14 @@ mod tests {
 
     #[tokio::test]
     async fn sunshine_test_reencrypt() {
-        sunshine_reencrypt(TEST_CENTRAL_KEYS_PATH, &TEST_CENTRAL_KEY_ID).await;
+        sunshine_reencrypt(ensure_kms_test_keys().await, &TEST_CENTRAL_KEY_ID).await;
     }
 
     #[tokio::test]
     async fn reencrypt_with_bad_ephemeral_key() {
         simulate_reencrypt(
             SimulationType::BadEphemeralKey,
-            TEST_CENTRAL_KEYS_PATH,
+            ensure_kms_test_keys().await,
             &TEST_CENTRAL_KEY_ID,
         )
         .await
@@ -970,7 +971,7 @@ mod tests {
     async fn reencrypt_with_bad_sig_key() {
         simulate_reencrypt(
             SimulationType::BadSigKey,
-            TEST_CENTRAL_KEYS_PATH,
+            ensure_kms_test_keys().await,
             &TEST_CENTRAL_KEY_ID,
         )
         .await
@@ -980,7 +981,7 @@ mod tests {
     async fn reencrypt_with_bad_client_key() {
         simulate_reencrypt(
             SimulationType::BadFheKey,
-            TEST_CENTRAL_KEYS_PATH,
+            ensure_kms_test_keys().await,
             &TEST_CENTRAL_KEY_ID,
         )
         .await
@@ -989,23 +990,23 @@ mod tests {
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn sunshine_default_reencrypt() {
-        sunshine_reencrypt(DEFAULT_CENTRAL_KEYS_PATH, &DEFAULT_CENTRAL_KEY_ID).await;
+        sunshine_reencrypt(ensure_kms_default_keys().await, &DEFAULT_CENTRAL_KEY_ID).await;
     }
 
     #[tokio::test]
     #[serial]
     async fn multiple_test_keys_reencrypt() {
-        sunshine_reencrypt(TEST_CENTRAL_KEYS_PATH, &OTHER_CENTRAL_TEST_ID).await;
+        sunshine_reencrypt(ensure_kms_test_keys().await, &OTHER_CENTRAL_TEST_ID).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn multiple_default_keys_reencrypt() {
-        sunshine_reencrypt(DEFAULT_CENTRAL_KEYS_PATH, &OTHER_CENTRAL_DEFAULT_ID).await;
+        sunshine_reencrypt(ensure_kms_default_keys().await, &OTHER_CENTRAL_DEFAULT_ID).await;
     }
 
-    async fn sunshine_reencrypt(kms_key_path: &str, key_handle: &RequestId) {
-        simulate_reencrypt(SimulationType::NoError, kms_key_path, key_handle).await
+    async fn sunshine_reencrypt(keys: CentralizedTestingKeys, key_handle: &RequestId) {
+        simulate_reencrypt(SimulationType::NoError, keys, key_handle).await
     }
 
     async fn set_wrong_client_key<
@@ -1046,12 +1047,11 @@ mod tests {
 
     async fn simulate_reencrypt(
         sim_type: SimulationType,
-        kms_key_path: &str,
+        keys: CentralizedTestingKeys,
         key_handle: &RequestId,
     ) {
         let msg = 42305u64;
         let mut rng = AesRng::seed_from_u64(1);
-        let keys: CentralizedTestingKeys = read_element(kms_key_path).await.unwrap();
         let (ct, fhe_type) = compute_cipher(
             msg.into(),
             &keys.pub_fhe_keys.get(key_handle).unwrap().public_key,
@@ -1144,8 +1144,7 @@ mod tests {
         // we need compute info to work without calling the sign function from KMS,
         // i.e., only using a signing key
         // this test makes sure the output is consistent
-        let kms_key_path = TEST_CENTRAL_KEYS_PATH;
-        let keys: CentralizedTestingKeys = read_element(kms_key_path).await.unwrap();
+        let keys: CentralizedTestingKeys = ensure_kms_test_keys().await;
         let kms = {
             SoftwareKms::new(
                 default_param_file_map(),

@@ -101,8 +101,8 @@ const DECRYPTION_MODE: DecryptionMode = DecryptionMode::PRSSDecrypt;
 /// * `private_storage` - Abstract private storage for storing sensitive information.
 ///
 /// * `run_prss` - If this is true, a setup protocol will be executed in this funciton.
-/// Otherwise, the setup must be done out of band by calling the init
-/// GRPC endpoint, or using the kms-init binary.
+///   Otherwise, the setup must be done out of band by calling the init
+///   GRPC endpoint, or using the kms-init binary.
 pub async fn threshold_server_init<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,

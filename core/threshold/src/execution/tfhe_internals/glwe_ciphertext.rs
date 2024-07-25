@@ -14,10 +14,11 @@ use super::{
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-///Structure that holds a share of a  Glwe ctxt
+/// Structure that holds a share of a Glwe ctxt
+///
 /// - mask holds the masks in a "flatten" way.
-/// Each mask is a polynomial, so the Vec holds
-/// multiple polynomials, each as a list of coefs
+///   Each mask is a polynomial, so the Vec holds
+///   multiple polynomials, each as a list of coefs
 /// - body is the B part, also a polynomial held as a list of coefs
 pub struct GlweCiphertextShare<Z: BaseRing> {
     //Integration note: if it's easier,

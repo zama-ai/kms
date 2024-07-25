@@ -9,10 +9,11 @@ use crate::{
 
 use super::lwe_key::LweSecretKeyShare;
 
-///Structure that holds a share of a GLWE secret key
-///- data contains share of the key (i.e. shares of w polynomial with binary coefficients each of degree polynomial_size-1)
-/// shares are in the galois extension domain but the underlying secret is really a bit in the underlyin [`BaseRing`]
-///- polynomial_size is the total number of coefficients in the above polynomials
+/// Structure that holds a share of a GLWE secret key
+///
+/// - data contains share of the key (i.e. shares of w polynomial with binary coefficients each of degree polynomial_size-1)
+///   shares are in the galois extension domain but the underlying secret is really a bit in the underlyin [`BaseRing`]
+/// - polynomial_size is the total number of coefficients in the above polynomials
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GlweSecretKeyShare<Z> {
     pub data: Vec<Share<ResiduePoly<Z>>>,
