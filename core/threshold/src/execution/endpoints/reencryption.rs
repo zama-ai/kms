@@ -524,12 +524,36 @@ mod tests {
         (rng, request, keys, cipher.to_vec())
     }
 
-    #[cfg(test)]
     #[ctor::ctor]
     fn setup_data_for_integration() {
-        // Ensure temp dir exists
-        let _ = std::fs::create_dir_all(TEMP_DIR);
+        use crate::{
+            execution::constants::{
+                PARAMS_DIR, REAL_KEY_PATH, REAL_PARAM_PATH, SMALL_TEST_KEY_PATH,
+                SMALL_TEST_PARAM_PATH, TEMP_DKG_DIR,
+            },
+            file_handling::write_as_json,
+            tests::test_data_setup::tests::{ensure_keys_exist, REAL_PARAMETERS, TEST_PARAMETERS},
+        };
+        use std::fs;
 
+        // Ensure temp/dkg dir exists (also creates the temp dir)
+        if let Err(e) = fs::create_dir_all(TEMP_DKG_DIR) {
+            println!("Error creating temp/dkg directory {TEMP_DKG_DIR}: {e:?}");
+        }
+        // Ensure parameters dir exists to store generated parameters json files
+        if let Err(e) = fs::create_dir_all(PARAMS_DIR) {
+            println!("Error creating parameters directory {PARAMS_DIR}: {e:?}");
+        }
+
+        // write parameter JSON files
+        write_as_json(SMALL_TEST_PARAM_PATH.to_string(), &TEST_PARAMETERS).unwrap();
+        write_as_json(REAL_PARAM_PATH.to_string(), &REAL_PARAMETERS).unwrap();
+
+        // make sure keys exist (generate them if they do not)
+        ensure_keys_exist(SMALL_TEST_KEY_PATH, TEST_PARAMETERS);
+        ensure_keys_exist(REAL_KEY_PATH, REAL_PARAMETERS);
+
+        // reencryption data
         let (mut rng, request, client_signcryption_keys, _fhe_cipher) = test_setup();
         let (_server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A message".as_bytes();

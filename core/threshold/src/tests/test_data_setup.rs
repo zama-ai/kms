@@ -1,17 +1,11 @@
 #[cfg(test)]
 pub mod tests {
-    use crate::execution::constants::{
-        PARAMS_DIR, REAL_KEY_PATH, REAL_PARAM_PATH, SMALL_TEST_KEY_PATH, SMALL_TEST_PARAM_PATH,
-        TEMP_DKG_DIR,
-    };
     use crate::execution::tfhe_internals::parameters::{
         NoiseFloodParameters, SwitchAndSquashParameters,
     };
     use crate::execution::tfhe_internals::test_feature::KeySet;
     use crate::file_handling::{read_element, write_element};
-    use crate::{file_handling::write_as_json, tests::helper::tests::generate_keys};
-    use ctor::ctor;
-    use std::fs;
+    use crate::tests::helper::tests::generate_keys;
     use tfhe::core_crypto::commons::math::random::TUniform;
     use tfhe::integer::parameters::DynamicDistribution;
     use tfhe::shortint::{
@@ -96,29 +90,12 @@ pub mod tests {
 
     // TAKING NIST P=32 AS REFERENCE (March 7th 2024)
     // TODO MULTIPLE PEOPLE SHOULD VALIDATE THAT THESE ARE INDEED THE PARAMETERS WE SHOULD RUN WITH!!!
-    const REAL_PARAMETERS: NoiseFloodParameters = NoiseFloodParameters {
+    pub const REAL_PARAMETERS: NoiseFloodParameters = NoiseFloodParameters {
         ciphertext_parameters: PARAM_CGGI_4_BITS_COMPACT_PKE_PBS_KS_INPUT,
         sns_parameters: PARAM_4_BITS_CGGI_COMPACT_PKE_PBS_KS_SNS,
     };
 
-    /// run this once before all other tests to make sure the required keys and parameters exist
-    #[ctor]
-    fn setup_directories_params_and_keys() {
-        // Ensure temp/dkg dir exists (also creates the temp dir)
-        let _ = fs::create_dir_all(TEMP_DKG_DIR);
-        // Ensure parameters dir exists to store generated parameters json files
-        let _ = fs::create_dir_all(PARAMS_DIR);
-
-        // write parameter JSON files
-        write_as_json(SMALL_TEST_PARAM_PATH.to_string(), &TEST_PARAMETERS).unwrap();
-        write_as_json(REAL_PARAM_PATH.to_string(), &REAL_PARAMETERS).unwrap();
-
-        // make sure keys exist (generate them if they do not)
-        ensure_keys_exist(SMALL_TEST_KEY_PATH, TEST_PARAMETERS);
-        ensure_keys_exist(REAL_KEY_PATH, REAL_PARAMETERS);
-    }
-
-    fn ensure_keys_exist(path: &str, params: NoiseFloodParameters) {
+    pub fn ensure_keys_exist(path: &str, params: NoiseFloodParameters) {
         match read_element::<KeySet>(path.to_string()) {
             Ok(_key_bytes) => (),
             Err(_e) => {

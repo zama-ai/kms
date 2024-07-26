@@ -2217,9 +2217,7 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_KEY_ID};
     #[cfg(feature = "slow_tests")]
-    use crate::cryptography::central_kms::tests::ensure_kms_default_keys;
-    #[cfg(feature = "slow_tests")]
-    use crate::cryptography::central_kms::CentralizedTestingKeys;
+    use crate::cryptography::central_kms::tests::get_default_keys;
     use crate::cryptography::central_kms::{compute_handle, gen_sig_keys, BaseKmsStruct};
     use crate::cryptography::der_types::Signature;
     use crate::cryptography::signcryption::Reencrypt;
@@ -3739,7 +3737,7 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_largecipher() {
-        let keys: CentralizedTestingKeys = ensure_kms_default_keys().await;
+        let keys = get_default_keys().await;
         let (kms_server, mut kms_client) = super::test_tools::setup_centralized(
             RamStorage::new(StorageType::PUB),
             RamStorage::from_existing_keys(&keys.software_kms_keys)
@@ -3753,7 +3751,7 @@ pub(crate) mod tests {
         let mut internal_client = Client::new(
             keys.server_keys.clone(),
             client_address,
-            Some(keys.client_sk),
+            Some(keys.client_sk.clone()),
             keys.params.ciphertext_parameters,
         );
         let request_id = RequestId::derive("TEST_REENC_ID_123").unwrap();

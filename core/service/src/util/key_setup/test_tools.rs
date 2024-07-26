@@ -337,10 +337,9 @@ mod tests {
     use crate::util::key_setup::{
         ensure_central_crs_store_exists, ensure_central_keys_exist, ensure_client_keys_exist,
     };
+    use tokio::runtime::Runtime;
 
-    #[tokio::test]
-    #[ctor::ctor]
-    async fn ensure_testing_material_exists() {
+    async fn testing_material() {
         ensure_dir_exist().await;
         ensure_client_keys_exist(None, true).await;
         let mut central_pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
@@ -385,15 +384,19 @@ mod tests {
         .await;
     }
 
-    #[cfg(feature = "slow_tests")]
-    #[tokio::test]
     #[ctor::ctor]
-    async fn ensure_default_material_exists() {
+    fn ensure_testing_material_exists() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(testing_material());
+    }
+
+    #[cfg(feature = "slow_tests")]
+    async fn default_material() {
         use crate::consts::{
             DEFAULT_CENTRAL_KEY_ID, DEFAULT_CRS_ID, DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_KEY_ID,
             OTHER_CENTRAL_DEFAULT_ID,
         };
-
+        ensure_dir_exist().await;
         let mut central_pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
         let mut central_priv_storage =
             FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
@@ -408,7 +411,6 @@ mod tests {
                 .push(FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap());
         }
 
-        ensure_dir_exist().await;
         ensure_client_keys_exist(None, true).await;
         ensure_central_keys_exist(
             &mut central_pub_storage,
@@ -436,5 +438,12 @@ mod tests {
             true,
         )
         .await;
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[ctor::ctor]
+    fn ensure_default_material_exists() {
+        let rt = Runtime::new().unwrap();
+        rt.block_on(default_material());
     }
 }

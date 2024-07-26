@@ -759,6 +759,23 @@ pub(crate) mod tests {
     use std::{path::Path, sync::Arc};
     use tfhe::shortint::ClassicPBSParameters;
     use tfhe::ConfigBuilder;
+    use tokio::sync::OnceCell;
+
+    static ONCE_TEST_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
+    async fn get_test_keys() -> &'static CentralizedTestingKeys {
+        ONCE_TEST_KEY
+            .get_or_init(|| async { ensure_kms_test_keys().await })
+            .await
+    }
+
+    #[cfg(feature = "slow_tests")]
+    static ONCE_DEFAULT_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
+    #[cfg(feature = "slow_tests")]
+    pub(crate) async fn get_default_keys() -> &'static CentralizedTestingKeys {
+        ONCE_DEFAULT_KEY
+            .get_or_init(|| async { ensure_kms_default_keys().await })
+            .await
+    }
 
     #[derive(Clone, PartialEq, Eq)]
     enum SimulationType {
@@ -839,7 +856,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn multiple_test_keys_access() {
-        let central_keys = ensure_kms_test_keys().await;
+        let central_keys = get_test_keys().await;
 
         // try to get keys with the default handle
         let default_key = central_keys
@@ -866,14 +883,14 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn sunshine_test_decrypt() {
-        sunshine_decrypt(ensure_kms_test_keys().await, &TEST_CENTRAL_KEY_ID).await;
+        sunshine_decrypt(get_test_keys().await, &TEST_CENTRAL_KEY_ID).await;
     }
 
     #[tokio::test]
     async fn decrypt_with_bad_client_key() {
         simulate_decrypt(
             SimulationType::BadFheKey,
-            ensure_kms_test_keys().await,
+            get_test_keys().await,
             &TEST_CENTRAL_KEY_ID,
         )
         .await;
@@ -882,28 +899,28 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn sunshine_default_decrypt() {
-        sunshine_decrypt(ensure_kms_default_keys().await, &DEFAULT_CENTRAL_KEY_ID).await;
+        sunshine_decrypt(get_default_keys().await, &DEFAULT_CENTRAL_KEY_ID).await;
     }
 
     #[tokio::test]
     #[serial]
     async fn multiple_test_keys_decrypt() {
-        sunshine_decrypt(ensure_kms_test_keys().await, &OTHER_CENTRAL_TEST_ID).await;
+        sunshine_decrypt(get_test_keys().await, &OTHER_CENTRAL_TEST_ID).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn multiple_default_keys_decrypt() {
-        sunshine_decrypt(ensure_kms_default_keys().await, &OTHER_CENTRAL_DEFAULT_ID).await;
+        sunshine_decrypt(get_default_keys().await, &OTHER_CENTRAL_DEFAULT_ID).await;
     }
 
-    async fn sunshine_decrypt(keys: CentralizedTestingKeys, key_id: &RequestId) {
+    async fn sunshine_decrypt(keys: &CentralizedTestingKeys, key_id: &RequestId) {
         simulate_decrypt(SimulationType::NoError, keys, key_id).await;
     }
 
     async fn simulate_decrypt(
         sim_type: SimulationType,
-        keys: CentralizedTestingKeys,
+        keys: &CentralizedTestingKeys,
         key_id: &RequestId,
     ) {
         let msg = 523u64;
@@ -954,14 +971,14 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn sunshine_test_reencrypt() {
-        sunshine_reencrypt(ensure_kms_test_keys().await, &TEST_CENTRAL_KEY_ID).await;
+        sunshine_reencrypt(get_test_keys().await, &TEST_CENTRAL_KEY_ID).await;
     }
 
     #[tokio::test]
     async fn reencrypt_with_bad_ephemeral_key() {
         simulate_reencrypt(
             SimulationType::BadEphemeralKey,
-            ensure_kms_test_keys().await,
+            get_test_keys().await,
             &TEST_CENTRAL_KEY_ID,
         )
         .await
@@ -971,7 +988,7 @@ pub(crate) mod tests {
     async fn reencrypt_with_bad_sig_key() {
         simulate_reencrypt(
             SimulationType::BadSigKey,
-            ensure_kms_test_keys().await,
+            get_test_keys().await,
             &TEST_CENTRAL_KEY_ID,
         )
         .await
@@ -981,7 +998,7 @@ pub(crate) mod tests {
     async fn reencrypt_with_bad_client_key() {
         simulate_reencrypt(
             SimulationType::BadFheKey,
-            ensure_kms_test_keys().await,
+            get_test_keys().await,
             &TEST_CENTRAL_KEY_ID,
         )
         .await
@@ -990,22 +1007,22 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn sunshine_default_reencrypt() {
-        sunshine_reencrypt(ensure_kms_default_keys().await, &DEFAULT_CENTRAL_KEY_ID).await;
+        sunshine_reencrypt(get_default_keys().await, &DEFAULT_CENTRAL_KEY_ID).await;
     }
 
     #[tokio::test]
     #[serial]
     async fn multiple_test_keys_reencrypt() {
-        sunshine_reencrypt(ensure_kms_test_keys().await, &OTHER_CENTRAL_TEST_ID).await;
+        sunshine_reencrypt(get_test_keys().await, &OTHER_CENTRAL_TEST_ID).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
     async fn multiple_default_keys_reencrypt() {
-        sunshine_reencrypt(ensure_kms_default_keys().await, &OTHER_CENTRAL_DEFAULT_ID).await;
+        sunshine_reencrypt(get_default_keys().await, &OTHER_CENTRAL_DEFAULT_ID).await;
     }
 
-    async fn sunshine_reencrypt(keys: CentralizedTestingKeys, key_handle: &RequestId) {
+    async fn sunshine_reencrypt(keys: &CentralizedTestingKeys, key_handle: &RequestId) {
         simulate_reencrypt(SimulationType::NoError, keys, key_handle).await
     }
 
@@ -1047,7 +1064,7 @@ pub(crate) mod tests {
 
     async fn simulate_reencrypt(
         sim_type: SimulationType,
-        keys: CentralizedTestingKeys,
+        keys: &CentralizedTestingKeys,
         key_handle: &RequestId,
     ) {
         let msg = 42305u64;
@@ -1144,7 +1161,7 @@ pub(crate) mod tests {
         // we need compute info to work without calling the sign function from KMS,
         // i.e., only using a signing key
         // this test makes sure the output is consistent
-        let keys: CentralizedTestingKeys = ensure_kms_test_keys().await;
+        let keys = get_test_keys().await;
         let kms = {
             SoftwareKms::new(
                 default_param_file_map(),
