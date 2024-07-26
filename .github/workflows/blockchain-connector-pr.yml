@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: ['*']
     paths:
+      - 'blockchain/client/**'
       - 'blockchain/connector/**'
       - 'blockchain/events/**'
       - 'core/service/proto/kms.proto'

@@ -4,6 +4,7 @@ on:
   push:
     branches: ['main']
     paths:
+      - 'blockchain/client/**'
       - 'blockchain/connector/**'
       - 'blockchain/events/**'
       - 'core/service/proto/kms.proto'

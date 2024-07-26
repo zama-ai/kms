@@ -23,8 +23,6 @@ use events::kms::KmsMessage;
 use prost_types::Any;
 use std::str;
 use std::str::FromStr;
-use std::sync::atomic::AtomicU64;
-use std::sync::Arc;
 use std::time::Duration;
 use tonic::transport::{Channel, Endpoint};
 use typed_builder::TypedBuilder;
@@ -119,15 +117,9 @@ impl TryFrom<ClientBuilder<'_>> for Client {
             chain_id,
             coin_denom,
             contract_address,
-            client_state: None,
             gas_price,
         })
     }
-}
-
-pub struct ClientState {
-    account_number: u64,
-    sequence_number: Arc<AtomicU64>,
 }
 
 /// A client for interacting with CosmWasm smart contracts via Cosmos SDK's Tendermint protocol.
@@ -135,7 +127,6 @@ pub struct Client {
     client: Channel,
     sender_key: SigningKey,
     contract_address: AccountId,
-    client_state: Option<ClientState>,
     coin_denom: String,
     chain_id: String,
     gas_price: f64,
@@ -164,54 +155,6 @@ impl Client {
         Ok(resp_acc)
     }
 
-    /// Initializes the client state by querying the account details from the blockchain.
-    #[tracing::instrument(skip(self))]
-    async fn init_lazy_query_account(&mut self) -> Result<(), Error> {
-        match self.client_state {
-            Some(ref mut state) => {
-                state
-                    .sequence_number
-                    .fetch_add(1, std::sync::atomic::Ordering::Release);
-                Ok(())
-            }
-            None => {
-                let account = self.query_account().await?;
-                let account_number = account.account_number;
-                let sequence_number = account.sequence + 1;
-                self.client_state = Some(ClientState {
-                    account_number,
-                    sequence_number: Arc::new(AtomicU64::new(sequence_number)),
-                });
-                Ok(())
-            }
-        }
-    }
-
-    fn get_sequence_number(&self) -> Result<u64, Error> {
-        Ok(self
-            .client_state
-            .as_ref()
-            .ok_or_else(|| {
-                Error::InvalidAccount(
-                    "Account not initialized. Cannot get sequence_number".to_string(),
-                )
-            })?
-            .sequence_number
-            .load(std::sync::atomic::Ordering::Acquire))
-    }
-
-    fn get_account_number(&self) -> Result<u64, Error> {
-        Ok(self
-            .client_state
-            .as_ref()
-            .ok_or_else(|| {
-                Error::InvalidAccount(
-                    "Account not initialized. Cannot get account_number".to_string(),
-                )
-            })?
-            .account_number)
-    }
-
     /// Executes a transaction on the blockchain by broadcasting a signed transaction message.
     ///
     /// # Arguments
@@ -225,7 +168,7 @@ impl Client {
         &mut self,
         request: ExecuteContractRequest,
     ) -> Result<TxResponse, Error> {
-        self.init_lazy_query_account().await?;
+        let account = self.query_account().await?;
 
         let msg_payload = request
             .message
@@ -240,7 +183,7 @@ impl Client {
         let funds = request.funds;
 
         let tx_bytes = self
-            .prepare_msg(&msg_payload, gas_limit, gas_price, funds)
+            .prepare_msg(&account, &msg_payload, gas_limit, gas_price, funds)
             .await?;
 
         let mut tx_client = ServiceClient::new(self.client.clone());
@@ -273,6 +216,7 @@ impl Client {
     /// Prepares a transaction message for execution on the blockchain.
     async fn prepare_msg(
         &self,
+        account: &BaseAccount,
         msg_payload: &[u8],
         gas_limit: u64,
         gas_price: f64,
@@ -326,7 +270,7 @@ impl Client {
             mode_info: Some(ModeInfo {
                 sum: Some(Sum::Single(Single { mode: 1 })),
             }),
-            sequence: self.get_sequence_number()?,
+            sequence: account.sequence,
         };
 
         #[allow(deprecated)]
@@ -342,7 +286,7 @@ impl Client {
             body_bytes: body_bytes.clone(),
             auth_info_bytes: auth_info_bytes.clone(),
             chain_id: self.chain_id.clone(),
-            account_number: self.get_account_number()?,
+            account_number: account.account_number,
         };
 
         let sign_doc_bytes = sign_doc.to_bytes()?;
