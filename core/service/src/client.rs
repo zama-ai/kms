@@ -2215,10 +2215,9 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     use crate::consts::TEST_CENTRAL_KEY_ID;
     #[cfg(feature = "slow_tests")]
-    use crate::consts::{
-        DEFAULT_CENTRAL_KEYS_PATH, DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM_PATH,
-        DEFAULT_THRESHOLD_KEY_ID,
-    };
+    use crate::consts::{DEFAULT_CENTRAL_KEY_ID, DEFAULT_PARAM_PATH, DEFAULT_THRESHOLD_KEY_ID};
+    #[cfg(feature = "slow_tests")]
+    use crate::cryptography::central_kms::tests::ensure_kms_default_keys;
     #[cfg(feature = "slow_tests")]
     use crate::cryptography::central_kms::CentralizedTestingKeys;
     use crate::cryptography::central_kms::{compute_handle, gen_sig_keys, BaseKmsStruct};
@@ -3117,7 +3116,7 @@ pub(crate) mod tests {
             name: "Authorization token",
             version: "1",
             chain_id: 8006,
-            verifying_contract: alloy_primitives::Address::ZERO,
+            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
         )
     }
 
@@ -3740,7 +3739,7 @@ pub(crate) mod tests {
     #[tokio::test]
     #[serial]
     async fn test_largecipher() {
-        let keys: CentralizedTestingKeys = read_element(DEFAULT_CENTRAL_KEYS_PATH).await.unwrap();
+        let keys: CentralizedTestingKeys = ensure_kms_default_keys().await;
         let (kms_server, mut kms_client) = super::test_tools::setup_centralized(
             RamStorage::new(StorageType::PUB),
             RamStorage::from_existing_keys(&keys.software_kms_keys)

@@ -725,7 +725,7 @@ where
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{KmsFheKeyHandles, Storage};
     #[cfg(feature = "slow_tests")]
     use crate::consts::{
@@ -780,7 +780,7 @@ mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    async fn ensure_kms_default_keys() -> CentralizedTestingKeys {
+    pub(crate) async fn ensure_kms_default_keys() -> CentralizedTestingKeys {
         setup(
             DEFAULT_PARAM_PATH,
             &DEFAULT_CENTRAL_KEY_ID.to_string(),

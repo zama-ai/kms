@@ -1,3 +1,4 @@
+use aes_prng::AesRng;
 use clap::{Parser, Subcommand};
 use kms_lib::client::Client;
 use kms_lib::consts::THRESHOLD;
@@ -11,8 +12,9 @@ use kms_lib::{
     storage::{FileStorage, StorageType},
     util::key_setup::test_tools::compute_cipher_from_storage,
 };
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 use tokio::task::JoinSet;
+use tonic::transport::Channel;
 
 const CLIENT_RETRY_COUNTER: usize = 100;
 
@@ -69,14 +71,12 @@ macro_rules! retry {
     };
 }
 
-// TODO correctly implement domain parsing in CLI when
-// it's more clear what fields are needed
 fn dummy_domain() -> alloy_sol_types::Eip712Domain {
     alloy_sol_types::eip712_domain!(
-        name: "dummy",
+        name: "Authorization token",
         version: "1",
-        chain_id: 1,
-        verifying_contract: alloy_primitives::Address::ZERO,
+        chain_id: 8006,
+        verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
     )
 }
 
@@ -171,7 +171,8 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
                 "Reencryption response is ok: {:?} of type {:?}",
                 plaintext.as_u32(),
                 plaintext.fhe_type()
-            )
+            );
+            assert_eq!(plaintext.as_u32(), msg);
         }
         _ => tracing::warn!("Reencryption response is NOT valid"),
     };
@@ -179,58 +180,12 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Result<()> {
-    let mut rng = rand::thread_rng();
-
-    tracing::info!("Threshold  Client - connecting to: {:?}", addresses);
-    let num_parties = addresses.len();
-    let mut pub_storage = Vec::with_capacity(num_parties);
-    let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
-    let mut core_endpoints = Vec::with_capacity(num_parties);
-
-    for (i, address) in addresses.iter().enumerate() {
-        // make sure address starts with http://
-        let url = if address.starts_with("http://") {
-            address.clone()
-        } else {
-            "http://".to_string() + address
-        };
-
-        tracing::info!("Connecting to {:?}", url);
-
-        let core_endpoint = retry!(
-            CoreServiceEndpointClient::connect(url.to_owned()).await,
-            5,
-            100
-        )?;
-
-        core_endpoints.push(core_endpoint);
-
-        pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i + 1).unwrap());
-    }
-
-    let mut internal_client = Client::new_client(client_storage, pub_storage, DEFAULT_PARAM_PATH)
-        .await
-        .unwrap();
-
-    // initialize PRSS if flag is set
-    if init {
-        let mut handles = JoinSet::new();
-
-        for ce in core_endpoints.iter_mut() {
-            let mut ce = ce.clone();
-
-            handles.spawn(tokio::spawn(async move {
-                let init_request = InitRequest {
-                    config: Some(kms_lib::kms::Config {}),
-                };
-                let _ = ce.init(init_request).await.unwrap();
-            }));
-        }
-
-        while handles.join_next().await.is_some() {}
-    }
-
+async fn do_threshold_decryption(
+    internal_client: &mut Client,
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    rng: &mut AesRng,
+) -> anyhow::Result<()> {
+    let num_parties = core_endpoints.len();
     let msg: u8 = rng.gen();
     let (ct, fhe_type) =
         compute_cipher_from_storage(None, msg.into(), &DEFAULT_THRESHOLD_KEY_ID.to_string()).await;
@@ -306,15 +261,169 @@ async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Resul
         Ok(Some(plaintext)) => {
             tracing::info!(
                 "Decryption response is ok: {:?} of type {:?}",
-                plaintext.as_u32(),
+                plaintext.as_u8(),
                 plaintext.fhe_type()
-            )
+            );
+            assert_eq!(plaintext.as_u8(), msg);
         }
         _ => tracing::warn!("Decryption response is NOT valid"),
     };
 
     Ok(())
 }
+
+async fn do_threshold_reencryption(
+    internal_client: &mut Client,
+    core_endpoints: &mut [CoreServiceEndpointClient<Channel>],
+    rng: &mut AesRng,
+) -> anyhow::Result<()> {
+    let num_parties = core_endpoints.len();
+    let msg: u8 = rng.gen();
+    let (ct, fhe_type) =
+        compute_cipher_from_storage(None, msg.into(), &DEFAULT_THRESHOLD_KEY_ID.to_string()).await;
+
+    let random_req_id = RequestId::from(rng.gen::<u128>());
+
+    // REENCRYPTION REQUEST
+    let domain = dummy_domain();
+    let reenc_req_tuple = internal_client.reencryption_request(
+        ct.clone(),
+        &domain,
+        fhe_type,
+        &random_req_id,
+        &DEFAULT_THRESHOLD_KEY_ID,
+    )?;
+    let (reenc_req, enc_pk, enc_sk) = reenc_req_tuple;
+
+    // make parallel requests by calling [decrypt] in a thread
+    let mut req_tasks = JoinSet::new();
+
+    for ce in core_endpoints.iter_mut() {
+        let req_cloned = reenc_req.clone();
+        let mut cur_client = ce.clone();
+        req_tasks.spawn(async move { cur_client.reencrypt(tonic::Request::new(req_cloned)).await });
+    }
+
+    let mut req_response_vec = Vec::new();
+    while let Some(inner) = req_tasks.join_next().await {
+        req_response_vec.push(inner.unwrap().unwrap().into_inner());
+    }
+    assert_eq!(req_response_vec.len(), num_parties);
+
+    // get all responses
+    let mut resp_tasks = JoinSet::new();
+    for ce in core_endpoints.iter_mut() {
+        let mut cur_client = ce.clone();
+        let req_id_clone = reenc_req.request_id.as_ref().unwrap().clone();
+
+        resp_tasks.spawn(async move {
+            // Sleep to give the server some time to complete decryption
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+            let mut response = cur_client
+                .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                .await;
+            let mut ctr = 0_usize;
+            while response.is_err()
+                && response.as_ref().unwrap_err().code() == tonic::Code::Unavailable
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                // do at most 100 retries (stop after max. 50 secs)
+                if ctr >= CLIENT_RETRY_COUNTER {
+                    panic!(
+                        "timeout while waiting for decryption after {CLIENT_RETRY_COUNTER} retries"
+                    );
+                }
+                ctr += 1;
+                response = cur_client
+                    .get_reencrypt_result(tonic::Request::new(req_id_clone.clone()))
+                    .await;
+            }
+            (req_id_clone, response.unwrap().into_inner())
+        });
+    }
+
+    let mut resp_response_vec = Vec::new();
+    while let Some(resp) = resp_tasks.join_next().await {
+        resp_response_vec.push(resp.unwrap().1);
+    }
+
+    match internal_client.process_reencryption_resp(
+        Some(reenc_req),
+        &resp_response_vec,
+        &enc_pk,
+        &enc_sk,
+    ) {
+        Ok(plaintext) => {
+            tracing::info!(
+                "Reencryption response is ok: {:?} of type {:?}",
+                plaintext.as_u8(),
+                plaintext.fhe_type()
+            );
+            assert_eq!(plaintext.as_u8(), msg);
+        }
+        _ => tracing::warn!("Reencryption response is NOT valid"),
+    };
+
+    Ok(())
+}
+
+async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Result<()> {
+    let mut rng = AesRng::from_entropy();
+
+    tracing::info!("Threshold  Client - connecting to: {:?}", addresses);
+    let num_parties = addresses.len();
+    let mut pub_storage = Vec::with_capacity(num_parties);
+    let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
+    let mut core_endpoints = Vec::with_capacity(num_parties);
+
+    for (i, address) in addresses.iter().enumerate() {
+        // make sure address starts with http://
+        let url = if address.starts_with("http://") {
+            address.clone()
+        } else {
+            "http://".to_string() + address
+        };
+
+        tracing::info!("Connecting to {:?}", url);
+
+        let core_endpoint = retry!(
+            CoreServiceEndpointClient::connect(url.to_owned()).await,
+            5,
+            100
+        )?;
+
+        core_endpoints.push(core_endpoint);
+
+        pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i + 1).unwrap());
+    }
+
+    let mut internal_client = Client::new_client(client_storage, pub_storage, DEFAULT_PARAM_PATH)
+        .await
+        .unwrap();
+
+    // initialize PRSS if flag is set
+    if init {
+        let mut handles = JoinSet::new();
+
+        for ce in core_endpoints.iter_mut() {
+            let mut ce = ce.clone();
+
+            handles.spawn(tokio::spawn(async move {
+                let init_request = InitRequest {
+                    config: Some(kms_lib::kms::Config {}),
+                };
+                let _ = ce.init(init_request).await.unwrap();
+            }));
+        }
+
+        while handles.join_next().await.is_some() {}
+    }
+
+    do_threshold_decryption(&mut internal_client, &mut core_endpoints, &mut rng).await?;
+    do_threshold_reencryption(&mut internal_client, &mut core_endpoints, &mut rng).await
+}
+
 /// This client serves test purposes.
 #[cfg(feature = "non-wasm")]
 #[tokio::main]
