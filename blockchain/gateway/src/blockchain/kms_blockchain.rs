@@ -400,7 +400,7 @@ impl Blockchain for KmsBlockchainImpl {
     async fn reencrypt(
         &self,
         signature: Vec<u8>,
-        user_address: Vec<u8>,
+        client_address: String,
         enc_key: Vec<u8>,
         fhe_type: FheType,
         ciphertext: Vec<u8>,
@@ -410,7 +410,7 @@ impl Blockchain for KmsBlockchainImpl {
         tracing::info!(
             "🔒 Reencrypting ciphertext with signature: {:?}, user_address: {:?}, enc_key: {:?}, fhe_type: {:?}, eip712_verifying_contract: {:?}, chain_id: {:?}",
             hex::encode(&signature),
-            hex::encode(&user_address),
+            hex::encode(&client_address),
             hex::encode(&enc_key),
             fhe_type,
             eip712_verifying_contract,
@@ -442,10 +442,10 @@ impl Blockchain for KmsBlockchainImpl {
         chain_id.to_little_endian(&mut eip712_chain_id);
 
         // convert user_address to verification_key
-        if user_address.len() != 20 {
+        if client_address.len() != 20 {
             return Err(anyhow::anyhow!(
                 "user_address {} bytes but 20 bytes is expected",
-                user_address.len()
+                client_address.len()
             ));
         }
 
@@ -453,7 +453,7 @@ impl Blockchain for KmsBlockchainImpl {
         let reencrypt_values = ReencryptValues::builder()
             .signature(signature)
             .version(CURRENT_FORMAT_VERSION)
-            .client_address(user_address)
+            .client_address(client_address)
             .randomness(randomness)
             .enc_key(enc_key)
             .fhe_type(fhe_type)

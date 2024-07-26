@@ -1,9 +1,10 @@
 use aes_prng::AesRng;
 use clap::{Parser, Subcommand};
-use kms_lib::client::Client;
+use kms_lib::client::{Client, ParsedReencryptionRequest};
 use kms_lib::consts::THRESHOLD;
 use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
 use kms_lib::kms::RequestId;
+use kms_lib::rpc::rpc_types::protobuf_to_alloy_domain;
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::{
     conf::init_trace,
@@ -165,7 +166,16 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
     }
     tracing::debug!("GET REENCRYPT RESPONSE={:?}", response);
     let responses = vec![response?.into_inner()];
-    match internal_client.process_reencryption_resp(Some(req), &responses, &enc_pk, &enc_sk) {
+
+    let eip712_domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap()).unwrap();
+    let client_request = ParsedReencryptionRequest::try_from(&req).unwrap();
+    match internal_client.process_reencryption_resp(
+        &client_request,
+        &eip712_domain,
+        &responses,
+        &enc_pk,
+        &enc_sk,
+    ) {
         Ok(plaintext) => {
             tracing::info!(
                 "Reencryption response is ok: {:?} of type {:?}",
@@ -348,8 +358,11 @@ async fn do_threshold_reencryption(
         resp_response_vec.push(resp.unwrap().1);
     }
 
+    let client_request = ParsedReencryptionRequest::try_from(&reenc_req).unwrap();
+    let eip712_domain = protobuf_to_alloy_domain(reenc_req.domain.as_ref().unwrap()).unwrap();
     match internal_client.process_reencryption_resp(
-        Some(reenc_req),
+        &client_request,
+        &eip712_domain,
         &resp_response_vec,
         &enc_pk,
         &enc_sk,

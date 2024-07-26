@@ -57,7 +57,7 @@ pub(crate) fn top_n_chars(mut s: String) -> String {
 pub fn some_or_err<T: fmt::Debug>(input: Option<T>, error: String) -> anyhow::Result<T> {
     input.ok_or_else(|| {
         tracing::warn!(error);
-        anyhow!("Invalid request: {}", top_n_chars(error.to_string()))
+        anyhow!("Missing value: {}", top_n_chars(error.to_string()))
     })
 }
 

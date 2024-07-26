@@ -8,25 +8,27 @@ const {
     cryptobox_decrypt,
     cryptobox_pk_to_u8vec,
     cryptobox_sk_to_u8vec,
-    client_from_transcript,
     process_reencryption_resp,
-    process_reencryption_resp_from_json,
-    centralized_reencryption_request_from_transcript,
-    centralized_reencryption_response_from_transcript,
-    threshold_reencryption_response_from_transcript,
+    process_reencryption_resp_from_js,
     u8vec_to_cryptobox_pk,
     u8vec_to_cryptobox_sk,
     new_client,
     u8vec_to_public_sig_key,
-    new_eip712_domain,
-    new_request_id,
-    new_fhe_type,
-    make_reencryption_req,
-    reencryption_request_to_flat_json_string,
-    agg_resp_to_json,
+    agg_resp_to_js,
     get_client_secret_key,
     get_client_address,
-    private_sig_key_to_u8vec
+    private_sig_key_to_u8vec,
+    buf_to_transcript,
+    transcript_to_client,
+    transcript_to_eip712domain,
+    transcript_to_response,
+    transcript_to_parsed_req,
+    transcript_to_enc_pk,
+    transcript_to_enc_sk,
+    transcript_to_parsed_req_js,
+    transcript_to_eip712domain_js,
+    transcript_to_response_js,
+    transcript_to_pt_js
 } = require("../../pkg");
 
 test('crypto_box', (_t) => {
@@ -68,58 +70,83 @@ test('crypto_box ser', (_t) => {
 test('centralized reencryption response', (_t) => {
     // TEST_CENTRAL_WASM_TRANSCRIPT_PATH
     const transcript_buf = fs.readFileSync('temp/test-central-wasm-transcript.bin.8')
-    let client = client_from_transcript(transcript_buf);
+    const transcript = buf_to_transcript(transcript_buf);
+    const client = transcript_to_client(transcript);
+    const request = transcript_to_parsed_req(transcript);
+    const eip712_domain = transcript_to_eip712domain(transcript);
+    const response = transcript_to_response(transcript);
+    const enc_pk = transcript_to_enc_pk(transcript);
+    const enc_sk = transcript_to_enc_sk(transcript);
 
-    let response = centralized_reencryption_response_from_transcript(transcript_buf);
-
-    let pt = process_reencryption_resp(client, response.req, response.agg_resp, response.enc_pk, response.enc_sk, false);
+    // test reenc using wasm objects
+    const pt = process_reencryption_resp(client, request, eip712_domain, response, enc_pk, enc_sk, true);
     assert.deepEqual(48, pt[0]);
 
-    let pt2 = process_reencryption_resp(client, response.req, response.agg_resp, response.enc_pk, response.enc_sk, true);
+    const response2 = transcript_to_response(transcript);
+    const pt2 = process_reencryption_resp(client, null, null, response2, enc_pk, enc_sk, false);
+    assert.deepEqual(48, pt2[0]);
+});
+
+test('centralized reencryption response with js', (_t) => {
+    // TEST_CENTRAL_WASM_TRANSCRIPT_PATH
+    const transcript_buf = fs.readFileSync('temp/test-central-wasm-transcript.bin.8')
+    const transcript = buf_to_transcript(transcript_buf);
+    const client = transcript_to_client(transcript);
+    const request_js = transcript_to_parsed_req_js(transcript);
+    const eip712_domain_js = transcript_to_eip712domain_js(transcript);
+    const response_js = transcript_to_response_js(transcript);
+    const enc_pk = transcript_to_enc_pk(transcript);
+    const enc_sk = transcript_to_enc_sk(transcript);
+
+    // test reenc using js objects
+    // these logs display the format of the request and response.
+    console.log(request_js);
+    console.log(eip712_domain_js);
+    console.log(response_js);
+    const pt = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true);
+    assert.deepEqual(48, pt[0]);
+
+    const pt2 = process_reencryption_resp_from_js(client, null, null, response_js, enc_pk, enc_sk, false);
     assert.deepEqual(48, pt2[0]);
 });
 
 test('threshold reencryption response', (_t) => {
     // TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
     const transcript_buf = fs.readFileSync('temp/test-threshold-wasm-transcript.bin.8')
-    let client = client_from_transcript(transcript_buf);
-    let response = threshold_reencryption_response_from_transcript(transcript_buf);
+    const transcript = buf_to_transcript(transcript_buf);
+    const client = transcript_to_client(transcript);
+    const request = transcript_to_parsed_req(transcript);
+    const eip712_domain = transcript_to_eip712domain(transcript);
+    const response = transcript_to_response(transcript);
+    const enc_pk = transcript_to_enc_pk(transcript);
+    const enc_sk = transcript_to_enc_sk(transcript);
 
-    let pt = process_reencryption_resp(client, response.req, response.agg_resp, response.enc_pk, response.enc_sk, false);
+    // test reenc using wasm objects
+    const pt = process_reencryption_resp(client, request, eip712_domain, response, enc_pk, enc_sk, true);
     assert.deepEqual(42, pt[0]);
 
-    let pt2 = process_reencryption_resp(client, response.req, response.agg_resp, response.enc_pk, response.enc_sk, true);
+    const response2 = transcript_to_response(transcript);
+    const pt2 = process_reencryption_resp(client, null, null, response2, enc_pk, enc_sk, false);
     assert.deepEqual(42, pt2[0]);
 });
 
-test('print central transcript', (_t) => {
-    const transcript_buf = fs.readFileSync('temp/test-central-wasm-transcript.bin.8')
-    let client = client_from_transcript(transcript_buf);
-    let req_struct = centralized_reencryption_request_from_transcript(client, transcript_buf, 48);
-    let req = req_struct.inner_str;
-    let enc_pk = req_struct.enc_pk;
-    let enc_sk = req_struct.enc_sk;
-    let expected_pt = req_struct.pt;
-    console.log("pt:");
-    console.log(expected_pt);
+test('threshold reencryption response with js', (_t) => {
+    // TEST_THRESHOLD_WASM_TRANSCRIPT_PATH
+    const transcript_buf = fs.readFileSync('temp/test-threshold-wasm-transcript.bin.8')
+    const transcript = buf_to_transcript(transcript_buf);
+    const client = transcript_to_client(transcript);
+    const request_js = transcript_to_parsed_req_js(transcript);
+    const eip712_domain_js = transcript_to_eip712domain_js(transcript);
+    const response_js = transcript_to_response_js(transcript);
+    const enc_pk = transcript_to_enc_pk(transcript);
+    const enc_sk = transcript_to_enc_sk(transcript);
 
-    console.log("request:");
-    console.log(req);
+    // test reenc using js objects
+    const pt = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, response_js, enc_pk, enc_sk, true);
+    assert.deepEqual(42, pt[0]);
 
-    console.log("ethereum address:");
-    console.log(get_client_address(client))
-
-    console.log("ethereum sk (bincoded):");
-    console.log(private_sig_key_to_u8vec(get_client_secret_key(client)));
-
-    console.log("ephemeral pk and sk:");
-    console.log(cryptobox_pk_to_u8vec(enc_pk));
-    console.log(cryptobox_sk_to_u8vec(enc_sk));
-
-    let response = centralized_reencryption_response_from_transcript(transcript_buf);
-    console.log("response:");
-    console.log(agg_resp_to_json(response.agg_resp));
-
+    const pt2 = process_reencryption_resp_from_js(client, null, null, response_js, enc_pk, enc_sk, false);
+    assert.deepEqual(42, pt2[0]);
 });
 
 test('new client', (_t) => {
@@ -131,31 +158,12 @@ test('new client', (_t) => {
     let kms_keys = [u8vec_to_public_sig_key(kms_key_buf)];
 
     // make a generic client
-    let address = "0x4838B106FCe9647Bdf1E7877BF73cE8B0BAD5f97";
-    let generic_client = new_client(kms_keys, address, 'default');
+    let address = "0x66f9664f97F2b50F62D13eA064982f936dE76657";
+    new_client(kms_keys, address, 'default');
 
-    // try creating requests
-    generic_make_reenc(generic_client, make_reencryption_req);
+    // we only need to test the constructor, no need to test is further
+    // as they are handled by the other tests
 });
-
-function generic_make_reenc(client, reqf) {
-    let eipmsg = new_eip712_domain("dummy", "1", new Uint8Array([1, 2, 3]), "0x010203", new Uint8Array([1, 2, 3]));
-    let key_id = new_request_id("myrequestid");
-    let fhe_type = new_fhe_type("euint8");
-    let sig = new Uint8Array([2, 3, 4]);
-
-    let alice_sk = cryptobox_keygen();
-    let alice_pk = cryptobox_get_pk(alice_sk);
-
-    let ct = new Uint8Array([7, 6, 5]);
-    let ct_digest = new Uint8Array([7, 8, 9]);
-    let req = reqf(client, sig, alice_pk, fhe_type, key_id, ct, ct_digest, eipmsg);
-
-    // turn the request into json
-    let req_json = reencryption_request_to_flat_json_string(req);
-    // check that the parsed result is ok
-    let _parsed = JSON.parse(req_json);
-}
 
 async function postData(url = "", data = "") {
     const response = await fetch(url, {
@@ -173,17 +181,16 @@ test('centralized integration', { skip: 'start the gateway to run integration te
     // DEFAULT_CENTRAL_WASM_TRANSCRIPT_PATH
     // change the .8 to something else to test with a different type
     const transcript_buf = fs.readFileSync('temp/default-central-wasm-transcript.bin.8')
-    let client = client_from_transcript(transcript_buf);
-    let req_struct = centralized_reencryption_request_from_transcript(client, transcript_buf, 44);
-    let req_str = req_struct.inner_str;
-    let req = req_struct.inner;
-    let enc_pk = req_struct.enc_pk;
-    let enc_sk = req_struct.enc_sk;
-    let expected_pt = req_struct.pt;
+    let transcript = buf_to_transcript(transcript_buf);
+    const client = transcript_to_client(transcript);
+    const request_js = transcript_to_parsed_req_js(transcript);
+    const eip712_domain_js = transcript_to_eip712domain_js(transcript);
+    const enc_pk = transcript_to_enc_pk(transcript);
+    const enc_sk = transcript_to_enc_sk(transcript);
+    let expected_pt = transcript_to_pt_js(transcript);
 
-    await postData("http://127.0.0.1:7077/reencrypt", req_str).then((res) => {
-        console.log(res.response);
-        let actual_pt = process_reencryption_resp_from_json(client, req, res.response, null, enc_pk, enc_sk, false);
+    await postData("http://127.0.0.1:7077/reencrypt", JSON.stringify(request_js)).then((res) => {
+        let actual_pt = process_reencryption_resp_from_js(client, request_js, eip712_domain_js, res.response, enc_pk, enc_sk, true);
         assert.deepEqual(expected_pt, actual_pt);
     });
 });

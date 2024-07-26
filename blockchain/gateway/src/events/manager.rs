@@ -35,10 +35,20 @@ pub struct DecryptionEvent {
     pub(crate) block_number: u64,
 }
 
+// Example payload:
+// {
+//     signature: '15a4f9a8eb61459cfba7d103d8f911fb04ce91ecf841b34c49c0d56a70b896d20cbc31986188f91efc3842b7df215cee8acb40178daedb8b63d0ba5d199bce121c',
+//     client_address: '0x17853A630aAe15AED549B2B874de08B73C0F59c5',
+//     enc_key: '2000000000000000df2fcacb774f03187f3802a27259f45c06d33cefa68d9c53426b15ad531aa822',
+//     ciphertext_digest: '0748b542afe2353c86cb707e3d21044b0be1fd18efc7cbaa6a415af055bfb358',
+//     eip712_verifying_contract: '0x66f9664f97F2b50F62D13eA064982f936dE76657'
+// }
+// Note that `client_address` and `eip712_verifying_contract`
+// are encoded using EIP-55.
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct ApiReencryptValues {
     pub(crate) signature: HexVector,
-    pub(crate) user_address: HexVector,
+    pub(crate) client_address: String,
     pub(crate) enc_key: HexVector,
     pub(crate) ciphertext_handle: HexVector,
     pub(crate) eip712_verifying_contract: String,
@@ -335,7 +345,7 @@ mod tests {
     fn test_serde() {
         let values = ApiReencryptValues {
             signature: HexVector::from(vec![1, 2, 3]),
-            user_address: HexVector::from(vec![4, 5, 6]),
+            client_address: "0x1234567890abcdef".to_string(),
             enc_key: HexVector::from(vec![7, 8, 9]),
             ciphertext_handle: HexVector::from(vec![10, 11, 12]),
             eip712_verifying_contract: "0x1234567890abcdef".to_string(),

@@ -374,8 +374,19 @@ impl<
             degree: 0, // In the centralized KMS, the degree is always 0 since result is a constant
         };
 
+        // sign the response
+        let sig_payload_vec = tonic_handle_potential_err(
+            bincode::serialize(&payload),
+            format!("Could not convert payload to bytes {:?}", payload),
+        )?;
+
+        let sig = tonic_handle_potential_err(
+            self.sign(&sig_payload_vec),
+            format!("Could not sign payload {:?}", payload),
+        )?;
+
         Ok(Response::new(ReencryptionResponse {
-            signature: vec![],
+            signature: sig.sig.to_vec(),
             payload: Some(payload),
         }))
     }
@@ -706,10 +717,8 @@ pub async fn validate_reencrypt_req(
         )));
     }
 
-    if payload.client_address.len() != 20 {
-        return Err(anyhow::anyhow!("incorrect address length"));
-    }
-    let client_verf_key = alloy_primitives::Address::from_slice(&payload.client_address);
+    let client_verf_key =
+        alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
 
     match verify_eip712(req) {
         Ok(()) => {

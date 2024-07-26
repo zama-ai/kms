@@ -12,7 +12,7 @@ use crate::kms::{
     ReencryptionResponsePayload, RequestId,
 };
 use crate::rpc::rpc_types::{
-    allow_to_protobuf_domain, MetaResponse, Plaintext, CURRENT_FORMAT_VERSION,
+    alloy_to_protobuf_domain, MetaResponse, Plaintext, CURRENT_FORMAT_VERSION,
 };
 use crate::{anyhow_error_and_log, some_or_err};
 use aes_prng::AesRng;
@@ -223,6 +223,7 @@ pub struct TestingReencryptionTranscript {
 pub mod js_api {
     use crate::kms::Eip712DomainMsg;
     use crate::kms::ParamChoice;
+    use crate::rpc::rpc_types::protobuf_to_alloy_domain;
     use crypto_box::aead::{Aead, AeadCore};
     use crypto_box::{Nonce, SalsaBox};
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
@@ -314,120 +315,85 @@ pub mod js_api {
         checksumed.to_string()
     }
 
-    #[wasm_bindgen(getter_with_clone)]
-    #[cfg(feature = "wasm_tests")]
-    pub struct DummyReencResponse {
-        pub req: Option<ReencryptionRequest>,
-        pub agg_resp: Vec<ReencryptionResponse>,
-        pub enc_pk: PublicEncKey,
-        pub enc_sk: PrivateEncKey,
-    }
-
     #[wasm_bindgen]
     #[cfg(feature = "wasm_tests")]
-    pub fn agg_resp_to_json(agg_resp: Vec<ReencryptionResponse>) -> Result<JsValue, JsError> {
-        resp_to_json(agg_resp)
-    }
-
-    #[wasm_bindgen]
-    #[cfg(feature = "wasm_tests")]
-    pub fn centralized_reencryption_response_from_transcript(buf: &[u8]) -> DummyReencResponse {
-        let transcript: TestingReencryptionTranscript = bincode::deserialize(buf).unwrap();
-        DummyReencResponse {
-            req: transcript.request,
-            agg_resp: transcript.agg_resp,
-            enc_pk: transcript.eph_pk.clone(),
-            enc_sk: transcript.eph_sk.clone(),
-        }
-    }
-
-    #[cfg(feature = "wasm_tests")]
-    #[wasm_bindgen(getter_with_clone)]
-    pub struct DummyReencRequest {
-        pub inner: ReencryptionRequest,
-        pub inner_str: String,
-        pub enc_pk: PublicEncKey,
-        pub enc_sk: PrivateEncKey,
-        pub pt: Vec<u8>,
-    }
-
-    #[cfg(feature = "wasm_tests")]
-    #[wasm_bindgen]
-    pub fn centralized_reencryption_request_from_transcript(
-        client: &mut Client,
-        buf: &[u8],
-    ) -> DummyReencRequest {
-        reencryption_request_from_transcript(client, buf, &crate::consts::DEFAULT_CENTRAL_KEY_ID)
-    }
-
-    #[cfg(feature = "wasm_tests")]
-    #[wasm_bindgen]
-    pub fn threshold_reencryption_request_from_transcript(
-        client: &mut Client,
-        buf: &[u8],
-    ) -> DummyReencRequest {
-        reencryption_request_from_transcript(client, buf, &crate::consts::DEFAULT_THRESHOLD_KEY_ID)
-    }
-
-    #[cfg(feature = "wasm_tests")]
-    fn reencryption_request_from_transcript(
-        client: &mut Client,
-        buf: &[u8],
-        key_id: &RequestId,
-    ) -> DummyReencRequest {
+    pub fn buf_to_transcript(buf: &[u8]) -> TestingReencryptionTranscript {
         console_error_panic_hook::set_once();
-        let transcript: TestingReencryptionTranscript = bincode::deserialize(buf).unwrap();
-
-        let domain = alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::Address::ZERO,
-        );
-        let request_id = RequestId::derive("REENC_ID").unwrap();
-        let (req, enc_pk, enc_sk) = client
-            .reencryption_request(
-                transcript.ct.clone(),
-                &domain,
-                transcript.fhe_type,
-                &request_id,
-                key_id,
-            )
-            .unwrap();
-
-        let json = reencryption_request_to_flat_json_string(&req);
-
-        DummyReencRequest {
-            inner: req,
-            inner_str: json.to_string(),
-            enc_pk,
-            enc_sk,
-            pt: transcript.pt,
-        }
+        bincode::deserialize(buf).unwrap()
     }
 
     #[wasm_bindgen]
     #[cfg(feature = "wasm_tests")]
-    pub fn threshold_reencryption_response_from_transcript(buf: &[u8]) -> DummyReencResponse {
-        let transcript: TestingReencryptionTranscript = bincode::deserialize(buf).unwrap();
-        DummyReencResponse {
-            req: transcript.request,
-            agg_resp: transcript.agg_resp.clone(),
-            enc_pk: transcript.eph_pk.clone(),
-            enc_sk: transcript.eph_sk.clone(),
-        }
+    pub fn transcript_to_parsed_req(
+        transcript: &TestingReencryptionTranscript,
+    ) -> ParsedReencryptionRequest {
+        ParsedReencryptionRequest::try_from(transcript.request.as_ref().unwrap()).unwrap()
     }
 
     #[wasm_bindgen]
     #[cfg(feature = "wasm_tests")]
-    pub fn client_from_transcript(buf: &[u8]) -> Client {
-        console_error_panic_hook::set_once();
-        let transcript: TestingReencryptionTranscript = bincode::deserialize(buf).unwrap();
+    pub fn transcript_to_parsed_req_js(transcript: &TestingReencryptionTranscript) -> JsValue {
+        let parsed = transcript_to_parsed_req(&transcript);
+        let parsed_hex = ParsedReencryptionRequestHex::from(&parsed);
+        serde_wasm_bindgen::to_value(&parsed_hex).unwrap()
+    }
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn transcript_to_eip712domain(
+        transcript: &TestingReencryptionTranscript,
+    ) -> Eip712DomainMsg {
+        transcript.request.as_ref().unwrap().domain.clone().unwrap()
+    }
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn transcript_to_eip712domain_js(transcript: &TestingReencryptionTranscript) -> JsValue {
+        let domain = transcript_to_eip712domain(transcript);
+        serde_wasm_bindgen::to_value(&domain).unwrap()
+    }
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn transcript_to_response(
+        transcript: &TestingReencryptionTranscript,
+    ) -> Vec<ReencryptionResponse> {
+        transcript.agg_resp.clone()
+    }
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn transcript_to_response_js(transcript: &TestingReencryptionTranscript) -> JsValue {
+        let agg_resp = transcript_to_response(transcript);
+        resp_to_js(agg_resp)
+    }
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn transcript_to_enc_sk(transcript: &TestingReencryptionTranscript) -> PrivateEncKey {
+        transcript.eph_sk.clone()
+    }
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn transcript_to_enc_pk(transcript: &TestingReencryptionTranscript) -> PublicEncKey {
+        transcript.eph_pk.clone()
+    }
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn transcript_to_pt_js(transcript: &TestingReencryptionTranscript) -> JsValue {
+        serde_wasm_bindgen::to_value(&transcript.pt).unwrap()
+    }
+
+    #[wasm_bindgen]
+    #[cfg(feature = "wasm_tests")]
+    pub fn transcript_to_client(transcript: &TestingReencryptionTranscript) -> Client {
         Client {
             rng: Box::new(AesRng::from_entropy()),
-            server_pks: transcript.server_pks,
+            server_pks: transcript.server_pks.clone(),
             client_address: transcript.client_address,
-            client_sk: transcript.client_sk,
+            client_sk: transcript.client_sk.clone(),
             params: transcript.params,
         }
     }
@@ -497,113 +463,6 @@ pub mod js_api {
         salsa_box.decrypt(&ct.nonce, &ct.ct[..]).unwrap()
     }
 
-    #[wasm_bindgen]
-    pub fn new_eip712_domain(
-        name: String,
-        version: String,
-        chain_id: Vec<u8>,
-        verifying_contract: String,
-        salt: Vec<u8>,
-    ) -> Eip712DomainMsg {
-        Eip712DomainMsg {
-            name,
-            version,
-            chain_id,
-            verifying_contract,
-            salt,
-        }
-    }
-
-    #[wasm_bindgen]
-    pub fn new_request_id(request_id: String) -> RequestId {
-        RequestId { request_id }
-    }
-
-    #[wasm_bindgen]
-    pub fn new_fhe_type(mut type_str: String) -> Result<FheType, JsError> {
-        make_ascii_titlecase(&mut type_str);
-        let out = FheType::from_str_name(&type_str).ok_or(JsError::new("invalid fhe type"))?;
-        Ok(out)
-    }
-
-    /// This function assembles a reencryption request
-    /// from a signature and other metadata.
-    /// The signature is on the ephemeral public key
-    /// signed by the client's private key
-    /// following the EIP712 standard.
-    ///
-    /// The result value needs to convert to the following JSON
-    /// for the gateway.
-    /// ```
-    /// { "signature": "010203",                  // HEX
-    ///   "verification_key": "010203",           // HEX
-    ///   "enc_key": "010203",                    // HEX
-    ///   "ciphertext_digest": "010203",          // HEX
-    ///   "eip712_verifying_contract": "0x1234",  // String
-    /// }
-    /// ```
-    /// This can be done using [reencryption_request_to_flat_json_string].
-    #[wasm_bindgen]
-    pub fn make_reencryption_req(
-        client: &mut Client,
-        signature: Vec<u8>,
-        enc_pk: PublicEncKey,
-        fhe_type: FheType,
-        key_id: RequestId,
-        ciphertext: Option<Vec<u8>>,
-        ciphertext_digest: Vec<u8>,
-        domain: Eip712DomainMsg,
-    ) -> Result<ReencryptionRequest, JsError> {
-        let mut randomness: Vec<u8> = vec![0; RND_SIZE];
-        client.rng.fill_bytes(&mut randomness);
-        let payload = ReencryptionRequestPayload {
-            version: CURRENT_FORMAT_VERSION,
-            randomness,
-            enc_key: serialize(&enc_pk)?,
-            client_address: client.client_address.to_vec(),
-            fhe_type: fhe_type as i32,
-            key_id: Some(key_id),
-            ciphertext,
-            ciphertext_digest,
-        };
-        Ok(ReencryptionRequest {
-            signature,
-            payload: Some(payload),
-            domain: Some(domain),
-            // the request_id needs to be filled by the gateway/connector
-            request_id: None,
-        })
-    }
-
-    #[wasm_bindgen]
-    pub fn reencryption_request_to_flat_json_string(req: &ReencryptionRequest) -> String {
-        let domain = req.domain.as_ref().unwrap();
-        let mut json = serde_json::json!(
-        {
-            "signature": hex::encode(&req.signature),
-            "verification_key": hex::encode(&req.payload.as_ref().unwrap().client_address),
-            "enc_key": hex::encode(&req.payload.as_ref().unwrap().enc_key),
-            "ciphertext_digest": hex::encode(&req.payload.as_ref().unwrap().ciphertext_digest),
-            "eip712_verifying_contract": domain.verifying_contract,
-        });
-
-        // optionally include the full ciphertext for testing
-        let ciphertext = req.payload.as_ref().unwrap().ciphertext.clone();
-        if let Some(ct) = ciphertext {
-            json.as_object_mut().unwrap().insert(
-                "ciphertext".to_string(),
-                serde_json::Value::String(hex::encode(ct)),
-            );
-        }
-        json.to_string()
-    }
-
-    fn make_ascii_titlecase(s: &mut str) {
-        if let Some(r) = s.get_mut(0..1) {
-            r.make_ascii_uppercase();
-        }
-    }
-
     #[derive(serde::Deserialize, serde::Serialize)]
     struct ReencryptionResponseHex {
         signature: String,
@@ -611,40 +470,40 @@ pub mod js_api {
     }
 
     #[cfg(feature = "wasm_tests")]
-    fn resp_to_json(agg_resp: Vec<ReencryptionResponse>) -> Result<JsValue, JsError> {
+    fn resp_to_js(agg_resp: Vec<ReencryptionResponse>) -> JsValue {
         let mut out = vec![];
         for resp in agg_resp {
             let r = ReencryptionResponseHex {
                 signature: hex::encode(&resp.signature),
                 payload: match resp.payload {
-                    Some(inner) => Some(hex::encode(
-                        serialize(&inner).map_err(|e| JsError::new(&e.to_string()))?,
-                    )),
+                    Some(inner) => Some(hex::encode(serialize(&inner).unwrap())),
                     None => None,
                 },
             };
             out.push(r);
         }
 
-        let res = serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))?;
-        Ok(res)
+        serde_wasm_bindgen::to_value(&out).unwrap()
     }
 
-    fn json_to_resp(json: JsValue) -> Result<Vec<ReencryptionResponse>, JsError> {
+    // Note: normally the result type should be a JsError
+    // but JsError is very limited, it cannot be printed,
+    // so it's difficult to append information to the error.
+    // This is why we're using anyhow::Error.
+    fn js_to_resp(json: JsValue) -> anyhow::Result<Vec<ReencryptionResponse>> {
         // first read the hex type
-        let hex_resps: Vec<ReencryptionResponseHex> =
-            serde_wasm_bindgen::from_value(json).map_err(|e| JsError::new(&e.to_string()))?;
+        let hex_resps: Vec<ReencryptionResponseHex> = serde_wasm_bindgen::from_value(json)
+            .map_err(|e| anyhow::anyhow!("from_value error {e:?}"))?;
 
         // then convert the hex type into the type we need
         let mut out = vec![];
         for hex_resp in hex_resps {
             out.push(ReencryptionResponse {
-                signature: hex::decode(&hex_resp.signature)
-                    .map_err(|e| JsError::new(&e.to_string()))?,
+                signature: hex::decode(&hex_resp.signature)?,
                 payload: match hex_resp.payload {
                     Some(inner) => {
-                        let buf = hex::decode(inner).map_err(|e| JsError::new(&e.to_string()))?;
-                        deserialize(&buf).map_err(|e| JsError::new(&e.to_string()))?
+                        let buf = hex::decode(&inner)?;
+                        Some(deserialize(&buf)?)
                     }
                     None => None,
                 },
@@ -653,14 +512,55 @@ pub mod js_api {
         Ok(out)
     }
 
-    /// Process the reencryption response from a JSON object.
+    /// Process the reencryption response from JavaScript objects.
     /// The result is a byte array representing a plaintext of any length.
     ///
     /// * `client` - client that wants to perform reencryption.
     ///
-    /// * `request` - the initial reencryption request.
+    /// * `request` - the initial reencryption request JS object.
+    /// It can be set to null if `verify` is false.
+    /// Otherwise the caller needs to give the following JS object.
+    /// Note that `client_address` and `eip712_verifying_contract` follow EIP-55.
+    /// ```
+    /// {
+    ///   signature: '15a4f9a8eb61459cfba7d103d8f911fb04ce91ecf841b34c49c0d56a70b896d20cbc31986188f91efc3842b7df215cee8acb40178daedb8b63d0ba5d199bce121c',
+    ///   client_address: '0x17853A630aAe15AED549B2B874de08B73C0F59c5',
+    ///   enc_key: '2000000000000000df2fcacb774f03187f3802a27259f45c06d33cefa68d9c53426b15ad531aa822',
+    ///   ciphertext_digest: '0748b542afe2353c86cb707e3d21044b0be1fd18efc7cbaa6a415af055bfb358',
+    ///   eip712_verifying_contract: '0x66f9664f97F2b50F62D13eA064982f936dE76657'
+    /// }
+    /// ```
     ///
-    /// * `agg_resp - the response JSON object from the gateway.
+    /// * `eip712_domain` - the EIP-712 domain JS object.
+    /// It can be set to null if `verify` is false.
+    /// Otherwise the caller needs to give the following JS object.
+    /// Note that `salt` is optional and `verifying_contract` follows EIP-55,
+    /// additionally, `chain_id` is an array of u8.
+    /// ```
+    /// {
+    ///   name: 'Authorization token',
+    ///   version: '1',
+    ///   chain_id: [
+    ///     70, 31, 0, 0, 0, 0, 0, 0, 0,
+    ///      0,  0, 0, 0, 0, 0, 0, 0, 0,
+    ///      0,  0, 0, 0, 0, 0, 0, 0, 0,
+    ///      0,  0, 0, 0, 0
+    ///   ],
+    ///   verifying_contract: '0x66f9664f97F2b50F62D13eA064982f936dE76657',
+    ///   salt: []
+    /// }
+    /// ```
+    ///
+    /// * `agg_resp` - the response JS object from the gateway.
+    /// It has two fields like so, both are hex encoded byte arrays.
+    /// ```
+    /// [
+    ///   {
+    ///     signature: '69e7e040cab157aa819015b321c012dccb1545ffefd325b359b492653f0347517e28e66c572cdc299e259024329859ff9fcb0096e1ce072af0b6e1ca1fe25ec6',
+    ///     payload: '0100000029...'
+    ///   }
+    /// ]
+    /// ```
     ///
     /// * `enc_pk` - The ephemeral public key.
     ///
@@ -669,26 +569,54 @@ pub mod js_api {
     /// * `verify` - Whether to perform signature verification for the response.
     /// It is insecure if `verify = false`!
     #[wasm_bindgen]
-    pub fn process_reencryption_resp_from_json(
+    pub fn process_reencryption_resp_from_js(
         client: &mut Client,
-        request: Option<ReencryptionRequest>,
+        request: JsValue,
+        eip712_domain: JsValue,
         agg_resp: JsValue,
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
         verify: bool,
     ) -> Result<Vec<u8>, JsError> {
-        let agg_resp = json_to_resp(agg_resp)?;
-        process_reencryption_resp(client, request, agg_resp, enc_pk, enc_sk, verify)
+        let agg_resp = js_to_resp(agg_resp)
+            .map_err(|e| JsError::new(&format!("response parsing failed with error {}", e)))?;
+        let eip712_domain = if eip712_domain.is_null() || eip712_domain.is_undefined() {
+            None
+        } else {
+            let pb_domain = serde_wasm_bindgen::from_value(eip712_domain)
+                .map_err(|e| JsError::new(&format!("domain parsing failed with error {}", e)))?;
+            Some(pb_domain)
+        };
+        let request = if request.is_null() || request.is_undefined() {
+            None
+        } else {
+            Some(ParsedReencryptionRequest::try_from(request)?)
+        };
+        process_reencryption_resp(
+            client,
+            request,
+            eip712_domain,
+            agg_resp,
+            enc_pk,
+            enc_sk,
+            verify,
+        )
     }
 
-    /// Process the reencryption response from a JSON object.
+    /// Process the reencryption response from Rust objects.
+    /// Consider using [process_reencryption_resp_from_js]
+    /// when using the JS API.
     /// The result is a byte array representing a plaintext of any length.
     ///
     /// * `client` - client that wants to perform reencryption.
     ///
     /// * `request` - the initial reencryption request.
+    /// Must be given if `verify` is true.
     ///
-    /// * `agg_resp - the vector of reencryption responses.
+    /// * `eip712_domain` - the EIP-712 domain.
+    /// Must be given if `verify` is true.
+    ///
+    /// * `agg_resp` - the vector of reencryption responses.
     ///
     /// * `enc_pk` - The ephemeral public key.
     ///
@@ -699,14 +627,20 @@ pub mod js_api {
     #[wasm_bindgen]
     pub fn process_reencryption_resp(
         client: &mut Client,
-        request: Option<ReencryptionRequest>,
+        request: Option<ParsedReencryptionRequest>,
+        eip712_domain: Option<Eip712DomainMsg>,
         agg_resp: Vec<ReencryptionResponse>,
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
         verify: bool,
     ) -> Result<Vec<u8>, JsError> {
+        // if verify is true, then request and eip712 domain must exist
         let reenc_resp = if verify {
-            client.process_reencryption_resp(request, &agg_resp, enc_pk, enc_sk)
+            let request = request.ok_or(JsError::new("missing request"))?;
+            let pb_domain = eip712_domain.ok_or(JsError::new("missing eip712 domain"))?;
+            let eip712_domain =
+                protobuf_to_alloy_domain(&pb_domain).map_err(|e| JsError::new(&e.to_string()))?;
+            client.process_reencryption_resp(&request, &eip712_domain, &agg_resp, enc_pk, enc_sk)
         } else {
             client.insecure_process_reencryption_resp(&agg_resp, enc_pk, enc_sk)
         };
@@ -715,6 +649,141 @@ pub mod js_api {
             Err(e) => Err(JsError::new(&e.to_string())),
         }
     }
+}
+
+/// Validity of this struct is not checked.
+#[wasm_bindgen]
+pub struct ParsedReencryptionRequest {
+    // We allow dead_code because these are required to parse from JSON
+    #[allow(dead_code)]
+    signature: alloy_primitives::Signature,
+    #[allow(dead_code)]
+    client_address: alloy_primitives::Address,
+    enc_key: Vec<u8>,
+    ciphertext_digest: Vec<u8>,
+    eip712_verifying_contract: alloy_primitives::Address,
+}
+
+pub(crate) fn hex_decode_js_err(msg: &str) -> Result<Vec<u8>, JsError> {
+    hex::decode(msg).map_err(|e| JsError::new(&e.to_string()))
+}
+
+// we need this type because the json fields are hex-encoded
+// which cannot be converted to Vec<u8> automatically.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ParsedReencryptionRequestHex {
+    signature: String,
+    client_address: String,
+    enc_key: String,
+    ciphertext_digest: String,
+    eip712_verifying_contract: String,
+}
+
+impl TryFrom<&ParsedReencryptionRequestHex> for ParsedReencryptionRequest {
+    type Error = JsError;
+
+    fn try_from(req_hex: &ParsedReencryptionRequestHex) -> Result<Self, Self::Error> {
+        let signature_buf = hex_decode_js_err(&req_hex.signature)?;
+        let signature = alloy_primitives::Signature::try_from(signature_buf.as_slice())
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        let client_address =
+            alloy_primitives::Address::parse_checksummed(&req_hex.client_address, None)
+                .map_err(|e| JsError::new(&e.to_string()))?;
+        let eip712_verifying_contract =
+            alloy_primitives::Address::parse_checksummed(&req_hex.eip712_verifying_contract, None)
+                .map_err(|e| JsError::new(&e.to_string()))?;
+        let out = Self {
+            signature,
+            client_address,
+            enc_key: hex_decode_js_err(&req_hex.enc_key)?,
+            ciphertext_digest: hex_decode_js_err(&req_hex.ciphertext_digest)?,
+            eip712_verifying_contract,
+        };
+        Ok(out)
+    }
+}
+
+impl TryFrom<JsValue> for ParsedReencryptionRequest {
+    type Error = JsError;
+
+    fn try_from(value: JsValue) -> Result<Self, Self::Error> {
+        // JsValue -> JsClientReencryptionRequestHex
+        let req_hex: ParsedReencryptionRequestHex =
+            serde_wasm_bindgen::from_value(value).map_err(|e| JsError::new(&e.to_string()))?;
+
+        // JsClientReencryptionRequestHex -> JsClientReencryptionRequest
+        ParsedReencryptionRequest::try_from(&req_hex)
+    }
+}
+
+impl From<&ParsedReencryptionRequest> for ParsedReencryptionRequestHex {
+    fn from(value: &ParsedReencryptionRequest) -> Self {
+        Self {
+            signature: hex::encode(value.signature.as_bytes()),
+            client_address: value.client_address.to_checksum(None),
+            enc_key: hex::encode(&value.enc_key),
+            ciphertext_digest: hex::encode(&value.ciphertext_digest),
+            eip712_verifying_contract: value.eip712_verifying_contract.to_checksum(None),
+        }
+    }
+}
+
+impl TryFrom<&ReencryptionRequest> for ParsedReencryptionRequest {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &ReencryptionRequest) -> Result<Self, Self::Error> {
+        let payload = value
+            .payload
+            .as_ref()
+            .ok_or(anyhow::anyhow!("Missing payload"))?;
+        let domain = value
+            .domain
+            .as_ref()
+            .ok_or(anyhow::anyhow!("Missing domain"))?;
+
+        let signature = alloy_primitives::Signature::try_from(value.signature.as_slice())?;
+
+        let client_address =
+            alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
+
+        let eip712_verifying_contract =
+            alloy_primitives::Address::parse_checksummed(domain.verifying_contract.clone(), None)?;
+
+        let out = Self {
+            signature,
+            client_address,
+            enc_key: payload.enc_key.clone(),
+            ciphertext_digest: payload.ciphertext_digest.clone(),
+            eip712_verifying_contract,
+        };
+        Ok(out)
+    }
+}
+
+/// Compute the link as (eip712_signing_hash(pk, domain) || ciphertext digest).
+pub fn compute_link(
+    req: &ParsedReencryptionRequest,
+    domain: &Eip712Domain,
+) -> anyhow::Result<Vec<u8>> {
+    // check consistency
+    let verifying_contract = domain
+        .verifying_contract
+        .ok_or_else(|| anyhow_error_and_log("Empty verifying contract"))?;
+
+    if req.eip712_verifying_contract != verifying_contract {
+        return Err(anyhow_error_and_log(format!(
+            "inconsistent verifying contract: {:?} != {:?}",
+            req.eip712_verifying_contract, verifying_contract,
+        )));
+    }
+
+    let pk_sol = Reencrypt {
+        publicKey: Bytes::copy_from_slice(&req.enc_key),
+    };
+
+    let pk_digest = pk_sol.eip712_signing_hash(domain).to_vec();
+
+    Ok([pk_digest, req.ciphertext_digest.clone()].concat())
 }
 
 /// Enum which represents the different kinds of public information that can be stored as part of key generation.
@@ -1101,7 +1170,7 @@ impl Client {
         let sig_payload = ReencryptionRequestPayload {
             version: CURRENT_FORMAT_VERSION,
             enc_key: serialize(&enc_pk)?,
-            client_address: self.client_address.to_vec(),
+            client_address: self.client_address.to_checksum(None),
             fhe_type: fhe_type as i32,
             randomness,
             key_id: Some(key_id.clone()),
@@ -1125,7 +1194,7 @@ impl Client {
 
         let signature = signer.sign_hash_sync(&message_hash)?;
 
-        let domain_msg = allow_to_protobuf_domain(domain)?;
+        let domain_msg = alloy_to_protobuf_domain(domain)?;
         tracing::debug!(
             "reencryption request payload - \
             address: {:?} \
@@ -1330,7 +1399,8 @@ impl Client {
     /// centralized and distributed cases.
     pub fn process_reencryption_resp(
         &self,
-        request: Option<ReencryptionRequest>,
+        client_request: &ParsedReencryptionRequest,
+        eip712_domain: &Eip712Domain,
         agg_resp: &[ReencryptionResponse],
         enc_pk: &PublicEncKey,
         enc_sk: &PrivateEncKey,
@@ -1345,9 +1415,6 @@ impl Client {
                 enc_key: enc_pk.clone(),
             },
         };
-        let request = request.ok_or_else(|| {
-            anyhow_error_and_log("empty request while processing reencryption response")
-        })?;
 
         // Execute simplified and faster flow for the centralized case
         // Observe that we don't encode exactly the same in the centralized case and in the
@@ -1355,9 +1422,14 @@ impl Client {
         // object whereas for the distributed we encode the plain text as a
         // Vec<ResiduePoly<Z128>>
         if agg_resp.len() <= 1 {
-            self.centralized_reencryption_resp(request, agg_resp, &client_keys)
+            self.centralized_reencryption_resp(
+                client_request,
+                eip712_domain,
+                agg_resp,
+                &client_keys,
+            )
         } else {
-            self.threshold_reencryption_resp(request, agg_resp, &client_keys)
+            self.threshold_reencryption_resp(client_request, eip712_domain, agg_resp, &client_keys)
         }
     }
 
@@ -1500,39 +1572,23 @@ impl Client {
     /// mapped to the server ID on success.
     fn validate_reenc_req_resp(
         &self,
-        request: ReencryptionRequest,
+        client_request: &ParsedReencryptionRequest,
+        eip712_domain: &Eip712Domain,
         agg_resp: &[ReencryptionResponse],
-    ) -> anyhow::Result<Option<(ReencryptionRequestPayload, Vec<ReencryptionResponsePayload>)>>
-    {
-        let expected_link = request.compute_link_checked()?;
-        match request.payload {
-            Some(req_payload) => {
-                let resp_parsed = some_or_err(
-                    self.validate_reenc_resp(agg_resp)?,
-                    "Could not validate the aggregated responses".to_string(),
-                )?;
-                let pivot_resp = resp_parsed[0].clone();
-                if req_payload.version != pivot_resp.version() {
-                    tracing::warn!("Version in the reencryption request is incorrect");
-                    return Ok(None);
-                }
-                if req_payload.fhe_type() != pivot_resp.fhe_type() {
-                    tracing::warn!("Fhe type in the reencryption response is incorrect");
-                    return Ok(None);
-                }
-                if expected_link != pivot_resp.digest {
-                    tracing::warn!(
-                        "The reencryption response is not linked to the correct request"
-                    );
-                    return Ok(None);
-                }
-                Ok(Some((req_payload, resp_parsed)))
-            }
-            None => {
-                tracing::warn!("No payload in the reencryption request!");
-                Ok(None)
-            }
+    ) -> anyhow::Result<Option<(FheType, Vec<ReencryptionResponsePayload>)>> {
+        let resp_parsed = some_or_err(
+            self.validate_reenc_resp(agg_resp)?,
+            "Could not validate the aggregated responses".to_string(),
+        )?;
+        let expected_link = compute_link(client_request, eip712_domain)?;
+        let pivot_resp = resp_parsed[0].clone();
+        if expected_link != pivot_resp.digest {
+            tracing::warn!("The reencryption response is not linked to the correct request");
+            return Ok(None);
         }
+
+        // resp_parsed is guaranteed to be non empty since [validate_reenc_resp] passed
+        Ok(Some((resp_parsed[0].fhe_type(), resp_parsed)))
     }
 
     fn validate_reenc_resp(
@@ -1634,24 +1690,45 @@ impl Client {
     /// Decrypt the reencryption response from the centralized KMS and verify that the signatures are valid
     fn centralized_reencryption_resp(
         &self,
-        request: ReencryptionRequest,
+        request: &ParsedReencryptionRequest,
+        eip712_domain: &Eip712Domain,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Plaintext> {
         let resp = some_or_err(agg_resp.last(), "Response does not exist".to_owned())?;
         let payload = some_or_err(resp.payload.clone(), "Payload does not exist".to_owned())?;
 
-        let link = request.compute_link_checked()?;
+        let link = compute_link(request, eip712_domain)?;
         if link != payload.digest {
             return Err(anyhow_error_and_log(format!(
                 "link mismatch ({} != {}) for domain {:?}",
                 hex::encode(&link),
                 hex::encode(&payload.digest),
-                request.domain
+                eip712_domain,
             )));
         }
 
+        // check signature
+        if resp.signature.is_empty() {
+            return Err(anyhow_error_and_log("empty signature"));
+        }
+        if self.server_pks.len() != 1 {
+            return Err(anyhow_error_and_log(
+                "incorrect length for server public keys",
+            ));
+        }
         let cur_verf_key: PublicSigKey = deserialize(&payload.verification_key)?;
+        if self.server_pks[0] != cur_verf_key {
+            return Err(anyhow_error_and_log("verification key is not consistent"));
+        }
+        let sig = Signature {
+            sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
+        };
+        if !internal_verify_sig(&bincode::serialize(&payload)?, &sig, &self.server_pks[0]) {
+            return Err(anyhow_error_and_log(
+                "Signature on received response is not valid!",
+            ));
+        }
 
         decrypt_signcryption(
             &payload.signcrypted_ciphertext,
@@ -1681,12 +1758,13 @@ impl Client {
     /// Decrypt the reencryption responses from the threshold KMS and verify that the signatures are valid
     fn threshold_reencryption_resp(
         &self,
-        request: ReencryptionRequest,
+        client_request: &ParsedReencryptionRequest,
+        eip712_domain: &Eip712Domain,
         agg_resp: &[ReencryptionResponse],
         client_keys: &SigncryptionPair,
     ) -> anyhow::Result<Plaintext> {
-        let (req_payload, validated_resps) = some_or_err(
-            self.validate_reenc_req_resp(request, agg_resp)?,
+        let (fhe_type, validated_resps) = some_or_err(
+            self.validate_reenc_req_resp(client_request, eip712_domain, agg_resp)?,
             "Could not validate request".to_owned(),
         )?;
         let degree = some_or_err(
@@ -1694,8 +1772,7 @@ impl Client {
             "No valid repsonses parsed".to_string(),
         )?
         .degree as usize;
-        let sharings =
-            self.recover_sharings(&validated_resps, req_payload.fhe_type(), client_keys)?;
+        let sharings = self.recover_sharings(&validated_resps, fhe_type, client_keys)?;
         let amount_shares = sharings.len();
         let mut decrypted_blocks = Vec::new();
         for cur_block_shares in sharings {
@@ -1709,7 +1786,7 @@ impl Client {
             }
         }
         let recon_blocks = reconstruct_message(Some(decrypted_blocks), &self.params)?;
-        decrypted_blocks_to_plaintext(&self.params, req_payload.fhe_type(), recon_blocks)
+        decrypted_blocks_to_plaintext(&self.params, fhe_type, recon_blocks)
     }
 
     /// Decrypt the reencryption response from the threshold KMS.
@@ -1895,7 +1972,7 @@ impl Client {
         }
         let resp_verf_key: PublicSigKey = deserialize(&other_resp.verification_key())?;
         if !&self.server_pks.contains(&resp_verf_key) {
-            tracing::warn!("Server key is unknown or incorrect.");
+            tracing::warn!("Server key is incorrect in reencryption request");
             return Ok(false);
         }
 
@@ -2210,6 +2287,7 @@ pub mod test_tools {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{recover_ecdsa_public_key_from_signature, Client};
+    use crate::client::ParsedReencryptionRequest;
     #[cfg(feature = "wasm_tests")]
     use crate::client::TestingReencryptionTranscript;
     #[cfg(feature = "wasm_tests")]
@@ -2226,7 +2304,7 @@ pub(crate) mod tests {
     use crate::kms::CrsGenResult;
     use crate::kms::{FheType, ParamChoice};
     use crate::rpc::central_rpc::default_param_file_map;
-    use crate::rpc::rpc_types::{BaseKms, PubDataType};
+    use crate::rpc::rpc_types::{protobuf_to_alloy_domain, BaseKms, PubDataType};
     use crate::storage::StorageReader;
     use crate::storage::{FileStorage, RamStorage, StorageType, StorageVersion};
     use crate::util::file_handling::read_element;
@@ -2246,7 +2324,6 @@ pub(crate) mod tests {
     use alloy_primitives::Bytes;
     use alloy_signer::Signer;
     use alloy_signer_local::PrivateKeySigner;
-    use alloy_sol_types::Eip712Domain;
     use alloy_sol_types::SolStruct;
     use distributed_decryption::execution::zk::ceremony::PublicParameter;
     use distributed_decryption::execution::{
@@ -2258,6 +2335,15 @@ pub(crate) mod tests {
     use std::collections::{hash_map::Entry, HashMap};
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::Channel;
+
+    fn dummy_domain() -> alloy_sol_types::Eip712Domain {
+        alloy_sol_types::eip712_domain!(
+            name: "Authorization token",
+            version: "1",
+            chain_id: 8006,
+            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+        )
+    }
 
     /// Reads the testing keys for the threshold servers and starts them up, and returns a hash map
     /// of the servers, based on their ID, which starts from 1. A similar map is also returned
@@ -3109,15 +3195,6 @@ pub(crate) mod tests {
         .await;
     }
 
-    fn dummy_domain() -> Eip712Domain {
-        alloy_sol_types::eip712_domain!(
-            name: "Authorization token",
-            version: "1",
-            chain_id: 8006,
-            verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-        )
-    }
-
     async fn reencryption_centralized(
         param_path: &str,
         key_id: &str,
@@ -3274,9 +3351,17 @@ pub(crate) mod tests {
             let inner_response = responses.first().unwrap();
             let responses = vec![inner_response.clone()];
 
+            let eip712_domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap()).unwrap();
+            let client_request = ParsedReencryptionRequest::try_from(req).unwrap();
             let plaintext = if secure {
                 internal_client
-                    .process_reencryption_resp(Some(req.clone()), &responses, enc_pk, enc_sk)
+                    .process_reencryption_resp(
+                        &client_request,
+                        &eip712_domain,
+                        &responses,
+                        enc_pk,
+                        enc_sk,
+                    )
                     .unwrap()
             } else {
                 internal_client.server_pks = Vec::new();
@@ -3706,9 +3791,11 @@ pub(crate) mod tests {
             let (req, enc_pk, enc_sk) = req;
             let responses = response_map.get(req.request_id.as_ref().unwrap()).unwrap();
 
+            let domain = protobuf_to_alloy_domain(req.domain.as_ref().unwrap()).unwrap();
+            let client_req = ParsedReencryptionRequest::try_from(req).unwrap();
             let plaintext = if secure {
                 internal_client
-                    .process_reencryption_resp(Some(req.clone()), responses, enc_pk, enc_sk)
+                    .process_reencryption_resp(&client_req, &domain, responses, enc_pk, enc_sk)
                     .unwrap()
             } else {
                 internal_client.server_pks = Vec::new();

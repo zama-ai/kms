@@ -1,26 +1,29 @@
 use crate::anyhow_error_and_log;
 use crate::consts::ID_LENGTH;
-#[cfg(feature = "non-wasm")]
-use crate::cryptography::der_types::PrivateSigKey;
-#[cfg(feature = "non-wasm")]
-use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
-use crate::cryptography::signcryption::{hash_element, Reencrypt};
 use crate::kms::{DecryptionResponsePayload, Eip712DomainMsg, FheType, RequestId};
 use crate::kms::{ReencryptionResponsePayload, SignedPubDataHandle};
-#[cfg(feature = "non-wasm")]
-use crate::util::key_setup::FhePrivateKey;
-use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::{Eip712Domain, SolStruct};
+use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
 use bincode::deserialize;
 use kms_core_common::{Unversionize, Versioned, Versionize};
-#[cfg(feature = "non-wasm")]
-use rand::{CryptoRng, RngCore};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{borrow::Cow, fmt};
 use strum_macros::EnumIter;
 use wasm_bindgen::prelude::wasm_bindgen;
+
+cfg_if::cfg_if! {
+    if #[cfg(feature = "non-wasm")] {
+        use crate::cryptography::der_types::PrivateSigKey;
+        use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
+        use crate::cryptography::signcryption::{hash_element, Reencrypt};
+        use crate::util::key_setup::FhePrivateKey;
+        use alloy_primitives::Bytes;
+        use alloy_sol_types::SolStruct;
+        use rand::{CryptoRng, RngCore};
+    }
+}
 
 pub static CURRENT_FORMAT_VERSION: u32 = 1;
 pub static KEY_GEN_REQUEST_NAME: &str = "key_gen_request";
@@ -138,9 +141,7 @@ impl fmt::Display for PrivDataType {
     }
 }
 
-pub(crate) fn protobuf_to_alloy_domain(
-    pb_domain: &Eip712DomainMsg,
-) -> anyhow::Result<Eip712Domain> {
+pub fn protobuf_to_alloy_domain(pb_domain: &Eip712DomainMsg) -> anyhow::Result<Eip712Domain> {
     let salt = if pb_domain.salt.is_empty() {
         None
     } else {
@@ -162,7 +163,7 @@ pub(crate) fn protobuf_to_alloy_domain(
     Ok(out)
 }
 
-pub(crate) fn allow_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712DomainMsg> {
+pub(crate) fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<Eip712DomainMsg> {
     let name = domain
         .name
         .as_ref()
@@ -237,6 +238,7 @@ pub(crate) struct SigncryptionPayload {
     pub(crate) link: Vec<u8>,
 }
 
+#[cfg(feature = "non-wasm")]
 impl crate::kms::ReencryptionRequest {
     pub(crate) fn compute_link_checked(&self) -> anyhow::Result<Vec<u8>> {
         let payload = self

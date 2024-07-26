@@ -232,10 +232,8 @@ pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<()>
     // print out the req.signature in hex string
     tracing::debug!("🔒 req.signature: {:?}", hex::encode(signature_bytes));
 
-    if payload.client_address.len() != 20 {
-        return Err(anyhow::anyhow!("incorrect address length"));
-    }
-    let client_address = alloy_primitives::Address::from_slice(&payload.client_address);
+    let client_address =
+        alloy_primitives::Address::parse_checksummed(&payload.client_address, None)?;
 
     // print out the client address
     // note that the alloy address should format to hex already
@@ -855,6 +853,7 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    #[serial(test_keys)]
     async fn multiple_test_keys_access() {
         let central_keys = get_test_keys().await;
 
@@ -882,11 +881,13 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    #[serial(test_keys)]
     async fn sunshine_test_decrypt() {
         sunshine_decrypt(get_test_keys().await, &TEST_CENTRAL_KEY_ID).await;
     }
 
     #[tokio::test]
+    #[serial(test_keys)]
     async fn decrypt_with_bad_client_key() {
         simulate_decrypt(
             SimulationType::BadFheKey,
@@ -898,18 +899,20 @@ pub(crate) mod tests {
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
+    #[serial(default_keys)]
     async fn sunshine_default_decrypt() {
         sunshine_decrypt(get_default_keys().await, &DEFAULT_CENTRAL_KEY_ID).await;
     }
 
     #[tokio::test]
-    #[serial]
+    #[serial(test_keys)]
     async fn multiple_test_keys_decrypt() {
         sunshine_decrypt(get_test_keys().await, &OTHER_CENTRAL_TEST_ID).await;
     }
 
     #[cfg(feature = "slow_tests")]
     #[tokio::test]
+    #[serial(default_keys)]
     async fn multiple_default_keys_decrypt() {
         sunshine_decrypt(get_default_keys().await, &OTHER_CENTRAL_DEFAULT_ID).await;
     }

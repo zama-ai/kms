@@ -43,7 +43,7 @@ impl Blockchain for MockchainImpl {
     async fn reencrypt(
         &self,
         signature: Vec<u8>,
-        verification_key: Vec<u8>,
+        client_address: String,
         enc_key: Vec<u8>,
         fhe_type: FheType,
         ciphertext: Vec<u8>,
@@ -52,7 +52,7 @@ impl Blockchain for MockchainImpl {
     ) -> anyhow::Result<Vec<ReencryptResponseValues>> {
         tracing::debug!("🐛 Mockchain reencrypting ciphertext");
         tracing::debug!("🐛 signature: {:?}", signature);
-        tracing::debug!("🐛 verification_key: {:?}", verification_key);
+        tracing::debug!("🐛 client_address: {:?}", client_address);
         tracing::debug!("🐛 enc_key: {:?}", enc_key);
         tracing::debug!("🐛 fhe_type: {:?}", fhe_type);
         tracing::debug!("🐛 ciphertext: {:?}", ciphertext);

@@ -838,7 +838,7 @@ mod tests {
         let reencrypt = ReencryptValues::builder()
             .signature(vec![1])
             .version(1)
-            .client_address(vec![2])
+            .client_address("0x1234".to_string())
             .randomness(vec![3])
             .enc_key(vec![4])
             .fhe_type(FheType::Euint8)

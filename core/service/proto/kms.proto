@@ -189,10 +189,9 @@ message DecryptionResponse {
 message ReencryptionRequestPayload {
   // Version of the request format.
   uint32 version = 1;
-  // The client's (blockchain wallet) address.
-  // This is the keccak-256 hash of the uncompressed public key
-  // and then take the last 20 bytes of the hash.
-  bytes client_address = 2;
+  // The client's (blockchain wallet) address,
+  // encoded using EIP-55.
+  string client_address = 2;
   // Randomness specified in the request to ensure EU-CMA of the signed response.
   // TODO check that we don't need two types of randomness. One for the reuqest and one for the response
   // TODO also check potential risk with repeated calls
@@ -248,8 +247,9 @@ message ReencryptionResponsePayload {
   // Needed to validate the response, but MUST also be linked to a list of
   // trusted keys.
   bytes verification_key = 2;
-  // Digest of the request validated.
-  // Needed to ensure that the response is for the expected request.
+  // The concatenation of two digests:
+  // (eip712_signing_hash(pk, domain) || ciphertext digest).
+  // This is needed to ensure the response corresponds to the request.
   bytes digest = 3;
   // The type of plaintext encrypted.
   FheType fhe_type = 4;

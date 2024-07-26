@@ -53,7 +53,7 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
     async fn reencrypt(
         &self,
         signature: Vec<u8>,
-        user_address: Vec<u8>,
+        client_address: String,
         enc_key: Vec<u8>,
         fhe_type: FheType,
         ciphertext: Vec<u8>,

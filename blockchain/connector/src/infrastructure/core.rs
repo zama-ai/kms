@@ -379,7 +379,7 @@ where
             signature: self.reencrypt.signature().into(),
             payload: Some(ReencryptionRequestPayload {
                 version: reencrypt.version(),
-                client_address: reencrypt.client_address().deref().into(),
+                client_address: reencrypt.client_address().to_string(),
                 randomness: reencrypt.randomness().deref().into(),
                 enc_key: reencrypt.enc_key().deref().into(),
                 fhe_type: reencrypt.fhe_type() as i32,
@@ -737,7 +737,7 @@ mod test {
         HexVector,
     };
     use kms_lib::{
-        client::{test_tools, Client},
+        client::{test_tools, Client, ParsedReencryptionRequest},
         consts::{
             AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID,
             TEST_CENTRAL_KEY_ID, TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID, THRESHOLD,
@@ -745,7 +745,7 @@ mod test {
         kms::{
             DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
         },
-        rpc::rpc_types::{Plaintext, CURRENT_FORMAT_VERSION},
+        rpc::rpc_types::{protobuf_to_alloy_domain, Plaintext, CURRENT_FORMAT_VERSION},
         storage::{FileStorage, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
         util::key_setup::{
@@ -1165,8 +1165,17 @@ mod test {
                     }
                 })
                 .collect();
+
+            let eip712_domain = protobuf_to_alloy_domain(kms_req.domain.as_ref().unwrap()).unwrap();
+            let client_request = ParsedReencryptionRequest::try_from(&kms_req).unwrap();
             let pt = kms_client
-                .process_reencryption_resp(Some(kms_req), &agg_resp, &enc_pk, &enc_sk)
+                .process_reencryption_resp(
+                    &client_request,
+                    &eip712_domain,
+                    &agg_resp,
+                    &enc_pk,
+                    &enc_sk,
+                )
                 .unwrap();
             assert_eq!(pt.as_u8(), msg);
         } else {

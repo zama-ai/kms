@@ -162,11 +162,16 @@ pub(crate) async fn handle_reencryption_event(
         <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
             .get_ciphertext(&client, ethereum_ct_handle.clone(), None)
             .await?;
+
+    // check the format EIP-55
+    _ = alloy_primitives::Address::parse_checksummed(&event.client_address, None)?;
+    _ = alloy_primitives::Address::parse_checksummed(&event.eip712_verifying_contract, None)?;
+
     let response = blockchain_impl(config)
         .await
         .reencrypt(
             event.signature.0.clone(),
-            event.user_address.0.clone(),
+            event.client_address.clone(),
             event.enc_key.0.clone(),
             fhe_type,
             ciphertext,
