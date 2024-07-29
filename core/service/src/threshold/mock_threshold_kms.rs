@@ -124,7 +124,9 @@ impl Decryptor for DummyDecryptor {
                 version: CURRENT_FORMAT_VERSION,
                 verification_key: vec![],
                 digest: "dummy digest".as_bytes().to_vec(),
-                plaintext: serialize(&Plaintext::new(42, crate::kms::FheType::Euint8)).unwrap(),
+                plaintexts: vec![
+                    serialize(&Plaintext::new(42, crate::kms::FheType::Euint8)).unwrap()
+                ],
             }),
         }))
     }

@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use kms_lib::client::{Client, ParsedReencryptionRequest};
 use kms_lib::consts::THRESHOLD;
 use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
-use kms_lib::kms::RequestId;
+use kms_lib::kms::{RequestId, TypedCiphertext};
 use kms_lib::rpc::rpc_types::protobuf_to_alloy_domain;
 use kms_lib::util::key_setup::ensure_client_keys_exist;
 use kms_lib::{
@@ -107,14 +107,16 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
     let (ct, fhe_type) =
         compute_cipher_from_storage(None, msg.into(), &DEFAULT_CENTRAL_KEY_ID.to_string()).await;
 
+    // this is currently a batch of size 1
+    let ct = vec![TypedCiphertext {
+        ciphertext: ct,
+        fhe_type: fhe_type.into(),
+    }];
+
     // DECRYPTION REQUEST
     let random_req_id = RequestId::from(rng.gen::<u128>());
-    let req = internal_client.decryption_request(
-        ct.clone(),
-        fhe_type,
-        &random_req_id,
-        &DEFAULT_CENTRAL_KEY_ID,
-    )?;
+    let req =
+        internal_client.decryption_request(ct.clone(), &random_req_id, &DEFAULT_CENTRAL_KEY_ID)?;
     let response = kms_client.decrypt(tonic::Request::new(req.clone())).await?;
     tracing::debug!("DECRYPT RESPONSE={:?}", response);
     // Wait for the servers to complete the decryption
@@ -131,11 +133,11 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
     tracing::debug!("GET DECRYPT RESPONSE={:?}", response);
     let responses = vec![response?.into_inner()];
     match internal_client.process_decryption_resp(Some(req), &responses, 1) {
-        Ok(Some(plaintext)) => {
+        Ok(plaintext) => {
             tracing::info!(
                 "Decryption response is ok: {:?} of type {:?}",
-                plaintext.as_u32(),
-                plaintext.fhe_type()
+                plaintext[0].as_u32(),
+                plaintext[0].fhe_type()
             )
         }
         _ => tracing::warn!("Decryption response is NOT valid"),
@@ -143,7 +145,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
 
     // REENCRYPTION REQUEST
     let (req, enc_pk, enc_sk) = internal_client.reencryption_request(
-        ct,
+        ct[0].ciphertext.clone(),
         &dummy_domain(),
         fhe_type,
         &random_req_id,
@@ -202,13 +204,14 @@ async fn do_threshold_decryption(
 
     let random_req_id = RequestId::from(rng.gen::<u128>());
 
+    let ct = vec![TypedCiphertext {
+        ciphertext: ct,
+        fhe_type: fhe_type.into(),
+    }];
+
     // DECRYPTION REQUEST
-    let dec_req = internal_client.decryption_request(
-        ct.clone(),
-        fhe_type,
-        &random_req_id,
-        &DEFAULT_THRESHOLD_KEY_ID,
-    )?;
+    let dec_req =
+        internal_client.decryption_request(ct, &random_req_id, &DEFAULT_THRESHOLD_KEY_ID)?;
 
     // make parallel requests by calling [decrypt] in a thread
     let mut req_tasks = JoinSet::new();
@@ -268,13 +271,13 @@ async fn do_threshold_decryption(
         &resp_response_vec,
         (THRESHOLD + 1) as u32,
     ) {
-        Ok(Some(plaintext)) => {
+        Ok(plaintexts) => {
             tracing::info!(
                 "Decryption response is ok: {:?} of type {:?}",
-                plaintext.as_u8(),
-                plaintext.fhe_type()
+                plaintexts[0].as_u8(),
+                plaintexts[0].fhe_type()
             );
-            assert_eq!(plaintext.as_u8(), msg);
+            assert_eq!(plaintexts[0].as_u8(), msg);
         }
         _ => tracing::warn!("Decryption response is NOT valid"),
     };

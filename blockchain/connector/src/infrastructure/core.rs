@@ -21,7 +21,7 @@ use kms_lib::kms::{
     Config, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
     DecryptionResponsePayload, Eip712DomainMsg, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
     KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionRequestPayload,
-    ReencryptionResponse, ReencryptionResponsePayload,
+    ReencryptionResponse, ReencryptionResponsePayload, TypedCiphertext,
 };
 use kms_lib::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
 use kms_lib::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
@@ -282,12 +282,18 @@ where
             .get_ciphertext(ciphertext_handle)
             .await?;
 
+        // TODO this needs to be changed to allow for batch decryption on the gateway
+        // here we pack the single CT that the connector currently receives into a length 1 vector
+        let ciphertexts = vec![TypedCiphertext {
+            ciphertext,
+            fhe_type,
+        }];
+
         let req = DecryptionRequest {
             version,
             randomness,
-            fhe_type,
+            ciphertexts,
             key_id: Some(RequestId { request_id: key_id }),
-            ciphertext,
             request_id: Some(req_id.clone()),
         };
 
@@ -888,8 +894,9 @@ mod test {
                     <&HexVector as Into<Vec<u8>>>::into(resp.decrypt_response.payload()).as_slice(),
                 )
                 .unwrap();
+
                 assert_eq!(
-                    bincode::deserialize::<Plaintext>(&payload.plaintext)
+                    bincode::deserialize::<Plaintext>(&payload.plaintexts[0]) // TODO properly handle batch
                         .unwrap()
                         .as_u8(),
                     msg,
@@ -1072,7 +1079,7 @@ mod test {
                     .unwrap();
                     if slow {
                         assert_eq!(
-                            bincode::deserialize::<Plaintext>(&payload.plaintext)
+                            bincode::deserialize::<Plaintext>(&payload.plaintexts[0]) // TODO properly handle batch
                                 .unwrap()
                                 .as_u8(),
                             msg,

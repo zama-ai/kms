@@ -5,7 +5,6 @@ use crate::kms::{ReencryptionResponsePayload, SignedPubDataHandle};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
-use bincode::deserialize;
 use kms_core_common::{Unversionize, Versioned, Versionize};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -611,17 +610,16 @@ impl<'de> Visitor<'de> for FheTypeVisitor {
 pub trait MetaResponse {
     fn version(&self) -> u32;
     fn verification_key(&self) -> Vec<u8>;
-    fn fhe_type(&self) -> anyhow::Result<FheType>;
     fn digest(&self) -> Vec<u8>;
+}
+
+pub trait FheTypeResponse {
+    fn fhe_type(&self) -> anyhow::Result<FheType>;
 }
 
 impl MetaResponse for ReencryptionResponsePayload {
     fn verification_key(&self) -> Vec<u8> {
         self.verification_key.to_owned()
-    }
-
-    fn fhe_type(&self) -> anyhow::Result<FheType> {
-        Ok(self.fhe_type())
     }
 
     fn digest(&self) -> Vec<u8> {
@@ -633,14 +631,15 @@ impl MetaResponse for ReencryptionResponsePayload {
     }
 }
 
+impl FheTypeResponse for ReencryptionResponsePayload {
+    fn fhe_type(&self) -> anyhow::Result<FheType> {
+        Ok(self.fhe_type())
+    }
+}
+
 impl MetaResponse for DecryptionResponsePayload {
     fn verification_key(&self) -> Vec<u8> {
         self.verification_key.to_owned()
-    }
-
-    fn fhe_type(&self) -> anyhow::Result<FheType> {
-        let plaintext: Plaintext = deserialize(&self.plaintext)?;
-        Ok(plaintext.fhe_type)
     }
 
     fn digest(&self) -> Vec<u8> {

@@ -82,6 +82,7 @@ use tfhe::{
     FheUint64, FheUint8,
 };
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
+use tokio::task::JoinSet;
 use tokio::time::Instant;
 use tonic::transport::{Server, ServerTlsConfig};
 use tonic::{Request, Response, Status};
@@ -297,7 +298,7 @@ impl Unversionize for ThresholdFheKeys {
 }
 
 // Request digest, and resultant plaintext
-type DecMetaStore = (Vec<u8>, Plaintext);
+type DecMetaStore = (Vec<u8>, Vec<Plaintext>);
 // Request digest, fhe type of encryption and resultant partial decryption
 type ReencMetaStore = (Vec<u8>, FheType, Vec<u8>);
 // Hashmap of `PubDataType` to the corresponding `SignedPubDataHandle` information for all the different
@@ -1037,16 +1038,14 @@ impl Decryptor for RealDecryptor {
             self.session_preparer.own_identity(),
             inner.request_id
         );
-        let (ciphertext, fhe_type, req_digest, key_id, req_id) = tonic_handle_potential_err(
+        let (ciphertexts, req_digest, key_id, req_id) = tonic_handle_potential_err(
             validate_decrypt_req(&inner),
             format!("Invalid key in request {:?}", inner),
         )?;
 
-        let mut session = tonic_handle_potential_err(
-            self.session_preparer
-                .prepare_ddec_data_from_requestid(&req_id)
-                .await,
-            "Could not prepare ddec data for reencryption".to_string(),
+        let internal_sid = tonic_handle_potential_err(
+            u128::try_from(req_id.clone()),
+            format!("Invalid request id {:?}", inner),
         )?;
 
         // Below we write to the meta-store.
@@ -1062,95 +1061,139 @@ impl Decryptor for RealDecryptor {
             )?;
         }
 
-        let mut protocol = Small::new(session.clone());
-        let meta_store = Arc::clone(&self.dec_meta_store);
-        let fhe_keys = Arc::clone(&self.fhe_keys);
+        let mut dec_tasks = JoinSet::new();
 
-        // we do not need to hold the handle,
-        // the result of the computation is tracked by the dec_meta_store
-        let _handle = tokio::spawn(async move {
-            let fhe_keys_rlock = fhe_keys.read().await;
-            let tmp = match fhe_type {
-                FheType::Euint512 => {
-                    todo!("Implement decryption for Euint512")
+        for (idx, ct) in ciphertexts.iter().cloned().enumerate() {
+            let internal_sid = SessionId::from(internal_sid + idx as u128);
+            let key_id = key_id.clone();
+
+            let mut session = tonic_handle_potential_err(
+                self.session_preparer
+                    .prepare_ddec_data_from_sessionid(internal_sid)
+                    .await,
+                "Could not prepare ddec data for reencryption".to_string(),
+            )?;
+
+            let mut protocol = Small::new(session.clone());
+            let fhe_keys = Arc::clone(&self.fhe_keys);
+
+            // we do not need to hold the handle,
+            // the result of the computation is tracked by the dec_meta_store
+            dec_tasks.spawn(async move {
+                let fhe_type = if let Ok(f) = FheType::try_from(ct.fhe_type) {
+                    f
+                } else {
+                    return Err(anyhow_error_and_log(format!(
+                        "Threshold decryption failed due to wrong fhe type: {}",
+                        ct.fhe_type
+                    )));
+                };
+
+                let ciphertext = &ct.ciphertext;
+
+                let fhe_keys_rlock = fhe_keys.read().await;
+                let tmp = match fhe_type {
+                    FheType::Euint512 => {
+                        todo!("Implement decryption for Euint512")
+                    }
+                    FheType::Euint1024 => {
+                        todo!("Implement decryption for Euint1024")
+                    }
+                    FheType::Euint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
+                        &mut session,
+                        &mut protocol,
+                        ciphertext,
+                        fhe_type,
+                        &key_id,
+                        fhe_keys_rlock,
+                    )
+                    .await
+                    .map(Plaintext::from_u2048),
+                    FheType::Euint256 => Self::inner_decrypt::<tfhe::integer::U256>(
+                        &mut session,
+                        &mut protocol,
+                        ciphertext,
+                        fhe_type,
+                        &key_id,
+                        fhe_keys_rlock,
+                    )
+                    .await
+                    .map(Plaintext::from_u256),
+                    FheType::Euint160 => Self::inner_decrypt::<tfhe::integer::U256>(
+                        &mut session,
+                        &mut protocol,
+                        ciphertext,
+                        fhe_type,
+                        &key_id,
+                        fhe_keys_rlock,
+                    )
+                    .await
+                    .map(Plaintext::from_u160),
+                    FheType::Euint128 => Self::inner_decrypt::<u128>(
+                        &mut session,
+                        &mut protocol,
+                        ciphertext,
+                        fhe_type,
+                        &key_id,
+                        fhe_keys_rlock,
+                    )
+                    .await
+                    .map(|x| Plaintext::new(x, fhe_type)),
+                    FheType::Ebool
+                    | FheType::Euint4
+                    | FheType::Euint8
+                    | FheType::Euint16
+                    | FheType::Euint32
+                    | FheType::Euint64 => Self::inner_decrypt::<u64>(
+                        &mut session,
+                        &mut protocol,
+                        ciphertext,
+                        fhe_type,
+                        &key_id,
+                        fhe_keys_rlock,
+                    )
+                    .await
+                    .map(|x| Plaintext::new(x as u128, fhe_type)),
+                };
+                match tmp {
+                    Ok(plaintext) => Ok((idx, plaintext)),
+                    Result::Err(e) => Err(anyhow_error_and_log(format!(
+                        "Threshold decryption failed:{}",
+                        e
+                    ))),
                 }
-                FheType::Euint1024 => {
-                    todo!("Implement decryption for Euint1024")
+            });
+        }
+
+        let mut decs = HashMap::new();
+        while let Some(resp) = dec_tasks.join_next().await {
+            match resp {
+                Ok(Ok((idx, plaintext))) => {
+                    decs.insert(idx, plaintext);
                 }
-                FheType::Euint2048 => Self::inner_decrypt::<tfhe::integer::bigint::U2048>(
-                    &mut session,
-                    &mut protocol,
-                    &ciphertext,
-                    fhe_type,
-                    &key_id,
-                    fhe_keys_rlock,
-                )
-                .await
-                .map(Plaintext::from_u2048),
-                FheType::Euint256 => Self::inner_decrypt::<tfhe::integer::U256>(
-                    &mut session,
-                    &mut protocol,
-                    &ciphertext,
-                    fhe_type,
-                    &key_id,
-                    fhe_keys_rlock,
-                )
-                .await
-                .map(Plaintext::from_u256),
-                FheType::Euint160 => Self::inner_decrypt::<tfhe::integer::U256>(
-                    &mut session,
-                    &mut protocol,
-                    &ciphertext,
-                    fhe_type,
-                    &key_id,
-                    fhe_keys_rlock,
-                )
-                .await
-                .map(Plaintext::from_u160),
-                FheType::Euint128 => Self::inner_decrypt::<u128>(
-                    &mut session,
-                    &mut protocol,
-                    &ciphertext,
-                    fhe_type,
-                    &key_id,
-                    fhe_keys_rlock,
-                )
-                .await
-                .map(|x| Plaintext::new(x, fhe_type)),
-                FheType::Ebool
-                | FheType::Euint4
-                | FheType::Euint8
-                | FheType::Euint16
-                | FheType::Euint32
-                | FheType::Euint64 => Self::inner_decrypt::<u64>(
-                    &mut session,
-                    &mut protocol,
-                    &ciphertext,
-                    fhe_type,
-                    &key_id,
-                    fhe_keys_rlock,
-                )
-                .await
-                .map(|x| Plaintext::new(x as u128, fhe_type)),
-            };
-            let mut guarded_meta_store = meta_store.write().await;
-            match tmp {
-                Ok(plaintext) => {
-                    // We cannot do much if updating the storage fails at this point...
+                _ => {
+                    let meta_store = Arc::clone(&self.dec_meta_store);
+                    let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
                         &req_id,
-                        HandlerStatus::Done((req_digest.clone(), plaintext.clone())),
+                        HandlerStatus::Error("Failed decryption.".to_string()),
                     );
-                }
-                Result::Err(e) => {
-                    // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_store.update(
-                        &req_id,
-                        HandlerStatus::Error(format!("Failed decryption: {e}")),
-                    );
+                    return Ok(Response::new(Empty {}));
                 }
             }
-        });
+        }
+
+        let pts: Vec<_> = decs
+            .keys()
+            .sorted()
+            .map(|k| decs.get(k).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
+            .collect();
+
+        let meta_store = Arc::clone(&self.dec_meta_store);
+        let mut guarded_meta_store = meta_store.write().await;
+
+        let _ = guarded_meta_store.update(&req_id, HandlerStatus::Done((req_digest.clone(), pts)));
+
         Ok(Response::new(Empty {}))
     }
 
@@ -1169,7 +1212,7 @@ impl Decryptor for RealDecryptor {
                 format!("The value {} is not a valid request ID!", request_id),
             ));
         }
-        let (req_digest, plaintext) = {
+        let (req_digest, plaintexts) = {
             let guarded_meta_store = self.dec_meta_store.read().await;
             handle_res_mapping(
                 guarded_meta_store.retrieve(&request_id).cloned(),
@@ -1177,17 +1220,19 @@ impl Decryptor for RealDecryptor {
                 "Decryption",
             )?
         };
-        let decrypted_bytes = tonic_handle_potential_err(
-            serialize(&plaintext),
-            format!(
-                "Could not convert plaintext to bytes in request with ID {:?}",
-                request_id
-            ),
+
+        let pt_payload = tonic_handle_potential_err(
+            plaintexts
+                .into_iter()
+                .map(|pt| serialize(&pt))
+                .collect::<Result<Vec<Vec<u8>>, _>>(),
+            "Error serializing plaintexts in get_result()".to_string(),
         )?;
+
         let server_verf_key = self.base_kms.get_serialized_verf_key();
         let sig_payload = DecryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
-            plaintext: decrypted_bytes,
+            plaintexts: pt_payload,
             verification_key: server_verf_key,
             digest: req_digest,
         };

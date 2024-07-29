@@ -281,10 +281,10 @@ impl Blockchain for KmsBlockchainImpl {
                     .unwrap();
 
                     tracing::info!(
-                        "🍇🥐🍇🥐🍇🥐 Centralized Gateway decryption result payload: {:?}",
-                        hex::encode(payload.plaintext.clone())
+                        "🍇🥐🍇🥐🍇🥐 Centralized Gateway decryption result payload: {:x?}",
+                        payload.plaintexts.clone()
                     );
-                    deserialize::<Plaintext>(&payload.plaintext)?
+                    deserialize::<Plaintext>(&payload.plaintexts[0])? // TODO properly handle batch
                 }
                 _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
             },
@@ -312,7 +312,7 @@ impl Blockchain for KmsBlockchainImpl {
                     ));
                 }
 
-                // loop through the vector of results
+                // loop through the vector of results (one from each party)
                 for value in results.iter() {
                     match value {
                         OperationValue::DecryptResponse(decrypt_response) => {
@@ -322,10 +322,11 @@ impl Blockchain for KmsBlockchainImpl {
                             )
                             .unwrap();
                             tracing::info!(
-                                "🥐🥐🥐🥐🥐🥐 Threshold Gateway decryption results payload: {:?}",
-                                hex::encode(payload.plaintext.clone())
+                                "🥐🥐🥐🥐🥐🥐 Threshold Gateway decrypted {} plaintext(s).",
+                                payload.plaintexts.len()
                             );
-                            ptxts.push(deserialize::<Plaintext>(&payload.plaintext)?);
+                            ptxts.push(deserialize::<Plaintext>(&payload.plaintexts[0])?);
+                            // TODO properly handle batch
                         }
                         _ => {
                             return Err(anyhow::anyhow!(

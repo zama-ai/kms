@@ -10,6 +10,7 @@ use crate::cryptography::signcryption::Reencrypt;
 use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
+use crate::kms::TypedCiphertext;
 use crate::rpc::rpc_types::CrsMetaData;
 use crate::rpc::rpc_types::{
     BaseKms, Kms, Plaintext, PrivDataType, PubDataType, SigncryptionPayload,
@@ -387,7 +388,7 @@ type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandle>;
 // Values that need to be stored temporarily as part of an async decryption call.
 // Represents the digest of the request and the result of the decryption.
 #[cfg(feature = "non-wasm")]
-pub type DecCallValues = (Vec<u8>, Vec<u8>);
+pub type DecCallValues = (Vec<u8>, Vec<Vec<u8>>);
 
 // Values that need to be stored temporarily as part of an async reencryption call.
 // Represents the FHE type, the digest of the request and the partial decryption.
@@ -422,22 +423,30 @@ pub struct SoftwareKms<PubS: Storage, PrivS: Storage> {
 
 /// Perform asynchronous decryption and serialize the result
 #[cfg(feature = "non-wasm")]
-pub async fn async_decrypt<
+pub fn central_decrypt<
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 >(
     client_key: &FhePrivateKey,
-    high_level_ct: &[u8],
-    fhe_type: FheType,
-) -> anyhow::Result<Vec<u8>> {
-    handle_potential_err(
-        serialize(&SoftwareKms::<PubS, PrivS>::decrypt(
-            client_key,
-            high_level_ct,
-            fhe_type,
-        )?),
-        "Could not serialize the decrypted ciphertext".to_string(),
-    )
+    cts: &Vec<TypedCiphertext>,
+) -> anyhow::Result<Vec<Vec<u8>>> {
+    use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+
+    // run the decryption of each ct in the batch in parallel
+    cts.par_iter()
+        .map(|ct| {
+            let pt = &SoftwareKms::<PubS, PrivS>::decrypt(
+                client_key,
+                &ct.ciphertext,
+                ct.fhe_type.try_into()?,
+            )?;
+
+            handle_potential_err(
+                serialize(&pt),
+                "Could not serialize the decrypted ciphertext".to_string(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
 }
 
 /// Perform asynchronous reencryption and serialize the result

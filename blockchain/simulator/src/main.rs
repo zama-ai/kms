@@ -144,7 +144,7 @@ async fn query_contract(
                 <&HexVector as Into<Vec<u8>>>::into(decrypt.payload()).as_slice(),
             )
             .unwrap();
-            let actual_pt: Plaintext = deserialize(&payload.plaintext).unwrap();
+            let actual_pt: Plaintext = deserialize(&payload.plaintexts[0]).unwrap(); // TODO properly handle batch
             tracing::info!("Decrypt Result: Plaintext Decrypted {:?} ", actual_pt);
         }
         _ => tracing::info!("Incorrect Response: {:?}", x),

@@ -4,7 +4,7 @@ use crate::conf::centralized::CentralizedConfig;
 use crate::consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH};
 use crate::cryptography::central_kms::verify_eip712;
 use crate::cryptography::central_kms::{
-    async_decrypt, async_generate_crs, async_generate_fhe_keys, async_reencrypt, BaseKmsStruct,
+    async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt, BaseKmsStruct,
     SoftwareKms,
 };
 use crate::cryptography::der_types::PublicEncKey;
@@ -13,7 +13,7 @@ use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest,
     KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId, SignedPubDataHandle,
+    ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedCiphertext,
 };
 use crate::rpc::rpc_types::PubDataType;
 use crate::storage::delete_at_request_id;
@@ -400,9 +400,9 @@ impl<
         let start = std::time::Instant::now();
         let inner = request.into_inner();
         tracing::info!("Request ID: {:?}", inner.request_id);
-        tracing::debug!("Fhe Type: {:?}", inner.fhe_type);
+        tracing::debug!("#CTs: {}", inner.ciphertexts.len());
 
-        let (ciphertext, fhe_type, req_digest, key_id, request_id) = tonic_handle_potential_err(
+        let (ciphertexts, req_digest, key_id, request_id) = tonic_handle_potential_err(
             validate_decrypt_req(&inner),
             format!("Invalid key in request {:?}", inner),
         )?;
@@ -423,7 +423,7 @@ impl<
         let _handle = tokio::spawn(async move {
             let fhe_keys_rlock = fhe_keys.read().await;
             let keys = match fhe_keys_rlock.get(&key_id) {
-                Some(keys) => keys,
+                Some(keys) => keys.clone(),
                 None => {
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
@@ -435,8 +435,17 @@ impl<
                     return;
                 }
             };
-            match async_decrypt::<PubS, PrivS>(&keys.client_key, &ciphertext, fhe_type).await {
-                Ok(raw_decryption) => {
+
+            // run the computation in a separate rayon thread to avoid blocking the tokio runtime
+            let (send, recv) = tokio::sync::oneshot::channel();
+            rayon::spawn(move || {
+                let decryptions = central_decrypt::<PubS, PrivS>(&keys.client_key, &ciphertexts);
+                let _ = send.send(decryptions);
+            });
+            let decryptions = recv.await;
+
+            match decryptions {
+                Ok(Ok(raw_decryption)) => {
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
                         &request_id,
@@ -444,11 +453,18 @@ impl<
                     );
                     tracing::info!("⏱️ Core Event Time elapsed: {:?}", start.elapsed());
                 }
-                Result::Err(e) => {
+                Err(e) => {
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
                         &request_id,
-                        HandlerStatus::Error(format!("Failed decryption: {e}")),
+                        HandlerStatus::Error(format!("Error collecting decrypt result: {:?}", e)),
+                    );
+                }
+                Ok(Err(e)) => {
+                    let mut guarded_meta_store = meta_store.write().await;
+                    let _ = guarded_meta_store.update(
+                        &request_id,
+                        HandlerStatus::Error(format!("Error during decryption computation: {}", e)),
                     );
                 }
             }
@@ -464,7 +480,7 @@ impl<
     ) -> Result<Response<DecryptionResponse>, Status> {
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
-        let (req_digest, plaintext) = {
+        let (req_digest, plaintexts) = {
             let guarded_meta_store = self.dec_meta_store.read().await;
             handle_res_mapping(
                 guarded_meta_store.retrieve(&request_id).cloned(),
@@ -475,7 +491,7 @@ impl<
         let server_verf_key = self.get_serialized_verf_key();
         let sig_payload = DecryptionResponsePayload {
             version: CURRENT_FORMAT_VERSION,
-            plaintext,
+            plaintexts,
             verification_key: server_verf_key,
             digest: req_digest,
         };
@@ -762,19 +778,17 @@ pub async fn validate_reencrypt_req(
 #[allow(clippy::type_complexity)]
 pub(crate) fn validate_decrypt_req(
     req: &DecryptionRequest,
-) -> anyhow::Result<(Vec<u8>, FheType, Vec<u8>, RequestId, RequestId)> {
+) -> anyhow::Result<(Vec<TypedCiphertext>, Vec<u8>, RequestId, RequestId)> {
     let key_id = tonic_some_or_err(
         req.key_id.clone(),
         format!("The request {:?} does not have a key_id", req),
     )?;
-    let ciphertext = req.ciphertext.clone();
     if req.version != CURRENT_FORMAT_VERSION {
         return Err(anyhow_error_and_warn_log(format!(
             "Version number was {:?}, whereas current is {:?}",
             req.version, CURRENT_FORMAT_VERSION
         )));
     }
-    let fhetype = req.fhe_type();
     let serialized_req = tonic_handle_potential_err(
         bincode::serialize(&req),
         format!("Could not serialize payload {:?}", req),
@@ -791,7 +805,7 @@ pub(crate) fn validate_decrypt_req(
             request_id
         )));
     }
-    Ok((ciphertext, fhetype, req_digest, key_id, request_id))
+    Ok((req.ciphertexts.clone(), req_digest, key_id, request_id))
 }
 
 pub fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Result<T, Status> {
