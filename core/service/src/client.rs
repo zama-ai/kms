@@ -2167,6 +2167,7 @@ pub mod test_tools {
     }
 
     async fn connect_with_retry(uri: Uri) -> Channel {
+        tracing::info!("Client connecting to {}", uri);
         const RETRY_COUNT: usize = 10;
         let mut channel = Channel::builder(uri.clone()).connect().await;
         let mut tries = 0usize;
@@ -2176,6 +2177,7 @@ pub mod test_tools {
                     break;
                 }
                 Err(_) => {
+                    tracing::info!("Retrying: Client connection to {}", uri);
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     channel = Channel::builder(uri.clone()).connect().await;
                     tries += 1;
@@ -2185,7 +2187,16 @@ pub mod test_tools {
                 }
             }
         }
-        channel.unwrap()
+        match channel {
+            Ok(channel) => {
+                tracing::info!("Client connected to {}", uri);
+                channel
+            }
+            Err(e) => {
+                tracing::error!("Client unable to connect to {}: Error {:?}", uri, e);
+                panic!("Client unable to connect to {}: Error {:?}", uri, e)
+            }
+        }
     }
 
     pub async fn setup_threshold<

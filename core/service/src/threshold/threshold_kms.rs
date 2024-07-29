@@ -176,13 +176,12 @@ pub async fn threshold_server_start<
         .await;
 
     let socket: std::net::SocketAddr = format!("{}:{}", listen_address, listen_port).parse()?;
-    tracing::info!("Starting threshold KMS server on socket {socket}");
     let trace_request = tower::ServiceBuilder::new()
         .layer(TraceLayer::new_for_grpc().make_span_with(make_span))
         .map_request(accept_trace)
         .map_request(record_trace_id);
 
-    Server::builder()
+    let server = Server::builder()
         .layer(trace_request)
         .timeout(tokio::time::Duration::from_secs(timeout_secs))
         .add_service(
@@ -191,8 +190,10 @@ pub async fn threshold_server_start<
                 .max_encoding_message_size(grpc_max_message_size),
         )
         .add_service(health_service)
-        .serve(socket)
-        .await?;
+        .serve(socket);
+
+    tracing::info!("Starting threshold KMS server on socket {socket}");
+    server.await?;
     Ok(())
 }
 
