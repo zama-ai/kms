@@ -1666,13 +1666,9 @@ impl KeyGenPreprocessor for RealPreprocessor {
 
     async fn get_result(
         &self,
-        request: Request<KeyGenPreprocRequest>,
+        request: Request<RequestId>,
     ) -> Result<Response<KeyGenPreprocStatus>, Status> {
-        let inner = request.into_inner();
-        let request_id = tonic_some_or_err(
-            inner.request_id.clone(),
-            "Request ID is not set".to_string(),
-        )?;
+        let request_id = request.into_inner();
         let response = {
             let map = self.preproc_buckets.read().await;
             match map.retrieve(&request_id) {

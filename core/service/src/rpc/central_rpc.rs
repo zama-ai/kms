@@ -96,7 +96,7 @@ impl<
     #[tracing::instrument(skip(self, _request))]
     async fn get_preproc_status(
         &self,
-        _request: Request<KeyGenPreprocRequest>,
+        _request: Request<RequestId>,
     ) -> Result<Response<KeyGenPreprocStatus>, Status> {
         tonic_some_or_err(
             None,

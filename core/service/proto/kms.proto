@@ -11,9 +11,8 @@ service CoreServiceEndpoint {
   // This call returns an error on the centralized KMS.
   rpc KeyGenPreproc(KeyGenPreprocRequest) returns (Empty);
 
-  // TODO to have common logic KeyGenPreprocRequest should only contain RequestId
   // This call returns an error on the centralized KMS.
-  rpc GetPreprocStatus(KeyGenPreprocRequest) returns (KeyGenPreprocStatus);
+  rpc GetPreprocStatus(RequestId) returns (KeyGenPreprocStatus);
 
   // Generate new keys asynchronously.
   rpc KeyGen(KeyGenRequest) returns (Empty);
@@ -173,10 +172,8 @@ message DecryptionResponsePayload {
   // Digest of the request validated.
   // Needed to ensure that the response is for the expected request.
   bytes digest = 3;
-  // Randomness specified in the request to ensure EU-CMA of the signed
-  // response.
-  // TODO check that we don't need two types of randomness. One for the reuqest
-  // and one for the response
+  // The resulting plaintext as a byte vector in little endian,
+  // it should be reassembled to an integer according to `fhe_type` in the request.
   bytes plaintext = 4;
 }
 

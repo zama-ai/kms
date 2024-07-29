@@ -3910,11 +3910,11 @@ pub(crate) mod tests {
     ) -> Vec<crate::kms::KeyGenPreprocStatus> {
         let mut tasks = JoinSet::new();
         for i in 1..=AMOUNT_PARTIES as u32 {
-            let req_clone = request.clone();
+            let req_id = request.request_id.clone().unwrap();
             let mut cur_client = kms_clients.get(&i).unwrap().clone();
             tasks.spawn(async move {
                 cur_client
-                    .get_preproc_status(tonic::Request::new(req_clone))
+                    .get_preproc_status(tonic::Request::new(req_id))
                     .await
             });
         }

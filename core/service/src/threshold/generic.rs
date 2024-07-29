@@ -48,7 +48,7 @@ pub trait KeyGenPreprocessor {
     ) -> Result<Response<Empty>, Status>;
     async fn get_result(
         &self,
-        request: Request<KeyGenPreprocRequest>,
+        request: Request<RequestId>,
     ) -> Result<Response<KeyGenPreprocStatus>, Status>;
 }
 
@@ -122,7 +122,7 @@ impl<
     #[tracing::instrument(skip(self, request))]
     async fn get_preproc_status(
         &self,
-        request: Request<KeyGenPreprocRequest>,
+        request: Request<RequestId>,
     ) -> Result<Response<KeyGenPreprocStatus>, Status> {
         self.keygen_preprocessor.get_result(request).await
     }

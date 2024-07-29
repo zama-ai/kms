@@ -535,8 +535,9 @@ where
 
         // loop to get response
         let timeout_triple = self.operation_val.kms_client.timeout_config.preproc.clone();
+
         poller!(
-            client.get_preproc_status(make_request(req.clone(), Some(request_id.clone()))?),
+            client.get_preproc_status(make_request(req_id.clone(), Some(request_id.clone()))?),
             g,
             timeout_triple,
             "(KeyGenPreproc)",

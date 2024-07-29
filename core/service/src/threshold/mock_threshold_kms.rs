@@ -170,7 +170,7 @@ impl KeyGenPreprocessor for DummyPreprocessor {
     }
     async fn get_result(
         &self,
-        _request: Request<KeyGenPreprocRequest>,
+        _request: Request<RequestId>,
     ) -> Result<Response<KeyGenPreprocStatus>, Status> {
         Ok(Response::new(KeyGenPreprocStatus {
             result: KeyGenPreprocStatusEnum::Finished as i32,

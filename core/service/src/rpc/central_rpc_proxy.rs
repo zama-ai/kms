@@ -73,7 +73,7 @@ impl CoreServiceEndpoint for KmsProxy {
     #[tracing::instrument(skip(self, request))]
     async fn get_preproc_status(
         &self,
-        request: Request<KeyGenPreprocRequest>,
+        request: Request<RequestId>,
     ) -> Result<Response<KeyGenPreprocStatus>, Status> {
         let mut kms_client = self.kms_client.lock().await;
         let response = kms_client.get_preproc_status(request).await?;
