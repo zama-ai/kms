@@ -78,34 +78,25 @@ pub fn sign_eip712<T: alloy_sol_types::SolStruct>(
 
 /// Verify a plain signature.
 ///
-/// Returns true if the signature is ok and false otherwise.
-///
-/// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
-/// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
+/// Returns Ok if the signature is ok.
 pub(crate) fn internal_verify_sig<T>(
     payload: &T,
     sig: &Signature,
     server_verf_key: &PublicSigKey,
-) -> bool
+) -> anyhow::Result<()>
 where
     T: Serialize + AsRef<[u8]>,
 {
     // Check that the signature is normalized
     if !check_normalized_and_warn(sig) {
-        return false;
+        return Err(anyhow::anyhow!("signature is not normalized"));
     }
 
     // Verify signature
-    if server_verf_key
+    server_verf_key
         .pk
         .verify(payload.as_ref(), &sig.sig)
-        .is_err()
-    {
-        tracing::warn!("Signature {:X?} is not valid", sig.sig);
-        return false;
-    }
-
-    true
+        .map_err(anyhow::Error::new)
 }
 
 /// Compute the signcryption of a message encrypted under the public keys received from a client and
@@ -195,9 +186,7 @@ pub fn validate_and_decrypt(
     };
     let (msg, sig) = parse_msg(decrypted_plaintext, &cipher.server_enc_key, server_verf_key)?;
 
-    if !check_signature(msg.clone(), &sig, server_verf_key, &client_keys.pk) {
-        return Err(anyhow_error_and_warn_log("Could not verify signature!"));
-    }
+    check_signature_and_log(msg.clone(), &sig, server_verf_key, &client_keys.pk)?;
     Ok(msg)
 }
 
@@ -236,20 +225,19 @@ fn parse_msg(
 
 /// Helper method for performing the necessary checks on a signcryption signature.
 /// Returns true if the signature is ok and false otherwise
-///
-/// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
-/// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
-fn check_signature(
+fn check_signature_and_log(
     msg: Vec<u8>,
     sig: &Signature,
     server_verf_key: &PublicSigKey,
     client_pk: &SigncryptionPubKey,
-) -> bool {
+) -> anyhow::Result<()> {
     let enc_key_digest = match serialize(&client_pk.enc_key) {
         Ok(enc_key_digest) => enc_key_digest,
-        Err(_) => {
-            tracing::warn!("Could not serialize encryption key {:?}", client_pk.enc_key);
-            return false;
+        Err(e) => {
+            return Err(anyhow_error_and_log(format!(
+                "Could not serialize encryption key {:?} with error {}",
+                client_pk.enc_key, e
+            )));
         }
     };
     // What should be signed is msg || H(client_verification_key) || H(client_enc_key)
@@ -262,20 +250,17 @@ fn check_signature(
 
     // Check that the signature is normalized
     if !check_normalized_and_warn(sig) {
-        return false;
+        return Err(anyhow::anyhow!("Signature is not normalized"));
     }
 
     // Verify signature
-    if server_verf_key
+    server_verf_key
         .pk
         .verify(&msg_signed[..], &sig.sig)
-        .is_err()
-    {
-        tracing::warn!("Signature {:X?} is not valid", sig.sig);
-        return false;
-    }
-
-    true
+        .map_err(|e| {
+            tracing::error!("signature verification failed with error {e}");
+            anyhow::Error::new(e)
+        })
 }
 
 /// Check if a signature is normalized in "low S" form as described in
@@ -326,8 +311,6 @@ where
 ///
 /// This fn also checks that the provided link parameter corresponds to the link in the signcryption
 /// payload.
-///
-/// TODO: The return type should probably be anyhow::Result<Plaintext>, which means we should return an Error instead of Ok(None) when something goes wrong.
 pub(crate) fn decrypt_signcryption(
     cipher: &[u8],
     link: &[u8],
@@ -408,8 +391,9 @@ mod tests {
     };
     use crate::cryptography::der_types::Signature;
     use crate::cryptography::signcryption::{
-        check_signature, ephemeral_encryption_key_generation, internal_verify_sig, parse_msg,
-        serialize_hash_element, sign, signcrypt, validate_and_decrypt, DIGEST_BYTES, SIG_SIZE,
+        check_signature_and_log, ephemeral_encryption_key_generation, internal_verify_sig,
+        parse_msg, serialize_hash_element, sign, signcrypt, validate_and_decrypt, DIGEST_BYTES,
+        SIG_SIZE,
     };
     use aes_prng::AesRng;
     use k256::ecdsa::SigningKey;
@@ -494,7 +478,7 @@ mod tests {
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "A relatively long message that we wish to be able to later validate".as_bytes();
         let sig = sign(&msg, &server_sig_key).unwrap();
-        assert!(internal_verify_sig(&msg.to_vec(), &sig, &server_verf_key));
+        assert!(internal_verify_sig(&msg.to_vec(), &sig, &server_verf_key).is_ok());
     }
 
     #[test]
@@ -637,15 +621,15 @@ mod tests {
         };
         // Fails as the correct key digests are not included in the message whose signature gets
         // checked
-        let res = check_signature(
+        let res = check_signature_and_log(
             msg.to_vec(),
             &sig,
             &server_verf_key,
             &client_signcryption_keys.pk,
         );
-        assert!(logs_contain("is not valid"));
+        assert!(logs_contain("signature error"));
         // unwrapping fails
-        assert!(!res);
+        assert!(res.is_err());
     }
 
     #[traced_test]
@@ -671,17 +655,18 @@ mod tests {
         // Ensure the signature is normalized
         let internal_sig = sig.sig.normalize_s().unwrap_or(sig.sig);
         // Ensure the signature is ok
-        assert!(check_signature(
+        assert!(check_signature_and_log(
             msg.to_vec(),
             &Signature { sig: internal_sig },
             &server_verf_key,
             &client_signcryption_keys.pk,
-        ));
+        )
+        .is_ok());
         // Undo normalization
         let bad_sig =
             k256::ecdsa::Signature::from_scalars(internal_sig.r(), internal_sig.s().negate())
                 .unwrap();
-        let res = check_signature(
+        let res = check_signature_and_log(
             msg.to_vec(),
             &Signature { sig: bad_sig },
             &server_verf_key,
@@ -689,6 +674,6 @@ mod tests {
         );
         assert!(logs_contain("was not normalized as expected"));
         // unwrapping fails
-        assert!(!res);
+        assert!(res.is_err());
     }
 }

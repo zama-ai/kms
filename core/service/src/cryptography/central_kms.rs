@@ -185,13 +185,11 @@ impl BaseKmsStruct {
 }
 
 impl BaseKms for BaseKmsStruct {
-    /// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
-    /// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
     fn verify_sig<T>(
         payload: &T,
         signature: &super::der_types::Signature,
         key: &PublicSigKey,
-    ) -> bool
+    ) -> anyhow::Result<()>
     where
         T: Serialize + AsRef<[u8]>,
     {
@@ -493,13 +491,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static> BaseKms
     for SoftwareKms<PubS, PrivS>
 {
-    /// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
-    /// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
         signature: &super::der_types::Signature,
         verification_key: &PublicSigKey,
-    ) -> bool {
+    ) -> anyhow::Result<()> {
         BaseKmsStruct::verify_sig(payload, signature, verification_key)
     }
 

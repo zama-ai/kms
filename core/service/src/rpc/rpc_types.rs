@@ -202,7 +202,7 @@ pub trait BaseKms {
         payload: &T,
         signature: &Signature,
         verification_key: &PublicSigKey,
-    ) -> bool;
+    ) -> anyhow::Result<()>;
     fn sign<T: Serialize + AsRef<[u8]>>(&self, msg: &T) -> anyhow::Result<Signature>;
     fn get_serialized_verf_key(&self) -> Vec<u8>;
     fn digest<T: ?Sized + AsRef<[u8]>>(msg: &T) -> anyhow::Result<Vec<u8>>;

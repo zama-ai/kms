@@ -66,7 +66,6 @@ cfg_if::cfg_if! {
 }
 
 /// Helper method for combining reconstructed messages after decryption.
-// TODO is this the right place for this function? Should probably be in ddec. Related to this issue https://github.com/zama-ai/distributed-decryption/issues/352
 fn decrypted_blocks_to_plaintext(
     params: &ClassicPBSParameters,
     fhe_type: FheType,
@@ -108,12 +107,6 @@ fn decrypted_blocks_to_plaintext(
 /// Simple client to interact with the KMS servers. This can be seen as a proof-of-concept
 /// and reference code for validating the KMS. The logic supplied by the client will be
 /// distributed accross the aggregator/proxy and smart contracts.
-/// TODO should probably aggregate the KmsEndpointClient to void having two client code bases
-/// exposed in tests and MVP
-///
-/// client_sk is optional because sometimes the private signing key is kept
-/// in a secure location, e.g., hardware wallet. Calling functions that requires
-/// client_sk when it is None will return an error.
 #[wasm_bindgen]
 pub struct Client {
     rng: Box<AesRng>,
@@ -271,7 +264,7 @@ pub mod js_api {
     ) -> Result<Client, JsError> {
         console_error_panic_hook::set_once();
 
-        // TODO: we cannot use the consts like TEST_PARAM_PATH
+        // NOTE: we cannot use the consts like TEST_PARAM_PATH
         // here because include_str! only accepts literals.
         let default_params = include_str!("../parameters/default_params.json");
         let test_params = include_str!("../parameters/small_test_params.json");
@@ -809,7 +802,18 @@ impl fmt::Display for ClientDataType {
 
 impl Client {
     /// Constructor method to be used for WASM and other situations where data cannot be directly loaded
-    /// from a [PublicStorage]
+    /// from a [PublicStorage].
+    ///
+    /// * `server_pks` - a set of tkms core public keys.
+    ///
+    /// * `client_address` - the client wallet address.
+    ///
+    /// * `client_sk` - client private key.
+    ///   This is optional because sometimes the private signing key is kept
+    ///   in a secure location, e.g., hardware wallet or web extension.
+    ///   Calling functions that requires `client_sk` when it is None will return an error.
+    ///
+    /// * `params` - the FHE parameters.
     pub fn new(
         server_pks: Vec<PublicSigKey>,
         client_address: alloy_primitives::Address,
@@ -887,16 +891,17 @@ impl Client {
 
     /// Verify the signature received from the server on keys or other data objects.
     /// This verification will pass if one of the public keys can verify the signature.
-    ///
-    /// TODO: this fn should probably return a Result<(), Error> or anyhow::Result<()> instead of a bool to be more rust idiomatic
-    /// See also https://docs.rs/signature/latest/signature/trait.Verifier.html
     #[cfg(feature = "non-wasm")]
     pub fn verify_server_signature<T: serde::Serialize + AsRef<[u8]>>(
         &self,
         data: &T,
         signature: &[u8],
-    ) -> bool {
-        self.find_verifying_public_key(data, signature).is_some()
+    ) -> anyhow::Result<()> {
+        if self.find_verifying_public_key(data, signature).is_some() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("server signature verification failed"))
+        }
     }
 
     /// Verify the signature received from the server on keys or other data objects
@@ -916,7 +921,7 @@ impl Client {
         };
 
         for verf_key in &self.server_pks {
-            let ok = BaseKmsStruct::verify_sig(&data, &signature_struct, verf_key);
+            let ok = BaseKmsStruct::verify_sig(&data, &signature_struct, verf_key).is_ok();
             if ok {
                 return Some(verf_key.clone());
             }
@@ -1212,7 +1217,9 @@ impl Client {
         ))
     }
 
-    // TODO do we need to linking to request?
+    // NOTE: we're not checking it against the request
+    // since this part of the client is only used for testing
+    // see https://github.com/zama-ai/kms-core/issues/911
     #[cfg(feature = "non-wasm")]
     pub async fn process_get_key_gen_resp<R: StorageReader>(
         &self,
@@ -1267,7 +1274,10 @@ impl Client {
             );
             return Ok(None);
         }
-        if !self.verify_server_signature(&key_handle, &pki.signature) {
+        if self
+            .verify_server_signature(&key_handle, &pki.signature)
+            .is_err()
+        {
             tracing::warn!(
                 "Could not verify server signature for key handle {}",
                 key_handle,
@@ -1277,7 +1287,9 @@ impl Client {
         Ok(Some(key))
     }
 
-    // TODO do we need to linking to request?
+    // NOTE: we're not checking it against the request
+    // since this part of the client is only used for testing
+    // see https://github.com/zama-ai/kms-core/issues/911
     #[cfg(feature = "non-wasm")]
     pub async fn process_get_crs_resp<R: StorageReader>(
         &self,
@@ -1322,7 +1334,10 @@ impl Client {
             );
             return Ok(None);
         }
-        if !self.verify_server_signature(&crs_handle, &crs_info.signature) {
+        if self
+            .verify_server_signature(&crs_handle, &crs_info.signature)
+            .is_err()
+        {
             tracing::warn!(
                 "Could not verify server signature for crs handle {}",
                 crs_handle,
@@ -1376,11 +1391,11 @@ impl Client {
             // Observe that it has already been verified in [self.validate_meta_data] that server
             // verification key is in the set of permissible keys
             let cur_verf_key: PublicSigKey = deserialize(&cur_payload.verification_key)?;
-            if !BaseKmsStruct::verify_sig(&bincode::serialize(&cur_payload)?, &sig, &cur_verf_key) {
-                return Err(anyhow_error_and_log(
-                    "Signature on received response is not valid!",
-                ));
-            }
+            BaseKmsStruct::verify_sig(&bincode::serialize(&cur_payload)?, &sig, &cur_verf_key)
+                .map_err(|e| {
+                    tracing::warn!("Signature on received response is not valid!");
+                    e
+                })?;
         }
         let serialized_plaintexts = some_or_err(
             pivot.payload.to_owned(),
@@ -1736,11 +1751,12 @@ impl Client {
         let sig = Signature {
             sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
         };
-        if !internal_verify_sig(&bincode::serialize(&payload)?, &sig, &self.server_pks[0]) {
-            return Err(anyhow_error_and_log(
-                "Signature on received response is not valid!",
-            ));
-        }
+        internal_verify_sig(&bincode::serialize(&payload)?, &sig, &self.server_pks[0]).map_err(
+            |e| {
+                tracing::warn!("Signature on received response is not valid!");
+                e
+            },
+        )?;
 
         decrypt_signcryption(
             &payload.signcrypted_ciphertext,
@@ -1984,7 +2000,7 @@ impl Client {
         };
         // NOTE that we cannot use `BaseKmsStruct::verify_sig`
         // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
-        if !internal_verify_sig(&bincode::serialize(&other_resp)?, &sig, &resp_verf_key) {
+        if internal_verify_sig(&bincode::serialize(&other_resp)?, &sig, &resp_verf_key).is_err() {
             tracing::warn!("Signature on received response is not valid!");
             return Ok(false);
         }
@@ -2038,7 +2054,7 @@ impl Client {
         };
         // NOTE that we cannot use `BaseKmsStruct::verify_sig`
         // because `BaseKmsStruct` cannot be compiled for wasm (it has an async mutex).
-        if !internal_verify_sig(&bincode::serialize(&other_resp)?, &sig, &resp_verf_key) {
+        if internal_verify_sig(&bincode::serialize(&other_resp)?, &sig, &resp_verf_key).is_err() {
             tracing::warn!("Signature on received response is not valid!");
             return Ok(false);
         }
@@ -2527,8 +2543,6 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert_eq!(gen_response.into_inner(), Empty {});
-        // TODO the `Client` struct should aggregate the `KmsEndpointClient` struct for simplicity.
-        // This makes it easier to use the client for testing and validation.
         let mut response = kms_client
             .get_key_gen_result(tonic::Request::new(req_id.clone()))
             .await;
@@ -2641,7 +2655,7 @@ pub(crate) mod tests {
         let crs_sig: Signature = bincode::deserialize(&crs_info.signature).unwrap();
         let mut verified = false;
         for vk in &internal_client.server_pks {
-            let v = BaseKmsStruct::verify_sig(&client_handle, &crs_sig, vk);
+            let v = BaseKmsStruct::verify_sig(&client_handle, &crs_sig, vk).is_ok();
             verified = verified || v;
         }
 

@@ -312,12 +312,12 @@ mod kms_server_binary_test {
         run_subcommand_no_args("config/default_1.toml", "threshold");
     }
 
+    // NOTE: this test is ignored because it won't run on a non-nitro environment
+    // find another way to test it, e.g., mock the missing devices like `/dev/nsm`
     #[test]
     #[ignore]
     #[serial_test::serial]
     fn subcommand_enclave() {
-        // TODO this test is ignored because it won't run on a non-nitro environment
-        // find another way to test it, e.g., mock the missing devices like `/dev/nsm`
         run_subcommand_no_args("enclave", "centralized")
     }
 }
