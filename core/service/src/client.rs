@@ -106,7 +106,7 @@ fn decrypted_blocks_to_plaintext(
 
 /// Simple client to interact with the KMS servers. This can be seen as a proof-of-concept
 /// and reference code for validating the KMS. The logic supplied by the client will be
-/// distributed accross the aggregator/proxy and smart contracts.
+/// distributed across the aggregator/proxy and smart contracts.
 #[wasm_bindgen]
 pub struct Client {
     rng: Box<AesRng>,
@@ -140,7 +140,7 @@ pub struct TestingReencryptionTranscript {
     agg_resp: Vec<ReencryptionResponse>,
 }
 
-// TODO it would make sense to seperate the wasm specific stuff into a seperate file
+// TODO it would make sense to separate the wasm specific stuff into a separate file
 
 /// This module is dedicated to making an re-encryption request
 /// and reconstruction of the re-encryption results on a web client
@@ -304,8 +304,8 @@ pub mod js_api {
 
     #[wasm_bindgen]
     pub fn get_client_address(client: &Client) -> String {
-        let checksumed = client.client_address.to_checksum_buffer(None);
-        checksumed.to_string()
+        let checksummed = client.client_address.to_checksum_buffer(None);
+        checksummed.to_string()
     }
 
     #[wasm_bindgen]
@@ -1669,10 +1669,10 @@ impl Client {
                 );
                 continue;
             }
-            // Sanitiy check the ID of the server.
+            // Sanity check the ID of the server.
             // However, this will not catch all cheating since a server could claim the ID of another server
             // and we can't know who lies without consulting the verification key to ID mapping on the blockchain.
-            // Furhtermore, observe that we assume the optimal threshold is set.
+            // Furthermore, observe that we assume the optimal threshold is set.
             if cur_payload.party_id > cur_payload.degree * 3 + 1 {
                 tracing::warn!(
                     "Server who gave ID {} is too large. The largest allowed id {}",
@@ -2239,9 +2239,10 @@ pub mod test_tools {
         server_handles
     }
 
+    /// try to connect to a URI and retry every 200ms for 25 times before giving up after 5 seconds.
     async fn connect_with_retry(uri: Uri) -> Channel {
         tracing::info!("Client connecting to {}", uri);
-        const RETRY_COUNT: usize = 10;
+        const RETRY_COUNT: usize = 25;
         let mut channel = Channel::builder(uri.clone()).connect().await;
         let mut tries = 0usize;
         loop {
@@ -3354,7 +3355,7 @@ pub(crate) mod tests {
         }
         assert_eq!(req_response_vec.len(), parallelism);
 
-        // check that initial request responsed are all Empty
+        // check that initial request responses are all Empty
         for rr in req_response_vec {
             assert_eq!(rr, Empty {});
         }
@@ -3932,7 +3933,6 @@ pub(crate) mod tests {
                     .insecure_process_reencryption_resp(responses, enc_pk, enc_sk)
                     .unwrap()
             };
-            println!("dsfds");
             assert_eq!(msg.to_fhe_type(), plaintext.fhe_type());
             match msg {
                 TypedPlaintext::Bool(x) => assert_eq!(x, plaintext.as_bool()),
