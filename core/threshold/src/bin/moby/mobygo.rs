@@ -16,7 +16,7 @@ use distributed_decryption::{
     execution::{
         endpoints::keygen::FhePubKeySet,
         runtime::{party::RoleAssignment, session::DecryptionMode},
-        tfhe_internals::parameters::DkgParamsAvailable,
+        tfhe_internals::{parameters::DkgParamsAvailable, utils::expanded_encrypt},
     },
     session_id::SessionId,
 };
@@ -24,9 +24,8 @@ use itertools::Itertools;
 use rand::{distributions::Uniform, random, Rng};
 use tfhe::{
     integer::{ciphertext::BaseRadixCiphertext, IntegerCiphertext},
-    prelude::FheEncrypt,
-    FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32, FheUint4,
-    FheUint64, FheUint8,
+    set_server_key, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32,
+    FheUint4, FheUint64, FheUint8,
 };
 use tonic::transport::ClientTlsConfig;
 
@@ -363,7 +362,11 @@ async fn threshold_decrypt_command(
     let (key_sid, pk): (SessionId, FhePubKeySet) = bincode::deserialize(&pk_serialized)?;
     let compact_key = pk.public_key;
 
+    //Required to be able to expand the CompactCiphertextList if the encryption and compute keys
+    //are different (i.e. need access to PKSK)
+    set_server_key(pk.server_key);
     let messages;
+    //Encrypt messages one by one, not taking advantage of the compact ciphertext list
     let ctxts = match tfhe_type {
         TfheType::Bool => {
             messages = rand::thread_rng()
@@ -374,9 +377,8 @@ async fn threshold_decrypt_command(
             messages
                 .iter()
                 .map(|msg| {
-                    let msg = *msg == 1;
-                    let ct = FheBool::encrypt(msg, &compact_key).into_raw_parts();
-                    BaseRadixCiphertext::from_blocks(vec![ct])
+                    let ct: FheBool = expanded_encrypt(&compact_key, *msg, 1);
+                    BaseRadixCiphertext::from_blocks(vec![ct.into_raw_parts()])
                 })
                 .collect_vec()
         }
@@ -388,7 +390,10 @@ async fn threshold_decrypt_command(
 
             messages
                 .iter()
-                .map(|msg| FheUint4::encrypt(*msg, &compact_key).into_raw_parts().0)
+                .map(|msg| {
+                    let ct: FheUint4 = expanded_encrypt(&compact_key, *msg, 4);
+                    ct.into_raw_parts().0
+                })
                 .collect_vec()
         }
         TfheType::U8 => {
@@ -399,7 +404,10 @@ async fn threshold_decrypt_command(
 
             messages
                 .iter()
-                .map(|msg| FheUint8::encrypt(*msg, &compact_key).into_raw_parts().0)
+                .map(|msg| {
+                    let ct: FheUint8 = expanded_encrypt(&compact_key, *msg, 8);
+                    ct.into_raw_parts().0
+                })
                 .collect_vec()
         }
         TfheType::U16 => {
@@ -410,7 +418,10 @@ async fn threshold_decrypt_command(
 
             messages
                 .iter()
-                .map(|msg| FheUint16::encrypt(*msg, &compact_key).into_raw_parts().0)
+                .map(|msg| {
+                    let ct: FheUint16 = expanded_encrypt(&compact_key, *msg, 16);
+                    ct.into_raw_parts().0
+                })
                 .collect_vec()
         }
         TfheType::U32 => {
@@ -421,7 +432,10 @@ async fn threshold_decrypt_command(
 
             messages
                 .iter()
-                .map(|msg| FheUint32::encrypt(*msg, &compact_key).into_raw_parts().0)
+                .map(|msg| {
+                    let ct: FheUint32 = expanded_encrypt(&compact_key, *msg, 32);
+                    ct.into_raw_parts().0
+                })
                 .collect_vec()
         }
         TfheType::U64 => {
@@ -432,7 +446,10 @@ async fn threshold_decrypt_command(
 
             messages
                 .iter()
-                .map(|msg| FheUint64::encrypt(*msg, &compact_key).into_raw_parts().0)
+                .map(|msg| {
+                    let ct: FheUint64 = expanded_encrypt(&compact_key, *msg, 64);
+                    ct.into_raw_parts().0
+                })
                 .collect_vec()
         }
         TfheType::U128 => {
@@ -444,7 +461,10 @@ async fn threshold_decrypt_command(
 
             messages
                 .iter()
-                .map(|msg| FheUint128::encrypt(*msg, &compact_key).into_raw_parts().0)
+                .map(|msg| {
+                    let ct: FheUint128 = expanded_encrypt(&compact_key, *msg, 128);
+                    ct.into_raw_parts().0
+                })
                 .collect_vec()
         }
         TfheType::U160 => {
@@ -456,7 +476,10 @@ async fn threshold_decrypt_command(
 
             messages
                 .iter()
-                .map(|msg| FheUint160::encrypt(*msg, &compact_key).into_raw_parts().0)
+                .map(|msg| {
+                    let ct: FheUint160 = expanded_encrypt(&compact_key, *msg, 160);
+                    ct.into_raw_parts().0
+                })
                 .collect_vec()
         }
         TfheType::U256 => {
@@ -468,7 +491,10 @@ async fn threshold_decrypt_command(
 
             messages
                 .iter()
-                .map(|msg| FheUint256::encrypt(*msg, &compact_key).into_raw_parts().0)
+                .map(|msg| {
+                    let ct: FheUint256 = expanded_encrypt(&compact_key, *msg, 256);
+                    ct.into_raw_parts().0
+                })
                 .collect_vec()
         }
         TfheType::U2048 => {
@@ -480,7 +506,10 @@ async fn threshold_decrypt_command(
 
             messages
                 .iter()
-                .map(|msg| FheUint2048::encrypt(*msg, &compact_key).into_raw_parts().0)
+                .map(|msg| {
+                    let ct: FheUint2048 = expanded_encrypt(&compact_key, *msg, 2048);
+                    ct.into_raw_parts().0
+                })
                 .collect_vec()
         }
     };

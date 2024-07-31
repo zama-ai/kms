@@ -96,4 +96,5 @@ pub mod config;
 #[cfg(feature = "non-wasm")]
 pub mod zk {
     pub mod ceremony;
+    pub mod constants;
 }

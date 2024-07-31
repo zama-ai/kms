@@ -1,9 +1,11 @@
 use crate::algebra::base_ring::{Z128, Z64};
 use crate::algebra::residue_poly::ResiduePoly64;
-use crate::execution::online::preprocessing::{DKGPreprocessing, NoiseBounds, RandomPreprocessing};
+use crate::execution::online::preprocessing::{DKGPreprocessing, RandomPreprocessing};
 use crate::execution::sharing::share::Share;
 use crate::execution::tfhe_internals::lwe_key::LweCompactPublicKeyShare;
-use crate::execution::tfhe_internals::parameters::{DKGParams, DKGParamsBasics};
+use crate::execution::tfhe_internals::parameters::{
+    DKGParams, DKGParamsBasics, KSKParams, NoiseBounds,
+};
 use crate::execution::tfhe_internals::switch_and_squash::SwitchAndSquashKey;
 use crate::{
     algebra::{
@@ -70,6 +72,7 @@ impl FhePubKeySet {
 struct RawPubKeySet {
     pub lwe_public_key: LweCompactPublicKey<Vec<u64>>,
     pub ksk: LweKeyswitchKey<Vec<u64>>,
+    pub pksk: Option<LweKeyswitchKey<Vec<u64>>>,
     pub bk: LweBootstrapKey<Vec<u64>>,
     pub bk_sns: Option<LweBootstrapKey<Vec<u128>>>,
 }
@@ -98,6 +101,7 @@ impl RawPubKeySet {
                 convert_standard_lwe_bootstrap_key_to_fourier_128(bk_sns, &mut fourier_bk);
                 Some(SwitchAndSquashKey {
                     fbsk_out: fourier_bk,
+                    ksk: self.ksk.clone(),
                 })
             }
             None => None,
@@ -138,14 +142,34 @@ impl RawPubKeySet {
             MaxDegree::new(max_value),
             max_noise_level,
             params_tfhe.ciphertext_modulus,
-            params_tfhe.encryption_key_choice.into(),
+            regular_params.encryption_key_choice().into(),
         )
     }
 
     pub fn compute_tfhe_hl_api_server_key(&self, params: DKGParams) -> tfhe::ServerKey {
         let shortint_key = self.compute_tfhe_shortint_server_key(params);
         let integer_key = tfhe::integer::ServerKey::from_raw_parts(shortint_key);
-        tfhe::ServerKey::from_raw_parts(integer_key, None)
+
+        if let Some(pksk) = &self.pksk {
+            let shortint_pksk =
+                tfhe::shortint::key_switching_key::KeySwitchingKeyMaterial::from_raw_parts(
+                    pksk.clone(),
+                    0,
+                    params
+                        .get_params_basics_handle()
+                        .get_pksk_destination()
+                        .unwrap(),
+                );
+            let integer_pksk =
+                tfhe::integer::key_switching_key::KeySwitchingKeyMaterial::from_raw_parts(
+                    shortint_pksk,
+                );
+
+            //TODO: Once we have (de)compression keys, need to set them there.
+            tfhe::ServerKey::from_raw_parts(integer_key, Some(integer_pksk), None, None)
+        } else {
+            tfhe::ServerKey::from_raw_parts(integer_key, None, None, None)
+        }
     }
 
     pub fn compute_tfhe_hl_api_compact_public_key(
@@ -154,7 +178,8 @@ impl RawPubKeySet {
     ) -> tfhe::CompactPublicKey {
         let params = params
             .get_params_basics_handle()
-            .to_classic_pbs_parameters();
+            .get_compact_pk_enc_params();
+
         to_tfhe_hl_api_compact_public_key(self.lwe_public_key.clone(), params)
     }
 
@@ -168,6 +193,8 @@ impl RawPubKeySet {
 }
 
 struct GenericPrivateKeySet<Z> {
+    //The two Lwe keys are the same if there's no dedicated pk parameters
+    pub lwe_encryption_secret_key_share: LweSecretKeyShare<Z>,
     pub lwe_secret_key_share: LweSecretKeyShare<Z>,
     pub glwe_secret_key_share: GlweSecretKeyShare<Z>,
     pub glwe_secret_key_share_sns: Option<GlweSecretKeyShare<Z>>,
@@ -175,7 +202,9 @@ struct GenericPrivateKeySet<Z> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PrivateKeySet {
-    pub lwe_secret_key_share: LweSecretKeyShare<Z64>,
+    //The two Lwe keys are the same if there's no dedicated pk parameters
+    pub lwe_encryption_secret_key_share: LweSecretKeyShare<Z64>,
+    pub lwe_compute_secret_key_share: LweSecretKeyShare<Z64>,
     pub glwe_secret_key_share: GlweSecretKeyShare<Z64>,
     pub glwe_secret_key_share_sns_as_lwe: Option<LweSecretKeyShare<Z128>>,
     pub parameters: ClassicPBSParameters,
@@ -193,7 +222,7 @@ impl PrivateKeySet {
 
 impl GenericPrivateKeySet<Z128> {
     pub fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet {
-        let lwe_data = self
+        let lwe_compute_data = self
             .lwe_secret_key_share
             .data
             .into_iter()
@@ -202,7 +231,22 @@ impl GenericPrivateKeySet<Z128> {
                 Share::new(share.owner(), converted_value)
             })
             .collect_vec();
-        let converted_lwe_secret_key_share = LweSecretKeyShare { data: lwe_data };
+        let converted_lwe_secret_key_share = LweSecretKeyShare {
+            data: lwe_compute_data,
+        };
+
+        let lwe_encryption_data = self
+            .lwe_encryption_secret_key_share
+            .data
+            .into_iter()
+            .map(|share| {
+                let converted_value = share.value().to_residuepoly64();
+                Share::new(share.owner(), converted_value)
+            })
+            .collect_vec();
+        let converted_lwe_encryption_key_share = LweSecretKeyShare {
+            data: lwe_encryption_data,
+        };
 
         let glwe_data = self
             .glwe_secret_key_share
@@ -223,7 +267,8 @@ impl GenericPrivateKeySet<Z128> {
             .map(|key| key.into_lwe_secret_key());
 
         PrivateKeySet {
-            lwe_secret_key_share: converted_lwe_secret_key_share,
+            lwe_encryption_secret_key_share: converted_lwe_encryption_key_share,
+            lwe_compute_secret_key_share: converted_lwe_secret_key_share,
             glwe_secret_key_share: converted_glwe_secret_key_share,
             glwe_secret_key_share_sns_as_lwe,
             parameters,
@@ -234,7 +279,8 @@ impl GenericPrivateKeySet<Z128> {
 impl GenericPrivateKeySet<Z64> {
     pub fn finalize_keyset(self, parameters: ClassicPBSParameters) -> PrivateKeySet {
         PrivateKeySet {
-            lwe_secret_key_share: self.lwe_secret_key_share,
+            lwe_encryption_secret_key_share: self.lwe_encryption_secret_key_share,
+            lwe_compute_secret_key_share: self.lwe_secret_key_share,
             glwe_secret_key_share: self.glwe_secret_key_share,
             glwe_secret_key_share_sns_as_lwe: None,
             parameters,
@@ -287,12 +333,12 @@ where
     //Init the shared LWE secret key
     tracing::info!("(Party {my_role}) Generating LWE Secret key...Start");
     let lwe_secret_key_share =
-        LweSecretKeyShare::new_from_preprocessing(params.lwe_dimension(), preprocessing)?;
+        LweSecretKeyShare::new_from_preprocessing(params.lwe_hat_dimension(), preprocessing)?;
     tracing::info!("(Party {my_role}) Generating corresponding public key...Start");
     let vec_tuniform_noise = preprocessing
         .next_noise_vec(
             params.num_needed_noise_pk(),
-            NoiseBounds::LweNoise(params.lwe_tuniform_bound()),
+            NoiseBounds::LweHatNoise(params.lwe_hat_tuniform_bound()),
         )?
         .iter()
         .map(|share| share.value())
@@ -339,7 +385,7 @@ where
 
 ///Generate the Key Switch Key from a Glwe key given in Lwe format,
 ///and an actual Lwe key
-#[instrument(skip(glwe_sk_share_as_lwe, lwe_secret_key_share, mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
+#[instrument(skip(input_lwe_sk, output_lwe_sk, mpc_encryption_rng, session, preprocessing), fields(session_id = ?session.session_id(), own_identity = ?session.own_identity()))]
 async fn generate_key_switch_key<
     Z: BaseRing,
     P: DKGPreprocessing<ResiduePoly<Z>> + ?Sized,
@@ -347,9 +393,9 @@ async fn generate_key_switch_key<
     S: BaseSessionHandles<R>,
     Gen: ByteRandomGenerator,
 >(
-    glwe_sk_share_as_lwe: &LweSecretKeyShare<Z>,
-    lwe_secret_key_share: &LweSecretKeyShare<Z>,
-    params: &DKGParams,
+    input_lwe_sk: &LweSecretKeyShare<Z>,
+    output_lwe_sk: &LweSecretKeyShare<Z>,
+    params: &KSKParams,
     mpc_encryption_rng: &mut MPCEncryptionRandomGenerator<Z, Gen>,
     session: &mut S,
     preprocessing: &mut P,
@@ -357,14 +403,10 @@ async fn generate_key_switch_key<
 where
     ResiduePoly<Z>: ErrorCorrect,
 {
-    let params = params.get_params_basics_handle();
     let my_role = session.my_role()?;
     tracing::info!("(Party {my_role}) Generating KSK...Start");
     let vec_tuniform_noise = preprocessing
-        .next_noise_vec(
-            params.num_needed_noise_ksk(),
-            NoiseBounds::LweNoise(params.lwe_tuniform_bound()),
-        )?
+        .next_noise_vec(params.num_needed_noise, params.noise_bound)?
         .iter()
         .map(|share| share.value())
         .collect_vec();
@@ -373,10 +415,10 @@ where
 
     //Then compute the KSK
     let ksk_share = allocate_and_generate_new_lwe_keyswitch_key(
-        glwe_sk_share_as_lwe,
-        lwe_secret_key_share,
-        params.decomposition_base_log_ksk(),
-        params.decomposition_level_count_ksk(),
+        input_lwe_sk,
+        output_lwe_sk,
+        params.decomposition_base_log,
+        params.decomposition_level_count,
         mpc_encryption_rng,
     )?;
 
@@ -562,14 +604,24 @@ where
     let mut mpc_encryption_rng =
         MPCEncryptionRandomGenerator::<Z, SoftwareRandomGenerator>::new_from_seed(seed);
 
-    //Generate the shared LWE secret key and corresponding public key
-    let (lwe_secret_key_share, lwe_public_key) = generate_lwe_private_public_key_pair(
+    //Generate the shared LWE hat secret key and corresponding public key
+    let (lwe_hat_secret_key_share, lwe_public_key) = generate_lwe_private_public_key_pair(
         &params,
         &mut mpc_encryption_rng,
         session,
         preprocessing,
     )
     .await?;
+
+    //Generate the LWE (no hat) secret key if it should exist
+    let lwe_secret_key_share = if params_basics_handle.has_dedicated_compact_pk_params() {
+        LweSecretKeyShare::new_from_preprocessing(
+            params_basics_handle.lwe_dimension(),
+            preprocessing,
+        )?
+    } else {
+        lwe_hat_secret_key_share.clone()
+    };
 
     tracing::info!("(Party {my_role}) Generating corresponding public key...Done");
 
@@ -586,10 +638,18 @@ where
     tracing::info!("(Party {my_role}) Generating GLWE secret key...Done");
 
     //Generate the KSK
+    let ksk_params = params_basics_handle.get_ksk_params();
+    // KSKParams {
+    //    num_needed_noise: params_basics_handle.num_needed_noise_ksk(),
+    //    noise_bound: NoiseBounds::LweNoise(params_basics_handle.lwe_tuniform_bound()),
+    //    decomposition_base_log: params_basics_handle.decomposition_base_log_ksk(),
+    //    decomposition_level_count: params_basics_handle.decomposition_level_count_ksk(),
+    //};
+
     let ksk = generate_key_switch_key(
         &glwe_sk_share_as_lwe,
         &lwe_secret_key_share,
-        &params,
+        &ksk_params,
         &mut mpc_encryption_rng,
         session,
         preprocessing,
@@ -641,14 +701,53 @@ where
         DKGParams::WithoutSnS(_) => (None, None),
     };
 
+    //Compute the PKSK
+    let pksk = match (
+        params_basics_handle.get_pksk_destination(),
+        params_basics_handle.get_pksk_params(),
+    ) {
+        //Corresponds to type = F-GLWE
+        (Some(tfhe::shortint::EncryptionKeyChoice::Big), Some(pksk_params)) => Some(
+            generate_key_switch_key(
+                &lwe_hat_secret_key_share,
+                &glwe_sk_share_as_lwe,
+                &pksk_params,
+                &mut mpc_encryption_rng,
+                session,
+                preprocessing,
+            )
+            .await?,
+        ),
+
+        //Corresponds to type = LWE
+        (Some(tfhe::shortint::EncryptionKeyChoice::Small), Some(pksk_params)) => Some(
+            generate_key_switch_key(
+                &lwe_hat_secret_key_share,
+                &lwe_secret_key_share,
+                &pksk_params,
+                &mut mpc_encryption_rng,
+                session,
+                preprocessing,
+            )
+            .await?,
+        ),
+        (None, None) => None,
+        _ => {
+            tracing::error!("Incompatible parameters regarding pksk, can not generate it.");
+            None
+        }
+    };
+
     let pub_key_set = RawPubKeySet {
         lwe_public_key,
         ksk,
+        pksk,
         bk,
         bk_sns,
     };
 
     let priv_key_set = GenericPrivateKeySet {
+        lwe_encryption_secret_key_share: lwe_hat_secret_key_share,
         lwe_secret_key_share,
         glwe_secret_key_share,
         glwe_secret_key_share_sns,
@@ -731,7 +830,7 @@ pub mod tests {
             entities::{Fourier128LweBootstrapKey, GlweSecretKey, LweBootstrapKey, LweSecretKey},
         },
         integer::parameters::DynamicDistribution,
-        prelude::{FheDecrypt, FheEncrypt, FheMin, FheTryEncrypt},
+        prelude::{FheDecrypt, FheMin, FheTryEncrypt},
         set_server_key,
         shortint::parameters::CoreCiphertextModulus,
         FheUint32, FheUint64, FheUint8,
@@ -740,8 +839,14 @@ pub mod tests {
     use crate::execution::{
         random::{get_rng, seed_from_rng},
         tfhe_internals::{
-            parameters::PARAMS_TEST_BK_SNS, switch_and_squash::SwitchAndSquashKey,
-            test_feature::to_hl_client_key, utils::tests::reconstruct_glwe_secret_key_from_file,
+            parameters::{
+                OLD_PARAMS_P32_REAL_WITH_SNS, PARAMS_P32_INTERNAL_FGLWE, PARAMS_P32_NO_SNS_FGLWE,
+                PARAMS_P32_NO_SNS_LWE, PARAMS_P32_SNS_FGLWE, PARAMS_P8_NO_SNS_FGLWE,
+                PARAMS_P8_NO_SNS_LWE, PARAMS_P8_SNS_FGLWE, PARAMS_TEST_BK_SNS,
+            },
+            switch_and_squash::SwitchAndSquashKey,
+            test_feature::to_hl_client_key,
+            utils::{expanded_encrypt, tests::reconstruct_glwe_secret_key_from_file},
         },
     };
     use crate::{
@@ -755,10 +860,7 @@ pub mod tests {
             online::preprocessing::{create_memory_factory, dummy::DummyPreprocessing},
             runtime::session::{LargeSession, ParameterHandles, SmallSession, ToBaseSession},
             small_execution::{agree_random::DummyAgreeRandom, offline::SmallPreprocessing},
-            tfhe_internals::parameters::{
-                DKGParamsBasics, DKGParamsRegular, DKGParamsSnS, PARAMS_P32_SMALL_NO_SNS,
-                PARAMS_P8_SMALL_NO_SNS,
-            },
+            tfhe_internals::parameters::{DKGParamsBasics, DKGParamsRegular, DKGParamsSnS},
         },
         tests::helper::tests_and_benches::{execute_protocol_large, execute_protocol_small},
     };
@@ -773,9 +875,7 @@ pub mod tests {
         execution::{
             endpoints::keygen::RawPubKeySet,
             tfhe_internals::{
-                parameters::{PARAMS_P32_REAL_WITH_SNS, PARAMS_P8_REAL_WITH_SNS},
-                test_feature::SnsClientKey,
-                utils::tests::reconstruct_lwe_secret_key_from_file,
+                test_feature::SnsClientKey, utils::tests::reconstruct_lwe_secret_key_from_file,
             },
         },
         networking::NetworkMode,
@@ -785,16 +885,26 @@ pub mod tests {
     use super::distributed_homprf_bsk_gen;
     use super::{distributed_keygen, DKGParams};
 
-    struct TestKeySize {
-        public_key_material_size: u64,
-        secret_key_material_size: u64,
+    #[test]
+    fn pure_tfhers_test() {
+        let params = PARAMS_P32_INTERNAL_FGLWE;
+        let classic_pbs = params.ciphertext_parameters;
+        let dedicated_cpk_params = params.dedicated_compact_public_key_parameters.unwrap();
+
+        let config = tfhe::ConfigBuilder::with_custom_parameters(classic_pbs)
+            .use_dedicated_compact_public_key_parameters(dedicated_cpk_params);
+
+        let client_key = tfhe::ClientKey::generate(config.clone());
+        let server_key = tfhe::ServerKey::new(&client_key);
+        let public_key = tfhe::CompactPublicKey::try_new(&client_key).unwrap();
+
+        try_tfhe_pk_compactlist_computation(&client_key, &server_key, &public_key);
     }
 
-    ///Tests related to [`PARAMS_P32_SMALL_NO_SNS`]
     #[test]
     #[ignore]
-    fn keygen_params32_small_no_sns() {
-        let params = PARAMS_P32_SMALL_NO_SNS;
+    fn old_keygen_params32_with_sns() {
+        let params = OLD_PARAMS_P32_REAL_WITH_SNS;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
@@ -807,25 +917,50 @@ pub mod tests {
             _ = fs::create_dir(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
-        let expected_size = TestKeySize {
-            public_key_material_size: 117506209,
-            secret_key_material_size: 221209,
-        };
 
-        assert_key_size(prefix_path.clone(), expected_size, num_parties);
+        run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
+
+        run_tfhe_computation_shortint::<Z128, DKGParamsSnS>(
+            prefix_path.clone(),
+            num_parties,
+            threshold,
+            false,
+        );
+        run_tfhe_computation_fheuint::<Z128, DKGParamsSnS>(prefix_path, num_parties, threshold);
+    }
+
+    ///Tests related to [`PARAMS_P32_NO_SNS_FGLWE`]
+    #[test]
+    #[ignore]
+    fn keygen_params32_no_sns_fglwe() {
+        let params = PARAMS_P32_NO_SNS_FGLWE;
+        let params_basics_handles = params.get_params_basics_handle();
+        let num_parties = 5;
+        let threshold = 1;
+        let prefix_path = params_basics_handles.get_prefix_path();
+
+        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
+            .try_exists()
+            .unwrap()
+        {
+            _ = fs::create_dir(prefix_path.clone());
+            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
+        }
+
         run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
             prefix_path.clone(),
             num_parties,
             threshold,
+            true,
         );
         run_tfhe_computation_fheuint::<Z128, DKGParamsRegular>(prefix_path, num_parties, threshold);
     }
 
-    ///Tests related to [`PARAMS_P8_SMALL_NO_SNS`]
+    ///Tests related to [`PARAMS_P8_NO_SNS_FGLWE`]
     #[test]
     #[ignore]
-    fn keygen_params8_small_no_sns() {
-        let params = PARAMS_P8_SMALL_NO_SNS;
+    fn keygen_params8_no_sns_fglwe() {
+        let params = PARAMS_P8_NO_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
@@ -839,17 +974,66 @@ pub mod tests {
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
-        let expected_size = TestKeySize {
-            public_key_material_size: 10498209,
-            secret_key_material_size: 73753,
-        };
+        //This parameter set isnt big enough to run the fheuint tests
+        run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
+            prefix_path.clone(),
+            num_parties,
+            threshold,
+            true,
+        );
+    }
 
-        assert_key_size(prefix_path.clone(), expected_size, num_parties);
+    ///Tests related to [`PARAMS_P32_NO_SNS_LWE`]
+    #[test]
+    #[ignore]
+    fn keygen_params32_no_sns_lwe() {
+        let params = PARAMS_P32_NO_SNS_LWE;
+        let params_basics_handles = params.get_params_basics_handle();
+        let num_parties = 5;
+        let threshold = 1;
+        let prefix_path = params_basics_handles.get_prefix_path();
+
+        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
+            .try_exists()
+            .unwrap()
+        {
+            _ = fs::create_dir(prefix_path.clone());
+            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
+        }
+
+        run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
+            prefix_path.clone(),
+            num_parties,
+            threshold,
+            true,
+        );
+        run_tfhe_computation_fheuint::<Z128, DKGParamsRegular>(prefix_path, num_parties, threshold);
+    }
+
+    ///Tests related to [`PARAMS_P8_NO_SNS_LWE`]
+    #[test]
+    #[ignore]
+    fn keygen_params8_no_sns_lwe() {
+        let params = PARAMS_P8_NO_SNS_LWE;
+        let params_basics_handles = params.get_params_basics_handle();
+        let num_parties = 5;
+        let threshold = 1;
+        let prefix_path = params_basics_handles.get_prefix_path();
+
+        if !std::path::Path::new(&(prefix_path.clone() + "/params.json"))
+            .try_exists()
+            .unwrap()
+        {
+            _ = fs::create_dir(prefix_path.clone());
+            run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
+        }
+
         //This parameter set isnt big enough to run the fheuint tests
         run_tfhe_computation_shortint::<Z128, DKGParamsRegular>(
             prefix_path,
             num_parties,
             threshold,
+            true,
         );
     }
 
@@ -871,12 +1055,6 @@ pub mod tests {
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
-        let expected_size = TestKeySize {
-            public_key_material_size: 2493153,
-            secret_key_material_size: 76585,
-        };
-
-        assert_key_size(prefix_path.clone(), expected_size, num_parties);
         run_switch_and_squash(prefix_path, num_parties, threshold);
     }
 
@@ -897,20 +1075,15 @@ pub mod tests {
             _ = fs::create_dir_all(prefix_path.clone());
             run_real_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
-        let expected_size = TestKeySize {
-            public_key_material_size: 2493153,
-            secret_key_material_size: 76585,
-        };
 
-        assert_key_size(prefix_path.clone(), expected_size, num_parties);
         run_switch_and_squash(prefix_path.clone(), num_parties, threshold.into());
     }
 
-    ///Tests related to [`PARAMS_P32_REAL_WITH_SNS`]
+    ///Tests related to [`PARAMS_P32_SNS_FGLWE`]
     #[test]
     #[ignore]
-    fn keygen_params32_real_with_sns() {
-        let params = PARAMS_P32_REAL_WITH_SNS;
+    fn keygen_params32_with_sns_fglwe() {
+        let params = PARAMS_P32_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
@@ -923,13 +1096,6 @@ pub mod tests {
             _ = fs::create_dir(prefix_path.clone());
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
-
-        let expected_size = TestKeySize {
-            public_key_material_size: 1023475937,
-            secret_key_material_size: 778281,
-        };
-
-        assert_key_size(prefix_path.clone(), expected_size, num_parties);
 
         run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
 
@@ -937,6 +1103,7 @@ pub mod tests {
             prefix_path.clone(),
             num_parties,
             threshold,
+            true,
         );
         run_tfhe_computation_fheuint::<Z128, DKGParamsSnS>(prefix_path, num_parties, threshold);
     }
@@ -944,8 +1111,8 @@ pub mod tests {
     ///Tests related to [`PARAMS_P8_REAL_WITH_SNS`]
     #[test]
     #[ignore]
-    fn keygen_params8_real_with_sns() {
-        let params = PARAMS_P8_REAL_WITH_SNS;
+    fn keygen_params8_with_sns_fglwe() {
+        let params = PARAMS_P8_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
@@ -959,30 +1126,15 @@ pub mod tests {
             run_dkg_and_save(params, num_parties, threshold, prefix_path.clone());
         }
 
-        let expected_size = TestKeySize {
-            public_key_material_size: 1350607073,
-            secret_key_material_size: 741417,
-        };
-
-        assert_key_size(prefix_path.clone(), expected_size, num_parties);
-
         run_switch_and_squash(prefix_path.clone(), num_parties, threshold);
 
         //This parameter set isnt big enough to run the fheuint tests
-        run_tfhe_computation_shortint::<Z128, DKGParamsSnS>(prefix_path, num_parties, threshold);
-    }
-
-    fn assert_key_size(prefix_path: String, expected_size: TestKeySize, num_parties: usize) {
-        let pk_size = fs::metadata(format!("{}/pk.der", prefix_path))
-            .unwrap()
-            .len();
-        assert_eq!(pk_size, expected_size.public_key_material_size);
-        for i in 0..num_parties {
-            let sk_size = fs::metadata(format!("{}/sk_p{i}.der", prefix_path))
-                .unwrap()
-                .len();
-            assert_eq!(sk_size, expected_size.secret_key_material_size);
-        }
+        run_tfhe_computation_shortint::<Z128, DKGParamsSnS>(
+            prefix_path,
+            num_parties,
+            threshold,
+            true,
+        );
     }
 
     fn run_real_dkg_and_save(
@@ -1253,8 +1405,9 @@ pub mod tests {
         convert_standard_lwe_bootstrap_key_to_fourier_128(&bsk_out, &mut fbsk_out);
         drop(bsk_out);
 
-        let ck_bis = SwitchAndSquashKey::new(fbsk_out);
-        let small_ct = FheUint64::encrypt(message, &ddec_pk);
+        let ck_bis = SwitchAndSquashKey::new(fbsk_out, ck.ksk.clone());
+
+        let small_ct: FheUint64 = expanded_encrypt(&ddec_pk, message as u64, 64);
         let (raw_ct, _id) = small_ct.clone().into_raw_parts();
         let large_ct = ck.to_large_ciphertext(&raw_ct).unwrap();
         let large_ct_bis = ck_bis.to_large_ciphertext(&raw_ct).unwrap();
@@ -1273,6 +1426,7 @@ pub mod tests {
         prefix_path: String,
         num_parties: usize,
         threshold: usize,
+        with_compact: bool,
     ) where
         ResiduePoly<Z>: ErrorCorrect,
     {
@@ -1284,6 +1438,16 @@ pub mod tests {
         let shortint_pk = pk.compute_tfhe_shortint_server_key(params);
         for _ in 0..100 {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
+        }
+
+        if with_compact {
+            let tfhe_sk = tfhe::ClientKey::from_raw_parts(shortint_sk.into(), None, None);
+            let pub_key_set = pk.to_pubkeyset(params);
+            try_tfhe_pk_compactlist_computation(
+                &tfhe_sk,
+                &pub_key_set.server_key,
+                &pub_key_set.public_key,
+            );
         }
     }
 
@@ -1305,10 +1469,10 @@ pub mod tests {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
         }
 
-        let tfhe_sk = tfhe::ClientKey::from_raw_parts(shortint_sk.into(), None);
-        let tfhe_pk = pk.compute_tfhe_hl_api_server_key(params);
+        let tfhe_sk = tfhe::ClientKey::from_raw_parts(shortint_sk.into(), None, None);
+        let pub_key_set = pk.to_pubkeyset(params);
 
-        try_tfhe_fheuint_computation(&tfhe_sk, &tfhe_pk);
+        try_tfhe_fheuint_computation(&tfhe_sk, &pub_key_set.server_key);
     }
 
     ///Read files created by [`run_dkg_and_save`] and reconstruct the secret keys
@@ -1373,6 +1537,36 @@ pub mod tests {
         assert_eq!(clear_res, expected_res);
     }
 
+    fn try_tfhe_pk_compactlist_computation(
+        client_key: &tfhe::ClientKey,
+        server_keys: &tfhe::ServerKey,
+        pk: &tfhe::CompactPublicKey,
+    ) {
+        let clear_a = 3u64;
+        let clear_b = 5u64;
+
+        let compact_ctxt_list = tfhe::CompactCiphertextList::builder(pk)
+            .push(clear_a)
+            .push(clear_b)
+            .build_packed();
+
+        let result = {
+            set_server_key(server_keys.clone());
+            let all_keys = server_keys.clone().into_raw_parts();
+            let cpk_ksk = all_keys.1;
+            assert!(cpk_ksk.is_some());
+            // Verify the ciphertexts
+            let expander = compact_ctxt_list.expand().unwrap();
+            let a: tfhe::FheUint64 = expander.get(0).unwrap().unwrap();
+            let b: tfhe::FheUint64 = expander.get(1).unwrap().unwrap();
+
+            a + b
+        };
+
+        let a_plus_b: u64 = result.decrypt(client_key);
+        assert_eq!(a_plus_b, clear_a.wrapping_add(clear_b));
+    }
+
     //TFHE-rs doctest for fheuint
     fn try_tfhe_fheuint_computation(client_key: &tfhe::ClientKey, server_keys: &tfhe::ServerKey) {
         //// Key generation
@@ -1426,8 +1620,8 @@ pub mod tests {
     // is different when the PRF key is different.
     #[cfg(feature = "slow_tests")]
     #[test]
-    fn keygen_params32_small_no_sns_w_homprf() {
-        let params = PARAMS_P32_SMALL_NO_SNS;
+    fn keygen_params32_no_sns_fglwe_w_homprf() {
+        let params = PARAMS_P32_NO_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 2;
         let threshold = 0;
@@ -1448,6 +1642,7 @@ pub mod tests {
             params_basics_handles.get_prefix_path(),
             num_parties,
             threshold,
+            true,
         );
 
         // generate new bsk used for the hom-prf

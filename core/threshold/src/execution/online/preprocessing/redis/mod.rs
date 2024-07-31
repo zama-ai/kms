@@ -76,6 +76,7 @@ pub enum CorrelatedRandomnessType {
     Bit,
     DDecMask,
     NoiseLwe,
+    NoiseLweHat,
     NoiseGlwe,
     NoiseGlweSnS,
 }
@@ -104,6 +105,7 @@ impl CorrelatedRandomnessType {
             CorrelatedRandomnessType::Bit => "_bit",
             CorrelatedRandomnessType::DDecMask => "_mask",
             CorrelatedRandomnessType::NoiseLwe => "_noise_lwe",
+            CorrelatedRandomnessType::NoiseLweHat => "_noise_lwe_hat",
             CorrelatedRandomnessType::NoiseGlwe => "_noise_glwe",
             CorrelatedRandomnessType::NoiseGlweSnS => "_noise_glwe_sns",
         }

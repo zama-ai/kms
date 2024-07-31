@@ -58,7 +58,9 @@ use std::num::Wrapping;
 #[cfg(any(test, feature = "testing"))]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tfhe::core_crypto::prelude::{keyswitch_lwe_ciphertext, LweCiphertext, LweKeyswitchKey};
 use tfhe::integer::IntegerCiphertext;
+use tfhe::shortint::PBSOrder;
 #[cfg(any(test, feature = "testing"))]
 use tokio::task::JoinSet;
 use tracing::instrument;
@@ -481,25 +483,37 @@ pub fn threshold_decrypt64<Z: Ring>(
                 });
             }
             DecryptionMode::BitDecLargeDecrypt => {
+                let ks_key = runtime.get_ks_key();
                 set.spawn(async move {
                     let mut session = LargeSession::new(base_session);
                     let mut prep = init_prep_bitdec_large(&mut session, ct.blocks().len()).await;
-                    let out =
-                        run_decryption_bitdec(&mut session, prep.as_mut(), &party_keyshare, ct)
-                            .await
-                            .unwrap();
+                    let out = run_decryption_bitdec(
+                        &mut session,
+                        prep.as_mut(),
+                        &party_keyshare,
+                        &ks_key,
+                        ct,
+                    )
+                    .await
+                    .unwrap();
 
                     (identity, out)
                 });
             }
             DecryptionMode::BitDecSmallDecrypt => {
+                let ks_key = runtime.get_ks_key();
                 set.spawn(async move {
                     let mut session = setup_small_session::<ResiduePoly64>(base_session).await;
                     let mut prep = init_prep_bitdec_small(&mut session, ct.blocks().len()).await;
-                    let out =
-                        run_decryption_bitdec(&mut session, prep.as_mut(), &party_keyshare, ct)
-                            .await
-                            .unwrap();
+                    let out = run_decryption_bitdec(
+                        &mut session,
+                        prep.as_mut(),
+                        &party_keyshare,
+                        &ks_key,
+                        ct,
+                    )
+                    .await
+                    .unwrap();
                     (identity, out)
                 });
             }
@@ -600,7 +614,7 @@ pub async fn run_decryption_noiseflood_64<
 // run decryption with bit-decomposition
 #[instrument(
     name = "TFHE.Threshold-Dec-2",
-    skip(session, prep, keyshares, ciphertext),
+    skip(session, prep, keyshares, ksk, ciphertext),
     fields(batch_size=?ciphertext.blocks().len())
 )]
 pub async fn run_decryption_bitdec<
@@ -611,13 +625,14 @@ pub async fn run_decryption_bitdec<
     session: &mut Ses,
     prep: &mut P,
     keyshares: &PrivateKeySet,
+    ksk: &LweKeyswitchKey<Vec<u64>>,
     ciphertext: Ciphertext64,
 ) -> anyhow::Result<Z64> {
     let own_role = session.my_role()?;
 
     let mut shared_ptxts = Vec::with_capacity(ciphertext.blocks().len());
     for current_ct_block in ciphertext.blocks() {
-        let partial_dec = partial_decrypt64(keyshares, current_ct_block)?;
+        let partial_dec = partial_decrypt64(keyshares, ksk, current_ct_block)?;
         shared_ptxts.push(Share::new(own_role, partial_dec));
     }
 
@@ -671,11 +686,22 @@ pub fn partial_decrypt128(
 // computes b - <a, s> + \Delta/2 for the bitwise decryption method
 pub fn partial_decrypt64(
     sk_share: &PrivateKeySet,
+    ksk: &LweKeyswitchKey<Vec<u64>>,
     ct_block: &Ciphertext64Block,
 ) -> anyhow::Result<ResiduePoly64> {
     let ciphertext_modulus = 64;
-    let (mask, body) = ct_block.ct.get_mask_and_body();
-    let key_share64 = sk_share.lwe_secret_key_share.data_as_raw_vec().clone();
+    let mut output_ctxt;
+    let (mask, body) = if ct_block.pbs_order == PBSOrder::KeyswitchBootstrap {
+        output_ctxt = LweCiphertext::new(0, ksk.output_lwe_size(), ksk.ciphertext_modulus());
+        keyswitch_lwe_ciphertext(ksk, &ct_block.ct, &mut output_ctxt);
+        output_ctxt.get_mask_and_body()
+    } else {
+        ct_block.ct.get_mask_and_body()
+    };
+    let key_share64 = sk_share
+        .lwe_compute_secret_key_share
+        .data_as_raw_vec()
+        .clone();
     let a_time_s = (0..key_share64.len()).fold(ResiduePoly64::ZERO, |acc, column| {
         acc + key_share64[column] * ResiduePoly64::from_scalar(Wrapping(mask.as_ref()[column]))
     });
@@ -875,6 +901,15 @@ mod tests {
         );
 
         runtime.setup_sks(key_shares);
+        runtime.setup_ks(Arc::new(
+            keyset
+                .public_keys
+                .server_key
+                .into_raw_parts()
+                .0
+                .into_raw_parts()
+                .key_switching_key,
+        ));
 
         let results_dec =
             threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecSmallDecrypt).unwrap();
@@ -920,6 +955,15 @@ mod tests {
         );
 
         runtime.setup_sks(key_shares);
+        runtime.setup_ks(Arc::new(
+            keyset
+                .public_keys
+                .server_key
+                .into_raw_parts()
+                .0
+                .into_raw_parts()
+                .key_switching_key,
+        ));
 
         let results_dec =
             threshold_decrypt64(&runtime, &ct, DecryptionMode::BitDecLargeDecrypt).unwrap();

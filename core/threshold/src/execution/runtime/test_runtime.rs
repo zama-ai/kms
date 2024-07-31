@@ -18,6 +18,7 @@ use crate::{
 use aes_prng::AesRng;
 use rand::SeedableRng;
 use std::{collections::HashMap, sync::Arc, time::Duration};
+use tfhe::core_crypto::prelude::LweKeyswitchKey;
 
 // TODO The name and use of unwrap hints that this is a struct only to be used for testing, but it is also used in production, e.g. in grpc.rs
 // Unsafe and test code should not be mixed with production code. See issue 173
@@ -29,6 +30,7 @@ pub struct DistributedTestRuntime<Z: Ring> {
     pub user_nets: Vec<Arc<LocalNetworking>>,
     pub role_assignments: RoleAssignment,
     pub conversion_keys: Option<Arc<SwitchAndSquashKey>>,
+    pub ks_key: Option<Arc<LweKeyswitchKey<Vec<u64>>>>,
 }
 
 /// Generates a list of list identities, setting their addresses as localhost:5000, localhost:5001, ...
@@ -79,6 +81,7 @@ impl<Z: Ring> DistributedTestRuntime<Z> {
             user_nets,
             role_assignments,
             conversion_keys: None,
+            ks_key: None,
         }
     }
 
@@ -93,6 +96,14 @@ impl<Z: Ring> DistributedTestRuntime<Z> {
     /// store keyshares if you want to test sth related to them
     pub fn setup_sks(&mut self, keyshares: Vec<PrivateKeySet>) {
         self.keyshares = Some(keyshares);
+    }
+
+    pub fn setup_ks(&mut self, ks: Arc<LweKeyswitchKey<Vec<u64>>>) {
+        self.ks_key = Some(ks);
+    }
+
+    pub fn get_ks_key(&self) -> Arc<LweKeyswitchKey<Vec<u64>>> {
+        Arc::clone(&self.ks_key.clone().unwrap())
     }
 
     /// store prss setups if you want to test sth related to them

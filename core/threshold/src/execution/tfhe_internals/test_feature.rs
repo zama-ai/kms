@@ -1,3 +1,4 @@
+use aligned_vec::ABox;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::{num::Wrapping, sync::Arc};
@@ -62,19 +63,22 @@ pub struct KeySet {
 }
 impl KeySet {
     pub fn get_raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
-        let (inner_client_key, _) = self.client_key.clone().into_raw_parts();
+        let (inner_client_key, _, _) = self.client_key.clone().into_raw_parts();
         let short_client_key = inner_client_key.into_raw_parts();
         let (_glwe_secret_key, lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
         lwe_secret_key
     }
     pub fn get_raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
-        let (inner_client_key, _) = self.client_key.clone().into_raw_parts();
+        let (inner_client_key, _, _) = self.client_key.clone().into_raw_parts();
         let short_client_key = inner_client_key.into_raw_parts();
         let (glwe_secret_key, _lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
         glwe_secret_key
     }
 }
 
+//TODO(PKSK): This is called from core/service to generate the key
+//needs to be updated to generate the new PKSK when updating core/service
+//probably requires getting rid of this NoiseFloodParameters struct and use DKGParams instead
 pub fn gen_key_set<R: Rng + CryptoRng>(
     threshold_lwe_parameters: NoiseFloodParameters,
     rng: &mut R,
@@ -101,13 +105,18 @@ pub fn gen_key_set<R: Rng + CryptoRng>(
     );
     let public_key = tfhe::CompactPublicKey::new(&client_key);
     let server_key = tfhe::ServerKey::new(&client_key);
-    let (sns_secret_key, conversion_key) =
+    let (sns_secret_key, fbsk_out) =
         generate_large_keys(threshold_lwe_parameters, client_key.clone(), rng);
+
+    let sns_key = SwitchAndSquashKey::new(
+        fbsk_out,
+        server_key.as_ref().as_ref().key_switching_key.clone(),
+    );
 
     let public_keys = FhePubKeySet {
         public_key,
         server_key,
-        sns_key: Some(conversion_key),
+        sns_key: Some(sns_key),
     };
     KeySet {
         client_key,
@@ -124,9 +133,11 @@ pub fn to_hl_client_key(
 ) -> tfhe::ClientKey {
     let sps = ShortintParameterSet::new_pbs_param_set(tfhe::shortint::PBSParameters::PBS(params));
     let sck = shortint::ClientKey::from_raw_parts(glwe_secret_key, lwe_secret_key, sps);
-    ClientKey::from_raw_parts(sck.into(), None)
+    ClientKey::from_raw_parts(sck.into(), None, None)
 }
 
+//TODO(PKSK): Need to change this to account for difference between encryption and compute key,
+//and PKSK to KS between the 2
 pub async fn initialize_key_material<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     session: &mut S,
     params: NoiseFloodParameters,
@@ -205,9 +216,11 @@ pub async fn initialize_key_material<R: Rng + CryptoRng, S: BaseSessionHandles<R
     .await?;
 
     let shared_sk = PrivateKeySet {
-        lwe_secret_key_share: LweSecretKeyShare {
+        lwe_compute_secret_key_share: LweSecretKeyShare {
             data: lwe_key_shares64,
         },
+        //USING DUMMY ENC SECRET KEY AS IT SI NOT NEEDE IN TESTS
+        lwe_encryption_secret_key_share: LweSecretKeyShare { data: vec![] },
         //USING A DUMMY GLWE SECRET KEY AS IT IS NOT NEEDED IN TESTS
         glwe_secret_key_share: GlweSecretKeyShare {
             data: vec![],
@@ -325,7 +338,7 @@ pub fn generate_large_keys<R: Rng + CryptoRng>(
     threshold_lwe_parameters: NoiseFloodParameters,
     input_sk: ClientKey,
     rng: &mut R,
-) -> (SnsClientKey, SwitchAndSquashKey) {
+) -> (SnsClientKey, Fourier128LweBootstrapKey<ABox<[f64]>>) {
     let output_param = threshold_lwe_parameters.sns_parameters;
     let input_param = threshold_lwe_parameters.ciphertext_parameters;
 
@@ -347,7 +360,7 @@ pub fn generate_large_keys<R: Rng + CryptoRng>(
     let client_output_key = SnsClientKey::new(input_param, output_lwe_secret_key_out);
 
     // Generate conversion key
-    let (short_sk, _whopbs_param) = input_sk.into_raw_parts();
+    let (short_sk, _compact_privkey, _compression_privkey) = input_sk.into_raw_parts();
     let (_raw_input_glwe_secret_key, raw_input_lwe_secret_key, _short_param) =
         short_sk.into_raw_parts().into_raw_parts();
     let mut input_lwe_secret_key_out =
@@ -388,10 +401,11 @@ pub fn generate_large_keys<R: Rng + CryptoRng>(
     convert_standard_lwe_bootstrap_key_to_fourier_128(&bsk_out, &mut fbsk_out);
     drop(bsk_out);
 
-    let conversion_key = SwitchAndSquashKey::new(fbsk_out);
-    (client_output_key, conversion_key)
+    (client_output_key, fbsk_out)
 }
 
+//TODO(PKSK): Need to change this to account for difference between encryption and compute key,
+//and PKSK to KS between the 2
 /// keygen that generates secret key shares for many parties
 pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
     lwe_secret_key: LweSecretKey<Vec<u64>>,
@@ -469,7 +483,11 @@ pub fn keygen_all_party_shares<R: Rng + CryptoRng>(
     // put the individual parties shares into SecretKeyShare structs
     let shared_sks: Vec<_> = (0..num_parties)
         .map(|p| PrivateKeySet {
-            lwe_secret_key_share: LweSecretKeyShare {
+            lwe_compute_secret_key_share: LweSecretKeyShare {
+                data: vv64_lwe_key[p].clone(),
+            },
+            //For now assume the encryption key is same as compute key
+            lwe_encryption_secret_key_share: LweSecretKeyShare {
                 data: vv64_lwe_key[p].clone(),
             },
             glwe_secret_key_share: GlweSecretKeyShare {
@@ -536,7 +554,10 @@ mod tests {
     use crate::{
         execution::{
             constants::REAL_KEY_PATH,
-            tfhe_internals::test_feature::{to_hl_client_key, KeySet},
+            tfhe_internals::{
+                test_feature::{to_hl_client_key, KeySet},
+                utils::expanded_encrypt,
+            },
         },
         file_handling::read_element,
     };
@@ -546,7 +567,7 @@ mod tests {
     fn hl_sk_key_conversion() {
         let config = ConfigBuilder::default().build();
         let (client_key, _server_key) = generate_keys(config);
-        let (raw_sk, _whobs) = client_key.clone().into_raw_parts();
+        let (raw_sk, _compact_privkey, _compression_privkey) = client_key.clone().into_raw_parts();
         let (glwe_key, lwe_key, params) = raw_sk.into_raw_parts().into_raw_parts();
 
         let input_param = match params.pbs_parameters() {
@@ -556,8 +577,8 @@ mod tests {
 
         let hl_client_key = to_hl_client_key(input_param, lwe_key, glwe_key);
         assert_eq!(
-            hl_client_key.into_raw_parts(),
-            client_key.clone().into_raw_parts()
+            hl_client_key.into_raw_parts().0,
+            client_key.clone().into_raw_parts().0
         );
         let ct = FheUint8::encrypt(42_u8, &client_key);
         let msg: u8 = ct.decrypt(&client_key);
@@ -584,7 +605,8 @@ mod tests {
         let decrypted_a: u8 = ct_a.decrypt(&keyset.client_key);
         assert_eq!(42, decrypted_a);
         set_server_key(keyset.public_keys.server_key);
-        let ct_b = FheUint8::encrypt(55_u8, &keyset.public_keys.public_key);
+
+        let ct_b: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, 55_u8, 8);
         let ct_sum = ct_a.clone() + ct_b;
         let sum: u8 = ct_sum.decrypt(&keyset.client_key);
         assert_eq!(42 + 55, sum);

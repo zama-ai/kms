@@ -27,6 +27,7 @@ pub struct InMemoryDKGPreprocessing<Z: Ring> {
     in_memory_bits: InMemoryBitPreprocessing<Z>,
     in_memory_base: InMemoryBasePreprocessing<Z>,
     available_noise_lwe: Vec<Share<Z>>,
+    available_noise_lwe_hat: Vec<Share<Z>>,
     available_noise_glwe: Vec<Share<Z>>,
     available_noise_oglwe: Vec<Share<Z>>,
 }
@@ -97,6 +98,7 @@ where
         //Note: do we want to assert that the distribution is the epxect one from self.parameters ?
         match bound {
             NoiseBounds::LweNoise(_) => self.available_noise_lwe.extend(noises),
+            NoiseBounds::LweHatNoise(_) => self.available_noise_lwe_hat.extend(noises),
             NoiseBounds::GlweNoise(_) => self.available_noise_glwe.extend(noises),
             NoiseBounds::GlweNoiseSnS(_) => self.available_noise_oglwe.extend(noises),
         }
@@ -112,6 +114,7 @@ where
     ) -> anyhow::Result<Vec<Share<Z>>> {
         let noise_distrib = match bound {
             NoiseBounds::LweNoise(_) => &mut self.available_noise_lwe,
+            NoiseBounds::LweHatNoise(_) => &mut self.available_noise_lwe_hat,
             NoiseBounds::GlweNoise(_) => &mut self.available_noise_glwe,
             NoiseBounds::GlweNoiseSnS(_) => &mut self.available_noise_oglwe,
         };

@@ -2,6 +2,11 @@
 //I put them there as they may not be needed anymore when/if
 //part of this code is integrated in tfhe-rs
 use itertools::{EitherOrBoth, Itertools};
+use tfhe::{
+    core_crypto::prelude::Numeric,
+    integer::ciphertext::{Compactable, Expandable},
+    CompactCiphertextList, CompactPublicKey,
+};
 
 use crate::{
     algebra::{
@@ -153,6 +158,24 @@ pub fn slice_wrapping_scalar_mul_assign<Z: BaseRing>(lhs: &mut [ResiduePoly<Z>],
     lhs.iter_mut().for_each(|lhs| *lhs = *lhs * rhs);
 }
 
+pub fn expanded_encrypt<M: Compactable + Numeric, T: Expandable>(
+    pk: &CompactPublicKey,
+    msg: M,
+    num_bits: usize,
+) -> T {
+    let mut compact_list_builder = CompactCiphertextList::builder(pk);
+    if num_bits == 1 {
+        compact_list_builder.push(msg == M::ONE);
+    } else {
+        compact_list_builder
+            .push_with_num_bits(msg, num_bits)
+            .unwrap();
+    }
+    let compact_list = compact_list_builder.build();
+    let expanded = compact_list.expand().unwrap();
+    expanded.get(0).unwrap().unwrap()
+}
+
 #[cfg(test)]
 pub mod tests {
     use std::collections::HashMap;
@@ -259,7 +282,7 @@ pub mod tests {
         for (role, sk) in sk_shares {
             lwe_key_shares.insert(role, Vec::new());
             let lwe_key_shares = lwe_key_shares.get_mut(&role).unwrap();
-            for key_share in sk.lwe_secret_key_share.data.into_iter() {
+            for key_share in sk.lwe_compute_secret_key_share.data.into_iter() {
                 (*lwe_key_shares).push(key_share);
             }
         }

@@ -9,7 +9,10 @@ use distributed_decryption::{
             session::DecryptionMode,
             test_runtime::{generate_fixed_identities, DistributedTestRuntime},
         },
-        tfhe_internals::test_feature::{keygen_all_party_shares, KeySet},
+        tfhe_internals::{
+            test_feature::{keygen_all_party_shares, KeySet},
+            utils::expanded_encrypt,
+        },
     },
     file_handling::read_element,
     networking::NetworkMode,
@@ -17,7 +20,7 @@ use distributed_decryption::{
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
-use tfhe::{prelude::FheEncrypt, FheUint8};
+use tfhe::FheUint8;
 
 #[derive(Debug, Clone, Copy)]
 struct OneShotConfig {
@@ -72,7 +75,7 @@ fn ddec_nsmall(c: &mut Criterion) {
             config.t,
         )
         .unwrap();
-        let ct = FheUint8::encrypt(message, &keyset.public_keys.public_key);
+        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8);
         let (raw_ct, _id) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
@@ -137,7 +140,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
             config.t,
         )
         .unwrap();
-        let ct = FheUint8::encrypt(message, &keyset.public_keys.public_key);
+        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8);
         let (raw_ct, _id) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
@@ -201,7 +204,8 @@ fn ddec_nlarge(c: &mut Criterion) {
             config.t,
         )
         .unwrap();
-        let ct = FheUint8::encrypt(message, &keyset.public_keys.public_key);
+
+        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8);
         let (raw_ct, _id) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
@@ -266,7 +270,8 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
             config.t,
         )
         .unwrap();
-        let ct = FheUint8::encrypt(message, &keyset.public_keys.public_key);
+
+        let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8);
         let (raw_ct, _id) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);

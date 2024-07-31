@@ -17,9 +17,17 @@ use std::{
     ops::{Add, Mul, Neg},
 };
 use tfhe::shortint::ClassicPBSParameters;
-use tfhe_zk_pok::{curve_api::bls12_446 as curve, proofs::pke};
+use tfhe_zk_pok::{
+    curve_api::{bls12_446 as curve, CurveGroupOps},
+    proofs::pke,
+};
 use tracing::instrument;
 use zeroize::Zeroize;
+
+use super::constants::{
+    ZK_DSEP_HASH_AGG_PADDED, ZK_DSEP_HASH_LMAP_PADDED, ZK_DSEP_HASH_PADDED, ZK_DSEP_HASH_T_PADDED,
+    ZK_DSEP_HASH_W_PADDED, ZK_DSEP_HASH_Z_PADDED,
+};
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct PartialProof {
@@ -132,10 +140,24 @@ impl PublicParameter {
             t,
         } = compute_meta_parameter(params)?;
 
+        let g_list = self
+            .inner
+            .0
+            .clone()
+            .into_iter()
+            .map(|x| x.normalize())
+            .collect_vec();
+        let g_hat_list = self
+            .inner
+            .1
+            .clone()
+            .into_iter()
+            .map(|x| x.normalize())
+            .collect_vec();
         Ok(
             pke::PublicParams::<tfhe_zk_pok::curve_api::Bls12_446>::from_vec(
-                self.inner.0.clone(),
-                self.inner.1.clone(),
+                g_list,
+                g_hat_list,
                 big_d,
                 n,
                 d,
@@ -144,6 +166,12 @@ impl PublicParameter {
                 b_r,
                 q,
                 t,
+                *ZK_DSEP_HASH_PADDED,
+                *ZK_DSEP_HASH_T_PADDED,
+                *ZK_DSEP_HASH_AGG_PADDED,
+                *ZK_DSEP_HASH_LMAP_PADDED,
+                *ZK_DSEP_HASH_Z_PADDED,
+                *ZK_DSEP_HASH_W_PADDED,
             ),
         )
     }
@@ -653,9 +681,29 @@ mod tests {
 
         // check that we can use pp to make a proof
         let mut rng = AesRng::from_entropy();
+        let g_list = pp
+            .inner
+            .0
+            .clone()
+            .into_iter()
+            .map(|x| x.normalize())
+            .collect_vec();
+
+        let g_hat_list = pp
+            .inner
+            .1
+            .clone()
+            .into_iter()
+            .map(|x| x.normalize())
+            .collect_vec();
+
         let public_params = proofs::range::PublicParams::<Bls12_446>::from_vec(
-            pp.inner.0.to_owned(),
-            pp.inner.1.to_owned(),
+            g_list,
+            g_hat_list,
+            *ZK_DSEP_HASH_PADDED,
+            *ZK_DSEP_HASH_Z_PADDED, //Using DSEP HASH_Z instead of HASH_S as we dont have defined the latter
+            *ZK_DSEP_HASH_T_PADDED,
+            *ZK_DSEP_HASH_AGG_PADDED,
         );
         let l = 6;
         let x = rng.gen::<u64>() % (1 << l);

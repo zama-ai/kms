@@ -968,13 +968,16 @@ impl Choreography for GrpcChoreography {
                     ))
                 };
                 let mut res = Vec::new();
+
                 let my_future = || async move {
+                    let ks = &key_ref.0.server_key.as_ref().as_ref().key_switching_key;
                     for ctxt in ctxts.into_iter() {
                         res.push(
                             run_decryption_bitdec(
                                 &mut base_session,
                                 preprocessing.as_mut(),
                                 &key_ref.1,
+                                ks,
                                 ctxt,
                             )
                             .await

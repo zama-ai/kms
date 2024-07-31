@@ -8,8 +8,8 @@ use tfhe::{
     },
     shortint::{
         self,
-        parameters::{LweDimension, PolynomialSize},
-        CiphertextModulus, ClassicPBSParameters, ShortintParameterSet,
+        parameters::{CompactPublicKeyEncryptionParameters, LweDimension, PolynomialSize},
+        CiphertextModulus,
     },
 };
 
@@ -121,14 +121,9 @@ where
 
 pub(crate) fn to_tfhe_hl_api_compact_public_key(
     compact_lwe_pk: LweCompactPublicKey<Vec<u64>>,
-    params: ClassicPBSParameters,
+    params: CompactPublicKeyEncryptionParameters,
 ) -> tfhe::CompactPublicKey {
-    let sps = ShortintParameterSet::new_pbs_param_set(tfhe::shortint::PBSParameters::PBS(params));
-    let ipk = shortint::CompactPublicKey::from_raw_parts(
-        compact_lwe_pk,
-        sps,
-        params.encryption_key_choice.into(),
-    );
+    let ipk = shortint::CompactPublicKey::from_raw_parts(compact_lwe_pk, params);
     let cpk = tfhe::integer::public_key::CompactPublicKey::from_raw_parts(ipk);
     tfhe::CompactPublicKey::from_raw_parts(cpk)
 }
@@ -213,11 +208,7 @@ mod tests {
         Seed,
     };
     #[cfg(feature = "slow_tests")]
-    use tfhe::{
-        prelude::{FheDecrypt, FheEncrypt},
-        shortint::PBSParameters::PBS,
-        ConfigBuilder, FheUint8,
-    };
+    use tfhe::{prelude::FheDecrypt, ConfigBuilder, FheUint8};
 
     #[cfg(feature = "slow_tests")]
     use crate::execution::tfhe_internals::lwe_key::to_tfhe_hl_api_compact_public_key;
@@ -375,20 +366,17 @@ mod tests {
     #[cfg(feature = "slow_tests")]
     #[test]
     fn hl_pk_key_conversion() {
+        use crate::execution::tfhe_internals::utils::expanded_encrypt;
+
         let config = ConfigBuilder::default().build();
         let (client_key, _server_key) = tfhe::generate_keys(config);
         let pk = tfhe::CompactPublicKey::new(&client_key);
         let raw_pk = pk.clone().into_raw_parts().into_raw_parts();
-        let (lcpk, params, _order) = raw_pk.into_raw_parts();
+        let (lcpk, params) = raw_pk.into_raw_parts();
 
-        let input_param = match params.pbs_parameters() {
-            Some(PBS(param)) => param,
-            _ => panic!("Only support for ClassicPBSParameters"),
-        };
-
-        let hl_client_key = to_tfhe_hl_api_compact_public_key(lcpk, input_param);
+        let hl_client_key = to_tfhe_hl_api_compact_public_key(lcpk, params);
         assert_eq!(hl_client_key.into_raw_parts(), pk.clone().into_raw_parts());
-        let ct = FheUint8::encrypt(42_u8, &pk);
+        let ct: FheUint8 = expanded_encrypt(&pk, 42_u8, 8);
         let msg: u8 = ct.decrypt(&client_key);
         assert_eq!(42, msg);
     }

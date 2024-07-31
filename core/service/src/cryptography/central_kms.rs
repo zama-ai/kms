@@ -100,6 +100,9 @@ pub async fn async_generate_crs(
     recv.await?
 }
 
+//TODO(PKSK): Need to change this function when we want KMS to support the new parameters
+//that involve a new set of dedicated encryption keys and corresponding PKSK
+//also requires moving away from NoiseFloodParameters and use DKGParams everywhere
 #[cfg(feature = "non-wasm")]
 pub fn generate_fhe_keys(
     sk: &PrivateSigKey,
@@ -128,7 +131,7 @@ pub fn generate_fhe_keys(
 #[cfg(feature = "non-wasm")]
 pub fn generate_client_fhe_key(params: NoiseFloodParameters) -> ClientKey {
     let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
-    let config = ConfigBuilder::with_custom_parameters(pbs_params, None);
+    let config = ConfigBuilder::with_custom_parameters(pbs_params);
     ClientKey::generate(config)
 }
 
@@ -1043,7 +1046,7 @@ pub(crate) mod tests {
         params: NoiseFloodParameters,
     ) {
         let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
-        let config = ConfigBuilder::with_custom_parameters(pbs_params, None);
+        let config = ConfigBuilder::with_custom_parameters(pbs_params);
         let wrong_client_key = tfhe::ClientKey::generate(config);
         let mut key_info = inner.fhe_keys.write().await;
         let x: &mut KmsFheKeyHandles = key_info.get_mut(key_handle).unwrap();

@@ -85,11 +85,20 @@ pub async fn reshare_sk_same_sets<
         None
     };
 
-    let lwe_secret_key_share = LweSecretKeyShare {
+    let lwe_compute_secret_key_share = LweSecretKeyShare {
         data: reshare_same_sets(
             preproc64,
             session,
-            &mut input_share.lwe_secret_key_share.data,
+            &mut input_share.lwe_compute_secret_key_share.data,
+        )
+        .await?,
+    };
+
+    let lwe_encryption_secret_key_share = LweSecretKeyShare {
+        data: reshare_same_sets(
+            preproc64,
+            session,
+            &mut input_share.lwe_encryption_secret_key_share.data,
         )
         .await?,
     };
@@ -104,7 +113,8 @@ pub async fn reshare_sk_same_sets<
         polynomial_size: input_share.glwe_secret_key_share.polynomial_size(),
     };
     Ok(PrivateKeySet {
-        lwe_secret_key_share,
+        lwe_encryption_secret_key_share,
+        lwe_compute_secret_key_share,
         glwe_secret_key_share,
         glwe_secret_key_share_sns_as_lwe,
         parameters: input_share.parameters,
@@ -349,7 +359,7 @@ mod tests {
         // reconstruct the 64-bit lwe key
         let shares64 = shares
             .iter()
-            .map(|x| x.lwe_secret_key_share.clone().data_as_raw_vec())
+            .map(|x| x.lwe_compute_secret_key_share.clone().data_as_raw_vec())
             .collect_vec();
         let lwe_sk64 = reconstruct_shares_to_scalar(shares64, threshold)
             .into_iter()
@@ -411,10 +421,16 @@ mod tests {
             DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
         if !add_error {
             key_shares[0] = PrivateKeySet {
-                lwe_secret_key_share: LweSecretKeyShare {
+                lwe_compute_secret_key_share: LweSecretKeyShare {
                     data: vec![
                         Share::new(Role::indexed_by_zero(0), ResiduePoly64::sample(&mut rng));
-                        key_shares[1].lwe_secret_key_share.data.len()
+                        key_shares[1].lwe_compute_secret_key_share.data.len()
+                    ],
+                },
+                lwe_encryption_secret_key_share: LweSecretKeyShare {
+                    data: vec![
+                        Share::new(Role::indexed_by_zero(0), ResiduePoly64::sample(&mut rng));
+                        key_shares[1].lwe_encryption_secret_key_share.data.len()
                     ],
                 },
                 glwe_secret_key_share: GlweSecretKeyShare {
@@ -573,6 +589,7 @@ mod tests {
                 new_lwe_raw,
                 new_params,
             )),
+            None,
             None,
         );
         keyset.client_key = ck;

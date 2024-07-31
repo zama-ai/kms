@@ -21,8 +21,10 @@ use tfhe::{
         entities::{
             Cleartext, Fourier128LweBootstrapKey, GlweCiphertextOwned, LweCiphertext, PlaintextList,
         },
+        prelude::{keyswitch_lwe_ciphertext, LweKeyswitchKey},
     },
     integer::{parameters::PolynomialSize, IntegerCiphertext},
+    shortint::PBSOrder,
 };
 use tracing::instrument;
 
@@ -47,6 +49,8 @@ impl Versioned for SwitchAndSquashKeyVersioned<'_> {}
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct SwitchAndSquashKey {
     pub fbsk_out: Fourier128LweBootstrapKey<ABox<[f64]>>,
+    //ksk is needed if PBSOrder is KS-PBS
+    pub ksk: LweKeyswitchKey<Vec<u64>>,
 }
 impl Versionize for SwitchAndSquashKey {
     type Versioned<'vers> = SwitchAndSquashKeyVersioned<'vers>
@@ -72,8 +76,11 @@ impl Debug for SwitchAndSquashKey {
     }
 }
 impl SwitchAndSquashKey {
-    pub fn new(fbsk_out: Fourier128LweBootstrapKey<ABox<[f64]>>) -> Self {
-        SwitchAndSquashKey { fbsk_out }
+    pub fn new(
+        fbsk_out: Fourier128LweBootstrapKey<ABox<[f64]>>,
+        ksk: LweKeyswitchKey<Vec<u64>>,
+    ) -> Self {
+        SwitchAndSquashKey { fbsk_out, ksk }
     }
 
     /// Converts a ciphertext over a 64 bit domain to a ciphertext over a 128 bit domain (which is needed for secure threshold decryption).
@@ -122,6 +129,7 @@ impl SwitchAndSquashKey {
         small_ct_block: &Ciphertext64Block,
     ) -> anyhow::Result<Ciphertext128Block> {
         let total_bits = small_ct_block.total_block_bits();
+
         // Accumulator definition
         let delta = 1_u64 << (u64::BITS - 1 - total_bits);
         let msg_modulus = 1_u64 << total_bits;
@@ -143,7 +151,14 @@ impl SwitchAndSquashKey {
             self.fbsk_out.input_lwe_dimension().to_lwe_size(),
             CiphertextModulus::new_native(),
         );
-        Self::lwe_ciphertext_modulus_switch_up(&mut ms_output_lwe, &small_ct_block.ct)?;
+        if small_ct_block.pbs_order == PBSOrder::KeyswitchBootstrap {
+            let mut output_raw_ctxt =
+                LweCiphertext::new(0, self.ksk.output_lwe_size(), self.ksk.ciphertext_modulus());
+            keyswitch_lwe_ciphertext(&self.ksk, &small_ct_block.ct, &mut output_raw_ctxt);
+            Self::lwe_ciphertext_modulus_switch_up(&mut ms_output_lwe, &output_raw_ctxt)?;
+        } else {
+            Self::lwe_ciphertext_modulus_switch_up(&mut ms_output_lwe, &small_ct_block.ct)?;
+        };
 
         let pbs_cipher_size = LweSize(
             1 + self.fbsk_out.glwe_size().to_glwe_dimension().0 * self.fbsk_out.polynomial_size().0,
@@ -285,7 +300,7 @@ mod tests {
     use tfhe::{
         core_crypto::{commons::traits::UnsignedInteger, entities::Plaintext},
         prelude::{FheDecrypt, FheEncrypt},
-        FheUint8,
+        CompactCiphertextList, FheUint8,
     };
 
     use crate::{
@@ -340,11 +355,17 @@ mod tests {
     #[test]
     fn sunshine_enc_dec() {
         let keys: KeySet = read_element(SMALL_TEST_KEY_PATH.to_string()).unwrap();
+        let mut compact_list_builder = CompactCiphertextList::builder(&keys.public_keys.public_key);
         for msg in 0_u8..8 {
-            let small_ct = FheUint8::encrypt(msg, &keys.public_keys.public_key);
+            compact_list_builder.push(msg);
+        }
+        let compact_list = compact_list_builder.build();
+        let expanded_list = compact_list.expand().unwrap();
+        for index in 0..8 {
+            let small_ct: FheUint8 = expanded_list.get(index).unwrap().unwrap();
             let (raw_ct, _id) = small_ct.clone().into_raw_parts();
             let small_res: u8 = small_ct.decrypt(&keys.client_key);
-            assert_eq!(msg, small_res);
+            assert_eq!(index as u8, small_res);
             let large_ct = keys
                 .public_keys
                 .sns_key
@@ -353,7 +374,7 @@ mod tests {
                 .to_large_ciphertext(&raw_ct)
                 .unwrap();
             let large_res = keys.sns_secret_key.decrypt_128(&large_ct);
-            assert_eq!(msg as u128, large_res);
+            assert_eq!(index as u128, large_res);
         }
     }
 

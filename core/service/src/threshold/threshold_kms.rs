@@ -1526,6 +1526,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             regular_params: DKGParamsRegular {
                 sec: SEC_PAR,
                 ciphertext_parameters: params.ciphertext_parameters,
+                dedicated_compact_public_key_parameters: None,
                 flag: true,
             },
             sns_params: params.sns_parameters,
@@ -1686,6 +1687,7 @@ impl KeyGenPreprocessor for RealPreprocessor {
             regular_params: DKGParamsRegular {
                 sec: SEC_PAR,
                 ciphertext_parameters: params.ciphertext_parameters,
+                dedicated_compact_public_key_parameters: None,
                 flag: true,
             },
             sns_params: params.sns_parameters,

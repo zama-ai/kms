@@ -713,6 +713,7 @@ mod tests {
     use super::*;
     use crate::execution::sharing::shamir::RevealOp;
     use crate::execution::tfhe_internals::test_feature::KeySet;
+    use crate::execution::tfhe_internals::utils::expanded_encrypt;
     use crate::networking::NetworkMode;
     use crate::{
         algebra::{
@@ -746,7 +747,7 @@ mod tests {
     use rand::SeedableRng;
     use rstest::rstest;
     use std::sync::Arc;
-    use tfhe::{prelude::FheEncrypt, FheUint8};
+    use tfhe::FheUint8;
     use tokio::task::JoinSet;
     use tracing_test::traced_test;
 
@@ -929,7 +930,8 @@ mod tests {
             threshold,
         )
         .unwrap();
-        let ct = FheUint8::encrypt(msg, &keys.public_keys.public_key);
+
+        let ct: FheUint8 = expanded_encrypt(&keys.public_keys.public_key, msg, 8);
         let (raw_ct, _id) = ct.into_raw_parts();
 
         //Could probably be run Async, but NIST doc says all offline is Sync

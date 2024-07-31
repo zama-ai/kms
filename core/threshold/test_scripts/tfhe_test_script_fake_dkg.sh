@@ -5,7 +5,7 @@ MOBYGO_EXEC="${ROOT_DIR}/target/debug/mobygo"
 CURR_SID=1
 KEY_PATH="./temp/tfhe-key"
 NUM_CTXTS=10
-PARAMS="params-p32-real-with-sns"
+PARAMS="params-p32-sns-fglwe"
 
 exec 2>&1
 set -x

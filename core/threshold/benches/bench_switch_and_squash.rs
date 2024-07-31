@@ -3,11 +3,13 @@ use distributed_decryption::{
     execution::{
         constants::REAL_PARAM_PATH,
         random::get_rng,
-        tfhe_internals::{parameters::NoiseFloodParameters, test_feature::gen_key_set},
+        tfhe_internals::{
+            parameters::NoiseFloodParameters, test_feature::gen_key_set, utils::expanded_encrypt,
+        },
     },
     file_handling::read_as_json,
 };
-use tfhe::{integer::IntegerCiphertext, prelude::FheEncrypt, FheUint16, FheUint8};
+use tfhe::{integer::IntegerCiphertext, FheUint16, FheUint8};
 
 fn bench_switch_and_squash(c: &mut Criterion) {
     let mut group = c.benchmark_group("switch_and_squash");
@@ -20,10 +22,10 @@ fn bench_switch_and_squash(c: &mut Criterion) {
     let keyset = gen_key_set(params, &mut get_rng());
 
     let msg8 = 5_u8;
-    let ct8 = FheUint8::encrypt(msg8, &keyset.public_keys.public_key);
     let msg16 = 5_u16;
-    let ct16 = FheUint16::encrypt(msg16, &keyset.public_keys.public_key);
 
+    let ct8: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, msg8, 8);
+    let ct16: FheUint16 = expanded_encrypt(&keyset.public_keys.public_key, msg16, 16);
     let public_key = bincode::serialize(&(keyset.public_keys.public_key)).unwrap();
     let server_key = bincode::serialize(&(keyset.public_keys.server_key)).unwrap();
     let conversion_key = bincode::serialize(&(keyset.public_keys.sns_key)).unwrap();

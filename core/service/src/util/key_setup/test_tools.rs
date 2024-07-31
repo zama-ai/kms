@@ -16,23 +16,33 @@ use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodPar
 use distributed_decryption::execution::tfhe_internals::test_feature::{
     gen_key_set, keygen_all_party_shares,
 };
+use distributed_decryption::execution::tfhe_internals::utils::expanded_encrypt;
 use itertools::Itertools;
 use kms_core_common::Versionize;
 use rand::SeedableRng;
+use serde::Serialize;
 use std::path::Path;
 use strum::IntoEnumIterator;
-use tfhe::{prelude::*, FheBool, FheUint2048, FheUint256};
+use tfhe::core_crypto::prelude::Numeric;
+use tfhe::integer::ciphertext::{Compactable, Expandable};
+use tfhe::{FheBool, FheUint2048, FheUint256};
 use tfhe::{FheUint128, FheUint16, FheUint160, FheUint32, FheUint64, FheUint8};
 
 // TODD The code here should be split s.t. that generation code stays in production and everything else goes to the test package
 
-macro_rules! serialize_ct {
-    ($msg:expr,$pk:expr,$t1:ident) => {{
-        let ct = $t1::encrypt($msg, $pk);
-        let mut serialized_ct = Vec::new();
-        bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
-        serialized_ct
-    }};
+//Treat bool specifically because it doesn't work well with the ciphertext list builder
+//as it is not Numeric
+//TODO(PKSK): If we have an encryption key different from the compute key, then call to expand() requires
+//that the ServerKey (which contains the PKSK) is set, otherwise the unwrap will panic
+fn serialize_ctxt<M: Compactable + Numeric, T: Expandable + Serialize>(
+    msg: M,
+    pk: &FhePublicKey,
+    num_bits: usize,
+) -> Vec<u8> {
+    let ct: T = expanded_encrypt(pk, msg, num_bits);
+    let mut serialized_ct = Vec::new();
+    bincode::serialize_into(&mut serialized_ct, &ct).unwrap();
+    serialized_ct
 }
 
 pub fn compute_cipher(msg: TypedPlaintext, pk: &FhePublicKey) -> (Vec<u8>, FheType) {
@@ -40,31 +50,23 @@ pub fn compute_cipher(msg: TypedPlaintext, pk: &FhePublicKey) -> (Vec<u8>, FheTy
     (
         match msg {
             TypedPlaintext::Bool(x) => {
-                serialize_ct!(x, pk, FheBool)
+                serialize_ctxt::<_, FheBool>(x as u8, pk, FheBool::num_bits())
             }
-            TypedPlaintext::U8(x) => {
-                serialize_ct!(x, pk, FheUint8)
-            }
-            TypedPlaintext::U16(x) => {
-                serialize_ct!(x, pk, FheUint16)
-            }
-            TypedPlaintext::U32(x) => {
-                serialize_ct!(x, pk, FheUint32)
-            }
-            TypedPlaintext::U64(x) => {
-                serialize_ct!(x, pk, FheUint64)
-            }
+            TypedPlaintext::U8(x) => serialize_ctxt::<_, FheUint8>(x, pk, FheUint8::num_bits()),
+            TypedPlaintext::U16(x) => serialize_ctxt::<_, FheUint16>(x, pk, FheUint16::num_bits()),
+            TypedPlaintext::U32(x) => serialize_ctxt::<_, FheUint32>(x, pk, FheUint32::num_bits()),
+            TypedPlaintext::U64(x) => serialize_ctxt::<_, FheUint64>(x, pk, FheUint64::num_bits()),
             TypedPlaintext::U128(x) => {
-                serialize_ct!(x, pk, FheUint128)
+                serialize_ctxt::<_, FheUint128>(x, pk, FheUint128::num_bits())
             }
             TypedPlaintext::U160(x) => {
-                serialize_ct!(x, pk, FheUint160)
+                serialize_ctxt::<_, FheUint160>(x, pk, FheUint160::num_bits())
             }
             TypedPlaintext::U256(x) => {
-                serialize_ct!(x, pk, FheUint256)
+                serialize_ctxt::<_, FheUint256>(x, pk, FheUint256::num_bits())
             }
             TypedPlaintext::U2048(x) => {
-                serialize_ct!(x, pk, FheUint2048)
+                serialize_ctxt::<_, FheUint2048>(x, pk, FheUint2048::num_bits())
             }
         },
         fhe_type,

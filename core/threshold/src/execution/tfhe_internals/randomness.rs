@@ -25,6 +25,7 @@ use tfhe::{
 ///the mask is from seeded rng, seed is derived from MPC protocol
 ///for now the noise part is put into a vector in advance and poped when needed
 pub struct MPCEncryptionRandomGenerator<Z: BaseRing, Gen: ByteRandomGenerator> {
+    //TODO: Once XOF available from TFHE-RS, need to use it here and use the correct DSEP !!
     pub mask: MPCMaskRandomGenerator<Gen>,
     pub noise: MPCNoiseRandomGenerator<Z>,
 }

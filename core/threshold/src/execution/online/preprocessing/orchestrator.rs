@@ -33,6 +33,7 @@ use itertools::Itertools;
 use num_integer::div_ceil;
 use rand::{CryptoRng, Rng};
 use std::sync::{Arc, RwLock};
+use tfhe::shortint::EncryptionKeyChoice;
 use tokio::{
     sync::{
         mpsc::{channel, Receiver, Sender},
@@ -849,14 +850,23 @@ where
     fn get_num_tuniform_raw_bits_required(&self) -> (Vec<TUniformProduction>, usize) {
         let mut tuniform_productions = Vec::new();
         let params_basics_handle = self.params.get_params_basics_handle();
+
+        //Depending on encryption type, pksk requires either LweNoise noise or GlweNoise
+        let (amount_pksk_lwe_noise, amount_pksk_glwe_noise) =
+            match params_basics_handle.encryption_key_choice() {
+                //type = LWE case
+                EncryptionKeyChoice::Small => (params_basics_handle.num_needed_noise_pksk(), 0),
+                //type = F-GLWE case
+                EncryptionKeyChoice::Big => (0, params_basics_handle.num_needed_noise_pksk()),
+            };
+
         tuniform_productions.push(TUniformProduction {
             bound: NoiseBounds::LweNoise(params_basics_handle.lwe_tuniform_bound()),
-            amount: params_basics_handle.num_needed_noise_pk()
-                + params_basics_handle.num_needed_noise_ksk(),
+            amount: params_basics_handle.num_needed_noise_ksk() + amount_pksk_lwe_noise,
         });
         tuniform_productions.push(TUniformProduction {
             bound: NoiseBounds::GlweNoise(params_basics_handle.glwe_tuniform_bound()),
-            amount: params_basics_handle.num_needed_noise_bk(),
+            amount: params_basics_handle.num_needed_noise_bk() + amount_pksk_glwe_noise,
         });
 
         match self.params {
@@ -867,8 +877,15 @@ where
             DKGParams::WithoutSnS(_) => (),
         }
 
+        //pk requires LweHatNoise
+        tuniform_productions.push(TUniformProduction {
+            bound: NoiseBounds::LweHatNoise(params_basics_handle.lwe_hat_tuniform_bound()),
+            amount: params_basics_handle.num_needed_noise_pk(),
+        });
+
         //Required number of _raw_ bits
         let num_bits_required = params_basics_handle.lwe_dimension().0
+            + params_basics_handle.lwe_hat_dimension().0
             + params_basics_handle.glwe_sk_num_bits()
             + match self.params {
                 DKGParams::WithSnS(sns_params) => sns_params.glwe_sk_num_bits_sns(),
@@ -908,7 +925,7 @@ mod tests {
                 shamir::{RevealOp, ShamirSharings},
                 share::Share,
             },
-            tfhe_internals::parameters::PARAMS_P8_SMALL_NO_SNS,
+            tfhe_internals::parameters::PARAMS_P8_NO_SNS_FGLWE,
         },
         networking::NetworkMode,
         session_id::SessionId,
@@ -1175,7 +1192,7 @@ mod tests {
                 let mut inmemory_factory = create_memory_factory();
 
                 //DKGParams just for being able to call new (no SNS for ResiduePoly64)
-                let params = PARAMS_P8_SMALL_NO_SNS;
+                let params = PARAMS_P8_NO_SNS_FGLWE;
 
                 let orchestrator = PreprocessingOrchestrator::<ResiduePoly64>::new(
                     inmemory_factory.as_mut(),
@@ -1362,7 +1379,7 @@ mod tests {
                 let mut inmemory_factory = create_memory_factory();
 
                 //DKGParams just for being able to call new (no SNS for ResiduePoly64)
-                let params = PARAMS_P8_SMALL_NO_SNS;
+                let params = PARAMS_P8_NO_SNS_FGLWE;
 
                 let orchestrator = PreprocessingOrchestrator::<ResiduePoly64>::new(
                     inmemory_factory.as_mut(),

@@ -2418,6 +2418,7 @@ pub(crate) mod tests {
     use rand::SeedableRng;
     use serial_test::serial;
     use std::collections::{hash_map::Entry, HashMap};
+    use tfhe::shortint::parameters::compact_public_key_only::CompactCiphertextListCastingMode;
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::Channel;
 
@@ -2727,11 +2728,18 @@ pub(crate) mod tests {
             .collect::<Vec<_>>();
 
         let proven_ct = pk
-            .encrypt_and_prove_slice(&msgs, &pp, tfhe::zk::ZkComputeLoad::Proof)
+            .encrypt_and_prove_slice(
+                &msgs,
+                &pp,
+                tfhe::zk::ZkComputeLoad::Proof,
+                (pk.parameters.message_modulus.0 * pk.parameters.message_modulus.0) as u64,
+            )
             .unwrap();
         assert!(proven_ct.verify(&pp, &pk).is_valid());
 
-        let expanded = proven_ct.verify_and_expand(&pp, &pk).unwrap();
+        let expanded = proven_ct
+            .verify_and_expand(&pp, &pk, CompactCiphertextListCastingMode::NoCasting)
+            .unwrap();
         let decrypted = expanded
             .iter()
             .map(|ciphertext| cks.decrypt(ciphertext))
