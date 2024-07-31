@@ -1961,7 +1961,7 @@ mod tests {
 
             // make sure the store does not contain any PRSS info (currently stored under ID 1)
             let req_id = RequestId::from(PRSS_EPOCH_ID);
-            purge(None, Some(cur_priv.root_dir()), &req_id.to_string()).await;
+            purge(None, None, &req_id.to_string()).await;
 
             priv_storage.push(cur_priv);
         }

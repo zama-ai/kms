@@ -1,9 +1,9 @@
-use crate::consts::KEY_PATH_PREFIX;
 use crate::cryptography::central_kms::{compute_handle, SoftwareKmsKeys};
 use crate::kms::RequestId;
 use crate::rpc::rpc_types::PrivDataType;
 use crate::util::file_handling::{read_element, write_element};
 use crate::{anyhow_error_and_log, some_or_err};
+use crate::{consts::KEY_PATH_PREFIX, rpc::rpc_types::PubDataType};
 use anyhow::anyhow;
 use kms_core_common::{Versioned, Versionize};
 use serde::de::DeserializeOwned;
@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::fmt::{self};
 use std::path::{Path, PathBuf};
 use std::{env, fs, path::MAIN_SEPARATOR};
-use strum::EnumIter;
+use strum::{EnumIter, IntoEnumIterator};
 use url::Url;
 
 // TODO add a wrapper struct for both public and private storage.
@@ -69,6 +69,19 @@ pub async fn store_at_request_id<S: Storage, Ser: Versioned + Serialize + Send +
             request_id, data_type, e
         ))
     })
+}
+
+/// Delete ALL data under a given `request_id`.
+/// Observe that this method does not produce any error regardless of any whether data is deleted or not.
+pub async fn delete_all_at_request_id<S: Storage>(storage: &mut S, request_id: &RequestId) {
+    for cur_type in PrivDataType::iter() {
+        // Ignore an error as it is likely because the data does not exist
+        let _ = delete_at_request_id(storage, request_id, &cur_type.to_string()).await;
+    }
+    for cur_type in PubDataType::iter() {
+        // Ignore an error as it is likely because the data does not exist
+        let _ = delete_at_request_id(storage, request_id, &cur_type.to_string()).await;
+    }
 }
 
 // Helper method to remove data based on a data type and request ID.
@@ -186,17 +199,6 @@ impl FileStorage {
         Ok(Self { path })
     }
 
-    fn purge(path: PathBuf) -> anyhow::Result<()> {
-        tracing::warn!("Purging storage at {:?}", path);
-        match fs::remove_dir_all(path) {
-            Ok(_) => Ok(()),
-            Err(e) => match e.kind() {
-                std::io::ErrorKind::NotFound => Ok(()),
-                _ => Err(e.into()),
-            },
-        }
-    }
-
     /// Create a new directory for centralized storage.
     ///
     /// If [optional_path] is None, set the storage directory to be
@@ -224,27 +226,6 @@ impl FileStorage {
         party_id: usize,
     ) -> anyhow::Result<Self> {
         FileStorage::new(FileStorage::threshold_path(
-            optional_path,
-            storage_type,
-            party_id,
-        )?)
-    }
-
-    /// Delete everything stored in the file storage system at the given path for a centralized system's storage.
-    pub fn purge_centralized(
-        optional_path: Option<&Path>,
-        storage_type: StorageType,
-    ) -> anyhow::Result<()> {
-        FileStorage::purge(FileStorage::centralized_path(optional_path, storage_type)?)
-    }
-
-    /// Delete everything stored in the file storage system at the given path for a threshold system's storage.
-    pub fn purge_threshold(
-        optional_path: Option<&Path>,
-        storage_type: StorageType,
-        party_id: usize,
-    ) -> anyhow::Result<()> {
-        FileStorage::purge(FileStorage::threshold_path(
             optional_path,
             storage_type,
             party_id,
@@ -514,11 +495,17 @@ pub enum StorageVersion {
 }
 
 #[cfg(test)]
-mod tests {
-    use strum::IntoEnumIterator;
-
+pub mod tests {
     use super::*;
     use crate::rpc::rpc_types::PubDataType;
+    use serde::Deserialize;
+    use strum::IntoEnumIterator;
+
+    #[derive(Serialize, Deserialize, Eq, PartialEq, Debug)]
+    struct TestType {
+        i: u32,
+    }
+    impl Versioned for TestType {}
 
     #[ignore]
     #[tokio::test]
@@ -607,6 +594,135 @@ mod tests {
         // drop the tempdir and it should disappear
         drop(temp_dir);
         assert!(!data_path.exists());
+    }
+
+    #[tokio::test]
+    async fn storage_helper_methods_ramstorage() {
+        let mut storage = RamStorage::new(StorageType::PUB);
+        test_storage_read_store_methods(&mut storage).await;
+        test_batch_helper_methods(&mut storage).await;
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn storage_helper_methods_filestorage(#[values(true, false)] threshold: bool) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path();
+        let mut pub_storage = if threshold {
+            FileStorage::new_threshold(Some(path), StorageType::PUB, 1).unwrap()
+        } else {
+            FileStorage::new_centralized(Some(path), StorageType::PUB).unwrap()
+        };
+        let mut priv_storage = if threshold {
+            FileStorage::new_threshold(Some(path), StorageType::PRIV, 1).unwrap()
+        } else {
+            FileStorage::new_centralized(Some(path), StorageType::PRIV).unwrap()
+        };
+        test_storage_read_store_methods(&mut pub_storage).await;
+        test_storage_read_store_methods(&mut priv_storage).await;
+        test_batch_helper_methods(&mut pub_storage).await;
+        test_batch_helper_methods(&mut priv_storage).await;
+    }
+
+    pub async fn test_storage_read_store_methods<S: Storage>(storage: &mut S) {
+        let data = TestType { i: 42 };
+        let data_type = "TestType";
+        let req_id = RequestId::derive("123").unwrap();
+
+        // Ensure no old data is present
+        let _ = delete_at_request_id(storage, &req_id, data_type).await;
+        assert!(store_at_request_id(storage, &req_id, &data, data_type)
+            .await
+            .is_ok());
+        let retrieved_store: TestType = read_at_request_id(storage, &req_id, data_type)
+            .await
+            .unwrap();
+        assert_eq!(data, retrieved_store);
+        assert!(delete_at_request_id(storage, &req_id, data_type)
+            .await
+            .is_ok());
+        let reretrieved_store: anyhow::Result<TestType> =
+            read_at_request_id(storage, &req_id, data_type).await;
+        assert!(reretrieved_store.is_err());
+    }
+
+    pub async fn test_batch_helper_methods<S: Storage>(storage: &mut S) {
+        // Setup data
+        let req_id_1 = RequestId::derive("1").unwrap();
+        let data_1_pk = TestType { i: 1 };
+        let data_1_vk = TestType { i: 2 };
+        let req_id_2 = RequestId::derive("2").unwrap();
+        let data_2_pk = TestType { i: 3 };
+        let url_1_pk = storage
+            .compute_url(&req_id_1.to_string(), &PubDataType::PublicKey.to_string())
+            .unwrap();
+        let url_1_vk = storage
+            .compute_url(&req_id_1.to_string(), &PubDataType::VerfKey.to_string())
+            .unwrap();
+        let url_2_pk = storage
+            .compute_url(&req_id_2.to_string(), &PubDataType::PublicKey.to_string())
+            .unwrap();
+
+        // Ensure no old test data is present
+        println!("deleting..");
+        delete_all_at_request_id(storage, &req_id_1).await;
+        delete_all_at_request_id(storage, &req_id_2).await;
+
+        // Store data
+        println!("storing..");
+        storage.store_data(&data_1_pk, &url_1_pk).await.unwrap();
+        storage.store_data(&data_1_vk, &url_1_vk).await.unwrap();
+        storage.store_data(&data_2_pk, &url_2_pk).await.unwrap();
+
+        // Check data retrieval
+        println!("retrieving.. {}", storage.info());
+        let req_id_1_pk: anyhow::Result<TestType> =
+            read_at_request_id(storage, &req_id_1, &PubDataType::PublicKey.to_string()).await;
+        assert_eq!(&req_id_1_pk.unwrap(), &data_1_pk);
+        let pks: HashMap<RequestId, TestType> =
+            read_all_data(storage, &PubDataType::PublicKey.to_string())
+                .await
+                .unwrap();
+        assert_eq!(pks.len(), 2);
+        assert_eq!(pks.get(&req_id_1).unwrap(), &data_1_pk);
+        assert_eq!(pks.get(&req_id_2).unwrap(), &data_2_pk);
+        let verfs: HashMap<RequestId, TestType> =
+            read_all_data(storage, &PubDataType::VerfKey.to_string())
+                .await
+                .unwrap();
+        assert_eq!(verfs.len(), 1);
+        assert_eq!(verfs.get(&req_id_1).unwrap(), &data_1_vk);
+
+        // Delete data
+        delete_all_at_request_id(storage, &req_id_1).await;
+
+        // Check data retrieval again
+        let pks: HashMap<RequestId, TestType> =
+            read_all_data(storage, &PubDataType::PublicKey.to_string())
+                .await
+                .unwrap();
+        assert_eq!(pks.len(), 1);
+        assert_eq!(pks.get(&req_id_2).unwrap(), &data_2_pk);
+        let req_id_1_pk: anyhow::Result<TestType> =
+            read_at_request_id(storage, &req_id_1, &PubDataType::PublicKey.to_string()).await;
+        // Check there is no longer a pk for req_id_1
+        assert!(req_id_1_pk.is_err());
+
+        let verfs: HashMap<RequestId, TestType> =
+            read_all_data(storage, &PubDataType::VerfKey.to_string())
+                .await
+                .unwrap();
+        assert!(verfs.is_empty());
+
+        // Delete last data
+        delete_all_at_request_id(storage, &req_id_2).await;
+
+        // Check data retrieval again
+        let pks: HashMap<RequestId, TestType> =
+            read_all_data(storage, &PubDataType::PublicKey.to_string())
+                .await
+                .unwrap();
+        assert!(pks.is_empty());
     }
 
     #[ignore]

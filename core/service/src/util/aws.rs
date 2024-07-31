@@ -20,6 +20,7 @@ use url::Url;
 
 const PREALLOCATED_BLOB_SIZE: usize = 32768;
 
+// TODO refactor to keep all storage code in the same folder
 pub struct S3Storage {
     pub s3_client: S3Client,
     pub blob_bucket: String,
@@ -57,10 +58,11 @@ impl S3Storage {
         blob_key_prefix: String,
     ) -> Self {
         let s3_client = build_s3_client(aws_region, aws_s3_proxy).await;
+        let trimmed_key_prefix = blob_key_prefix.trim_start_matches('/').to_string();
         S3Storage {
             s3_client,
             blob_bucket,
-            blob_key_prefix,
+            blob_key_prefix: trimmed_key_prefix,
         }
     }
 }
@@ -142,13 +144,16 @@ impl StorageReader for S3Storage {
             .list_objects_v2()
             .bucket(&self.blob_bucket)
             .delimiter("/")
-            .prefix(format!("{}/{}/", self.blob_key_prefix, data_type))
+            .prefix(format!("{}/{}/", &self.blob_key_prefix, data_type))
             .send()
             .await?;
-        if let Some(contents) = result.contents {
-            for obj in contents {
-                if let Some(key) = obj.key {
-                    urls.insert(key.clone(), self.compute_url(&key, data_type)?);
+        for cur_res in result.contents() {
+            if let Some(key) = &cur_res.key {
+                let trimmed_key = key.trim();
+                // Find the elements with the right prefix
+                // Find the id of file which is always the last segment when splitting on "/"
+                if let Some(cur_id) = trimmed_key.split('/').last() {
+                    urls.insert(cur_id.to_string(), self.compute_url(cur_id, data_type)?);
                 }
             }
         }
@@ -510,22 +515,79 @@ pub async fn nitro_enclave_decrypt_app_key<T: DeserializeOwned>(
     )?)
 }
 
-#[tokio::test]
-async fn aws_storage_url() {
-    let storage = S3Storage::new(
-        "aws_region".to_string(),
-        Some("aws_kms_proxy".to_string()),
-        "blob_bucket".to_string(),
-        "blob_key_prefix".to_string(),
-    )
-    .await;
+/// Observe that certain tests require an S3 instance setup.
+/// There are run with the extra arguent `-F s3_tests`.
+/// Note that we pay for each of these tests, in the order of single digit cents per tests.
+///
+/// To setup a test environment for S3 proceed as follows:
+///
+/// 1. Creating access keys:
+///    a. Log into aws.amazon.com
+///    b. In the top right corner of the page there'll be your AWS account name. Click on it, and in the drop-down menu go to "security credentials".
+///    c. Select “Create access keys”
+///    d. Make sure to locally store the AWS access key ID and secret access key.
+/// 2. Create S3 bucket
+///    a. Search for “S3 console” in the search bar after logging into aws.amazon.com
+///    b. Click “Create a bucket”
+///    c. Make a “general bucket” and remember the name you gave it
+///    d. Download the AWS CLI tool
+///    e. Run `aws configure` to set it up with the correct information for your bucket
+///    f. Validate it works with `aws s3 ls`
+/// 3. Test S3 storage
+///    a. Update the const's BUCKET_NAME and AWS_REGION below to reflect what you created.
+///    b. Now you can run the tests :)
+///         cargo test --lib -F s3_tests s3_
+#[cfg(test)]
+pub mod tests {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "s3_tests")]{
+            use crate::storage::tests::{test_storage_read_store_methods, test_batch_helper_methods};
+            use crate::storage::StorageType;
+        }
+    }
+    use crate::storage::StorageReader;
+    use crate::util::aws::S3Storage;
+    use url::Url;
 
-    let url = storage.compute_url("id", "type").unwrap();
-    assert_eq!(
-        url,
-        Url::parse("s3://blob_bucket/blob_key_prefix/type/id").unwrap()
-    );
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "s3_tests")]{
+            const BUCKET_NAME: &str = "jot2re-kms-key-test";
+            const AWS_REGION: &str = "eu-north-1";
+        }
+    }
+    #[tokio::test]
+    async fn aws_storage_url() {
+        let storage = S3Storage::new(
+            "aws_region".to_string(),
+            Some("aws_kms_proxy".to_string()),
+            "blob_bucket".to_string(),
+            "blob_key_prefix".to_string(),
+        )
+        .await;
 
-    assert!(storage.compute_url("as/df", "type").is_err());
-    assert!(storage.compute_url("id", "as/df").is_err());
+        let url = storage.compute_url("id", "type").unwrap();
+        assert_eq!(
+            url,
+            Url::parse("s3://blob_bucket/blob_key_prefix/type/id").unwrap()
+        );
+
+        assert!(storage.compute_url("as/df", "type").is_err());
+        assert!(storage.compute_url("id", "as/df").is_err());
+    }
+
+    #[cfg(feature = "s3_tests")]
+    #[tokio::test]
+    async fn s3_storage_helper_methods() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let prefix = format!("{}/{}", temp_dir.path().to_str().unwrap(), StorageType::PUB);
+        let mut pub_storage = S3Storage::new(
+            AWS_REGION.to_string(),
+            None,
+            BUCKET_NAME.to_string(),
+            prefix,
+        )
+        .await;
+        test_storage_read_store_methods(&mut pub_storage).await;
+        test_batch_helper_methods(&mut pub_storage).await;
+    }
 }

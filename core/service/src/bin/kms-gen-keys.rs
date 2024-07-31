@@ -1,13 +1,13 @@
 use clap::{Parser, Subcommand};
-use kms_lib::conf::init_trace;
 use kms_lib::rpc::rpc_types::{PrivDataType, PubDataType};
 use kms_lib::util::key_setup::test_tools::ensure_threshold_keys_exist;
+use kms_lib::{conf::init_trace, storage::delete_all_at_request_id};
 use kms_lib::{
     consts::{
         AMOUNT_PARTIES, DEFAULT_CENTRAL_KEY_ID, DEFAULT_CRS_ID, DEFAULT_THRESHOLD_KEY_ID,
         OTHER_CENTRAL_DEFAULT_ID,
     },
-    storage::{url_to_pathbuf, FileStorage, Storage, StorageReader, StorageType},
+    storage::{url_to_pathbuf, FileStorage, Storage, StorageType},
     util::{
         aws::S3Storage,
         key_setup::{
@@ -148,7 +148,7 @@ async fn main() {
                             Some(url.path().trim_start_matches('/').to_string()),
                             StorageType::PUB,
                         );
-                        let mut storage = StorageProxy::S3(
+                        StorageProxy::S3(
                             S3Storage::new(
                                 aws_region.clone(),
                                 None,
@@ -156,24 +156,10 @@ async fn main() {
                                 blob_key_prefix.clone(),
                             )
                             .await,
-                        );
-                        if overwrite {
-                            let urls = storage.all_urls(blob_key_prefix.as_str()).await.unwrap();
-                            for url in urls.values() {
-                                storage.delete_data(url).await.unwrap();
-                            }
-                        }
-                        storage
+                        )
                     }
                     _ => {
                         let optional_path = url_to_pathbuf(&url);
-                        if overwrite {
-                            FileStorage::purge_centralized(
-                                Some(optional_path.as_path()),
-                                StorageType::PUB,
-                            )
-                            .unwrap();
-                        }
                         StorageProxy::File(
                             FileStorage::new_centralized(
                                 Some(optional_path.as_path()),
@@ -183,14 +169,9 @@ async fn main() {
                         )
                     }
                 },
-                None => {
-                    if overwrite {
-                        FileStorage::purge_centralized(None, StorageType::PUB).unwrap();
-                    }
-                    StorageProxy::File(
-                        FileStorage::new_centralized(None, StorageType::PUB).unwrap(),
-                    )
-                }
+                None => StorageProxy::File(
+                    FileStorage::new_centralized(None, StorageType::PUB).unwrap(),
+                ),
             };
             let mut priv_storage = match priv_url {
                 Some(url) => match url.scheme() {
@@ -199,7 +180,7 @@ async fn main() {
                             Some(url.path().trim_start_matches('/').to_string()),
                             StorageType::PRIV,
                         );
-                        let mut storage = StorageProxy::S3(
+                        StorageProxy::S3(
                             S3Storage::new(
                                 aws_region.clone(),
                                 None,
@@ -207,24 +188,10 @@ async fn main() {
                                 blob_key_prefix.clone(),
                             )
                             .await,
-                        );
-                        if overwrite {
-                            let urls = storage.all_urls(blob_key_prefix.as_str()).await.unwrap();
-                            for url in urls.values() {
-                                storage.delete_data(url).await.unwrap();
-                            }
-                        }
-                        storage
+                        )
                     }
                     _ => {
                         let optional_path = url_to_pathbuf(&url);
-                        if overwrite {
-                            FileStorage::purge_centralized(
-                                Some(optional_path.as_path()),
-                                StorageType::PRIV,
-                            )
-                            .unwrap();
-                        }
                         StorageProxy::File(
                             FileStorage::new_centralized(
                                 Some(optional_path.as_path()),
@@ -234,15 +201,18 @@ async fn main() {
                         )
                     }
                 },
-                None => {
-                    if overwrite {
-                        FileStorage::purge_centralized(None, StorageType::PRIV).unwrap();
-                    }
-                    StorageProxy::File(
-                        FileStorage::new_centralized(None, StorageType::PRIV).unwrap(),
-                    )
-                }
+                None => StorageProxy::File(
+                    FileStorage::new_centralized(None, StorageType::PRIV).unwrap(),
+                ),
             };
+            if overwrite {
+                tracing::info!(
+                    "Deleting all data under request ID {:}...",
+                    &DEFAULT_CENTRAL_KEY_ID.to_string()
+                );
+                delete_all_at_request_id(&mut priv_storage, &DEFAULT_CENTRAL_KEY_ID).await;
+                delete_all_at_request_id(&mut pub_storage, &DEFAULT_CENTRAL_KEY_ID).await;
+            }
             if show_existing {
                 show_keys(&pub_storage, &priv_storage).await;
                 return;
@@ -321,7 +291,7 @@ async fn main() {
                                 StorageType::PUB,
                                 i,
                             );
-                            let mut storage = StorageProxy::S3(
+                            let storage = StorageProxy::S3(
                                 S3Storage::new(
                                     aws_region.clone(),
                                     None,
@@ -330,25 +300,10 @@ async fn main() {
                                 )
                                 .await,
                             );
-                            if overwrite {
-                                let urls =
-                                    storage.all_urls(blob_key_prefix.as_str()).await.unwrap();
-                                for url in urls.values() {
-                                    storage.delete_data(url).await.unwrap();
-                                }
-                            }
                             pub_storages.push(storage);
                         }
                         _ => {
                             let optional_path = url_to_pathbuf(url);
-                            if overwrite {
-                                FileStorage::purge_threshold(
-                                    Some(optional_path.as_path()),
-                                    StorageType::PUB,
-                                    i,
-                                )
-                                .unwrap();
-                            }
                             pub_storages.push(StorageProxy::File(
                                 FileStorage::new_threshold(
                                     Some(optional_path.as_path()),
@@ -360,9 +315,6 @@ async fn main() {
                         }
                     },
                     None => {
-                        if overwrite {
-                            FileStorage::purge_threshold(None, StorageType::PUB, i).unwrap();
-                        }
                         pub_storages.push(StorageProxy::File(
                             FileStorage::new_threshold(None, StorageType::PUB, i).unwrap(),
                         ));
@@ -379,7 +331,7 @@ async fn main() {
                                 StorageType::PRIV,
                                 i,
                             );
-                            let mut storage = StorageProxy::S3(
+                            let storage = StorageProxy::S3(
                                 S3Storage::new(
                                     aws_region.clone(),
                                     None,
@@ -388,25 +340,10 @@ async fn main() {
                                 )
                                 .await,
                             );
-                            if overwrite {
-                                let urls =
-                                    storage.all_urls(blob_key_prefix.as_str()).await.unwrap();
-                                for url in urls.values() {
-                                    storage.delete_data(url).await.unwrap();
-                                }
-                            }
                             priv_storages.push(storage);
                         }
                         _ => {
                             let optional_path = url_to_pathbuf(url);
-                            if overwrite {
-                                FileStorage::purge_threshold(
-                                    Some(optional_path.as_path()),
-                                    StorageType::PRIV,
-                                    i,
-                                )
-                                .unwrap();
-                            }
                             priv_storages.push(StorageProxy::File(
                                 FileStorage::new_threshold(
                                     Some(optional_path.as_path()),
@@ -418,13 +355,22 @@ async fn main() {
                         }
                     },
                     None => {
-                        if overwrite {
-                            FileStorage::purge_threshold(None, StorageType::PRIV, i).unwrap();
-                        }
                         priv_storages.push(StorageProxy::File(
                             FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap(),
                         ));
                     }
+                }
+            }
+            if overwrite {
+                tracing::info!(
+                    "Deleting all data under request ID {:}...",
+                    &DEFAULT_CENTRAL_KEY_ID.to_string()
+                );
+                for cur_priv_storage in &mut priv_storages {
+                    delete_all_at_request_id(cur_priv_storage, &DEFAULT_CENTRAL_KEY_ID).await;
+                }
+                for cur_pub_storage in &mut pub_storages {
+                    delete_all_at_request_id(cur_pub_storage, &DEFAULT_CENTRAL_KEY_ID).await;
                 }
             }
             if show_existing {
