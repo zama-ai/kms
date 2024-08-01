@@ -1,4 +1,4 @@
-use super::signcryption::SIG_SIZE;
+use crate::consts::SIG_SIZE;
 use crypto_box::SecretKey;
 use k256::ecdsa::{SigningKey, VerifyingKey};
 use kms_core_common::{Unversionize, Versioned, Versionize};
@@ -263,9 +263,9 @@ pub struct SigncryptionPrivKey {
     pub decryption_key: PrivateEncKey,
 }
 
-/// Structure for public keys for signcryption that can get DER encoded as follows:
+/// Structure for public keys for signcryption that can get encoded as follows:
 ///     client_address, a 20-byte blockchain address, created from a public key
-///     enc_key, (Montgomery point following libsodium serialization as OCTET STRING)
+///     enc_key, (Montgomery point following libsodium serialization)
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 pub struct SigncryptionPubKey {
     pub client_address: alloy_primitives::Address,
@@ -292,7 +292,6 @@ impl Serialize for Signature {
     {
         let mut to_ser = Vec::new();
         to_ser.append(&mut self.sig.to_vec());
-        // to_ser.append(&mut self.pk.pk.to_sec1_bytes().to_vec());
         serializer.serialize_bytes(&to_ser)
     }
 }

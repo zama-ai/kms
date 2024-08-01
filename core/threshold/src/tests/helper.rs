@@ -156,19 +156,6 @@ pub mod tests_and_benches {
 
 #[cfg(test)]
 pub mod tests {
-
-    use std::{
-        collections::{HashMap, HashSet},
-        sync::Arc,
-    };
-
-    use aes_prng::AesRng;
-    use futures::Future;
-    use itertools::Itertools;
-    use rand::SeedableRng;
-    use tfhe::{prelude::FheEncrypt, FheUint8};
-    use tokio::task::{JoinError, JoinSet};
-
     use crate::{
         algebra::structure_traits::Ring,
         execution::{
@@ -190,6 +177,24 @@ pub mod tests {
         session_id::SessionId,
         tests::test_data_setup::tests::DEFAULT_SEED,
     };
+    use crate::{
+        execution::constants::{
+            PARAMS_DIR, REAL_KEY_PATH, REAL_PARAM_PATH, SMALL_TEST_PARAM_PATH, TEMP_DKG_DIR,
+        },
+        file_handling::write_as_json,
+        tests::test_data_setup::tests::{ensure_keys_exist, REAL_PARAMETERS, TEST_PARAMETERS},
+    };
+    use aes_prng::AesRng;
+    use futures::Future;
+    use itertools::Itertools;
+    use rand::SeedableRng;
+    use std::fs;
+    use std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+    };
+    use tfhe::{prelude::FheEncrypt, FheUint8};
+    use tokio::task::{JoinError, JoinSet};
 
     #[derive(Default, Clone)]
     pub struct TestingParameters {
@@ -505,5 +510,25 @@ pub mod tests {
         }
 
         res
+    }
+
+    #[ctor::ctor]
+    fn setup_data_for_integration() {
+        // Ensure temp/dkg dir exists (also creates the temp dir)
+        if let Err(e) = fs::create_dir_all(TEMP_DKG_DIR) {
+            println!("Error creating temp/dkg directory {TEMP_DKG_DIR}: {e:?}");
+        }
+        // Ensure parameters dir exists to store generated parameters json files
+        if let Err(e) = fs::create_dir_all(PARAMS_DIR) {
+            println!("Error creating parameters directory {PARAMS_DIR}: {e:?}");
+        }
+
+        // write parameter JSON files
+        write_as_json(SMALL_TEST_PARAM_PATH.to_string(), &TEST_PARAMETERS).unwrap();
+        write_as_json(REAL_PARAM_PATH.to_string(), &REAL_PARAMETERS).unwrap();
+
+        // make sure keys exist (generate them if they do not)
+        ensure_keys_exist(SMALL_TEST_KEY_PATH, TEST_PARAMETERS);
+        ensure_keys_exist(REAL_KEY_PATH, REAL_PARAMETERS);
     }
 }

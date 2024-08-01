@@ -14,8 +14,8 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
-        use crate::cryptography::der_types::PrivateSigKey;
-        use crate::cryptography::der_types::{PublicEncKey, PublicSigKey, Signature};
+        use crate::cryptography::internal_crypto_types::PrivateSigKey;
+        use crate::cryptography::internal_crypto_types::{PublicEncKey, PublicSigKey, Signature};
         use crate::cryptography::signcryption::{hash_element, Reencrypt};
         use crate::util::key_setup::FhePrivateKey;
         use alloy_primitives::Bytes;

@@ -1,12 +1,12 @@
-use crate::cryptography::der_types::Signature;
-use crate::cryptography::der_types::{
+use crate::cryptography::internal_crypto_types::{
     PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, SigncryptionPair,
     SigncryptionPrivKey, SigncryptionPubKey,
 };
 use crate::cryptography::signcryption::{
     decrypt_signcryption, ephemeral_encryption_key_generation, hash_element,
-    insecure_decrypt_ignoring_signature, internal_verify_sig, Reencrypt, RND_SIZE,
+    insecure_decrypt_ignoring_signature, internal_verify_sig, Reencrypt,
 };
+use crate::cryptography::{internal_crypto_types::Signature, signcryption::check_normalized};
 use crate::kms::{
     FheType, ReencryptionRequest, ReencryptionRequestPayload, ReencryptionResponse,
     ReencryptionResponsePayload, RequestId,
@@ -31,7 +31,7 @@ use distributed_decryption::execution::sharing::shamir::{
     fill_indexed_shares, reconstruct_w_errors_sync, ShamirSharings,
 };
 use distributed_decryption::execution::tfhe_internals::parameters::AugmentedCiphertextParameters;
-use rand::{RngCore, SeedableRng};
+use rand::SeedableRng;
 use std::collections::HashSet;
 use tfhe::shortint::ClassicPBSParameters;
 use wasm_bindgen::prelude::*;
@@ -39,7 +39,7 @@ use wasm_bindgen::prelude::*;
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::cryptography::central_kms::{compute_handle, BaseKmsStruct};
-        use crate::cryptography::der_types::{PrivateSigKeyVersioned, PublicSigKeyVersioned};
+        use crate::cryptography::internal_crypto_types::{PrivateSigKeyVersioned, PublicSigKeyVersioned};
         use crate::kms::DecryptionResponse;
         use crate::kms::ParamChoice;
         use crate::kms::{
@@ -1129,17 +1129,9 @@ impl Client {
                 "The request id format is not valid {request_id}"
             )));
         }
-
-        // Observe that this randomness can be reused across the servers since each server will have
-        // a unique PK that is included in their response, hence it will still be validated
-        // that each request contains a unique message to be signed hence ensuring CCA
-        // security. TODO this argument should be validated
-        let mut randomness: Vec<u8> = vec![0; RND_SIZE];
-        self.rng.fill_bytes(&mut randomness);
         let serialized_req = DecryptionRequest {
             version: CURRENT_FORMAT_VERSION,
             ciphertexts,
-            randomness,
             key_id: Some(key_id.clone()),
             request_id: Some(request_id.clone()),
         };
@@ -1168,14 +1160,11 @@ impl Client {
 
         let ciphertext_digest = hash_element(&ciphertext);
         let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(&mut self.rng);
-        let mut randomness = vec![0; RND_SIZE];
-        self.rng.fill_bytes(&mut randomness);
         let sig_payload = ReencryptionRequestPayload {
             version: CURRENT_FORMAT_VERSION,
             enc_key: serialize(&enc_pk)?,
             client_address: self.client_address.to_checksum(None),
             fhe_type: fhe_type as i32,
-            randomness,
             key_id: Some(key_id.clone()),
             ciphertext: Some(ciphertext),
             ciphertext_digest,
@@ -2108,6 +2097,9 @@ pub fn recover_ecdsa_public_key_from_signature(
     tracing::debug!("Target address: {:?}", hex::encode(target_address));
 
     let signature = alloy_primitives::Signature::try_from(sig)?;
+    check_normalized(&Signature {
+        sig: signature.inner().to_owned(),
+    })?;
 
     // Define the EIP-712 domain
     let message = Reencrypt {
@@ -2382,7 +2374,7 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     use crate::cryptography::central_kms::tests::get_default_keys;
     use crate::cryptography::central_kms::{compute_handle, gen_sig_keys, BaseKmsStruct};
-    use crate::cryptography::der_types::Signature;
+    use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::signcryption::Reencrypt;
     use crate::kms::core_service_endpoint_client::CoreServiceEndpointClient;
     #[cfg(feature = "slow_tests")]

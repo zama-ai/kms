@@ -9,12 +9,15 @@
 //! using ECDH with curve 25519 and Salsa.
 //! NOTE: This may change in the future to be more compatible with NIST standardized schemes.
 
-use super::der_types::{
+use super::internal_crypto_types::{
     Cipher, PrivateEncKey, PrivateSigKey, PublicEncKey, PublicSigKey, Signature, SigncryptionPair,
     SigncryptionPubKey,
 };
-use crate::rpc::rpc_types::{Plaintext, SigncryptionPayload};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log};
+use crate::{
+    consts::SIG_SIZE,
+    rpc::rpc_types::{Plaintext, SigncryptionPayload},
+};
 use ::signature::{Signer, Verifier};
 use bincode::{deserialize, serialize};
 use crypto_box::aead::{Aead, AeadCore};
@@ -26,8 +29,6 @@ use serde::Serialize;
 use sha3::{Digest, Sha3_256};
 
 const DIGEST_BYTES: usize = 256 / 8; // SHA3-256 digest
-pub(crate) const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
-pub const RND_SIZE: usize = 128 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
 
 /// Generate ephemeral keys used for encryption.
 ///
@@ -49,7 +50,7 @@ where
 {
     let sig: k256::ecdsa::Signature = server_sig_key.sk.try_sign(msg.as_ref())?;
     // Normalize s value to ensure a consistent signature and protect against malleability
-    sig.normalize_s();
+    let sig = sig.normalize_s().unwrap_or(sig);
     Ok(Signature { sig })
 }
 
@@ -72,7 +73,7 @@ pub fn sign_eip712<T: alloy_sol_types::SolStruct>(
     let signing_hash = msg.eip712_signing_hash(domain);
     let sig: k256::ecdsa::Signature = server_sig_key.sk.try_sign(&signing_hash[..])?;
     // Normalize s value to ensure a consistent signature and protect against malleability
-    sig.normalize_s();
+    let sig = sig.normalize_s().unwrap_or(sig);
     Ok(Signature { sig })
 }
 
@@ -88,9 +89,7 @@ where
     T: Serialize + AsRef<[u8]>,
 {
     // Check that the signature is normalized
-    if !check_normalized_and_warn(sig) {
-        return Err(anyhow::anyhow!("signature is not normalized"));
-    }
+    check_normalized(sig)?;
 
     // Verify signature
     server_verf_key
@@ -127,7 +126,7 @@ where
     .concat();
     let sig: k256::ecdsa::Signature = server_sig_key.sk.sign(to_sign.as_ref());
     // Normalize s value to ensure a consistent signature and protect against malleability
-    sig.normalize_s();
+    let sig = sig.normalize_s().unwrap_or(sig);
 
     // Generate the server part of the key agreement
     // Observe that we don't need to keep the secret key as we don't need the client to send the
@@ -249,9 +248,7 @@ fn check_signature_and_log(
     .concat();
 
     // Check that the signature is normalized
-    if !check_normalized_and_warn(sig) {
-        return Err(anyhow::anyhow!("Signature is not normalized"));
-    }
+    check_normalized(sig)?;
 
     // Verify signature
     server_verf_key
@@ -267,15 +264,18 @@ fn check_signature_and_log(
 /// [BIP 0062: Dealing with Malleability][1].
 ///
 /// [1]: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
-pub(crate) fn check_normalized_and_warn(sig: &Signature) -> bool {
+pub(crate) fn check_normalized(sig: &Signature) -> anyhow::Result<()> {
     if sig.sig.normalize_s().is_some() {
         tracing::warn!(
             "Received signature {:X?} was not normalized as expected",
             sig.sig
         );
-        return false;
+        return Err(anyhow::anyhow!(
+            "Signature {:X?} is not normalized",
+            sig.sig
+        ));
     };
-    true
+    Ok(())
 }
 
 /// Compute the SHA3-256 has of an element. Returns the hash as a vector of bytes.
@@ -373,11 +373,11 @@ pub(crate) fn ephemeral_signcryption_key_generation(
     };
     let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(rng);
     SigncryptionPair {
-        sk: crate::cryptography::der_types::SigncryptionPrivKey {
+        sk: crate::cryptography::internal_crypto_types::SigncryptionPrivKey {
             signing_key: Some(sig_key.clone()),
             decryption_key: enc_sk,
         },
-        pk: crate::cryptography::der_types::SigncryptionPubKey {
+        pk: crate::cryptography::internal_crypto_types::SigncryptionPubKey {
             client_address: alloy_primitives::Address::from_public_key(&verification_key.pk),
             enc_key: enc_pk,
         },
@@ -389,7 +389,7 @@ mod tests {
     use super::{
         ephemeral_signcryption_key_generation, PrivateSigKey, PublicSigKey, SigncryptionPair,
     };
-    use crate::cryptography::der_types::Signature;
+    use crate::cryptography::internal_crypto_types::Signature;
     use crate::cryptography::signcryption::{
         check_signature_and_log, ephemeral_encryption_key_generation, internal_verify_sig,
         parse_msg, serialize_hash_element, sign, signcrypt, validate_and_decrypt, DIGEST_BYTES,
@@ -456,7 +456,7 @@ mod tests {
         .unwrap();
 
         let serialized_cipher = bincode::serialize(&cipher).unwrap();
-        let deserialized_cipher: crate::cryptography::der_types::Cipher =
+        let deserialized_cipher: crate::cryptography::internal_crypto_types::Cipher =
             bincode::deserialize(&serialized_cipher).unwrap();
 
         let serialized_server_verf_key = bincode::serialize(&server_verf_key).unwrap();

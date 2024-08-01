@@ -611,7 +611,6 @@ mod tests {
             .key_id(vec![1, 2, 3])
             .version(1)
             .ciphertext_handle(ciphertext_handle.clone())
-            .randomness(vec![3, 4, 5])
             .fhe_type(FheType::Euint8)
             .build();
 
@@ -839,7 +838,6 @@ mod tests {
             .signature(vec![1])
             .version(1)
             .client_address("0x1234".to_string())
-            .randomness(vec![3])
             .enc_key(vec![4])
             .fhe_type(FheType::Euint8)
             .key_id(vec![5])
@@ -1024,7 +1022,6 @@ mod tests {
             .key_id(vec![1, 2, 3])
             .version(1)
             .ciphertext_handle(ciphertext_handle)
-            .randomness(vec![3, 4, 5])
             .fhe_type(FheType::Euint8)
             .build();
         let response = contract

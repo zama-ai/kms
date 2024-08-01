@@ -7,7 +7,7 @@ use crate::cryptography::central_kms::{
     async_generate_crs, async_generate_fhe_keys, async_reencrypt, central_decrypt, BaseKmsStruct,
     SoftwareKms,
 };
-use crate::cryptography::der_types::PublicEncKey;
+use crate::cryptography::internal_crypto_types::PublicEncKey;
 use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,

@@ -233,7 +233,6 @@ impl Blockchain for KmsBlockchainImpl {
                 .version(CURRENT_FORMAT_VERSION)
                 .key_id(hex::decode(self.config.kms.key_id.as_str()).unwrap())
                 .ciphertext_handle(ctxt_handle.clone())
-                .randomness(vec![6, 7, 8, 9, 0])
                 .fhe_type(fhe_type)
                 .build(),
         );
@@ -432,8 +431,6 @@ impl Blockchain for KmsBlockchainImpl {
             hex::encode(&ctxt_digest)
         );
 
-        // TODO(later) check whether randomness is essential
-        let randomness = vec![1, 2, 3, 4];
         let eip712_name = "Authorization token".to_string();
         let eip712_version = "1".to_string();
         let eip712_salt = HexVector(vec![]);
@@ -455,7 +452,6 @@ impl Blockchain for KmsBlockchainImpl {
             .signature(signature)
             .version(CURRENT_FORMAT_VERSION)
             .client_address(client_address)
-            .randomness(randomness)
             .enc_key(enc_key)
             .fhe_type(fhe_type)
             .key_id(key_id)

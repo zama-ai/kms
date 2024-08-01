@@ -1,11 +1,8 @@
-use super::signcryption::{internal_verify_sig, serialize_hash_element, sign, signcrypt, RND_SIZE};
+use super::signcryption::{internal_verify_sig, serialize_hash_element, sign, signcrypt};
 use super::{
-    der_types::{PrivateSigKey, PublicEncKey, PublicSigKey},
+    internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey},
     signcryption::hash_element,
 };
-use crate::consts::ID_LENGTH;
-use crate::consts::{DEC_CAPACITY, MIN_DEC_CACHE};
-use crate::cryptography::der_types::PrivateSigKeyVersioned;
 use crate::cryptography::signcryption::Reencrypt;
 use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
@@ -22,6 +19,12 @@ use crate::storage::Storage;
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
 use crate::util::meta_store::{HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, some_or_err};
+use crate::{consts::ID_LENGTH, cryptography::signcryption::check_normalized};
+use crate::{consts::RND_SIZE, cryptography::internal_crypto_types::PrivateSigKeyVersioned};
+use crate::{
+    consts::{DEC_CAPACITY, MIN_DEC_CACHE},
+    cryptography::internal_crypto_types::Signature,
+};
 use crate::{
     kms::{FheType, ParamChoice, SignedPubDataHandle},
     rpc::rpc_types::CrsMetaDataVersioned,
@@ -190,7 +193,7 @@ impl BaseKmsStruct {
 impl BaseKms for BaseKmsStruct {
     fn verify_sig<T>(
         payload: &T,
-        signature: &super::der_types::Signature,
+        signature: &super::internal_crypto_types::Signature,
         key: &PublicSigKey,
     ) -> anyhow::Result<()>
     where
@@ -199,7 +202,7 @@ impl BaseKms for BaseKmsStruct {
         internal_verify_sig(&payload, signature, key)
     }
 
-    fn sign<T>(&self, msg: &T) -> anyhow::Result<super::der_types::Signature>
+    fn sign<T>(&self, msg: &T) -> anyhow::Result<super::internal_crypto_types::Signature>
     where
         T: Serialize + AsRef<[u8]>,
     {
@@ -284,6 +287,10 @@ pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<()>
             tracing::error!("Failed to parse alloy signature with error: {e}");
             e
         })?;
+
+    check_normalized(&Signature {
+        sig: alloy_signature.inner().to_owned(),
+    })?;
 
     let recovered_address = alloy_signature.recover_address_from_prehash(&message_hash)?;
     tracing::debug!("🔒 Recovered address: {:?}", recovered_address);
@@ -496,7 +503,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 {
     fn verify_sig<T: Serialize + AsRef<[u8]>>(
         payload: &T,
-        signature: &super::der_types::Signature,
+        signature: &super::internal_crypto_types::Signature,
         verification_key: &PublicSigKey,
     ) -> anyhow::Result<()> {
         BaseKmsStruct::verify_sig(payload, signature, verification_key)
@@ -505,7 +512,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     fn sign<T: Serialize + AsRef<[u8]>>(
         &self,
         msg: &T,
-    ) -> anyhow::Result<super::der_types::Signature> {
+    ) -> anyhow::Result<super::internal_crypto_types::Signature> {
         self.base_kms.sign(msg)
     }
 
@@ -743,7 +750,7 @@ pub(crate) mod tests {
     use crate::cryptography::central_kms::CentralizedTestingKeys;
     use crate::cryptography::central_kms::SoftwareKmsKeys;
     use crate::cryptography::central_kms::{gen_sig_keys, SoftwareKms};
-    use crate::cryptography::der_types::PrivateSigKey;
+    use crate::cryptography::internal_crypto_types::PrivateSigKey;
     use crate::cryptography::signcryption::{
         decrypt_signcryption, ephemeral_signcryption_key_generation,
     };

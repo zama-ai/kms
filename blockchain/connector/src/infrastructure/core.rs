@@ -273,7 +273,6 @@ where
         let key_id = self.decrypt.key_id().to_hex();
         let fhe_type = self.decrypt.fhe_type() as i32;
         let ciphertext_handle: Vec<u8> = self.decrypt.ciphertext_handle().deref().into();
-        let randomness = self.decrypt.randomness().deref().into();
 
         let ciphertext = self
             .operation_val
@@ -291,7 +290,6 @@ where
 
         let req = DecryptionRequest {
             version,
-            randomness,
             ciphertexts,
             key_id: Some(RequestId { request_id: key_id }),
             request_id: Some(req_id.clone()),
@@ -386,7 +384,6 @@ where
             payload: Some(ReencryptionRequestPayload {
                 version: reencrypt.version(),
                 client_address: reencrypt.client_address().to_string(),
-                randomness: reencrypt.randomness().deref().into(),
                 enc_key: reencrypt.enc_key().deref().into(),
                 fhe_type: reencrypt.fhe_type() as i32,
                 key_id: Some(RequestId {
@@ -884,7 +881,6 @@ mod test {
                 .key_id(HexVector::from_hex(&TEST_CENTRAL_KEY_ID.request_id).unwrap())
                 .fhe_type(events::kms::FheType::from(fhe_type as u8))
                 .ciphertext_handle(MOCK_CT_HANDLE.to_vec())
-                .randomness(vec![1, 2, 3])
                 .build(),
         );
         let (result, txn_id) = generic_centralized_sunshine_test(ct, op).await;
@@ -1063,7 +1059,6 @@ mod test {
                 .key_id(HexVector::from_hex(&TEST_THRESHOLD_KEY_ID.request_id).unwrap())
                 .fhe_type(events::kms::FheType::from(fhe_type as u8))
                 .ciphertext_handle(MOCK_CT_HANDLE.to_vec())
-                .randomness(vec![1, 2, 3])
                 .build(),
         );
         let (results, txn_id, _) = generic_sunshine_test(slow, ct, op).await;
@@ -1135,7 +1130,6 @@ mod test {
                 .signature(kms_req.signature.clone())
                 .version(payload.version)
                 .client_address(payload.client_address)
-                .randomness(payload.randomness)
                 .enc_key(payload.enc_key)
                 .fhe_type(events::kms::FheType::from(fhe_type as u8))
                 .key_id(HexVector::from_hex(payload.key_id.unwrap().request_id.as_str()).unwrap())

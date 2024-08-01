@@ -70,7 +70,6 @@ async fn execute_contract(
             .fhe_type(FheType::Euint8)
             .key_id(hex::decode(key_id).unwrap())
             .version(1)
-            .randomness(vec![1, 2, 3, 4, 5])
             .build(),
     );
 

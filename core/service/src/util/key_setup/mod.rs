@@ -3,7 +3,7 @@ pub mod test_tools;
 use crate::cryptography::central_kms::{
     compute_handle, gen_centralized_crs, gen_sig_keys, generate_fhe_keys,
 };
-use crate::cryptography::der_types::PrivateSigKey;
+use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::kms::RequestId;
 use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::PubDataType;
@@ -11,7 +11,7 @@ use crate::storage::read_all_data;
 use crate::storage::Storage;
 use crate::storage::{store_at_request_id, FileStorage, StorageType};
 use crate::util::file_handling::read_as_json;
-use crate::{client::ClientDataType, cryptography::der_types::PrivateSigKeyVersioned};
+use crate::{client::ClientDataType, cryptography::internal_crypto_types::PrivateSigKeyVersioned};
 use aes_prng::AesRng;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use itertools::Itertools;

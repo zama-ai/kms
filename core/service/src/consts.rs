@@ -9,6 +9,9 @@ pub const TMP_PATH_PREFIX: &str = "temp";
 #[cfg(test)]
 pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 
+pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
+pub const RND_SIZE: usize = 128 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
+
 // TODO do we want to load this from a configuration?
 pub const SEC_PAR: u64 = 128;
 // TODO do we want to load this from a configuration?

@@ -273,8 +273,6 @@ pub struct DecryptValues {
     key_id: HexVector,
     #[builder(setter(into))]
     ciphertext_handle: RedactedHexVector,
-    #[builder(setter(into))]
-    randomness: RedactedHexVector,
     version: u32,
     fhe_type: FheType,
 }
@@ -295,10 +293,6 @@ impl DecryptValues {
     pub fn ciphertext_handle(&self) -> &RedactedHexVector {
         &self.ciphertext_handle
     }
-
-    pub fn randomness(&self) -> &RedactedHexVector {
-        &self.randomness
-    }
 }
 
 impl From<DecryptValues> for OperationValue {
@@ -316,8 +310,6 @@ pub struct ReencryptValues {
     // payload
     version: u32,
     client_address: String,
-    #[builder(setter(into))]
-    randomness: RedactedHexVector,
     #[builder(setter(into))]
     enc_key: RedactedHexVector,
     fhe_type: FheType,
@@ -349,10 +341,6 @@ impl ReencryptValues {
 
     pub fn client_address(&self) -> &str {
         &self.client_address
-    }
-
-    pub fn randomness(&self) -> &RedactedHexVector {
-        &self.randomness
     }
 
     pub fn enc_key(&self) -> &RedactedHexVector {
@@ -929,7 +917,6 @@ mod tests {
                 key_id: HexVector::arbitrary(g),
                 fhe_type: FheType::arbitrary(g),
                 ciphertext_handle: HexVector::arbitrary(g).into(),
-                randomness: HexVector::arbitrary(g).into(),
             }
         }
     }
@@ -940,7 +927,6 @@ mod tests {
                 signature: HexVector::arbitrary(g),
                 version: u32::arbitrary(g),
                 client_address: String::arbitrary(g),
-                randomness: HexVector::arbitrary(g).into(),
                 enc_key: HexVector::arbitrary(g).into(),
                 fhe_type: FheType::arbitrary(g),
                 key_id: HexVector::arbitrary(g),
@@ -1067,7 +1053,6 @@ mod tests {
             .key_id("mykeyid".as_bytes().to_vec())
             .fhe_type(FheType::Ebool)
             .ciphertext_handle(vec![1, 2, 3])
-            .randomness(vec![4, 5, 6])
             .build();
         let message = KmsMessage::builder()
             .proof(vec![1, 2, 3])
@@ -1082,7 +1067,6 @@ mod tests {
                     "key_id": hex::encode("mykeyid".as_bytes()),
                     "fhe_type": "ebool",
                     "ciphertext_handle": hex::encode([1, 2, 3]),
-                    "randomness": hex::encode([4, 5, 6]),
                 },
                 "proof": hex::encode([1, 2, 3]),
             }
@@ -1122,7 +1106,6 @@ mod tests {
             .signature(vec![1])
             .version(1)
             .client_address("0x1234".to_string())
-            .randomness(vec![3])
             .enc_key(vec![4])
             .fhe_type(FheType::Ebool)
             .key_id("kid".as_bytes().to_vec())
@@ -1146,7 +1129,6 @@ mod tests {
                     "signature": hex::encode([1]),
                     "version": 1,
                     "client_address": "0x1234",
-                    "randomness": hex::encode(vec![3]),
                     "enc_key": hex::encode(vec![4]),
                     "fhe_type": "ebool",
                     "key_id": hex::encode("kid".as_bytes()),

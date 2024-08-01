@@ -24,7 +24,6 @@ async fn main() {
             .fhe_type(FheType::Euint8)
             .version(1)
             .key_id(vec![1, 2, 3])
-            .randomness(vec![1, 2, 3])
             .build(),
     );
 

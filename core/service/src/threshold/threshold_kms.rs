@@ -2,7 +2,7 @@ use super::generic::{
     CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
 };
 use crate::conf::threshold::{PeerConf, ThresholdConfig};
-use crate::cryptography::der_types::{PrivateSigKey, PublicEncKey};
+use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt;
 use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
 use crate::kms::{
@@ -27,7 +27,7 @@ use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, some_or_err};
 use crate::{
     consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID, SEC_PAR},
-    cryptography::der_types::PrivateSigKeyVersioned,
+    cryptography::internal_crypto_types::PrivateSigKeyVersioned,
 };
 use crate::{
     cryptography::central_kms::{compute_info, BaseKmsStruct},

@@ -97,7 +97,6 @@ message KeyGenPreprocStatus {
 }
 
 // Request for generating new keys under a certain handle and return a URI where they can be accessed.
-// TODO handle the potential need for randomness in the signed stored keys which may be needed to ensure provable EU-CMA security of ECDSA.
 message KeyGenRequest {
   Config config = 1;
   ParamChoice params = 2;
@@ -154,15 +153,12 @@ message TypedCiphertext {
 message DecryptionRequest {
   // Version of the request format.
   uint32 version = 1;
-  // Randomness added to the request.
-  // Required to ensure formal EU-CMA security when using ECDSA.
-  bytes randomness = 2;
   // The one or many ciphertexts and corresponding types to decrypt
-  repeated TypedCiphertext ciphertexts = 3;
+  repeated TypedCiphertext ciphertexts = 2;
   // The key id to use for decryption, will be the request_id used for key generation
-  RequestId key_id = 4;
+  RequestId key_id = 3;
   // The ID of the decryption request. Will be the hash digest the other fields of this message object.
-  RequestId request_id = 5;
+  RequestId request_id = 4;
 }
 
 message DecryptionResponsePayload {
@@ -193,25 +189,21 @@ message ReencryptionRequestPayload {
   // The client's (blockchain wallet) address,
   // encoded using EIP-55.
   string client_address = 2;
-  // Randomness specified in the request to ensure EU-CMA of the signed response.
-  // TODO check that we don't need two types of randomness. One for the reuqest and one for the response
-  // TODO also check potential risk with repeated calls
-  bytes randomness = 3;
   // Encoding of the user's public encryption key for this request.
   // Encoding using the default encoding of libsodium, i.e. the 32 bytes of a
   // Montgomery point.
-  bytes enc_key = 4;
+  bytes enc_key = 3;
   // The type of plaintext encrypted.
-  FheType fhe_type = 5;
+  FheType fhe_type = 4;
   // The key id to use for decryption. Will be the request_id used during key generation
-  RequestId key_id = 6;
+  RequestId key_id = 5;
   // The actual ciphertext to decrypt, taken directly from the fhevm.
   // When creating the payload, this field may be empty,
   // it is the responsibility of the gateway to fetch the
   // ciphertext for the given digest below.
-  optional bytes ciphertext = 7;
+  optional bytes ciphertext = 6;
   // The SHA3 digest of the ciphertext above.
-  bytes ciphertext_digest = 8;
+  bytes ciphertext_digest = 7;
 }
 
 // https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator

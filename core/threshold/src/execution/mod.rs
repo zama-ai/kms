@@ -26,8 +26,6 @@ pub mod endpoints {
     #[cfg(feature = "non-wasm")]
     pub mod keygen;
     pub mod reconstruct;
-    #[cfg(feature = "non-wasm")]
-    pub mod reencryption;
 }
 #[cfg(feature = "non-wasm")]
 pub mod large_execution {

@@ -52,6 +52,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Sign the hash asynchronously with the wallet.
     let signature = signer.sign_hash(&message_hash).await?;
+
+    // Validate that the signature is normalized.
+    assert_eq!(signature.normalize_s().unwrap(), signature);
+
     println!("Signature: {:?}", signature);
 
     let binding = signature.as_bytes().to_vec();
