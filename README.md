@@ -97,6 +97,12 @@ cargo test
 ```
 Further details on required tools, installation can be found in the READMEs in each sub project.
 
+> **_NOTE:_** You might need to set the `rustc` version to use the nightly build to avoid issues with experimental features. To do so launch the following command.
+```
+rustup override set nightly
+```
+
+
 ### Development Environment
 
 Read this [section](./config/dev/README.md) for more information.
