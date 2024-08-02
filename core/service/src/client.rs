@@ -52,11 +52,9 @@ cfg_if::cfg_if! {
         use crate::storage::Storage;
         use crate::util::file_handling::read_as_json;
         use crate::{storage::StorageReader, util::key_setup::FhePublicKey};
-        use anyhow::ensure;
         use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
         use distributed_decryption::execution::zk::ceremony::PublicParameter;
         use distributed_decryption::execution::zk::ceremony::PublicParameterVersioned;
-        use itertools::Itertools;
         use kms_core_common::Unversionize;
         use serde::de::DeserializeOwned;
         use std::collections::HashMap;
@@ -838,15 +836,21 @@ impl Client {
         pub_storages: Vec<PubS>,
         param_path: &str,
     ) -> anyhow::Result<Client> {
-        let mut pks: HashMap<RequestId, PublicSigKey> = HashMap::new();
+        let mut pks: Vec<PublicSigKey> = Vec::new();
         for cur_storage in pub_storages {
             let cur_map = read_all_data(&cur_storage, &PubDataType::VerfKey.to_string()).await?;
             for (cur_req_id, cur_pk) in cur_map {
                 // ensure that the inserted pk did not exist before / is not inserted twice
-                ensure!(pks.insert(cur_req_id, PublicSigKey::unversionize(cur_pk)?) == None);
+                let new_pk = PublicSigKey::unversionize(cur_pk)?;
+                if pks.contains(&new_pk) {
+                    return Err(anyhow_error_and_log(format!(
+                        "Public key for request id {} is already in the map",
+                        cur_req_id,
+                    )));
+                }
+                pks.push(new_pk);
             }
         }
-        let server_keys = pks.values().cloned().collect_vec();
         let client_pk_map: HashMap<RequestId, PublicSigKeyVersioned> =
             read_all_data(&client_storage, &ClientDataType::VerfKey.to_string()).await?;
         if client_pk_map.values().len() != 1 {
@@ -882,7 +886,7 @@ impl Client {
         let params: NoiseFloodParameters = read_as_json(param_path).await?;
 
         Ok(Client::new(
-            server_keys,
+            pks,
             client_address,
             Some(client_sk),
             params.ciphertext_parameters,
@@ -2136,6 +2140,7 @@ pub mod test_tools {
     use crate::rpc::central_rpc::{default_param_file_map, server_handle};
     use crate::storage::{FileStorage, RamStorage, Storage, StorageType, StorageVersion};
     use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
+    use itertools::Itertools;
     use std::str::FromStr;
     use tokio::task::JoinHandle;
     use tonic::transport::{Channel, Uri};
@@ -2501,7 +2506,7 @@ pub(crate) mod tests {
         assert_eq!(recovered_pk, client_pk);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_key_gen_centralized() {
         let request_id = RequestId::derive("test_key_gen_centralized").unwrap();
@@ -2511,7 +2516,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_key_gen_centralized() {
         let request_id = RequestId::derive("default_key_gen_centralized").unwrap();
@@ -2566,7 +2571,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_crs_gen_centralized() {
         let request_id = RequestId::derive("default_crs_gen_centralized").unwrap();
@@ -2576,7 +2581,7 @@ pub(crate) mod tests {
             .await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_crs_gen_centralized() {
         let request_id = RequestId::derive("test_crs_gen_centralized").unwrap();
@@ -3049,7 +3054,7 @@ pub(crate) mod tests {
     #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
     #[case(vec![TypedPlaintext::U8(0), TypedPlaintext::U64(999), TypedPlaintext::U32(32),TypedPlaintext::U128(99887766)], 1)] // test mixed types in batch
     #[case(vec![TypedPlaintext::U8(0), TypedPlaintext::U64(999), TypedPlaintext::U32(32)], 3)] // test mixed types in batch and in parallel
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_decryption_centralized(
         #[case] msgs: Vec<TypedPlaintext>,
@@ -3207,7 +3212,7 @@ pub(crate) mod tests {
     }
 
     #[rstest::rstest]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_reencryption_centralized(#[values(true, false)] secure: bool) {
         reencryption_centralized(
@@ -3223,7 +3228,7 @@ pub(crate) mod tests {
 
     #[cfg(feature = "wasm_tests")]
     #[rstest::rstest]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_reencryption_centralized_and_write_transcript(
         #[values(true, false)] secure: bool,
@@ -3250,7 +3255,7 @@ pub(crate) mod tests {
     // #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))))]
     // #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))))]
     // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])))]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_reencryption_centralized_and_write_transcript(
         #[case] msg: TypedPlaintext,
@@ -3282,7 +3287,7 @@ pub(crate) mod tests {
     #[case(TypedPlaintext::U160(tfhe::integer::U256::from((u128::MAX, u32::MAX as u128))), 1)]
     #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))), 1)]
     #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_reencryption_centralized(
         #[case] msg: TypedPlaintext,
@@ -3494,7 +3499,7 @@ pub(crate) mod tests {
         assert!(kms_server.await.unwrap_err().is_cancelled());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     #[tracing_test::traced_test]
     async fn test_decryption_threshold() {
@@ -3722,7 +3727,7 @@ pub(crate) mod tests {
     // #[case(TypedPlaintext::U256(tfhe::integer::U256::from((u128::MAX, u128::MAX))))]
     // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])))]
     #[ignore]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn default_reencryption_threshold_and_write_transcript(
         #[case] msg: TypedPlaintext,
@@ -3950,7 +3955,7 @@ pub(crate) mod tests {
 
     // Validate bug-fix to ensure that the server fails gracefully when the ciphertext is too large
     #[cfg(feature = "slow_tests")]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_largecipher() {
         let keys = get_default_keys().await;
@@ -4065,7 +4070,7 @@ pub(crate) mod tests {
     #[cfg(feature = "slow_tests")]
     #[rstest::rstest]
     #[case(1)]
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_preproc(#[case] parallelism: usize) {
         assert!(parallelism > 0);
@@ -4203,7 +4208,7 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
     async fn test_dkg() {
         use crate::kms::KeyGenPreprocStatusEnum;

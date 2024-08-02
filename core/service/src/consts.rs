@@ -25,12 +25,13 @@ pub const MINIMUM_SESSIONS_PREPROC: u16 = 2;
 
 pub const PRSS_EPOCH_ID: u128 = 1;
 
+pub const AMOUNT_PARTIES: usize = 4;
+pub const THRESHOLD: usize = 1;
+
 cfg_if::cfg_if! {
     if #[cfg(any(test, feature = "testing"))] {
         use crate::kms::RequestId;
         use lazy_static::lazy_static;
-        pub const AMOUNT_PARTIES: usize = 4;
-        pub const THRESHOLD: usize = 1;
         pub const BASE_PORT: u16 = 50050;
         pub const DEFAULT_URL: &str = "127.0.0.1";
         pub const DEFAULT_PROT: &str = "http";
@@ -50,6 +51,7 @@ cfg_if::cfg_if! {
             pub static ref DEFAULT_DEC_ID: RequestId = RequestId::derive("DEFAULT_DEC_ID").unwrap();
             pub static ref OTHER_CENTRAL_DEFAULT_ID: RequestId =
                 RequestId::derive("OTHER_DEFAULT_ID").unwrap();
+            pub static ref SIGNING_KEY_ID: RequestId = RequestId::derive("SIGNING_KEY_ID").unwrap();
         }
     }
 }

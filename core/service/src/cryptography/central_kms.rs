@@ -33,11 +33,12 @@ use aes_prng::AesRng;
 use alloy_sol_types::SolStruct;
 use anyhow::Context;
 use bincode::{deserialize, serialize};
-use der::zeroize::Zeroize;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
-use distributed_decryption::execution::zk::ceremony::{make_proof_deterministic, PublicParameter};
+#[cfg(feature = "non-wasm")]
+use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
+use distributed_decryption::execution::zk::ceremony::PublicParameter;
 use itertools::Itertools;
 use k256::ecdsa::SigningKey;
 use kms_core_common::{Unversionize, Versioned, Versionize};
@@ -50,14 +51,14 @@ use std::{fmt, panic};
 use tfhe::integer::bigint::U2048;
 use tfhe::integer::U256;
 use tfhe::prelude::FheDecrypt;
+#[cfg(feature = "non-wasm")]
+use tfhe::Seed;
 
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
     ClientKey, ConfigBuilder, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
     FheUint32, FheUint4, FheUint64, FheUint8,
 };
-#[cfg(feature = "non-wasm")]
-use tfhe_zk_pok::curve_api::bls12_446 as curve;
 use tokio::sync::{Mutex, RwLock};
 
 pub(crate) fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> anyhow::Result<T> {
@@ -78,11 +79,12 @@ pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSi
 pub async fn async_generate_fhe_keys(
     sk: &PrivateSigKey,
     params: NoiseFloodParameters,
+    seed: Option<Seed>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     rayon::spawn(move || {
-        let out = generate_fhe_keys(&sk_copy, params);
+        let out = generate_fhe_keys(&sk_copy, params, seed);
         let _ = send.send(out);
     });
     recv.await.map_err(|e| anyhow::anyhow!(e.to_string()))?
@@ -110,9 +112,10 @@ pub async fn async_generate_crs(
 pub fn generate_fhe_keys(
     sk: &PrivateSigKey,
     params: NoiseFloodParameters,
+    seed: Option<Seed>,
 ) -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
     let f = || -> anyhow::Result<(FhePubKeySet, KmsFheKeyHandles)> {
-        let client_key = generate_client_fhe_key(params);
+        let client_key = generate_client_fhe_key(params, seed);
         let server_key = client_key.generate_server_key();
         let public_key = FhePublicKey::new(&client_key);
         let pks = FhePubKeySet {
@@ -132,10 +135,13 @@ pub fn generate_fhe_keys(
 }
 
 #[cfg(feature = "non-wasm")]
-pub fn generate_client_fhe_key(params: NoiseFloodParameters) -> ClientKey {
+pub fn generate_client_fhe_key(params: NoiseFloodParameters, seed: Option<Seed>) -> ClientKey {
     let pbs_params: ClassicPBSParameters = params.ciphertext_parameters;
     let config = ConfigBuilder::with_custom_parameters(pbs_params);
-    ClientKey::generate(config)
+    match seed {
+        Some(seed) => ClientKey::generate_with_seed(config, seed),
+        None => ClientKey::generate(config),
+    }
 }
 
 /// compute the CRS in the centralized KMS.
@@ -145,19 +151,9 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     params: &NoiseFloodParameters,
     mut rng: R,
 ) -> anyhow::Result<(PublicParameter, CrsMetaData)> {
-    use distributed_decryption::execution::zk::ceremony::compute_witness_dim;
-    let witness_dim = compute_witness_dim(&params.ciphertext_parameters)?;
-    tracing::info!("Generating CRS with witness dimension {}.", witness_dim);
-    let pparam = PublicParameter::new(witness_dim);
-
-    let mut tau = curve::Zp::rand(&mut rng);
-    let mut r = curve::Zp::rand(&mut rng);
-    let pproof = make_proof_deterministic(&pparam, tau, 1, r);
-    tau.zeroize();
-    r.zeroize();
-
-    let crs_info = compute_info(sk, &pproof.new_pp)?;
-    Ok((pproof.new_pp, crs_info.into()))
+    let pp = make_centralized_public_parameters(params, &mut rng)?;
+    let crs_info = compute_info(sk, &pp)?;
+    Ok((pp, crs_info.into()))
 }
 
 #[derive(Clone)]
@@ -770,8 +766,7 @@ pub(crate) mod tests {
     use serial_test::serial;
     use std::collections::HashMap;
     use std::{path::Path, sync::Arc};
-    use tfhe::shortint::ClassicPBSParameters;
-    use tfhe::ConfigBuilder;
+    use tfhe::{shortint::ClassicPBSParameters, ConfigBuilder, Seed};
     use tokio::sync::OnceCell;
 
     static ONCE_TEST_KEY: OnceCell<CentralizedTestingKeys> = OnceCell::const_new();
@@ -831,12 +826,14 @@ pub(crate) mod tests {
         }
 
         let mut rng = AesRng::seed_from_u64(100);
+        let seed = Some(Seed(42));
         let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
         let (sig_pk, sig_sk) = gen_sig_keys(&mut rng);
-        let (pub_fhe_keys, key_info) = generate_fhe_keys(&sig_sk, params).unwrap();
+        let (pub_fhe_keys, key_info) = generate_fhe_keys(&sig_sk, params, seed).unwrap();
         let mut key_info_map = HashMap::from([(key_id.to_string().try_into().unwrap(), key_info)]);
 
-        let (other_pub_fhe_keys, other_key_info) = generate_fhe_keys(&sig_sk, params).unwrap();
+        let (other_pub_fhe_keys, other_key_info) =
+            generate_fhe_keys(&sig_sk, params, seed).unwrap();
 
         // Insert a key with another handle to setup a KMS with multiple keys
         key_info_map.insert(other_key_id.to_string().try_into().unwrap(), other_key_info);

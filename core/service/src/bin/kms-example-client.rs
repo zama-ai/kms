@@ -444,9 +444,11 @@ async fn threshold_requests(addresses: Vec<String>, init: bool) -> anyhow::Resul
 #[cfg(feature = "non-wasm")]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use kms_lib::consts::SIGNING_KEY_ID;
+
     init_trace()?;
 
-    ensure_client_keys_exist(None, true).await;
+    ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
 
     let args = KmsArgs::parse();
     match args.mode {

@@ -744,7 +744,7 @@ mod test {
         client::{test_tools, Client, ParsedReencryptionRequest},
         consts::{
             AMOUNT_PARTIES, BASE_PORT, DEFAULT_PROT, DEFAULT_URL, OTHER_CENTRAL_TEST_ID,
-            TEST_CENTRAL_KEY_ID, TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID, THRESHOLD,
+            SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID, TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID, THRESHOLD,
         },
         kms::{
             DecryptionResponsePayload, ReencryptionResponse, ReencryptionResponsePayload, RequestId,
@@ -753,8 +753,10 @@ mod test {
         storage::{FileStorage, StorageType},
         threshold::mock_threshold_kms::setup_mock_kms,
         util::key_setup::{
-            ensure_central_keys_exist, ensure_client_keys_exist,
-            test_tools::{compute_cipher_from_storage, ensure_threshold_keys_exist, purge},
+            ensure_central_keys_exist, ensure_central_server_signing_keys_exist,
+            ensure_client_keys_exist, ensure_threshold_keys_exist,
+            ensure_threshold_server_signing_keys_exist,
+            test_tools::{compute_cipher_from_storage, purge},
         },
     };
     use rand::RngCore;
@@ -775,6 +777,15 @@ mod test {
                 .push(FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap());
         }
 
+        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+        ensure_threshold_server_signing_keys_exist(
+            &mut threshold_pub_storages,
+            &mut threshold_priv_storages,
+            &SIGNING_KEY_ID,
+            true,
+            AMOUNT_PARTIES,
+        )
+        .await;
         ensure_threshold_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
@@ -783,7 +794,6 @@ mod test {
             true,
         )
         .await;
-        ensure_client_keys_exist(None, true).await;
     }
 
     async fn setup_central_keys() {
@@ -791,6 +801,14 @@ mod test {
         let mut central_priv_storage =
             FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
 
+        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+        ensure_central_server_signing_keys_exist(
+            &mut central_pub_storage,
+            &mut central_priv_storage,
+            &SIGNING_KEY_ID,
+            true,
+        )
+        .await;
         ensure_central_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
@@ -801,7 +819,6 @@ mod test {
             false,
         )
         .await;
-        ensure_client_keys_exist(None, true).await;
     }
 
     #[derive(Clone)]

@@ -92,7 +92,7 @@ pub async fn delete_at_request_id<S: Storage>(
 ) -> anyhow::Result<()> {
     let url = storage.compute_url(&request_id.to_string(), data_type)?;
     storage.delete_data(&url).await.map_err(|e| {
-        anyhow_error_and_log(format!(
+        anyhow::anyhow!(format!(
             "Could not delete data with ID {} and type {}: {}",
             request_id, data_type, e
         ))
@@ -386,23 +386,24 @@ impl RamStorage {
 
     // Construct a storage for private keys
     pub async fn from_existing_keys(keys: &SoftwareKmsKeys) -> anyhow::Result<Self> {
-        let mut res = Self::new(StorageType::PRIV);
+        let mut ram_storage = Self::new(StorageType::PRIV);
         for (cur_req_id, cur_keys) in &keys.key_info {
             store_at_request_id(
-                &mut res,
+                &mut ram_storage,
                 cur_req_id,
                 &cur_keys.versionize(),
                 &PrivDataType::FheKeyInfo.to_string(),
             )
             .await?;
         }
-        let sk_handle = compute_handle(&keys.sig_sk)?;
-        res.store_data(
-            &keys.sig_sk.versionize(),
-            &res.compute_url(&sk_handle, &PrivDataType::SigningKey.to_string())?,
-        )
-        .await?;
-        Ok(res)
+        let sk_handle = compute_handle(&keys.sig_pk)?;
+        ram_storage
+            .store_data(
+                &keys.sig_sk.versionize(),
+                &ram_storage.compute_url(&sk_handle, &PrivDataType::SigningKey.to_string())?,
+            )
+            .await?;
+        Ok(ram_storage)
     }
 }
 

@@ -1,28 +1,13 @@
 #[cfg(test)]
 use crate::consts::{KEY_PATH_PREFIX, TMP_PATH_PREFIX};
 use crate::kms::{FheType, RequestId};
+use crate::rpc::rpc_types::Plaintext;
 use crate::rpc::rpc_types::PubDataType;
-use crate::rpc::rpc_types::{Plaintext, PrivDataType};
-use crate::storage::Storage;
 use crate::storage::StorageReader;
-use crate::storage::{store_at_request_id, FileStorage, StorageType};
-use crate::threshold::threshold_kms::compute_all_info;
-use crate::threshold::threshold_kms::ThresholdFheKeys;
-use crate::util::file_handling::read_as_json;
+use crate::storage::{FileStorage, StorageType};
 use crate::util::key_setup::FhePublicKey;
-use crate::{
-    consts::{AMOUNT_PARTIES, THRESHOLD},
-    storage::delete_all_at_request_id,
-};
-use aes_prng::AesRng;
-use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
-use distributed_decryption::execution::tfhe_internals::test_feature::{
-    gen_key_set, keygen_all_party_shares,
-};
+use crate::{consts::AMOUNT_PARTIES, storage::delete_all_at_request_id};
 use distributed_decryption::execution::tfhe_internals::utils::expanded_encrypt;
-use itertools::Itertools;
-use kms_core_common::Versionize;
-use rand::SeedableRng;
 use serde::Serialize;
 use std::path::Path;
 use tfhe::core_crypto::prelude::Numeric;
@@ -207,125 +192,39 @@ pub async fn purge(pub_path: Option<&Path>, priv_path: Option<&Path>, id: &str) 
 }
 
 #[cfg(test)]
-pub async fn ensure_dir_exist() {
-    tokio::fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();
-    tokio::fs::create_dir_all(KEY_PATH_PREFIX).await.unwrap();
-}
-
-/// NOTE: this is insecure!
-pub async fn ensure_threshold_keys_exist<S>(
-    pub_storages: &mut [S],
-    priv_storages: &mut [S],
-    param_path: &str,
-    key_id: &RequestId,
-    deterministic: bool,
-) where
-    S: Storage,
-{
-    // TODO generalize setup for multiple keys
-    let mut rng = if deterministic {
-        AesRng::seed_from_u64(AMOUNT_PARTIES as u64)
-    } else {
-        AesRng::from_entropy()
-    };
-    let signing_keys = super::ensure_threshold_server_signing_keys_exist(
-        pub_storages,
-        priv_storages,
-        deterministic,
-        AMOUNT_PARTIES,
-    )
-    .await;
-    if pub_storages[0]
-        .data_exists(
-            &pub_storages[0]
-                .compute_url(&key_id.to_string(), &PubDataType::PublicKey.to_string())
-                .unwrap(),
-        )
-        .await
-        .unwrap()
-    {
-        return;
-    }
-
-    let params: NoiseFloodParameters = match read_as_json(param_path).await {
-        Ok(x) => x,
-        Err(e) => panic!("Error opening params at {}: {}", param_path, e),
-    };
-
-    let key_set = gen_key_set(params, &mut rng);
-    let key_shares = keygen_all_party_shares(
-        key_set.get_raw_lwe_client_key(),
-        key_set.get_raw_glwe_client_key(),
-        key_set.sns_secret_key.key,
-        params.ciphertext_parameters,
-        &mut rng,
-        AMOUNT_PARTIES,
-        THRESHOLD,
-    )
-    .unwrap();
-    let sns_key = key_set.public_keys.sns_key.to_owned().unwrap();
-    for i in 1..=AMOUNT_PARTIES {
-        println!("Generating key for party {i}");
-        // Get first signing key
-        let sk = signing_keys[i - 1]
-            .values()
-            .collect_vec()
-            .first()
-            .unwrap()
-            .to_owned()
-            .to_owned();
-        let info = compute_all_info(&sk, &key_set.public_keys).unwrap();
-        let threshold_fhe_keys = ThresholdFheKeys {
-            private_keys: key_shares[i - 1].to_owned(),
-            sns_key: sns_key.clone(),
-            pk_meta_data: info,
-        };
-        store_at_request_id(
-            &mut pub_storages[i - 1],
-            key_id,
-            &key_set.public_keys.public_key,
-            &PubDataType::PublicKey.to_string(),
-        )
-        .await
-        .unwrap();
-        store_at_request_id(
-            &mut pub_storages[i - 1],
-            key_id,
-            &key_set.public_keys.server_key,
-            &PubDataType::ServerKey.to_string(),
-        )
-        .await
-        .unwrap();
-        store_at_request_id(
-            &mut priv_storages[i - 1],
-            key_id,
-            &threshold_fhe_keys.versionize(),
-            &PrivDataType::FheKeyInfo.to_string(),
-        )
-        .await
-        .unwrap();
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{FileStorage, StorageType};
-    use crate::util::key_setup::{
-        ensure_central_crs_store_exists, ensure_central_keys_exist, ensure_client_keys_exist,
-    };
     use crate::{
         consts::{
-            AMOUNT_PARTIES, OTHER_CENTRAL_TEST_ID, TEST_CENTRAL_KEY_ID, TEST_CRS_ID,
-            TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID,
+            AMOUNT_PARTIES, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID,
+            TEST_CRS_ID, TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID,
         },
         util::key_setup::ensure_central_server_signing_keys_exist,
     };
+    use crate::{
+        rpc::rpc_types::PrivDataType,
+        util::key_setup::{
+            ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
+        },
+    };
+    use crate::{
+        storage::{FileStorage, StorageType},
+        util::key_setup::{
+            ensure_threshold_crs_exists, ensure_threshold_keys_exist,
+            ensure_threshold_server_signing_keys_exist,
+        },
+    };
+    use itertools::Itertools;
     use tokio::runtime::Runtime;
+
+    pub async fn ensure_dir_exist() {
+        tokio::fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();
+        tokio::fs::create_dir_all(KEY_PATH_PREFIX).await.unwrap();
+    }
 
     async fn testing_material() {
         ensure_dir_exist().await;
-        ensure_client_keys_exist(None, true).await;
+        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
         let mut central_pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
         let mut central_priv_storage =
             FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
@@ -340,6 +239,15 @@ mod tests {
                 .push(FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap());
         }
 
+        ensure_dir_exist().await;
+        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+        ensure_central_server_signing_keys_exist(
+            &mut central_pub_storage,
+            &mut central_priv_storage,
+            &SIGNING_KEY_ID,
+            true,
+        )
+        .await;
         ensure_central_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
@@ -350,7 +258,7 @@ mod tests {
             false,
         )
         .await;
-        ensure_central_crs_store_exists(
+        ensure_central_crs_exists(
             &mut central_pub_storage,
             &mut central_priv_storage,
             TEST_PARAM_PATH,
@@ -358,11 +266,27 @@ mod tests {
             true,
         )
         .await;
+        ensure_threshold_server_signing_keys_exist(
+            &mut threshold_pub_storages,
+            &mut threshold_priv_storages,
+            &SIGNING_KEY_ID,
+            true,
+            AMOUNT_PARTIES,
+        )
+        .await;
         ensure_threshold_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
             TEST_PARAM_PATH,
             &TEST_THRESHOLD_KEY_ID,
+            true,
+        )
+        .await;
+        ensure_threshold_crs_exists(
+            &mut threshold_pub_storages,
+            &mut threshold_priv_storages,
+            TEST_PARAM_PATH,
+            &TEST_CRS_ID,
             true,
         )
         .await;
@@ -395,7 +319,14 @@ mod tests {
                 .push(FileStorage::new_threshold(None, StorageType::PRIV, i).unwrap());
         }
 
-        ensure_client_keys_exist(None, true).await;
+        ensure_client_keys_exist(None, &SIGNING_KEY_ID, true).await;
+        ensure_central_server_signing_keys_exist(
+            &mut central_pub_storage,
+            &mut central_priv_storage,
+            &SIGNING_KEY_ID,
+            true,
+        )
+        .await;
         ensure_central_keys_exist(
             &mut central_pub_storage,
             &mut central_priv_storage,
@@ -406,7 +337,7 @@ mod tests {
             false,
         )
         .await;
-        ensure_central_crs_store_exists(
+        ensure_central_crs_exists(
             &mut central_pub_storage,
             &mut central_priv_storage,
             DEFAULT_PARAM_PATH,
@@ -414,11 +345,27 @@ mod tests {
             true,
         )
         .await;
+        ensure_threshold_server_signing_keys_exist(
+            &mut threshold_pub_storages,
+            &mut threshold_priv_storages,
+            &SIGNING_KEY_ID,
+            true,
+            AMOUNT_PARTIES,
+        )
+        .await;
         ensure_threshold_keys_exist(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
             DEFAULT_PARAM_PATH,
             &DEFAULT_THRESHOLD_KEY_ID,
+            true,
+        )
+        .await;
+        ensure_threshold_crs_exists(
+            &mut threshold_pub_storages,
+            &mut threshold_priv_storages,
+            DEFAULT_PARAM_PATH,
+            &DEFAULT_CRS_ID,
             true,
         )
         .await;
@@ -448,6 +395,7 @@ mod tests {
             ensure_central_server_signing_keys_exist(
                 &mut central_pub_storage,
                 &mut central_priv_storage,
+                &SIGNING_KEY_ID,
                 true,
             )
             .await

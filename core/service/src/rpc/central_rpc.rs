@@ -148,7 +148,8 @@ impl<
                         return;
                     }
                 }
-                let (fhe_key_set, key_info) = match async_generate_fhe_keys(&sk, params).await {
+                let (fhe_key_set, key_info) = match async_generate_fhe_keys(&sk, params, None).await
+                {
                     Ok((fhe_key_set, key_info)) => (fhe_key_set, key_info),
                     Err(_e) => {
                         let mut guarded_meta_store = meta_store.write().await;

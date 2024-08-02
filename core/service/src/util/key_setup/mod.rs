@@ -4,26 +4,69 @@ use crate::cryptography::central_kms::{
     compute_handle, gen_centralized_crs, gen_sig_keys, generate_fhe_keys,
 };
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
+use crate::cryptography::internal_crypto_types::PrivateSigKeyVersioned;
 use crate::kms::RequestId;
 use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::PubDataType;
 use crate::storage::read_all_data;
 use crate::storage::Storage;
+use crate::storage::StorageReader;
 use crate::storage::{store_at_request_id, FileStorage, StorageType};
+use crate::threshold::threshold_kms::{compute_all_info, ThresholdFheKeys};
 use crate::util::file_handling::read_as_json;
-use crate::{client::ClientDataType, cryptography::internal_crypto_types::PrivateSigKeyVersioned};
+use crate::{
+    client::ClientDataType,
+    consts::{AMOUNT_PARTIES, THRESHOLD},
+};
+use crate::{cryptography::central_kms::compute_info, rpc::rpc_types::CrsMetaData};
 use aes_prng::AesRng;
-use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
-use itertools::Itertools;
+use distributed_decryption::execution::{
+    tfhe_internals::{
+        parameters::NoiseFloodParameters,
+        test_feature::{gen_key_set, keygen_all_party_shares},
+    },
+    zk::ceremony::make_centralized_public_parameters,
+};
 use kms_core_common::{Unversionize, Versionize};
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;
+use tfhe::Seed;
 
 pub type FhePublicKey = tfhe::CompactPublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
 
-pub async fn ensure_client_keys_exist(optional_path: Option<&Path>, deterministic: bool) {
+fn get_rng(deterministic: bool, seed: Option<u64>) -> AesRng {
+    if deterministic {
+        AesRng::seed_from_u64(seed.map_or(42, |seed| seed))
+    } else {
+        AesRng::from_entropy()
+    }
+}
+
+async fn get_signing_key<S: Storage>(priv_storage: &S) -> PrivateSigKey {
+    let sk_map: HashMap<RequestId, PrivateSigKeyVersioned> =
+        read_all_data(priv_storage, &PrivDataType::SigningKey.to_string())
+            .await
+            .unwrap();
+    if sk_map.values().len() != 1 {
+        panic!(
+            "Server signing key map should contain exactly one entry, but contains {} entries for storage \"{}\"",
+            sk_map.values().len(), priv_storage.info()
+        );
+    }
+    PrivateSigKey::unversionize(sk_map.values().last().unwrap().to_owned()).unwrap()
+}
+
+/// Generates a new client signing and verification keys and stores them in the given storage if they do not already exist.
+///
+/// Returns true if the keys were generated and false if they already existed and hence were not generated.
+/// This is only used for testing and debug purposes through the [Client].
+pub async fn ensure_client_keys_exist(
+    optional_path: Option<&Path>,
+    req_id: &RequestId,
+    deterministic: bool,
+) -> bool {
     let mut client_storage =
         FileStorage::new_centralized(optional_path, StorageType::CLIENT).unwrap();
     let temp: HashMap<RequestId, PrivateSigKeyVersioned> =
@@ -32,39 +75,50 @@ pub async fn ensure_client_keys_exist(optional_path: Option<&Path>, deterministi
             .unwrap();
     if !temp.is_empty() {
         // If signing keys already exit, then do nothing
-        return;
+        tracing::warn!(
+            "Client signing keys already exist at {}, skipping generation",
+            client_storage.root_dir().to_str().unwrap()
+        );
+        return false;
     }
-    let mut rng = if deterministic {
-        AesRng::seed_from_u64(42)
-    } else {
-        AesRng::from_entropy()
-    };
+    let mut rng = get_rng(deterministic, None);
     let (client_pk, client_sk) = gen_sig_keys(&mut rng);
-    // TODO is this how we want to compute the handles? Do we instead want to compute them from a static string
-    // since we only ever expect there to be one?
     store_at_request_id(
         &mut client_storage,
-        &compute_handle(&client_sk).unwrap().try_into().unwrap(),
+        req_id,
         &client_sk.versionize(),
         &ClientDataType::SigningKey.to_string(),
     )
     .await
     .unwrap();
+    tracing::info!(
+        "Successfully stored private client key under the handle {} with storage {}",
+        req_id,
+        client_storage.info()
+    );
     store_at_request_id(
         &mut client_storage,
-        &compute_handle(&client_pk).unwrap().try_into().unwrap(),
+        req_id,
         &client_pk.versionize(),
         &ClientDataType::VerfKey.to_string(),
     )
     .await
     .unwrap();
+    tracing::info!(
+        "Successfully stored public client key under the handle {} with storage {}",
+        compute_handle(&client_pk).unwrap(),
+        client_storage.info()
+    );
+    true
 }
 
-/// Ensure that the central server signing keys exist.
-/// If they already exist, then return false, otherwise create them and return true.
+/// Ensure that the central server signing and verification keys exist.
+///
+/// Returns true if the keys were generated and false if they already existed and hence were not generated.
 pub async fn ensure_central_server_signing_keys_exist<S>(
     pub_storage: &mut S,
     priv_storage: &mut S,
+    req_id: &RequestId,
     deterministic: bool,
 ) -> bool
 where
@@ -76,112 +130,50 @@ where
             .unwrap();
     if !temp.is_empty() {
         // If signing keys already exit, then do nothing
+        tracing::warn!(
+            "Server signing keys already exist for private storage \"{}\", skipping generation",
+            priv_storage.info()
+        );
         return false;
     }
-    let mut rng = if deterministic {
-        AesRng::seed_from_u64(1337)
-    } else {
-        AesRng::from_entropy()
-    };
+    let mut rng = get_rng(deterministic, Some(0));
     let (pk, sk) = gen_sig_keys(&mut rng);
     store_at_request_id(
         pub_storage,
-        &compute_handle(&sk).unwrap().try_into().unwrap(),
+        req_id,
         &pk.versionize(),
         &PubDataType::VerfKey.to_string(),
     )
     .await
     .unwrap();
+    tracing::info!(
+        "Successfully stored public server signing key under the handle {} with storage \"{}\"",
+        req_id,
+        pub_storage.info()
+    );
     store_at_request_id(
         priv_storage,
-        &compute_handle(&sk).unwrap().try_into().unwrap(),
+        req_id,
         &sk.versionize(),
         &PrivDataType::SigningKey.to_string(),
     )
     .await
     .unwrap();
+    tracing::info!(
+        "Successfully stored public server signing key under the handle {} with storage \"{}\"",
+        req_id,
+        priv_storage.info()
+    );
     true
 }
 
-pub async fn ensure_threshold_server_signing_keys_exist<S>(
-    pub_storages: &mut [S],
-    priv_storages: &mut [S],
-    deterministic: bool,
-    amount: usize,
-) -> Vec<HashMap<RequestId, PrivateSigKey>>
-where
-    S: Storage,
-{
-    let mut signing_keys = Vec::with_capacity(amount);
-    for i in 1..=amount {
-        let temp: HashMap<RequestId, PrivateSigKeyVersioned> =
-            read_all_data(&priv_storages[i - 1], &PrivDataType::SigningKey.to_string())
-                .await
-                .unwrap();
-        if !temp.is_empty() {
-            // If signing keys already exit, then do nothing
-            let mut temp_map = HashMap::new();
-            for (id, versioned_handles) in temp {
-                temp_map.insert(id, PrivateSigKey::unversionize(versioned_handles).unwrap());
-            }
-            signing_keys.push(temp_map);
-            continue;
-        }
-        let mut rng = if deterministic {
-            AesRng::seed_from_u64(i as u64)
-        } else {
-            AesRng::from_entropy()
-        };
-        let (pk, sk) = gen_sig_keys(&mut rng);
-        let handle = compute_handle(&sk).unwrap().try_into().unwrap();
-        store_at_request_id(
-            &mut pub_storages[i - 1],
-            &handle,
-            &pk.versionize(),
-            &PubDataType::VerfKey.to_string(),
-        )
-        .await
-        .unwrap();
-        store_at_request_id(
-            &mut priv_storages[i - 1],
-            &handle,
-            &sk.versionize(),
-            &PrivDataType::SigningKey.to_string(),
-        )
-        .await
-        .unwrap();
-        signing_keys.push(HashMap::from([(handle, sk)]));
-    }
-    signing_keys
-}
-
-/// Ensure that the central server crs exist.
-/// If they already exist, then return false, otherwise create them and return true.
-pub async fn ensure_central_crs_store_exists<S>(
+/// Generates a CRS and stores it in the given storage if it does not already exist.
+/// This involves both generating the public CRS and storing the private CRS.
+///
+/// Returns true if the keys were generated and false if they already existed and hence were not generated.
+pub async fn ensure_central_crs_exists<S>(
     pub_storage: &mut S,
     priv_storage: &mut S,
-    param_path: &str,
-    crs_handle: &RequestId,
-    deterministic: bool,
-) -> bool
-where
-    S: Storage,
-{
-    ensure_crs_store_exists(
-        priv_storage,
-        pub_storage,
-        param_path,
-        crs_handle,
-        deterministic,
-    )
-    .await
-}
-
-/// This is the helper function for creating CRS stores,
-/// it can be used for both the centralized and threshold setting (in an insecure way).
-async fn ensure_crs_store_exists<S>(
-    priv_storage: &mut S,
-    pub_storage: &mut S,
     param_path: &str,
     crs_handle: &RequestId,
     deterministic: bool,
@@ -197,34 +189,24 @@ where
         )
         .await
         .unwrap()
+        && priv_storage
+            .data_exists(
+                &priv_storage
+                    .compute_url(&crs_handle.to_string(), &PrivDataType::CrsInfo.to_string())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
     {
+        tracing::warn!(
+            "CRS already exist for private storage \"{}\" and public storage \"{}\" for ID {}, skipping generation",
+            priv_storage.info(), pub_storage.info(), crs_handle
+        );
         return false;
     }
-    println!("Generating new CRS store",);
-    let sk_map: HashMap<RequestId, PrivateSigKeyVersioned> =
-        read_all_data(priv_storage, &PrivDataType::SigningKey.to_string())
-            .await
-            .unwrap();
-    if sk_map.values().cloned().collect_vec().len() != 1 {
-        panic!("Server signing key map should only contain one entry");
-    }
-    let sk = PrivateSigKey::unversionize(
-        sk_map
-            .values()
-            .cloned()
-            .collect_vec()
-            .first()
-            .unwrap()
-            .to_owned(),
-    )
-    .unwrap();
-
+    let sk = get_signing_key(priv_storage).await;
     let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
-    let mut rng = if deterministic {
-        AesRng::seed_from_u64(42)
-    } else {
-        AesRng::from_entropy()
-    };
+    let mut rng = get_rng(deterministic, Some(0));
     let (pp, crs_info) = gen_centralized_crs(&sk, &params, &mut rng).unwrap();
 
     store_at_request_id(
@@ -235,6 +217,11 @@ where
     )
     .await
     .unwrap();
+    tracing::info!(
+        "Successfully stored private CRS data under the handle {} with storage {}",
+        crs_handle,
+        priv_storage.info()
+    );
     store_at_request_id(
         pub_storage,
         crs_handle,
@@ -243,11 +230,19 @@ where
     )
     .await
     .unwrap();
+    tracing::info!(
+        "Successfully stored public CRS data under the handle {} with storage {}",
+        crs_handle,
+        pub_storage.info()
+    );
     true
 }
 
 /// Ensure that the central server fhe keys exist.
-/// If they already exist, then return false, otherwise create them and return true.
+/// This involves generating and storing both the public and private keys and the private meta information.
+/// More specifically this method does so for two distinct sets of keys under [key_id] and [other_key_id].
+///
+/// Returns true if the keys were generated and false if they already existed and hence were not generated.
 pub async fn ensure_central_keys_exist<S>(
     pub_storage: &mut S,
     priv_storage: &mut S,
@@ -260,7 +255,6 @@ pub async fn ensure_central_keys_exist<S>(
 where
     S: Storage,
 {
-    ensure_central_server_signing_keys_exist(pub_storage, priv_storage, deterministic).await;
     if pub_storage
         .data_exists(
             &pub_storage
@@ -269,25 +263,31 @@ where
         )
         .await
         .unwrap()
+        && priv_storage
+            .data_exists(
+                &priv_storage
+                    .compute_url(&key_id.to_string(), &PrivDataType::FheKeyInfo.to_string())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
     {
+        tracing::warn!(
+            "FHE keys already exist for private storage \"{}\" and public storage \"{}\" with ID {}, skipping generation",
+            priv_storage.info(), pub_storage.info(), key_id
+        );
         return false;
     }
-    println!("Generating new centralized multiple keys. The default key has handle {key_id}");
-    let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
-    let sk_map: HashMap<RequestId, PrivateSigKeyVersioned> =
-        read_all_data(priv_storage, &PrivDataType::SigningKey.to_string())
-            .await
-            .unwrap();
-    if sk_map.values().len() != 1 {
-        panic!(
-            "Client signing key map must contain exactly one entry, but contains {}",
-            sk_map.values().len()
-        );
-    }
-    let sk = PrivateSigKey::unversionize(sk_map.values().last().unwrap().to_owned()).unwrap();
 
-    let (fhe_pub_keys_1, key_info_1) = generate_fhe_keys(&sk, params).unwrap();
-    let (fhe_pub_keys_2, key_info_2) = generate_fhe_keys(&sk, params).unwrap();
+    let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
+    let sk = get_signing_key(priv_storage).await;
+    let seed = match deterministic {
+        true => Some(Seed(42)),
+        false => None,
+    };
+
+    let (fhe_pub_keys_1, key_info_1) = generate_fhe_keys(&sk, params, seed).unwrap();
+    let (fhe_pub_keys_2, key_info_2) = generate_fhe_keys(&sk, params, seed).unwrap();
     let priv_fhe_map = HashMap::from([
         (key_id.clone(), key_info_1),
         (other_key_id.clone(), key_info_2),
@@ -305,7 +305,11 @@ where
         )
         .await
         .unwrap();
-
+        tracing::info!(
+            "Successfully stored private key data under the handle {} with storage {}",
+            req_id,
+            priv_storage.info()
+        );
         // when the flag [write_privkey] is set, store the private key separately
         if write_privkey {
             store_at_request_id(
@@ -316,6 +320,11 @@ where
             )
             .await
             .unwrap();
+            tracing::info!(
+                "Successfully stored individual private key under the handle {} with storage {}",
+                req_id,
+                priv_storage.info()
+            );
         }
     }
     for (req_id, cur_keys) in &pub_fhe_map {
@@ -327,6 +336,11 @@ where
         )
         .await
         .unwrap();
+        tracing::info!(
+            "Successfully stored public key under the handle {} with storage {}",
+            req_id,
+            pub_storage.info()
+        );
         store_at_request_id(
             pub_storage,
             req_id,
@@ -335,6 +349,270 @@ where
         )
         .await
         .unwrap();
+        tracing::info!(
+            "Successfully stored public server key under the handle {} with storage {}",
+            req_id,
+            pub_storage.info()
+        );
+    }
+    true
+}
+
+/// Generates signing and verification keys for _each_ of the servers
+/// and stores them in the storages if they don't already exist under [request_id].
+///
+/// Returns true if the keys were generated and false if they already existed and hence were not generated.
+pub async fn ensure_threshold_server_signing_keys_exist<S>(
+    pub_storages: &mut [S],
+    priv_storages: &mut [S],
+    request_id: &RequestId,
+    deterministic: bool,
+    amount: usize,
+) -> bool
+where
+    S: Storage,
+{
+    for i in 1..=amount {
+        let mut rng = get_rng(deterministic, Some(i as u64));
+        let temp: HashMap<RequestId, PrivateSigKeyVersioned> =
+            read_all_data(&priv_storages[i - 1], &PrivDataType::SigningKey.to_string())
+                .await
+                .unwrap();
+        if !temp.is_empty() {
+            // If signing keys already exit, then do nothing
+            tracing::warn!(
+                "Threshold server signing keys already exist for private storage \"{}\", skipping generation",
+                priv_storages[i-1].info()
+            );
+            return false;
+        }
+        let (pk, sk) = gen_sig_keys(&mut rng);
+        store_at_request_id(
+            &mut pub_storages[i - 1],
+            request_id,
+            &pk.versionize(),
+            &PubDataType::VerfKey.to_string(),
+        )
+        .await
+        .unwrap();
+        tracing::info!(
+            "Successfully stored public threshold server signing key under the handle {} with storage {}",
+            request_id,
+            pub_storages[i - 1].info()
+        );
+        store_at_request_id(
+            &mut priv_storages[i - 1],
+            request_id,
+            &sk.versionize(),
+            &PrivDataType::SigningKey.to_string(),
+        )
+        .await
+        .unwrap();
+        tracing::info!(
+            "Successfully stored private threshold server signing key under the handle {} with storage {}",
+            request_id,
+            priv_storages[i - 1].info()
+        );
+    }
+    true
+}
+
+/// Generates threshold key shares, meta data and public keys for an FHE keyset
+/// and stores them in the storages if they don't already exist under [key_id].
+///
+/// Returns true if the keys were generated and false if they already existed and hence were not generated.
+pub async fn ensure_threshold_keys_exist<S>(
+    pub_storages: &mut [S],
+    priv_storages: &mut [S],
+    param_path: &str,
+    key_id: &RequestId,
+    deterministic: bool,
+) -> bool
+where
+    S: Storage,
+{
+    // For simplicity just test if the first party has the keys
+    if pub_storages[0]
+        .data_exists(
+            &pub_storages[0]
+                .compute_url(&key_id.to_string(), &PubDataType::PublicKey.to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        && priv_storages[0]
+            .data_exists(
+                &priv_storages[0]
+                    .compute_url(
+                        &key_id.to_string(),
+                        &PrivDataType::FhePrivateKey.to_string(),
+                    )
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    {
+        tracing::warn!(
+            "Threshold FHE keys already exist for private storage \"{}\" and public storage \"{}\" with ID {}, skipping generation",
+            priv_storages[0].info(), pub_storages[0].info(), key_id
+        );
+        return false;
+    }
+
+    let mut rng = get_rng(deterministic, Some(AMOUNT_PARTIES as u64));
+
+    let params: NoiseFloodParameters = match read_as_json(param_path).await {
+        Ok(x) => x,
+        Err(e) => panic!("Error opening params at {}: {}", param_path, e),
+    };
+    let mut signing_keys = Vec::new();
+    for cur_storage in priv_storages.iter() {
+        signing_keys.push(get_signing_key(cur_storage).await);
+    }
+
+    let key_set = gen_key_set(params, &mut rng);
+    let key_shares = keygen_all_party_shares(
+        key_set.get_raw_lwe_client_key(),
+        key_set.get_raw_glwe_client_key(),
+        key_set.sns_secret_key.key,
+        params.ciphertext_parameters,
+        &mut rng,
+        AMOUNT_PARTIES,
+        THRESHOLD,
+    )
+    .unwrap();
+    let sns_key = key_set.public_keys.sns_key.to_owned().unwrap();
+    for i in 1..=AMOUNT_PARTIES {
+        // Get first signing key
+        let sk = &signing_keys[i - 1];
+        let info = compute_all_info(sk, &key_set.public_keys).unwrap();
+        let threshold_fhe_keys = ThresholdFheKeys {
+            private_keys: key_shares[i - 1].to_owned(),
+            sns_key: sns_key.clone(),
+            pk_meta_data: info,
+        };
+        store_at_request_id(
+            &mut pub_storages[i - 1],
+            key_id,
+            &key_set.public_keys.public_key,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .unwrap();
+        tracing::info!(
+            "Successfully stored public threshold key data under the handle {} with storage {}",
+            key_id,
+            pub_storages[i - 1].info()
+        );
+        store_at_request_id(
+            &mut pub_storages[i - 1],
+            key_id,
+            &key_set.public_keys.server_key,
+            &PubDataType::ServerKey.to_string(),
+        )
+        .await
+        .unwrap();
+        tracing::info!(
+            "Successfully stored public threshold server key data under the handle {} with storage {}",
+            key_id,
+            pub_storages[i-1].info()
+        );
+        store_at_request_id(
+            &mut priv_storages[i - 1],
+            key_id,
+            &threshold_fhe_keys.versionize(),
+            &PrivDataType::FheKeyInfo.to_string(),
+        )
+        .await
+        .unwrap();
+        tracing::info!(
+            "Successfully stored private threshold key data under the handle {} with storage {}",
+            key_id,
+            priv_storages[i - 1].info()
+        );
+    }
+    true
+}
+
+/// Generates a public CRS along with private metedata (containing the signature on the public CRS)
+/// and stores the information in the storage if CRS does not already exist for [crs_handle].
+///
+/// Returns true if the keys were generated and false if they already existed and hence were not generated.
+pub async fn ensure_threshold_crs_exists<S>(
+    pub_storages: &mut [S],
+    priv_storages: &mut [S],
+    param_path: &str,
+    crs_handle: &RequestId,
+    deterministic: bool,
+) -> bool
+where
+    S: Storage,
+{
+    if pub_storages[0]
+        .data_exists(
+            &pub_storages[0]
+                .compute_url(&crs_handle.to_string(), &PubDataType::CRS.to_string())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        && priv_storages[0]
+            .data_exists(
+                &priv_storages[0]
+                    .compute_url(&crs_handle.to_string(), &PrivDataType::CrsInfo.to_string())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    {
+        tracing::warn!(
+            "Threshold CRS already exist for private storage \"{}\" and public storage \"{}\" for ID {}, skipping generation",
+            priv_storages[0].info(), pub_storages[0].info(), crs_handle
+        );
+        return false;
+    }
+    let mut signing_keys = Vec::new();
+    for cur_storage in priv_storages.iter() {
+        signing_keys.push(get_signing_key(cur_storage).await);
+    }
+
+    let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
+    let mut rng = get_rng(deterministic, Some(AMOUNT_PARTIES as u64));
+
+    let pp = make_centralized_public_parameters(&params, &mut rng).unwrap();
+
+    for (cur_pub, (cur_priv, cur_sk)) in pub_storages
+        .iter_mut()
+        .zip(priv_storages.iter_mut().zip(signing_keys.iter()))
+    {
+        let crs_info: CrsMetaData = compute_info(cur_sk, &pp).unwrap().into();
+
+        store_at_request_id(
+            cur_priv,
+            crs_handle,
+            &crs_info.versionize(),
+            &PrivDataType::CrsInfo.to_string(),
+        )
+        .await
+        .unwrap();
+        println!(
+            "Successfully stored private threshold CRS data under the handle {} with storage {}",
+            crs_handle,
+            cur_priv.info()
+        );
+        store_at_request_id(
+            cur_pub,
+            crs_handle,
+            &pp.versionize(),
+            &PubDataType::CRS.to_string(),
+        )
+        .await
+        .unwrap();
+        println!(
+            "Successfully stored public threshold CRS data under the handle {} with storage {}",
+            crs_handle,
+            cur_pub.info()
+        );
     }
     true
 }

@@ -312,8 +312,66 @@ mod kms_server_binary_test {
         run_subcommand_no_args("config/default_1.toml", "threshold");
     }
 
-    // NOTE: this test is ignored because it won't run on a non-nitro environment
-    // find another way to test it, e.g., mock the missing devices like `/dev/nsm`
+    #[test]
+    #[serial_test::serial]
+    fn central_signing_keys_overwrite() {
+        let output = Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("centralized")
+            .arg("--param-path")
+            .arg("parameters/small_test_params.json")
+            .arg("--cmd=signing-keys")
+            .arg("--overwrite")
+            .output()
+            .unwrap();
+        let log = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success());
+        assert!(log.contains("Deleting VerfKey under request ID"));
+        assert!(log.contains("Deleting SigningKey under request ID "));
+        assert!(log.contains("Successfully stored public server signing key under the handle"));
+
+        let new_output = Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("centralized")
+            .arg("--param-path")
+            .arg("parameters/small_test_params.json")
+            .arg("--cmd=signing-keys")
+            .output()
+            .unwrap();
+        assert!(new_output.status.success());
+        let new_log = String::from_utf8_lossy(&new_output.stdout);
+        assert!(new_log.contains("Signing keys already exist, skipping generation"));
+    }
+
+    #[cfg(feature = "s3_tests")]
+    #[test]
+    #[serial_test::serial]
+    fn central_s3() {
+        use kms_lib::util::aws::{AWS_REGION, BUCKET_NAME};
+
+        let s3_url = format!("s3://{}/central_s3/", BUCKET_NAME);
+        let file_url = "file://temp/keys/";
+        // Test the following command:
+        // cargo run --features testing  --bin kms-gen-keys centralized --param-path parameters/small_test_params.json --aws-region eu-north-1 --pub-url=s3://jot2re-kms-key-test/central_s3/ --priv-url=file://temp/keys/ --cmd=signing-keys --overwrite --deterministic
+        let output = Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("centralized")
+            .arg("--param-path")
+            .arg("parameters/small_test_params.json")
+            .arg(format!("--aws-region={}", AWS_REGION))
+            .arg(format!("--pub-url={}", s3_url))
+            .arg(format!("--priv-url={}", file_url))
+            .arg("--cmd=signing-keys")
+            .arg("--overwrite")
+            .arg("--deterministic")
+            .output()
+            .unwrap();
+        let log = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success());
+        assert!(log.contains("Successfully stored public server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417a with storage \"S3 storage with bucket"));
+        assert!(log.contains("Successfully stored public server signing key under the handle e164d9de0bec6656928726433cc56bef6ee8417a with storage \"file storage with"));
+    }
+
     #[test]
     #[ignore]
     #[serial_test::serial]

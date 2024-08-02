@@ -104,15 +104,13 @@ async fn main() -> Result<(), anyhow::Error> {
             let pub_storage = match config.public_storage_url()? {
                 Some(url) => match url.scheme() {
                     "s3" => StorageProxy::S3(
-                        S3Storage::new(
+                        S3Storage::new_threshold(
                             config.aws_region.clone().unwrap(),
                             config.aws_s3_proxy.clone(),
                             url.host_str().unwrap().to_string(),
-                            S3Storage::threshold_prefix(
-                                Some(url.path().trim_start_matches('/').to_string()),
-                                StorageType::PUB,
-                                config.rest.my_id,
-                            ),
+                            Some(url.path().to_string()),
+                            StorageType::PUB,
+                            config.rest.my_id,
                         )
                         .await,
                     ),
@@ -131,16 +129,14 @@ async fn main() -> Result<(), anyhow::Error> {
             let priv_storage = match config.private_storage_url()? {
                 Some(url) => match url.scheme() {
                     "s3" => StorageProxy::EnclaveS3(
-                        EnclaveS3Storage::new(
+                        EnclaveS3Storage::new_threshold(
                             config.aws_region.clone().unwrap(),
                             config.aws_s3_proxy.clone().unwrap(),
                             config.aws_kms_proxy.clone().unwrap(),
                             url.host_str().unwrap().to_string(),
-                            S3Storage::threshold_prefix(
-                                Some(url.path().trim_start_matches('/').to_string()),
-                                StorageType::PRIV,
-                                config.rest.my_id,
-                            ),
+                            Some(url.path().to_string()),
+                            StorageType::PRIV,
+                            config.rest.my_id,
                             config.root_key_id.clone().unwrap(),
                         )
                         .await?,
@@ -175,14 +171,12 @@ async fn main() -> Result<(), anyhow::Error> {
             let pub_storage = match config.public_storage_url()? {
                 Some(url) => match url.scheme() {
                     "s3" => StorageProxy::S3(
-                        S3Storage::new(
+                        S3Storage::new_centralized(
                             config.aws_region.clone().unwrap(),
                             config.aws_s3_proxy.clone(),
                             url.host_str().unwrap().to_string(),
-                            S3Storage::centralized_prefix(
-                                Some(url.path().trim_start_matches('/').to_string()),
-                                StorageType::PUB,
-                            ),
+                            Some(url.path().to_string()),
+                            StorageType::PUB,
                         )
                         .await,
                     ),
@@ -196,15 +190,13 @@ async fn main() -> Result<(), anyhow::Error> {
             let priv_storage = match config.private_storage_url()? {
                 Some(url) => match url.scheme() {
                     "s3" => StorageProxy::EnclaveS3(
-                        EnclaveS3Storage::new(
+                        EnclaveS3Storage::new_centralized(
                             config.aws_region.clone().unwrap(),
                             config.aws_s3_proxy.clone().unwrap(),
                             config.aws_kms_proxy.clone().unwrap(),
                             url.host_str().unwrap().to_string(),
-                            S3Storage::centralized_prefix(
-                                Some(url.path().trim_start_matches('/').to_string()),
-                                StorageType::PRIV,
-                            ),
+                            Some(url.path().to_string()),
+                            StorageType::PRIV,
                             config.root_key_id.clone().unwrap(),
                         )
                         .await?,

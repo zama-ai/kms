@@ -1,9 +1,9 @@
-use crate::anyhow_error_and_log;
 use crate::cryptography::nitro_enclave::{
     decrypt_ciphertext_for_recipient, decrypt_on_data_key, encrypt_on_data_key,
     gen_nitro_enclave_keys, nitro_enclave_get_random, NitroEnclaveKeys, APP_BLOB_NONCE_SIZE,
 };
 use crate::storage::{Storage, StorageReader, StorageType};
+use crate::{anyhow_error_and_log, some_or_err};
 use anyhow::ensure;
 use aws_config::Region;
 use aws_sdk_kms::primitives::Blob;
@@ -24,63 +24,98 @@ const PREALLOCATED_BLOB_SIZE: usize = 32768;
 pub struct S3Storage {
     pub s3_client: S3Client,
     pub blob_bucket: String,
-    pub blob_key_prefix: String,
+    pub blob_path: String,
 }
 
 impl S3Storage {
-    pub fn centralized_prefix(
-        optional_prefix: Option<String>,
+    pub async fn new_centralized(
+        aws_region: String,
+        aws_s3_proxy: Option<String>,
+        blob_bucket: String,
+        optional_path: Option<String>,
         storage_type: StorageType,
-    ) -> String {
-        match optional_prefix {
-            Some(prefix) if prefix.ends_with('/') => format!("{prefix}{storage_type}"),
-            Some(prefix) => format!("{prefix}/{storage_type}"),
+    ) -> Self {
+        let blob_path = Self::centralized_path(optional_path, storage_type);
+        Self::new(aws_region, aws_s3_proxy, blob_bucket, blob_path).await
+    }
+
+    pub async fn new_threshold(
+        aws_region: String,
+        aws_s3_proxy: Option<String>,
+        blob_bucket: String,
+        optional_path: Option<String>,
+        storage_type: StorageType,
+        party_id: usize,
+    ) -> Self {
+        let blob_path = Self::threshold_path(optional_path, storage_type, party_id);
+        Self::new(aws_region, aws_s3_proxy, blob_bucket, blob_path).await
+    }
+
+    async fn new(
+        aws_region: String,
+        aws_s3_proxy: Option<String>,
+        blob_bucket: String,
+        blob_path: String,
+    ) -> Self {
+        let s3_client = build_s3_client(aws_region, aws_s3_proxy).await;
+        let trimmed_key_prefix = blob_path.trim_start_matches('/').to_string();
+        S3Storage {
+            s3_client,
+            blob_bucket,
+            blob_path: trimmed_key_prefix,
+        }
+    }
+
+    /// Make the path on the bucket neeeded for centralized S3 storage to store elements of a certain type.
+    fn centralized_path(optional_path: Option<String>, storage_type: StorageType) -> String {
+        match optional_path {
+            Some(path) => format!(
+                "{}/{}",
+                path.trim_start_matches('/').trim_end_matches('/'),
+                storage_type
+            ),
             None => format!("{storage_type}"),
         }
     }
 
-    pub fn threshold_prefix(
-        optional_prefix: Option<String>,
+    /// Make the path on the bucket neeeded for threshold S3 storage to store elements of a certain type and for a certain party.
+    fn threshold_path(
+        optional_path: Option<String>,
         storage_type: StorageType,
         party_id: usize,
     ) -> String {
-        match optional_prefix {
-            Some(prefix) if prefix.ends_with('/') => format!("{prefix}{storage_type}-p{party_id}"),
-            Some(prefix) => format!("{prefix}/{storage_type}-p{party_id}"),
+        match optional_path {
+            Some(path) => format!(
+                "{}/{}-p{}",
+                path.trim_start_matches('/').trim_end_matches('/'),
+                storage_type,
+                party_id
+            ),
             None => format!("{storage_type}-p{party_id}"),
         }
     }
 
-    pub async fn new(
-        aws_region: String,
-        aws_s3_proxy: Option<String>,
-        blob_bucket: String,
-        blob_key_prefix: String,
-    ) -> Self {
-        let s3_client = build_s3_client(aws_region, aws_s3_proxy).await;
-        let trimmed_key_prefix = blob_key_prefix.trim_start_matches('/').to_string();
-        S3Storage {
-            s3_client,
-            blob_bucket,
-            blob_key_prefix: trimmed_key_prefix,
-        }
+    /// Validates and parses an S3 URL into a bucket and path.
+    fn parse_url(url: &Url) -> anyhow::Result<(String, String)> {
+        ensure!(url.scheme() == "s3", "Storage URL is not an S3 URL");
+        ensure!(
+            url.path() != "/",
+            "Storage URL does not have an S3 key name"
+        );
+        let bucket = some_or_err(url.host(), "No host present in URL".to_string())?.to_string();
+        let path = url
+            .path()
+            .trim_start_matches('/')
+            .trim_end_matches('/')
+            .to_string();
+        Ok((bucket, path))
     }
 }
 
 #[tonic::async_trait]
 impl StorageReader for S3Storage {
     async fn data_exists(&self, url: &Url) -> anyhow::Result<bool> {
-        ensure!(url.scheme() == "s3", "Storage URL is not an S3 URL");
-        ensure!(
-            url.host().is_some(),
-            "Storage URL does not have an S3 bucket name"
-        );
-        ensure!(
-            url.path() != "/",
-            "Storage URL does not have an S3 key name"
-        );
-        let bucket = url.host().unwrap().to_string();
-        let key = url.path().trim_start_matches('/').to_string();
+        let (bucket, key) = S3Storage::parse_url(url)?;
 
         tracing::info!(
             "Checking if object exists in bucket {} under key {}",
@@ -105,17 +140,7 @@ impl StorageReader for S3Storage {
     }
 
     async fn read_data<T: DeserializeOwned + Send>(&self, url: &Url) -> anyhow::Result<T> {
-        ensure!(url.scheme() == "s3", "Storage URL is not an S3 URL");
-        ensure!(
-            url.host().is_some(),
-            "Storage URL does not have an S3 bucket name"
-        );
-        ensure!(
-            url.path() != "/",
-            "Storage URL does not have an S3 key name"
-        );
-        let bucket = url.host().unwrap().to_string();
-        let key = url.path().trim_start_matches('/').to_string();
+        let (bucket, key) = S3Storage::parse_url(url)?;
 
         tracing::info!("Reading object from bucket {} under key {}", bucket, key);
 
@@ -131,7 +156,7 @@ impl StorageReader for S3Storage {
         Ok(Url::parse(
             format!(
                 "s3://{}/{}/{}/{}",
-                self.blob_bucket, self.blob_key_prefix, data_type, data_id
+                self.blob_bucket, self.blob_path, data_type, data_id
             )
             .as_str(),
         )?)
@@ -144,7 +169,7 @@ impl StorageReader for S3Storage {
             .list_objects_v2()
             .bucket(&self.blob_bucket)
             .delimiter("/")
-            .prefix(format!("{}/{}/", &self.blob_key_prefix, data_type))
+            .prefix(format!("{}/{}/", &self.blob_path, data_type))
             .send()
             .await?;
         for cur_res in result.contents() {
@@ -175,17 +200,7 @@ impl Storage for S3Storage {
         data: &T,
         url: &Url,
     ) -> anyhow::Result<()> {
-        ensure!(url.scheme() == "s3", "Storage URL is not an S3 URL");
-        ensure!(
-            url.host().is_some(),
-            "Storage URL does not have an S3 bucket name"
-        );
-        ensure!(
-            url.path() != "/",
-            "Storage URL does not have an S3 key name"
-        );
-        let bucket = url.host().unwrap().to_string();
-        let key = url.path().trim_start_matches('/').to_string();
+        let (bucket, key) = S3Storage::parse_url(url)?;
 
         tracing::info!("Storing object in bucket {} under key {}", bucket, key);
 
@@ -193,17 +208,7 @@ impl Storage for S3Storage {
     }
 
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
-        ensure!(url.scheme() == "s3", "Storage URL is not an S3 URL");
-        ensure!(
-            url.host().is_some(),
-            "Storage URL does not have an S3 bucket name"
-        );
-        ensure!(
-            url.path() != "/",
-            "Storage URL does not have an S3 key name"
-        );
-        let bucket = url.host().unwrap().to_string();
-        let key = url.path().trim_start_matches('/').to_string();
+        let (bucket, key) = S3Storage::parse_url(url)?;
 
         tracing::info!("Deleting object from bucket {} under key {}", bucket, key);
 
@@ -224,28 +229,19 @@ impl Storage for S3Storage {
 /// (together with the corresponding data keys) are stored on S3. Enclave keys permit secure
 /// decryption of data keys by AWS KMS.
 pub struct EnclaveS3Storage {
-    pub s3_storage: S3Storage,
-    pub aws_kms_client: AmazonKMSClient,
-    pub root_key_id: String,
-    pub enclave_keys: NitroEnclaveKeys,
+    s3_storage: S3Storage,
+    aws_kms_client: AmazonKMSClient,
+    root_key_id: String,
+    enclave_keys: NitroEnclaveKeys,
 }
 
 impl EnclaveS3Storage {
-    pub async fn new(
+    async fn new(
+        s3_storage: S3Storage,
         aws_region: String,
-        aws_s3_proxy: String,
         aws_kms_proxy: String,
-        blob_bucket: String,
-        blob_key_prefix: String,
         root_key_id: String,
     ) -> anyhow::Result<Self> {
-        let s3_storage = S3Storage::new(
-            aws_region.clone(),
-            Some(aws_s3_proxy),
-            blob_bucket,
-            blob_key_prefix,
-        )
-        .await;
         let aws_kms_client = build_aws_kms_client(aws_region, aws_kms_proxy).await;
         let enclave_keys = gen_nitro_enclave_keys()?;
         Ok(EnclaveS3Storage {
@@ -254,6 +250,49 @@ impl EnclaveS3Storage {
             root_key_id,
             enclave_keys,
         })
+    }
+
+    pub async fn new_centralized(
+        aws_region: String,
+        aws_s3_proxy: String,
+        aws_kms_proxy: String,
+        blob_bucket: String,
+        optional_path: Option<String>,
+        storage_type: StorageType,
+        root_key_id: String,
+    ) -> anyhow::Result<Self> {
+        let s3_storage = S3Storage::new_centralized(
+            aws_region.clone(),
+            Some(aws_s3_proxy),
+            blob_bucket,
+            optional_path,
+            storage_type,
+        )
+        .await;
+        Self::new(s3_storage, aws_region, aws_kms_proxy, root_key_id).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn new_threshold(
+        aws_region: String,
+        aws_s3_proxy: String,
+        aws_kms_proxy: String,
+        blob_bucket: String,
+        optional_path: Option<String>,
+        storage_type: StorageType,
+        party_id: usize,
+        root_key_id: String,
+    ) -> anyhow::Result<Self> {
+        let s3_storage = S3Storage::new_threshold(
+            aws_region.clone(),
+            Some(aws_s3_proxy),
+            blob_bucket,
+            optional_path,
+            storage_type,
+            party_id,
+        )
+        .await;
+        Self::new(s3_storage, aws_region, aws_kms_proxy, root_key_id).await
     }
 }
 
@@ -341,21 +380,21 @@ pub async fn build_s3_client(region: String, proxy: Option<String>) -> S3Client 
 pub async fn s3_get_blob<T: DeserializeOwned>(
     s3_client: &S3Client,
     bucket: &str,
-    key: &str,
+    path: &str,
 ) -> anyhow::Result<T> {
-    let blob_bytes = s3_get_blob_bytes(s3_client, bucket, key).await?;
+    let blob_bytes = s3_get_blob_bytes(s3_client, bucket, path).await?;
     Ok(bincode::deserialize_from(blob_bytes.as_slice())?)
 }
 
 async fn s3_get_blob_bytes(
     s3_client: &S3Client,
     bucket: &str,
-    key: &str,
+    path: &str,
 ) -> anyhow::Result<Vec<u8>> {
     let blob_response = s3_client
         .get_object()
         .bucket(bucket)
-        .key(key)
+        .key(path)
         .send()
         .await?;
     let mut blob_bytes: Vec<u8> = Vec::with_capacity(PREALLOCATED_BLOB_SIZE);
@@ -367,22 +406,22 @@ async fn s3_get_blob_bytes(
 pub async fn s3_put_blob<T: Serialize + ?Sized>(
     s3_client: &S3Client,
     bucket: &str,
-    key: &str,
+    path: &str,
     blob: &T,
 ) -> anyhow::Result<()> {
-    s3_put_blob_bytes(s3_client, bucket, key, bincode::serialize(blob)?).await
+    s3_put_blob_bytes(s3_client, bucket, path, bincode::serialize(blob)?).await
 }
 
 async fn s3_put_blob_bytes(
     s3_client: &S3Client,
     bucket: &str,
-    key: &str,
+    path: &str,
     blob_bytes: Vec<u8>,
 ) -> anyhow::Result<()> {
     let _ = s3_client
         .put_object()
         .bucket(bucket)
-        .key(key)
+        .key(path)
         .body(ByteStream::from(blob_bytes))
         .send()
         .await?;
@@ -423,14 +462,11 @@ async fn aws_kms_decrypt_blob(
         .send()
         .await?;
 
-    ensure!(
-        decrypt_response.ciphertext_for_recipient.is_some(),
-        "Decryption request came back empty"
-    );
-    let decrypt_response_ciphertext_bytes = decrypt_response
-        .ciphertext_for_recipient
-        .unwrap()
-        .into_inner();
+    let decrypt_response_ciphertext_bytes = some_or_err(
+        decrypt_response.ciphertext_for_recipient,
+        "No blob returned in decryption response from AWS".to_string(),
+    )?
+    .into_inner();
     decrypt_ciphertext_for_recipient(
         decrypt_response_ciphertext_bytes,
         &nitro_enclave_keys.enclave_sk,
@@ -464,16 +500,13 @@ pub async fn nitro_enclave_encrypt_app_key<T: Serialize + ?Sized>(
         .await?;
 
     // decrypt the data key with the Nitro enclave private key
-    ensure!(
-        gen_data_key_response.ciphertext_for_recipient.is_some(),
-        "Data key generation request came back empty"
-    );
-    let gen_data_key_response_ciphertext_bytes = gen_data_key_response
-        .ciphertext_for_recipient
-        .unwrap()
-        .into_inner();
+    let gen_data_key_response_ciphertext_blob = some_or_err(
+        gen_data_key_response.ciphertext_for_recipient,
+        "No ciphertext for recipient returned in data key generation response from AWS KMS"
+            .to_string(),
+    )?;
     let data_key = decrypt_ciphertext_for_recipient(
-        gen_data_key_response_ciphertext_bytes,
+        gen_data_key_response_ciphertext_blob.into_inner(),
         &nitro_enclave_keys.enclave_sk,
     )?;
 
@@ -483,7 +516,11 @@ pub async fn nitro_enclave_encrypt_app_key<T: Serialize + ?Sized>(
     let auth_tag = encrypt_on_data_key(&mut blob_bytes, &data_key, &iv)?;
     Ok(AppKeyBlob {
         root_key_id: root_key_id.to_string(),
-        data_key_blob: gen_data_key_response.ciphertext_blob.unwrap().into_inner(),
+        data_key_blob: some_or_err(
+            gen_data_key_response.ciphertext_blob,
+            "No ciphertext blob returned in data key generation response from AWS KMS".to_string(),
+        )?
+        .into_inner(),
         ciphertext: blob_bytes,
         iv,
         auth_tag,
@@ -515,6 +552,12 @@ pub async fn nitro_enclave_decrypt_app_key<T: DeserializeOwned>(
     )?)
 }
 
+cfg_if::cfg_if! {
+    if #[cfg(feature = "s3_tests")]{
+        pub const BUCKET_NAME: &str = "jot2re-kms-key-test";
+        pub const AWS_REGION: &str = "eu-north-1";
+    }
+}
 /// Observe that certain tests require an S3 instance setup.
 /// There are run with the extra arguent `-F s3_tests`.
 /// Note that we pay for each of these tests, in the order of single digit cents per tests.
@@ -542,19 +585,14 @@ pub mod tests {
     cfg_if::cfg_if! {
         if #[cfg(feature = "s3_tests")]{
             use crate::storage::tests::{test_storage_read_store_methods, test_batch_helper_methods};
-            use crate::storage::StorageType;
+            use crate::util::aws::{AWS_REGION, BUCKET_NAME};
         }
     }
     use crate::storage::StorageReader;
+    use crate::storage::StorageType;
     use crate::util::aws::S3Storage;
     use url::Url;
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "s3_tests")]{
-            const BUCKET_NAME: &str = "jot2re-kms-key-test";
-            const AWS_REGION: &str = "eu-north-1";
-        }
-    }
     #[tokio::test]
     async fn aws_storage_url() {
         let storage = S3Storage::new(
@@ -579,15 +617,43 @@ pub mod tests {
     #[tokio::test]
     async fn s3_storage_helper_methods() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let prefix = format!("{}/{}", temp_dir.path().to_str().unwrap(), StorageType::PUB);
-        let mut pub_storage = S3Storage::new(
+        let mut pub_storage = S3Storage::new_centralized(
             AWS_REGION.to_string(),
             None,
             BUCKET_NAME.to_string(),
-            prefix,
+            Some(temp_dir.path().to_str().unwrap().to_string()),
+            StorageType::PUB,
         )
         .await;
         test_storage_read_store_methods(&mut pub_storage).await;
         test_batch_helper_methods(&mut pub_storage).await;
+    }
+
+    #[test]
+    fn centralized_prefix_resilience() {
+        let res = S3Storage::centralized_path(None, StorageType::PUB);
+        assert_eq!(&res, "PUB");
+        let res = S3Storage::centralized_path(Some("/central_s3/".to_string()), StorageType::PUB);
+        assert_eq!(&res, "central_s3/PUB");
+        let res = S3Storage::centralized_path(Some("/temp/keys".to_string()), StorageType::PRIV);
+        assert_eq!(&res, "temp/keys/PRIV");
+        let res = S3Storage::centralized_path(Some("temp/keys".to_string()), StorageType::PRIV);
+        assert_eq!(&res, "temp/keys/PRIV");
+        let res = S3Storage::centralized_path(Some("//temp/keys".to_string()), StorageType::PRIV);
+        assert_eq!(&res, "temp/keys/PRIV");
+    }
+
+    #[test]
+    fn threshold_prefix_resilience() {
+        let res = S3Storage::threshold_path(None, StorageType::PUB, 1);
+        assert_eq!(&res, "PUB-p1");
+        let res = S3Storage::threshold_path(Some("/central_s3/".to_string()), StorageType::PUB, 2);
+        assert_eq!(&res, "central_s3/PUB-p2");
+        let res = S3Storage::threshold_path(Some("/temp/keys".to_string()), StorageType::PRIV, 3);
+        assert_eq!(&res, "temp/keys/PRIV-p3");
+        let res = S3Storage::threshold_path(Some("temp/keys".to_string()), StorageType::PRIV, 3);
+        assert_eq!(&res, "temp/keys/PRIV-p3");
+        let res = S3Storage::threshold_path(Some("//temp/keys".to_string()), StorageType::PRIV, 3);
+        assert_eq!(&res, "temp/keys/PRIV-p3");
     }
 }

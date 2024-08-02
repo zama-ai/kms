@@ -3,6 +3,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::broadcast_w_corruption, runtime::session::BaseSessionHandles,
+        tfhe_internals::parameters::NoiseFloodParameters,
     },
     networking::value::BroadcastValue,
 };
@@ -237,7 +238,7 @@ impl PublicParameter {
 /// Compute a new proof round.
 ///
 /// Note that this function is deterministic, i.e. the parameters `tau` and `r` (r_{pok, j}) must be generated freshly at random outside this function.
-pub fn make_proof_deterministic(
+fn make_partial_proof_deterministic(
     current_pp: &PublicParameter,
     tau: curve::Zp,
     round: usize,
@@ -294,6 +295,22 @@ pub fn make_proof_deterministic(
         s_pok,
         new_pp,
     }
+}
+
+pub fn make_centralized_public_parameters<R: Rng + CryptoRng>(
+    params: &NoiseFloodParameters,
+    rng: &mut R,
+) -> anyhow::Result<PublicParameter> {
+    let witness_dim = compute_witness_dim(&params.ciphertext_parameters)?;
+    let pparam = PublicParameter::new(witness_dim);
+
+    let mut tau = curve::Zp::rand(rng);
+    let mut r = curve::Zp::rand(rng);
+    let pproof = make_partial_proof_deterministic(&pparam, tau, 1, r);
+    tau.zeroize();
+    r.zeroize();
+
+    Ok(pproof.new_pp)
 }
 
 // This function returns a custom error message
@@ -502,7 +519,7 @@ impl Ceremony for RealCeremony {
                 let mut r = curve::Zp::rand(&mut session.rng());
                 let (send, recv) = tokio::sync::oneshot::channel();
                 rayon::spawn(move || {
-                    let partial_proof = make_proof_deterministic(&pp, tau, round + 1, r);
+                    let partial_proof = make_partial_proof_deterministic(&pp, tau, round + 1, r);
                     tau.zeroize();
                     r.zeroize();
                     let _ = send.send(partial_proof);
@@ -758,7 +775,8 @@ mod tests {
                     let tau = curve::Zp::rand(&mut session.rng());
                     let r = curve::Zp::rand(&mut session.rng());
                     // make a bad proof
-                    let mut proof: PartialProof = make_proof_deterministic(&pp, tau, round + 1, r);
+                    let mut proof: PartialProof =
+                        make_partial_proof_deterministic(&pp, tau, round + 1, r);
                     proof.h_pok += curve::Zp::ONE;
                     let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
 
@@ -806,7 +824,7 @@ mod tests {
             for (round, role) in all_roles_sorted.iter().enumerate() {
                 let tau = curve::Zp::rand(&mut session.rng());
                 let r = curve::Zp::rand(&mut session.rng());
-                let proof: PartialProof = make_proof_deterministic(&pp, tau, round + 1, r);
+                let proof: PartialProof = make_partial_proof_deterministic(&pp, tau, round + 1, r);
                 let vi = BroadcastValue::PartialProof::<Z>(proof.clone());
                 if role == &my_role {
                     let _ = broadcast_w_corruption(session, &[my_role], Some(vi)).await?;
@@ -929,7 +947,7 @@ mod tests {
         );
 
         let pp = PublicParameter::new(2);
-        let proof = make_proof_deterministic(&pp, tau, 0, r);
+        let proof = make_partial_proof_deterministic(&pp, tau, 0, r);
         assert_eq!(
             proof.new_pp.inner.0[3],
             curve::G1::GENERATOR.mul_scalar(tau_powers[3])
@@ -957,24 +975,24 @@ mod tests {
 
         {
             // first round
-            let proof1 = make_proof_deterministic(&pp1, tau1, 1, r);
+            let proof1 = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             assert!(verify_proof(&pp1, &proof1).is_ok());
 
             // second round
             let pp2 = proof1.new_pp;
             let tau2 = curve::Zp::rand(&mut rng);
-            let proof2 = make_proof_deterministic(&pp2, tau2, 2, r);
+            let proof2 = make_partial_proof_deterministic(&pp2, tau2, 2, r);
             assert!(verify_proof(&pp2, &proof2).is_ok());
         }
         {
-            let proof = make_proof_deterministic(&pp1, tau1, 0, r);
+            let proof = make_partial_proof_deterministic(&pp1, tau1, 0, r);
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
                 .contains("bad round number"));
         }
         {
-            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             proof.h_pok += curve::Zp::ONE;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -982,7 +1000,7 @@ mod tests {
                 .contains("dlog check failed"));
         }
         {
-            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             proof.s_pok += curve::Zp::ONE;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -991,7 +1009,7 @@ mod tests {
         }
         {
             // note that tau=0
-            let proof = make_proof_deterministic(&pp1, curve::Zp::ZERO, 1, r);
+            let proof = make_partial_proof_deterministic(&pp1, curve::Zp::ZERO, 1, r);
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
@@ -999,14 +1017,14 @@ mod tests {
         }
         {
             let pp1 = make_degenerative_pp(n);
-            let proof = make_proof_deterministic(&pp1, tau1, 1, r);
+            let proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
                 .contains("non-degenerative check failed"));
         }
         {
-            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.0.push(curve::G1::GENERATOR);
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -1014,7 +1032,7 @@ mod tests {
                 .contains("crs length check failed (g)"));
         }
         {
-            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.1.push(curve::G2::GENERATOR);
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -1022,7 +1040,7 @@ mod tests {
                 .contains("crs length check failed (g_hat)"));
         }
         {
-            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.0[n + 1] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -1030,7 +1048,7 @@ mod tests {
                 .contains("well-formedness check failed (1)"));
         }
         {
-            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.0[n - 1] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -1038,7 +1056,7 @@ mod tests {
                 .contains("well-formedness check failed (1)"));
         }
         {
-            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.1[1] += curve::G2::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -1046,7 +1064,7 @@ mod tests {
                 .contains("well-formedness check failed (1)"));
         }
         {
-            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.0[2] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -1054,7 +1072,7 @@ mod tests {
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.0[2 * n - 1] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -1062,7 +1080,7 @@ mod tests {
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.1[2] += curve::G2::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
@@ -1070,7 +1088,7 @@ mod tests {
                 .contains("well-formedness check failed (2)"));
         }
         {
-            let mut proof = make_proof_deterministic(&pp1, tau1, 1, r);
+            let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
             proof.new_pp.inner.1[n - 1] += curve::G2::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
