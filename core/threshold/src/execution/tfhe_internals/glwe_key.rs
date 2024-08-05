@@ -1,6 +1,10 @@
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use tfhe::shortint::parameters::{GlweDimension, PolynomialSize};
+use tfhe::{
+    shortint::parameters::{GlweDimension, PolynomialSize},
+    Versionize,
+};
+use tfhe_versionable::VersionsDispatch;
 
 use crate::{
     algebra::{residue_poly::ResiduePoly, structure_traits::BaseRing},
@@ -9,13 +13,19 @@ use crate::{
 
 use super::lwe_key::LweSecretKeyShare;
 
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum GlweSecretKeyShareVersioned<Z: Clone> {
+    V0(GlweSecretKeyShare<Z>),
+}
+
 /// Structure that holds a share of a GLWE secret key
 ///
 /// - data contains share of the key (i.e. shares of w polynomial with binary coefficients each of degree polynomial_size-1)
 ///   shares are in the galois extension domain but the underlying secret is really a bit in the underlyin [`BaseRing`]
 /// - polynomial_size is the total number of coefficients in the above polynomials
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GlweSecretKeyShare<Z> {
+#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[versionize(GlweSecretKeyShareVersioned)]
+pub struct GlweSecretKeyShare<Z: Clone> {
     pub data: Vec<Share<ResiduePoly<Z>>>,
     pub polynomial_size: PolynomialSize,
 }

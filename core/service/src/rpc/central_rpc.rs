@@ -1,4 +1,6 @@
-use super::rpc_types::{BaseKms, PrivDataType, CURRENT_FORMAT_VERSION};
+use super::rpc_types::{
+    BaseKms, PrivDataType, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
+};
 use crate::conf::centralized::CentralizedConfig;
 #[cfg(any(test, feature = "testing"))]
 use crate::consts::{DEFAULT_PARAM_PATH, TEST_PARAM_PATH};
@@ -26,10 +28,10 @@ use conf_trace::telemetry::accept_trace;
 use conf_trace::telemetry::make_span;
 use conf_trace::telemetry::record_trace_id;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
-use kms_core_common::Versionize;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
+use tfhe::Versionize;
 use tokio::sync::RwLock;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
@@ -565,7 +567,7 @@ impl<
                 )
                 .await
                 .is_ok()
-                    && store_at_request_id(
+                    && crate::storage::store_at_request_id(
                         &mut (*pub_storage),
                         &request_id,
                         &pp.versionize(),
@@ -653,13 +655,13 @@ pub(crate) fn validate_request_id(request_id: &RequestId) -> Result<(), Status> 
 /// [HashMap<String, SignedPubDataHandle>] by applying the [ToString] function on [PubDataType] for each element in the map.
 /// The function is needed since protobuf does not support enums in maps.
 pub(crate) fn convert_key_response(
-    key_info_map: HashMap<PubDataType, SignedPubDataHandle>,
+    key_info_map: HashMap<PubDataType, SignedPubDataHandleInternal>,
 ) -> HashMap<String, SignedPubDataHandle> {
     key_info_map
         .into_iter()
         .map(|(key_type, key_info)| {
             let key_type = key_type.to_string();
-            (key_type, key_info)
+            (key_type, key_info.into())
         })
         .collect()
 }

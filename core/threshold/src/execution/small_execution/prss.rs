@@ -26,7 +26,6 @@ use crate::{
 };
 use anyhow::Context;
 use itertools::Itertools;
-use kms_core_common::{Unversionize, Versioned, Versionize};
 use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -35,9 +34,9 @@ use sha3::{
     digest::{Update, XofReader},
     Shake256,
 };
-use std::borrow::Cow;
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
+use tfhe_versionable::{Versionize, VersionsDispatch};
 use tracing::instrument;
 
 pub(crate) fn create_sets(n: usize, t: usize) -> Vec<Vec<usize>> {
@@ -51,8 +50,14 @@ struct PrfAes {
     chi_aes: ChiAes,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum PrssSetVersioned<Z> {
+    V0(PrssSet<Z>),
+}
+
 /// structure for holding values for each subset of n-t parties
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[versionize(PrssSetVersioned)]
 pub struct PrssSet<Z> {
     parties: PartySet,
     set_key: PrfKey,
@@ -73,38 +78,56 @@ pub type PartySet = Vec<usize>;
 type ValueVotes<Z> = HashMap<Vec<Z>, HashSet<Role>>;
 
 /// PRSS object that holds info in a certain epoch for a single party Pi
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum PRSSSetupVersioned<'a, Z: Default + Clone + Serialize> {
-    V0(Cow<'a, PRSSSetup<Z>>),
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum PRSSSetupVersioned<Z: Default + Clone + Serialize> {
+    V0(PRSSSetup<Z>),
 }
-impl<Z: Default + Clone + Serialize> Versioned for PRSSSetupVersioned<'_, Z> {}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PRSSSetup<Z: Default + Clone> {
-    /// all possible subsets of n-t parties (A) that contain Pi and their shared PRF keys
+#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[versionize(PRSSSetupVersioned)]
+pub struct PRSSSetup<Z: Default + Clone + Serialize> {
+    // all possible subsets of n-t parties (A) that contain Pi and their shared PRF keys
     sets: Vec<PrssSet<Z>>,
-    alpha_powers: Vec<Vec<Z>>,
+    alpha_powers: AlphaPowers<Z>,
 }
 
-impl<Z: Default + Clone + Serialize + DeserializeOwned> Versionize for PRSSSetup<Z> {
-    type Versioned<'a> = PRSSSetupVersioned<'a, Z> where Z: 'a;
+// TODO that this type has a non-versioned implementation.
+// see issue: https://github.com/zama-ai/kms-core/issues/934
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AlphaPowers<Z: Default + Clone>(Vec<Vec<Z>>);
 
-    fn versionize(&self) -> PRSSSetupVersioned<'_, Z> {
-        PRSSSetupVersioned::V0(Cow::Borrowed(self))
+impl<Z: Default + Clone + Serialize> tfhe_versionable::Versionize for AlphaPowers<Z> {
+    type Versioned<'vers> = &'vers AlphaPowers<Z> where Z: 'vers;
+
+    fn versionize(&self) -> Self::Versioned<'_> {
+        self
     }
 }
 
-impl<Z: Default + Clone + Serialize + DeserializeOwned> Unversionize for PRSSSetup<Z> {
-    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
-        match versioned {
-            PRSSSetupVersioned::V0(v0) => Ok(v0.into_owned()),
-        }
+impl<Z: Default + Clone + Serialize + DeserializeOwned> tfhe_versionable::VersionizeOwned
+    for AlphaPowers<Z>
+{
+    type VersionedOwned = AlphaPowers<Z>;
+    fn versionize_owned(self) -> Self::VersionedOwned {
+        self
     }
 }
+
+impl<Z: Default + Clone + Serialize + DeserializeOwned> tfhe_versionable::Unversionize
+    for AlphaPowers<Z>
+{
+    fn unversionize(
+        versioned: Self::VersionedOwned,
+    ) -> Result<Self, tfhe_versionable::UnversionizeError> {
+        Ok(versioned)
+    }
+}
+
+impl<Z: Default + Clone + Serialize> tfhe_versionable::NotVersioned for AlphaPowers<Z> {}
 
 /// PRSS state for use within a given session.
 #[derive(Debug, Clone)]
-pub struct PRSSState<Z: Default + Clone> {
+pub struct PRSSState<Z: Default + Clone + Serialize> {
     /// counters that increases on every call to the respective .next()
     pub mask_ctr: u128,
     pub prss_ctr: u128,
@@ -246,7 +269,7 @@ where
                         let f_a = set.f_a_points[party_id.zero_based()];
                         // power of alpha_i^j
                         let alpha_j =
-                            self.prss_setup.alpha_powers[party_id.zero_based()][j as usize];
+                            self.prss_setup.alpha_powers.0[party_id.zero_based()][j as usize];
                         res += f_a * alpha_j * chi;
                     }
                 } else {
@@ -567,7 +590,7 @@ where
 
         Ok(PRSSSetup {
             sets: party_prss_sets,
-            alpha_powers,
+            alpha_powers: AlphaPowers(alpha_powers),
         })
     }
 }
@@ -626,7 +649,10 @@ where
 
         Ok(PRSSSetup {
             sets: party_prss_sets,
-            alpha_powers: embed_parties_and_compute_alpha_powers(n, session.threshold() as usize)?,
+            alpha_powers: AlphaPowers(embed_parties_and_compute_alpha_powers(
+                n,
+                session.threshold() as usize,
+            )?),
         })
     }
 }
@@ -635,6 +661,7 @@ impl<Z> PRSSSetup<Z>
 where
     Z: Default,
     Z: Clone,
+    Z: Serialize,
 {
     /// initializes a PRSS state for a new session
     /// PRxS counters are set to zero
@@ -831,7 +858,10 @@ mod tests {
 
             tracing::debug!("epoch init: {:?}", sets);
 
-            Ok(PRSSSetup { sets, alpha_powers })
+            Ok(PRSSSetup {
+                sets,
+                alpha_powers: AlphaPowers(alpha_powers),
+            })
         }
     }
 

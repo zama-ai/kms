@@ -3,12 +3,14 @@ use super::{
     internal_crypto_types::{PrivateSigKey, PublicEncKey, PublicSigKey},
     signcryption::hash_element,
 };
+use crate::consts::RND_SIZE;
 use crate::cryptography::signcryption::Reencrypt;
 use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
 use crate::kms::TypedCiphertext;
-use crate::rpc::rpc_types::CrsMetaData;
+use crate::kms::{FheType, ParamChoice};
+use crate::rpc::rpc_types::SignedPubDataHandleInternal;
 use crate::rpc::rpc_types::{
     BaseKms, Kms, Plaintext, PrivDataType, PubDataType, SigncryptionPayload,
 };
@@ -18,16 +20,11 @@ use crate::storage::Storage;
 #[cfg(feature = "non-wasm")]
 use crate::util::key_setup::{FhePrivateKey, FhePublicKey};
 use crate::util::meta_store::{HandlerStatus, MetaStore};
-use crate::{anyhow_error_and_log, some_or_err};
+use crate::{anyhow_error_and_log, get_exactly_one};
 use crate::{consts::ID_LENGTH, cryptography::signcryption::check_normalized};
-use crate::{consts::RND_SIZE, cryptography::internal_crypto_types::PrivateSigKeyVersioned};
 use crate::{
     consts::{DEC_CAPACITY, MIN_DEC_CACHE},
     cryptography::internal_crypto_types::Signature,
-};
-use crate::{
-    kms::{FheType, ParamChoice, SignedPubDataHandle},
-    rpc::rpc_types::CrsMetaDataVersioned,
 };
 use aes_prng::AesRng;
 use alloy_sol_types::SolStruct;
@@ -39,25 +36,24 @@ use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodPar
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
 use distributed_decryption::execution::zk::ceremony::PublicParameter;
-use itertools::Itertools;
 use k256::ecdsa::SigningKey;
-use kms_core_common::{Unversionize, Versioned, Versionize};
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::{borrow::Cow, collections::HashMap};
 use std::{fmt, panic};
 use tfhe::integer::bigint::U2048;
 use tfhe::integer::U256;
 use tfhe::prelude::FheDecrypt;
 #[cfg(feature = "non-wasm")]
 use tfhe::Seed;
+use tfhe_versionable::{VersionizeOwned, VersionsDispatch};
 
 use tfhe::shortint::ClassicPBSParameters;
 use tfhe::{
     ClientKey, ConfigBuilder, FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256,
-    FheUint32, FheUint4, FheUint64, FheUint8,
+    FheUint32, FheUint4, FheUint64, FheUint8, Unversionize, Versionize,
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -72,7 +68,7 @@ pub(crate) fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> a
 pub fn gen_sig_keys<R: CryptoRng + Rng>(rng: &mut R) -> (PublicSigKey, PrivateSigKey) {
     let sk = SigningKey::random(rng);
     let pk = SigningKey::verifying_key(&sk);
-    (PublicSigKey { pk: *pk }, PrivateSigKey { sk })
+    (PublicSigKey::new(*pk), PrivateSigKey::new(sk))
 }
 
 #[cfg(feature = "non-wasm")]
@@ -95,7 +91,7 @@ pub async fn async_generate_crs(
     sk: &PrivateSigKey,
     rng: AesRng,
     params: NoiseFloodParameters,
-) -> anyhow::Result<(PublicParameter, CrsMetaData)> {
+) -> anyhow::Result<(PublicParameter, SignedPubDataHandleInternal)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     rayon::spawn(move || {
@@ -150,10 +146,10 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
     params: &NoiseFloodParameters,
     mut rng: R,
-) -> anyhow::Result<(PublicParameter, CrsMetaData)> {
+) -> anyhow::Result<(PublicParameter, SignedPubDataHandleInternal)> {
     let pp = make_centralized_public_parameters(params, &mut rng)?;
     let crs_info = compute_info(sk, &pp)?;
-    Ok((pp, crs_info.into()))
+    Ok((pp, crs_info))
 }
 
 #[derive(Clone)]
@@ -165,9 +161,9 @@ pub struct BaseKmsStruct {
 
 impl BaseKmsStruct {
     pub fn new(sig_key: PrivateSigKey) -> anyhow::Result<Self> {
-        let serialized_verf_key = Arc::new(serialize(&PublicSigKey {
-            pk: SigningKey::verifying_key(&sig_key.sk).to_owned(),
-        })?);
+        let serialized_verf_key = Arc::new(serialize(&PublicSigKey::new(
+            SigningKey::verifying_key(sig_key.sk()).to_owned(),
+        ))?);
         Ok(BaseKmsStruct {
             sig_key: Arc::new(sig_key),
             serialized_verf_key,
@@ -326,37 +322,18 @@ pub struct CentralizedTestingKeys {
 pub type KeysInfoHashMap = HashMap<RequestId, KmsFheKeyHandles>;
 
 #[cfg(feature = "non-wasm")]
-#[derive(Clone, Serialize, Deserialize)]
-pub enum KmsFheKeyHandlesVersioned<'a> {
-    V0(Cow<'a, KmsFheKeyHandles>),
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum KmsFheKeyHandlesVersioned {
+    V0(KmsFheKeyHandles),
 }
-impl Versioned for KmsFheKeyHandlesVersioned<'_> {}
 
 #[cfg(feature = "non-wasm")]
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[versionize(KmsFheKeyHandlesVersioned)]
 pub struct KmsFheKeyHandles {
     pub client_key: FhePrivateKey,
-    pub public_key_info: HashMap<PubDataType, SignedPubDataHandle>, // Mapping key type to information
-}
-
-#[cfg(feature = "non-wasm")]
-impl Versionize for KmsFheKeyHandles {
-    type Versioned<'vers> = KmsFheKeyHandlesVersioned<'vers>
-    where
-        Self: 'vers;
-
-    fn versionize(&self) -> Self::Versioned<'_> {
-        KmsFheKeyHandlesVersioned::V0(Cow::Borrowed(self))
-    }
-}
-
-#[cfg(feature = "non-wasm")]
-impl Unversionize for KmsFheKeyHandles {
-    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
-        match versioned {
-            KmsFheKeyHandlesVersioned::V0(v0) => Ok(v0.into_owned()),
-        }
-    }
+    /// Mapping key type to information
+    pub public_key_info: HashMap<PubDataType, SignedPubDataHandleInternal>,
 }
 
 #[cfg(feature = "non-wasm")]
@@ -387,7 +364,7 @@ impl KmsFheKeyHandles {
 
 // Values that need to be stored temporarily as part of an async key generation call.
 #[cfg(feature = "non-wasm")]
-type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandle>;
+type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
 
 // Values that need to be stored temporarily as part of an async decryption call.
 // Represents the digest of the request and the result of the decryption.
@@ -420,7 +397,7 @@ pub struct SoftwareKms<PubS: Storage, PrivS: Storage> {
     // Map storing ongoing reencryption requests.
     pub(crate) reenc_meta_map: Arc<RwLock<MetaStore<ReencCallValues>>>,
     // Map storing ongoing CRS generation requests.
-    pub(crate) crs_meta_map: Arc<RwLock<MetaStore<CrsMetaData>>>,
+    pub(crate) crs_meta_map: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     // Map storing the identity of parameters and the parameter file paths
     pub(crate) param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>, // TODO this should be loaded once during boot
 }
@@ -635,27 +612,16 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         public_storage: PubS,
         private_storage: PrivS,
     ) -> anyhow::Result<Self> {
-        let sks: HashMap<RequestId, PrivateSigKeyVersioned> =
+        let sks: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
             read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
-        if sks.len() != 1 {
-            return Err(anyhow_error_and_log(
-                "Server signing key map should only contain one entry",
-            ));
-        }
-
-        let sk = PrivateSigKey::unversionize(
-            some_or_err(
-                sks.values().collect_vec().first(),
-                format!(
-                    "There is no private signing key stored in {}",
-                    private_storage.info()
-                ),
-            )?
-            .to_owned()
-            .to_owned(),
-        )?;
-        let key_info_versioned: HashMap<RequestId, KmsFheKeyHandlesVersioned> =
-            read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+        let sk = PrivateSigKey::unversionize(get_exactly_one(sks).map_err(|e| {
+            tracing::error!("signing key hashmap is not exactly 1");
+            e
+        })?)?;
+        let key_info_versioned: HashMap<
+            RequestId,
+            <KmsFheKeyHandles as VersionizeOwned>::VersionedOwned,
+        > = read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
         let mut key_info = HashMap::new();
         for (id, versioned_handles) in key_info_versioned {
             key_info.insert(id, KmsFheKeyHandles::unversionize(versioned_handles)?);
@@ -676,13 +642,16 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 )
             })
             .collect();
-        let cs: HashMap<RequestId, CrsMetaDataVersioned> =
-            read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-        let mut cs_w_status: HashMap<RequestId, HandlerStatus<CrsMetaData>> = HashMap::new();
+        let cs: HashMap<
+            RequestId,
+            <SignedPubDataHandleInternal as VersionizeOwned>::VersionedOwned,
+        > = read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
+        let mut cs_w_status: HashMap<RequestId, HandlerStatus<SignedPubDataHandleInternal>> =
+            HashMap::new();
         for (id, crs) in cs {
             cs_w_status.insert(
                 id.to_owned(),
-                HandlerStatus::Done(CrsMetaData::unversionize(crs.to_owned())?),
+                HandlerStatus::Done(SignedPubDataHandleInternal::unversionize(crs)?),
             );
         }
 
@@ -711,11 +680,11 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 pub(crate) fn compute_info<S: Serialize>(
     sk: &PrivateSigKey,
     element: &S,
-) -> anyhow::Result<SignedPubDataHandle> {
+) -> anyhow::Result<SignedPubDataHandleInternal> {
     let ser = serialize(element)?;
     let handle = compute_handle(&ser)?;
     let signature = sign(&handle, sk)?;
-    Ok(SignedPubDataHandle {
+    Ok(SignedPubDataHandleInternal {
         key_handle: handle,
         signature: serialize(&signature)?,
     })
@@ -1071,10 +1040,8 @@ pub(crate) mod tests {
         // move to the next state so ensure we're generating a different ecdsa key
         _ = rng.next_u64();
         let wrong_ecdsa_key = k256::ecdsa::SigningKey::random(rng);
-        assert_ne!(wrong_ecdsa_key, inner.base_kms.sig_key.sk);
-        inner.base_kms.sig_key = Arc::new(PrivateSigKey {
-            sk: wrong_ecdsa_key,
-        });
+        assert_ne!(&wrong_ecdsa_key, inner.base_kms.sig_key.sk());
+        inner.base_kms.sig_key = Arc::new(PrivateSigKey::new(wrong_ecdsa_key));
     }
 
     async fn simulate_reencrypt(

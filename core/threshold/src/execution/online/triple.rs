@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Triple<R> {
+pub struct Triple<R: Clone> {
     pub a: Share<R>,
     pub b: Share<R>,
     pub c: Share<R>,

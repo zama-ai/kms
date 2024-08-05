@@ -48,7 +48,7 @@ pub fn sign<T>(msg: &T, server_sig_key: &PrivateSigKey) -> anyhow::Result<Signat
 where
     T: Serialize + AsRef<[u8]>,
 {
-    let sig: k256::ecdsa::Signature = server_sig_key.sk.try_sign(msg.as_ref())?;
+    let sig: k256::ecdsa::Signature = server_sig_key.sk().try_sign(msg.as_ref())?;
     // Normalize s value to ensure a consistent signature and protect against malleability
     let sig = sig.normalize_s().unwrap_or(sig);
     Ok(Signature { sig })
@@ -71,7 +71,7 @@ pub fn sign_eip712<T: alloy_sol_types::SolStruct>(
     server_sig_key: &PrivateSigKey,
 ) -> anyhow::Result<Signature> {
     let signing_hash = msg.eip712_signing_hash(domain);
-    let sig: k256::ecdsa::Signature = server_sig_key.sk.try_sign(&signing_hash[..])?;
+    let sig: k256::ecdsa::Signature = server_sig_key.sk().try_sign(&signing_hash[..])?;
     // Normalize s value to ensure a consistent signature and protect against malleability
     let sig = sig.normalize_s().unwrap_or(sig);
     Ok(Signature { sig })
@@ -93,7 +93,7 @@ where
 
     // Verify signature
     server_verf_key
-        .pk
+        .pk()
         .verify(payload.as_ref(), &sig.sig)
         .map_err(anyhow::Error::new)
 }
@@ -124,7 +124,7 @@ where
         &serialize_hash_element(client_pub_key)?,
     ]
     .concat();
-    let sig: k256::ecdsa::Signature = server_sig_key.sk.sign(to_sign.as_ref());
+    let sig: k256::ecdsa::Signature = server_sig_key.sk().sign(to_sign.as_ref());
     // Normalize s value to ensure a consistent signature and protect against malleability
     let sig = sig.normalize_s().unwrap_or(sig);
 
@@ -139,9 +139,9 @@ where
     let to_encrypt = [
         msg.as_ref(),
         &sig.to_bytes(),
-        &serialize_hash_element(&PublicSigKey {
-            pk: SigningKey::verifying_key(&server_sig_key.sk).to_owned(),
-        })?,
+        &serialize_hash_element(&PublicSigKey::new(
+            SigningKey::verifying_key(server_sig_key.sk()).to_owned(),
+        ))?,
         &serialize_hash_element(&server_enc_pub_key)?,
     ]
     .concat();
@@ -252,7 +252,7 @@ fn check_signature_and_log(
 
     // Verify signature
     server_verf_key
-        .pk
+        .pk()
         .verify(&msg_signed[..], &sig.sig)
         .map_err(|e| {
             tracing::error!("signature verification failed with error {e}");
@@ -368,9 +368,7 @@ pub(crate) fn ephemeral_signcryption_key_generation(
     rng: &mut (impl CryptoRng + RngCore),
     sig_key: &PrivateSigKey,
 ) -> SigncryptionPair {
-    let verification_key = PublicSigKey {
-        pk: *SigningKey::verifying_key(&sig_key.sk),
-    };
+    let verification_key = PublicSigKey::new(*SigningKey::verifying_key(sig_key.sk()));
     let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(rng);
     SigncryptionPair {
         sk: crate::cryptography::internal_crypto_types::SigncryptionPrivKey {
@@ -378,7 +376,7 @@ pub(crate) fn ephemeral_signcryption_key_generation(
             decryption_key: enc_sk,
         },
         pk: crate::cryptography::internal_crypto_types::SigncryptionPubKey {
-            client_address: alloy_primitives::Address::from_public_key(&verification_key.pk),
+            client_address: alloy_primitives::Address::from_public_key(verification_key.pk()),
             enc_key: enc_pk,
         },
     }
@@ -407,7 +405,7 @@ mod tests {
     ) -> (PublicSigKey, PrivateSigKey) {
         let sk = SigningKey::random(rng);
         let pk = SigningKey::verifying_key(&sk);
-        (PublicSigKey { pk: *pk }, PrivateSigKey { sk })
+        (PublicSigKey::new(*pk), PrivateSigKey::new(sk))
     }
 
     /// Helper method that creates an rng, a valid client request (on a dummy fhe cipher) and client
@@ -415,9 +413,7 @@ mod tests {
     /// keys and the dummy fhe cipher the request is made for.
     fn test_setup() -> (AesRng, SigncryptionPair) {
         let mut rng = AesRng::seed_from_u64(1);
-        let client_sig_key = PrivateSigKey {
-            sk: SigningKey::random(&mut rng),
-        };
+        let client_sig_key = PrivateSigKey::new(SigningKey::random(&mut rng));
         let keys = ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
         (rng, keys)
     }
@@ -520,9 +516,7 @@ mod tests {
         // use the wrong client signcryption key
         {
             let mut rng = AesRng::seed_from_u64(2);
-            let client_sig_key = PrivateSigKey {
-                sk: SigningKey::random(&mut rng),
-            };
+            let client_sig_key = PrivateSigKey::new(SigningKey::random(&mut rng));
             let client_signcryption_keys =
                 ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
 
@@ -616,7 +610,7 @@ mod tests {
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
         let msg = "Some message".as_bytes();
         let sig = Signature {
-            sig: server_sig_key.sk.sign(msg),
+            sig: server_sig_key.sk().sign(msg),
             // pk: client_signcryption_keys.pk.clone().verification_key,
         };
         // Fails as the correct key digests are not included in the message whose signature gets
@@ -637,9 +631,7 @@ mod tests {
     fn unnormalized_signature() {
         let mut rng = AesRng::seed_from_u64(1);
         let msg = "some message".as_bytes();
-        let client_sig_key = PrivateSigKey {
-            sk: SigningKey::random(&mut rng),
-        };
+        let client_sig_key = PrivateSigKey::new(SigningKey::random(&mut rng));
         let client_signcryption_keys =
             ephemeral_signcryption_key_generation(&mut rng, &client_sig_key);
         let (server_verf_key, server_sig_key) = signing_key_generation(&mut rng);
@@ -650,7 +642,7 @@ mod tests {
         ]
         .concat();
         let sig = Signature {
-            sig: server_sig_key.sk.sign(to_sign.as_ref()),
+            sig: server_sig_key.sk().sign(to_sign.as_ref()),
         };
         // Ensure the signature is normalized
         let internal_sig = sig.sig.normalize_s().unwrap_or(sig.sig);

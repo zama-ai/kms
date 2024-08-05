@@ -1,11 +1,11 @@
 use crate::consts::SIG_SIZE;
 use crypto_box::SecretKey;
 use k256::ecdsa::{SigningKey, VerifyingKey};
-use kms_core_common::{Unversionize, Versioned, Versionize};
+use kms_core_common::impl_generic_versionize;
 use nom::AsBytes;
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::borrow::Cow;
+use tfhe_versionable::{Versionize, VersionsDispatch};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 // Alias wrapping the ephemeral public encryption key the user's wallet constructs and the server
@@ -100,47 +100,46 @@ impl<'de> Visitor<'de> for PrivateEncKeyVisitor {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub enum PublicSigKeyVersioned<'a> {
-    V0(Cow<'a, PublicSigKey>),
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
+pub enum PublicSigKeyVersioned {
+    V0(PublicSigKey),
 }
-impl Versioned for PublicSigKeyVersioned<'_> {}
 
 // Struct wrapping signature verification key used by both the user's wallet and server
 #[wasm_bindgen]
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash, Serialize, Deserialize, Versionize)]
+#[versionize(PublicSigKeyVersioned)]
 pub struct PublicSigKey {
-    pub(crate) pk: k256::ecdsa::VerifyingKey,
+    pk: WrappedVerifyingKey,
 }
 
-impl Versionize for PublicSigKey {
-    type Versioned<'vers> = PublicSigKeyVersioned<'vers>
-    where
-        Self: 'vers;
-
-    fn versionize(&self) -> Self::Versioned<'_> {
-        PublicSigKeyVersioned::V0(Cow::Borrowed(self))
-    }
-}
-
-impl Unversionize for PublicSigKey {
-    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
-        match versioned {
-            PublicSigKeyVersioned::V0(v0) => Ok(v0.into_owned()),
+impl PublicSigKey {
+    pub fn new(pk: k256::ecdsa::VerifyingKey) -> Self {
+        Self {
+            pk: WrappedVerifyingKey(pk),
         }
     }
+
+    pub fn pk(&self) -> &k256::ecdsa::VerifyingKey {
+        &self.pk.0
+    }
 }
 
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct WrappedVerifyingKey(k256::ecdsa::VerifyingKey);
+impl_generic_versionize!(WrappedVerifyingKey);
+
 /// Serialize the public key as a SEC1 point, which is what is used in Ethereum
-impl Serialize for PublicSigKey {
+impl Serialize for WrappedVerifyingKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(self.pk.to_sec1_bytes().as_bytes())
+        serializer.serialize_bytes(self.0.to_sec1_bytes().as_bytes())
     }
 }
-impl<'de> Deserialize<'de> for PublicSigKey {
+
+impl<'de> Deserialize<'de> for WrappedVerifyingKey {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -148,22 +147,24 @@ impl<'de> Deserialize<'de> for PublicSigKey {
         deserializer.deserialize_bytes(PublicSigKeyVisitor)
     }
 }
-impl std::hash::Hash for PublicSigKey {
+impl std::hash::Hash for WrappedVerifyingKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.pk.to_sec1_bytes().hash(state);
+        self.0.to_sec1_bytes().hash(state);
     }
 }
 
 impl From<PrivateSigKey> for PublicSigKey {
     fn from(value: PrivateSigKey) -> Self {
-        let pk = SigningKey::verifying_key(&value.sk).to_owned();
-        PublicSigKey { pk }
+        let pk = SigningKey::verifying_key(&value.sk.0).to_owned();
+        PublicSigKey {
+            pk: WrappedVerifyingKey(pk),
+        }
     }
 }
 
 struct PublicSigKeyVisitor;
 impl<'de> Visitor<'de> for PublicSigKeyVisitor {
-    type Value = PublicSigKey;
+    type Value = WrappedVerifyingKey;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         formatter.write_str("A public verification key for ECDSA signatures using secp256k1")
@@ -174,7 +175,7 @@ impl<'de> Visitor<'de> for PublicSigKeyVisitor {
         E: serde::de::Error,
     {
         match VerifyingKey::from_sec1_bytes(v) {
-            Ok(pk) => Ok(PublicSigKey { pk }),
+            Ok(pk) => Ok(WrappedVerifyingKey(pk)),
             Err(e) => Err(E::custom(format!(
                 "Could not decode verification key: {:?}",
                 e
@@ -183,46 +184,45 @@ impl<'de> Visitor<'de> for PublicSigKeyVisitor {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub enum PrivateSigKeyVersioned<'a> {
-    V0(Cow<'a, PrivateSigKey>),
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, VersionsDispatch)]
+pub enum PrivateSigKeyVersioned {
+    V0(PrivateSigKey),
 }
-impl Versioned for PrivateSigKeyVersioned<'_> {}
 
 // Struct wrapping signature signing key used by both the client and server to authenticate their
 // messages to one another
 #[wasm_bindgen]
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize, Versionize)]
+#[versionize(PrivateSigKeyVersioned)]
 pub struct PrivateSigKey {
-    pub(crate) sk: k256::ecdsa::SigningKey,
-}
-impl Versionize for PrivateSigKey {
-    type Versioned<'vers> = PrivateSigKeyVersioned<'vers>
-    where
-        Self: 'vers;
-
-    fn versionize(&self) -> Self::Versioned<'_> {
-        PrivateSigKeyVersioned::V0(Cow::Borrowed(self))
-    }
+    sk: WrappedSigningKey,
 }
 
-impl Unversionize for PrivateSigKey {
-    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
-        match versioned {
-            PrivateSigKeyVersioned::V0(v0) => Ok(v0.into_owned()),
+impl PrivateSigKey {
+    pub fn new(sk: k256::ecdsa::SigningKey) -> Self {
+        Self {
+            sk: WrappedSigningKey(sk),
         }
     }
+
+    pub fn sk(&self) -> &k256::ecdsa::SigningKey {
+        &self.sk.0
+    }
 }
 
-impl Serialize for PrivateSigKey {
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct WrappedSigningKey(k256::ecdsa::SigningKey);
+impl_generic_versionize!(WrappedSigningKey);
+
+impl Serialize for WrappedSigningKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_bytes(self.sk.to_bytes().as_bytes())
+        serializer.serialize_bytes(self.0.to_bytes().as_bytes())
     }
 }
-impl<'de> Deserialize<'de> for PrivateSigKey {
+impl<'de> Deserialize<'de> for WrappedSigningKey {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -230,9 +230,10 @@ impl<'de> Deserialize<'de> for PrivateSigKey {
         deserializer.deserialize_bytes(PrivateSigKeyVisitor)
     }
 }
+
 struct PrivateSigKeyVisitor;
 impl<'de> Visitor<'de> for PrivateSigKeyVisitor {
-    type Value = PrivateSigKey;
+    type Value = WrappedSigningKey;
 
     fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
         formatter.write_str("A public verification key for ECDSA signatures using secp256k1")
@@ -243,7 +244,7 @@ impl<'de> Visitor<'de> for PrivateSigKeyVisitor {
         E: serde::de::Error,
     {
         match k256::ecdsa::SigningKey::from_bytes(v.into()) {
-            Ok(sk) => Ok(PrivateSigKey { sk }),
+            Ok(sk) => Ok(WrappedSigningKey(sk)),
             Err(e) => Err(E::custom(format!("Could not decode signing key: {:?}", e))),
         }
     }

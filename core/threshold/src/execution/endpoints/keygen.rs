@@ -38,6 +38,7 @@ use tfhe::core_crypto::algorithms::convert_standard_lwe_bootstrap_key_to_fourier
 use tfhe::core_crypto::commons::traits::UnsignedInteger;
 use tfhe::core_crypto::entities::Fourier128LweBootstrapKey;
 use tfhe::shortint::ClassicPBSParameters;
+use tfhe::Versionize;
 use tfhe::{
     core_crypto::{
         algorithms::par_convert_standard_lwe_bootstrap_key_to_fourier,
@@ -49,6 +50,7 @@ use tfhe::{
         server_key::ShortintBootstrappingKey,
     },
 };
+use tfhe_versionable::VersionsDispatch;
 use tracing::instrument;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -192,7 +194,7 @@ impl RawPubKeySet {
     }
 }
 
-struct GenericPrivateKeySet<Z> {
+struct GenericPrivateKeySet<Z: Clone> {
     //The two Lwe keys are the same if there's no dedicated pk parameters
     pub lwe_encryption_secret_key_share: LweSecretKeyShare<Z>,
     pub lwe_secret_key_share: LweSecretKeyShare<Z>,
@@ -200,7 +202,13 @@ struct GenericPrivateKeySet<Z> {
     pub glwe_secret_key_share_sns: Option<GlweSecretKeyShare<Z>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, VersionsDispatch)]
+pub enum PrivateKeySetVersioned {
+    V0(PrivateKeySet),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[versionize(PrivateKeySetVersioned)]
 pub struct PrivateKeySet {
     //The two Lwe keys are the same if there's no dedicated pk parameters
     pub lwe_encryption_secret_key_share: LweSecretKeyShare<Z64>,

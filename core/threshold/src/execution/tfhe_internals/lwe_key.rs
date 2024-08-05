@@ -11,7 +11,9 @@ use tfhe::{
         parameters::{CompactPublicKeyEncryptionParameters, LweDimension, PolynomialSize},
         CiphertextModulus,
     },
+    Versionize,
 };
+use tfhe_versionable::VersionsDispatch;
 
 use crate::{
     algebra::{
@@ -32,10 +34,16 @@ use super::{
     utils::slice_semi_reverse_negacyclic_convolution,
 };
 
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum LweSecretKeyShareVersioned<Z: Clone> {
+    V0(LweSecretKeyShare<Z>),
+}
+
 ///Structure that holds a share of the LWE key
 /// - data contains shares of the key components
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LweSecretKeyShare<Z> {
+#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[versionize(LweSecretKeyShareVersioned)]
+pub struct LweSecretKeyShare<Z: Clone> {
     pub data: Vec<Share<ResiduePoly<Z>>>,
 }
 

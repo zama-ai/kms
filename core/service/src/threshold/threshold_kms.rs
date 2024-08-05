@@ -2,6 +2,8 @@ use super::generic::{
     CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
 };
 use crate::conf::threshold::{PeerConf, ThresholdConfig};
+use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID, SEC_PAR};
+use crate::cryptography::central_kms::{compute_info, BaseKmsStruct};
 use crate::cryptography::internal_crypto_types::{PrivateSigKey, PublicEncKey};
 use crate::cryptography::signcryption::signcrypt;
 use crate::kms::core_service_endpoint_server::CoreServiceEndpointServer;
@@ -9,14 +11,14 @@ use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
     KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ParamChoice, ReencryptionRequest,
-    ReencryptionResponse, ReencryptionResponsePayload, RequestId, SignedPubDataHandle,
+    ReencryptionResponse, ReencryptionResponsePayload, RequestId,
 };
 use crate::rpc::central_rpc::{
     convert_key_response, retrieve_parameters_sync, tonic_handle_potential_err, tonic_some_or_err,
     validate_decrypt_req, validate_reencrypt_req, validate_request_id,
 };
-use crate::rpc::rpc_types::CrsMetaData;
 use crate::rpc::rpc_types::PrivDataType;
+use crate::rpc::rpc_types::SignedPubDataHandleInternal;
 use crate::rpc::rpc_types::{
     BaseKms, Plaintext, PubDataType, SigncryptionPayload, CURRENT_FORMAT_VERSION,
 };
@@ -24,15 +26,7 @@ use crate::storage::{
     delete_at_request_id, read_all_data, read_at_request_id, store_at_request_id, Storage,
 };
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
-use crate::{anyhow_error_and_log, some_or_err};
-use crate::{
-    consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID, SEC_PAR},
-    cryptography::internal_crypto_types::PrivateSigKeyVersioned,
-};
-use crate::{
-    cryptography::central_kms::{compute_info, BaseKmsStruct},
-    rpc::rpc_types::CrsMetaDataVersioned,
-};
+use crate::{anyhow_error_and_log, get_exactly_one};
 use aes_prng::AesRng;
 use anyhow::anyhow;
 use bincode::serialize;
@@ -56,7 +50,6 @@ use distributed_decryption::execution::runtime::session::{
     BaseSessionStruct, DecryptionMode, ParameterHandles, SessionParameters, SmallSession,
 };
 use distributed_decryption::execution::small_execution::prss::PRSSSetup;
-use distributed_decryption::execution::small_execution::prss::PRSSSetupVersioned;
 use distributed_decryption::execution::tfhe_internals::parameters::{
     Ciphertext64, DKGParams, DKGParamsRegular, DKGParamsSnS,
 };
@@ -69,18 +62,18 @@ use distributed_decryption::networking::NetworkMode;
 use distributed_decryption::session_id::SessionId;
 use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;
-use kms_core_common::{Unversionize, Versioned, Versionize};
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::{borrow::Cow, collections::HashMap};
 use tfhe::integer::ciphertext::BaseRadixCiphertext;
 use tfhe::integer::IntegerCiphertext;
 use tfhe::{
     FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32, FheUint4,
-    FheUint64, FheUint8,
+    FheUint64, FheUint8, Unversionize, Versionize,
 };
+use tfhe_versionable::{VersionizeOwned, VersionsDispatch};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
@@ -266,44 +259,27 @@ impl FheType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ThresholdFheKeysVersioned<'a> {
-    V0(Cow<'a, ThresholdFheKeys>),
+#[derive(Debug, Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum ThresholdFheKeysVersioned {
+    V0(ThresholdFheKeys),
 }
-impl Versioned for ThresholdFheKeysVersioned<'_> {}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
     pub private_keys: PrivateKeySet,
     pub sns_key: SwitchAndSquashKey,
     pub pk_meta_data: DkgMetaStore,
 }
 
-impl Versionize for ThresholdFheKeys {
-    type Versioned<'vers> = ThresholdFheKeysVersioned<'vers>
-    where
-        Self: 'vers;
-
-    fn versionize(&self) -> Self::Versioned<'_> {
-        ThresholdFheKeysVersioned::V0(Cow::Borrowed(self))
-    }
-}
-
-impl Unversionize for ThresholdFheKeys {
-    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
-        match versioned {
-            ThresholdFheKeysVersioned::V0(v0) => Ok(v0.into_owned()),
-        }
-    }
-}
-
 // Request digest, and resultant plaintext
 type DecMetaStore = (Vec<u8>, Vec<Plaintext>);
 // Request digest, fhe type of encryption and resultant partial decryption
 type ReencMetaStore = (Vec<u8>, FheType, Vec<u8>);
-// Hashmap of `PubDataType` to the corresponding `SignedPubDataHandle` information for all the different
+// Hashmap of `PubDataType` to the corresponding `SignedPubDataHandleInternal` information for all the different
 // public keys
-type DkgMetaStore = HashMap<PubDataType, SignedPubDataHandle>;
+type DkgMetaStore = HashMap<PubDataType, SignedPubDataHandleInternal>;
+
 type BucketMetaStore = Box<dyn DKGPreprocessing<ResiduePoly128>>;
 
 /// Compute all the info of a [FhePubKeySet] and return the result as as [DkgMetaStore]
@@ -362,21 +338,17 @@ where
     PubS: Storage + Sync + Send + 'static,
     PrivS: Storage + Sync + Send + 'static,
 {
-    let sks: HashMap<RequestId, PrivateSigKeyVersioned> =
+    let sks: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
         read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
-    let sk = PrivateSigKey::unversionize(
-        some_or_err(
-            sks.values().collect_vec().first(),
-            format!(
-                "There is no private signing key stored in {}",
-                private_storage.info()
-            ),
-        )?
-        .to_owned()
-        .to_owned(),
-    )?;
-    let key_info_versioned: HashMap<RequestId, ThresholdFheKeysVersioned> =
-        read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
+    let sk = PrivateSigKey::unversionize(get_exactly_one(sks).map_err(|e| {
+        tracing::error!("signing key hashmap is not exactly 1");
+        e
+    })?)?;
+
+    let key_info_versioned: HashMap<
+        RequestId,
+        <ThresholdFheKeys as VersionizeOwned>::VersionedOwned,
+    > = read_all_data(&private_storage, &PrivDataType::FheKeyInfo.to_string()).await?;
     let mut key_info = HashMap::new();
     let mut key_info_w_status = HashMap::new();
     for (id, info) in key_info_versioned.into_iter() {
@@ -387,13 +359,14 @@ where
         );
         key_info.insert(id, unversioned);
     }
-    let cs: HashMap<RequestId, CrsMetaDataVersioned> =
+    let cs: HashMap<RequestId, <SignedPubDataHandleInternal as VersionizeOwned>::VersionedOwned> =
         read_all_data(&private_storage, &PrivDataType::CrsInfo.to_string()).await?;
-    let mut cs_w_status: HashMap<RequestId, HandlerStatus<CrsMetaData>> = HashMap::new();
+    let mut cs_w_status: HashMap<RequestId, HandlerStatus<SignedPubDataHandleInternal>> =
+        HashMap::new();
     for (id, crs) in cs {
         cs_w_status.insert(
             id.to_owned(),
-            HandlerStatus::Done(CrsMetaData::unversionize(crs.to_owned())?),
+            HandlerStatus::Done(SignedPubDataHandleInternal::unversionize(crs)?),
         );
     }
     let role_assignments: RoleAssignment = peer_configs
@@ -669,7 +642,10 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
 
         let prss_setup_from_file = {
             let guarded_private_storage = self.private_storage.lock().await;
-            read_at_request_id::<PrivS, PRSSSetupVersioned<ResiduePoly128>>(
+            read_at_request_id::<
+                PrivS,
+                <PRSSSetup<ResiduePoly128> as VersionizeOwned>::VersionedOwned,
+            >(
                 &guarded_private_storage,
                 &RequestId::from(epoch_id),
                 &PrivDataType::PrssSetup.to_string(),
@@ -1755,7 +1731,7 @@ pub struct RealCrsGenerator<
     base_kms: BaseKmsStruct,
     public_storage: Arc<Mutex<PubS>>,
     private_storage: Arc<Mutex<PrivS>>,
-    crs_meta_store: Arc<RwLock<MetaStore<CrsMetaData>>>,
+    crs_meta_store: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
     param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
     session_preparer: SessionPreparer,
 }
@@ -1803,8 +1779,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 let mut pub_storage = public_storage.lock().await;
                 let mut priv_storage = private_storage.lock().await;
 
-                let (info, pp) = match res_info_pp {
-                    Ok(info_pp) => info_pp,
+                let (meta_data, pp) = match res_info_pp {
+                    Ok(tuple) => tuple,
                     Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         // We cannot do much if updating the storage fails at this point...
@@ -1814,11 +1790,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     }
                 };
 
-                let crs_meta_data: CrsMetaData = info.into();
                 if store_at_request_id(
                     &mut (*priv_storage),
                     &owned_req_id,
-                    &crs_meta_data.versionize(),
+                    &meta_data.versionize(),
                     &PrivDataType::CrsInfo.to_string(),
                 )
                 .await
@@ -1835,8 +1810,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 {
                     let mut guarded_meta_store = meta_store.write().await;
                     // We cannot do much if updating the storage fails at this point...
-                    let _ = guarded_meta_store
-                        .update(&owned_req_id, HandlerStatus::Done(crs_meta_data));
+                    let _ =
+                        guarded_meta_store.update(&owned_req_id, HandlerStatus::Done(meta_data));
                 } else {
                     tracing::error!("Could not store all the CRS data from request ID {owned_req_id}. Deleting any dangling data.");
                     // Try to delete stored data to avoid anything dangling

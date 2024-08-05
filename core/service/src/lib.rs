@@ -46,6 +46,31 @@ pub mod rpc {
 #[cfg(feature = "non-wasm")]
 pub mod conf;
 
+/// Check that the hashmap has exactly one element and return it.
+#[cfg(feature = "non-wasm")]
+pub(crate) fn get_exactly_one<K, V>(mut hm: HashMap<K, V>) -> anyhow::Result<V>
+where
+    K: Clone + fmt::Debug + Eq + std::hash::Hash,
+{
+    if hm.values().len() != 1 {
+        return Err(anyhow_error_and_log(format!(
+            "Hashmap map should contain exactly one entry, but contained {} entries",
+            hm.values().len(),
+        )));
+    }
+
+    let req_id = some_or_err(
+        hm.keys().last(),
+        "impossible error: hashmap is empty".to_string(),
+    )?
+    .clone();
+
+    // cannot use `some_or_err` because the derived type
+    // e.g., XXXVersionedDispatchOwned does not have Debug
+    hm.remove(&req_id)
+        .ok_or(anyhow!("client pk hashmap is empty"))
+}
+
 /// Truncate s to a maximum of 128 chars.
 pub(crate) fn top_n_chars(mut s: String) -> String {
     s.truncate(128);

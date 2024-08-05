@@ -20,7 +20,7 @@ bincode.workspace = true
 cfg-if = "1.0.0"
 clap = { workspace = true, features = ["derive", "env"] }
 kms-core-common = { path = "../common", version = "0.8.0" }
-concrete-csprng = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-alpha.2" } 
+concrete-csprng = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "27f3e6f0fc7253540f678e12d98f59bfd9d1f173" } 
 conf-trace = { path = "../../conf-trace", optional = true , version = "0.8.0" }
 const_format = "0.2.32"
 crypto-bigint = { version = "0.6.0-pre.12", features = [
@@ -60,7 +60,7 @@ tonic = { workspace = true, features = ["tls"], optional = true }
 tonic-health = { version = "0.11", optional = true }
 tower = { version = "0.4", features = ["retry", "timeout"], optional = true }
 tower-http = { version = "0.4", features = ["trace"], optional = true }
-tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-alpha.2", features = [
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "27f3e6f0fc7253540f678e12d98f59bfd9d1f173", features = [
     "boolean",
     "shortint",
     "integer",
@@ -69,7 +69,8 @@ tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-al
 tracing = { workspace = true, features = ["log"] }
 x509-parser = "0.16"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
-tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-alpha.2", optional = true } 
+tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "27f3e6f0fc7253540f678e12d98f59bfd9d1f173", optional = true } 
+tfhe-versionable = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "27f3e6f0fc7253540f678e12d98f59bfd9d1f173" }
 
 # we need getrandom to have the js feature so that it can target wasm
 # this is an indirect dependency
@@ -79,7 +80,7 @@ getrandom = { version = "0.2", features = ["js"] }
 tonic-build.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-alpha.2", features = [
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "27f3e6f0fc7253540f678e12d98f59bfd9d1f173", features = [
     "seeder_unix",
 ] } 
 

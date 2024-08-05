@@ -1,5 +1,6 @@
 #[cfg(any(test, feature = "testing"))]
 pub mod test_tools;
+use crate::cryptography::central_kms::compute_info;
 use crate::cryptography::central_kms::{
     compute_handle, gen_centralized_crs, gen_sig_keys, generate_fhe_keys,
 };
@@ -18,7 +19,6 @@ use crate::{
     client::ClientDataType,
     consts::{AMOUNT_PARTIES, THRESHOLD},
 };
-use crate::{cryptography::central_kms::compute_info, rpc::rpc_types::CrsMetaData};
 use aes_prng::AesRng;
 use distributed_decryption::execution::{
     tfhe_internals::{
@@ -27,11 +27,12 @@ use distributed_decryption::execution::{
     },
     zk::ceremony::make_centralized_public_parameters,
 };
-use kms_core_common::{Unversionize, Versionize};
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;
 use tfhe::Seed;
+use tfhe::{Unversionize, Versionize};
+use tfhe_versionable::VersionizeOwned;
 
 pub type FhePublicKey = tfhe::CompactPublicKey;
 pub type FhePrivateKey = tfhe::ClientKey;
@@ -45,7 +46,7 @@ fn get_rng(deterministic: bool, seed: Option<u64>) -> AesRng {
 }
 
 async fn get_signing_key<S: Storage>(priv_storage: &S) -> PrivateSigKey {
-    let sk_map: HashMap<RequestId, PrivateSigKeyVersioned> =
+    let mut sk_map: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
         read_all_data(priv_storage, &PrivDataType::SigningKey.to_string())
             .await
             .unwrap();
@@ -55,7 +56,11 @@ async fn get_signing_key<S: Storage>(priv_storage: &S) -> PrivateSigKey {
             sk_map.values().len(), priv_storage.info()
         );
     }
-    PrivateSigKey::unversionize(sk_map.values().last().unwrap().to_owned()).unwrap()
+    PrivateSigKey::unversionize({
+        let req_id = sk_map.keys().last().unwrap().clone();
+        sk_map.remove(&req_id).unwrap()
+    })
+    .unwrap()
 }
 
 /// Generates a new client signing and verification keys and stores them in the given storage if they do not already exist.
@@ -315,7 +320,7 @@ where
             store_at_request_id(
                 priv_storage,
                 req_id,
-                &key_info.client_key,
+                &key_info.client_key.versionize(),
                 &PrivDataType::FhePrivateKey.to_string(),
             )
             .await
@@ -331,7 +336,7 @@ where
         store_at_request_id(
             pub_storage,
             req_id,
-            &cur_keys.public_key,
+            &cur_keys.public_key.versionize(),
             &PubDataType::PublicKey.to_string(),
         )
         .await
@@ -344,7 +349,7 @@ where
         store_at_request_id(
             pub_storage,
             req_id,
-            &cur_keys.server_key,
+            &cur_keys.server_key.versionize(),
             &PubDataType::ServerKey.to_string(),
         )
         .await
@@ -494,7 +499,7 @@ where
         store_at_request_id(
             &mut pub_storages[i - 1],
             key_id,
-            &key_set.public_keys.public_key,
+            &key_set.public_keys.public_key.versionize(),
             &PubDataType::PublicKey.to_string(),
         )
         .await
@@ -507,7 +512,7 @@ where
         store_at_request_id(
             &mut pub_storages[i - 1],
             key_id,
-            &key_set.public_keys.server_key,
+            &key_set.public_keys.server_key.versionize(),
             &PubDataType::ServerKey.to_string(),
         )
         .await
@@ -585,7 +590,7 @@ where
         .iter_mut()
         .zip(priv_storages.iter_mut().zip(signing_keys.iter()))
     {
-        let crs_info: CrsMetaData = compute_info(cur_sk, &pp).unwrap().into();
+        let crs_info = compute_info(cur_sk, &pp).unwrap();
 
         store_at_request_id(
             cur_priv,

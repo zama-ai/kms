@@ -1,13 +1,21 @@
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 
 use serde::{Deserialize, Serialize};
+use tfhe::Versionize;
+use tfhe_versionable::VersionsDispatch;
 use zeroize::Zeroize;
 
 use crate::{algebra::structure_traits::Ring, execution::runtime::party::Role};
 
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum ShareVersioned<Z: Clone> {
+    V0(Share<Z>),
+}
+
 /// Generic structure for shares with non-interactive methods possible to carry out on shares.
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, Serialize, Deserialize, Zeroize)]
-pub struct Share<Z> {
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Copy, Serialize, Deserialize, Zeroize, Versionize)]
+#[versionize(ShareVersioned)]
+pub struct Share<Z: Clone> {
     value: Z,
     owner: Role,
 }

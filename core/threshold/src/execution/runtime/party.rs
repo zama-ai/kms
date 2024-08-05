@@ -1,7 +1,14 @@
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tfhe::Versionize;
+use tfhe_versionable::VersionsDispatch;
 use zeroize::Zeroize;
+
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum RoleVersioned {
+    V0(Role),
+}
 
 /// Role/party ID of a party (1...N)
 #[derive(
@@ -17,7 +24,9 @@ use zeroize::Zeroize;
     Serialize,
     Deserialize,
     Zeroize,
+    Versionize,
 )]
+#[versionize(RoleVersioned)]
 pub struct Role(u64);
 
 impl Role {

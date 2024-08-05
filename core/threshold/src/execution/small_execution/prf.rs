@@ -7,6 +7,8 @@ use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
 use serde::{Deserialize, Serialize};
+use tfhe::Versionize;
+use tfhe_versionable::VersionsDispatch;
 
 /// Trait required for PRSS executions
 pub trait PRSSConversions {
@@ -14,8 +16,14 @@ pub trait PRSSConversions {
     fn from_i128(value: i128) -> Self;
 }
 
+#[derive(Clone, Serialize, Deserialize, VersionsDispatch)]
+pub enum PrfKeyVersioned {
+    V0(PrfKey),
+}
+
 /// key for the PRF
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Eq, Versionize)]
+#[versionize(PrfKeyVersioned)]
 pub struct PrfKey(pub [u8; 16]);
 
 /// helper function that compute bit-wise xor of two byte arrays in place (overwriting the first argument `arr1`)

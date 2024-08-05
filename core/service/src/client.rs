@@ -39,7 +39,7 @@ use wasm_bindgen::prelude::*;
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::cryptography::central_kms::{compute_handle, BaseKmsStruct};
-        use crate::cryptography::internal_crypto_types::{PrivateSigKeyVersioned, PublicSigKeyVersioned};
+        use crate::get_exactly_one;
         use crate::kms::DecryptionResponse;
         use crate::kms::ParamChoice;
         use crate::kms::{
@@ -54,12 +54,11 @@ cfg_if::cfg_if! {
         use crate::{storage::StorageReader, util::key_setup::FhePublicKey};
         use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
         use distributed_decryption::execution::zk::ceremony::PublicParameter;
-        use distributed_decryption::execution::zk::ceremony::PublicParameterVersioned;
-        use kms_core_common::Unversionize;
         use serde::de::DeserializeOwned;
         use std::collections::HashMap;
         use std::fmt;
         use tfhe::ServerKey;
+        use tfhe_versionable::{Unversionize, VersionizeOwned};
     }
 }
 
@@ -223,15 +222,15 @@ pub mod js_api {
 
     #[wasm_bindgen]
     pub fn public_sig_key_to_u8vec(pk: &PublicSigKey) -> Vec<u8> {
-        pk.pk.to_sec1_bytes().to_vec()
+        pk.pk().to_sec1_bytes().to_vec()
     }
 
     #[wasm_bindgen]
     pub fn u8vec_to_public_sig_key(v: &[u8]) -> Result<PublicSigKey, JsError> {
-        Ok(PublicSigKey {
-            pk: k256::ecdsa::VerifyingKey::from_sec1_bytes(v)
+        Ok(PublicSigKey::new(
+            k256::ecdsa::VerifyingKey::from_sec1_bytes(v)
                 .map_err(|e| JsError::new(&e.to_string()))?,
-        })
+        ))
     }
 
     #[wasm_bindgen]
@@ -851,38 +850,22 @@ impl Client {
                 pks.push(new_pk);
             }
         }
-        let client_pk_map: HashMap<RequestId, PublicSigKeyVersioned> =
+        let client_pk_map: HashMap<RequestId, <PublicSigKey as VersionizeOwned>::VersionedOwned> =
             read_all_data(&client_storage, &ClientDataType::VerfKey.to_string()).await?;
-        if client_pk_map.values().len() != 1 {
-            return Err(anyhow_error_and_log(format!(
-                "Client public key map should contain exactly one entry, but contained {} entries",
-                client_pk_map.values().len(),
-            )));
-        }
-        let client_pk = PublicSigKey::unversionize(
-            some_or_err(
-                client_pk_map.values().next(),
-                "Client public key map did not contain a key".to_string(),
-            )?
-            .to_owned(),
-        )?;
-        let client_address = alloy_primitives::Address::from_public_key(&client_pk.pk);
+        let client_pk =
+            PublicSigKey::unversionize(get_exactly_one(client_pk_map).map_err(|e| {
+                tracing::error!("client pk hashmap is not exactly 1");
+                e
+            })?)?;
+        let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
 
-        let client_sk_map: HashMap<RequestId, PrivateSigKeyVersioned> =
+        let client_sk_map: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
             read_all_data(&client_storage, &ClientDataType::SigningKey.to_string()).await?;
-        if client_sk_map.values().len() != 1 {
-            return Err(anyhow_error_and_log(
-                "Client signing key map should only contain one entry",
-            ));
-        }
-        let client_sk = PrivateSigKey::unversionize(
-            some_or_err(
-                client_sk_map.values().next(),
-                "Client private key could not be unversioned".to_string(),
-            )?
-            .to_owned(),
-        )?;
-
+        let client_sk =
+            PrivateSigKey::unversionize(get_exactly_one(client_sk_map).map_err(|e| {
+                tracing::error!("client sk hashmap is not exactly 1");
+                e
+            })?)?;
         let params: NoiseFloodParameters = read_as_json(param_path).await?;
 
         Ok(Client::new(
@@ -1042,7 +1025,7 @@ impl Client {
             let (pp, info) = if let Some(info) = result.crs_results {
                 let url =
                     storage.compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())?;
-                let pp: PublicParameterVersioned = storage.read_data(&url).await?;
+                let pp = storage.read_data(&url).await?;
                 (PublicParameter::unversionize(pp)?, info)
             } else {
                 tracing::warn!("empty SignedPubDataHandle");
@@ -1161,6 +1144,10 @@ impl Client {
                 "The request id format is not valid {request_id}"
             )));
         }
+        let client_sk = some_or_err(
+            self.client_sk.clone(),
+            "missing client signing key".to_string(),
+        )?;
 
         let ciphertext_digest = hash_element(&ciphertext);
         let (enc_pk, enc_sk) = ephemeral_encryption_key_generation(&mut self.rng);
@@ -1178,9 +1165,7 @@ impl Client {
         };
         // Derive the EIP-712 signing hash.
         let message_hash = message.eip712_signing_hash(domain);
-        let signer = alloy_signer_local::PrivateKeySigner::from_signing_key(
-            self.client_sk.clone().unwrap().sk,
-        );
+        let signer = alloy_signer_local::PrivateKeySigner::from_signing_key(client_sk.sk().clone());
         // sanity check
         if signer.address() != self.client_address {
             return Err(anyhow_error_and_log(
@@ -1315,7 +1300,7 @@ impl Client {
             "No request id".to_string(),
         )?;
         let url = storage.compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())?;
-        let crs_versioned: PublicParameterVersioned = storage.read_data(&url).await?;
+        let crs_versioned = storage.read_data(&url).await?;
         let crs = PublicParameter::unversionize(crs_versioned)?;
         let serialized_crs = bincode::serialize(&crs)?;
         let crs_handle = compute_handle(&serialized_crs)?;
@@ -2077,7 +2062,7 @@ pub fn num_blocks(fhe_type: FheType, params: &ClassicPBSParameters) -> usize {
 
 pub fn ecdsa_public_key_to_address(pk: &PublicSigKey) -> anyhow::Result<Vec<u8>> {
     use k256::elliptic_curve::sec1::ToEncodedPoint;
-    let affine = pk.pk.as_ref();
+    let affine = pk.pk().as_ref();
     let encoded = affine.to_encoded_point(false);
     let pk_buf = &encoded.as_bytes()[1..];
     if pk_buf.len() != 64 {
@@ -2120,9 +2105,9 @@ pub fn recover_ecdsa_public_key_from_signature(
 
     let recovered_address = signature.recover_address_from_prehash(&message_hash)?;
     tracing::debug!("Recovered address: {:?}", recovered_address);
-    Ok(PublicSigKey {
-        pk: signature.recover_from_prehash(&message_hash)?,
-    })
+    Ok(PublicSigKey::new(
+        signature.recover_from_prehash(&message_hash)?,
+    ))
 }
 
 // TODO this module should be behind cfg(test) normally
@@ -2407,15 +2392,13 @@ pub(crate) mod tests {
     use alloy_signer::Signer;
     use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::SolStruct;
+    use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
     use distributed_decryption::execution::zk::ceremony::PublicParameter;
-    use distributed_decryption::execution::{
-        tfhe_internals::parameters::NoiseFloodParameters, zk::ceremony::PublicParameterVersioned,
-    };
-    use kms_core_common::Unversionize;
     use rand::SeedableRng;
     use serial_test::serial;
     use std::collections::{hash_map::Entry, HashMap};
     use tfhe::shortint::parameters::compact_public_key_only::CompactCiphertextListCastingMode;
+    use tfhe_versionable::Unversionize;
     use tokio::task::{JoinHandle, JoinSet};
     use tonic::transport::Channel;
 
@@ -2485,7 +2468,7 @@ pub(crate) mod tests {
         let (client_pk, client_sk) = gen_sig_keys(&mut rng);
         //let target_address = ecdsa_public_key_to_address(&client_pk).unwrap();
 
-        let signer = PrivateKeySigner::from_signing_key(client_sk.sk);
+        let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
         let target_address = signer.address();
         println!("Signer address: {:?}", target_address);
 
@@ -2642,9 +2625,7 @@ pub(crate) mod tests {
         crs_path.replace_range(0..7, ""); // remove leading "file:/" from URI, so we can read the file
 
         // check that CRS signature is verified correctly for the current version
-        let crs_raw = read_element::<PublicParameterVersioned>(&crs_path)
-            .await
-            .unwrap();
+        let crs_raw = read_element(&crs_path).await.unwrap();
         let crs_serialized =
             bincode::serialize(&PublicParameter::unversionize(crs_raw).unwrap()).unwrap();
         let client_handle = compute_handle(&crs_serialized).unwrap();
@@ -3968,7 +3949,7 @@ pub(crate) mod tests {
         .await;
         let ct = Vec::from([1_u8; 100000]);
         let fhe_type = FheType::Euint32;
-        let client_address = alloy_primitives::Address::from_public_key(&keys.client_pk.pk);
+        let client_address = alloy_primitives::Address::from_public_key(keys.client_pk.pk());
         let mut internal_client = Client::new(
             keys.server_keys.clone(),
             client_address,

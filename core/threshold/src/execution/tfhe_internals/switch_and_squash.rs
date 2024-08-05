@@ -1,12 +1,11 @@
 use aligned_vec::ABox;
 use core::fmt;
 use core::fmt::Debug;
-use kms_core_common::{Unversionize, Versioned, Versionize};
 use num_traits::AsPrimitive;
 #[cfg(not(feature = "sequential_sns"))]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, num::Wrapping};
+use std::num::Wrapping;
 use tfhe::{
     core_crypto::{
         algorithms::{
@@ -25,7 +24,9 @@ use tfhe::{
     },
     integer::{parameters::PolynomialSize, IntegerCiphertext},
     shortint::PBSOrder,
+    Versionize,
 };
+use tfhe_versionable::VersionsDispatch;
 use tracing::instrument;
 
 use crate::{
@@ -39,35 +40,18 @@ use super::parameters::{
 };
 
 /// Key used for switch-and-squash to convert a ciphertext over u64 to one over u128
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub enum SwitchAndSquashKeyVersioned<'a> {
-    V0(Cow<'a, SwitchAndSquashKey>),
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, VersionsDispatch)]
+pub enum SwitchAndSquashKeyVersioned {
+    V0(SwitchAndSquashKey),
 }
-impl Versioned for SwitchAndSquashKeyVersioned<'_> {}
 
 /// Key used for switch-and-squash to convert a ciphertext over u64 to one over u128
-#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Versionize)]
+#[versionize(SwitchAndSquashKeyVersioned)]
 pub struct SwitchAndSquashKey {
     pub fbsk_out: Fourier128LweBootstrapKey<ABox<[f64]>>,
     //ksk is needed if PBSOrder is KS-PBS
     pub ksk: LweKeyswitchKey<Vec<u64>>,
-}
-impl Versionize for SwitchAndSquashKey {
-    type Versioned<'vers> = SwitchAndSquashKeyVersioned<'vers>
-    where
-        Self: 'vers;
-
-    fn versionize(&self) -> Self::Versioned<'_> {
-        SwitchAndSquashKeyVersioned::V0(Cow::Borrowed(self))
-    }
-}
-
-impl Unversionize for SwitchAndSquashKey {
-    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
-        match versioned {
-            SwitchAndSquashKeyVersioned::V0(v0) => Ok(v0.into_owned()),
-        }
-    }
 }
 
 impl Debug for SwitchAndSquashKey {
@@ -75,6 +59,7 @@ impl Debug for SwitchAndSquashKey {
         write!(f, "Bootstrapping key vector{:?}", self.fbsk_out)
     }
 }
+
 impl SwitchAndSquashKey {
     pub fn new(
         fbsk_out: Fourier128LweBootstrapKey<ABox<[f64]>>,

@@ -9,15 +9,13 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
-use kms_core_common::{Unversionize, Versioned, Versionize};
+use kms_core_common::impl_generic_versionize;
 use rand::{CryptoRng, Rng};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::{
-    borrow::Cow,
-    ops::{Add, Mul, Neg},
-};
+use std::ops::{Add, Mul, Neg};
 use tfhe::shortint::ClassicPBSParameters;
+use tfhe_versionable::{Versionize, VersionsDispatch};
 use tfhe_zk_pok::{
     curve_api::{bls12_446 as curve, CurveGroupOps},
     proofs::pke,
@@ -95,35 +93,23 @@ fn compute_meta_parameter(params: &ClassicPBSParameters) -> anyhow::Result<MetaP
 pub fn compute_witness_dim(params: &ClassicPBSParameters) -> anyhow::Result<usize> {
     Ok(compute_meta_parameter(params)?.n)
 }
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
-pub enum PublicParameterVersioned<'a> {
-    V0(Cow<'a, PublicParameter>),
-}
-impl Versioned for PublicParameterVersioned<'_> {}
 
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash, VersionsDispatch)]
+pub enum PublicParameterVersioned {
+    V0(PublicParameter),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash, Versionize)]
+#[versionize(PublicParameterVersioned)]
 pub struct PublicParameter {
     round: usize,
-    inner: (Vec<curve::G1>, Vec<curve::G2>),
+    inner: WrappedG1G2s,
 }
 
-impl Versionize for PublicParameter {
-    type Versioned<'vers> = PublicParameterVersioned<'vers>
-    where
-        Self: 'vers;
-
-    fn versionize(&self) -> Self::Versioned<'_> {
-        PublicParameterVersioned::V0(Cow::Borrowed(self))
-    }
-}
-
-impl Unversionize for PublicParameter {
-    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
-        match versioned {
-            PublicParameterVersioned::V0(v0) => Ok(v0.into_owned()),
-        }
-    }
-}
+// NOTE: we need to ensure `curve::G1`, `curve::G2` is stable.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
+struct WrappedG1G2s(Vec<curve::G1>, Vec<curve::G2>);
+impl_generic_versionize!(WrappedG1G2s);
 
 impl PublicParameter {
     pub fn try_into_tfhe_zk_pok_pp(
@@ -181,7 +167,7 @@ impl PublicParameter {
     pub fn new(witness_dim: usize) -> Self {
         PublicParameter {
             round: 0,
-            inner: (
+            inner: WrappedG1G2s(
                 vec![curve::G1::GENERATOR; witness_dim * 2],
                 vec![curve::G2::GENERATOR; witness_dim],
             ),
@@ -192,7 +178,7 @@ impl PublicParameter {
         let witness_dim = compute_meta_parameter(params)?.n;
         Ok(PublicParameter {
             round: 0,
-            inner: (
+            inner: WrappedG1G2s(
                 vec![curve::G1::GENERATOR; witness_dim * 2],
                 vec![curve::G2::GENERATOR; witness_dim],
             ),
@@ -261,7 +247,7 @@ fn make_partial_proof_deterministic(
     // with powers of tau is the most expensive step.
     let new_pp = PublicParameter {
         round,
-        inner: (
+        inner: WrappedG1G2s(
             current_pp
                 .inner
                 .0
@@ -614,6 +600,7 @@ mod tests {
     use rand::SeedableRng;
     use rstest::rstest;
     use std::collections::HashMap;
+    use tfhe_versionable::{Unversionize, VersionizeOwned};
     use tfhe_zk_pok::{curve_api::Bls12_446, proofs};
     use tokio::task::JoinSet;
 
@@ -629,7 +616,7 @@ mod tests {
         ) -> anyhow::Result<PublicParameter> {
             Ok(PublicParameter {
                 round: session.num_parties(),
-                inner: (
+                inner: WrappedG1G2s(
                     vec![curve::G1::GENERATOR; witness_dim * 2],
                     vec![curve::G2::GENERATOR; witness_dim],
                 ),
@@ -735,7 +722,7 @@ mod tests {
     fn make_degenerative_pp(n: usize) -> PublicParameter {
         PublicParameter {
             round: 0,
-            inner: (vec![curve::G1::ZERO; 2 * n], vec![curve::G2::ZERO; n]),
+            inner: WrappedG1G2s(vec![curve::G1::ZERO; 2 * n], vec![curve::G2::ZERO; n]),
         }
     }
 
@@ -815,7 +802,7 @@ mod tests {
 
             let pp = PublicParameter {
                 round: 0,
-                inner: (
+                inner: WrappedG1G2s(
                     vec![curve::G1::GENERATOR; witness_dim * 2],
                     vec![curve::G2::GENERATOR; witness_dim],
                 ),
@@ -1095,5 +1082,19 @@ mod tests {
                 .to_string()
                 .contains("well-formedness check failed (2)"));
         }
+    }
+
+    #[test]
+    fn test_versioning() {
+        let ms = PublicParameter {
+            round: 0,
+            inner: WrappedG1G2s(vec![], vec![]),
+        };
+
+        let versioned: <PublicParameter as VersionizeOwned>::VersionedOwned = ms.versionize_owned();
+        let serialized = bincode::serialize(&versioned).unwrap();
+
+        let _unserialized =
+            PublicParameter::unversionize(bincode::deserialize(&serialized).unwrap());
     }
 }

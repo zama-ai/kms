@@ -5,7 +5,6 @@ use crate::util::file_handling::{read_element, write_element};
 use crate::{anyhow_error_and_log, some_or_err};
 use crate::{consts::KEY_PATH_PREFIX, rpc::rpc_types::PubDataType};
 use anyhow::anyhow;
-use kms_core_common::{Versioned, Versionize};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -13,6 +12,7 @@ use std::fmt::{self};
 use std::path::{Path, PathBuf};
 use std::{env, fs, path::MAIN_SEPARATOR};
 use strum::{EnumIter, IntoEnumIterator};
+use tfhe::Versionize;
 use url::Url;
 
 // TODO add a wrapper struct for both public and private storage.
@@ -56,7 +56,7 @@ pub trait Storage: StorageReader {
 
 // Helper method for storing data based on a data type and request ID.
 // An error will be returned if the data already exists.
-pub async fn store_at_request_id<S: Storage, Ser: Versioned + Serialize + Send + Sync + ?Sized>(
+pub async fn store_at_request_id<S: Storage, Ser: Serialize + Send + Sync + ?Sized>(
     storage: &mut S,
     request_id: &RequestId,
     data: &Ser,
@@ -100,7 +100,7 @@ pub async fn delete_at_request_id<S: Storage>(
 }
 
 /// Helper method for reading data based on a data type and request ID.
-pub async fn read_at_request_id<S: Storage, Ser: Versioned + DeserializeOwned + Send>(
+pub async fn read_at_request_id<S: Storage, Ser: DeserializeOwned + Send>(
     storage: &S,
     request_id: &RequestId,
     data_type: &str,
@@ -110,10 +110,7 @@ pub async fn read_at_request_id<S: Storage, Ser: Versioned + DeserializeOwned + 
 }
 
 /// Helper method for reading all data of a specific type.
-pub async fn read_all_data<
-    S: StorageReader,
-    Ser: Versioned + DeserializeOwned + Serialize + Send,
->(
+pub async fn read_all_data<S: StorageReader, Ser: DeserializeOwned + Serialize + Send>(
     storage: &S,
     data_type: &str,
 ) -> anyhow::Result<HashMap<RequestId, Ser>> {
@@ -501,12 +498,18 @@ pub mod tests {
     use crate::rpc::rpc_types::PubDataType;
     use serde::Deserialize;
     use strum::IntoEnumIterator;
+    use tfhe_versionable::VersionsDispatch;
 
-    #[derive(Serialize, Deserialize, Eq, PartialEq, Debug)]
+    #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, VersionsDispatch)]
+    enum TestTypeVersioned {
+        V0(TestType),
+    }
+
+    #[derive(Serialize, Deserialize, Eq, PartialEq, Debug, Versionize)]
+    #[versionize(TestTypeVersioned)]
     struct TestType {
         i: u32,
     }
-    impl Versioned for TestType {}
 
     #[ignore]
     #[tokio::test]

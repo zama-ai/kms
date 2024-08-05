@@ -5,11 +5,12 @@ use crate::kms::{ReencryptionResponsePayload, SignedPubDataHandle};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::Eip712Domain;
 use anyhow::anyhow;
-use kms_core_common::{Unversionize, Versioned, Versionize};
 use serde::de::Visitor;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::{borrow::Cow, fmt};
+use std::fmt;
 use strum_macros::EnumIter;
+use tfhe::Versionize;
+use tfhe_versionable::VersionsDispatch;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 cfg_if::cfg_if! {
@@ -31,57 +32,44 @@ pub static DEC_REQUEST_NAME: &str = "dec_request";
 pub static REENC_REQUEST_NAME: &str = "reenc_request";
 
 /// The format of what will be stored, and returned in gRPC, as a result of CRS generation in the KMS
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CrsMetaDataVersioned<'a> {
-    V0(Cow<'a, CrsMetaData>),
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
+pub enum SignedPubDataHandleInternalVersioned {
+    V0(SignedPubDataHandleInternal),
 }
-impl Versioned for CrsMetaDataVersioned<'_> {}
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CrsMetaData {
+/// This type is the internal type that corresponds to
+/// the generate protobuf type `SignedPubDataHandle`.
+///
+/// It's needed because we are not able to derive versioned
+/// for the protobuf type.
+#[derive(Clone, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, Versionize)]
+#[versionize(SignedPubDataHandleInternalVersioned)]
+pub struct SignedPubDataHandleInternal {
     // Digest (the 160-bit hex-encoded value, computed using compute_info/handle)
     pub key_handle: String,
     // The signature on the handle
     pub signature: Vec<u8>,
 }
 
-impl Versionize for CrsMetaData {
-    type Versioned<'vers> = CrsMetaDataVersioned<'vers>
-    where
-        Self: 'vers;
-
-    fn versionize(&self) -> Self::Versioned<'_> {
-        CrsMetaDataVersioned::V0(Cow::Borrowed(self))
-    }
-}
-
-impl Unversionize for CrsMetaData {
-    fn unversionize(versioned: Self::Versioned<'_>) -> anyhow::Result<Self> {
-        match versioned {
-            CrsMetaDataVersioned::V0(v0) => Ok(v0.into_owned()),
-        }
-    }
-}
-
-impl CrsMetaData {
-    pub fn new(key_handle: String, signature: Vec<u8>) -> CrsMetaData {
-        CrsMetaData {
+impl SignedPubDataHandleInternal {
+    pub fn new(key_handle: String, signature: Vec<u8>) -> SignedPubDataHandleInternal {
+        SignedPubDataHandleInternal {
             key_handle,
             signature,
         }
     }
 }
 
-impl From<SignedPubDataHandle> for CrsMetaData {
+impl From<SignedPubDataHandle> for SignedPubDataHandleInternal {
     fn from(handle: SignedPubDataHandle) -> Self {
-        CrsMetaData {
+        SignedPubDataHandleInternal {
             key_handle: handle.key_handle,
             signature: handle.signature,
         }
     }
 }
-impl From<CrsMetaData> for SignedPubDataHandle {
-    fn from(crs: CrsMetaData) -> Self {
+impl From<SignedPubDataHandleInternal> for SignedPubDataHandle {
+    fn from(crs: SignedPubDataHandleInternal) -> Self {
         SignedPubDataHandle {
             key_handle: crs.key_handle,
             signature: crs.signature,
@@ -89,11 +77,17 @@ impl From<CrsMetaData> for SignedPubDataHandle {
     }
 }
 
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, VersionsDispatch)]
+pub enum PubDataTypeVersioned {
+    V0(PubDataType),
+}
+
 /// Enum which represents the different kinds of public information that can be stored as part of
 /// key generation. In practice this means the CRS and different types of public keys.
 /// Data of this type is supposed to be readable by anyone on the internet
 /// and stored on a medium that _may_ be suseptible to malicious modifications.
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize, EnumIter, Versionize)]
+#[versionize(PubDataTypeVersioned)]
 pub enum PubDataType {
     PublicKey,
     ServerKey,

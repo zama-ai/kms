@@ -38,6 +38,8 @@ use std::{
     ops::{Add, AddAssign, Mul, Neg, Shl, Sub, SubAssign},
 };
 use std::{num::Wrapping, ops::MulAssign};
+use tfhe::Versionize;
+use tfhe_versionable::VersionsDispatch;
 use zeroize::Zeroize;
 
 pub const F_DEG: usize = 8; // degree of irreducible polynomial F = x8 + x4 + x3 + x + 1
@@ -46,9 +48,17 @@ pub const F_DEG: usize = 8; // degree of irreducible polynomial F = x8 + x4 + x3
 ///
 /// Comes with fixed evaluation points lifted from GF(2^8).
 /// This is also the 'value' of a single ShamirShare.
-#[derive(Serialize, Deserialize, Clone, Copy, Default, PartialEq, Hash, Eq, Debug, Zeroize)]
-pub struct ResiduePoly<Z> {
+#[derive(
+    Serialize, Deserialize, Clone, Copy, Default, PartialEq, Hash, Eq, Debug, Zeroize, Versionize,
+)]
+#[versionize(ResiduePolyVersioned)]
+pub struct ResiduePoly<Z: Clone> {
     pub coefs: [Z; F_DEG], // TODO(Daniel) can this be a slice instead of an array?
+}
+
+#[derive(Serialize, Deserialize, Clone, VersionsDispatch)]
+pub enum ResiduePolyVersioned<Z: Clone> {
+    V0(ResiduePoly<Z>),
 }
 
 impl<Z: BaseRing> Ring for ResiduePoly<Z>
@@ -85,7 +95,7 @@ impl<Z: Ring + std::fmt::Display> TryFrom<ResiduePoly<Z>> for TryFromWrapper<Z> 
     }
 }
 
-impl<Z> ResiduePoly<Z> {
+impl<Z: Clone> ResiduePoly<Z> {
     pub fn from_scalar(x: Z) -> Self
     where
         Z: Zero,
@@ -173,7 +183,7 @@ impl<Z: Zero + Sample + Copy> Sample for ResiduePoly<Z> {
     }
 }
 
-impl<Z: Zero> Zero for ResiduePoly<Z> {
+impl<Z: Zero + Clone> Zero for ResiduePoly<Z> {
     const ZERO: Self = ResiduePoly {
         coefs: [Z::ZERO; F_DEG],
     };
@@ -256,7 +266,7 @@ where
     }
 }
 
-impl<Z: Neg<Output = Z>> Neg for ResiduePoly<Z> {
+impl<Z: Neg<Output = Z> + Clone> Neg for ResiduePoly<Z> {
     type Output = Self;
     fn neg(self) -> Self::Output {
         ResiduePoly {
@@ -320,7 +330,7 @@ where
 
 impl<Z> Add<Z> for ResiduePoly<Z>
 where
-    Z: AddAssign<Z>,
+    Z: AddAssign<Z> + Clone,
 {
     type Output = ResiduePoly<Z>;
     fn add(mut self, other: Z) -> Self::Output {
@@ -491,18 +501,18 @@ where
     }
 }
 
-pub trait ReductionTable<Z> {
+pub trait ReductionTable<Z: Clone> {
     const REDUCTION_TABLES: ReductionTablesGF256<Z>;
 }
 
 /// Precomputes reductions of x^8, x^9, ...x^14 to help us in reducing polynomials faster
-pub struct ReductionTablesGF256<Z> {
+pub struct ReductionTablesGF256<Z: Clone> {
     pub reduced: [ResiduePoly<Z>; 8],
 }
 
 impl<Z> Default for ReductionTablesGF256<Z>
 where
-    Z: ZConsts + One + Zero,
+    Z: ZConsts + One + Zero + Clone,
 {
     fn default() -> Self {
         Self::new()
@@ -511,7 +521,7 @@ where
 
 impl<Z> ReductionTablesGF256<Z>
 where
-    Z: ZConsts + One + Zero,
+    Z: ZConsts + One + Zero + Clone,
 {
     pub const fn new() -> Self {
         Self {

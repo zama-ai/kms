@@ -12,8 +12,10 @@ use serde::Serialize;
 use std::path::Path;
 use tfhe::core_crypto::prelude::Numeric;
 use tfhe::integer::ciphertext::{Compactable, Expandable};
-use tfhe::{FheBool, FheUint2048, FheUint256};
-use tfhe::{FheUint128, FheUint16, FheUint160, FheUint32, FheUint64, FheUint8};
+use tfhe::{
+    FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32, FheUint64,
+    FheUint8, Unversionize,
+};
 
 // TODD The code here should be split s.t. that generation code stays in production and everything else goes to the test package
 
@@ -160,14 +162,14 @@ pub async fn compute_cipher_from_storage(
         .compute_url(key_id, &PubDataType::PublicKey.to_string())
         .unwrap();
     let pk = if storage.data_exists(&url).await.unwrap() {
-        storage.read_data(&url).await.unwrap()
+        FhePublicKey::unversionize(storage.read_data(&url).await.unwrap()).unwrap()
     } else {
         // Try with the threshold storage
         let storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
         let url = storage
             .compute_url(key_id, &PubDataType::PublicKey.to_string())
             .unwrap();
-        storage.read_data(&url).await.unwrap()
+        FhePublicKey::unversionize(storage.read_data(&url).await.unwrap()).unwrap()
     };
     compute_cipher(msg, &pk)
 }

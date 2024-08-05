@@ -114,7 +114,7 @@ type ShareChannels<R> = (
 ///- One set for Triples
 ///- One set for Randomness
 ///- One set for Bits
-fn create_channels<R>(
+fn create_channels<R: Clone>(
     num_basic_sessions: usize,
     num_bits_sessions: usize,
 ) -> (TripleChannels<R>, ShareChannels<R>, ShareChannels<R>) {
@@ -944,7 +944,7 @@ mod tests {
 
     const TEST_NUM_LOOP: usize = 5;
 
-    fn create_test_channels<R>(
+    fn create_test_channels<R: Clone>(
         num_basic_sessions: usize,
         num_bits_sessions: usize,
     ) -> (TripleChannels<R>, ShareChannels<R>, ShareChannels<R>) {
