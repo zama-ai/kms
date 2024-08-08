@@ -271,23 +271,39 @@ where
 
         let version = self.decrypt.version();
         let key_id = self.decrypt.key_id().to_hex();
-        let fhe_type = self.decrypt.fhe_type() as i32;
-        let ciphertext_handle: Vec<u8> = self.decrypt.ciphertext_handle().deref().into();
 
-        let ciphertext = self
-            .operation_val
-            .kms_client
-            .storage
-            .get_ciphertext(ciphertext_handle)
-            .await?;
+        let ct_handles = self.decrypt.ciphertext_handles();
+        let fhe_types = self.decrypt.fhe_types();
 
-        // TODO this needs to be changed to allow for batch decryption on the gateway
-        // here we pack the single CT that the connector currently receives into a length 1 vector
-        let ciphertexts = vec![TypedCiphertext {
-            ciphertext,
-            fhe_type,
-        }];
+        if ct_handles.0.len() != fhe_types.len() {
+            return Err(anyhow!(
+                "ct_handles and fhe_types must have the same length, but did not: #ct_handles={} - #fhe_types={}",
+                ct_handles.0.len(),
+                fhe_types.len()
+            ));
+        }
 
+        // vector of TypedCiphertext to send to kms core to decrypt
+        let mut ciphertexts = Vec::new();
+
+        // iterate over ciphertext handles and get actual ciphertext values from storage
+        for (idx, ch) in ct_handles.0.iter().enumerate() {
+            let ct_handle = ch.0.clone();
+
+            let ciphertext = self
+                .operation_val
+                .kms_client
+                .storage
+                .get_ciphertext(ct_handle)
+                .await?;
+
+            ciphertexts.push(TypedCiphertext {
+                ciphertext,
+                fhe_type: fhe_types[idx] as i32,
+            });
+        }
+
+        // decryption request for the kms core
         let req = DecryptionRequest {
             version,
             ciphertexts,
@@ -763,7 +779,14 @@ mod test {
     use std::collections::HashMap;
     use tokio::task::JoinSet;
 
-    const MOCK_CT_HANDLE: &[u8; 3] = &[1, 2, 3];
+    const MOCK_CT_HANDLES: &[&[u8]] = &[
+        &[0, 0, 0],
+        &[1, 1, 1],
+        &[2, 2, 2],
+        &[3, 3, 3],
+        &[4, 4, 4],
+        &[5, 5, 5],
+    ];
 
     async fn setup_threshold_keys() {
         let mut threshold_pub_storages = Vec::with_capacity(AMOUNT_PARTIES);
@@ -844,9 +867,14 @@ mod test {
     }
 
     async fn generic_centralized_sunshine_test(
-        ct: Vec<u8>,
+        cts: Vec<Vec<u8>>,
         op: OperationValue,
     ) -> (KmsOperationResponse, TransactionId) {
+        assert!(
+            cts.len() <= MOCK_CT_HANDLES.len(),
+            "Not enough MOCK_CT_HANDLES defined!"
+        );
+
         let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
         let priv_storage = FileStorage::new_centralized(None, StorageType::PRIV).unwrap();
         let join_handle = test_tools::setup_centralized_no_client(pub_storage, priv_storage).await;
@@ -857,10 +885,16 @@ mod test {
             timeout_config: TimeoutConfig::mocking_default(),
         };
 
-        let mut mock = MockStorage::new();
-        mock.ciphertext.insert(MOCK_CT_HANDLE.to_vec(), ct);
+        let mut mock_storage = MockStorage::new();
 
-        let client = KmsCore::new(config.clone(), mock, OpenTelemetryMetrics::new()).unwrap();
+        for (idx, ct) in cts.iter().enumerate() {
+            mock_storage
+                .ciphertext
+                .insert(MOCK_CT_HANDLES[idx].to_vec(), ct.clone());
+        }
+
+        let client =
+            KmsCore::new(config.clone(), mock_storage, OpenTelemetryMetrics::new()).unwrap();
 
         let mut txn_buf = vec![0u8; 20];
         rand::thread_rng().fill_bytes(&mut txn_buf);
@@ -888,19 +922,28 @@ mod test {
     #[tokio::test]
     #[serial_test::serial]
     async fn ddec_centralized_sunshine() {
-        let msg = 110u8;
+        let msg1 = 110u8;
+        let msg2 = 222u16;
         setup_central_keys().await;
-        let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            compute_cipher_from_storage(None, msg.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
+        let (ct1, fhe_type1): (Vec<u8>, kms_lib::kms::FheType) =
+            compute_cipher_from_storage(None, msg1.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
+        let (ct2, fhe_type2): (Vec<u8>, kms_lib::kms::FheType) =
+            compute_cipher_from_storage(None, msg2.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
         let op = OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
                 .key_id(HexVector::from_hex(&TEST_CENTRAL_KEY_ID.request_id).unwrap())
-                .fhe_type(events::kms::FheType::from(fhe_type as u8))
-                .ciphertext_handle(MOCK_CT_HANDLE.to_vec())
+                .fhe_types(vec![
+                    events::kms::FheType::from(fhe_type1 as u8),
+                    events::kms::FheType::from(fhe_type2 as u8),
+                ])
+                .ciphertext_handles(vec![
+                    MOCK_CT_HANDLES[0].to_vec(),
+                    MOCK_CT_HANDLES[1].to_vec(),
+                ])
                 .build(),
         );
-        let (result, txn_id) = generic_centralized_sunshine_test(ct, op).await;
+        let (result, txn_id) = generic_centralized_sunshine_test(vec![ct1, ct2], op).await;
         match result {
             KmsOperationResponse::DecryptResponse(resp) => {
                 let payload: DecryptionResponsePayload = bincode::deserialize(
@@ -909,10 +952,16 @@ mod test {
                 .unwrap();
 
                 assert_eq!(
-                    bincode::deserialize::<Plaintext>(&payload.plaintexts[0]) // TODO properly handle batch
+                    bincode::deserialize::<Plaintext>(&payload.plaintexts[0])
                         .unwrap()
                         .as_u8(),
-                    msg,
+                    msg1,
+                );
+                assert_eq!(
+                    bincode::deserialize::<Plaintext>(&payload.plaintexts[1])
+                        .unwrap()
+                        .as_u16(),
+                    msg2,
                 );
                 assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
                 assert_eq!(resp.operation_val.tx_id, txn_id);
@@ -976,7 +1025,7 @@ mod test {
     /// Before running this function, ensure [setup_keys] is executed
     async fn generic_sunshine_test(
         slow: bool,
-        ct: Vec<u8>,
+        cts: Vec<Vec<u8>>,
         op: OperationValue,
     ) -> (Vec<KmsOperationResponse>, TransactionId, Vec<u32>) {
         let txn_id = TransactionId::from(vec![2u8; 20]);
@@ -1017,9 +1066,15 @@ mod test {
         // create the clients
         let mut clients = vec![];
         for config in configs {
-            let mut mock = MockStorage::new();
-            mock.ciphertext.insert(vec![1, 2, 3], ct.clone());
-            clients.push(KmsCore::new(config.clone(), mock, OpenTelemetryMetrics::new()).unwrap());
+            let mut mock_storage = MockStorage::new();
+            for (idx, ct) in cts.iter().enumerate() {
+                mock_storage
+                    .ciphertext
+                    .insert(MOCK_CT_HANDLES[idx].to_vec(), ct.clone());
+            }
+            clients.push(
+                KmsCore::new(config.clone(), mock_storage, OpenTelemetryMetrics::new()).unwrap(),
+            );
         }
 
         // create events
@@ -1067,18 +1122,29 @@ mod test {
 
     async fn ddec_sunshine(slow: bool) {
         setup_threshold_keys().await;
-        let msg = 121u8;
-        let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-            compute_cipher_from_storage(None, msg.into(), &TEST_THRESHOLD_KEY_ID.to_string()).await;
+        let msg1 = 121u8;
+        let msg2 = 321u16;
+        let (ct1, fhe_type1): (Vec<u8>, kms_lib::kms::FheType) =
+            compute_cipher_from_storage(None, msg1.into(), &TEST_THRESHOLD_KEY_ID.to_string())
+                .await;
+        let (ct2, fhe_type2): (Vec<u8>, kms_lib::kms::FheType) =
+            compute_cipher_from_storage(None, msg2.into(), &TEST_THRESHOLD_KEY_ID.to_string())
+                .await;
         let op = OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
                 .key_id(HexVector::from_hex(&TEST_THRESHOLD_KEY_ID.request_id).unwrap())
-                .fhe_type(events::kms::FheType::from(fhe_type as u8))
-                .ciphertext_handle(MOCK_CT_HANDLE.to_vec())
+                .fhe_types(vec![
+                    events::kms::FheType::from(fhe_type1 as u8),
+                    events::kms::FheType::from(fhe_type2 as u8),
+                ])
+                .ciphertext_handles(vec![
+                    MOCK_CT_HANDLES[0].to_vec(),
+                    MOCK_CT_HANDLES[1].to_vec(),
+                ])
                 .build(),
         );
-        let (results, txn_id, _) = generic_sunshine_test(slow, ct, op).await;
+        let (results, txn_id, _) = generic_sunshine_test(slow, vec![ct1, ct2], op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
         for result in results {
@@ -1091,10 +1157,16 @@ mod test {
                     .unwrap();
                     if slow {
                         assert_eq!(
-                            bincode::deserialize::<Plaintext>(&payload.plaintexts[0]) // TODO properly handle batch
+                            bincode::deserialize::<Plaintext>(&payload.plaintexts[0])
                                 .unwrap()
                                 .as_u8(),
-                            msg,
+                            msg1,
+                        );
+                        assert_eq!(
+                            bincode::deserialize::<Plaintext>(&payload.plaintexts[1])
+                                .unwrap()
+                                .as_u16(),
+                            msg2,
                         );
                     }
                     assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
@@ -1150,7 +1222,7 @@ mod test {
                 .enc_key(payload.enc_key)
                 .fhe_type(events::kms::FheType::from(fhe_type as u8))
                 .key_id(HexVector::from_hex(payload.key_id.unwrap().request_id.as_str()).unwrap())
-                .ciphertext_handle(MOCK_CT_HANDLE.to_vec())
+                .ciphertext_handle(MOCK_CT_HANDLES[0].to_vec())
                 .ciphertext_digest(payload.ciphertext_digest)
                 .eip712_name(eip712.name)
                 .eip712_version(eip712.version)
@@ -1159,7 +1231,7 @@ mod test {
                 .eip712_salt(eip712.salt)
                 .build(),
         );
-        let (results, txn_id, _) = generic_sunshine_test(slow, ct, op).await;
+        let (results, txn_id, _) = generic_sunshine_test(slow, vec![ct], op).await;
         assert_eq!(results.len(), AMOUNT_PARTIES);
 
         if slow {

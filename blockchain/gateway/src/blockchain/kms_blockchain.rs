@@ -225,15 +225,28 @@ impl<'a> KmsBlockchainImpl {
 
 #[async_trait]
 impl Blockchain for KmsBlockchainImpl {
-    async fn decrypt(&self, ciphertext: Vec<u8>, fhe_type: FheType) -> anyhow::Result<Token> {
-        let ctxt_handle = self.store_ciphertext(ciphertext.clone()).await?;
+    async fn decrypt(
+        &self,
+        typed_cts: Vec<(Vec<u8>, FheType)>,
+    ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
+        let mut ct_handles = Vec::new();
+        let mut fhe_types = Vec::new();
+        let mut total_size = 0;
+
+        for (ct, fhe_type) in typed_cts {
+            let ctxt_handle = self.store_ciphertext(ct.clone()).await?;
+            let data_size = footprint::extract_ciphertext_size(&ctxt_handle);
+            total_size += data_size;
+            fhe_types.push(fhe_type);
+            ct_handles.push(ctxt_handle);
+        }
 
         let operation = events::kms::OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
                 .key_id(hex::decode(self.config.kms.key_id.as_str()).unwrap())
-                .ciphertext_handle(ctxt_handle.clone())
-                .fhe_type(fhe_type)
+                .ciphertext_handles(ct_handles.clone())
+                .fhe_types(fhe_types.clone())
                 .build(),
         );
 
@@ -241,11 +254,10 @@ impl Blockchain for KmsBlockchainImpl {
         let proof = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
 
         // send coins 1:1 with the ciphertext size
-        let data_size = footprint::extract_ciphertext_size(&ctxt_handle);
-        tracing::info!("🍊 Decrypting ciphertext of size: {:?}", data_size);
+        tracing::info!("🍊 Decrypting ciphertexts of total size: {:?}", total_size);
 
         let evs = self
-            .make_req_to_kms_blockchain(data_size, operation, proof)
+            .make_req_to_kms_blockchain(total_size, operation, proof)
             .await?;
 
         // TODO what if we have multiple events?
@@ -271,7 +283,7 @@ impl Blockchain for KmsBlockchainImpl {
             .build();
 
         let results: Vec<OperationValue> = self.query_client.query_contract(request).await?;
-        let ptxt = match self.config.mode {
+        let (ptxts, sigs) = match self.config.mode {
             KmsMode::Centralized => match results.first().unwrap() {
                 OperationValue::DecryptResponse(decrypt_response) => {
                     let payload: DecryptionResponsePayload = deserialize(
@@ -279,16 +291,27 @@ impl Blockchain for KmsBlockchainImpl {
                     )
                     .unwrap();
 
+                    let sig = decrypt_response.signature().0.clone();
+
                     tracing::info!(
-                        "🍇🥐🍇🥐🍇🥐 Centralized Gateway decryption result payload: {:x?}",
-                        payload.plaintexts.clone()
+                        "🍇🥐🍇🥐🍇🥐 Centralized Gateway decrypted {} plaintext(s).",
+                        payload.plaintexts.len()
                     );
-                    deserialize::<Plaintext>(&payload.plaintexts[0])? // TODO properly handle batch
+
+                    // deserialize the individual plaintexts in this batch
+                    let ptxts = payload
+                        .plaintexts
+                        .iter()
+                        .map(|pt| deserialize::<Plaintext>(pt))
+                        .collect::<Result<Vec<_>, _>>()?;
+
+                    (ptxts, vec![sig])
                 }
                 _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
             },
             KmsMode::Threshold => {
                 let mut ptxts = Vec::new();
+                let mut sigs = Vec::new();
 
                 // Fetch threshold KMS core config (the config is read at start once, currently)
                 let threshold_kms_core_conf =
@@ -311,7 +334,7 @@ impl Blockchain for KmsBlockchainImpl {
                     ));
                 }
 
-                // loop through the vector of results (one from each party)
+                // loop through the vector of results (one value (= 1 batch) from each party)
                 for value in results.iter() {
                     match value {
                         OperationValue::DecryptResponse(decrypt_response) => {
@@ -324,8 +347,10 @@ impl Blockchain for KmsBlockchainImpl {
                                 "🥐🥐🥐🥐🥐🥐 Threshold Gateway decrypted {} plaintext(s).",
                                 payload.plaintexts.len()
                             );
-                            ptxts.push(deserialize::<Plaintext>(&payload.plaintexts[0])?);
-                            // TODO properly handle batch
+                            ptxts.push(payload.plaintexts);
+
+                            let sig = decrypt_response.signature().0.clone();
+                            sigs.push(sig);
                         }
                         _ => {
                             return Err(anyhow::anyhow!(
@@ -336,13 +361,18 @@ impl Blockchain for KmsBlockchainImpl {
                     };
                 }
 
-                let (majority_pt, majority_count) = most_common_element(&ptxts)
+                let (majority_pts, majority_count) = most_common_element(&ptxts)
                     .ok_or_else(|| anyhow::anyhow!("No plaintext found."))?; // this cannot happen, since we have some responses, but just to be sure
 
-                // We need at least t + 1 identical responses as majority, so we can return the majority plaintext (at most t others were corrupted)
+                // We need at least t + 1 identical batch responses as majority, so we can return the majority plaintext (at most t others were corrupted)
                 let required_majority = threshold_kms_core_conf.degree_for_reconstruction + 1;
                 if majority_count >= required_majority {
-                    majority_pt
+                    // deserialize the individual plaintexts in this batch
+                    let ptxts = majority_pts
+                        .iter()
+                        .map(|pt| deserialize::<Plaintext>(pt))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    (ptxts, sigs)
                 } else {
                     return Err(anyhow::anyhow!(
                         "Have not received a large enough majority of decryptions: majority size is {}, needed at least {}",
@@ -353,47 +383,53 @@ impl Blockchain for KmsBlockchainImpl {
             }
         };
 
-        tracing::info!("FheType: {:#?}", fhe_type);
+        assert_eq!(ptxts.len(), fhe_types.len());
 
-        let res = match fhe_type {
-            FheType::Ebool => ptxt.as_bool().to_token(),
-            FheType::Euint4 => ptxt.as_u4().to_token(),
-            FheType::Euint8 => ptxt.as_u8().to_token(),
-            FheType::Euint16 => ptxt.as_u16().to_token(),
-            FheType::Euint32 => ptxt.as_u32().to_token(),
-            FheType::Euint64 => ptxt.as_u64().to_token(),
-            FheType::Euint128 => ptxt.as_u128().to_token(),
-            FheType::Euint160 => {
-                let mut cake = vec![0u8; 32];
-                ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
-                ethers::types::Address::from_slice(&cake[12..]).to_token()
-            }
-            FheType::Euint256 => {
-                let mut cake = vec![0u8; 32];
-                ptxt.as_u256().copy_to_be_byte_slice(cake.as_mut_slice());
-                U256::from_big_endian(&cake).to_token()
-            }
-            FheType::Euint512 => {
-                todo!("Implement Euint512")
-            }
-            FheType::Euint1024 => {
-                todo!("Implement Euint1024")
-            }
-            FheType::Euint2048 => {
-                let mut cake = vec![0u8; 256];
-                ptxt.as_u2048().copy_to_be_byte_slice(cake.as_mut_slice());
-                let token = Token::Bytes(cake);
-                info!(
-                    "🍰 Euint2048 Token: {:#?}, ",
-                    hex::encode(token.clone().into_bytes().unwrap())
-                );
-                token
-            }
-            FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
-        };
+        let mut tokens = Vec::new();
 
-        info!("🍊 plaintext: {:#?}", res);
-        Ok(res)
+        for (idx, ptxt) in ptxts.iter().enumerate() {
+            tracing::info!("FheType: {:#?}", fhe_types[idx]);
+            let res = match fhe_types[idx] {
+                FheType::Ebool => ptxt.as_bool().to_token(),
+                FheType::Euint4 => ptxt.as_u4().to_token(),
+                FheType::Euint8 => ptxt.as_u8().to_token(),
+                FheType::Euint16 => ptxt.as_u16().to_token(),
+                FheType::Euint32 => ptxt.as_u32().to_token(),
+                FheType::Euint64 => ptxt.as_u64().to_token(),
+                FheType::Euint128 => ptxt.as_u128().to_token(),
+                FheType::Euint160 => {
+                    let mut cake = vec![0u8; 32];
+                    ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
+                    ethers::types::Address::from_slice(&cake[12..]).to_token()
+                }
+                FheType::Euint256 => {
+                    let mut cake = vec![0u8; 32];
+                    ptxt.as_u256().copy_to_be_byte_slice(cake.as_mut_slice());
+                    U256::from_big_endian(&cake).to_token()
+                }
+                FheType::Euint512 => {
+                    todo!("Implement Euint512")
+                }
+                FheType::Euint1024 => {
+                    todo!("Implement Euint1024")
+                }
+                FheType::Euint2048 => {
+                    let mut cake = vec![0u8; 256];
+                    ptxt.as_u2048().copy_to_be_byte_slice(cake.as_mut_slice());
+                    let token = Token::Bytes(cake);
+                    info!(
+                        "🍰 Euint2048 Token: {:#?}, ",
+                        hex::encode(token.clone().into_bytes().unwrap())
+                    );
+                    token
+                }
+                FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
+            };
+            tokens.push(res);
+        }
+
+        info!("🍊 plaintexts: {:#?}", tokens);
+        Ok((tokens, sigs))
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -275,8 +275,8 @@ async fn send_decrypt_request(client: &RwLock<Client>) -> String {
         DecryptValues::builder()
             .version(CURRENT_FORMAT_VERSION)
             .key_id("kid".as_bytes().to_vec())
-            .ciphertext_handle([0, 0, 0, 0, 0, 1, 1, 1, 1, 1].to_vec())
-            .fhe_type(FheType::Euint8)
+            .ciphertext_handles(vec![[0, 0, 0, 0, 0, 1, 1, 1, 1, 1].to_vec()])
+            .fhe_types(vec![FheType::Euint8])
             .build(),
     );
 

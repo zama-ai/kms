@@ -21,23 +21,33 @@ impl KmsEventSubscriber for MockchainImpl {
 
 #[async_trait]
 impl Blockchain for MockchainImpl {
-    async fn decrypt(&self, _ctxt_handle: Vec<u8>, fhe_type: FheType) -> anyhow::Result<Token> {
-        let res = match fhe_type {
-            FheType::Ebool => true.to_token(),
-            FheType::Euint4 => U4::new(3_u8).unwrap().to_token(),
-            FheType::Euint8 => 42_u8.to_token(),
-            FheType::Euint16 => 42_u16.to_token(),
-            FheType::Euint32 => 42_u32.to_token(),
-            FheType::Euint64 => 42_u64.to_token(),
-            FheType::Euint128 => 42_u128.to_token(),
-            FheType::Euint160 => Address::zero().to_token(),
-            FheType::Euint256 => Address::zero().to_token(),
-            events::kms::FheType::Euint512 | events::kms::FheType::Euint1024 => todo!(),
-            FheType::Euint2048 => Address::zero().to_token(),
-            FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
-        };
-        tracing::info!("🍊 plaintext: {:#?}", res);
-        Ok(res)
+    async fn decrypt(
+        &self,
+        typed_cts: Vec<(Vec<u8>, FheType)>,
+    ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
+        let mut ptxts = Vec::new();
+
+        for (_ct, fhe_type) in typed_cts {
+            let res = match fhe_type {
+                FheType::Ebool => true.to_token(),
+                FheType::Euint4 => U4::new(3_u8).unwrap().to_token(),
+                FheType::Euint8 => 42_u8.to_token(),
+                FheType::Euint16 => 42_u16.to_token(),
+                FheType::Euint32 => 42_u32.to_token(),
+                FheType::Euint64 => 42_u64.to_token(),
+                FheType::Euint128 => 42_u128.to_token(),
+                FheType::Euint160 => Address::zero().to_token(),
+                FheType::Euint256 => Address::zero().to_token(),
+                events::kms::FheType::Euint512 | events::kms::FheType::Euint1024 => todo!(),
+                FheType::Euint2048 => Address::zero().to_token(),
+                FheType::Unknown => anyhow::bail!("Invalid ciphertext type"),
+            };
+            tracing::info!("🍊 plaintext: {:#?}", res);
+            ptxts.push(res);
+        }
+
+        let mock_sig = vec![0u8; 65];
+        Ok((ptxts, vec![mock_sig]))
     }
 
     async fn reencrypt(

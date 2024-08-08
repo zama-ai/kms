@@ -186,6 +186,7 @@ impl KmsContract {
         self.storage.get_operations_value(ctx.deps.storage, event)
     }
 
+    /// return ciphertext size from handle. Size is encoded as u32 in the first 4 bytes of the handle
     fn parse_ciphertext_handle_size(ciphertext_handle: &[u8]) -> u32 {
         ((ciphertext_handle[0] as u32) << 24)
             | ((ciphertext_handle[1] as u32) << 16)
@@ -193,8 +194,11 @@ impl KmsContract {
             | (ciphertext_handle[3] as u32)
     }
 
-    fn verify_payment(&self, ctx: &ExecCtx, ciphertext_handle: Vec<u8>) -> StdResult<()> {
-        let data_size = Self::parse_ciphertext_handle_size(&ciphertext_handle[..8]);
+    fn verify_payment(&self, ctx: &ExecCtx, ciphertext_handles: Vec<&Vec<u8>>) -> StdResult<()> {
+        let mut data_size = 0;
+        for handle in ciphertext_handles {
+            data_size += Self::parse_ciphertext_handle_size(&handle[..4]);
+        }
 
         // Ensure the payment is included in the message
         let payment = must_pay(&ctx.info, UCOSM).map_err(|_| {
@@ -222,8 +226,11 @@ impl KmsContract {
         proof: HexVector,
     ) -> StdResult<Response> {
         // decipher the size encoding and ensure the payment is included in the message
-        let ciphertext_handle: Vec<u8> = decrypt.ciphertext_handle().deref().into();
-        self.verify_payment(&ctx, ciphertext_handle)?;
+        let ciphertext_handles = decrypt.ciphertext_handles();
+
+        let ctvecs = ciphertext_handles.0.iter().map(|ct| ct.deref()).collect();
+
+        self.verify_payment(&ctx, ctvecs)?;
 
         if !self
             .proof_strategy
@@ -347,7 +354,7 @@ impl KmsContract {
     ) -> StdResult<Response> {
         // decipher the size encoding and ensure the payment is included in the message
         let ciphertext_handle: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
-        self.verify_payment(&ctx, ciphertext_handle)?;
+        self.verify_payment(&ctx, vec![&ciphertext_handle])?;
 
         if !self
             .proof_strategy
@@ -604,14 +611,17 @@ mod tests {
         let ciphertext_handle =
             hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
                 .unwrap();
-        let data_size = extract_ciphertext_size(&ciphertext_handle);
-        assert_eq!(data_size, 661448);
+
+        let batch_size = 2_usize;
+
+        let data_size = extract_ciphertext_size(&ciphertext_handle) * batch_size as u32;
+        assert_eq!(data_size, 661448 * batch_size as u32);
 
         let decrypt = DecryptValues::builder()
             .key_id(vec![1, 2, 3])
             .version(1)
-            .ciphertext_handle(ciphertext_handle.clone())
-            .fhe_type(FheType::Euint8)
+            .ciphertext_handles(vec![ciphertext_handle; batch_size])
+            .fhe_types(vec![FheType::Euint8; batch_size])
             .build();
 
         // test insufficient funds
@@ -1015,14 +1025,16 @@ mod tests {
         let ciphertext_handle =
             hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
                 .unwrap();
-        let data_size = extract_ciphertext_size(&ciphertext_handle);
-        assert_eq!(data_size, 661448);
+        let batch_size = 2_usize;
+
+        let data_size = extract_ciphertext_size(&ciphertext_handle) * batch_size as u32;
+        assert_eq!(data_size, 661448 * batch_size as u32);
 
         let decrypt = DecryptValues::builder()
             .key_id(vec![1, 2, 3])
             .version(1)
-            .ciphertext_handle(ciphertext_handle)
-            .fhe_type(FheType::Euint8)
+            .ciphertext_handles(vec![ciphertext_handle; batch_size])
+            .fhe_types(vec![FheType::Euint8; batch_size])
             .build();
         let response = contract
             .decrypt(decrypt.clone(), proof.clone())

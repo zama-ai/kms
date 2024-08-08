@@ -85,3 +85,25 @@ impl From<Vec<u8>> for RedactedHexVector {
         RedactedHexVector(HexVector(value))
     }
 }
+
+#[derive(Eq, PartialEq, Default, Clone, JsonSchema, Deserialize, Serialize)]
+pub struct RedactedHexVectorList(pub Vec<HexVector>);
+
+impl Debug for RedactedHexVectorList {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<REDACTED>")
+    }
+}
+
+impl From<Vec<HexVector>> for RedactedHexVectorList {
+    fn from(value: Vec<HexVector>) -> Self {
+        RedactedHexVectorList(value)
+    }
+}
+
+impl From<Vec<Vec<u8>>> for RedactedHexVectorList {
+    fn from(values: Vec<Vec<u8>>) -> Self {
+        let hvs = values.iter().map(|v| HexVector(v.clone())).collect();
+        RedactedHexVectorList(hvs)
+    }
+}

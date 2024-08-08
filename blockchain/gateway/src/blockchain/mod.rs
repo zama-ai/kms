@@ -48,7 +48,10 @@ pub(crate) trait KmsEventSubscriber: Send + Sync {
 #[allow(clippy::too_many_arguments)]
 #[async_trait]
 pub(crate) trait Blockchain: KmsEventSubscriber {
-    async fn decrypt(&self, ciphertext: Vec<u8>, fhe_type: FheType) -> anyhow::Result<Token>;
+    async fn decrypt(
+        &self,
+        typed_cts: Vec<(Vec<u8>, FheType)>,
+    ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)>;
 
     async fn reencrypt(
         &self,

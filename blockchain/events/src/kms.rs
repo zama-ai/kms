@@ -272,9 +272,9 @@ pub struct DecryptValues {
     #[builder(setter(into))]
     key_id: HexVector,
     #[builder(setter(into))]
-    ciphertext_handle: RedactedHexVector,
+    ciphertext_handles: RedactedHexVectorList,
+    fhe_types: Vec<FheType>,
     version: u32,
-    fhe_type: FheType,
 }
 
 impl DecryptValues {
@@ -286,12 +286,12 @@ impl DecryptValues {
         &self.key_id
     }
 
-    pub fn fhe_type(&self) -> FheType {
-        self.fhe_type
+    pub fn fhe_types(&self) -> &Vec<FheType> {
+        &self.fhe_types
     }
 
-    pub fn ciphertext_handle(&self) -> &RedactedHexVector {
-        &self.ciphertext_handle
+    pub fn ciphertext_handles(&self) -> &RedactedHexVectorList {
+        &self.ciphertext_handles
     }
 }
 
@@ -910,13 +910,19 @@ mod tests {
         }
     }
 
+    impl Arbitrary for RedactedHexVectorList {
+        fn arbitrary(g: &mut Gen) -> RedactedHexVectorList {
+            RedactedHexVectorList(Vec::<HexVector>::arbitrary(g))
+        }
+    }
+
     impl Arbitrary for DecryptValues {
         fn arbitrary(g: &mut Gen) -> DecryptValues {
             DecryptValues {
                 version: u32::arbitrary(g),
                 key_id: HexVector::arbitrary(g),
-                fhe_type: FheType::arbitrary(g),
-                ciphertext_handle: HexVector::arbitrary(g).into(),
+                fhe_types: Vec::<FheType>::arbitrary(g),
+                ciphertext_handles: RedactedHexVectorList::arbitrary(g),
             }
         }
     }
@@ -1051,8 +1057,8 @@ mod tests {
         let decrypt_values = DecryptValues::builder()
             .version(1)
             .key_id("mykeyid".as_bytes().to_vec())
-            .fhe_type(FheType::Ebool)
-            .ciphertext_handle(vec![1, 2, 3])
+            .ciphertext_handles(vec![vec![1, 2, 3], vec![4, 4, 4]])
+            .fhe_types(vec![FheType::Euint8, FheType::Euint16])
             .build();
         let message = KmsMessage::builder()
             .proof(vec![1, 2, 3])
@@ -1065,8 +1071,8 @@ mod tests {
                 "decrypt":{
                     "version": 1,
                     "key_id": hex::encode("mykeyid".as_bytes()),
-                    "fhe_type": "ebool",
-                    "ciphertext_handle": hex::encode([1, 2, 3]),
+                    "fhe_types": ["euint8", "euint16"],
+                    "ciphertext_handles": [hex::encode([1, 2, 3]), hex::encode([4, 4, 4])],
                 },
                 "proof": hex::encode([1, 2, 3]),
             }

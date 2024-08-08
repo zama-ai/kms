@@ -62,12 +62,12 @@ async fn execute_contract(
     let mut client = client;
     let key_id = "2add68b744d5f5dce2c365b2587a4374f60e4d98";
     let typed_to_encrypt = TypedPlaintext::U8(to_encrypt);
-    let (cypher, _) =
+    let (cipher, _) =
         compute_cipher_from_storage(Some(Path::new("./keys")), typed_to_encrypt, key_id).await;
     let value = OperationValue::Decrypt(
         DecryptValues::builder()
-            .ciphertext_handle(cypher.clone())
-            .fhe_type(FheType::Euint8)
+            .ciphertext_handles(vec![cipher.clone()])
+            .fhe_types(vec![FheType::Euint8])
             .key_id(hex::decode(key_id).unwrap())
             .version(1)
             .build(),
@@ -143,8 +143,13 @@ async fn query_contract(
                 <&HexVector as Into<Vec<u8>>>::into(decrypt.payload()).as_slice(),
             )
             .unwrap();
-            let actual_pt: Plaintext = deserialize(&payload.plaintexts[0]).unwrap(); // TODO properly handle batch
-            tracing::info!("Decrypt Result: Plaintext Decrypted {:?} ", actual_pt);
+            for (idx, pt) in payload.plaintexts.iter().enumerate() {
+                let actual_pt: Plaintext = deserialize(&pt).unwrap();
+                tracing::info!(
+                    "Decrypt Result #{idx}: Plaintext Decrypted = {:?}.",
+                    actual_pt
+                );
+            }
         }
         _ => tracing::info!("Incorrect Response: {:?}", x),
     });

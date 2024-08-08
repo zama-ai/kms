@@ -22,35 +22,19 @@ pub(crate) async fn handle_event_decryption(
 ) -> anyhow::Result<()> {
     tracing::debug!("🍻 handle_event_decryption enter");
     let start = std::time::Instant::now();
-    let mut decrytion_tasks = Vec::new();
     let block_number = event.block_number;
     let ciphertexts = event.filter.cts.clone();
-    for (index, ct_handle) in ciphertexts.into_iter().enumerate() {
-        // Capture the index and request for the async task
-        let config = config.clone();
-        let task = tokio::task::spawn(async move {
-            tracing::info!("🧵 decrypt thread started");
-            let client = Arc::new(http_provider(&config).await.unwrap());
-            let token = decrypt(&client, &config, ct_handle, block_number)
-                .await
-                .unwrap();
-            (index, token)
-        });
-        decrytion_tasks.push(task);
-    }
 
-    // Collect the results and preserve the order
-    let mut results = vec![None; event.filter.cts.len()];
-    for task in decrytion_tasks {
-        let (index, token) = task.await.unwrap();
-        results[index] = Some(token);
-    }
-    let tokens: Vec<Token> = results.into_iter().map(|opt| opt.unwrap()).collect();
+    let client = Arc::new(http_provider(config).await.unwrap());
+
+    let (tokens, sigs) = decrypt(&client, config, ciphertexts, block_number)
+        .await
+        .unwrap();
 
     tracing::info!("⏱️ KMS Response Time elapsed: {:?}", start.elapsed());
 
-    // Fake signatures for now
-    let signatures = vec![Bytes::from(vec![0u8; 65])];
+    // Signatures into Bytes type
+    let signatures = sigs.iter().map(|s| Bytes::from(s.clone())).collect();
     tracing::info!("Fulfilling Ethereum request: {:?}", event.filter.request_id);
 
     // prepend a uint256 placeholder token to the tokens vec
@@ -129,24 +113,27 @@ pub(crate) async fn handle_event_decryption(
 async fn decrypt(
     client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
     config: &GatewayConfig,
-    ct_handle: U256,
+    ct_handles: Vec<U256>,
     block_number: u64,
-) -> anyhow::Result<Token> {
-    let mut ct_handle_bytes = [0u8; 32];
-    ct_handle.to_big_endian(&mut ct_handle_bytes);
-    let (ct_bytes, fhe_type) =
-        <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
-            .get_ciphertext(
-                client,
-                ct_handle_bytes.to_vec(),
-                Some(BlockId::from(block_number)),
-            )
-            .await?;
+) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
+    let mut typed_cts = Vec::new();
 
-    blockchain_impl(config)
-        .await
-        .decrypt(ct_bytes, fhe_type)
-        .await
+    // get ct for every handle
+    for ct_handle in ct_handles {
+        let mut ct_handle_bytes = [0u8; 32];
+        ct_handle.to_big_endian(&mut ct_handle_bytes);
+        let (ct_bytes, fhe_type) =
+            <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
+                .get_ciphertext(
+                    client,
+                    ct_handle_bytes.to_vec(),
+                    Some(BlockId::from(block_number)),
+                )
+                .await?;
+        typed_cts.push((ct_bytes, fhe_type));
+    }
+
+    blockchain_impl(config).await.decrypt(typed_cts).await
 }
 
 pub(crate) async fn handle_reencryption_event(
