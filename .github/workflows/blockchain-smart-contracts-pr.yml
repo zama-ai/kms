@@ -9,7 +9,7 @@ on:
       - '.github/workflows/blockchain-smart-contracts-pr.yml'
 
 jobs:
-  build-smart-contracts:
+  build-asc:
     uses: ./.github/workflows/common-build.yml
     with:
       working-directory: './blockchain/contracts/asc'
@@ -21,7 +21,20 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
-  optimize-smart-contracts:
+  build-tendermint-ipsc:
+    uses: ./.github/workflows/common-build.yml
+    with:
+      working-directory: './blockchain/contracts/tendermint-ipsc'
+      args-tests-fhe: ''
+      package-name: 'tendermint-ipsc'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
+
+  optimize-asc:
     uses: ./.github/workflows/common-build-wasm.yml
     with:
       working-directory: './blockchain/'
@@ -34,13 +47,27 @@ jobs:
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
 
+  optimize-tendermint-ipsc:
+    uses: ./.github/workflows/common-build-wasm.yml
+    with:
+      working-directory: './blockchain/'
+      # relative to working-directory
+      cargo-manifest-path: './contracts/tendermint-ipsc/'
+      target-path: 'contracts/tendermint-ipsc/'
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+    secrets:
+      BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+
+
   docker-smart-contracts:
     uses: ./.github/workflows/common-docker.yml
     permissions:
       contents: 'read'
       id-token: 'write'
     with:
-      working-directory: './blockchain/contracts/asc'
+      working-directory: './blockchain/contracts'
       push_image: false
       image-name: 'kms-blockchain-asc'
     secrets:
@@ -54,6 +81,8 @@ jobs:
       - name: Success
         run: echo Pipeline Done
     needs:
-      - build-smart-contracts
-      - optimize-smart-contracts
+      - build-asc
+      - build-tendermint-ipsc
+      - optimize-asc
+      - optimize-tendermint-ipsc
       - docker-smart-contracts

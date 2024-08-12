@@ -50,7 +50,7 @@ rand.workspace = true
 rayon = "1.10"
 redis = { version = "0.25.3", optional = true }
 serde = { workspace = true, features = ["derive", "rc"] }
-serde_json = "1.0"
+serde_json.workspace = true
 sha3 = "0.10.8"
 signature = "2.2"
 strum = { version = "0.26", features = ["derive"] }

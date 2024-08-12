@@ -66,7 +66,7 @@ rcgen = { version = "0.13", optional = true }
 rsa = { version = "0.9.6", features = ["sha2"] }
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_bytes = "0.11"
-serde_json = "1.0"
+serde_json.workspace = true
 serial_test = "3.0.0"
 sha3 = "0.10.8"
 signature = "2.2.0"

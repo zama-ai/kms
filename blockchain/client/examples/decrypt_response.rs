@@ -32,7 +32,6 @@ async fn main() {
             .build(),
     );
     let msg = KmsMessage::builder()
-        .proof(vec![1, 2, 3])
         .txn_id(Some(txn_id.into()))
         .value(operation_response)
         .build();

@@ -21,6 +21,7 @@ pub const PROOF_OP_SMT_COMMITMENT: &str = "ics23:smt";
 
 /// Represents a commitment operation with its type, spec, key, and proof.
 pub struct CommitmentOp {
+    #[allow(dead_code)]
     op_type: String,
     spec: ProofSpec,
     key: Vec<u8>,
@@ -118,20 +119,6 @@ impl ProofOperator for CommitmentOp {
             _ => return Err("args must be length 0 or 1".into()),
         }
         Ok(vec![root.to_vec()])
-    }
-
-    /// Converts the internal `CommitmentOp` to a Tendermint `ProofOp`.
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing the Tendermint `ProofOp`, or an error if serialization fails.
-    fn proof_op(&self) -> Result<ProofOp, Box<dyn Error>> {
-        let bz = bincode::serialize(&self.proof)?;
-        Ok(ProofOp {
-            field_type: self.op_type.clone(),
-            key: self.key.clone(),
-            data: bz,
-        })
     }
 }
 

@@ -37,14 +37,14 @@ reqwest = { version = "0.12.4", features = ["json"] }
 retrying = "0.1.0"
 secp256k1 = "0.29.0"
 serde = { workspace = true , features = ["derive"] }
-serde_json = "1.0.120"
+serde_json.workspace = true
 sha2 = "0.10.8"
 sha3 = "0.10.8"
 structopt = "0.3.26"
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
-tendermint = "0.37.0"
-tendermint-rpc = { version = "0.37.0", features = ["websocket-client"] }
+tendermint.workspace = true
+tendermint-rpc = { workspace = true, features = ["websocket-client"] }
 thiserror = "1.0.61"
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true, features = ["log"] }

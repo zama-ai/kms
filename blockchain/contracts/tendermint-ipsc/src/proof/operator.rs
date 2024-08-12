@@ -4,16 +4,10 @@
 //! specifically targeting the verification of merkle proofs within the context of blockchain
 //! applications. It supports various proof formats through a pluggable decoder mechanism.
 //!
-//! ## Examples
-//!
-//! ```no_run
-//! # use your_crate::proof::{ProofRuntime, default_proof_runtime};
-//! let runtime = default_proof_runtime();
-//! // Example usage with runtime...
-//! ```
 
-use crate::commitment::commitment_op_decoder;
-use crate::commitment::{PROOF_OP_IAVL_COMMITMENT, PROOF_OP_SIMPLE_MERKLE_COMMITMENT};
+#![allow(dead_code)]
+use super::commitment::commitment_op_decoder;
+use super::commitment::{PROOF_OP_IAVL_COMMITMENT, PROOF_OP_SIMPLE_MERKLE_COMMITMENT};
 use anyhow::anyhow;
 use percent_encoding::percent_decode_str;
 use percent_encoding::utf8_percent_encode;
@@ -44,13 +38,6 @@ pub trait ProofOperator {
     ///
     /// A result containing either the key as a byte vector, or an error if no key is available.
     fn get_key(&self) -> Result<Vec<u8>, Box<dyn Error>>;
-
-    /// Converts this proof operation into a Tendermint `ProofOp`.
-    ///
-    /// # Returns
-    ///
-    /// A result containing either the `ProofOp`, or an error if the conversion fails.
-    fn proof_op(&self) -> Result<ProofOp, Box<dyn Error>>;
 }
 
 /// A container for multiple proof operators.
@@ -161,14 +148,6 @@ impl ProofRuntime {
     /// Initializes an empty `ProofRuntime` with no decoders registered. Decoders must be registered
     /// using the `register_op_decoder` method before the runtime can be used to decode and verify proofs.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use your_crate::proof::ProofRuntime;
-    ///
-    /// let mut runtime = ProofRuntime::new();
-    /// // Register decoders before using the runtime...
-    /// ```
     pub fn new() -> Self {
         ProofRuntime {
             decoders: HashMap::new(),
@@ -190,13 +169,6 @@ impl ProofRuntime {
     ///
     /// Ok(()) if the decoder was successfully registered, or an error if a decoder for the type is already present.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use your_crate::proof::{ProofRuntime, commitment_op_decoder, PROOF_OP_IAVL_COMMITMENT};
-    /// # let mut runtime = ProofRuntime::new();
-    /// runtime.register_op_decoder(PROOF_OP_IAVL_COMMITMENT, commitment_op_decoder).expect("Failed to register decoder");
-    /// ```
     pub fn register_op_decoder<F>(&mut self, typ: &str, dec: F) -> Result<(), Box<dyn Error>>
     where
         F: 'static + Fn(ProofOp) -> Result<Box<dyn ProofOperator>, Box<dyn Error>>,
@@ -223,14 +195,6 @@ impl ProofRuntime {
     /// A `Result` containing the decoded `ProofOperator` if successful, or an error if no decoder is registered
     /// for the `ProofOp`'s type.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use your_crate::proof::{ProofRuntime, ProofOp};
-    /// # let runtime = ProofRuntime::new();
-    /// # let proof_op = ProofOp { /* fields omitted */ };
-    /// let decoded_op = runtime.decode(&proof_op).expect("Failed to decode ProofOp");
-    /// ```
     pub fn decode(&self, pop: &ProofOp) -> Result<Box<dyn ProofOperator>, Box<dyn Error>> {
         match self.decoders.get(&pop.field_type) {
             Some(decoder) => decoder(pop.clone()),
@@ -263,17 +227,6 @@ impl ProofRuntime {
     ///
     /// Ok(()) if all proof operations are successfully verified against the root, or an error if any verification step fails.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use your_crate::proof::{ProofRuntime, ProofOps};
-    /// # let runtime = ProofRuntime::new();
-    /// # let proof_ops = ProofOps { /* fields omitted */ };
-    /// # let root = &[];
-    /// # let keypath = "";
-    /// # let args = Some(vec![vec![]]);
-    /// runtime.verify(&proof_ops, root, keypath, &args).expect("Proof verification failed");
-    /// ```
     pub fn verify(
         &self,
         proof: &ProofOps,
@@ -332,7 +285,23 @@ pub enum KeyEncoding {
     /// URL encoding format, where characters are percent-encoded to make them safe for use in URLs.
     Url = 0,
     /// Hexadecimal encoding format, where binary data is represented as a string of hexadecimal digits.
+    #[allow(dead_code)]
     Hex = 1,
+}
+
+impl KeyEncoding {
+    /// Returns `true` if the key encoding is [`Hex`].
+    ///
+    /// [`Hex`]: KeyEncoding::Hex
+    pub fn is_hex(&self) -> bool {
+        matches!(self, Self::Hex)
+    }
+}
+
+impl Default for KeyEncoding {
+    fn default() -> Self {
+        Self::Url
+    }
 }
 
 /// A struct representing a key with a specified encoding.
@@ -539,17 +508,6 @@ mod tests {
 
     // Implement the DominoOp functionality
     impl ProofOperator for DominoOp {
-        // Converts the DominoOp into a ProofOp (assuming a simplified version of ProofOp)
-        fn proof_op(&self) -> Result<ProofOp, Box<dyn Error>> {
-            // Serialize the DominoOp (simplified example, replace with actual serialization logic)
-            let serialized = serde_json::to_vec(&self).unwrap();
-            Ok(ProofOp {
-                field_type: "test:domino".to_string(),
-                key: self.key.clone().into_bytes(),
-                data: serialized,
-            })
-        }
-
         // Runs the DominoOp, producing output from the given input
         fn run(&self, input: Vec<Vec<u8>>) -> Result<Vec<Vec<u8>>, Box<dyn Error>> {
             if input.len() != 1 {

@@ -98,6 +98,7 @@ impl From<WrappedProofOps> for ProofOps {
 ///
 /// This function wraps the `ProofOps` into `WrappedProofOps` before serializing, converting binary
 /// data to a base64-encoded string format suitable for text-based serialization formats like JSON.
+#[allow(dead_code)]
 pub fn ser_proof_ops<S>(proof_ops: &ProofOps, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
@@ -110,6 +111,7 @@ where
 ///
 /// Deserializes data into `WrappedProofOps` and then converts it back into `ProofOps`,
 /// performing base64 decoding of the binary fields in the process.
+#[allow(dead_code)]
 pub fn des_proof_ops<'de, D>(deserializer: D) -> Result<ProofOps, D::Error>
 where
     D: Deserializer<'de>,
@@ -118,6 +120,7 @@ where
     Ok(wrapped_proof_ops.into())
 }
 
+#[allow(dead_code)]
 pub fn raw_to_proof_ops(raw_proof_ops: RawProofOps) -> ProofOps {
     let mut ops: Vec<ProofOp> = vec![];
     // loops throug the decoded_raw.ops and build a vector of ProofOp from it

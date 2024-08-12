@@ -164,10 +164,10 @@ impl<'a> KmsBlockchainImpl {
         &self,
         data_size: u32,
         operation: OperationValue,
-        proof: Vec<u8>,
+        _proof: Vec<u8>,
     ) -> anyhow::Result<Vec<KmsEvent>> {
         let request = ExecuteContractRequest::builder()
-            .message(KmsMessage::builder().value(operation).proof(proof).build())
+            .message(KmsMessage::builder().value(operation).build())
             .gas_limit(10_000_000u64)
             .funds(vec![ProtoCoin::builder()
                 .denom("ucosm".to_string())
@@ -263,11 +263,7 @@ impl Blockchain for KmsBlockchainImpl {
         // TODO what if we have multiple events?
         let ev = evs[0].clone();
 
-        tracing::info!(
-            "✉️ TxId: {:?} - Proof: {:?}",
-            ev.txn_id().to_hex(),
-            ev.proof().to_hex()
-        );
+        tracing::info!("✉️ TxId: {:?}", ev.txn_id().to_hex(),);
 
         tracing::info!(
             "🍊 Waiting for callback from KMS, txn_id: {:?}",
@@ -523,11 +519,7 @@ impl Blockchain for KmsBlockchainImpl {
         // TODO what if we have multiple events?
         let ev = evs[0].clone();
 
-        tracing::info!(
-            "✉️ TxId: {:?} - Proof: {:?}",
-            ev.txn_id().to_hex(),
-            ev.proof().to_hex()
-        );
+        tracing::info!("✉️ TxId: {:?}", ev.txn_id().to_hex(),);
 
         tracing::info!(
             "🍊 Waiting for callback from KMS, txn_id: {:?}",

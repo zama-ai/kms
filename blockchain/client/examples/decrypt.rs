@@ -27,10 +27,7 @@ async fn main() {
             .build(),
     );
 
-    let msg = KmsMessage::builder()
-        .proof(vec![1, 2, 3])
-        .value(operation_response)
-        .build();
+    let msg = KmsMessage::builder().value(operation_response).build();
 
     let request = ExecuteContractRequest::builder()
         .message(msg)

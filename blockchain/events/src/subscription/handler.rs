@@ -387,7 +387,6 @@ mod tests {
         let event = KmsEvent::builder()
             .operation(KmsOperation::Decrypt)
             .txn_id(vec![1])
-            .proof(vec![1, 2, 3])
             .build();
         let attrs: Vec<Attribute> = <KmsEvent as Into<Event>>::into(event).attributes;
         tx_response

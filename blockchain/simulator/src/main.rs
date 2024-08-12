@@ -74,12 +74,7 @@ async fn execute_contract(
     );
 
     let request = ExecuteContractRequest::builder()
-        .message(
-            KmsMessage::builder()
-                .proof(vec![1, 2, 3])
-                .value(value)
-                .build(),
-        )
+        .message(KmsMessage::builder().value(value).build())
         .gas_limit(3_100_000)
         .funds(vec![ProtoCoin::builder()
             .amount(20_000_000)
@@ -111,11 +106,7 @@ async fn execute_contract(
 
     let ev = evs[0].clone();
 
-    tracing::info!(
-        "TxId: {:?} - Proof: {:?}",
-        ev.txn_id().to_hex(),
-        ev.proof().to_hex()
-    );
+    tracing::info!("TxId: {:?}", ev.txn_id().to_hex(),);
     Ok(())
 }
 
@@ -128,7 +119,6 @@ async fn query_contract(
     let ev = KmsEvent::builder()
         .operation(query.event)
         .txn_id(txn_id)
-        .proof(vec![1, 2, 3])
         .build();
     let query_req = ContractQuery::GetOperationsValue(OperationQuery::builder().event(ev).build());
 

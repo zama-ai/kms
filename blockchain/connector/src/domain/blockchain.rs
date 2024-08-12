@@ -1,15 +1,13 @@
 use async_trait::async_trait;
 use events::kms::{
     CrsGenResponseValues, DecryptResponseValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
-    KmsCoreConf, KmsEvent, KmsMessage, OperationValue, Proof, ReencryptResponseValues,
-    TransactionId,
+    KmsCoreConf, KmsEvent, KmsMessage, OperationValue, ReencryptResponseValues, TransactionId,
 };
 use strum_macros::{Display, EnumString};
 
 #[derive(Default, PartialEq, Eq)]
 pub struct BlockchainOperationVal {
     pub tx_id: TransactionId,
-    pub proof: Proof,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -73,27 +71,22 @@ impl From<KmsOperationResponse> for KmsMessage {
             KmsOperationResponse::DecryptResponse(val) => KmsMessage::builder()
                 .value(val.decrypt_response)
                 .txn_id(val.operation_val.tx_id)
-                .proof(val.operation_val.proof)
                 .build(),
             KmsOperationResponse::ReencryptResponse(val) => KmsMessage::builder()
                 .value(val.reencrypt_response)
                 .txn_id(val.operation_val.tx_id)
-                .proof(val.operation_val.proof)
                 .build(),
             KmsOperationResponse::KeyGenPreprocResponse(val) => KmsMessage::builder()
                 .value(val.keygen_preproc_response)
                 .txn_id(val.operation_val.tx_id)
-                .proof(val.operation_val.proof)
                 .build(),
             KmsOperationResponse::KeyGenResponse(val) => KmsMessage::builder()
                 .value(val.keygen_response)
                 .txn_id(val.operation_val.tx_id)
-                .proof(val.operation_val.proof)
                 .build(),
             KmsOperationResponse::CrsGenResponse(val) => KmsMessage::builder()
                 .value(val.crs_gen_response)
                 .txn_id(val.operation_val.tx_id)
-                .proof(val.operation_val.proof)
                 .build(),
         }
     }

@@ -1,53 +1,38 @@
+use super::state::KmsContractStorage;
 use crate::events::EventEmitStrategy as _;
-use crate::{
-    proof::{ContractProofType, DebugProofStrategy, ProofStrategy},
-    state::KmsContractStorage,
-};
-use core::cell::RefCell;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Response, StdError, StdResult, VerificationError};
+use cosmwasm_std::{
+    to_json_binary, Env, Reply, Response, StdError, StdResult, Storage, SubMsg, SubMsgResult,
+    VerificationError, WasmMsg,
+};
 use cw_controllers::Admin;
 use cw_utils::must_pay;
 use events::kms::{
     CrsGenResponseValues, CrsGenValues, DecryptResponseValues, DecryptValues,
     KeyGenPreprocResponseValues, KeyGenPreprocValues, KeyGenResponseValues, KeyGenValues,
-    KmsCoreConf, KmsEvent, OperationValue, ReencryptResponseValues, ReencryptValues, Transaction,
-    TransactionId,
+    KmsCoreConf, KmsEvent, OperationValue, Proof, ReencryptResponseValues, ReencryptValues,
+    Transaction, TransactionId,
 };
-use events::HexVector;
 use sha3::{Digest, Sha3_256};
 use std::ops::Deref;
 use sylvia::{
     contract, entry_points,
-    types::{ExecCtx, InstantiateCtx, QueryCtx},
+    types::{ExecCtx, InstantiateCtx, QueryCtx, ReplyCtx},
 };
 
 const UCOSM: &str = "ucosm";
 
-#[cw_serde]
-pub struct SequenceResponse {
-    pub sequence: u64,
-}
-
-#[cw_serde]
-pub struct ConfigurationResponse {
-    pub value: String,
-}
-
 pub(crate) const ADMIN: Admin = Admin::new("kms-conf-admin");
 
-pub struct KmsContract {
-    pub(crate) storage: KmsContractStorage,
-    proof_strategy: RefCell<Box<dyn ProofStrategy>>,
+#[cw_serde]
+pub struct ProofMessage {
+    pub proof: Vec<u8>,
+    pub value: Vec<u8>,
 }
 
-impl Default for KmsContract {
-    fn default() -> Self {
-        Self {
-            storage: KmsContractStorage::default(),
-            proof_strategy: RefCell::new(Box::new(DebugProofStrategy {})),
-        }
-    }
+#[derive(Default)]
+pub struct KmsContract {
+    pub(crate) storage: KmsContractStorage,
 }
 
 #[entry_points]
@@ -57,10 +42,9 @@ impl KmsContract {
         Self::default()
     }
 
-    fn derive_transaction_id(&self, ctx: &ExecCtx) -> StdResult<Vec<u8>> {
-        let block_height = ctx.env.block.height;
-        let transaction_index = ctx
-            .env
+    fn derive_transaction_id(&self, env: &Env) -> StdResult<Vec<u8>> {
+        let block_height = env.block.height;
+        let transaction_index = env
             .transaction
             .clone()
             .ok_or_else(|| StdError::generic_err("Cannot find transaction index in env"))?
@@ -82,18 +66,56 @@ impl KmsContract {
 
     fn process_transaction<T>(
         &self,
-        ctx: ExecCtx,
+        storage: &mut dyn Storage,
+        env: &Env,
         txn_id: &[u8],
-        proof: HexVector,
         operation: T,
     ) -> StdResult<Response>
     where
         T: Into<OperationValue> + Clone,
     {
-        let mut ctx = ctx;
         self.storage
-            .update_transaction(&mut ctx, txn_id, &operation)?;
-        let response = self.emit_event(&ctx, txn_id, proof, &operation)?;
+            .update_transaction(storage, env, txn_id, &operation)?;
+        let response = self.emit_event(storage, txn_id, &operation)?;
+        Ok(response)
+    }
+
+    fn verify_proof_call<T: Into<OperationValue> + Clone>(
+        &self,
+        ctx: ExecCtx,
+        proof: Proof,
+        value: &[u8],
+        operation: T,
+    ) -> StdResult<Response> {
+        if self.storage.get_debug_proof(ctx.deps.storage)? {
+            let txn_id = self.derive_transaction_id(&ctx.env)?;
+            self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id, operation)
+        } else {
+            self.call_proof_contract(ctx, proof, value, operation)
+        }
+    }
+
+    fn call_proof_contract<T: Into<OperationValue>>(
+        &self,
+        ctx: ExecCtx,
+        proof: Proof,
+        value: &[u8],
+        operation: T,
+    ) -> StdResult<Response> {
+        let msg = ProofMessage {
+            proof: proof.proof,
+            value: value.to_vec(),
+        };
+        let msg = WasmMsg::Execute {
+            contract_addr: proof.contract_address,
+            msg: to_json_binary(&msg)?,
+            funds: vec![],
+        };
+        let reply_id = self.storage.next_id(ctx.deps.storage)?;
+        self.storage
+            .add_pending_transaction(ctx.deps.storage, reply_id, operation)?;
+        let sub_msg = SubMsg::reply_on_success(msg, reply_id);
+        let response = Response::new().add_submessage(sub_msg);
         Ok(response)
     }
 
@@ -101,18 +123,9 @@ impl KmsContract {
     pub fn instantiate(
         &self,
         ctx: InstantiateCtx,
-        proof_type: ContractProofType,
+        debug_proof: Option<bool>,
         kms_core_conf: KmsCoreConf,
     ) -> StdResult<Response> {
-        match proof_type {
-            ContractProofType::Debug => {
-                *self.proof_strategy.borrow_mut() = Box::new(DebugProofStrategy {})
-            }
-            ContractProofType::Tendermint => {
-                *self.proof_strategy.borrow_mut() = Box::new(DebugProofStrategy {})
-            }
-        }
-
         if let KmsCoreConf::Threshold(conf) = &kms_core_conf {
             // centralized setting should be used if there is only one party
             if conf.parties.len() < 2 {
@@ -150,6 +163,11 @@ impl KmsContract {
                 ));
             }
         };
+
+        if let Some(debug_proof) = debug_proof {
+            self.storage
+                .set_debug_proof(ctx.deps.storage, debug_proof)?;
+        }
 
         self.storage
             .update_core_conf(ctx.deps.storage, kms_core_conf)?;
@@ -194,7 +212,7 @@ impl KmsContract {
             | (ciphertext_handle[3] as u32)
     }
 
-    fn verify_payment(&self, ctx: &ExecCtx, ciphertext_handles: Vec<&Vec<u8>>) -> StdResult<()> {
+    fn verify_payment(&self, ctx: &ExecCtx, ciphertext_handles: &[Vec<u8>]) -> StdResult<()> {
         let mut data_size = 0;
         for handle in ciphertext_handles {
             data_size += Self::parse_ciphertext_handle_size(&handle[..4]);
@@ -223,27 +241,24 @@ impl KmsContract {
         &self,
         ctx: ExecCtx,
         decrypt: DecryptValues,
-        proof: HexVector,
+        proof: Proof,
     ) -> StdResult<Response> {
         // decipher the size encoding and ensure the payment is included in the message
         let ciphertext_handles = decrypt.ciphertext_handles();
 
-        let ctvecs = ciphertext_handles.0.iter().map(|ct| ct.deref()).collect();
+        let ctvecs: Vec<Vec<u8>> = ciphertext_handles.0.iter().map(|ct| ct.to_vec()).collect();
 
-        self.verify_payment(&ctx, ctvecs)?;
-
-        if !self
-            .proof_strategy
-            .borrow()
-            .verify_request_proof(proof.clone().into())
-        {
-            return Err(cosmwasm_std::StdError::verification_err(
-                VerificationError::GenericErr,
-            ));
-        }
-
-        let txn_id = self.derive_transaction_id(&ctx)?;
-        self.process_transaction(ctx, &txn_id, proof, decrypt)
+        self.verify_payment(&ctx, &ctvecs).map_err(|e| {
+            StdError::generic_err(format!(
+                "Error verifying payment for ciphertext storage - {}",
+                e
+            ))
+        })?;
+        let value = ctvecs.into_iter().flatten().collect::<Vec<u8>>();
+        self.verify_proof_call(ctx, proof, &value, decrypt)
+            .map_err(|e| {
+                StdError::generic_err(format!("Error verifying proof for decryption - {}", e))
+            })
     }
 
     #[sv::msg(exec)]
@@ -252,33 +267,18 @@ impl KmsContract {
         ctx: ExecCtx,
         txn_id: TransactionId,
         decrypt_response: DecryptResponseValues,
-        proof: HexVector,
     ) -> StdResult<Response> {
-        if !self
-            .proof_strategy
-            .borrow()
-            .verify_response_proof(proof.clone().into())
-        {
-            return Err(cosmwasm_std::StdError::verification_err(
-                VerificationError::GenericErr,
-            ));
-        }
-        self.process_transaction(ctx, &txn_id.to_vec(), proof, decrypt_response)
+        self.process_transaction(
+            ctx.deps.storage,
+            &ctx.env,
+            &txn_id.to_vec(),
+            decrypt_response,
+        )
     }
 
     #[sv::msg(exec)]
-    pub fn keygen_preproc(&self, ctx: ExecCtx, proof: HexVector) -> StdResult<Response> {
-        if !self
-            .proof_strategy
-            .borrow()
-            .verify_request_proof(proof.clone().into())
-        {
-            return Err(cosmwasm_std::StdError::verification_err(
-                VerificationError::GenericErr,
-            ));
-        }
-        let txn_id = self.derive_transaction_id(&ctx)?;
-        self.process_transaction(ctx, &txn_id, proof, KeyGenPreprocValues::default())
+    pub fn keygen_preproc(&self, ctx: ExecCtx, proof: Proof) -> StdResult<Response> {
+        self.verify_proof_call(ctx, proof, &[], KeyGenPreprocValues::default())
     }
 
     #[sv::msg(exec)]
@@ -286,43 +286,19 @@ impl KmsContract {
         &self,
         ctx: ExecCtx,
         txn_id: TransactionId,
-        proof: HexVector,
     ) -> StdResult<Response> {
-        if !self
-            .proof_strategy
-            .borrow()
-            .verify_response_proof(proof.clone().into())
-        {
-            return Err(cosmwasm_std::StdError::verification_err(
-                VerificationError::GenericErr,
-            ));
-        }
         self.process_transaction(
-            ctx,
+            ctx.deps.storage,
+            &ctx.env,
             &txn_id.to_vec(),
-            proof,
             KeyGenPreprocResponseValues::default(),
         )
     }
 
     #[sv::msg(exec)]
-    pub fn keygen(
-        &self,
-        ctx: ExecCtx,
-        keygen: KeyGenValues,
-        proof: HexVector,
-    ) -> StdResult<Response> {
-        if !self
-            .proof_strategy
-            .borrow()
-            .verify_request_proof(proof.clone().into())
-        {
-            return Err(cosmwasm_std::StdError::verification_err(
-                VerificationError::GenericErr,
-            ));
-        }
-        let txn_id = self.derive_transaction_id(&ctx)?;
-        self.process_transaction(ctx, &txn_id, proof, keygen)
+    pub fn keygen(&self, ctx: ExecCtx, keygen: KeyGenValues, proof: Proof) -> StdResult<Response> {
+        let value = keygen.preproc_id().deref().to_vec();
+        self.verify_proof_call(ctx, proof, &value, keygen)
     }
 
     #[sv::msg(exec)]
@@ -331,18 +307,13 @@ impl KmsContract {
         ctx: ExecCtx,
         txn_id: TransactionId,
         keygen_response: KeyGenResponseValues,
-        proof: HexVector,
     ) -> StdResult<Response> {
-        if !self
-            .proof_strategy
-            .borrow()
-            .verify_response_proof(proof.clone().into())
-        {
-            return Err(cosmwasm_std::StdError::verification_err(
-                VerificationError::GenericErr,
-            ));
-        }
-        self.process_transaction(ctx, &txn_id.to_vec(), proof, keygen_response)
+        self.process_transaction(
+            ctx.deps.storage,
+            &ctx.env,
+            &txn_id.to_vec(),
+            keygen_response,
+        )
     }
 
     #[sv::msg(exec)]
@@ -350,23 +321,13 @@ impl KmsContract {
         &self,
         ctx: ExecCtx,
         reencrypt: ReencryptValues,
-        proof: HexVector,
+        proof: Proof,
     ) -> StdResult<Response> {
         // decipher the size encoding and ensure the payment is included in the message
         let ciphertext_handle: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
-        self.verify_payment(&ctx, vec![&ciphertext_handle])?;
+        self.verify_payment(&ctx, &[ciphertext_handle.clone()])?;
 
-        if !self
-            .proof_strategy
-            .borrow()
-            .verify_request_proof(proof.clone().into())
-        {
-            return Err(cosmwasm_std::StdError::verification_err(
-                VerificationError::GenericErr,
-            ));
-        }
-        let txn_id = self.derive_transaction_id(&ctx)?;
-        self.process_transaction(ctx, &txn_id, proof, reencrypt)
+        self.verify_proof_call(ctx, proof, &ciphertext_handle, reencrypt)
     }
 
     #[sv::msg(exec)]
@@ -375,34 +336,18 @@ impl KmsContract {
         ctx: ExecCtx,
         txn_id: TransactionId,
         reencrypt_response: ReencryptResponseValues,
-        proof: HexVector,
     ) -> StdResult<Response> {
-        if !self
-            .proof_strategy
-            .borrow()
-            .verify_response_proof(proof.clone().into())
-        {
-            return Err(cosmwasm_std::StdError::verification_err(
-                VerificationError::GenericErr,
-            ));
-        }
-
-        self.process_transaction(ctx, &txn_id.to_vec(), proof, reencrypt_response)
+        self.process_transaction(
+            ctx.deps.storage,
+            &ctx.env,
+            &txn_id.to_vec(),
+            reencrypt_response,
+        )
     }
 
     #[sv::msg(exec)]
-    pub fn crs_gen(&self, ctx: ExecCtx, proof: HexVector) -> StdResult<Response> {
-        if !self
-            .proof_strategy
-            .borrow()
-            .verify_request_proof(proof.clone().into())
-        {
-            return Err(cosmwasm_std::StdError::verification_err(
-                VerificationError::GenericErr,
-            ));
-        }
-        let txn_id = self.derive_transaction_id(&ctx)?;
-        self.process_transaction(ctx, &txn_id, proof, CrsGenValues::default())
+    pub fn crs_gen(&self, ctx: ExecCtx, proof: Proof) -> StdResult<Response> {
+        self.verify_proof_call(ctx, proof, &[], CrsGenValues::default())
     }
 
     #[sv::msg(exec)]
@@ -411,18 +356,33 @@ impl KmsContract {
         ctx: ExecCtx,
         txn_id: TransactionId,
         crs_gen_response: CrsGenResponseValues,
-        proof: HexVector,
     ) -> StdResult<Response> {
-        if !self
-            .proof_strategy
-            .borrow()
-            .verify_response_proof(proof.clone().into())
-        {
-            return Err(cosmwasm_std::StdError::verification_err(
-                VerificationError::GenericErr,
-            ));
-        }
-        self.process_transaction(ctx, &txn_id.to_vec(), proof, crs_gen_response)
+        self.process_transaction(
+            ctx.deps.storage,
+            &ctx.env,
+            &txn_id.to_vec(),
+            crs_gen_response,
+        )
+    }
+
+    #[allow(dead_code)]
+    #[sv::msg(reply)]
+    pub fn reply(&self, ctx: ReplyCtx, reply: Reply) -> StdResult<Response> {
+        let reply_id = reply.id;
+        let result = reply.result;
+        let response = match result {
+            SubMsgResult::Ok(_) => {
+                let pending_txn = self
+                    .storage
+                    .get_pending_transaction(ctx.deps.storage, reply_id)?;
+                let txn_id = self.derive_transaction_id(&ctx.env)?;
+                self.process_transaction(ctx.deps.storage, &ctx.env, &txn_id, pending_txn)
+            }
+            SubMsgResult::Err(e) => Err(StdError::generic_err(format!("Reply failed - {}", e))),
+        };
+        self.storage
+            .remove_pending_transaction(ctx.deps.storage, reply_id)?;
+        response
     }
 }
 
@@ -431,7 +391,7 @@ mod tests {
     use super::sv::mt::KmsContractProxy;
     use crate::contract::sv::mt::CodeId;
     use crate::contract::KmsContract;
-    use crate::proof::ContractProofType;
+    use crate::contract::Proof;
     use cosmwasm_std::coin;
     use cosmwasm_std::coins;
     use cosmwasm_std::Addr;
@@ -454,7 +414,6 @@ mod tests {
     use events::kms::ReencryptResponseValues;
     use events::kms::ReencryptValues;
     use events::kms::TransactionId;
-    use events::HexVector;
     use sylvia::cw_multi_test::IntoAddr as _;
     use sylvia::multitest::App;
 
@@ -470,7 +429,7 @@ mod tests {
         // `degree_for_reconstruction` is too high
         assert!(code_id
             .instantiate(
-                ContractProofType::Debug,
+                Some(true),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 3,
@@ -485,7 +444,7 @@ mod tests {
         // `response_count_for_majority_vote` is greater than the no. of parties
         assert!(code_id
             .instantiate(
-                ContractProofType::Debug,
+                Some(true),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 5,
@@ -500,7 +459,7 @@ mod tests {
         // `response_count_for_reconstruction` is greater than the no. of parties
         assert!(code_id
             .instantiate(
-                ContractProofType::Debug,
+                Some(true),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 3,
@@ -515,7 +474,7 @@ mod tests {
         // finally we make a successful attempt
         let contract = code_id
             .instantiate(
-                ContractProofType::Debug,
+                Some(true),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 3,
@@ -542,7 +501,7 @@ mod tests {
 
         let contract = code_id
             .instantiate(
-                ContractProofType::Debug,
+                Some(true),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 3,
@@ -592,11 +551,11 @@ mod tests {
         let app = App::new(app);
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
-        let proof: HexVector = vec![1, 2, 3].into();
+        let proof = Proof::default();
 
         let contract = code_id
             .instantiate(
-                ContractProofType::Debug,
+                Some(true),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
@@ -632,7 +591,7 @@ mod tests {
             .expect_err("Insufficient funds sent to cover the data size");
 
         let response = contract
-            .decrypt(decrypt.clone(), proof.clone())
+            .decrypt(decrypt.clone(), proof)
             .with_funds(&[coin(data_size.into(), UCOSM)])
             .call(&gateway)
             .unwrap();
@@ -643,7 +602,6 @@ mod tests {
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::Decrypt)
             .txn_id(txn_id.clone())
-            .proof(proof.clone())
             .build();
 
         assert_event(&response.events, &expected_event);
@@ -654,14 +612,14 @@ mod tests {
             .build();
 
         let response = contract
-            .decrypt_response(txn_id.clone(), decrypt_response.clone(), proof.clone())
+            .decrypt_response(txn_id.clone(), decrypt_response.clone())
             .call(&owner)
             .unwrap();
         // one event because there's always an execute event
         assert_eq!(response.events.len(), 1);
 
         let response = contract
-            .decrypt_response(txn_id.clone(), decrypt_response, proof.clone())
+            .decrypt_response(txn_id.clone(), decrypt_response)
             .call(&owner)
             .unwrap();
         // two events because there's always an execute event
@@ -676,7 +634,6 @@ mod tests {
                     .build(),
             ))
             .txn_id(txn_id.clone())
-            .proof(proof.clone())
             .build();
 
         assert_event(&response.events, &expected_event);
@@ -693,11 +650,11 @@ mod tests {
         let app = App::default();
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
-        let proof: HexVector = vec![1, 2, 3].into();
+        let proof = Proof::default();
 
         let contract = code_id
             .instantiate(
-                ContractProofType::Debug,
+                Some(true),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
@@ -709,20 +666,19 @@ mod tests {
             .call(&owner)
             .unwrap();
 
-        let response = contract.keygen_preproc(proof.clone()).call(&owner).unwrap();
+        let response = contract.keygen_preproc(proof).call(&owner).unwrap();
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
         assert_eq!(response.events.len(), 2);
 
         let expected_event = KmsEvent::builder()
             .operation(OperationValue::KeyGenPreproc(KeyGenPreprocValues {}))
             .txn_id(txn_id.clone())
-            .proof(proof.clone())
             .build();
 
         assert_event(&response.events, &expected_event);
 
         let response = contract
-            .keygen_preproc_response(txn_id.clone(), proof.clone())
+            .keygen_preproc_response(txn_id.clone())
             .call(&owner)
             .unwrap();
         assert_eq!(response.events.len(), 2);
@@ -732,7 +688,6 @@ mod tests {
                 KeyGenPreprocResponseValues {},
             ))
             .txn_id(txn_id.clone())
-            .proof(proof)
             .build();
 
         assert_event(&response.events, &expected_event);
@@ -743,11 +698,10 @@ mod tests {
         let app = App::default();
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
-        let proof: HexVector = vec![1, 2, 3].into();
 
         let contract = code_id
             .instantiate(
-                ContractProofType::Debug,
+                Some(true),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
@@ -762,7 +716,7 @@ mod tests {
         let preproc_id = "preproc_id".as_bytes().to_vec().into();
         let keygen = KeyGenValues::builder().preproc_id(preproc_id).build();
         let response = contract
-            .keygen(keygen.clone(), proof.clone())
+            .keygen(keygen.clone(), Proof::default())
             .call(&owner)
             .unwrap();
         println!("response: {:#?}", response);
@@ -772,7 +726,6 @@ mod tests {
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::KeyGen)
             .txn_id(txn_id.clone())
-            .proof(proof.clone())
             .build();
 
         assert_event(&response.events, &expected_event);
@@ -786,13 +739,13 @@ mod tests {
             .build();
 
         let response = contract
-            .keygen_response(txn_id.clone(), keygen_response.clone(), proof.clone())
+            .keygen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
         assert_eq!(response.events.len(), 1);
 
         let response = contract
-            .keygen_response(txn_id.clone(), keygen_response.clone(), proof.clone())
+            .keygen_response(txn_id.clone(), keygen_response.clone())
             .call(&owner)
             .unwrap();
         // one exec and two response events
@@ -801,7 +754,6 @@ mod tests {
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::KeyGenResponse)
             .txn_id(txn_id.clone())
-            .proof(proof)
             .build();
         assert_event(&response.events, &expected_event);
     }
@@ -822,11 +774,10 @@ mod tests {
         //let app = App::default();
         let code_id = CodeId::store_code(&app);
         //let owner = "owner".into_addr();
-        let proof: HexVector = vec![1, 2, 3].into();
 
         let contract = code_id
             .instantiate(
-                ContractProofType::Debug,
+                Some(true),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 1,
@@ -861,13 +812,13 @@ mod tests {
             .build();
 
         let _failed_response = contract
-            .reencrypt(reencrypt.clone(), proof.clone())
+            .reencrypt(reencrypt.clone(), Proof::default())
             .with_funds(&[coin(42_u128, UCOSM)])
             .call(&owner)
             .expect_err("Insufficient funds sent to cover the data size");
 
         let response = contract
-            .reencrypt(reencrypt.clone(), proof.clone())
+            .reencrypt(reencrypt.clone(), Proof::default())
             .with_funds(&[coin(data_size.into(), UCOSM)])
             .call(&owner)
             .unwrap();
@@ -878,7 +829,6 @@ mod tests {
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::Reencrypt)
             .txn_id(txn_id.clone())
-            .proof(proof.clone())
             .build();
 
         assert_event(&response.events, &expected_event);
@@ -889,19 +839,19 @@ mod tests {
             .build();
 
         let response = contract
-            .reencrypt_response(txn_id.clone(), response_values.clone(), proof.clone())
+            .reencrypt_response(txn_id.clone(), response_values.clone())
             .call(&owner)
             .unwrap();
         assert_eq!(response.events.len(), 1);
 
         let response = contract
-            .reencrypt_response(txn_id.clone(), response_values.clone(), proof.clone())
+            .reencrypt_response(txn_id.clone(), response_values.clone())
             .call(&owner)
             .unwrap();
         assert_eq!(response.events.len(), 1);
 
         let response = contract
-            .reencrypt_response(txn_id.clone(), response_values.clone(), proof.clone())
+            .reencrypt_response(txn_id.clone(), response_values.clone())
             .call(&owner)
             .unwrap();
         // one exec and one response event since we hit the threshold of 3
@@ -910,7 +860,6 @@ mod tests {
         let expected_event = KmsEvent::builder()
             .operation(OperationValue::ReencryptResponse(response_values))
             .txn_id(txn_id.clone())
-            .proof(proof.clone())
             .build();
 
         assert_event(&response.events, &expected_event);
@@ -921,11 +870,10 @@ mod tests {
         let app = App::default();
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
-        let proof: HexVector = vec![1, 2, 3].into();
 
         let contract = code_id
             .instantiate(
-                ContractProofType::Debug,
+                Some(true),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
@@ -937,7 +885,7 @@ mod tests {
             .call(&owner)
             .unwrap();
 
-        let response = contract.crs_gen(proof.clone()).call(&owner).unwrap();
+        let response = contract.crs_gen(Proof::default()).call(&owner).unwrap();
 
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
         assert_eq!(response.events.len(), 2);
@@ -945,7 +893,6 @@ mod tests {
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::CrsGen)
             .txn_id(txn_id.clone())
-            .proof(proof.clone())
             .build();
 
         assert_event(&response.events, &expected_event);
@@ -957,13 +904,13 @@ mod tests {
             .build();
 
         let response = contract
-            .crs_gen_response(txn_id.clone(), crs_gen_response.clone(), proof.clone())
+            .crs_gen_response(txn_id.clone(), crs_gen_response.clone())
             .call(&owner)
             .unwrap();
         assert_eq!(response.events.len(), 1);
 
         let response = contract
-            .crs_gen_response(txn_id.clone(), crs_gen_response, proof.clone())
+            .crs_gen_response(txn_id.clone(), crs_gen_response)
             .call(&owner)
             .unwrap();
         // one exec and two response events
@@ -972,7 +919,6 @@ mod tests {
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::CrsGenResponse)
             .txn_id(txn_id.clone())
-            .proof(proof)
             .build();
 
         assert_event(&response.events, &expected_event);
@@ -1006,11 +952,10 @@ mod tests {
         let app = App::new(app);
         let code_id = CodeId::store_code(&app);
         let owner = "owner".into_addr();
-        let proof: HexVector = vec![1, 2, 3].into();
 
         let contract = code_id
             .instantiate(
-                ContractProofType::Debug,
+                Some(true),
                 KmsCoreConf::Threshold(KmsCoreThresholdConf {
                     parties: vec![KmsCoreParty::default(); 4],
                     response_count_for_majority_vote: 2,
@@ -1037,7 +982,7 @@ mod tests {
             .fhe_types(vec![FheType::Euint8; batch_size])
             .build();
         let response = contract
-            .decrypt(decrypt.clone(), proof.clone())
+            .decrypt(decrypt.clone(), Proof::default())
             .with_funds(&[coin(data_size.into(), UCOSM)])
             .call(&caller)
             .unwrap();
@@ -1047,7 +992,6 @@ mod tests {
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::Decrypt)
             .txn_id(txn_id.clone())
-            .proof(proof.clone())
             .build();
 
         assert_event(&response.events, &expected_event);
@@ -1058,7 +1002,6 @@ mod tests {
         let not_expected_event = KmsEvent::builder()
             .operation(KmsOperation::KeyGen)
             .txn_id(txn_id.clone())
-            .proof(proof.clone())
             .build();
 
         let response = contract.get_operations_value(not_expected_event);

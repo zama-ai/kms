@@ -12,8 +12,8 @@ use conf_trace::grpc::make_request;
 use enum_dispatch::enum_dispatch;
 use events::kms::{
     DecryptResponseValues, DecryptValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
-    KeyGenValues, KmsCoreConf, KmsEvent, OperationValue, Proof, ReencryptResponseValues,
-    ReencryptValues, TransactionId,
+    KeyGenValues, KmsCoreConf, KmsEvent, OperationValue, ReencryptResponseValues, ReencryptValues,
+    TransactionId,
 };
 use events::HexVector;
 use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -36,7 +36,6 @@ use typed_builder::TypedBuilder;
 pub struct KmsOperationVal<S> {
     pub kms_client: KmsCore<S>,
     pub tx_id: TransactionId,
-    pub proof: Proof,
 }
 
 pub struct DecryptVal<S> {
@@ -166,7 +165,6 @@ where
         let operation_val = KmsOperationVal {
             kms_client: self.clone(),
             tx_id: event.txn_id().clone(),
-            proof: event.proof().clone(),
         };
         let request = match operation_value {
             OperationValue::Reencrypt(reencrypt) => KmsOperationRequest::Reencrypt(ReencryptVal {
@@ -336,7 +334,6 @@ where
                                 .build(),
                             operation_val: BlockchainOperationVal {
                                 tx_id: self.operation_val.tx_id.clone(),
-                                proof: self.operation_val.proof.clone(),
                             },
                         })))
                 }
@@ -445,7 +442,6 @@ where
                                 .build(),
                             operation_val: BlockchainOperationVal {
                                 tx_id: self.operation_val.tx_id.clone(),
-                                proof: self.operation_val.proof.clone(),
                             },
                         },
                     )))
@@ -533,7 +529,6 @@ where
                                     keygen_preproc_response: KeyGenPreprocResponseValues {},
                                     operation_val: crate::domain::blockchain::BlockchainOperationVal {
                                         tx_id: self.operation_val.tx_id.clone(),
-                                        proof: self.operation_val.proof.clone(),
                                     },
                                 },
                             )))
@@ -637,7 +632,6 @@ where
                                     .build(),
                                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                                     tx_id: self.operation_val.tx_id.clone(),
-                                    proof: self.operation_val.proof.clone(),
                                 },
                             },
                         )))
@@ -720,7 +714,6 @@ where
                                     .build(),
                                 operation_val: crate::domain::blockchain::BlockchainOperationVal {
                                     tx_id: self.operation_val.tx_id.clone(),
-                                    proof: self.operation_val.proof.clone(),
                                 },
                             },
                         )))
@@ -753,7 +746,7 @@ mod test {
         KmsCoreThresholdConf, KmsEvent, TransactionId,
     };
     use events::{
-        kms::{DecryptValues, KeyGenValues, OperationValue, Proof, ReencryptValues},
+        kms::{DecryptValues, KeyGenValues, OperationValue, ReencryptValues},
         HexVector,
     };
     use kms_lib::{
@@ -903,7 +896,6 @@ mod test {
         let event = KmsEvent::builder()
             .operation(op.clone())
             .txn_id(txn_id.clone())
-            .proof(Proof::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
             .build();
 
         let conf = KmsCoreConf::Centralized(FheParameter::Test);
@@ -1082,7 +1074,6 @@ mod test {
             KmsEvent::builder()
                 .operation(op.clone())
                 .txn_id(txn_id.clone())
-                .proof(Proof::from(vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))
                 .build();
             AMOUNT_PARTIES
         ];

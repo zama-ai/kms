@@ -260,8 +260,6 @@ pub enum KmsEventAttributeKey {
     OperationType,
     #[strum(serialize = "txn_id")]
     TransactionId,
-    #[strum(serialize = "proof")]
-    Proof,
 }
 
 #[cw_serde]
@@ -614,21 +612,29 @@ impl KmsOperation {
     }
 }
 
+#[cw_serde]
+#[derive(Eq, Default, TypedBuilder)]
+pub struct Proof {
+    pub proof: Vec<u8>,
+    pub contract_address: String,
+}
+
 #[derive(Eq, PartialEq, Clone, Debug, TypedBuilder)]
 pub struct KmsMessage {
     #[builder(setter(into), default = None)]
     txn_id: Option<TransactionId>,
-    #[builder(setter(into))]
-    proof: Proof,
+    #[builder(setter(into), default = None)]
+    proof: Option<Proof>,
     #[builder(setter(into))]
     value: OperationValue,
 }
 
 #[derive(Serialize)]
 struct InnerKmsMessage<'a> {
-    proof: &'a Proof,
     #[serde(skip_serializing_if = "Option::is_none")]
     txn_id: Option<&'a TransactionId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proof: Option<&'a Proof>,
     #[serde(flatten, skip_serializing_if = "OperationValue::has_no_inner_value")]
     value: &'a OperationValue,
 }
@@ -639,8 +645,8 @@ impl Serialize for KmsMessage {
         S: serde::Serializer,
     {
         let data = InnerKmsMessage {
-            proof: &self.proof,
             txn_id: self.txn_id.as_ref(),
+            proof: self.proof.as_ref(),
             value: self.value(),
         };
         let operation = Box::leak(self.value.to_string().into_boxed_str());
@@ -655,12 +661,12 @@ impl KmsMessage {
         self.txn_id.as_ref()
     }
 
-    pub fn proof(&self) -> &Proof {
-        &self.proof
-    }
-
     pub fn value(&self) -> &OperationValue {
         &self.value
+    }
+
+    pub fn proof(&self) -> Option<&Proof> {
+        self.proof.as_ref()
     }
 
     pub fn to_json(&self) -> Result<Value, serde_json::error::Error> {
@@ -728,74 +734,21 @@ impl Hash for TransactionId {
 }
 
 #[cw_serde]
-#[derive(Eq, Default)]
-pub struct Proof(pub(crate) HexVector);
-
-impl Deref for Proof {
-    type Target = HexVector;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Proof {
-    pub fn to_hex(&self) -> String {
-        self.0.to_hex()
-    }
-
-    pub fn from_hex(hex: &str) -> anyhow::Result<Self> {
-        Ok(Proof(HexVector::from_hex(hex)?))
-    }
-
-    pub fn to_vec(&self) -> Vec<u8> {
-        self.deref().deref().clone()
-    }
-}
-
-impl From<&HexVector> for Proof {
-    fn from(value: &HexVector) -> Self {
-        Proof(value.clone())
-    }
-}
-
-impl From<HexVector> for Proof {
-    fn from(value: HexVector) -> Self {
-        Proof(value)
-    }
-}
-
-impl From<Vec<u8>> for Proof {
-    fn from(value: Vec<u8>) -> Self {
-        Proof(HexVector(value))
-    }
-}
-
-impl From<Proof> for Attribute {
-    fn from(value: Proof) -> Self {
-        Attribute::new(KmsEventAttributeKey::Proof.to_string(), value.0.to_hex())
-    }
-}
-
-#[cw_serde]
 #[derive(Eq, TypedBuilder, Default)]
 pub struct KmsEvent {
     #[builder(setter(into))]
     pub operation: KmsOperation,
     #[builder(setter(into))]
     pub txn_id: TransactionId,
-    #[builder(setter(into))]
-    pub proof: Proof,
 }
 
 impl std::fmt::Display for KmsEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{:?} with txn_id: {} and proof: {}",
+            "{:?} with txn_id: {}",
             self.operation,
             self.txn_id.to_hex(),
-            self.proof.to_hex()
         )
     }
 }
@@ -808,19 +761,12 @@ impl KmsEvent {
     pub fn txn_id(&self) -> &TransactionId {
         &self.txn_id
     }
-
-    pub fn proof(&self) -> &Proof {
-        &self.proof
-    }
 }
 
 impl From<KmsEvent> for Event {
     fn from(value: KmsEvent) -> Self {
         let event_type = value.operation().to_string();
-        let attributes = vec![
-            <TransactionId as Into<Attribute>>::into(value.txn_id),
-            <Proof as Into<Attribute>>::into(value.proof),
-        ];
+        let attributes = vec![<TransactionId as Into<Attribute>>::into(value.txn_id)];
         Event::new(event_type).add_attributes(attributes)
     }
 }
@@ -839,16 +785,6 @@ impl TryFrom<Event> for KmsEvent {
             .transpose()?
             .map(Into::into)
             .ok_or_else(|| anyhow::anyhow!("Missing txn_id attribute"))?;
-        let pos_proof_id = attributes
-            .iter()
-            .position(|a| a.key == "proof")
-            .ok_or_else(|| anyhow::anyhow!("Missing proof attribute"))?;
-        let proof = attributes
-            .get(pos_proof_id)
-            .map(|a| hex::decode(a.value.as_str()))
-            .transpose()?
-            .map(Into::into)
-            .ok_or_else(|| anyhow::anyhow!("Missing proof attribute"))?;
         attributes.remove(pos_tx_id);
         let operation = event
             .ty
@@ -856,11 +792,7 @@ impl TryFrom<Event> for KmsEvent {
             .strip_prefix("wasm-")
             .ok_or_else(|| anyhow::anyhow!("Invalid event type"))?;
         let operation = KmsOperation::from_str(operation)?;
-        Ok(KmsEvent {
-            operation,
-            txn_id,
-            proof,
-        })
+        Ok(KmsEvent { operation, txn_id })
     }
 }
 
@@ -1010,18 +942,11 @@ mod tests {
         }
     }
 
-    impl Arbitrary for Proof {
-        fn arbitrary(g: &mut Gen) -> Proof {
-            Proof(HexVector::arbitrary(g))
-        }
-    }
-
     impl Arbitrary for KmsEvent {
         fn arbitrary(g: &mut Gen) -> KmsEvent {
             KmsEvent {
                 operation: KmsOperation::arbitrary(g),
                 txn_id: TransactionId::arbitrary(g),
-                proof: Proof::arbitrary(g),
             }
         }
     }
@@ -1031,7 +956,6 @@ mod tests {
         let operation = KmsEvent::builder()
             .operation(KmsOperation::Decrypt)
             .txn_id(vec![1])
-            .proof(vec![1, 2, 3])
             .build();
 
         let event: Event = operation.into();
@@ -1039,15 +963,10 @@ mod tests {
 
         assert_eq!(event.ty, KmsOperation::Decrypt.to_string());
 
-        assert_eq!(attributes.len(), 2);
+        assert_eq!(attributes.len(), 1);
         let result = attributes.iter().find(move |a| {
             a.key == KmsEventAttributeKey::TransactionId.to_string()
                 && a.value == hex::encode(vec![1])
-        });
-        assert!(result.is_some());
-
-        let result = attributes.iter().find(move |a| {
-            a.key == KmsEventAttributeKey::Proof.to_string() && a.value == hex::encode([1, 2, 3])
         });
         assert!(result.is_some());
     }
@@ -1061,8 +980,8 @@ mod tests {
             .fhe_types(vec![FheType::Euint8, FheType::Euint16])
             .build();
         let message = KmsMessage::builder()
-            .proof(vec![1, 2, 3])
             .value(decrypt_values)
+            .proof(Proof::default())
             .build();
 
         let json = message.to_json().unwrap();
@@ -1074,7 +993,10 @@ mod tests {
                     "fhe_types": ["euint8", "euint16"],
                     "ciphertext_handles": [hex::encode([1, 2, 3]), hex::encode([4, 4, 4])],
                 },
-                "proof": hex::encode([1, 2, 3]),
+                "proof": {
+                    "proof": [],
+                    "contract_address": ""
+                }
             }
         });
         assert_eq!(json, json_str);
@@ -1088,7 +1010,6 @@ mod tests {
             .build();
         let message = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
-            .proof(vec![1, 2, 3])
             .value(decrypt_response_values)
             .build();
 
@@ -1099,7 +1020,6 @@ mod tests {
                     "signature": hex::encode([4, 5, 6]),
                     "payload": hex::encode([1, 2, 3]),
                 },
-                "proof": hex::encode([1, 2, 3]),
                 "txn_id": hex::encode([1]),
             }
         });
@@ -1124,8 +1044,8 @@ mod tests {
             .eip712_salt(vec![7])
             .build();
         let message = KmsMessage::builder()
-            .proof(vec![1, 2, 3])
             .value(reencrypt_values)
+            .proof(Proof::default())
             .build();
 
         let json = message.to_json().unwrap();
@@ -1146,7 +1066,10 @@ mod tests {
                     "eip712_verifying_contract": "contract",
                     "eip712_salt": hex::encode([7]),
                 },
-                "proof": hex::encode([1, 2, 3]),
+                "proof": {
+                    "proof": [],
+                    "contract_address": ""
+                }
             }
         });
         assert_eq!(json, json_str);
@@ -1160,7 +1083,6 @@ mod tests {
             .build();
         let message = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
-            .proof(vec![1, 2, 3])
             .value(reencrypt_response_values)
             .build();
         let json = message.to_json().unwrap();
@@ -1170,7 +1092,6 @@ mod tests {
                     "signature": hex::encode([1]),
                     "payload": hex::encode([2]),
                 },
-                "proof": hex::encode([1, 2, 3]),
                 "txn_id": hex::encode(vec![1])
             }
         });
@@ -1180,8 +1101,8 @@ mod tests {
     #[test]
     fn test_keygen_event_to_json() {
         let message = KmsMessage::builder()
-            .proof(vec![1, 2, 3])
             .value(KeyGenValues::default())
+            .proof(Proof::default())
             .build();
 
         let json = message.to_json().unwrap();
@@ -1190,7 +1111,10 @@ mod tests {
                 "keygen": {
                     "preproc_id": ""
                 },
-                "proof": hex::encode([1, 2, 3]),
+                "proof": {
+                    "proof": [],
+                    "contract_address": ""
+                }
             }
         });
         assert_eq!(json, json_str);
@@ -1207,7 +1131,6 @@ mod tests {
             .build();
         let message = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
-            .proof(vec![1, 2, 3])
             .value(keygen_response_values)
             .build();
         let json = message.to_json().unwrap();
@@ -1220,7 +1143,6 @@ mod tests {
                     "server_key_digest": "def",
                     "server_key_signature": hex::encode([4, 5, 6]),
                 },
-                "proof": hex::encode([1, 2, 3]),
                 "txn_id": hex::encode(vec![1])
             }
         });
@@ -1229,14 +1151,11 @@ mod tests {
 
     #[test]
     fn test_crs_gen_event_to_json() {
-        let message = KmsMessage::builder()
-            .proof(vec![1, 2, 3])
-            .value(CrsGenValues::default())
-            .build();
+        let message = KmsMessage::builder().value(CrsGenValues::default()).build();
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
-            "crs_gen": { "proof": hex::encode([1, 2, 3]) }
+            "crs_gen": {  }
         });
         assert_eq!(json, json_str);
     }
@@ -1251,7 +1170,6 @@ mod tests {
 
         let message = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
-            .proof(vec![1, 2, 3])
             .value(crs_gen_response_values)
             .build();
 
@@ -1263,7 +1181,6 @@ mod tests {
                     "digest": "123456",
                     "signature": hex::encode([1, 2, 3]),
                 },
-                "proof": hex::encode([1, 2, 3]),
                 "txn_id": hex::encode(vec![1])
             }
         });

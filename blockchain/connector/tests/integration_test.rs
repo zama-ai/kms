@@ -1,7 +1,8 @@
 use conf_trace::conf::Tracing;
 use conf_trace::telemetry::init_tracing;
 use events::kms::{
-    DecryptResponseValues, DecryptValues, FheType, KmsCoreConf, KmsEvent, KmsMessage, Transaction,
+    DecryptResponseValues, DecryptValues, FheType, KmsCoreConf, KmsEvent, KmsMessage, Proof,
+    Transaction,
 };
 use events::kms::{KmsOperation, OperationValue};
 use kms_blockchain_client::client::{Client, ClientBuilder, ExecuteContractRequest, ProtoCoin};
@@ -72,7 +73,6 @@ impl Kms for KmsMock {
                 .build(),
             operation_val: BlockchainOperationVal {
                 tx_id: event.txn_id().clone(),
-                proof: event.proof().clone(),
             },
         }))
     }
@@ -280,10 +280,13 @@ async fn send_decrypt_request(client: &RwLock<Client>) -> String {
             .build(),
     );
 
-    let proof = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
-
     let request = ExecuteContractRequest::builder()
-        .message(KmsMessage::builder().value(operation).proof(proof).build())
+        .message(
+            KmsMessage::builder()
+                .value(operation)
+                .proof(Proof::default())
+                .build(),
+        )
         .gas_limit(200000u64)
         .funds(vec![ProtoCoin::builder()
             .denom("ucosm".to_string())

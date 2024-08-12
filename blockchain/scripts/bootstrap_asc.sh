@@ -35,14 +35,21 @@ echo $PASSWORD |wasmd tx bank multi-send validator $CONN_ADD $GATEWAY_ADD "10000
 sleep 1
 echo $PASSWORD | wasmd tx wasm upload /app/asc.wasm --from validator --chain-id testing --node tcp://localhost:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json
 
+# Deploy and instantiate the Tendermint smart contract
+sleep 1
+echo $PASSWORD | wasmd tx wasm upload /app/tendermint_ipsc.wasm --from validator --chain-id testing --node tcp://localhost:26657 --gas-prices 0.25ucosm --gas auto --gas-adjustment 1.3 -y --output json
+
+
 # Instantiate the ASC smart contract
 # run in threshold mode
 # sleep 10
 # echo $PASSWORD | wasmd tx wasm instantiate 1 '{"proof_type": "debug", "kms_core_conf": { "threshold": { "parties": [], "response_count_for_majority_vote": 3, "response_count_for_reconstruction": 3, "degree_for_reconstruction": 1, "param_choice": "default" }  }}' --label "configuration_0" --from validator --output json --chain-id testing --node tcp://kms-full-node:26657 -y --no-admin
 # run in centralized mode
 sleep 10
-echo $PASSWORD | wasmd tx wasm instantiate 1 '{"proof_type": "debug", "kms_core_conf": { "centralized": "default" }}' --label "configuration_0" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin
+echo $PASSWORD | wasmd tx wasm instantiate 1 '{"debug_proof": true, "kms_core_conf": { "centralized": "default" }}' --label "asc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin
 
+sleep 10
+echo $PASSWORD | wasmd tx wasm instantiate 2 '{}' --label "tendermint-ipsc" --from validator --output json --chain-id testing --node tcp://localhost:26657 -y --no-admin
 
 # keep the container running
 tail -f /dev/null

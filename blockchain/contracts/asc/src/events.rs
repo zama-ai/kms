@@ -1,15 +1,12 @@
 use crate::contract::KmsContract;
-use cosmwasm_std::{Response, StdResult};
+use cosmwasm_std::{Response, StdResult, Storage};
 use events::kms::{KmsCoreConf, KmsEvent, OperationValue, Transaction};
-use events::HexVector;
-use sylvia::types::ExecCtx;
 
 pub trait EventEmitStrategy {
     fn emit_event<T>(
         &self,
-        ctx: &ExecCtx,
+        storage: &mut dyn Storage,
         txn_id: &[u8],
-        proof: HexVector,
         operation: &T,
     ) -> StdResult<Response>
     where
@@ -19,9 +16,8 @@ pub trait EventEmitStrategy {
 impl EventEmitStrategy for KmsContract {
     fn emit_event<T>(
         &self,
-        ctx: &ExecCtx,
+        storage: &mut dyn Storage,
         txn_id: &[u8],
-        proof: HexVector,
         operation: &T,
     ) -> StdResult<Response>
     where
@@ -31,14 +27,13 @@ impl EventEmitStrategy for KmsContract {
         let operation = operation.clone().into();
         let transaction = self
             .storage
-            .load_transaction(ctx.deps.storage, txn_id.to_vec().into())?;
-        let core_conf = self.storage.load_core_conf(ctx.deps.storage)?;
+            .load_transaction(storage, txn_id.to_vec().into())?;
+        let core_conf = self.storage.load_core_conf(storage)?;
         if operation.should_emit_event(&core_conf, &transaction) {
             response = response.add_event(
                 KmsEvent::builder()
                     .txn_id(txn_id.to_vec())
                     .operation(operation)
-                    .proof(proof)
                     .build(),
             );
         }
