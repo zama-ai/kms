@@ -1,9 +1,8 @@
-use crate::proof::strategy::TendermintProofStrategy;
-
 use super::state::ProofStorage;
+use crate::proof::strategy::TendermintProofStrategy;
 use aipsc::contract::InclusionProofContract;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Response, StdError, StdResult};
+use cosmwasm_std::{CustomMsg, Response, StdError, StdResult};
 use events::HexVector;
 use schemars::{
     gen::SchemaGenerator,
@@ -12,7 +11,7 @@ use schemars::{
 };
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, ops::Deref};
-use sylvia::{contract, entry_points, types::ExecCtx};
+use sylvia::{contract, types::ExecCtx};
 use tendermint::merkle::proof::ProofOps;
 
 #[cw_serde]
@@ -115,23 +114,28 @@ pub struct ProofContract {
     pub(crate) storage: ProofStorage,
 }
 
-#[entry_points]
 #[contract]
+#[sv::messages(aipsc::contract as InclusionProofContract)]
 impl ProofContract {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            storage: ProofStorage::default(),
+        }
     }
-
     #[sv::msg(instantiate)]
-    pub fn instantiate(&self, _ctx: ExecCtx) -> StdResult<Response> {
+    pub fn instantiate(&self, ctx: ExecCtx, validator_set: Vec<HexVector>) -> StdResult<Response> {
+        self.storage
+            .set_validators(ctx.deps.storage, validator_set)?;
         Ok(Response::default())
     }
 }
 
+impl CustomMsg for TendermintUpdateHeader {}
+impl CustomMsg for ProofTendermint {}
+
 impl InclusionProofContract for ProofContract {
     type Error = StdError;
     type UpdateHeader = TendermintUpdateHeader;
-    type ProofData = ProofTendermint;
 
     fn update_header(
         &self,
@@ -169,14 +173,11 @@ impl InclusionProofContract for ProofContract {
             .map(|_| Response::default())
     }
 
-    fn verify_proof(
-        &self,
-        ctx: ExecCtx,
-        proof: Self::ProofData,
-        value: Vec<u8>,
-    ) -> StdResult<Response> {
+    fn verify_proof(&self, ctx: ExecCtx, proof: Vec<u8>, value: Vec<u8>) -> StdResult<Response> {
+        let proof_tendermint = bincode::deserialize(&proof[..]).unwrap();
+        println!("verify_proof: {:?}", proof_tendermint);
         let root_hash = self.storage.get_last_root_hash(ctx.deps.storage)?;
-        TendermintProofStrategy::verify(proof, root_hash, &value)?;
+        TendermintProofStrategy::verify(proof_tendermint, root_hash, &value)?;
         Ok(Response::default())
     }
 }

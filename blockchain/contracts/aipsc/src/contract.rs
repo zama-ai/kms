@@ -1,20 +1,14 @@
 use cosmwasm_std::{Response, StdError};
-use schemars::JsonSchema;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use sylvia::interface;
-use sylvia::types::ExecCtx;
+use sylvia::types::{CustomMsg, ExecCtx};
 
 pub struct DebugProof;
 
 #[interface]
-#[sv::custom(msg=cosmwasm_std::Empty, query=cosmwasm_std::Empty)]
 pub trait InclusionProofContract {
     type Error: From<StdError>;
 
-    type UpdateHeader: Serialize + DeserializeOwned + JsonSchema + Clone + std::fmt::Debug;
-
-    type ProofData: Serialize + DeserializeOwned + JsonSchema + Clone + std::fmt::Debug;
+    type UpdateHeader: CustomMsg;
 
     #[sv::msg(exec)]
     fn update_header(
@@ -27,7 +21,7 @@ pub trait InclusionProofContract {
     fn verify_proof(
         &self,
         ctx: ExecCtx,
-        proof: Self::ProofData,
+        proof: Vec<u8>,
         value: Vec<u8>,
     ) -> Result<Response, Self::Error>;
 }

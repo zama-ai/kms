@@ -110,6 +110,9 @@ impl KmsContractStorage {
     }
 
     pub fn next_id(&self, storage: &mut dyn Storage) -> StdResult<u64> {
+        if self.id_replies.may_load(storage)?.is_none() {
+            self.id_replies.save(storage, &0)?;
+        }
         self.id_replies
             .update(storage, |count| -> StdResult<u64> { Ok(count + 1) })
     }

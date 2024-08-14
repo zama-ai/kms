@@ -614,40 +614,58 @@ impl KmsOperation {
 
 #[cw_serde]
 #[derive(Eq, Default, TypedBuilder)]
-pub struct Proof {
-    pub proof: Vec<u8>,
+pub struct Proof<T> {
+    pub proof: T,
     pub contract_address: String,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug, TypedBuilder)]
-pub struct KmsMessage {
+pub struct KmsMessage<T = ()> {
     #[builder(setter(into), default = None)]
     txn_id: Option<TransactionId>,
     #[builder(setter(into), default = None)]
-    proof: Option<Proof>,
+    proof: Option<Proof<T>>,
     #[builder(setter(into))]
     value: OperationValue,
 }
 
+pub type KmsMessageWithoutProof = KmsMessage<()>;
+
 #[derive(Serialize)]
-struct InnerKmsMessage<'a> {
+struct InnerKmsMessage<'a, T> {
     #[serde(skip_serializing_if = "Option::is_none")]
     txn_id: Option<&'a TransactionId>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    proof: Option<&'a Proof>,
+    proof: Option<&'a Proof<T>>,
     #[serde(flatten, skip_serializing_if = "OperationValue::has_no_inner_value")]
     value: &'a OperationValue,
 }
 
-impl Serialize for KmsMessage {
+impl<T> Serialize for KmsMessage<T>
+where
+    T: Serialize,
+{
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
+        let proof: Option<Proof<Vec<u8>>> = self
+            .proof
+            .as_ref()
+            .map(|p| {
+                let proof = bincode::serialize(&p.proof).map_err(|e| {
+                    serde::ser::Error::custom(format!("Failed to serialize proof: {}", e))
+                })?;
+                Ok(Proof {
+                    proof,
+                    contract_address: p.contract_address.clone(),
+                })
+            })
+            .transpose()?;
         let data = InnerKmsMessage {
             txn_id: self.txn_id.as_ref(),
-            proof: self.proof.as_ref(),
-            value: self.value(),
+            proof: proof.as_ref(),
+            value: &self.value,
         };
         let operation = Box::leak(self.value.to_string().into_boxed_str());
         let mut ser = serializer.serialize_map(None)?;
@@ -656,7 +674,10 @@ impl Serialize for KmsMessage {
     }
 }
 
-impl KmsMessage {
+impl<T> KmsMessage<T>
+where
+    T: Serialize,
+{
     pub fn txn_id(&self) -> Option<&TransactionId> {
         self.txn_id.as_ref()
     }
@@ -665,7 +686,7 @@ impl KmsMessage {
         &self.value
     }
 
-    pub fn proof(&self) -> Option<&Proof> {
+    pub fn proof(&self) -> Option<&Proof<T>> {
         self.proof.as_ref()
     }
 
@@ -979,7 +1000,7 @@ mod tests {
             .ciphertext_handles(vec![vec![1, 2, 3], vec![4, 4, 4]])
             .fhe_types(vec![FheType::Euint8, FheType::Euint16])
             .build();
-        let message = KmsMessage::builder()
+        let message: KmsMessageWithoutProof = KmsMessage::builder()
             .value(decrypt_values)
             .proof(Proof::default())
             .build();
@@ -1008,7 +1029,7 @@ mod tests {
             .signature(vec![4, 5, 6])
             .payload(vec![1, 2, 3])
             .build();
-        let message = KmsMessage::builder()
+        let message: KmsMessageWithoutProof = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
             .value(decrypt_response_values)
             .build();
@@ -1043,7 +1064,7 @@ mod tests {
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![7])
             .build();
-        let message = KmsMessage::builder()
+        let message: KmsMessageWithoutProof = KmsMessage::builder()
             .value(reencrypt_values)
             .proof(Proof::default())
             .build();
@@ -1081,7 +1102,7 @@ mod tests {
             .signature(vec![1])
             .payload(vec![2])
             .build();
-        let message = KmsMessage::builder()
+        let message: KmsMessageWithoutProof = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
             .value(reencrypt_response_values)
             .build();
@@ -1100,7 +1121,7 @@ mod tests {
 
     #[test]
     fn test_keygen_event_to_json() {
-        let message = KmsMessage::builder()
+        let message: KmsMessageWithoutProof = KmsMessage::builder()
             .value(KeyGenValues::default())
             .proof(Proof::default())
             .build();
@@ -1129,7 +1150,7 @@ mod tests {
             .server_key_digest("def".to_string())
             .server_key_signature(vec![4, 5, 6])
             .build();
-        let message = KmsMessage::builder()
+        let message: KmsMessageWithoutProof = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
             .value(keygen_response_values)
             .build();
@@ -1151,7 +1172,8 @@ mod tests {
 
     #[test]
     fn test_crs_gen_event_to_json() {
-        let message = KmsMessage::builder().value(CrsGenValues::default()).build();
+        let message: KmsMessageWithoutProof =
+            KmsMessage::builder().value(CrsGenValues::default()).build();
 
         let json = message.to_json().unwrap();
         let json_str = serde_json::json!({
@@ -1168,7 +1190,7 @@ mod tests {
             .signature(vec![1, 2, 3])
             .build();
 
-        let message = KmsMessage::builder()
+        let message: KmsMessageWithoutProof = KmsMessage::builder()
             .txn_id(Some(vec![1].into()))
             .value(crs_gen_response_values)
             .build();

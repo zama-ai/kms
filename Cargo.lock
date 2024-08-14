@@ -824,6 +824,8 @@ checksum = "96d30a06541fbafbc7f82ed10c06164cfbd2c401138f6addd8404629c4b16711"
 name = "asc"
 version = "0.8.0"
 dependencies = [
+ "aipsc",
+ "bincode",
  "byteorder",
  "cosmwasm-schema",
  "cosmwasm-std",
@@ -831,13 +833,17 @@ dependencies = [
  "cw-multi-test",
  "cw-storage-plus",
  "cw-utils",
+ "ed25519-consensus",
  "events",
  "hex",
+ "rand",
  "schemars",
  "serde",
  "sha3",
  "sylvia",
  "sylvia-derive",
+ "tendermint",
+ "tendermint-ipsc",
  "test-context",
 ]
 
@@ -3336,7 +3342,9 @@ dependencies = [
  "curve25519-dalek-ng",
  "hex",
  "rand_core",
+ "serde",
  "sha2 0.9.9",
+ "thiserror",
  "zeroize",
 ]
 
@@ -3859,6 +3867,7 @@ version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bincode",
  "cosmos-proto",
  "cosmwasm-schema",
  "cosmwasm-std",

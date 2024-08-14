@@ -25,9 +25,14 @@ const UCOSM: &str = "ucosm";
 pub(crate) const ADMIN: Admin = Admin::new("kms-conf-admin");
 
 #[cw_serde]
-pub struct ProofMessage {
+pub struct ProofPayload {
     pub proof: Vec<u8>,
     pub value: Vec<u8>,
+}
+
+#[cw_serde]
+pub struct ProofMessage {
+    pub verify_proof: ProofPayload,
 }
 
 #[derive(Default)]
@@ -83,7 +88,7 @@ impl KmsContract {
     fn verify_proof_call<T: Into<OperationValue> + Clone>(
         &self,
         ctx: ExecCtx,
-        proof: Proof,
+        proof: Proof<Vec<u8>>,
         value: &[u8],
         operation: T,
     ) -> StdResult<Response> {
@@ -98,13 +103,15 @@ impl KmsContract {
     fn call_proof_contract<T: Into<OperationValue>>(
         &self,
         ctx: ExecCtx,
-        proof: Proof,
+        proof: Proof<Vec<u8>>,
         value: &[u8],
         operation: T,
     ) -> StdResult<Response> {
         let msg = ProofMessage {
-            proof: proof.proof,
-            value: value.to_vec(),
+            verify_proof: ProofPayload {
+                proof: proof.proof,
+                value: value.to_vec(),
+            },
         };
         let msg = WasmMsg::Execute {
             contract_addr: proof.contract_address,
@@ -167,6 +174,8 @@ impl KmsContract {
         if let Some(debug_proof) = debug_proof {
             self.storage
                 .set_debug_proof(ctx.deps.storage, debug_proof)?;
+        } else {
+            self.storage.set_debug_proof(ctx.deps.storage, false)?;
         }
 
         self.storage
@@ -241,7 +250,7 @@ impl KmsContract {
         &self,
         ctx: ExecCtx,
         decrypt: DecryptValues,
-        proof: Proof,
+        proof: Proof<Vec<u8>>,
     ) -> StdResult<Response> {
         // decipher the size encoding and ensure the payment is included in the message
         let ciphertext_handles = decrypt.ciphertext_handles();
@@ -277,7 +286,7 @@ impl KmsContract {
     }
 
     #[sv::msg(exec)]
-    pub fn keygen_preproc(&self, ctx: ExecCtx, proof: Proof) -> StdResult<Response> {
+    pub fn keygen_preproc(&self, ctx: ExecCtx, proof: Proof<Vec<u8>>) -> StdResult<Response> {
         self.verify_proof_call(ctx, proof, &[], KeyGenPreprocValues::default())
     }
 
@@ -296,7 +305,12 @@ impl KmsContract {
     }
 
     #[sv::msg(exec)]
-    pub fn keygen(&self, ctx: ExecCtx, keygen: KeyGenValues, proof: Proof) -> StdResult<Response> {
+    pub fn keygen(
+        &self,
+        ctx: ExecCtx,
+        keygen: KeyGenValues,
+        proof: Proof<Vec<u8>>,
+    ) -> StdResult<Response> {
         let value = keygen.preproc_id().deref().to_vec();
         self.verify_proof_call(ctx, proof, &value, keygen)
     }
@@ -321,7 +335,7 @@ impl KmsContract {
         &self,
         ctx: ExecCtx,
         reencrypt: ReencryptValues,
-        proof: Proof,
+        proof: Proof<Vec<u8>>,
     ) -> StdResult<Response> {
         // decipher the size encoding and ensure the payment is included in the message
         let ciphertext_handle: Vec<u8> = reencrypt.ciphertext_handle().deref().into();
@@ -346,7 +360,7 @@ impl KmsContract {
     }
 
     #[sv::msg(exec)]
-    pub fn crs_gen(&self, ctx: ExecCtx, proof: Proof) -> StdResult<Response> {
+    pub fn crs_gen(&self, ctx: ExecCtx, proof: Proof<Vec<u8>>) -> StdResult<Response> {
         self.verify_proof_call(ctx, proof, &[], CrsGenValues::default())
     }
 
@@ -392,10 +406,13 @@ mod tests {
     use crate::contract::sv::mt::CodeId;
     use crate::contract::KmsContract;
     use crate::contract::Proof;
+    use aipsc::contract::sv::mt::InclusionProofContractProxy;
     use cosmwasm_std::coin;
     use cosmwasm_std::coins;
     use cosmwasm_std::Addr;
     use cosmwasm_std::Event;
+    use ed25519_consensus::SigningKey;
+    use ed25519_consensus::VerificationKey;
     use events::kms::CrsGenResponseValues;
     use events::kms::DecryptResponseValues;
     use events::kms::DecryptValues;
@@ -414,8 +431,14 @@ mod tests {
     use events::kms::ReencryptResponseValues;
     use events::kms::ReencryptValues;
     use events::kms::TransactionId;
+    use rand::thread_rng;
     use sylvia::cw_multi_test::IntoAddr as _;
     use sylvia::multitest::App;
+    use tendermint::merkle::proof::ProofOp;
+    use tendermint::merkle::proof::ProofOps;
+    use tendermint_ipsc::contract::sv::mt::CodeId as ProofCodeId;
+    use tendermint_ipsc::contract::NewHeader;
+    use tendermint_ipsc::contract::TendermintUpdateHeader;
 
     const UCOSM: &str = "ucosm";
 
@@ -596,6 +619,155 @@ mod tests {
             .call(&gateway)
             .unwrap();
         println!("response: {:#?}", response);
+        let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
+        assert_eq!(response.events.len(), 2);
+
+        let expected_event = KmsEvent::builder()
+            .operation(KmsOperation::Decrypt)
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
+
+        let decrypt_response = DecryptResponseValues::builder()
+            .signature(vec![4, 5, 6])
+            .payload(vec![6, 7, 8])
+            .build();
+
+        let response = contract
+            .decrypt_response(txn_id.clone(), decrypt_response.clone())
+            .call(&owner)
+            .unwrap();
+        // one event because there's always an execute event
+        assert_eq!(response.events.len(), 1);
+
+        let response = contract
+            .decrypt_response(txn_id.clone(), decrypt_response)
+            .call(&owner)
+            .unwrap();
+        // two events because there's always an execute event
+        // plus the decryption request since it reached the threshold
+        assert_eq!(response.events.len(), 2);
+
+        let expected_event = KmsEvent::builder()
+            .operation(OperationValue::DecryptResponse(
+                DecryptResponseValues::builder()
+                    .signature(vec![4, 5, 6])
+                    .payload(vec![6, 7, 8])
+                    .build(),
+            ))
+            .txn_id(txn_id.clone())
+            .build();
+
+        assert_event(&response.events, &expected_event);
+
+        let response = contract.get_transaction(txn_id.clone()).unwrap();
+        assert_eq!(response.block_height(), 12345);
+        assert_eq!(response.transaction_index(), 0);
+        // three operations: one decrypt and two decrypt response
+        assert_eq!(response.operations().len(), 3);
+    }
+
+    #[ignore = "impleming proof contract"]
+    #[test]
+    fn test_decrypt_with_proof() {
+        let test = Addr::unchecked("test");
+        let proof_address = Addr::unchecked("wasm19dnevk6vtv3y48lsksh452mv9x6endmxh4zzdf");
+
+        let app = cw_multi_test::App::new(|router, _api, storage| {
+            router
+                .bank
+                .init_balance(storage, &test, coins(5000000, UCOSM))
+                .unwrap();
+        });
+
+        let app = App::new(app);
+        let proof_app = App::default();
+        let code_id = CodeId::store_code(&app);
+        let proof_code_id = ProofCodeId::store_code(&proof_app);
+        let owner = "owner".into_addr();
+
+        let contract = code_id
+            .instantiate(
+                None,
+                KmsCoreConf::Threshold(KmsCoreThresholdConf {
+                    parties: vec![KmsCoreParty::default(); 4],
+                    response_count_for_majority_vote: 2,
+                    response_count_for_reconstruction: 3,
+                    degree_for_reconstruction: 1,
+                    param_choice: FheParameter::Test,
+                }),
+            )
+            .call(&owner)
+            .unwrap();
+
+        let ciphertext_handle =
+            hex::decode("000a17c82f8cd9fe41c871f12b391a2afaf5b640ea4fdd0420a109aa14c674d3e385b955")
+                .unwrap();
+
+        let batch_size = 2_usize;
+
+        let sk = SigningKey::new(thread_rng());
+        let sig = sk.sign([1, 2, 3].as_ref());
+        let sig_bytes: [u8; 64] = sig.into();
+        let vk_bytes: [u8; 32] = VerificationKey::from(&sk).into();
+
+        let validator_set = vec![vk_bytes.to_vec().into()];
+        let signature = sig_bytes.to_vec().into();
+
+        let contract_proof = proof_code_id
+            .instantiate(validator_set)
+            .call(&owner)
+            .unwrap();
+
+        let proof_op = ProofOp {
+            key: vec![1, 2, 3],
+            field_type: "u8".to_string(),
+            data: vec![1, 2, 3],
+        };
+        let proof_ops = ProofOps {
+            ops: vec![proof_op],
+        };
+
+        let proof = Proof::builder()
+            .contract_address(proof_address.to_string())
+            .proof(bincode::serialize(&proof_ops).unwrap())
+            .build();
+        let tendermint_header = TendermintUpdateHeader {
+            new_validator_set: None,
+            new_header: NewHeader {
+                root_hash: vec![1, 2, 3].into(),
+                signatures: vec![signature],
+            },
+        };
+
+        contract_proof
+            .update_header(tendermint_header)
+            .call(&proof_address)
+            .unwrap();
+
+        let data_size = extract_ciphertext_size(&ciphertext_handle) * batch_size as u32;
+        assert_eq!(data_size, 661448 * batch_size as u32);
+
+        let decrypt = DecryptValues::builder()
+            .key_id(vec![1, 2, 3])
+            .version(1)
+            .ciphertext_handles(vec![ciphertext_handle; batch_size])
+            .fhe_types(vec![FheType::Euint8; batch_size])
+            .build();
+
+        // test insufficient funds
+        let _failed_response = contract
+            .decrypt(decrypt.clone(), proof.clone())
+            .with_funds(&[coin(42_u128, UCOSM)])
+            .call(&test)
+            .expect_err("Insufficient funds sent to cover the data size");
+
+        let response = contract
+            .decrypt(decrypt.clone(), proof)
+            .with_funds(&[coin(data_size.into(), UCOSM)])
+            .call(&test)
+            .unwrap();
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
         assert_eq!(response.events.len(), 2);
 
