@@ -825,7 +825,6 @@ name = "asc"
 version = "0.8.0"
 dependencies = [
  "aipsc",
- "bincode",
  "byteorder",
  "cosmwasm-schema",
  "cosmwasm-std",
@@ -3867,7 +3866,6 @@ version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "bincode",
  "cosmos-proto",
  "cosmwasm-schema",
  "cosmwasm-std",
@@ -8483,7 +8481,6 @@ dependencies = [
  "aipsc",
  "anyhow",
  "base64 0.22.1",
- "bincode",
  "byteorder",
  "cosmwasm-schema",
  "cosmwasm-std",

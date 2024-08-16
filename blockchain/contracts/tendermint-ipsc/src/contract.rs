@@ -2,7 +2,7 @@ use super::state::ProofStorage;
 use crate::proof::strategy::TendermintProofStrategy;
 use aipsc::contract::InclusionProofContract;
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{CustomMsg, Response, StdError, StdResult};
+use cosmwasm_std::{from_json, CustomMsg, Response, StdError, StdResult};
 use events::HexVector;
 use schemars::{
     gen::SchemaGenerator,
@@ -34,8 +34,8 @@ pub struct NewHeader {
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Eq)]
 pub struct ProofTendermint {
-    proof: ProofOps,
-    keypath: String,
+    pub proof: ProofOps,
+    pub keypath: String,
 }
 
 impl ProofTendermint {
@@ -174,8 +174,12 @@ impl InclusionProofContract for ProofContract {
     }
 
     fn verify_proof(&self, ctx: ExecCtx, proof: Vec<u8>, value: Vec<u8>) -> StdResult<Response> {
-        let proof_tendermint = bincode::deserialize(&proof[..]).unwrap();
-        println!("verify_proof: {:?}", proof_tendermint);
+        let proof_tendermint = from_json(&proof).map_err(|e| {
+            StdError::generic_err(format!(
+                "Error deserializing Tendermint Proof from binary {:?}",
+                e
+            ))
+        })?;
         let root_hash = self.storage.get_last_root_hash(ctx.deps.storage)?;
         TendermintProofStrategy::verify(proof_tendermint, root_hash, &value)?;
         Ok(Response::default())

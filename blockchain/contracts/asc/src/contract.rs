@@ -409,10 +409,10 @@ mod tests {
     use aipsc::contract::sv::mt::InclusionProofContractProxy;
     use cosmwasm_std::coin;
     use cosmwasm_std::coins;
+    use cosmwasm_std::to_json_binary;
     use cosmwasm_std::Addr;
     use cosmwasm_std::Event;
     use ed25519_consensus::SigningKey;
-    use ed25519_consensus::VerificationKey;
     use events::kms::CrsGenResponseValues;
     use events::kms::DecryptResponseValues;
     use events::kms::DecryptValues;
@@ -436,9 +436,10 @@ mod tests {
     use sylvia::multitest::App;
     use tendermint::merkle::proof::ProofOp;
     use tendermint::merkle::proof::ProofOps;
-    use tendermint_ipsc::contract::sv::mt::CodeId as ProofCodeId;
     use tendermint_ipsc::contract::NewHeader;
+    use tendermint_ipsc::contract::ProofTendermint;
     use tendermint_ipsc::contract::TendermintUpdateHeader;
+    use tendermint_ipsc::mock::sv::mt::CodeId as ProofCodeId;
 
     const UCOSM: &str = "ucosm";
 
@@ -668,11 +669,9 @@ mod tests {
         assert_eq!(response.operations().len(), 3);
     }
 
-    #[ignore = "impleming proof contract"]
     #[test]
     fn test_decrypt_with_proof() {
         let test = Addr::unchecked("test");
-        let proof_address = Addr::unchecked("wasm19dnevk6vtv3y48lsksh452mv9x6endmxh4zzdf");
 
         let app = cw_multi_test::App::new(|router, _api, storage| {
             router
@@ -682,9 +681,8 @@ mod tests {
         });
 
         let app = App::new(app);
-        let proof_app = App::default();
         let code_id = CodeId::store_code(&app);
-        let proof_code_id = ProofCodeId::store_code(&proof_app);
+        let proof_code_id = ProofCodeId::store_code(&app);
         let owner = "owner".into_addr();
 
         let contract = code_id
@@ -710,28 +708,32 @@ mod tests {
         let sk = SigningKey::new(thread_rng());
         let sig = sk.sign([1, 2, 3].as_ref());
         let sig_bytes: [u8; 64] = sig.into();
-        let vk_bytes: [u8; 32] = VerificationKey::from(&sk).into();
 
-        let validator_set = vec![vk_bytes.to_vec().into()];
         let signature = sig_bytes.to_vec().into();
 
-        let contract_proof = proof_code_id
-            .instantiate(validator_set)
-            .call(&owner)
-            .unwrap();
+        let contract_proof = proof_code_id.instantiate().call(&owner).unwrap();
+
+        let proof_addr = &contract_proof.contract_addr;
 
         let proof_op = ProofOp {
             key: vec![1, 2, 3],
-            field_type: "u8".to_string(),
+            field_type: "ics23:simple".to_string(),
             data: vec![1, 2, 3],
         };
         let proof_ops = ProofOps {
             ops: vec![proof_op],
         };
 
+        let proof_tendermint = ProofTendermint {
+            proof: proof_ops.clone(),
+            keypath: "".to_string(),
+        };
+
+        let proof_ser = to_json_binary(&proof_tendermint).unwrap().to_vec();
+
         let proof = Proof::builder()
-            .contract_address(proof_address.to_string())
-            .proof(bincode::serialize(&proof_ops).unwrap())
+            .contract_address(proof_addr.to_string())
+            .proof(proof_ser)
             .build();
         let tendermint_header = TendermintUpdateHeader {
             new_validator_set: None,
@@ -743,7 +745,7 @@ mod tests {
 
         contract_proof
             .update_header(tendermint_header)
-            .call(&proof_address)
+            .call(&test)
             .unwrap();
 
         let data_size = extract_ciphertext_size(&ciphertext_handle) * batch_size as u32;
@@ -769,7 +771,7 @@ mod tests {
             .call(&test)
             .unwrap();
         let txn_id: TransactionId = KmsContract::hash_transaction_id(12345, 0).into();
-        assert_eq!(response.events.len(), 2);
+        assert_eq!(response.events.len(), 4);
 
         let expected_event = KmsEvent::builder()
             .operation(KmsOperation::Decrypt)

@@ -8,6 +8,17 @@ fn main() {
         execute: ContractExecMsg,
         query: ContractQueryMsg,
     }
+
+    #[cfg(feature = "mock")]
+    use tendermint_ipsc::mock::sv::{
+        ContractExecMsg as MockContractExecMsg, InstantiateMsg as MockInstantiateMsg,
+    };
+
+    #[cfg(feature = "mock")]
+    write_api! {
+        instantiate: MockInstantiateMsg,
+        execute: MockContractExecMsg,
+    }
 }
 
 #[cfg(not(feature = "schema"))]

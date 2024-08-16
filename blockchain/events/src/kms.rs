@@ -2,6 +2,7 @@ use super::conversions::*;
 use core::hash::Hash;
 use core::hash::Hasher;
 use cosmwasm_schema::cw_serde;
+use cosmwasm_std::to_json_binary;
 use cosmwasm_std::{Attribute, Event};
 use serde::ser::SerializeMap;
 use serde::Serialize;
@@ -653,11 +654,11 @@ where
             .proof
             .as_ref()
             .map(|p| {
-                let proof = bincode::serialize(&p.proof).map_err(|e| {
+                let proof = to_json_binary(&p.proof).map_err(|e| {
                     serde::ser::Error::custom(format!("Failed to serialize proof: {}", e))
                 })?;
                 Ok(Proof {
-                    proof,
+                    proof: proof.to_vec(),
                     contract_address: p.contract_address.clone(),
                 })
             })
@@ -1000,9 +1001,10 @@ mod tests {
             .ciphertext_handles(vec![vec![1, 2, 3], vec![4, 4, 4]])
             .fhe_types(vec![FheType::Euint8, FheType::Euint16])
             .build();
+        let proof_values = Proof::default();
         let message: KmsMessageWithoutProof = KmsMessage::builder()
             .value(decrypt_values)
-            .proof(Proof::default())
+            .proof(proof_values)
             .build();
 
         let json = message.to_json().unwrap();
@@ -1015,7 +1017,7 @@ mod tests {
                     "ciphertext_handles": [hex::encode([1, 2, 3]), hex::encode([4, 4, 4])],
                 },
                 "proof": {
-                    "proof": [],
+                    "proof": [110,117,108,108],
                     "contract_address": ""
                 }
             }
@@ -1064,9 +1066,10 @@ mod tests {
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![7])
             .build();
+        let proof_values = Proof::default();
         let message: KmsMessageWithoutProof = KmsMessage::builder()
             .value(reencrypt_values)
-            .proof(Proof::default())
+            .proof(proof_values)
             .build();
 
         let json = message.to_json().unwrap();
@@ -1088,7 +1091,7 @@ mod tests {
                     "eip712_salt": hex::encode([7]),
                 },
                 "proof": {
-                    "proof": [],
+                    "proof": [110,117,108,108],
                     "contract_address": ""
                 }
             }
@@ -1121,9 +1124,10 @@ mod tests {
 
     #[test]
     fn test_keygen_event_to_json() {
+        let proof_values = Proof::default();
         let message: KmsMessageWithoutProof = KmsMessage::builder()
             .value(KeyGenValues::default())
-            .proof(Proof::default())
+            .proof(proof_values)
             .build();
 
         let json = message.to_json().unwrap();
@@ -1133,7 +1137,7 @@ mod tests {
                     "preproc_id": ""
                 },
                 "proof": {
-                    "proof": [],
+                    "proof": [110, 117, 108, 108],
                     "contract_address": ""
                 }
             }

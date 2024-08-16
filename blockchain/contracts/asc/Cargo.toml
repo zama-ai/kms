@@ -27,12 +27,11 @@ sylvia-derive.workspace = true
 
 [dev-dependencies]
 aipsc = { path = "../aipsc" }
-bincode.workspace = true
 byteorder = "1.5.0"
 cw-multi-test = "=2.1.0"
 ed25519-consensus = "2.1.0"
 rand.workspace = true
 sylvia = { workspace = true, features = ["mt"] }
 tendermint.workspace = true
-tendermint-ipsc = { path = "../tendermint-ipsc" }
+tendermint-ipsc = { path = "../tendermint-ipsc", features = ["mock"] }
 test-context = "0.3.0"

@@ -11,12 +11,12 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 schema = []
+mock = []
 
 [dependencies]
 aipsc = { path = "../aipsc" }
 anyhow.workspace = true
 base64 = "0.22.1"
-bincode.workspace = true
 cosmwasm-schema.workspace = true
 cosmwasm-std.workspace = true
 cw-controllers.workspace = true
