@@ -48,15 +48,15 @@ impl BitGenEven for RealBitGenEven {
         session: &mut Ses,
     ) -> anyhow::Result<Vec<Share<Z>>> {
         let a = preproc.next_random_vec(amount)?;
-        let trips = preproc.next_triple_vec(amount)?;
-        let s = mult_list(&a, &a, trips, session).await?;
+        let triples = preproc.next_triple_vec(amount)?;
+        let s = mult_list(&a, &a, triples, session).await?;
         let v = a
             .iter()
             .zip(s)
             .map(|(cur_a, cur_s)| (*cur_a) + cur_s)
             .collect_vec();
         let opened_v_vec = open_list(&v, session).await?;
-        let mut b = Vec::new();
+        let mut b = Vec::with_capacity(amount);
         for (cur_v, cur_a) in opened_v_vec.iter().zip(a) {
             let cur_r = Z::solve(cur_v)?;
             let cur_d = Z::ZERO - (Z::ONE + Z::TWO * cur_r);

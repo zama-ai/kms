@@ -54,6 +54,10 @@ where
     const BIT_LENGTH: usize;
     // Base 2 log of characteristic of the ring
     const CHAR_LOG2: usize;
+    // Degree of the extension
+    const EXTENSION_DEGREE: usize;
+    // Number of random bits required to sample a uniform element of the base ring
+    const NUM_BITS_STAT_SEC_BASE_RING: usize;
     fn to_byte_vec(&self) -> Vec<u8>;
 }
 
@@ -108,18 +112,24 @@ pub trait RingEmbed: Sized {
 }
 
 pub trait ErrorCorrect: Ring + RingEmbed {
+    ///Perform error correction.
+    /// degree is the degree of the sharing polynomial (either threshold or 2*threshold)
+    /// max_errs is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)
+    ///
+    /// __NOTE__ : We assume values coming from known malicious parties have been excluded by the caller (i.e. values denoted Bot in NIST doc)
     fn error_correct(
         sharing: &ShamirSharings<Self>,
-        threshold: usize,
-        max_correctable_errs: usize,
+        degree: usize,
+        max_errs: usize,
     ) -> anyhow::Result<Poly<Self>>;
 }
 
 pub trait Derive: Sized {
+    const SIZE_EXCEPTIONAL_SET: usize;
     /// This is known as H_{LDS} from the NIST spec.
     fn derive_challenges_from_coinflip(
         x: &Self,
-        g: usize,
+        g: u8,
         l: usize,
         roles: &[Role],
     ) -> HashMap<Role, Vec<Self>>;

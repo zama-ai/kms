@@ -4,7 +4,7 @@ use crate::{
     algebra::residue_poly::ResiduePoly128,
     error::error_handler::anyhow_error_and_log,
     execution::{
-        constants::{BD1, LOG_BD, STATSEC},
+        constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC},
         online::{
             gen_bits::{BitGenEven, RealBitGenEven},
             preprocessing::BasePreprocessing,
@@ -69,7 +69,7 @@ impl NoiseFloodPreprocessing for InMemoryNoiseFloodPreprocessing {
         let own_role = session.my_role()?;
 
         let masks = (0..amount)
-            .map(|_| session.prss_state.mask_next(own_role, BD1))
+            .map(|_| session.prss_state.mask_next(own_role, B_SWITCH_SQUASH))
             .try_collect()?;
 
         self.append_masks(masks);
@@ -86,7 +86,7 @@ impl NoiseFloodPreprocessing for InMemoryNoiseFloodPreprocessing {
         session: &mut BaseSession,
         num_ctxts: usize,
     ) -> anyhow::Result<()> {
-        let bound_d = (STATSEC + LOG_BD) as usize;
+        let bound_d = (STATSEC + LOG_B_SWITCH_SQUASH) as usize;
         let num_bits = 2 * num_ctxts * (bound_d + 2);
         let available_bits =
             RealBitGenEven::gen_bits_even(num_bits, preprocessing, session).await?;
@@ -101,7 +101,7 @@ impl NoiseFloodPreprocessing for InMemoryNoiseFloodPreprocessing {
         bit_preproc: &mut dyn BitPreprocessing<ResiduePoly128>,
         num_ctxts: usize,
     ) -> anyhow::Result<()> {
-        let bound_d = (STATSEC + LOG_BD) as usize;
+        let bound_d = (STATSEC + LOG_B_SWITCH_SQUASH) as usize;
         let mut u_randoms =
             RealSecretDistributions::t_uniform(2 * num_ctxts, TUniformBound(bound_d), bit_preproc)?
                 .into_iter()

@@ -136,6 +136,7 @@ impl SwitchAndSquashKey {
             self.fbsk_out.input_lwe_dimension().to_lwe_size(),
             CiphertextModulus::new_native(),
         );
+        //If ctype = F-GLWE we need to KS before doing the Bootstrap
         if small_ct_block.pbs_order == PBSOrder::KeyswitchBootstrap {
             let mut output_raw_ctxt =
                 LweCiphertext::new(0, self.ksk.output_lwe_size(), self.ksk.ciphertext_modulus());
@@ -254,16 +255,9 @@ pub(crate) fn from_expanded_msg<Scalar: UnsignedInteger + AsPrimitive<u128>>(
     message_and_carry_mod_bits: usize,
 ) -> Z128 {
     // delta = q/t where t is the amount of plain text bits
-    // Observe we actually divide this by 2 (i.e. subtract 1 bit) to make space for padding
+    // Observe that t includes the message and carry bits as well as the padding bit (hence the + 1)
     let delta_pad_bits = (Scalar::BITS as u128) - (message_and_carry_mod_bits as u128 + 1_u128);
 
-    // compute delta / 2
-    let delta_pad_half = 1 << (delta_pad_bits - 1);
-
-    // add delta/2 to kill the negative noise, note this does not affect the message.
-    let raw_msg = raw_plaintext.as_().wrapping_add(delta_pad_half) >> delta_pad_bits;
-
-    let msg = Wrapping(raw_msg % (1 << message_and_carry_mod_bits));
     // Observe that in certain situations the computation of b-<a,s> may be negative
     // Concretely this happens when the message encrypted is 0 and randomness ends up being negative.
     // We cannot simply do the standard modulo operation then, as this would mean the message becomes
@@ -273,7 +267,13 @@ pub(crate) fn from_expanded_msg<Scalar: UnsignedInteger + AsPrimitive<u128>>(
     if raw_plaintext.as_() > Scalar::MAX.as_() - (1 << delta_pad_bits) {
         Z128::ZERO
     } else {
-        msg
+        // compute delta / 2
+        let delta_pad_half = 1 << (delta_pad_bits - 1);
+
+        // add delta/2 to kill the negative noise, note this does not affect the message.
+        // and then divide by delta
+        let raw_msg = raw_plaintext.as_().wrapping_add(delta_pad_half) >> delta_pad_bits;
+        Wrapping(raw_msg % (1 << message_and_carry_mod_bits))
     }
 }
 

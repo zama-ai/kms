@@ -48,7 +48,7 @@ fn bench_prss(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("prss_mask_next", size), |b| {
             b.iter(|| {
                 for _ in 0..*size {
-                    let _e_shares = state.mask_next(Role::indexed_by_one(1), 1_u128 << 114);
+                    let _e_shares = state.mask_next(Role::indexed_by_one(1), 1_u128 << 70);
                 }
             });
         });

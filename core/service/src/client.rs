@@ -1784,7 +1784,7 @@ impl Client {
         for cur_block_shares in sharings {
             // NOTE: this performs optimistic reconstruction
             if let Ok(Some(r)) =
-                reconstruct_w_errors_sync(amount_shares, degree, degree, &cur_block_shares)
+                reconstruct_w_errors_sync(amount_shares, degree, degree, 0, &cur_block_shares)
             {
                 decrypted_blocks.push(r);
             } else {
@@ -1841,7 +1841,7 @@ impl Client {
         for cur_block_shares in sharings {
             // NOTE: this performs optimistic reconstruction
             if let Ok(Some(r)) =
-                reconstruct_w_errors_sync(num_parties, degree, degree, &cur_block_shares)
+                reconstruct_w_errors_sync(num_parties, degree, degree, 0, &cur_block_shares)
             {
                 decrypted_blocks.push(r);
             } else {

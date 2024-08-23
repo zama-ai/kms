@@ -66,6 +66,8 @@ impl<V: Vss> Coinflip for RealCoinflip<V> {
 
         let shares_of_contributions = self.vss.execute(session, &my_secret).await?;
 
+        //Note that we don't care about summing only non-corrupt contributions as
+        //output of VSS from corrupted parties is the trivial 0 sharing
         let share_of_coin = shares_of_contributions.into_iter().sum::<Z>();
 
         let opening =

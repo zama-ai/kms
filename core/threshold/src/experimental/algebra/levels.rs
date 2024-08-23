@@ -103,8 +103,10 @@ macro_rules! impl_ring_level {
             impl Ring for $name {
                 ///BIT LENGTH FOR THIS RING IS DEFINED AS THE NUMBER OF BITS REQUIRED TO SAMPLE
                 ///AN ELEMENT FROM A DISTRIBUTION INDISTINGUISHABLE FROM THE UNIFORM DISTRIBUTION
-                const BIT_LENGTH: usize = ($uint_type::from_be_hex($max_val).bits() + crate::execution::constants::STATSEC) as usize;
+                const BIT_LENGTH: usize = $uint_type::from_be_hex($max_val).bits() as usize ;
+                const NUM_BITS_STAT_SEC_BASE_RING: usize = Self::BIT_LENGTH + (crate::execution::constants::STATSEC as usize);
                 const CHAR_LOG2: usize = unimplemented!();
+                const EXTENSION_DEGREE: usize = 1;
 
                 fn to_byte_vec(&self) -> Vec<u8> {
                     self.value.0.to_le_bytes().to_vec()
@@ -351,7 +353,7 @@ macro_rules! impl_field_level {
                 fn error_correct(
                     sharing: &ShamirSharings<$name>,
                     threshold: usize,
-                    max_correctable_errs: usize,
+                    max_errs: usize,
                 ) -> anyhow::Result<Poly<$name>> {
                     let shares: Vec<_> = sharing
                         .shares
@@ -361,7 +363,7 @@ macro_rules! impl_field_level {
                             party_id: share.owner().one_based() as u8,
                         })
                         .collect();
-                    let res = error_correction(shares.as_slice(), threshold, max_correctable_errs)?;
+                    let res = error_correction(shares.as_slice(), threshold, max_errs)?;
 
                     Ok(res)
                 }
@@ -380,7 +382,7 @@ impl ErrorCorrect for LevelKsw {
     fn error_correct(
         sharing: &ShamirSharings<Self>,
         threshold: usize,
-        max_correctable_errs: usize,
+        max_errs: usize,
     ) -> anyhow::Result<Poly<Self>> {
         //Apply CRT decomposition to all the shares
         let crt_shares = sharing
@@ -395,8 +397,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_r))
                 .collect_vec(),
         };
-        let mut res_level_r =
-            LevelR::error_correct(&shamir_level_r, threshold, max_correctable_errs)?;
+        let mut res_level_r = LevelR::error_correct(&shamir_level_r, threshold, max_errs)?;
 
         let shamir_level_one = ShamirSharings {
             shares: crt_shares
@@ -404,8 +405,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_one))
                 .collect_vec(),
         };
-        let mut res_level_one =
-            LevelOne::error_correct(&shamir_level_one, threshold, max_correctable_errs)?;
+        let mut res_level_one = LevelOne::error_correct(&shamir_level_one, threshold, max_errs)?;
 
         let shamir_level_two = ShamirSharings {
             shares: crt_shares
@@ -413,8 +413,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_two))
                 .collect_vec(),
         };
-        let mut res_level_two =
-            LevelTwo::error_correct(&shamir_level_two, threshold, max_correctable_errs)?;
+        let mut res_level_two = LevelTwo::error_correct(&shamir_level_two, threshold, max_errs)?;
 
         let shamir_level_three = ShamirSharings {
             shares: crt_shares
@@ -423,7 +422,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_three =
-            LevelThree::error_correct(&shamir_level_three, threshold, max_correctable_errs)?;
+            LevelThree::error_correct(&shamir_level_three, threshold, max_errs)?;
 
         let shamir_level_four = ShamirSharings {
             shares: crt_shares
@@ -431,8 +430,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_four))
                 .collect_vec(),
         };
-        let mut res_level_four =
-            LevelFour::error_correct(&shamir_level_four, threshold, max_correctable_errs)?;
+        let mut res_level_four = LevelFour::error_correct(&shamir_level_four, threshold, max_errs)?;
 
         let shamir_level_five = ShamirSharings {
             shares: crt_shares
@@ -440,8 +438,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_five))
                 .collect_vec(),
         };
-        let mut res_level_five =
-            LevelFive::error_correct(&shamir_level_five, threshold, max_correctable_errs)?;
+        let mut res_level_five = LevelFive::error_correct(&shamir_level_five, threshold, max_errs)?;
 
         let shamir_level_six = ShamirSharings {
             shares: crt_shares
@@ -449,8 +446,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_six))
                 .collect_vec(),
         };
-        let mut res_level_six =
-            LevelSix::error_correct(&shamir_level_six, threshold, max_correctable_errs)?;
+        let mut res_level_six = LevelSix::error_correct(&shamir_level_six, threshold, max_errs)?;
 
         let shamir_level_seven = ShamirSharings {
             shares: crt_shares
@@ -459,7 +455,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_seven =
-            LevelSeven::error_correct(&shamir_level_seven, threshold, max_correctable_errs)?;
+            LevelSeven::error_correct(&shamir_level_seven, threshold, max_errs)?;
 
         let shamir_level_eight = ShamirSharings {
             shares: crt_shares
@@ -468,7 +464,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_eight =
-            LevelEight::error_correct(&shamir_level_eight, threshold, max_correctable_errs)?;
+            LevelEight::error_correct(&shamir_level_eight, threshold, max_errs)?;
 
         let shamir_level_nine = ShamirSharings {
             shares: crt_shares
@@ -476,8 +472,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_nine))
                 .collect_vec(),
         };
-        let mut res_level_nine =
-            LevelNine::error_correct(&shamir_level_nine, threshold, max_correctable_errs)?;
+        let mut res_level_nine = LevelNine::error_correct(&shamir_level_nine, threshold, max_errs)?;
 
         let shamir_level_ten = ShamirSharings {
             shares: crt_shares
@@ -485,8 +480,7 @@ impl ErrorCorrect for LevelKsw {
                 .map(|crt_share| Share::new(crt_share.1, crt_share.0.value_level_ten))
                 .collect_vec(),
         };
-        let mut res_level_ten =
-            LevelTen::error_correct(&shamir_level_ten, threshold, max_correctable_errs)?;
+        let mut res_level_ten = LevelTen::error_correct(&shamir_level_ten, threshold, max_errs)?;
 
         let shamir_level_eleven = ShamirSharings {
             shares: crt_shares
@@ -495,7 +489,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_eleven =
-            LevelEleven::error_correct(&shamir_level_eleven, threshold, max_correctable_errs)?;
+            LevelEleven::error_correct(&shamir_level_eleven, threshold, max_errs)?;
 
         let shamir_level_twelve = ShamirSharings {
             shares: crt_shares
@@ -504,7 +498,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_twelve =
-            LevelTwelve::error_correct(&shamir_level_twelve, threshold, max_correctable_errs)?;
+            LevelTwelve::error_correct(&shamir_level_twelve, threshold, max_errs)?;
 
         let shamir_level_thirteen = ShamirSharings {
             shares: crt_shares
@@ -513,7 +507,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_thirteen =
-            LevelThirteen::error_correct(&shamir_level_thirteen, threshold, max_correctable_errs)?;
+            LevelThirteen::error_correct(&shamir_level_thirteen, threshold, max_errs)?;
 
         let shamir_level_fourteen = ShamirSharings {
             shares: crt_shares
@@ -522,7 +516,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_fourteen =
-            LevelFourteen::error_correct(&shamir_level_fourteen, threshold, max_correctable_errs)?;
+            LevelFourteen::error_correct(&shamir_level_fourteen, threshold, max_errs)?;
 
         let shamir_level_fifteen = ShamirSharings {
             shares: crt_shares
@@ -531,7 +525,7 @@ impl ErrorCorrect for LevelKsw {
                 .collect_vec(),
         };
         let mut res_level_fifteen =
-            LevelFifteen::error_correct(&shamir_level_fifteen, threshold, max_correctable_errs)?;
+            LevelFifteen::error_correct(&shamir_level_fifteen, threshold, max_errs)?;
 
         //All the level polynomial have max degree threshold, so we will crt reconstruct a polynomial of degree threshold
         let mut coefs: Vec<Self> = Vec::new();
@@ -664,7 +658,7 @@ impl PRSSConversions for LevelKsw {
         assert!(coefs.len() * 128 > Self::BIT_LENGTH);
         let mut bytes = coefs
             .iter()
-            .map(|coef| coef.to_be_bytes().to_vec())
+            .map(|coef| coef.to_le_bytes().to_vec())
             .collect_vec()
             .into_iter()
             .flatten()
@@ -674,7 +668,7 @@ impl PRSSConversions for LevelKsw {
         bytes.resize(expected_size, 0);
         let modulus_1600: crypto_bigint::U1600 = Self::MODULUS.as_ref().into();
         let value =
-            crypto_bigint::U1600::from_be_slice(&bytes).rem(&NonZero::new(modulus_1600).unwrap());
+            crypto_bigint::U1600::from_le_slice(&bytes).rem(&NonZero::new(modulus_1600).unwrap());
 
         Self {
             value: GenericModulus((&value).into()),
@@ -806,7 +800,7 @@ impl PRSSConversions for LevelOne {
         assert!(coefs.len() * 128 > Self::BIT_LENGTH);
         let mut bytes = coefs
             .iter()
-            .map(|coef| coef.to_be_bytes().to_vec())
+            .map(|coef| coef.to_le_bytes().to_vec())
             .collect_vec()
             .into_iter()
             .flatten()
@@ -815,7 +809,7 @@ impl PRSSConversions for LevelOne {
         bytes.resize(expected_size, 0);
         let modulus_192: crypto_bigint::U192 = Self::MODULUS.as_ref().into();
         let value =
-            crypto_bigint::U192::from_be_slice(&bytes).rem(&NonZero::new(modulus_192).unwrap());
+            crypto_bigint::U192::from_le_slice(&bytes).rem(&NonZero::new(modulus_192).unwrap());
 
         Self {
             value: GenericModulus((&value).into()),

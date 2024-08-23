@@ -55,14 +55,14 @@ impl IntQ {
 }
 
 impl IntQ {
-    /// Computes round(x / y) by first computing (q, r) = x/y
-    /// where y*q + r = x
-    /// if r >= y/2 then output q+1
-    /// otherwise output q
-    /// eg: round(17/4 = 4.25) = 4 since (q,r) = (4, 1) and 1>=4/2 is false
-    /// eg: round(18/4 = 4.5) = 5 since  (q, r) = (4, 2) and 2>=4/2 is true
-    /// eg: round(19/4 = 4.75) = 5 since (q, r) = (4, 3) and 3>=4/2 is true
-    pub fn round(&self, rhs: &IntQ) -> Self {
+    /// Computes `round(x / y)` by first computing `(q, r) = x/y`
+    /// where `y*q + r = x`
+    /// if `r >= y/2` then output `q+1`
+    /// otherwise output `q`
+    /// - eg: `div_and_round(17/4 = 4.25) = 4` since `(q,r) = (4, 1)` and `1>=4/2` is false
+    /// - eg: `div_and_round(18/4 = 4.5) = 5` since  `(q, r) = (4, 2)` and `2>=4/2` is true
+    /// - eg: `div_and_round(19/4 = 4.75) = 5` since `(q, r) = (4, 3)` and `3>=4/2` is true
+    pub fn div_and_round(&self, rhs: &IntQ) -> Self {
         let nz = rhs.data.to_nz().unwrap();
         let (mut q, r) = self.data.div_rem_vartime(&nz);
         let half_rhs = rhs.data.shr(1);

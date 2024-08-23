@@ -16,8 +16,12 @@ use crate::{
     execution::small_execution::prf::PrfKey,
 };
 use serde::{Deserialize, Serialize};
+use sha3::{Digest, Sha3_256};
 use std::collections::{BTreeMap, HashMap};
 
+pub(crate) const BCAST_HASH_BYTE_LEN: usize = 32;
+pub(crate) const DSEP_BRACH: &[u8; 5] = b"BRACH";
+pub(crate) type BcastHash = [u8; BCAST_HASH_BYTE_LEN];
 /// Captures network values which can (and sometimes should) be broadcast
 #[derive(Serialize, Deserialize, PartialEq, Clone, Hash, Eq, Debug)]
 pub enum BroadcastValue<Z: Eq + Zero> {
@@ -31,6 +35,22 @@ pub enum BroadcastValue<Z: Eq + Zero> {
     LocalSingleShare(MapsSharesChallenges<Z>),
     LocalDoubleShare(MapsDoubleSharesChallenges<Z>),
     PartialProof(ceremony::PartialProof),
+}
+
+impl<Z: Eq + Zero + Serialize> BroadcastValue<Z> {
+    pub fn to_bcast_hash(&self) -> BcastHash {
+        //We hash the serialized broadcast value
+        let serialized = bincode::serialize(self).unwrap();
+        let mut hasher = Sha3_256::new();
+        hasher.update(DSEP_BRACH);
+        hasher.update(serialized);
+        let digest = hasher.finalize();
+
+        digest
+            .as_slice()
+            .try_into()
+            .expect("wrong length in broadcast hash")
+    }
 }
 
 impl<Z: Ring> From<Z> for BroadcastValue<Z> {
@@ -64,7 +84,7 @@ pub enum NetworkValue<Z: Eq + Zero> {
     VecPairRingValue(Vec<(Z, Z)>),
     Send(BroadcastValue<Z>),
     EchoBatch(HashMap<Role, BroadcastValue<Z>>),
-    VoteBatch(HashMap<Role, BroadcastValue<Z>>),
+    VoteBatch(HashMap<Role, BcastHash>),
     AgreeRandom(AgreeRandomValue),
     Bot,
     Empty,

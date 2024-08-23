@@ -15,6 +15,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
+use num_integer::div_ceil;
 use rand::{CryptoRng, Rng};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::instrument;
@@ -128,12 +129,12 @@ async fn send_receive_pads_double<Z, R, L, S>(
     share_dispute: &S,
 ) -> anyhow::Result<ShareDisputeOutputDouble<Z>>
 where
-    Z: Ring + RingEmbed + Invert,
+    Z: Ring + RingEmbed + Derive + Invert,
     R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
     S: ShareDispute,
 {
-    let m = (DISPUTE_STAT_SEC as f64 / Z::BIT_LENGTH as f64).ceil() as usize;
+    let m = div_ceil(DISPUTE_STAT_SEC, Z::SIZE_EXCEPTIONAL_SET);
     let my_pads = (0..m).map(|_| Z::sample(session.rng())).collect_vec();
     share_dispute.execute_double(session, &my_pads).await
 }
@@ -169,12 +170,12 @@ async fn verify_sharing<
     );
 
     let roles = session.role_assignments().keys().cloned().collect_vec();
-    let m = (DISPUTE_STAT_SEC as f64 / Z::BIT_LENGTH as f64).ceil() as usize;
+    let m = div_ceil(DISPUTE_STAT_SEC, Z::SIZE_EXCEPTIONAL_SET);
     let my_role = session.my_role()?;
-    let mut result = true;
 
+    //TODO: Could be done in parallel (to minimize round complexity)
     for g in 0..m {
-        let map_challenges = Z::derive_challenges_from_coinflip(x, g, l, &roles);
+        let map_challenges = Z::derive_challenges_from_coinflip(x, g.try_into()?, l, &roles);
 
         //Compute my share of check values for every sharing of degree t
         let map_share_check_values_t = compute_check_values(
@@ -303,10 +304,17 @@ async fn verify_sharing<
             secrets_shares_all_2t.insert(role_pi, vec![Z::ZERO; l]);
             session.add_corrupt(role_pi)?;
         }
-        result &= look_for_disputes(&bcast_data_t, session)?;
-        result &= look_for_disputes(&bcast_data_2t, session)?;
+
+        //Returns as soon as we have a new dispute
+        if (!look_for_disputes(&bcast_data_t, session)?)
+            || (!look_for_disputes(&bcast_data_2t, session)?)
+        {
+            return Ok(false);
+        }
     }
-    Ok(result)
+
+    //If we reached here, evereything went fine
+    Ok(true)
 }
 
 #[cfg(test)]

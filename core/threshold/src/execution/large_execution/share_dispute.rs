@@ -5,7 +5,7 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        communication::p2p::{receive_from_parties_w_dispute, send_to_parties_w_dispute},
+        communication::p2p::{receive_from_parties_w_dispute, send_to_honest_parties},
         runtime::{party::Role, session::LargeSessionHandles},
     },
     networking::value::NetworkValue,
@@ -59,8 +59,8 @@ pub trait ShareDispute: Send + Sync + Clone + Default {
 #[derive(Default, Clone)]
 pub struct RealShareDispute {}
 
-//Want to puncture only at Dispute\Corrupt ids
-fn compute_puncture_idx<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+/// Returns the ids (one based) of the roles I am in dispute with but that are not corrupt
+fn compute_idx_dispute_not_corrupt<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     session: &L,
 ) -> anyhow::Result<Vec<usize>> {
     Ok(session
@@ -128,7 +128,7 @@ impl ShareDispute for RealShareDispute {
         let degree_t = session.threshold() as usize;
         let degree_2t = 2 * degree_t;
 
-        let dispute_ids = compute_puncture_idx(session)?;
+        let dispute_ids = compute_idx_dispute_not_corrupt(session)?;
 
         //Sample one random polynomial of correct degree per secret
         //and evaluate it at the parties' points
@@ -183,7 +183,7 @@ impl ShareDispute for RealShareDispute {
         let degree = session.threshold() as usize;
         //If some party is corrupt I shouldn't sample a specific point for it
         //Even if it is in dispute with me
-        let dispute_ids = compute_puncture_idx(session)?;
+        let dispute_ids = compute_idx_dispute_not_corrupt(session)?;
 
         //Sample one random polynomial of correct degree per secret
         //and evaluate it at the parties' points
@@ -223,7 +223,7 @@ async fn send_and_receive_share_dispute_double<
     polypoints_map: HashMap<Role, NetworkValue<Z>>,
     num_secrets: usize,
 ) -> anyhow::Result<ShareDisputeOutputDouble<Z>> {
-    send_to_parties_w_dispute(&polypoints_map, session).await?;
+    send_to_honest_parties(&polypoints_map, session).await?;
 
     let sender_list = session.role_assignments().keys().cloned().collect_vec();
     let mut received_values = receive_from_parties_w_dispute(&sender_list, session).await?;
@@ -307,7 +307,7 @@ async fn send_and_receive_share_dispute_single<
     polypoints_map: HashMap<Role, NetworkValue<Z>>,
     num_secrets: usize,
 ) -> anyhow::Result<ShareDisputeOutput<Z>> {
-    send_to_parties_w_dispute(&polypoints_map, session).await?;
+    send_to_honest_parties(&polypoints_map, session).await?;
 
     let sender_list = session.role_assignments().keys().cloned().collect_vec();
     let mut received_values = receive_from_parties_w_dispute(&sender_list, session).await?;
@@ -326,7 +326,7 @@ async fn send_and_receive_share_dispute_single<
             .clone(),
     );
 
-    //Recast polypoints_map to residuepoly instead of network value
+    //Recast polypoints_map to ring value instead of network value
     let polypoints_map = polypoints_map
         .into_iter()
         .map(|(role, net_value)| {
@@ -347,6 +347,7 @@ async fn send_and_receive_share_dispute_single<
             if let NetworkValue::VecRingValue(value) = net_value {
                 (role, value)
             } else {
+                //If other party sent me wrong type, replace with 0s
                 (role, vec![Z::ZERO; num_secrets])
             }
         })
@@ -386,24 +387,21 @@ where
     let base_poly = Poly::sample_random_with_fixed_constant(rng, secret, degree);
     // Modify the polynomial by increasing its degree with |dispute_party_ids| and ensuring the points
     // in `dispute_party_ids` gets y-value=0 and evaluate it for 1..num_parties
-    let points = evaluate_w_zero_roots(num_parties, dispute_party_ids, &base_poly)?;
+    let points = evaluate_w_new_roots(num_parties, dispute_party_ids, &base_poly)?;
     // check that the zero point is `secret`
     debug_assert_eq!(secret, points[0]);
-    // evaluate the poly at the party indices gamma
-    // exclude the point at x=0
+    // exclude the point at x=0 (i.e. the secret)
     Ok(points[1..points.len()].to_vec())
 }
 
 //TODO: This function should be optimized with memoized calls to normalized_parties_root
-/// Helper method for punctured polynomial interpolation.
-/// Takes a base polynomial and increases its degree by [points_of_zero_roots] by ensuring that each of the [points_of_zero_roots] gets embedded to x-points whose y-value is 0.
-/// And then returns all the 0..[num_parties] points on the polynomial.
-/// More specifically the values in [points_of_zero_roots] gets embedded on the polynomial to ensure they are invertable, then
-/// the polynomial gets modified to ensure that each of the points in [points_of_zero_roots] will have y-value 0
-/// by increasing its degres with |points_of_zero_roots|. Then the polynomial is evaluated in embedded points 0..[num_partes] and this is returned.
-pub fn evaluate_w_zero_roots<Z>(
+/// Helper method for `punctured` polynomial interpolation.
+/// Takes a base polynomial and increases its degree by multiplying roots of the form (1 - X/embed(i)) for each i in [points_of_new_roots].
+/// Such that the new polynomial has same constant term, and evaluates to 0 at each embed(i) for i in [points_of_new_roots]
+/// Then returns all the 0..[num_parties] points on the polynomial.
+pub fn evaluate_w_new_roots<Z>(
     num_parties: usize,
-    points_of_zero_roots: Vec<usize>,
+    points_of_new_roots: Vec<usize>,
     base_poly: &Poly<Z>,
 ) -> anyhow::Result<Vec<Z>>
 where
@@ -415,8 +413,8 @@ where
     let mut poly = base_poly.clone();
 
     // poly will be of degree [threshold], zero at the points [x_coords], which reflect the party IDs embedded, and [secret] at 0
-    for p in points_of_zero_roots {
-        poly = poly * normalized_parties_root[p - 1].clone(); //(x.clone() + neg_parties[p].clone()) * Poly::from_coefs(vec![inv_coefs[p]]);
+    for p in points_of_new_roots {
+        poly = poly * normalized_parties_root[p - 1].clone();
     }
     // evaluate the poly at the embedded party indices
     let points: Vec<_> = (0..=num_parties).map(|p| poly.eval(&x_coords[p])).collect();
@@ -426,8 +424,9 @@ where
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        compute_puncture_idx, evaluate_w_zero_roots, send_and_receive_share_dispute_double,
-        send_and_receive_share_dispute_single, share_secrets,
+        compute_idx_dispute_not_corrupt, evaluate_w_new_roots,
+        send_and_receive_share_dispute_double, send_and_receive_share_dispute_single,
+        share_secrets,
     };
     use crate::execution::sharing::shamir::RevealOp;
     use crate::networking::NetworkMode;
@@ -438,7 +437,7 @@ pub(crate) mod tests {
             structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed, Zero},
         },
         execution::{
-            communication::p2p::send_to_parties_w_dispute,
+            communication::p2p::send_to_honest_parties,
             large_execution::share_dispute::{
                 interpolate_poly_w_punctures, RealShareDispute, ShareDispute, ShareDisputeOutput,
                 ShareDisputeOutputDouble,
@@ -544,7 +543,7 @@ pub(crate) mod tests {
                     }
                 }
             }
-            send_to_parties_w_dispute(&polypoints_map, session)
+            send_to_honest_parties(&polypoints_map, session)
                 .await
                 .unwrap();
             Ok(ShareDisputeOutput::default())
@@ -582,7 +581,7 @@ pub(crate) mod tests {
                     }
                 }
             }
-            send_to_parties_w_dispute(&polypoints_map, session)
+            send_to_honest_parties(&polypoints_map, session)
                 .await
                 .unwrap();
             Ok(ShareDisputeOutputDouble::default())
@@ -604,7 +603,7 @@ pub(crate) mod tests {
             let degree_t = session.threshold() as usize;
             let degree_2t = 2 * degree_t;
 
-            let dispute_ids = compute_puncture_idx(session)?;
+            let dispute_ids = compute_idx_dispute_not_corrupt(session)?;
 
             //Sample one random polynomial of correct degree per secret
             //and evaluate it at the parties' points
@@ -662,7 +661,7 @@ pub(crate) mod tests {
             let degree = session.threshold() as usize;
             //If some party is corrupt I shouldn't sample a specific point for it
             //Even if it is in dispute with me
-            let dispute_ids: Vec<usize> = compute_puncture_idx(session)?;
+            let dispute_ids: Vec<usize> = compute_idx_dispute_not_corrupt(session)?;
 
             //Sample one random polynomial of correct degree per secret
             //and evaluate it at the parties' points
@@ -941,7 +940,7 @@ pub(crate) mod tests {
         let zero_points = vec![1];
         // Constant base-poly
         let base = Poly::from_coefs(vec![ResiduePoly::from_scalar(Wrapping(msg))]);
-        let res = evaluate_w_zero_roots(parties, zero_points.clone(), &base).unwrap();
+        let res = evaluate_w_new_roots(parties, zero_points.clone(), &base).unwrap();
         // Check msg is in the constant
         assert_eq!(ResiduePoly::from_scalar(Wrapping::<u128>(msg)), res[0]);
         // Check that the zero_points are 0

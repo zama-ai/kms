@@ -21,8 +21,7 @@ use crate::experimental::{
 use crate::{
     algebra::structure_traits::FromU128,
     execution::{
-        constants::STATSEC, online::triple::open_list, runtime::session::SmallSessionHandles,
-        sharing::share::Share,
+        online::triple::open_list, runtime::session::SmallSessionHandles, sharing::share::Share,
     },
     experimental::{
         algebra::integers::IntQ,
@@ -78,13 +77,15 @@ pub(crate) async fn noise_flood_decryption<
         value: GenericModulus(*LevelEll::MODULUS.as_ref()),
     };
 
+    //Scale to level one
     let ct_prime =
         modulus_switch::<LevelOne, LevelEll, N>(ciphertext, q, big_q, *PLAINTEXT_MODULUS);
     let p_share = partial_decrypt(&ct_prime.c0, &ct_prime.c1, keyshares);
 
     let dist_shift = LevelOne::from_u128(PLAINTEXT_MODULUS.get().into());
+    //NOTE: We assumed a power of two cyclotomic ring, so E_M = 1 (Design Decision 24)
     let shifted_t_vec = (0..N::VALUE)
-        .map(|_| prss_state.mask_next(own_role, (STATSEC + LOG_B_MULT - LOG_PLAINTEXT) as u128))
+        .map(|_| prss_state.mask_next(own_role, 1u128 << ((LOG_B_MULT - LOG_PLAINTEXT) as u128)))
         .try_collect::<_, Vec<LevelOne>, _>()?
         .into_iter()
         .map(|x| x * dist_shift)

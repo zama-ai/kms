@@ -245,8 +245,8 @@ where
     let aq = a_int * q_int;
     let bq = b_int * q_int;
 
-    let a_bar = &aq.round(&big_q_int);
-    let b_bar = &bq.round(&big_q_int);
+    let a_bar = &aq.div_and_round(&big_q_int);
+    let b_bar = &bq.div_and_round(&big_q_int);
 
     let d_a = aq - (a_bar * &big_q_int);
     let d_b = bq - (b_bar * &big_q_int);

@@ -59,6 +59,7 @@ impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> 
             .execute(session, &my_secrets)
             .await?;
 
+        // Prepare data from the map output by LocalSingleShare to the vector ready to be multiplied with the VDM matrix
         self.available_lsl = format_for_next(shares, l)?;
         self.max_num_iterations = l;
 
@@ -80,12 +81,16 @@ impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> 
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<Z> {
+        //If there's no shares available we recompute a new batch
         if self.available_shares.is_empty() {
+            //If there's no more randomness to extract we re init
             if self.available_lsl.is_empty() {
                 self.init(session, self.max_num_iterations).await?;
             }
+            //Extract randomness from the next available set of LocalSingleShares
             self.available_shares = compute_next_batch(&mut self.available_lsl, &self.vdm_matrix)?;
         }
+
         Ok(self
             .available_shares
             .pop()
@@ -93,24 +98,33 @@ impl<Z: Ring + RingEmbed + Invert + Derive + ErrorCorrect, S: LocalSingleShare> 
     }
 }
 
+///Create the VDM matrix of dimension (height, width) such that
+/// VDM_{i,j} = alpha_i^j, with alpha_i the ith element of the exceptional set
 pub fn init_vdm<Z: Ring + RingEmbed>(height: usize, width: usize) -> anyhow::Result<ArrayD<Z>> {
-    let invertible_points: Vec<Z> = (0..height)
-        .map(|inv_idx| Z::embed_exceptional_set(inv_idx + 1))
+    // We could actually probably take 0 in the VDM matrix, but to match the alpha indexing with the one we use for parties,
+    //we skip it
+    let exceptional_sequence: Vec<Z> = (0..height)
+        .map(|idx| Z::embed_exceptional_set(idx + 1))
         .try_collect()?;
 
-    let powers_of_invertible_points: Vec<Z> = invertible_points
+    let powers_of_exceptional_sequence: Vec<Z> = exceptional_sequence
         .into_iter()
         .fold(Vec::<Z>::new(), |acc, point| {
             [acc, compute_powers(point, width - 1)].concat()
         });
 
-    Ok(ArrayD::from_shape_vec(IxDyn(&[height, width]), powers_of_invertible_points)?.into_dyn())
+    Ok(ArrayD::from_shape_vec(IxDyn(&[height, width]), powers_of_exceptional_sequence)?.into_dyn())
 }
-//Have to be careful about ordering (e.g. cant just iterate over the set of key as its unordered)
-//Format the map with keys role_i in Roles
-//role_i -> [<x_1^{(i)}>_{self}, ... , <x_l^{(i)}>_{self}]
-//to a map appropriate for the randomness extraction with keys j in [l]
-// j -> [<x_j^{(1)}>_{self}, ..., <x_j^{(n)}>_{self}]
+
+///Have to be careful about ordering (e.g. cant just iterate over the set of key as its unordered)
+///
+///Format the map with keys role_i in Roles
+///
+///role_i -> [<x_1^{(i)}>_{self}, ... , <x_l^{(i)}>_{self}]
+///
+///to a vector appropriate fro the randomness extraction with keys j in [l]
+///
+/// j -> [<x_j^{(1)}>_{self}, ..., <x_j^{(n)}>_{self}]
 fn format_for_next<Z: Ring>(
     local_single_shares: HashMap<Role, Vec<Z>>,
     l: usize,
@@ -119,12 +133,15 @@ fn format_for_next<Z: Ring>(
     let mut res = Vec::with_capacity(l);
     for i in 0..l {
         let mut vec = Vec::with_capacity(num_parties);
-        for j in 0..num_parties {
+        for party_idx in 0..num_parties {
             vec.push(
                 local_single_shares
-                    .get(&Role::indexed_by_zero(j))
+                    .get(&Role::indexed_by_zero(party_idx))
                     .ok_or_else(|| {
-                        anyhow_error_and_log(format!("Can not find shares for Party {}", j + 1))
+                        anyhow_error_and_log(format!(
+                            "Can not find shares for Party {}",
+                            party_idx + 1
+                        ))
                     })?[i],
             );
         }
@@ -133,6 +150,7 @@ fn format_for_next<Z: Ring>(
     Ok(res)
 }
 
+///Extract randomness using the parties contributions and the VDM matrix
 fn compute_next_batch<Z: Ring>(
     formated_lsl: &mut Vec<ArrayD<Z>>,
     vdm: &ArrayD<Z>,

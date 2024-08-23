@@ -118,11 +118,11 @@ pub(crate) fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
         )));
     }
 
-    // number of AES blocks, currently limited to 1. This will grow once BGV decryption is implemented
+    // number of AES blocks, currently limited to 1. See NOTE above.
     let v = (((bd1 + 1) as f32).log2() / 128_f32).ceil() as u32;
     debug_assert_eq!(v, 1);
 
-    // TODO iterate over blocks form 0..v here, once we have big number arithmetic for BGV in place
+    // TODO iterate over blocks form 0..v here if we ever need Bd1 > 2^126
     let mut ctr_bytes = ctr.to_le_bytes();
     ctr_bytes[15] = 0; // v - the block counter, currently fixed to zero
     let mut to_enc = GenericArray::from(ctr_bytes);
@@ -136,7 +136,6 @@ pub(crate) fn phi(pa: &PhiAes, ctr: u128, bd1: u128) -> anyhow::Result<i128> {
 }
 
 /// Function Psi that generates bounded randomness for PRSS.next()
-/// This currently assumes that q is 2^128
 pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::Result<Z> {
     // check ctr is smaller 2^112, so nothing gets overwritten by setting the indices in inner_psi
     if ctr >= 1 << 112 {
@@ -145,30 +144,31 @@ pub(crate) fn psi<Z: Ring + PRSSConversions>(pa: &PsiAes, ctr: u128) -> anyhow::
         )));
     }
 
-    let mut coefs = vec![0_u128; Z::BIT_LENGTH.div_ceil(128)];
+    //Compute v = ceil(log(q)/128) if q power of 2, v = (dist + log(q)/128) else
+    let num_u128_base_ring = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
+    let mut coefs = vec![0_u128; Z::EXTENSION_DEGREE * num_u128_base_ring];
 
-    for (i, c) in coefs
-        .iter_mut()
-        .enumerate()
-        .take(Z::BIT_LENGTH.div_ceil(128))
-    {
-        *c = inner_psi(pa, ctr, i as u8);
+    //Loop over psi^(i)
+    for i in 0..Z::EXTENSION_DEGREE {
+        //loop over block counter for each base ring element
+        for block_ctr in 0..num_u128_base_ring {
+            coefs[i * num_u128_base_ring + block_ctr] =
+                inner_psi(pa, ctr, i as u8, block_ctr as u8);
+        }
     }
 
     Ok(Z::from_u128_chunks(coefs))
 }
 
 /// Inner function Psi^(i) that generates bounded randomness for PRSS.next()
-/// This currently assumes that q = 2^128
-fn inner_psi(pa: &PsiAes, ctr: u128, i: u8) -> u128 {
+fn inner_psi(pa: &PsiAes, ctr: u128, i: u8, block_ctr: u8) -> u128 {
     let mut ctr_bytes = ctr.to_le_bytes();
 
     // pad/truncate ctr value and put v and i in the MSBs
-    ctr_bytes[15] = 0; // v - the block counter, currently fixed to zero
+    ctr_bytes[15] = block_ctr; // v - the block counter
     ctr_bytes[14] = i; // i - the dimension index
     let mut to_enc = GenericArray::from(ctr_bytes);
     pa.aes.encrypt_block(&mut to_enc);
-    //NOTE: Is it ok to always outpout 128 random bit, or do we want to sometime output less?
     u128::from_le_bytes(to_enc.into())
 }
 
@@ -181,31 +181,33 @@ pub(crate) fn chi<Z: Ring + PRSSConversions>(pa: &ChiAes, ctr: u128, j: u8) -> a
             "ctr in chi must be smaller than 2^104 but was {ctr}."
         )));
     }
-    let mut coefs = vec![0_u128; Z::BIT_LENGTH.div_ceil(128)];
 
-    for (i, c) in coefs
-        .iter_mut()
-        .enumerate()
-        .take(Z::BIT_LENGTH.div_ceil(128))
-    {
-        *c = inner_chi(pa, ctr, i as u8, j);
+    //Compute v = ceil(log(q)/128) if q power of 2, v = (dist + log(q)/128) else
+    let num_u128_base_ring = Z::NUM_BITS_STAT_SEC_BASE_RING.div_ceil(128);
+    let mut coefs = vec![0_u128; Z::EXTENSION_DEGREE * num_u128_base_ring];
+
+    //Loop over chi^(i)
+    for i in 0..Z::EXTENSION_DEGREE {
+        //loop over block counter for each base ring element
+        for block_ctr in 0..num_u128_base_ring {
+            coefs[i * num_u128_base_ring + block_ctr] =
+                inner_chi(pa, ctr, i as u8, j, block_ctr as u8);
+        }
     }
 
     Ok(Z::from_u128_chunks(coefs))
 }
 
 /// Inner function Chi^(i) that generates bounded randomness for PRZS.next()
-/// This currently assumes that q is 2^128
-fn inner_chi(pa: &ChiAes, ctr: u128, i: u8, j: u8) -> u128 {
+fn inner_chi(pa: &ChiAes, ctr: u128, i: u8, j: u8, block_ctr: u8) -> u128 {
     let mut ctr_bytes = ctr.to_le_bytes();
 
     // pad/truncate ctr value and put v and i in the MSBs, and j in the LSBs
-    ctr_bytes[15] = 0; // v - the block counter, currently fixed to zero
+    ctr_bytes[15] = block_ctr; // v - the block counter
     ctr_bytes[14] = i; // i - the dimension index
     ctr_bytes[13] = j; // j - the threshold index
     let mut to_enc = GenericArray::from(ctr_bytes);
     pa.aes.encrypt_block(&mut to_enc);
-    //NOTE: Is it ok to always outpout 128 random bit, or do we want to sometime output less?
     u128::from_le_bytes(to_enc.into())
 }
 
@@ -214,7 +216,7 @@ mod tests {
     use super::*;
     use crate::{
         algebra::residue_poly::{ResiduePoly128, ResiduePoly64},
-        execution::constants::{BD1, LOG_BD, STATSEC},
+        execution::constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, STATSEC},
     };
 
     #[test]
@@ -223,13 +225,14 @@ mod tests {
         let aes = PhiAes::new(&key, SessionId(0));
         let mut prev = 0_i128;
 
-        // test for BD1 constant (currently even, so we can count bits using ilog2)
+        // test for B_SWITCH_SQUASH * 2^STATSEC  (currently even, so we can count bits using ilog2)
         for ctr in 0..100 {
-            let res = phi(&aes, ctr, BD1).unwrap();
+            let bd1 = B_SWITCH_SQUASH * (1 << STATSEC);
+            let res = phi(&aes, ctr, bd1).unwrap();
             let log = res.abs().ilog2();
-            assert!(log < (LOG_BD + STATSEC));
-            assert!(-(BD1 as i128) <= res);
-            assert!(BD1 as i128 > res);
+            assert!(log < (LOG_B_SWITCH_SQUASH + STATSEC));
+            assert!(-(bd1 as i128) <= res);
+            assert!(bd1 as i128 > res);
             assert_ne!(prev, res);
             prev = res;
         }
@@ -244,15 +247,23 @@ mod tests {
             prev = res;
         }
 
-        assert_eq!(phi(&aes, 0, BD1).unwrap(), phi(&aes, 0, BD1).unwrap());
+        assert_eq!(
+            phi(&aes, 0, B_SWITCH_SQUASH).unwrap(),
+            phi(&aes, 0, B_SWITCH_SQUASH).unwrap()
+        );
 
         let aes_2 = PhiAes::new(&key, SessionId(2));
-        assert_ne!(phi(&aes, 0, BD1).unwrap(), phi(&aes_2, 0, BD1).unwrap());
+        assert_ne!(
+            phi(&aes, 0, B_SWITCH_SQUASH).unwrap(),
+            phi(&aes_2, 0, B_SWITCH_SQUASH).unwrap()
+        );
 
         let err_overflow = phi(&aes, 0, 1 << 127).unwrap_err().to_string();
         assert!(err_overflow.contains("Bd1 must be at most 2^126 to not overflow, but is larger"));
 
-        let err_ctr = phi(&aes, 1 << 123, BD1).unwrap_err().to_string();
+        let err_ctr = phi(&aes, 1 << 123, B_SWITCH_SQUASH)
+            .unwrap_err()
+            .to_string();
         assert!(err_ctr.contains(
             "ctr in phi must be smaller than 2^120 but was 10633823966279326983230456482242756608."
         ));

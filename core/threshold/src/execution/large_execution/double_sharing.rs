@@ -70,6 +70,7 @@ impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, S: LocalDoubleShare> 
             .execute(session, &my_secrets)
             .await?;
 
+        //Prepare data from the map output by LocalDoubleShare to 2 vectors ready to be multiplied with the VDM matrix
         self.available_ldl = format_for_next(ldl, l)?;
         self.max_num_iterations = l;
 
@@ -91,10 +92,13 @@ impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, S: LocalDoubleShare> 
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<DoubleShare<Z>> {
+        //If there's no share available we recompute a new batch
         if self.available_shares.is_empty() {
+            //If there's no more randomness to extract we re init
             if self.available_ldl.is_empty() {
                 self.init(session, self.max_num_iterations).await?;
             }
+            //Extract randomness from the next available set of LocalDoubleShare
             self.available_shares = compute_next_batch(&mut self.available_ldl, &self.vdm_matrix)?;
         }
         let res = self
@@ -108,14 +112,21 @@ impl<Z: Ring + RingEmbed + Derive + ErrorCorrect + Invert, S: LocalDoubleShare> 
     }
 }
 
-//Have to be careful about ordering (e.g. cant just iterate over the set of key as its unordered)
-//Format the map with keys role_i in Roles
-//role_i -> DoubleShare{
-//          share_t: [<x_1^{(i)}>_{self}^t, ... , <x_l^{(i)}>_{self}^t],
-//          share_2t: [<x_1^{(i)}>_{self}^{2t}, ... , <x_l^{(i)}>_{self}^{2t}]
-//          }
-//to a map appropriate for the randomness extraction with keys j in [l]
-// j -> ([<x_j^{(1)}>_{self}^t, ..., <x_j^{(n)}>_{self}^t], [<x_j^{(1)}>_{self}^{2t}, ..., <x_j^{(n)}>_{self}^{2t}])
+///Have to be careful about ordering (e.g. cant just iterate over the set of key as its unordered)
+///
+///Format the map with keys role_i in Roles
+///
+///role_i -> DoubleShare{
+///          share_t: [<x_1^{(i)}>_{self}^t, ... , <x_l^{(i)}>_{self}^t],
+///          share_2t: [<x_1^{(i)}>_{self}^{2t}, ... , <x_l^{(i)}>_{self}^{2t}]
+///          }
+///
+///to a vector of tuples appropriate for the randomness extraction with keys j in [l]
+///
+/// j -> (
+///       [<x_j^{(1)}>_{self}^t, ..., <x_j^{(n)}>_{self}^t],
+///       [<x_j^{(1)}>_{self}^{2t}, ..., <x_j^{(n)}>_{self}^{2t}]
+///      )
 fn format_for_next<Z: Ring>(
     local_double_shares: HashMap<Role, DoubleShares<Z>>,
     l: usize,
@@ -125,11 +136,11 @@ fn format_for_next<Z: Ring>(
     for i in 0..l {
         let mut vec_t = Vec::with_capacity(num_parties);
         let mut vec_2t = Vec::with_capacity(num_parties);
-        for j in 0..num_parties {
+        for party_idx in 0..num_parties {
             let double_share_j = local_double_shares
-                .get(&Role::indexed_by_zero(j))
+                .get(&Role::indexed_by_zero(party_idx))
                 .ok_or_else(|| {
-                    anyhow_error_and_log(format!("Can not find shares for Party {}", j + 1))
+                    anyhow_error_and_log(format!("Can not find shares for Party {}", party_idx + 1))
                 })?;
             vec_t.push(double_share_j.share_t[i]);
             vec_2t.push(double_share_j.share_2t[i]);
@@ -142,6 +153,7 @@ fn format_for_next<Z: Ring>(
     Ok(res)
 }
 
+/// Extract randomness of degree t and 2t using the parties' contributions and the VDM matrix
 fn compute_next_batch<Z: Ring>(
     formated_ldl: &mut Vec<DoubleArrayShares<Z>>,
     vdm: &ArrayD<Z>,

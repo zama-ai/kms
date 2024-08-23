@@ -647,12 +647,6 @@ where
 
     //Generate the KSK
     let ksk_params = params_basics_handle.get_ksk_params();
-    // KSKParams {
-    //    num_needed_noise: params_basics_handle.num_needed_noise_ksk(),
-    //    noise_bound: NoiseBounds::LweNoise(params_basics_handle.lwe_tuniform_bound()),
-    //    decomposition_base_log: params_basics_handle.decomposition_base_log_ksk(),
-    //    decomposition_level_count: params_basics_handle.decomposition_level_count_ksk(),
-    //};
 
     let ksk = generate_key_switch_key(
         &glwe_sk_share_as_lwe,

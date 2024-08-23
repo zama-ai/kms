@@ -67,6 +67,8 @@ where
 {
     const BIT_LENGTH: usize = Z::BIT_LENGTH * F_DEG;
     const CHAR_LOG2: usize = Z::CHAR_LOG2;
+    const EXTENSION_DEGREE: usize = F_DEG;
+    const NUM_BITS_STAT_SEC_BASE_RING: usize = Z::NUM_BITS_STAT_SEC_BASE_RING;
 
     fn to_byte_vec(&self) -> Vec<u8> {
         let size = Self::BIT_LENGTH >> 3;
@@ -637,6 +639,12 @@ where
 /// Comes with fixed evaluation points lifted from GF(2^8).
 /// This is also the 'value' of a single ShamirShare.
 impl<Z: BaseRing> ResiduePoly<Z> {
+    ///Computes the isomorphism GR(Z,F) -> GF(2,F)
+    /// to input Self/2^i
+    ///
+    ///
+    /// I.e. for each coefficient of Self, extract the ith bit and
+    /// set it as coefficient of same degree of the GF256 polynomial
     pub fn bit_compose(&self, idx_bit: usize) -> GF256 {
         let x: u8 = self
             .coefs
@@ -906,6 +914,7 @@ impl<Z: BaseRing> Solve for ResiduePoly<Z> {
         let mut x = Self::solve_1(v)?;
         let mut y = one;
         // Do outer Newton Raphson
+        //NOTE: If the base ring isn't a power of 2, ilog2 is floor whereas we want ceil
         for _i in 1..=Z::BIT_LENGTH.ilog2() {
             // Do inner Newton Raphson to compute inverse of 1+2*x
             // Observe that because we use modulo 2^64 and 2^128, which are 2^2^i values
@@ -916,6 +925,7 @@ impl<Z: BaseRing> Solve for ResiduePoly<Z> {
             x = (x * x + *v) * y;
         }
         // Validate the result, i.e. x+x^2 = input
+        //Note: This is a sanity check, we don't explicitly need it
         if v != &(x + x * x) {
             return Err(anyhow_error_and_log(
                 "The outer Newton Raphson inversion computation in solve() failed",
@@ -941,6 +951,22 @@ impl ResiduePoly128 {
     }
 }
 
+lazy_static::lazy_static! {
+    //Pre-compute the set S defined in Fig.58 (i.e. GF256 from generator X+1)
+    pub static ref GF256_FROM_GENERATOR : Vec<GF256> =
+    {
+
+        let generator = GF256::from(3);
+         (0..256)
+            .scan(GF256::from(1), |state, idx| {
+                let res = if idx == 255 { GF256::from(0) } else { *state };
+                *state = res * generator;
+                Some(res)
+            })
+            .collect_vec()
+    };
+}
+
 /// Domain separator for the function `derive_challenges_from_coinflip`.
 ///
 /// "LDS" stands for local double sharing
@@ -948,9 +974,11 @@ impl ResiduePoly128 {
 const DSEP_LDS: &[u8] = b"LDS";
 
 impl Derive for ResiduePoly128 {
+    /// Implements H_{LDS}, mapping to the exceptional sequence
+    /// via the finite field generator
     fn derive_challenges_from_coinflip(
         x: &Self,
-        g: usize,
+        g: u8,
         l: usize,
         roles: &[Role],
     ) -> HashMap<Role, Vec<Self>> {
@@ -958,33 +986,43 @@ impl Derive for ResiduePoly128 {
         hasher.update(DSEP_LDS);
         //Update hasher with x
         for x_coef in x.coefs {
+            //This line is the reason why it's not straightforward to implement Derive
+            //for ResiduePoly<Z> in general
             hasher.update(&x_coef.0.to_le_bytes());
         }
+
+        //Encode g on 1 byte
         hasher.update(&g.to_le_bytes());
 
         roles
             .iter()
             .map(|role| {
                 let mut hasher_cloned = hasher.clone();
-                hasher_cloned.update(&role.one_based().to_le_bytes());
+                //Encode role on two bytes
+                hasher_cloned.update(&(role.one_based() as u16).to_le_bytes());
                 let mut output_reader = hasher_cloned.finalize_xof();
-                let mut challenges = vec![Self::ZERO; l];
-                for challenge in challenges.iter_mut() {
-                    let mut bytes_res_poly = [0u8; Self::BIT_LENGTH >> 3];
-                    output_reader.read(&mut bytes_res_poly);
-                    *challenge = Self::from_bytes(&bytes_res_poly);
-                }
+                let mut challenges_idx = vec![0u8; l];
+                output_reader.read(&mut challenges_idx);
+                let challenges = challenges_idx
+                    .iter()
+                    .map(|idx| {
+                        Self::bit_lift(*(GF256_FROM_GENERATOR.get(*idx as usize).unwrap()), 0)
+                            .unwrap()
+                    })
+                    .collect_vec();
                 (*role, challenges)
             })
             .collect()
     }
+
+    const SIZE_EXCEPTIONAL_SET: usize = 256;
 }
 
 #[cfg(feature = "non-wasm")]
 impl PRSSConversions for ResiduePoly128 {
     fn from_u128_chunks(coefs: Vec<u128>) -> Self {
-        assert_eq!(coefs.len(), F_DEG);
-        let mut poly_coefs = [Z128::ZERO; F_DEG];
+        assert_eq!(coefs.len(), Self::EXTENSION_DEGREE);
+        let mut poly_coefs = [Z128::ZERO; Self::EXTENSION_DEGREE];
         for (idx, coef) in coefs.into_iter().enumerate() {
             poly_coefs[idx] = Wrapping(coef);
         }
@@ -1022,46 +1060,56 @@ impl ResiduePoly<Z128> {
 }
 
 impl Derive for ResiduePoly64 {
+    /// Implements H_{LDS}, mapping to the exceptional sequence
+    /// via the finite field generator
     fn derive_challenges_from_coinflip(
         x: &Self,
-        g: usize,
+        g: u8,
         l: usize,
         roles: &[Role],
-    ) -> std::collections::HashMap<Role, Vec<Self>> {
+    ) -> HashMap<Role, Vec<Self>> {
         let mut hasher = Shake256::default();
         hasher.update(DSEP_LDS);
         //Update hasher with x
         for x_coef in x.coefs {
+            //This line is the reason why it's not straightforward to implement Derive
+            //for ResiduePoly<Z> in general
             hasher.update(&x_coef.0.to_le_bytes());
         }
+        //Encode g on 1 byte
         hasher.update(&g.to_le_bytes());
 
         roles
             .iter()
             .map(|role| {
                 let mut hasher_cloned = hasher.clone();
-                hasher_cloned.update(&role.one_based().to_le_bytes());
+                //Encode role on two bytes
+                hasher_cloned.update(&(role.one_based() as u16).to_le_bytes());
                 let mut output_reader = hasher_cloned.finalize_xof();
-                let mut challenges = vec![Self::ZERO; l];
-                for challenge in challenges.iter_mut() {
-                    let mut bytes_res_poly = [0u8; Self::BIT_LENGTH >> 3];
-                    output_reader.read(&mut bytes_res_poly);
-                    *challenge = Self::from_bytes(&bytes_res_poly);
-                }
+                let mut challenges_idx = vec![0u8; l];
+                output_reader.read(&mut challenges_idx);
+                let challenges = challenges_idx
+                    .iter()
+                    .map(|idx| {
+                        Self::bit_lift(*(GF256_FROM_GENERATOR.get(*idx as usize).unwrap()), 0)
+                            .unwrap()
+                    })
+                    .collect_vec();
                 (*role, challenges)
             })
             .collect()
     }
+
+    const SIZE_EXCEPTIONAL_SET: usize = 256;
 }
 
 #[cfg(feature = "non-wasm")]
 impl PRSSConversions for ResiduePoly64 {
     fn from_u128_chunks(coefs: Vec<u128>) -> Self {
-        assert_eq!(coefs.len(), F_DEG / 2);
-        let mut poly_coefs = [Z64::ZERO; F_DEG];
+        assert_eq!(coefs.len(), Self::EXTENSION_DEGREE);
+        let mut poly_coefs = [Z64::ZERO; Self::EXTENSION_DEGREE];
         for (idx, coef) in coefs.into_iter().enumerate() {
-            poly_coefs[2 * idx] = Wrapping(coef as u64);
-            poly_coefs[2 * idx + 1] = Wrapping((coef >> 64) as u64);
+            poly_coefs[idx] = Wrapping(coef as u64);
         }
         Self { coefs: poly_coefs }
     }
@@ -1082,6 +1130,7 @@ mod tests {
     use paste::paste;
     use rand::SeedableRng;
     use rstest::rstest;
+    use std::collections::HashSet;
     use std::num::Wrapping;
 
     #[test]
@@ -1689,8 +1738,8 @@ mod tests {
         let rpoly = ResiduePoly64::sample(&mut AesRng::seed_from_u64(0));
         let coefs = rpoly.coefs.into_iter().map(|x| x.0).collect_vec();
         let mut new_coefs = Vec::new();
-        for coef in coefs.chunks(2) {
-            new_coefs.push((coef[0] as u128) + ((coef[1] as u128) << 64));
+        for coef in coefs.into_iter() {
+            new_coefs.push(coef as u128);
         }
         let rpoly_test = ResiduePoly64::from_u128_chunks(new_coefs);
 
@@ -1704,5 +1753,16 @@ mod tests {
             rpoly.to_byte_vec().try_into().unwrap();
         let rpoly_test = ResiduePoly64::from_bytes(&byte_vec);
         assert_eq!(rpoly, rpoly_test);
+    }
+
+    #[test]
+    fn test_gf256_from_generator() {
+        let mut hashset = HashSet::new();
+        for e in GF256_FROM_GENERATOR.iter() {
+            hashset.insert(*e);
+        }
+        //Make sure we have all 256 elements
+        assert_eq!(hashset.len(), 256);
+        assert_eq!(GF256_FROM_GENERATOR[255], GF256::from(0));
     }
 }

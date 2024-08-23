@@ -170,19 +170,19 @@ where
 }
 
 pub trait RevealOp<Z> {
-    fn reconstruct(&self, threshold: usize) -> anyhow::Result<Z> {
-        self.err_reconstruct(threshold, 0)
+    fn reconstruct(&self, degree: usize) -> anyhow::Result<Z> {
+        self.err_reconstruct(degree, 0)
     }
 
-    fn err_reconstruct(&self, threshold: usize, max_correctable_errs: usize) -> anyhow::Result<Z>;
+    fn err_reconstruct(&self, degree: usize, max_errs: usize) -> anyhow::Result<Z>;
 }
 
 impl<Z> RevealOp<Z> for ShamirSharings<Z>
 where
     Z: ErrorCorrect,
 {
-    fn err_reconstruct(&self, threshold: usize, max_correctable_errs: usize) -> anyhow::Result<Z> {
-        let recon = <Z as ErrorCorrect>::error_correct(self, threshold, max_correctable_errs)?;
+    fn err_reconstruct(&self, degree: usize, max_errs: usize) -> anyhow::Result<Z> {
+        let recon = <Z as ErrorCorrect>::error_correct(self, degree, max_errs)?;
         Ok(recon.eval(&Z::ZERO))
     }
 }
@@ -216,23 +216,33 @@ pub fn fill_indexed_shares<Z: Ring>(
 /// - num_parties as number of parties
 /// - degree as the degree of the sharing (usually either t or 2t)
 /// - threshold as the threshold of maximum corruptions
+/// - num_bots as the number of known Bot (known wrong values) contributions
 /// - indexed_shares as the indexed shares of the parties
 ///
 /// Returns either the result or None if there are not enough shares to do reconstruction yet
+/// This assumes that sharing contains all the shares the current party know of, including its own if relevant
+/// thus we always perform the check "case B".
 pub fn reconstruct_w_errors_sync<Z>(
     num_parties: usize,
     degree: usize,
     threshold: usize,
+    num_bots: usize,
     sharing: &ShamirSharings<Z>,
 ) -> anyhow::Result<Option<Z>>
 where
     Z: Ring + ErrorCorrect,
     ShamirSharings<Z>: RevealOp<Z>,
 {
-    if degree + 2 * threshold < num_parties && sharing.shares.len() > degree + 2 * threshold {
-        let opened = sharing.err_reconstruct(degree, threshold)?;
+    //We've heard from parties we have shares for + parties that contributed Bot shares
+    let num_heard_from = sharing.shares.len() + num_bots;
+    //Make sure we have enough shares already to try and reconstrcut
+    if degree + 2 * threshold < num_parties && num_heard_from > degree + 2 * threshold {
+        let max_errs = threshold - num_bots;
+        let opened = sharing.err_reconstruct(degree, max_errs)?;
         return Ok(Some(opened));
     }
+
+    //Make sure there's hope to ever have enough shares to try and reconstruct
     if degree + 2 * threshold >= num_parties {
         return Err(anyhow_error_and_warn_log(format!("Can NOT reconstruct with {} shares, degree {degree}, threshold {threshold} and num_parties {num_parties}", sharing.shares.len())));
     }
@@ -247,30 +257,37 @@ where
 /// - num_parties as number of parties
 /// - degree as the degree of the sharing (i.e. the corruption threshold)
 /// - threshold as the threshold of maximum corruptions
+/// - num_bots as the number of known Bot contributions
 /// - indexed_shares as the indexed shares of the parties
 ///
 ///  Returns either the result or None if there are not enough shares to do reconstruction yet
+/// This assumes that sharing contains all the shares the current party know of, including its own if relevant
+/// thus we always perform the check "case B".
 pub fn reconstruct_w_errors_async<Z>(
     num_parties: usize,
     degree: usize,
     threshold: usize,
+    num_bots: usize,
     sharing: &ShamirSharings<Z>,
 ) -> anyhow::Result<Option<Z>>
 where
     Z: Ring + ErrorCorrect,
     ShamirSharings<Z>: RevealOp<Z>,
 {
+    //We've heard from parties we have shares for + parties that contributed Bot shares
+    let num_heard_from = sharing.shares.len() + num_bots;
     if degree + 3 * threshold < num_parties {
-        if sharing.shares.len() > degree + 2 * threshold {
-            let opened = sharing.err_reconstruct(degree, threshold)?;
+        if num_heard_from > degree + 2 * threshold {
+            let max_errs = threshold - num_bots;
+            let opened = sharing.err_reconstruct(degree, max_errs)?;
             Ok(Some(opened))
         } else {
             //We do not have enough shares yet
             Ok(None)
         }
     } else if degree + 2 * threshold < num_parties {
-        if sharing.shares.len() > degree + threshold {
-            let r = sharing.shares.len() - (degree + threshold + 1);
+        if num_heard_from > degree + threshold {
+            let r: usize = num_heard_from - (degree + threshold + 1);
             let opened_poly = Z::error_correct(sharing, degree, r);
             if let Ok(opened_poly) = opened_poly {
                 if opened_poly.deg() <= degree {
@@ -304,6 +321,7 @@ where
             //We do not have enough shares yet
             Ok(None)
         }
+    //Make sure there's hope to ever have enough shares to try and reconstruct
     } else {
         Err(anyhow_error_and_warn_log(format!("Can NOT reconstruct with degree {degree}, threshold {threshold} and num_parties {num_parties}")))
     }
@@ -407,7 +425,7 @@ mod tests {
             ShamirSharings::<ResiduePoly<Z128>>::share(&mut rng, secret, num_parties, threshold)
                 .unwrap();
 
-        let opened = reconstruct_w_errors_async(num_parties, threshold, threshold, &sharings)
+        let opened = reconstruct_w_errors_async(num_parties, threshold, threshold, 0, &sharings)
             .unwrap()
             .unwrap();
 
@@ -445,7 +463,7 @@ mod tests {
             contribution.push(sharings.shares[i]);
             let faulty_shares = ShamirSharings::create(contribution.clone());
             let opened =
-                reconstruct_w_errors_async(num_parties, threshold, threshold, &faulty_shares)
+                reconstruct_w_errors_async(num_parties, threshold, threshold, 0, &faulty_shares)
                     .unwrap();
 
             assert!(opened.is_none());
@@ -454,7 +472,7 @@ mod tests {
         //With all shares we should be able to decode
         contribution.push(*sharings.shares.last().unwrap());
         let shares = ShamirSharings::create(contribution.clone());
-        let opened = reconstruct_w_errors_async(num_parties, threshold, threshold, &shares)
+        let opened = reconstruct_w_errors_async(num_parties, threshold, threshold, 0, &shares)
             .unwrap()
             .unwrap();
 

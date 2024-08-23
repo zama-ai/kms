@@ -461,8 +461,8 @@ impl Add<RingElement<IntQ>> for RingElement<IntQ> {
 }
 
 impl RingElement<IntQ> {
-    pub fn round(&self, rhs: &IntQ) -> RingElement<IntQ> {
-        let data = self.data.iter().map(|x| x.round(rhs)).collect();
+    pub fn div_and_round(&self, rhs: &IntQ) -> RingElement<IntQ> {
+        let data = self.data.iter().map(|x| x.div_and_round(rhs)).collect();
         RingElement { data }
     }
 }

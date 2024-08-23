@@ -45,6 +45,8 @@ pub struct RealBitGenOdd {}
 
 #[async_trait]
 impl BitGenOdd for RealBitGenOdd {
+    /// Generates a vector of secret shared random bits using a preprocessing functionality and a session.
+    /// The code only works when the modulo of the ring used is odd.
     #[instrument(name="MPC.GenBits",skip(amount, preproc, session), fields(session_id = ?session.session_id(), own_identity= ?session.own_identity(), batch_size=?amount))]
     async fn gen_bits_odd<
         Z: Ring + RingEmbed + Invert + ErrorCorrect + LargestPrimeFactor + ZConsts + PRSSConversions,
@@ -62,6 +64,7 @@ impl BitGenOdd for RealBitGenOdd {
         let mut s_vec = Vec::with_capacity(amount);
         let mut a_vec = Vec::with_capacity(amount);
 
+        //Open enough non-zero squares, and corresponding secret square roots
         while s_vec.len() != amount {
             let current_amount = amount - s_vec.len();
             let tmp_a_vec = preproc.next_random_vec(current_amount)?;
@@ -79,10 +82,11 @@ impl BitGenOdd for RealBitGenOdd {
                 });
         }
 
+        //Compute sqrt on opened values mod the largest prime factor
         let c_vec = s_vec.iter().map(Z::largest_prime_factor_sqrt).collect_vec();
 
         let v_vec: Vec<Share<Z>> = a_vec
-            .iter()
+            .into_iter()
             .zip(c_vec.iter())
             .map(|(a, c)| match c.invert() {
                 Ok(c_inv) => Ok(a * c_inv),
@@ -100,7 +104,7 @@ impl BitGenOdd for RealBitGenOdd {
             let prss_state = session.prss_as_mut();
 
             (0..amount)
-                .map(|_| prss_state.mask_next(own_role, STATSEC as u128))
+                .map(|_| prss_state.mask_next(own_role, 1))
                 .try_collect::<_, Vec<Z>, _>()?
                 .into_iter()
                 .map(|x| x + dist_shift)

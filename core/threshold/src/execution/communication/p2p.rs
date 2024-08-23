@@ -60,8 +60,8 @@ fn check_talking_to_myself<R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
 /// I.e. not the sending party or corrupt parties.
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
 /// Automatically increases the round counter when called
-/// TODO: It seems the check for corrupt parties is missing.
-pub async fn send_to_honest_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
+/// Note: This also sends to corrupt parties
+pub async fn send_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &B,
 ) -> anyhow::Result<()> {
@@ -74,7 +74,7 @@ pub async fn send_to_honest_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionH
 /// I.e. not the sending party or in dispute or corrupt.
 /// Each party is supposed to receive a specific value, mapped to their role in `values_to_send`.
 /// Automatically increases the round counter when called
-pub async fn send_to_parties_w_dispute<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
+pub async fn send_to_honest_parties<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     values_to_send: &HashMap<Role, NetworkValue<Z>>,
     session: &L,
 ) -> anyhow::Result<()> {

@@ -12,7 +12,7 @@ use crate::{
         online::preprocessing::BasePreprocessing,
         runtime::{party::Role, session::BaseSessionHandles},
         sharing::{
-            open::{robust_opens_to, robust_opens_to_all},
+            open::{multi_robust_opens_to, robust_opens_to_all},
             shamir::ShamirSharings,
             share::Share,
         },
@@ -143,43 +143,49 @@ where
     // setup r_{i,j} shares
     let mut rs_shares = HashMap::with_capacity(n1);
     for role in &all_roles_sorted {
-        let v = preproc.next_random_vec(share_count)?;
-        rs_shares.insert(role, v);
+        let v = preproc
+            .next_random_vec(share_count)?
+            .into_iter()
+            .map(|v| v.value())
+            .collect_vec();
+        rs_shares.insert(*role, v);
     }
 
     // open r_{i,j} to party j
     let my_role = session.my_role()?;
-    let mut opened = vec![]; // this will be zeroized later
-    for other_role in &all_roles_sorted {
-        let rs_share = rs_shares
-            .get(other_role)
-            .ok_or_else(|| anyhow_error_and_log(format!("missing share for {:?}", other_role)))?
-            .iter()
-            .map(|x| x.value())
-            .collect_vec();
-        if let Some(res) = robust_opens_to(
-            session,
-            &rs_share,
-            session.threshold() as usize,
-            &my_role,
-            other_role.one_based(),
-        )
-        .await?
-        {
-            opened.push(res)
-        }
-    }
+    //let mut opened = vec![]; // this will be zeroized later
+    //for other_role in &all_roles_sorted {
+    //    let rs_share = rs_shares
+    //        .get(other_role)
+    //        .ok_or_else(|| anyhow_error_and_log(format!("missing share for {:?}", other_role)))?
+    //        .iter()
+    //        .map(|x| x.value())
+    //        .collect_vec();
+    //    if let Some(res) =
+    //        robust_opens_to(session, &rs_share, session.threshold() as usize, other_role).await?
+    //    {
+    //        opened.push(res)
+    //    }
+    //}
 
-    // only one r should be opened to us, which we call `rj`
-    if opened.len() != 1 {
-        return Err(anyhow_error_and_log(format!(
-            "expected to only receive exactly one opening but got {}",
-            opened.len()
-        )));
-    }
+    //// only one r should be opened to us, which we call `rj`
+    //if opened.len() != 1 {
+    //    return Err(anyhow_error_and_log(format!(
+    //        "expected to only receive exactly one opening but got {}",
+    //        opened.len()
+    //    )));
+    //}
+
+    let mut opened = if let Some(result) =
+        multi_robust_opens_to(session, &rs_shares, session.threshold() as usize).await?
+    {
+        result
+    } else {
+        return Err(anyhow_error_and_log("Failed to robust open r_{i,j}"));
+    };
 
     // opened[0] is r_j
-    let vj = opened[0]
+    let vj = opened
         .iter()
         .zip(input_share.clone())
         .map(|(r, s)| *r + s.value())
@@ -189,14 +195,13 @@ where
     for share in input_share {
         share.zeroize();
     }
-    for r in &mut opened[0] {
+    for r in &mut opened {
         r.zeroize();
     }
 
-    // sending and receiving the vs (step 3d)
-    // is only necessary when the two sets of parties are different
+    // We are resharing to the same set,
     // so we go straight to the sync-broadcast
-    let broadcast_value = BroadcastValue::RingVector(vj.clone());
+    let broadcast_value = BroadcastValue::RingVector(vj);
     let broadcast_result = broadcast_from_all(session, Some(broadcast_value)).await?;
 
     // compute v_{i,j} - <r_{i,j}>^{S_2}_k, k = 0,1,...,n1-1
@@ -204,11 +209,12 @@ where
     for (sender, msg) in broadcast_result {
         if let BroadcastValue::RingVector(vs) = msg {
             let rs_share_iter = rs_shares
-                .get(&sender)
-                .ok_or_else(|| anyhow_error_and_log(format!("missing share for {:?}", sender)))?
-                .iter()
-                .map(|x| x.value());
-            let s_share = vs.iter().zip(rs_share_iter).map(|(v, r)| *v - r);
+                .remove(&sender)
+                .ok_or_else(|| anyhow_error_and_log(format!("missing share for {:?}", sender)))?;
+            let s_share = vs
+                .into_iter()
+                .zip(rs_share_iter.into_iter())
+                .map(|(v, r)| v - r);
 
             // usually we'd do `s_vec.push((sender, s_share))`
             // but we want to transpose the result so we insert s_share
@@ -381,12 +387,12 @@ mod tests {
 
     #[test]
     fn reshare_no_error() -> anyhow::Result<()> {
-        simulate_reshare(true)
+        simulate_reshare(false)
     }
 
     #[test]
     fn reshare_with_error() -> anyhow::Result<()> {
-        simulate_reshare(false)
+        simulate_reshare(true)
     }
 
     fn simulate_reshare(add_error: bool) -> anyhow::Result<()> {
@@ -419,7 +425,7 @@ mod tests {
         //Reshare assumes Sync network
         let mut runtime: DistributedTestRuntime<ResiduePoly128> =
             DistributedTestRuntime::new(identities, threshold as u8, NetworkMode::Sync, None);
-        if !add_error {
+        if add_error {
             key_shares[0] = PrivateKeySet {
                 lwe_compute_secret_key_share: LweSecretKeyShare {
                     data: vec![

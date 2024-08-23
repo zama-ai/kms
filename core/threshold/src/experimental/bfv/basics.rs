@@ -98,7 +98,7 @@ pub fn bfv_dec(ct: &LevelledCiphertext<LevelEll, PolyDeg>, sk: SecretKey) -> Pla
         value: GenericModulus(*LevelEll::MODULUS.as_ref()),
     };
     let q_ell_int = IntQ::from_non_centered(&q_ell);
-    let m = &pdec_times_p_mod.round(&q_ell_int);
+    let m = &pdec_times_p_mod.div_and_round(&q_ell_int);
     let m = m.zero_centered_rem(*PLAINTEXT_MODULUS);
     let supported_ptxt: Vec<u32> = m
         .data

@@ -83,6 +83,8 @@ impl FromU128 for GF256 {
 impl Ring for GF256 {
     const BIT_LENGTH: usize = 8;
     const CHAR_LOG2: usize = 1;
+    const EXTENSION_DEGREE: usize = 8;
+    const NUM_BITS_STAT_SEC_BASE_RING: usize = 1;
 
     fn to_byte_vec(&self) -> Vec<u8> {
         self.0.to_le_bytes().to_vec()
@@ -135,8 +137,8 @@ impl Field for GF256 {
 
 pub fn error_correction<F: Field>(
     shares: &[ShamirSharing<F>],
-    threshold: usize,
-    max_correctable_errs: usize,
+    degree: usize,
+    max_errs: usize,
 ) -> anyhow::Result<ShamirFieldPoly<F>> {
     let xs: Vec<F> = shares
         .iter()
@@ -144,8 +146,8 @@ pub fn error_correction<F: Field>(
         .collect();
     let ys: Vec<F> = shares.iter().map(|s| s.share).collect();
 
-    // call Gao decoding with the shares as points/values, set Gao parameter k = v = threshold+1
-    gao_decoding(&xs, &ys, threshold + 1, max_correctable_errs)
+    // call Gao decoding with the shares as points/values, set Gao parameter k = v = degree+1
+    gao_decoding(&xs, &ys, degree + 1, max_errs)
 }
 
 pub fn syndrome_decoding_z2(

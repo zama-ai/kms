@@ -18,6 +18,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use itertools::Itertools;
+use num_integer::div_ceil;
 use rand::{CryptoRng, Rng};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -30,10 +31,8 @@ pub trait LocalSingleShare: Send + Sync + Default + Clone {
     ///NOTE: This does not always guarantee privacy of the inputs towards honest parties (but this is intended behaviour!)
     ///
     ///Inputs:
-    /// - rng as the random number generator
     /// - session as the MPC session
     /// - secrets as the vector of secrets I want to share
-    /// - dispute as the dispute set (can be mutated)
     ///
     /// Output:
     /// - A HashMap that maps role to the vector of shares receive from that party (including my own shares).
@@ -81,7 +80,7 @@ impl<C: Coinflip, S: ShareDispute> LocalSingleShare for RealLocalSingleShare<C, 
                 "Passed an empty secrets vector to LocalSingleShare".to_string(),
             ));
         }
-        // Keeps executing til verification passes
+        // Keeps executing til verification passes, excluding malicious players every time it does not
         loop {
             // ShareDispute will fill shares from corrupted parties with 0s
             let mut shared_secrets = self.share_dispute.execute(session, secrets).await?;
@@ -112,12 +111,12 @@ async fn send_receive_pads<Z, R, L, S>(
     share_dispute: &S,
 ) -> anyhow::Result<ShareDisputeOutput<Z>>
 where
-    Z: Ring + RingEmbed + Invert,
+    Z: Ring + RingEmbed + Derive + Invert,
     R: Rng + CryptoRng,
     L: LargeSessionHandles<R>,
     S: ShareDispute,
 {
-    let m = (DISPUTE_STAT_SEC as f64 / Z::BIT_LENGTH as f64).ceil() as usize;
+    let m = div_ceil(DISPUTE_STAT_SEC, Z::SIZE_EXCEPTIONAL_SET);
     let my_pads = (0..m).map(|_| Z::sample(session.rng())).collect_vec();
     share_dispute.execute(session, &my_pads).await
 }
@@ -136,12 +135,12 @@ async fn verify_sharing<
     let (secrets_shares_all, my_shared_secrets) =
         (&mut secrets.all_shares, &mut secrets.shares_own_secret);
     let (pads_shares_all, my_shared_pads) = (&pads.all_shares, &pads.shares_own_secret);
-    let m = (DISPUTE_STAT_SEC as f64 / Z::BIT_LENGTH as f64).ceil() as usize;
+    let m = div_ceil(DISPUTE_STAT_SEC, Z::SIZE_EXCEPTIONAL_SET);
     let roles = session.role_assignments().keys().cloned().collect_vec();
     let my_role = session.my_role()?;
-    let mut result = true;
+    //TODO: Could be done in parallel (to minimize round complexity)
     for g in 0..m {
-        let map_challenges = Z::derive_challenges_from_coinflip(x, g, l, &roles);
+        let map_challenges = Z::derive_challenges_from_coinflip(x, g.try_into()?, l, &roles);
 
         //Compute my share of check values for every local single share happening in parallel
         let map_share_check_values = compute_check_values(
@@ -196,9 +195,14 @@ async fn verify_sharing<
             session.add_corrupt(role_pi)?;
         }
 
-        result &= look_for_disputes(&bcast_output, session)?;
+        //Returns as soon as we have a new dispute
+        if !look_for_disputes(&bcast_output, session)? {
+            return Ok(false);
+        }
     }
-    Ok(result)
+
+    //If we reached here, everything went fine
+    Ok(true)
 }
 
 // Inputs:
@@ -313,6 +317,8 @@ pub(crate) fn verify_sender_challenge<
     Ok(newly_corrupt)
 }
 
+/// Add party to dispute based on the challenges in bcast_data
+/// returns true if no new dispute appeared, false else
 pub(crate) fn look_for_disputes<Z: Ring, R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
     bcast_data: &HashMap<Role, MapsSharesChallenges<Z>>,
     session: &mut L,

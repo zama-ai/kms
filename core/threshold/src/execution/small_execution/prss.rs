@@ -1,5 +1,5 @@
 use super::{
-    agree_random::AgreeRandom,
+    agree_random::{agree_random_robust, AgreeRandom},
     prf::{ChiAes, PRSSConversions, PrfKey, PsiAes},
 };
 use crate::{
@@ -8,17 +8,15 @@ use crate::{
         poly::Poly,
         structure_traits::{ErrorCorrect, Invert, Ring, RingEmbed},
     },
-    commitment::KEY_BYTE_LEN,
     error::error_handler::{anyhow_error_and_log, log_error_wrapper},
     execution::{
         communication::broadcast::broadcast_from_all_w_corruption,
-        constants::PRSS_SIZE_MAX,
+        constants::{PRSS_SIZE_MAX, STATSEC},
         large_execution::{single_sharing::init_vdm, vss::Vss},
         runtime::{
             party::Role,
             session::{BaseSessionHandles, ParameterHandles, SmallSessionHandles},
         },
-        sharing::open::robust_opens_to_all,
         small_execution::prf::{chi, phi, psi, PhiAes},
     },
     networking::value::BroadcastValue,
@@ -29,11 +27,6 @@ use itertools::Itertools;
 use ndarray::{ArrayD, IxDyn};
 use rand::{CryptoRng, Rng};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sha3::{
-    digest::ExtendableOutput,
-    digest::{Update, XofReader},
-    Shake256,
-};
 use std::clone::Clone;
 use std::collections::{HashMap, HashSet};
 use tfhe_versionable::{Versionize, VersionsDispatch};
@@ -195,7 +188,10 @@ where
     Z: PRSSConversions,
 {
     /// PRSS-Mask.Next() for a single party
-    pub fn mask_next(&mut self, party_id: Role, bd1: u128) -> anyhow::Result<Z> {
+    ///
+    /// __NOTE__ : using [`STATSEC`] const
+    pub fn mask_next(&mut self, party_id: Role, bd: u128) -> anyhow::Result<Z> {
+        let bd1 = bd << STATSEC;
         let mut res = Z::ZERO;
 
         for (i, set) in self.prss_setup.sets.iter().enumerate() {
@@ -227,6 +223,9 @@ where
     }
 
     /// PRSS.Next() for a single party
+    ///
+    /// __NOTE__: telemetry is done at the caller because this function isn't batched
+    /// and we want to avoid creating too many telemetry spans
     pub fn prss_next(&mut self, party_id: Role) -> anyhow::Result<Z> {
         let mut res = Z::ZERO;
 
@@ -235,7 +234,7 @@ where
                 if let Some(aes_prf) = &self.prfs.get(i) {
                     let psi = psi(&aes_prf.psi_aes, self.prss_ctr)?;
 
-                    // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the f_a_points (indexed from zero)
+                    // compute f_A(alpha_i), where alpha_i is simply the embedded party ID, so we can just index into the precomputed f_a_points (indexed from zero)
                     let f_a = set.f_a_points[party_id.zero_based()];
 
                     res += f_a * psi;
@@ -255,8 +254,11 @@ where
     }
 
     /// PRZS.Next() for a single party
-    /// `party_id`: The 1-index party ID.
+    /// `party_id`: The party's role to derive IDs
     /// `t`: The threshold parameter for the session
+    ///
+    /// __NOTE__: telemetry is done at the caller because this function isn't batched
+    /// and we want to avoid creating too many telemetry spans
     pub fn przs_next(&mut self, party_id: Role, threshold: u8) -> anyhow::Result<Z> {
         let mut res = Z::ZERO;
 
@@ -296,6 +298,8 @@ where
         ctr: u128,
     ) -> anyhow::Result<HashMap<Role, Z>> {
         let sets = &self.prss_setup.sets;
+
+        //Compute all psi values for subsets I am part of
         let mut psi_values = Vec::with_capacity(sets.len());
         for (i, cur_set) in sets.iter().enumerate() {
             if let Some(aes_prf) = &self.prfs.get(i) {
@@ -307,16 +311,18 @@ where
                 ));
             }
         }
+
+        //Broadcast (as sender and receiver) all the psi values
         let broadcast_result = broadcast_from_all_w_corruption::<Z, R, S>(
             session,
             BroadcastValue::PRSSVotes(psi_values),
         )
         .await?;
 
-        // Count the votes received from the broadcast
-        let count = Self::count_votes(&broadcast_result, session)?;
+        // Sort the votes received from the broadcast
+        let count = Self::sort_votes(&broadcast_result, session)?;
         // Find which values have received most votes
-        let true_psi_vals = Self::find_winning_prf_values(&count)?;
+        let true_psi_vals = Self::find_winning_prf_values(&count, session)?;
         // Find the parties who did not vote for the results and add them to the corrupt set
         Self::handle_non_voting_parties(&true_psi_vals, &count, session)?;
         // Compute result based on majority votes
@@ -353,26 +359,27 @@ where
         )
         .await?;
 
-        // Count the votes received from the broadcast
-        let count = Self::count_votes(&broadcast_result, session)?;
+        // Sort the votes received from the broadcast
+        let count = Self::sort_votes(&broadcast_result, session)?;
         // Find which values have received most votes
-        let true_chi_vals = Self::find_winning_prf_values(&count)?;
+        let true_chi_vals = Self::find_winning_prf_values(&count, session)?;
         // Find the parties who did not vote for the results and add them to the corrupt set
         Self::handle_non_voting_parties(&true_chi_vals, &count, session)?;
         // Compute result based on majority votes
         Self::compute_party_shares(&true_chi_vals, session, ComputeShareMode::Przs)
     }
 
-    /// Helper method for counting the votes. Takes the `broadcast_result` and counts which parties has voted/replied each of the different [Value]s for each given [PrssSet].
+    /// Helper method for sorting the votes. Takes the `broadcast_result` and for each [PrssSet] sorts which parties has voted/replied for each of the different [Value]s.
     /// The result is a map from each unique received [PrssSet] to another map which maps from all possible received [Value]s associated
     /// with the [PrssSet] to the set of [Role]s which has voted/replied to the specific [Value] for the specific [PrssSet].
-    fn count_votes<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+    fn sort_votes<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         broadcast_result: &HashMap<Role, BroadcastValue<Z>>,
         session: &mut S,
     ) -> anyhow::Result<HashMap<PartySet, ValueVotes<Z>>> {
         // We count through a set of voting roles in order to avoid one party voting for the same value multiple times
         let mut count: HashMap<PartySet, ValueVotes<Z>> = HashMap::new();
         for (role, broadcast_val) in broadcast_result {
+            //Destructure bcast value into the voting vector
             let vec_pairs = match broadcast_val {
                 BroadcastValue::PRSSVotes(vec_values) => vec_values,
                 // If the party does not broadcast the type as expected they are considered malicious
@@ -383,9 +390,8 @@ where
                     continue;
                 }
             };
-            // Count the votes received from `role` during broadcast for each [PrssSet]
-            for prss_value_pair in vec_pairs {
-                let (prss_set, prf_val) = prss_value_pair;
+            // Sorts the votes received from `role` during broadcast for each [PrssSet]
+            for (prss_set, prf_val) in vec_pairs {
                 match count.get_mut(prss_set) {
                     Some(value_votes) => Self::add_vote(value_votes, prf_val, *role, session)?,
                     None => {
@@ -433,9 +439,13 @@ where
     /// Takes as input the counts of the different PRF values from each of the parties and finds the value received
     /// by most parties for each entry in the [PrssSet].
     /// Returns a [HashMap] mapping each of the sets in [PrssSet] to the [Value] received by most parties for this set.
-    fn find_winning_prf_values(
-        count: &HashMap<PartySet, ValueVotes<Z>>,
-    ) -> anyhow::Result<HashMap<&PartySet, &Vec<Z>>> {
+    ///
+    /// __NOTE__: If for a given prss_set, the value with max vote has <= threshold votes, this means this
+    ///  prss_set is __NOT__ a valid prss_set, and all parties that voted for this prss_set must be malicious.
+    fn find_winning_prf_values<'a, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
+        count: &'a HashMap<PartySet, ValueVotes<Z>>,
+        session: &mut S,
+    ) -> anyhow::Result<HashMap<&'a PartySet, &'a Vec<Z>>> {
         let mut true_prf_vals = HashMap::with_capacity(count.len());
         for (prss_set, value_votes) in count {
             let (value_max, _) = value_votes
@@ -443,7 +453,26 @@ where
                 .max_by_key(|&(_, votes)| votes.len())
                 .with_context(|| log_error_wrapper("No votes found!"))?;
 
-            true_prf_vals.insert(prss_set, value_max);
+            //Make sure there's enough votes
+            //(safe to unwrap as we just checked value_max is in the map)
+            if value_votes.get(value_max).unwrap().len() <= session.threshold() as usize {
+                //Sanity check this set is indeed not a valid set
+                if create_sets(session.num_parties(), session.threshold() as usize)
+                    .contains(prss_set)
+                {
+                    return Err(anyhow_error_and_log(
+                        "PR*S-Check went wrong, did not find enough votes for a valid subset",
+                    ));
+                }
+                //All parties that voted for this prss_set are malicious
+                for voter_set in value_votes.values() {
+                    for voter in voter_set {
+                        session.add_corrupt(*voter)?;
+                    }
+                }
+            } else {
+                true_prf_vals.insert(prss_set, value_max);
+            }
         }
         Ok(true_prf_vals)
     }
@@ -461,6 +490,10 @@ where
                 .get(*prss_set)
                 .and_then(|value_map| value_map.get(*value))
             {
+                //Note we do not need to check that prss_set is a valid set as we've already
+                //discarded non valid sets in [find_winning_prf_values].
+                //Hadn't we done so, we might have flagged honest parties as malicious
+                //because they wouldn't participate in voting for an invalid prss_set.
                 if prss_set.len() > roles_votes.len() {
                     for cur_party_id in prss_set.iter() {
                         let cur_role = Role::indexed_by_one(*cur_party_id);
@@ -496,14 +529,14 @@ where
         let mut s_values: HashMap<Role, Z> = HashMap::with_capacity(param.num_parties());
         for cur_role in param.role_assignments().keys() {
             let mut cur_s = Z::ZERO;
-            for (idx, set) in sets.iter().enumerate() {
+            for (set_idx, set) in sets.iter().enumerate() {
                 if set.contains(&cur_role.one_based()) {
-                    let f_a = points[idx][cur_role.zero_based()];
+                    let f_a = points[set_idx][cur_role.zero_based()];
 
                     if let Some(cur_prf_val) = true_prf_vals.get(set) {
                         match mode {
                             ComputeShareMode::Prss => {
-                                if (*cur_prf_val).len() != 1 {
+                                if cur_prf_val.len() != 1 {
                                     return Err(anyhow_error_and_log(
                                         "Did not receive a single PRSS psi value".to_string(),
                                     ));
@@ -517,9 +550,10 @@ where
                                     ));
                                 }
 
-                                for (idx, cv) in cur_prf_val.iter().enumerate() {
+                                for (val_idx, cv) in cur_prf_val.iter().enumerate() {
                                     if let Some(alpha) = &alphas {
-                                        cur_s += f_a * alpha[cur_role.zero_based()][idx + 1] * *cv;
+                                        cur_s +=
+                                            f_a * alpha[cur_role.zero_based()][val_idx + 1] * *cv;
                                     } else {
                                         return Err(anyhow_error_and_log(
                                             "alphas not initialized".to_string(),
@@ -548,6 +582,8 @@ where
     Z: Invert,
 {
     /// initialize the PRSS setup for this epoch and a given party
+    ///
+    /// __NOTE__: Needs to be instantiated with [`RealAgreeRandomWithAbort`] to match the spec
     #[instrument(name="PRSS.Init (abort)",skip(session),fields(own_identity = ?session.own_identity()))]
     pub async fn init_with_abort<A: AgreeRandom, R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
         session: &mut S,
@@ -617,23 +653,33 @@ where
             ));
         }
 
-        let c = binom_nt.div_ceil(n - t);
+        let c: usize = binom_nt.div_ceil(n - t);
         let party_id = session.my_role()?.one_based();
-        // create all the subsets A that contain the party id
-        let party_sets: Vec<Vec<usize>> = create_sets(n, t).into_iter().collect();
-        let mut party_prss_sets: Vec<PrssSet<Z>> = Vec::new();
-        let mut to_open = Vec::with_capacity(c * (n - t));
-        let m_inverse = inverse_vdm(n - t, n)?;
+
+        //Generate random secret contribution
         let secrets = (0..c).map(|_| Z::sample(session.rng())).collect_vec();
+        //Send and receive shares via VSS, format is vss_res[sender_id][contribution_id]
         let vss_res = vss.execute_many(session, &secrets).await?;
-        for i in 0..secrets.len() {
+
+        let mut to_open = Vec::with_capacity(c * (n - t));
+        let m_inverse = transpose_vdm(n - t, n)?;
+        for i in 0..c {
+            //Retrieve the ith VSSed contribution of all parties
             let vss_s = vss_res.iter().map(|s| s[i]).collect_vec();
+            //Apply randomness extraction
             let random_val = m_inverse.matmul(&ArrayD::from_shape_vec(IxDyn(&[n]), vss_s)?)?;
             to_open.append(&mut random_val.into_raw_vec());
         }
+
+        // create all the subsets A that contain the party id
+        let party_sets: Vec<Vec<usize>> = create_sets(n, t).into_iter().collect();
         let f_a_points = party_compute_f_a_points(&party_sets, n)?;
-        let r = agree_random_robust(session, to_open).await?;
-        for (prf_key, (set, f_a_point)) in r.iter().zip(party_sets.iter().zip(f_a_points)) {
+        let mut r: Vec<PrfKey> = agree_random_robust(session, to_open, &party_sets).await?;
+        //Reverse r to pop it in correct order
+        r.reverse();
+        //Populate the prss sets for setup
+        let mut party_prss_sets: Vec<PrssSet<Z>> = Vec::new();
+        for (set, f_a_point) in party_sets.iter().zip(f_a_points) {
             // Skip sets which the current party is not part of
             if !set.contains(&party_id) {
                 continue;
@@ -641,7 +687,9 @@ where
             let pset = PrssSet {
                 parties: set.to_vec(),
 
-                set_key: prf_key.to_owned(),
+                set_key: r
+                    .pop()
+                    .with_context(|| log_error_wrapper(format!("Missing key for set {:?}", set)))?,
                 f_a_points: f_a_point.clone(),
             };
             party_prss_sets.push(pset);
@@ -692,45 +740,15 @@ where
     }
 }
 
-/// Compute the inverse Vandermonde matrix with a_i = embed(i).
+/// Compute the transposed Vandermonde matrix with a_i = embed(i).
 /// That is:
 /// 1               1               1           ...    1
 /// a_1             a_2             a_3         ...    a_columns
 /// a_1^2           a_2^2           a_3^2       ...    a_columns^2
 /// ...
 /// a_1^{rows-1}    a_2^{rows-1}    a_3^{rows-1}...    a_columns^{rows-1}
-fn inverse_vdm<Z: Ring + RingEmbed>(rows: usize, columns: usize) -> anyhow::Result<ArrayD<Z>> {
+fn transpose_vdm<Z: Ring + RingEmbed>(rows: usize, columns: usize) -> anyhow::Result<ArrayD<Z>> {
     Ok(init_vdm::<Z>(columns, rows)?.reversed_axes())
-}
-
-/// Domain separator for `agree_random_robust`.
-pub(crate) const DSEP_AR: &[u8; 2] = b"AR";
-
-#[instrument(name="AgreeRandom-Robust",skip(session,shares),fields(session_id = ?session.session_id(),own_identity = ?session.own_identity(),batch_size = ?shares.len()))]
-async fn agree_random_robust<
-    Z: Ring + ErrorCorrect,
-    Rnd: Rng + CryptoRng,
-    L: BaseSessionHandles<Rnd>,
->(
-    session: &mut L,
-    shares: Vec<Z>,
-) -> anyhow::Result<Vec<PrfKey>> {
-    let r_vec = robust_opens_to_all(session, shares.as_slice(), session.threshold() as usize)
-        .await?
-        .with_context(|| log_error_wrapper("No valid result from open"))?;
-    let s_vec = r_vec
-        .iter()
-        .map(|cur_r| {
-            let mut digest = [0u8; KEY_BYTE_LEN];
-            let mut hasher = Shake256::default();
-            hasher.update(DSEP_AR);
-            hasher.update(&cur_r.to_byte_vec());
-            let mut or = hasher.finalize_xof();
-            or.read(&mut digest);
-            PrfKey(digest)
-        })
-        .collect_vec();
-    Ok(s_vec)
 }
 
 #[cfg(test)]
@@ -739,6 +757,7 @@ mod tests {
 
     use super::*;
     use crate::execution::sharing::shamir::RevealOp;
+    use crate::execution::small_execution::agree_random::DSEP_AR;
     use crate::execution::tfhe_internals::test_feature::KeySet;
     use crate::execution::tfhe_internals::utils::expanded_encrypt;
     use crate::networking::NetworkMode;
@@ -750,7 +769,7 @@ mod tests {
         commitment::KEY_BYTE_LEN,
         execution::tfhe_internals::test_feature::keygen_all_party_shares,
         execution::{
-            constants::{BD1, LOG_BD, SMALL_TEST_KEY_PATH, STATSEC},
+            constants::{B_SWITCH_SQUASH, LOG_B_SWITCH_SQUASH, SMALL_TEST_KEY_PATH, STATSEC},
             endpoints::decryption::threshold_decrypt64,
             large_execution::vss::RealVss,
             runtime::party::{Identity, Role},
@@ -773,6 +792,8 @@ mod tests {
     use aes_prng::AesRng;
     use rand::SeedableRng;
     use rstest::rstest;
+    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    use sha3::Shake256;
     use std::sync::Arc;
     use tfhe::FheUint8;
     use tokio::task::JoinSet;
@@ -896,7 +917,9 @@ mod tests {
 
                 assert_eq!(state.mask_ctr, 0);
 
-                let nextval = state.mask_next(Role::indexed_by_one(p), BD1).unwrap();
+                let nextval = state
+                    .mask_next(Role::indexed_by_one(p), B_SWITCH_SQUASH)
+                    .unwrap();
 
                 // prss state counter must have increased after call to next
                 assert_eq!(state.mask_ctr, 2);
@@ -920,18 +943,19 @@ mod tests {
         tracing::debug!("bitsize of reconstructed value: {}", log);
         tracing::debug!(
             "maximum allowed bitsize: {}",
-            STATSEC + LOG_BD + 1 + log_n_choose_t
+            STATSEC + LOG_B_SWITCH_SQUASH + 1 + log_n_choose_t
         );
         tracing::debug!(
             "Value bounds: ({} .. {}]",
-            -(BD1 as i128 * 2 * binom_nt as i128),
-            BD1 as i128 * 2 * binom_nt as i128
+            -(B_SWITCH_SQUASH as i128 * 2 * binom_nt as i128 * (1 << STATSEC)),
+            B_SWITCH_SQUASH as i128 * 2 * binom_nt as i128 * (1 << STATSEC)
         );
 
         // check that reconstructed PRSS random output E has limited bit length
-        assert!(log < (STATSEC + LOG_BD + 1 + log_n_choose_t)); // check bit length
-        assert!(-(BD1 as i128 * 2 * binom_nt as i128) <= recon); // check actual value against upper bound
-        assert!((BD1 as i128 * 2 * binom_nt as i128) > recon); // check actual value against lower bound
+        assert!(log < (STATSEC + LOG_B_SWITCH_SQUASH + 1 + log_n_choose_t)); // check bit length
+        assert!(-(B_SWITCH_SQUASH as i128 * 2 * binom_nt as i128 * (1 << STATSEC)) <= recon); // check actual value against upper bound
+        assert!((B_SWITCH_SQUASH as i128 * 2 * binom_nt as i128 * (1 << STATSEC)) > recon);
+        // check actual value against lower bound
     }
 
     #[test]
@@ -1037,7 +1061,9 @@ mod tests {
 
         let mut prev = ResiduePoly128::ZERO;
         for _ in 0..rounds {
-            let cur = state.mask_next(Role::indexed_by_one(1), BD1).unwrap();
+            let cur = state
+                .mask_next(Role::indexed_by_one(1), B_SWITCH_SQUASH)
+                .unwrap();
             // check that values change on each call.
             assert_ne!(prev, cur);
             prev = cur;
@@ -1386,7 +1412,7 @@ mod tests {
             ),
         ]);
 
-        let res = PRSSState::count_votes(&broadcast_result, &mut session).unwrap();
+        let res = PRSSState::sort_votes(&broadcast_result, &mut session).unwrap();
         let reference_votes = HashMap::from([(
             value.clone(),
             HashSet::from([
@@ -1425,7 +1451,7 @@ mod tests {
             ), // Not the right broadcast type again
         ]);
 
-        let res = PRSSState::count_votes(&broadcast_result, &mut session).unwrap();
+        let res = PRSSState::sort_votes(&broadcast_result, &mut session).unwrap();
         let reference_votes =
             HashMap::from([(vec![value], HashSet::from([Role::indexed_by_one(1)]))]);
         let reference = HashMap::from([(set.clone(), reference_votes)]);
@@ -1478,6 +1504,9 @@ mod tests {
 
     #[test]
     fn test_find_winning_psi_values() {
+        let parties = 3;
+        let my_role = Role::indexed_by_one(1);
+        let mut session = get_networkless_base_session_for_parties(parties, 0, my_role);
         let set = Vec::from([1, 2, 3]);
         let value = vec![ResiduePoly128::from_scalar(Wrapping(42))];
         let true_psi_vals = HashMap::from([(&set, &value)]);
@@ -1496,7 +1525,7 @@ mod tests {
             ),
         ]);
         let count = HashMap::from([(set.clone(), votes)]);
-        let result = PRSSState::find_winning_prf_values(&count).unwrap();
+        let result = PRSSState::find_winning_prf_values(&count, &mut session).unwrap();
         assert_eq!(result, true_psi_vals);
     }
 
@@ -1713,7 +1742,7 @@ mod tests {
 
     #[test]
     fn test_vdm_inverse() {
-        let res = inverse_vdm(3, 4).unwrap();
+        let res = transpose_vdm(3, 4).unwrap();
         // Check first row is
         // 1, 1, 1, 1
         assert_eq!(ResiduePoly::ONE, res[[0, 0]]);

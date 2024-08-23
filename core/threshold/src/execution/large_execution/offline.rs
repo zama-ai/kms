@@ -25,14 +25,8 @@ pub struct LargePreprocessing<Z: Ring, S: SingleSharing<Z>, D: DoubleSharing<Z>>
 }
 
 impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePreprocessing<Z, S, D> {
-    /// Initializes the preprocessing for a new epoch, by preprocessing a batch
-    /// NOTE: if None is passed for the option, we use the constants, which should at some point
-    /// be set to give an optimized offline phase for ddec.
-    ///
-    /// batch_sizes is an option which contains in order:
-    /// - batch size for single and double sharing
-    /// - batch size for triple generation
-    /// - batch size for random generation
+    /// Initializes the preprocessing with a fresh batch of triples and randomness
+    /// This executes the GenTriples and Nextrandom based on the provided [`BatchParams`]
     pub async fn init<R: Rng + CryptoRng, L: LargeSessionHandles<R>>(
         session: &mut L,
         batch_sizes: BatchParams,
@@ -40,12 +34,12 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
         mut dsh: D,
     ) -> anyhow::Result<Self> {
         let init_span = info_span!("MPC_Large.Init");
-        //Init single sharing
+        //Init single sharing, we need 2 calls per triple and 1 call per randomness
         ssh.init(session, 2 * batch_sizes.triples + batch_sizes.randoms)
             .instrument(init_span.clone())
             .await?;
 
-        //Init double sharing
+        //Init double sharing, we need 1 call per triple
         dsh.init(session, batch_sizes.triples)
             .instrument(init_span)
             .await?;
@@ -62,9 +56,11 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
         };
 
         if batch_sizes.triples > 0 {
+            //Preprocess a batch of triples
             large_preproc.next_triple_batch(session).await?;
         }
         if batch_sizes.randoms > 0 {
+            //Preprocess a batch of randomness
             large_preproc.next_random_batch(session).await?;
         }
 
@@ -82,6 +78,8 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
             return Ok(());
         }
 
+        //NOTE: We create the telemetry span fro SingleSharing Next here, but in truth the bulk of the work has been done in init
+        //Next will simply pop stuff
         let single_sharing_span = info_span!(
             "SingleSharing.Next",
             session_id = ?session.session_id(),
@@ -89,6 +87,8 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
             batch_size = 2 * self.triple_batch_size
         );
 
+        //NOTE: We create the telemetry span fro DoubleSharing Next here, but in truth the bulk of the work has been done in init
+        //Next will simply pop stuff
         let double_sharing_span = info_span!("DoubleSharing.Next",
             session_id = ?session.session_id(),
                 own_identity = ?session.own_identity(),
@@ -98,6 +98,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
         let mut vec_share_x = Vec::with_capacity(self.triple_batch_size);
         let mut vec_share_y = Vec::with_capacity(self.triple_batch_size);
         let mut vec_double_share_v = Vec::with_capacity(self.triple_batch_size);
+
         for _ in 0..self.triple_batch_size {
             vec_share_x.push(
                 self.single_sharing_handle
@@ -119,6 +120,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
             );
         }
 
+        //Compute <d>_i^{2t} = <x>_i * <y>_i + <v>^{2t}
         let network_vec_share_d = vec_share_x
             .iter()
             .zip(vec_share_y.iter())
@@ -126,6 +128,9 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
             .map(|((x, y), v)| *x * *y + v.degree_2t)
             .collect_vec();
 
+        //Perform RobustOpen on the degree 2t masked z component
+        //TODO: For now NIST doc doesn't explicitly call this robust_open,
+        //but I believe this is exactly what we're doing
         let recons_vec_share_d = robust_opens_to_all(
             session,
             &network_vec_share_d,
@@ -136,6 +141,7 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
             anyhow_error_and_log("Reconstruction failed in offline triple generation".to_string())
         })?;
 
+        //Remove the mask from the opened value
         let vec_shares_z: Vec<_> = recons_vec_share_d
             .into_iter()
             .zip(vec_double_share_v.iter())
@@ -166,6 +172,8 @@ impl<Z: Ring + ErrorCorrect, S: SingleSharing<Z>, D: DoubleSharing<Z>> LargePrep
         &mut self,
         session: &mut L,
     ) -> anyhow::Result<()> {
+        //NOTE: We create the telemetry span fro SingleSharing Next here, but in truth the bulk of the work has been done in init
+        //Next will simply pop stuff
         let single_sharing_span = info_span!(
             "SingleSharing.Next",
             session_id = ?session.session_id(),

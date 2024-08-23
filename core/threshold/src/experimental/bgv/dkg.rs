@@ -129,7 +129,7 @@ where
         .map(|((x, y), z)| y + x - z)
         .collect_vec();
 
-    //Open pk_b and pk'_b
+    //Open pk_b and pk'_b (in a single round)
     let pk_b = pk_b
         .data
         .into_iter()

@@ -91,11 +91,12 @@ pub async fn mult_list<
         to_open.push(share_epsilon);
         to_open.push(share_rho);
     }
+    //NOTE: That's a lot of memory manipulation, could execute the "linear equation loop" with epsilonrho directly
     // Open and seperate the list of both epsilon and rho values into two lists of values
     let mut epsilonrho = open_list(&to_open, session).await?;
     let mut epsilon_vec = Vec::with_capacity(amount);
     let mut rho_vec = Vec::with_capacity(amount);
-    // Indicator variable if the current element is an eprilson value (or rho value)
+    // Indicator variable if the current element is an epsilson value (or rho value)
     let mut epsilon_val = false;
     // Go through the list from the back
     while let Some(cur_val) = epsilonrho.pop() {
@@ -128,7 +129,7 @@ pub async fn mult_list<
     Ok(res)
 }
 
-// Open a single share
+/// Opens a single secret
 pub async fn open<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
     to_open: Share<Z>,
     session: &Ses,
@@ -142,7 +143,7 @@ pub async fn open<Z: Ring + ErrorCorrect, Rnd: Rng + CryptoRng, Ses: BaseSession
     }
 }
 
-/// Opens a list of shares to all parties
+/// Opens a list of secrets to all parties
 #[instrument(name="MPC.Open",skip(to_open, session),fields(batch_size=?to_open.len()))]
 pub async fn open_list<
     Z: Ring + ErrorCorrect,
@@ -156,7 +157,6 @@ pub async fn open_list<
         .iter()
         .map(|cur_open| cur_open.value())
         .collect_vec();
-    // TODO should be updated to the async one when #217 is complete
     let opened_vals: Vec<Z> =
         match robust_opens_to_all(session, &parsed_to_open, session.threshold() as usize).await? {
             Some(opened_vals) => opened_vals,

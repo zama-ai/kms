@@ -21,8 +21,8 @@ pub(crate) const DSEP_COMM: &[u8; 4] = b"COMM";
 fn commitment_inner_hash(msg: &[u8], o: &Opening) -> Commitment {
     let mut hasher = Sha3_256::new();
     hasher.update(DSEP_COMM);
-    hasher.update(o.0);
     hasher.update(msg);
+    hasher.update(o.0);
     let digest = hasher.finalize();
 
     // the try_into should never fail because our tests will guarantee the lengths are correct

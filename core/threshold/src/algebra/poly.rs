@@ -517,14 +517,20 @@ fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly
 }
 
 //NIST: Level Zero Operation
-/// runs Gao decoding on coordinates where points holds the x-coordinates and values holds the y-coordinates
-/// k is the RS degree and usually set to threshold + 1 in our case
-/// max_correctable_errs is used to check if the number of errors is at most as large as this value
+/// Runs Gao decoding algorithm.
+///
+/// - `points` holds the x-coordinates
+/// - `values` holds the y-coordinates
+/// - `k` such that we apply error correction to a polynomial of degree < k
+/// (usually degree = threshold in our scheme, but it can be 2*threshold in some cases)
+/// - `max_errs` is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)
+///
+/// __NOTE__ : We assume values already identified as errors have been excluded by the caller (i.e. values denoted Bot in NIST doc)
 pub fn gao_decoding<F: Field>(
     points: &[F],
     values: &[F],
     k: usize,
-    max_correctable_errs: usize,
+    max_errs: usize,
 ) -> anyhow::Result<Poly<F>> {
     // in the literature we find (n, k, d) codes
     // parameter k is called v in the NIST doc (the RS dimension)
@@ -545,8 +551,9 @@ pub fn gao_decoding<F: Field>(
         ));
     }
 
-    // Gao can only decode up to (d-1)/2 errors
-    if 2 * max_correctable_errs >= d {
+    // We are expecting to correct more than what can be done
+    // Gao can only correct up to (d-1)/2 errors
+    if 2 * max_errs >= d {
         return Err(anyhow_error_and_log(
             "Gao decoding failure: expected max number of errors is too large for given code parameters".to_string(),
         ));
@@ -574,9 +581,9 @@ pub fn gao_decoding<F: Field>(
     let (q1, q0) = partial_xgcd(g, r, gcd_stop);
 
     // abort early if we have too many errors
-    if q0.deg() > max_correctable_errs {
+    if q0.deg() > max_errs {
         return Err(anyhow_error_and_log(
-            format!("Gao decoding failure: Allowed at most {max_correctable_errs} errors but xgcd factor degree indicates {}.", q0.deg())
+            format!("Gao decoding failure: Allowed at most {max_errs} errors but xgcd factor degree indicates {}.", q0.deg())
         ));
     }
 

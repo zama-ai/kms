@@ -1,7 +1,7 @@
 use anyhow::Context;
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
-use std::{cmp::min, collections::HashMap};
+use std::collections::HashMap;
 use tracing::{info_span, instrument};
 
 use super::{agree_random::AgreeRandom, prf::PRSSConversions};
@@ -40,7 +40,8 @@ where
     Z: Invert,
 {
     /// Initializes the preprocessing for a new epoch, by preprocessing a batch
-    /// NOTE: if None is passed for the option for `batch_sizes`, then the default values are used.
+    /// We require a [`SmallSessionHandles`] which implicitly require an initialized PRSS
+    /// Init also executes automatically GenTriples and NextRandom based on the provided [`BatchParams`]
     pub async fn init<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         batch_sizes: BatchParams,
@@ -70,15 +71,13 @@ where
     }
 
     /// Computes a new batch of random values and appends the new batch to the the existing stash of preprocessing random values.
-    /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
-    /// If corruption occurs during the process then the corrupt parties are added to the corrupt set in `session` and the method
-    /// automatically retries to construct any missing triples, to ensure a full batch has been constructed before returning.
     #[instrument(name="MPC_Small.GenRandom",skip(self,session), fields(session_id= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = ?self.batch_sizes.randoms))]
     async fn next_random_batch<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         &mut self,
         session: &mut Ses,
     ) -> anyhow::Result<()> {
         let my_role = session.my_role()?;
+        //Create telemetry span to record all calls to PRSS.Next
         let prss_span = info_span!("PRSS.Next", batch_size = self.batch_sizes.randoms);
         let res = prss_span.in_scope(|| {
             let mut res = Vec::with_capacity(self.batch_sizes.randoms);
@@ -97,7 +96,7 @@ where
     /// Constructs a new batch of triples and appends this to the internal triple storage.
     /// If the method terminates correctly then an _entire_ new batch has been constructed and added to the internal stash.
     /// If corruption occurs during the process then the corrupt parties are added to the corrupt set in `session` and the method
-    /// automatically retries to construct any missing triples, to ensure a full batch has been constructed before returning.
+    /// Caller then needs to retry to construct any missing triples, to ensure a full batch has been constructed before returning.
     #[instrument(name="MPC_Small.GenTriples",skip(self,session), fields(session_id= ?session.session_id(), own_identity = ?session.own_identity(),batch_size = amount))]
     async fn next_triple_batch<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         &mut self,
@@ -111,6 +110,7 @@ where
         let vec_y_single = Self::prss_list(session, amount)?;
         let vec_v_single = Self::prss_list(session, amount)?;
         let vec_z_double = Self::przs_list(session, amount)?;
+
         let mut vec_d_double = Vec::with_capacity(amount);
         for i in 0..amount {
             let x_single = vec_x_single
@@ -135,11 +135,14 @@ where
         }
         let broadcast_res =
             broadcast_from_all_w_corruption(session, vec_d_double.clone().into()).await?;
-        let recons_vec_d = Self::compute_d_values(session, amount, broadcast_res.clone())?;
-        let mut triples = Vec::with_capacity(amount);
 
+        //Try reconstructing 2t sharings of d, a None means reconstruction failed.
+        let recons_vec_d = Self::reconstruct_d_values(session, amount, broadcast_res.clone())?;
+
+        let mut triples = Vec::with_capacity(amount);
         let mut bad_triples_idx = Vec::new();
         for i in 0..amount {
+            //If we managed to reconstruct, we store the triple
             if let Some(d) = recons_vec_d
                 .get(i)
                 .with_context(|| log_error_wrapper("Not all expected d values exist"))?
@@ -170,6 +173,7 @@ where
                                 .to_owned(),
                     ),
                 });
+            //If reconstruction failed, it's a bad triple and we will run cheater identification
             } else {
                 bad_triples_idx.push(i);
             }
@@ -197,10 +201,10 @@ where
         Ok(())
     }
 
-    /// Helper method to parse the result of the broadcast by turning taking the i'th share from each party and combine them in a vector for which reconstruction is then computed.
-    /// Hence the method returns a list of length `amount` which contain the reconstructed values.
-    /// In case a wrong amount of elements or a wrong type is returned then the culpit is added to the list of corrupt parties.
-    fn compute_d_values<Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
+    /// Helper method to parse the result of the broadcast by taking the ith share from each party and combine them in a vector for which reconstruction is then computed.
+    /// Returns a list of length `amount` which contains the reconstructed values.
+    /// In case a wrong amount of elements or a wrong type is returned then the culprit is added to the list of corrupt parties.
+    fn reconstruct_d_values<Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
         session: &mut Ses,
         amount: usize,
         d_recons: HashMap<Role, BroadcastValue<Z>>,
@@ -224,7 +228,7 @@ where
                         continue;
                     }
                     for (i, cur_collect_share) in collected_shares.iter_mut().enumerate() {
-                        cur_collect_share.push(Share::new(cur_role, cur_values[i].to_owned()));
+                        cur_collect_share.push(Share::new(cur_role, cur_values[i]));
                     }
                 }
                 _ => {
@@ -238,14 +242,12 @@ where
             };
         }
 
-        // Compute the max amount of corruptions that can be in the data. Since parties we already know are corrupted are excluded we subtract these
-        let mc_parties =
-            session.num_parties() - min(session.num_parties(), session.corrupt_roles().len());
-        let mc_threshold = (session.threshold() as usize)
-            - min(session.threshold() as usize, session.corrupt_roles().len());
-
-        // we can correct up to floor((n - 2t - 1)/2) errors, but we can also not have more than mc_threshold = t-e corruptions
-        let max_errors = min((mc_parties - 2 * mc_threshold - 1) / 2, mc_threshold);
+        //We know we may not be able to correct all errors, thus we set max_errors to maximum number of errors the code can correct,
+        //and deal with failure with the cheater identification strategy
+        let max_errors = (session.num_parties()
+            - session.corrupt_roles().len()
+            - (2 * session.threshold() as usize + 1))
+            / 2;
 
         Ok(collected_shares
             .into_iter()
@@ -261,9 +263,10 @@ where
             .collect_vec())
     }
 
-    /// Helper method which takes the list of d shares of each party (which is the result of the broadcast) and parses this into
-    /// a vector of maps, where each map is from the sending [Role] to their i'th d share.
-    /// Note: That in case the wrong type of share is sent, [None] is as share, and if the wrong type of broadcast message is sent, nothing is inserted.
+    /// Helper method which takes the list of d shares of each party (the result of the broadcast)
+    /// and parses it into a vector that stores at index i a map from the sending [Role] to their ith d share.
+    ///
+    /// Note: In case we can not find a correct share for a Party, we set [None] as its share.
     fn parse_d_shares<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
         amount: usize,
@@ -291,6 +294,7 @@ where
                             "Party {:?} did not broadcast the correct type and is thus malicious",
                             cur_role.one_based()
                         );
+                        cur_map.insert(*cur_role, None);
                     }
                 };
             }
@@ -299,6 +303,7 @@ where
         Ok(res)
     }
 
+    /// Output amount of PRSS.Next() calls
     #[instrument(name="PRSS.Next",skip(session,amount),fields(batch_size=?amount))]
     fn prss_list<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
@@ -312,6 +317,7 @@ where
         Ok(vec_prss)
     }
 
+    /// Output amount of PRZS.Next() calls
     #[instrument(name="PRZS.Next",skip(session,amount),fields(batch_size=?amount))]
     fn przs_list<Rnd: Rng + CryptoRng, Ses: SmallSessionHandles<Z, Rnd>>(
         session: &mut Ses,
@@ -335,16 +341,20 @@ where
         amount: u128,
         shared_d_double: HashMap<Role, Option<Z>>,
     ) -> anyhow::Result<()> {
+        //x is sampled first sot at given prss_ctr
         let vec_x = session.prss().prss_check(session, prss_ctr).await?;
+        //y is sampled after all the xs so at prss_ctr + amount
         let vec_y = session
             .prss()
             .prss_check(session, prss_ctr + amount)
             .await?;
+        //v is sampled after all the ys so at prss_ctr + 2*amount
         let vec_v = session
             .prss()
             .prss_check(session, prss_ctr + 2 * amount)
             .await?;
         let vec_z_double = session.prss().przs_check(session, przs_ctr).await?;
+
         for (cur_role, cur_d_share) in shared_d_double {
             let v_single = vec_v
                 .get(&cur_role)
@@ -363,8 +373,8 @@ where
                 .get(&cur_role)
                 .with_context(|| log_error_wrapper("Not all expected y check values exist"))?
                 .to_owned();
-            let d_double_prime = x * y + v_double;
-            if cur_d_share.is_none() || cur_d_share.is_some_and(|d_share| d_double_prime != d_share)
+            let d_prime_double = x * y + v_double;
+            if cur_d_share.is_none() || cur_d_share.is_some_and(|d_share| d_prime_double != d_share)
             {
                 tracing::warn!(
                     "Party {cur_role} did not send correct values during PRSS-init and
@@ -631,7 +641,7 @@ mod test {
             ),
         ]);
         assert!(session.corrupt_roles().is_empty());
-        let res = SmallPreprocessing::<ResiduePoly128, DummyAgreeRandom>::compute_d_values(
+        let res = SmallPreprocessing::<ResiduePoly128, DummyAgreeRandom>::reconstruct_d_values(
             &mut session,
             1,
             d_recons,

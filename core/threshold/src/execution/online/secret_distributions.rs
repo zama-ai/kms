@@ -41,15 +41,24 @@ impl SecretDistributions for RealSecretDistributions {
         P: BitPreprocessing<Z> + Send + ?Sized,
     {
         let bound = bound.0;
-        let b = preproc.next_bit_vec(n * (bound + 2))?;
+        let mut b = preproc.next_bit_vec(n * (bound + 2))?;
 
         let mut res = Vec::with_capacity(n);
 
-        for i in 1..=n {
-            let r = (i - 1) * (bound + 2);
-            let mut ei = b[r + bound + 2 - 1] - Z::from_u128(1 << bound);
+        //No need to compute indexes, simply pop the shared bits
+        for _ in 1..=n {
+            //Start with next_random_bit() - 2^bound
+            let mut ei = b
+                .pop()
+                .ok_or_else(|| anyhow_error_and_log("not enough bits in tuniform"))?
+                - Z::from_u128(1 << bound);
+            //for j in [1,bound+1], add next_random_bit() << (j-1)
+            //(could do j in [0,bound], but we keep it closer to NIST doc notation)
             for j in 1..=bound + 1 {
-                ei += b[r + j - 1] * Z::from_u128(1 << (j - 1));
+                ei += b
+                    .pop()
+                    .ok_or_else(|| anyhow_error_and_log("not enough bits in tuniform"))?
+                    * Z::from_u128(1 << (j - 1));
             }
             res.push(ei);
         }
@@ -65,6 +74,9 @@ impl SecretDistributions for RealSecretDistributions {
         let mut b = preproc.next_bit_vec(2 * n * bound)?;
         let mut res = Vec::with_capacity(n);
 
+        //No need to compute indexes, simply pop the shared bits
+        //adding bound times (next_random_bit() - next_random_bit())
+        //i.e. if bound = 1, we have {-1,0,1} with probability {1/4 , 1/2, 1/4}
         for _ in 1..=n {
             let mut e = b
                 .pop()

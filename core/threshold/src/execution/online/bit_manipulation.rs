@@ -67,7 +67,7 @@ where
     /// Takes a 1D array and arranges it into a 2D of size B (batch_size).
     /// Does this by taking consecutive CHAR_LOG2 (64/128) entries and puts them in a single batch
     /// Note that the input comes by flattening that 2D array of size B where each batch has 64/128 entries.
-    fn expand_to_batch(x: SecretVec<Z>, batch_size: usize) -> Vec<SecretBitArray<Z>> {
+    fn format_to_batch(x: SecretVec<Z>, batch_size: usize) -> Vec<SecretBitArray<Z>> {
         let mut arranged: Vec<SecretBitArray<Z>> = Vec::with_capacity(batch_size);
         for batch_idx in 0..batch_size {
             let entry: Vec<_> = (0..Z::CHAR_LOG2)
@@ -78,6 +78,7 @@ where
         arranged
     }
 
+    /// Computes XOR(\<a\>,b) for a and b vectors of vectors
     pub fn xor_list_secret_clear(
         lhs: &[SecretBitArray<Z>],
         rhs: &[ClearBitArray<Z>],
@@ -108,6 +109,7 @@ where
         Ok(res)
     }
 
+    /// Computes XOR(\<a\>,\<b\>) for a and b vectors of vectors
     async fn xor_list_secret_secret<
         Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
@@ -135,7 +137,7 @@ where
         debug_assert_eq!(rhs.len() % Z::CHAR_LOG2, 0);
 
         let flattened = Bits::xor_list_secret_secret(&lhs, &rhs, preproc, session).await?;
-        Ok(BatchedBits::expand_to_batch(flattened, batch_size))
+        Ok(BatchedBits::format_to_batch(flattened, batch_size))
     }
 
     async fn and_list_secret_secret<
@@ -160,9 +162,10 @@ where
         let lhs = lhs.iter().flatten().cloned().collect::<SecretVec<Z>>();
         let rhs = rhs.iter().flatten().cloned().collect::<SecretVec<Z>>();
         let flattened = Bits::and_list_secret_secret(&lhs, &rhs, preproc, session).await?;
-        Ok(BatchedBits::expand_to_batch(flattened, batch_size))
+        Ok(BatchedBits::format_to_batch(flattened, batch_size))
     }
 
+    /// Computes AND(\<a\>,b) for a and b vectors of vectors
     fn and_list_secret_clear(
         lhs: &[SecretBitArray<Z>],
         rhs: &[ClearBitArray<Z>],
@@ -217,8 +220,8 @@ where
         let ands = Bits::and_list_secret_secret(&lhs_all, &rhs_all, preproc, session).await?;
         let xor_ = Bits::xor_with_prods(&lhs, &rhs, &ands[0..lhs.len()].to_vec());
 
-        let res1 = Self::expand_to_batch(xor_, lhs1.len());
-        let res2 = Self::expand_to_batch(ands[lhs.len()..].to_vec(), lhs2.len());
+        let res1 = Self::format_to_batch(xor_, lhs1.len());
+        let res2 = Self::format_to_batch(ands[lhs.len()..].to_vec(), lhs2.len());
 
         Ok((res1, res2))
     }
@@ -298,8 +301,8 @@ where
     {
         let ct_len = Z::CHAR_LOG2;
 
-        let mut lhs = Vec::new();
-        let mut rhs = Vec::new();
+        let mut sign_bits = Vec::new();
+        let mut recomposed_decryptions = Vec::new();
 
         for partial_dec in partial_decs.iter() {
             let plaintext_bits = &partial_dec[ct_len - (message_mod_bits + 1)..ct_len - 1].to_vec();
@@ -310,18 +313,19 @@ where
             // sign_bit * 0 + (1 - sign_bit) * plaintext_sum
             // plaintext_sum - sign_bit * plaintext_sum
             let sign_bit = partial_dec[ct_len - 1];
-            lhs.push(sign_bit);
-            rhs.push(plaintext_sum);
+            sign_bits.push(sign_bit);
+            recomposed_decryptions.push(plaintext_sum);
         }
 
-        let triples = preproc.next_triple_vec(lhs.len())?;
-        let prods = mult_list(&lhs, &rhs, triples, session).await?;
+        //Perform the MUX described above, on all messages in one round
+        let triples = preproc.next_triple_vec(sign_bits.len())?;
+        let prods = mult_list(&sign_bits, &recomposed_decryptions, triples, session).await?;
 
         // compute plaintext_sum - sign_bit * plaintext_sum, final step of the MUX
         let res: Vec<Share<Z>> = prods
             .iter()
             .enumerate()
-            .map(|(i, prod)| &rhs[i] - prod)
+            .map(|(i, prod)| &recomposed_decryptions[i] - prod)
             .collect();
 
         Ok(res)
@@ -332,6 +336,7 @@ impl<Z> Bits<Z>
 where
     Z: Ring + ZConsts + Send + Sync + ErrorCorrect,
 {
+    /// Computes XOR(\<a\>,\<b\>) for a and b vecs given AND(\<a\>,\<b\>)
     fn xor_with_prods(
         lhs: &SecretVec<Z>,
         rhs: &SecretVec<Z>,
@@ -344,6 +349,7 @@ where
         res
     }
 
+    /// Computes XOR(\<a\>,\<b\>) for a and b vecs
     #[instrument(name="XOR", skip(lhs,rhs,preproc,session),fields(batch_size=?lhs.len()))]
     pub async fn xor_list_secret_secret<
         Rnd: Rng + CryptoRng,
@@ -359,6 +365,7 @@ where
         Ok(Self::xor_with_prods(lhs, rhs, &ands))
     }
 
+    /// Computes AND(\<a\>,\<b\>) for a and b vecs
     pub async fn and_list_secret_secret<
         Rnd: Rng + CryptoRng,
         Ses: BaseSessionHandles<Rnd>,
@@ -381,6 +388,7 @@ where
         Ok(prods)
     }
 
+    ///Given a vector of shared bits, compute the "bit recomposition"
     #[instrument(name="BitSum",skip(input),fields(batch_size=?input.len()))]
     pub fn bit_sum(input: &SecretVec<Z>) -> anyhow::Result<Share<Z>>
     where
@@ -406,6 +414,7 @@ where
     }
 }
 
+/// Bit decomposition of the input, assuming the secret lies in the base ring and not the extension.
 #[instrument(name="BitDec",skip(session,prep,inputs),fields(batch_size=?inputs.len()))]
 pub async fn bit_dec_batch<Z, P, Rnd: Rng + CryptoRng, Ses: BaseSessionHandles<Rnd>>(
     session: &mut Ses,
@@ -421,43 +430,51 @@ where
 {
     let batch_size = inputs.len();
 
+    //Take random bits from preprocessing
     let mut random_bits = prep.next_bit_vec(Z::CHAR_LOG2 * batch_size)?;
     tracing::debug!("Finished generating the random bits...");
 
-    let mut bitsums = Vec::with_capacity(batch_size);
+    //For each value, bit recompose random bits to form a mask,
+    //keeping in memory both the mask and the individual bits
+    let mut masks = Vec::with_capacity(batch_size);
     let mut prep_bits = Vec::<SecretBitArray<ResiduePoly<Z>>>::new();
     for _ in 0..batch_size {
         let bits_per_entry: Vec<_> = (0..Z::CHAR_LOG2)
             .map(|_| random_bits.pop().unwrap())
             .collect();
-        let bitsum = Bits::<ResiduePoly<Z>>::bit_sum(&bits_per_entry)?;
+        let mask = Bits::<ResiduePoly<Z>>::bit_sum(&bits_per_entry)?;
         prep_bits.push(bits_per_entry);
-        bitsums.push(bitsum);
+        masks.push(mask);
     }
 
-    let masks: Vec<_> = inputs
+    // Mask the secrets with the masks we've just computed
+    let masked_secrets: Vec<_> = inputs
         .iter()
-        .zip(bitsums.iter())
-        .map(|(lhs, rhs)| lhs - rhs)
+        .zip(masks.iter())
+        .map(|(secret, mask)| secret - mask)
         .collect();
 
     // value are safe to open now
-
-    // opening the mask
-    let opened_masks = open_list(&masks, session).await?;
+    // opening the masked values
+    let opened_masks = open_list(&masked_secrets, session).await?;
 
     let mut opened_masked_bits = Vec::new();
     for entry in opened_masks {
+        //This assumes the secret was in the base ring and not in the extension
         let scalar = entry.to_scalar()?;
+        //Bit decompose the masked secret
         let scalar_bits: Vec<u8> = (0..Z::CHAR_LOG2)
             .map(|bit_idx| scalar.extract_bit(bit_idx))
             .collect();
+        //Embed the bit decomposition back into the extension ring
         let residue_bits: Vec<ResiduePoly<Z>> = scalar_bits
             .iter()
             .map(|bit| ResiduePoly::<Z>::from_scalar(Z::from_u128(*bit as u128)))
             .collect();
         opened_masked_bits.push(residue_bits);
     }
+
+    //Use a binary adder to add back the mask to the masked secret, getting back the secret in binary format
     let add_res = BatchedBits::<ResiduePoly<Z>>::binary_adder_secret_clear(
         session,
         &prep_bits,

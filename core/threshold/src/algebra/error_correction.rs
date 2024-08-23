@@ -11,6 +11,7 @@ use crate::algebra::{poly::BitwisePoly, residue_poly::F_DEG};
 use crate::error::error_handler::anyhow_error_and_log;
 use crate::execution::sharing::shamir::ShamirSharing;
 use crate::execution::sharing::shamir::ShamirSharings;
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -106,15 +107,30 @@ where
     ResiduePoly<Z>: RingEmbed,
 {
     //NIST: Level Zero Operation
+    ///Perform error correction for the extension ring.
+    ///
+    /// - sharing is the set of shares we try to reconstruct the secret from
+    /// - degree is the degree of the sharing polynomial (either threshold or `2*threshold`)
+    /// - max_errs is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is `2*threshold`)
+    ///
+    /// __NOTE__ : We assume values coming from known malicious parties have been excluded by the caller (i.e. values denoted Bot in NIST doc)
     fn error_correct(
         sharing: &ShamirSharings<ResiduePoly<Z>>,
-        threshold: usize,
-        max_correctable_errs: usize,
+        degree: usize,
+        max_errs: usize,
     ) -> anyhow::Result<Poly<ResiduePoly<Z>>> {
         // threshold is the degree of the shamir polynomial
         let ring_size: usize = Z::BIT_LENGTH;
 
-        let mut y: Vec<_> = sharing.shares.iter().map(|x| x.value()).collect();
+        //Start with all values being valid (none of them are Bot)
+        let mut y = sharing
+            .shares
+            .iter()
+            .map(|x| (x.value(), true))
+            .collect_vec();
+
+        let initial_length = y.len();
+
         let parties: Vec<_> = sharing
             .shares
             .iter()
@@ -123,36 +139,117 @@ where
 
         let ordered_powers: Vec<Vec<ResiduePoly<Z>>> = parties
             .iter()
-            .map(|party_id| ResiduePoly::<Z>::exceptional_set(*party_id, threshold))
+            .map(|party_id| ResiduePoly::<Z>::exceptional_set(*party_id, degree))
             .collect::<anyhow::Result<Vec<_>>>()?;
 
         let mut res = Poly::<ResiduePoly<Z>>::zero();
 
         for bit_idx in 0..ring_size {
+            //Compute z = pi(y/2^i), where Bots are filtered out
             let binary_shares: Vec<ShamirSharing<GF256>> = parties
                 .iter()
                 .zip(y.iter())
-                .map(|(party_id, sh)| ShamirSharing::<GF256> {
-                    share: sh.bit_compose(bit_idx),
-                    party_id: *party_id as u8,
+                .filter_map(|(party_id, (sh, is_valid))| {
+                    if *is_valid {
+                        Some(ShamirSharing::<GF256> {
+                            share: sh.bit_compose(bit_idx),
+                            party_id: *party_id as u8,
+                        })
+                    } else {
+                        None
+                    }
                 })
                 .collect();
 
+            let num_new_bot = initial_length - binary_shares.len();
             // apply error correction on z
             // fi(X) = a0 + ... a_t * X^t where a0 is the secret bit corresponding to position i
-            let fi_mod2 = error_correction(&binary_shares, threshold, max_correctable_errs)?;
+            let fi_mod2 = error_correction(&binary_shares, degree, max_errs - num_new_bot)?;
             let bitwise = BitwisePoly::from(fi_mod2.clone());
 
             // remove LSBs computed from error correction in GF(256)
-            for (j, item) in y.iter_mut().enumerate() {
-                // compute fi(\gamma_1) ..., fi(\gamma_n) \in GR[Z = {2^64/2^128}]
-                let offset = bitwise.lazy_eval(&ordered_powers[j]) << bit_idx;
-                *item -= offset;
+            for (j, (item, is_valid)) in y.iter_mut().enumerate() {
+                if *is_valid {
+                    // compute fi(\gamma_1) ..., fi(\gamma_n) \in GR[Z = {2^64/2^128}]
+                    let offset = bitwise.lazy_eval(&ordered_powers[j]) << bit_idx;
+                    *item -= offset;
+
+                    //Do the divisibility check of pi, only need to do it if the share is currently valid
+                    *is_valid = item.multiple_pow2(bit_idx + 1);
+
+                    //Log at most once, when share becomes invalid
+                    if !*is_valid {
+                        tracing::warn!("Share at index {j} is invalid after iteration {bit_idx}");
+                    }
+                }
             }
 
             accumulate_and_lift_bitwise_poly(&mut res, &fi_mod2, bit_idx);
         }
 
         Ok(res)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::Wrapping;
+
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
+
+    use crate::{
+        algebra::{
+            residue_poly::ResiduePoly64,
+            structure_traits::{FromU128, One, ZConsts, Zero},
+        },
+        execution::sharing::{
+            shamir::{InputOp, ShamirSharings},
+            share::Share,
+        },
+    };
+
+    use super::ErrorCorrect;
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn test_divisibility_fail() {
+        let num_parties = 4;
+        let threshold = 1;
+        let mut rng = AesRng::seed_from_u64(0);
+        let secret = ResiduePoly64::from_scalar(Wrapping(10));
+        let mut sharing = ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap();
+
+        assert_eq!(
+            secret,
+            ErrorCorrect::error_correct(&sharing, threshold, threshold)
+                .unwrap()
+                .eval(&ResiduePoly64::ZERO)
+        );
+
+        let true_share = sharing.shares[0];
+        let modified_value = true_share.value() + ResiduePoly64::ONE;
+        let modified_share = Share::new(true_share.owner(), modified_value);
+        sharing.shares[0] = modified_share;
+        let _ = ErrorCorrect::error_correct(&sharing, threshold, threshold);
+        assert!(logs_contain(
+            "Share at index 0 is invalid after iteration 0"
+        ));
+
+        let modified_value = true_share.value() + ResiduePoly64::TWO;
+        let modified_share = Share::new(true_share.owner(), modified_value);
+        sharing.shares[0] = modified_share;
+        let _ = ErrorCorrect::error_correct(&sharing, threshold, threshold);
+        assert!(logs_contain(
+            "Share at index 0 is invalid after iteration 1"
+        ));
+
+        let modified_value = true_share.value() + (ResiduePoly64::from_u128(4));
+        let modified_share = Share::new(true_share.owner(), modified_value);
+        sharing.shares[0] = modified_share;
+        let _ = ErrorCorrect::error_correct(&sharing, threshold, threshold);
+        assert!(logs_contain(
+            "Share at index 0 is invalid after iteration 2"
+        ));
     }
 }

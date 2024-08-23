@@ -26,7 +26,7 @@ use crate::choreography::{
     NetworkingStrategy,
 };
 use crate::execution::endpoints::decryption::{
-    init_prep_bitdec_large, init_prep_bitdec_small, run_decryption_bitdec,
+    init_prep_bitdec_large, init_prep_bitdec_small, run_decryption_bitdec_64,
     run_decryption_noiseflood_64, NoiseFloodPreparation,
 };
 use crate::execution::endpoints::decryption::{Large, Small};
@@ -973,7 +973,7 @@ impl Choreography for GrpcChoreography {
                     let ks = &key_ref.0.server_key.as_ref().as_ref().key_switching_key;
                     for ctxt in ctxts.into_iter() {
                         res.push(
-                            run_decryption_bitdec(
+                            run_decryption_bitdec_64(
                                 &mut base_session,
                                 preprocessing.as_mut(),
                                 &key_ref.1,

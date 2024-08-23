@@ -94,7 +94,7 @@ where
                     .map(|_| {
                         Ok::<_, anyhow::Error>(Share::new(
                             my_role,
-                            prss_state.mask_next(my_role, 1 << bound.get_bound().0)?,
+                            prss_state.mask_next(my_role, 1u128 << bound.get_bound().0)?,
                         ))
                     })
                     .collect::<Result<Vec<_>, _>>()?,

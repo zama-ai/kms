@@ -41,7 +41,7 @@ use crate::{
     },
     error::error_handler::anyhow_error_and_log,
     execution::{
-        constants::{LOG_BD, STATSEC},
+        constants::{LOG_B_SWITCH_SQUASH, STATSEC},
         large_execution::offline::{RealLargePreprocessing, TrueDoubleSharing, TrueSingleSharing},
         runtime::session::{BaseSessionHandles, LargeSession, SmallSession},
     },
@@ -126,7 +126,7 @@ impl NoiseFloodPreparation for Large {
         num_ctxt: usize,
     ) -> Box<dyn NoiseFloodPreprocessing> {
         let session = self.session.get_mut();
-        let num_preproc = 2 * num_ctxt * ((STATSEC + LOG_BD) as usize + 2);
+        let num_preproc = 2 * num_ctxt * ((STATSEC + LOG_B_SWITCH_SQUASH) as usize + 2);
         let batch_size = BatchParams {
             triples: num_preproc,
             randoms: num_preproc,
@@ -487,7 +487,7 @@ pub fn threshold_decrypt64<Z: Ring>(
                 set.spawn(async move {
                     let mut session = LargeSession::new(base_session);
                     let mut prep = init_prep_bitdec_large(&mut session, ct.blocks().len()).await;
-                    let out = run_decryption_bitdec(
+                    let out = run_decryption_bitdec_64(
                         &mut session,
                         prep.as_mut(),
                         &party_keyshare,
@@ -505,7 +505,7 @@ pub fn threshold_decrypt64<Z: Ring>(
                 set.spawn(async move {
                     let mut session = setup_small_session::<ResiduePoly64>(base_session).await;
                     let mut prep = init_prep_bitdec_small(&mut session, ct.blocks().len()).await;
-                    let out = run_decryption_bitdec(
+                    let out = run_decryption_bitdec_64(
                         &mut session,
                         prep.as_mut(),
                         &party_keyshare,
@@ -563,6 +563,11 @@ async fn open_bit_composed_ptxts<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     Ok(out)
 }
 
+#[instrument(
+    name = "TFHE.Threshold-Dec-1",
+    skip(session, preprocessing, keyshares, ciphertext)
+    fields(batch_size=?ciphertext.len())
+)]
 pub async fn run_decryption_noiseflood<
     R: Rng + CryptoRng,
     S: BaseSessionHandles<R>,
@@ -611,13 +616,7 @@ pub async fn run_decryption_noiseflood_64<
     Ok(Wrapping(res))
 }
 
-// run decryption with bit-decomposition
-#[instrument(
-    name = "TFHE.Threshold-Dec-2",
-    skip(session, prep, keyshares, ksk, ciphertext),
-    fields(batch_size=?ciphertext.blocks().len())
-)]
-pub async fn run_decryption_bitdec<
+pub async fn run_decryption_bitdec_64<
     P: BitDecPreprocessing + Send + ?Sized,
     Rnd: Rng + CryptoRng,
     Ses: BaseSessionHandles<Rnd>,
@@ -628,6 +627,31 @@ pub async fn run_decryption_bitdec<
     ksk: &LweKeyswitchKey<Vec<u64>>,
     ciphertext: Ciphertext64,
 ) -> anyhow::Result<Z64> {
+    let res = run_decryption_bitdec(session, prep, keyshares, ksk, ciphertext).await?;
+    Ok(Wrapping(res))
+}
+// run decryption with bit-decomposition
+#[instrument(
+    name = "TFHE.Threshold-Dec-2",
+    skip(session, prep, keyshares, ksk, ciphertext),
+    fields(batch_size=?ciphertext.blocks().len())
+)]
+pub async fn run_decryption_bitdec<
+    P: BitDecPreprocessing + Send + ?Sized,
+    Rnd: Rng + CryptoRng,
+    Ses: BaseSessionHandles<Rnd>,
+    T,
+>(
+    session: &mut Ses,
+    prep: &mut P,
+    keyshares: &PrivateKeySet,
+    ksk: &LweKeyswitchKey<Vec<u64>>,
+    ciphertext: Ciphertext64,
+) -> anyhow::Result<T>
+where
+    T: tfhe::integer::block_decomposition::Recomposable
+        + tfhe::core_crypto::commons::traits::CastFrom<u128>,
+{
     let own_role = session.my_role()?;
 
     let mut shared_ptxts = Vec::with_capacity(ciphertext.blocks().len());
@@ -646,7 +670,7 @@ pub async fn run_decryption_bitdec<
     let ptxt_sums = BatchedBits::extract_ptxts(bits, total_bits, prep, session).await?;
     let ptxt_sums: Vec<_> = ptxt_sums.iter().map(|ptxt_sum| ptxt_sum.value()).collect();
 
-    // output results to party 0
+    // output results
     let ptxts64 = open_bit_composed_ptxts(session, ptxt_sums).await?;
     let ptxts128: Vec<_> = ptxts64
         .iter()
@@ -656,8 +680,7 @@ pub async fn run_decryption_bitdec<
     let usable_message_bits = keyshares.parameters.message_modulus_log() as usize;
 
     // combine outputs to form the decrypted integer on party 0
-    let res = combine_plaintext_blocks::<u64>(usable_message_bits, ptxts128)?;
-    Ok(Wrapping(res))
+    combine_plaintext_blocks(usable_message_bits, ptxts128)
 }
 
 /// computes b - <a, s> with no rounding of the noise. This is used for noise flooding decryption
@@ -673,7 +696,6 @@ pub fn partial_decrypt128(
             ))
         }
     };
-    // NOTE eventually this secret key share will be a vector of ResiduePoly128 elements
     let (mask, body) = ct.get_mask_and_body();
     let a_time_s = (0..sns_secret_key.len()).fold(ResiduePoly128::ZERO, |acc, column| {
         acc + sns_secret_key[column] * ResiduePoly128::from_scalar(Wrapping(mask.as_ref()[column]))
@@ -691,6 +713,8 @@ pub fn partial_decrypt64(
 ) -> anyhow::Result<ResiduePoly64> {
     let ciphertext_modulus = 64;
     let mut output_ctxt;
+
+    //If ctype = F-GLWE we need to KS before doing the decryption
     let (mask, body) = if ct_block.pbs_order == PBSOrder::KeyswitchBootstrap {
         output_ctxt = LweCiphertext::new(0, ksk.output_lwe_size(), ksk.ciphertext_modulus());
         keyswitch_lwe_ciphertext(ksk, &ct_block.ct, &mut output_ctxt);
@@ -698,6 +722,7 @@ pub fn partial_decrypt64(
     } else {
         ct_block.ct.get_mask_and_body()
     };
+
     let key_share64 = sk_share
         .lwe_compute_secret_key_share
         .data_as_raw_vec()
@@ -706,8 +731,9 @@ pub fn partial_decrypt64(
         acc + key_share64[column] * ResiduePoly64::from_scalar(Wrapping(mask.as_ref()[column]))
     });
     // b-<a, s>
+    // Compute Delta, taking into account that total_block_bits omits the additional padding bit
     let delta_pad_bits = ciphertext_modulus - (sk_share.parameters.total_block_bits() + 1);
-    let delta_pad_half = (1_u64 << delta_pad_bits) >> 1;
+    let delta_pad_half = 1_u64 << (delta_pad_bits - 1);
     let scalar_delta_half = ResiduePoly64::from_scalar(Wrapping(delta_pad_half));
     let res = ResiduePoly64::from_scalar(Wrapping(*body.data)) - a_time_s + scalar_delta_half;
     Ok(res)

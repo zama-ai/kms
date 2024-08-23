@@ -7,7 +7,7 @@ use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
 use crate::algebra::structure_traits::ErrorCorrect;
 use crate::algebra::structure_traits::RingEmbed;
-use crate::execution::constants::LOG_BD;
+use crate::execution::constants::LOG_B_SWITCH_SQUASH;
 use crate::execution::constants::STATSEC;
 use crate::execution::online::preprocessing::BasePreprocessing;
 use crate::execution::online::preprocessing::RandomPreprocessing;
@@ -262,7 +262,7 @@ impl<Rnd: Rng + CryptoRng + Send + Sync, Ses: BaseSessionHandles<Rnd>> NoiseFloo
     }
 
     fn next_mask_vec(&mut self, amount: usize) -> anyhow::Result<Vec<ResiduePoly128>> {
-        let bound_d = (STATSEC + LOG_BD) as usize;
+        let bound_d = (STATSEC + LOG_B_SWITCH_SQUASH) as usize;
         let mut u_randoms: Vec<_> =
             RealSecretDistributions::t_uniform(2 * amount, TUniformBound(bound_d), self)?
                 .into_iter()
