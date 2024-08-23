@@ -67,7 +67,7 @@ The default addresses are set to `localhost:50100,localhost:50200,localhost:5030
 #### Initializing the threshold KMS Cores
 
 If this is the first query to a set of threshold KMS cores and they have not been initialized before, it is possible to do the initialization by adding the `-i` flag to the command. Note that this initialization must only be done once per set of threshold nodes.
-Alternatively you can use the `kms-init-threshold` binary to do the initialization.
+Alternatively you can use the `kms-init` binary to do the initialization (see [below](#kms-init)).
 
 Note that the example client currently runs a `u8` decryption. This takes a few seconds, depending on the available hardware.
 By default, the binaries are built with optimizations and debug info enabled. Performance might increase slightly by passing `--release` to the cargo run commands.
@@ -81,3 +81,21 @@ ERROR grpc_request{endpoint="/kms.CoreServiceEndpoint/GetReencryptResult" header
 ```
 
 These stem from tracing and can be safely ignored in a local deployment.
+
+
+## kms-init
+
+The threshold nodes need to be initialized _once_ when they start for the first time, before they can run decryptions or reencryptions.
+This can be achieved by running the following stand-alone command, with the correct threshold node addresses as parameters:
+```bash
+cargo run --bin kms-init -- -a http://127.0.0.1:50100 http://127.0.0.1:50200 http://127.0.0.1:50300 http://127.0.0.1:50400
+```
+
+Alternatively, the same can be achieved by using the `kms-example-client`, by adding the `-i` flag. (see [above](#initializing-the-threshold-kms-cores)).
+
+Note that this must only be done _once_ per set of threshold nodes. Calling `init` multiple times will result in an error.
+Once the init material is successfully generated, it is stored to disk into the party's private storage, currently under `PRIV-pX/PrssSetup/000..001`, where `pX` denotes the party id, e.g. `p1`, etc.
+
+When a threshold node restarts, it will automatically use init material it finds on disk. This allows failing nodes to re-join an existing set of nodes, without running `init` again.
+
+When a different set of nodes (or a different number of nodes) should run the threshold protocols, `init` must be done again. Currently the only way is to manually delete the init material from disk in `PRIV-pX/PrssSetup/`.
