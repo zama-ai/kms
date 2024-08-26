@@ -1019,6 +1019,7 @@ impl Decryptor for RealDecryptor {
             format!("Invalid key in request {:?}", inner),
         )?;
 
+        // the session id that is used between the threshold engines to identify the decryption session, derived from the request id
         let internal_sid = tonic_handle_potential_err(
             u128::try_from(req_id.clone()),
             format!("Invalid request id {:?}", inner),
@@ -1039,7 +1040,8 @@ impl Decryptor for RealDecryptor {
 
         let mut dec_tasks = JoinSet::new();
 
-        for (idx, ct) in ciphertexts.iter().cloned().enumerate() {
+        // iterate over ciphertexts in this batch and decrypt each in their own session (so that it happens in parallel)
+        for (idx, ct) in ciphertexts.into_iter().enumerate() {
             let internal_sid = SessionId::from(internal_sid + idx as u128);
             let key_id = key_id.clone();
 
@@ -1068,7 +1070,7 @@ impl Decryptor for RealDecryptor {
                 let ciphertext = &ct.ciphertext;
 
                 let fhe_keys_rlock = fhe_keys.read().await;
-                let tmp = match fhe_type {
+                let res_plaintext = match fhe_type {
                     FheType::Euint512 => {
                         todo!("Implement decryption for Euint512")
                     }
@@ -1131,7 +1133,7 @@ impl Decryptor for RealDecryptor {
                     .await
                     .map(|x| Plaintext::new(x as u128, fhe_type)),
                 };
-                match tmp {
+                match res_plaintext {
                     Ok(plaintext) => Ok((idx, plaintext)),
                     Result::Err(e) => Err(anyhow_error_and_log(format!(
                         "Threshold decryption failed:{}",
@@ -1141,34 +1143,37 @@ impl Decryptor for RealDecryptor {
             });
         }
 
-        let mut decs = HashMap::new();
-        while let Some(resp) = dec_tasks.join_next().await {
-            match resp {
-                Ok(Ok((idx, plaintext))) => {
-                    decs.insert(idx, plaintext);
-                }
-                _ => {
-                    let meta_store = Arc::clone(&self.dec_meta_store);
-                    let mut guarded_meta_store = meta_store.write().await;
-                    let _ = guarded_meta_store.update(
-                        &req_id,
-                        HandlerStatus::Error("Failed decryption.".to_string()),
-                    );
-                    return Ok(Response::new(Empty {}));
+        // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
+        let meta_store = Arc::clone(&self.dec_meta_store);
+        let _handle = tokio::spawn(async move {
+            let mut decs = HashMap::new();
+            while let Some(resp) = dec_tasks.join_next().await {
+                match resp {
+                    Ok(Ok((idx, plaintext))) => {
+                        decs.insert(idx, plaintext);
+                    }
+                    _ => {
+                        let mut guarded_meta_store = meta_store.write().await;
+                        let _ = guarded_meta_store.update(
+                            &req_id,
+                            HandlerStatus::Error("Failed decryption.".to_string()),
+                        );
+                        // exit mgmt task early in case of error
+                        return;
+                    }
                 }
             }
-        }
 
-        let pts: Vec<_> = decs
-            .keys()
-            .sorted()
-            .map(|k| decs.get(k).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
-            .collect();
+            let pts: Vec<_> = decs
+                .keys()
+                .sorted()
+                .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
+                .collect();
 
-        let meta_store = Arc::clone(&self.dec_meta_store);
-        let mut guarded_meta_store = meta_store.write().await;
-
-        let _ = guarded_meta_store.update(&req_id, HandlerStatus::Done((req_digest.clone(), pts)));
+            let mut guarded_meta_store = meta_store.write().await;
+            let _ =
+                guarded_meta_store.update(&req_id, HandlerStatus::Done((req_digest.clone(), pts)));
+        });
 
         Ok(Response::new(Empty {}))
     }
