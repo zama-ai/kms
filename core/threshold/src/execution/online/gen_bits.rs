@@ -56,14 +56,17 @@ impl BitGenEven for RealBitGenEven {
             .map(|(cur_a, cur_s)| (*cur_a) + cur_s)
             .collect_vec();
         let opened_v_vec = open_list(&v, session).await?;
-        let mut b = Vec::with_capacity(amount);
-        for (cur_v, cur_a) in opened_v_vec.iter().zip(a) {
-            let cur_r = Z::solve(cur_v)?;
-            let cur_d = Z::ZERO - (Z::ONE + Z::TWO * cur_r);
-            let cur_b = (cur_a - cur_r) * Z::invert(cur_d)?;
-            b.push(cur_b);
-        }
-        Ok(b)
+
+        opened_v_vec
+            .iter()
+            .zip(a)
+            .map(|(cur_v, cur_a)| {
+                let cur_r = Z::solve(cur_v)?;
+                let cur_d = Z::ZERO - (Z::ONE + Z::TWO * cur_r);
+                let cur_b = (cur_a - cur_r) * Z::invert(cur_d)?;
+                Ok(cur_b)
+            })
+            .collect()
     }
 }
 

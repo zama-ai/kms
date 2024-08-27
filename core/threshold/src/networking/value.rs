@@ -129,7 +129,7 @@ mod tests {
         let net_bob = net_producer.user_net("bob".into(), NetworkMode::Sync, None);
 
         let task1 = tokio::spawn(async move {
-            let recv = net_bob.receive(&"alice".into(), &123_u128.into()).await;
+            let recv = net_bob.receive(&"alice".into()).await;
             let received_key = match NetworkValue::<Z128>::from_network(recv) {
                 Ok(NetworkValue::PubKeySet(key)) => key,
                 _ => panic!(),
@@ -137,11 +137,8 @@ mod tests {
             assert_eq!(*received_key, pk);
         });
 
-        let task2 = tokio::spawn(async move {
-            net_alice
-                .send(value.to_network(), &"bob".into(), &123_u128.into())
-                .await
-        });
+        let task2 =
+            tokio::spawn(async move { net_alice.send(value.to_network(), &"bob".into()).await });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
     }

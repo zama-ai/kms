@@ -1,6 +1,6 @@
 use aes_prng::AesRng;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use distributed_decryption::algebra::structure_traits::FromU128;
+use distributed_decryption::algebra::structure_traits::{FromU128, Sample};
 use distributed_decryption::execution::sharing::shamir::ShamirSharing;
 use distributed_decryption::execution::sharing::shamir::{InputOp, RevealOp, ShamirFieldPoly};
 use distributed_decryption::experimental::algebra::levels::LevelOne;
@@ -11,9 +11,11 @@ use distributed_decryption::{
     },
     execution::sharing::shamir::ShamirSharings,
 };
+use itertools::Itertools;
 use pprof::criterion::Output;
 use pprof::criterion::PProfProfiler;
 use rand::SeedableRng;
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::num::Wrapping;
 
 fn bench_decode_z2(c: &mut Criterion) {
@@ -97,6 +99,65 @@ fn bench_decode_z64(c: &mut Criterion) {
     }
 }
 
+fn bench_decode_par_z64(c: &mut Criterion) {
+    // params are (num_parties, threshold, max_errors)
+    let params = vec![(4, 1, 1), (10, 3, 3), (40, 13, 13)];
+    let chunk_sizes = [
+        None,
+        Some(1),
+        Some(100),
+        Some(1000),
+        Some(5000),
+        Some(10000),
+    ];
+    let mut group = c.benchmark_group("decode_par_z64");
+
+    for p in &params {
+        for chunk_size in chunk_sizes {
+            let (num_parties, threshold, max_err) = *p;
+            let p_str = format!(
+                "n:{num_parties} t:{threshold} e:{max_err} chunk_size:{:?}",
+                chunk_size
+            );
+            assert!(num_parties >= (threshold + 1) + 2 * max_err);
+
+            group.bench_function(BenchmarkId::new("decode", p_str), |b| {
+                //Doing 10000 reconstructions
+                let num_rec = 10000;
+                let mut rng = AesRng::seed_from_u64(0);
+                let secrets = (0..num_rec)
+                    .map(|_| ResiduePoly64::sample(&mut rng))
+                    .collect_vec();
+                let sharings = secrets
+                    .into_iter()
+                    .map(|secret| {
+                        ShamirSharings::share(&mut rng, secret, num_parties, threshold).unwrap()
+                    })
+                    .collect_vec();
+
+                b.iter(|| {
+                    let mut f_zero = Vec::new();
+                    match chunk_size {
+                        None => {
+                            sharings
+                                .iter()
+                                .map(|sharing| sharing.err_reconstruct(threshold, max_err).unwrap())
+                                .collect_vec();
+                        }
+                        Some(chunk_size) => {
+                            sharings
+                                .par_iter()
+                                .with_min_len(chunk_size)
+                                .map(|sharing| sharing.err_reconstruct(threshold, max_err).unwrap())
+                                .collect_into_vec(&mut f_zero);
+                        }
+                    }
+                });
+            });
+        }
+    }
+}
+
 fn bench_decode_large_field(c: &mut Criterion) {
     // params are (num_parties, threshold, max_errors)
     let params = vec![(4, 1, 0), (10, 3, 0), (10, 3, 2), (40, 13, 0)];
@@ -123,6 +184,6 @@ criterion_group! {
     name = decode;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
     targets = bench_decode_z2, bench_decode_z128, bench_decode_z64,
-    bench_decode_large_field
+    bench_decode_large_field, bench_decode_par_z64
 }
 criterion_main!(decode);

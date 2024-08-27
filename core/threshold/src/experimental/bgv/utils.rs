@@ -51,13 +51,10 @@ pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
                 let identity = session.identity_from(&Role::indexed_by_one(to_send_role))?;
 
                 let networking = Arc::clone(session.network());
-                let session_id = session.session_id();
                 let send_pk = pkval.clone();
 
                 set.spawn(async move {
-                    let _ = networking
-                        .send(send_pk.to_network(), &identity, &session_id)
-                        .await;
+                    let _ = networking.send(send_pk.to_network(), &identity).await;
                 });
             }
         }
@@ -66,14 +63,13 @@ pub async fn transfer_pub_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     } else {
         let receiver = session.identity_from(&Role::indexed_by_one(input_party_id))?;
         let networking = Arc::clone(session.network());
-        let session_id = session.session_id();
         let timeout = session.network().get_timeout_current_round()?;
         tracing::debug!(
             "Waiting for receiving public key from input party with timeout {:?}",
             timeout
         );
         let data = tokio::spawn(timeout_at(timeout, async move {
-            networking.receive(&receiver, &session_id).await
+            networking.receive(&receiver).await
         }))
         .await??;
 
@@ -109,13 +105,10 @@ pub async fn transfer_secret_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
                 let network_sk_shares = NetworkValue::<LevelOne>::VecRingValue(sk_vec);
 
                 let networking = Arc::clone(session.network());
-                let session_id = session.session_id();
                 let send_sk = network_sk_shares.clone();
 
                 set.spawn(async move {
-                    let _ = networking
-                        .send(send_sk.to_network(), &identity, &session_id)
-                        .await;
+                    let _ = networking.send(send_sk.to_network(), &identity).await;
                 });
             }
         }
@@ -129,10 +122,9 @@ pub async fn transfer_secret_key<R: Rng + CryptoRng, S: BaseSessionHandles<R>>(
     } else {
         let receiver = session.identity_from(&Role::indexed_by_one(input_party_id))?;
         let networking = Arc::clone(session.network());
-        let session_id = session.session_id();
         let timeout = session.network().get_timeout_current_round()?;
         let data = tokio::spawn(timeout_at(timeout, async move {
-            networking.receive(&receiver, &session_id).await
+            networking.receive(&receiver).await
         }))
         .await??;
 

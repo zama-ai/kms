@@ -49,15 +49,10 @@ where
             let receiver = session.identity_from(&to_send_role)?;
 
             let networking = Arc::clone(session.network());
-            let session_id = session.session_id();
             let share = indexed_share.value();
             set.spawn(async move {
                 let _ = networking
-                    .send(
-                        NetworkValue::RingValue(share).to_network(),
-                        &receiver,
-                        &session_id,
-                    )
+                    .send(NetworkValue::RingValue(share).to_network(), &receiver)
                     .await;
             });
         }
@@ -67,10 +62,9 @@ where
         let sender = session.identity_from(&Role::indexed_by_one(input_party_id))?;
 
         let networking = Arc::clone(session.network());
-        let session_id = session.session_id();
         let data = tokio::spawn(timeout_at(
             session.network().get_timeout_current_round()?,
-            async move { networking.receive(&sender, &session_id).await },
+            async move { networking.receive(&sender).await },
         ))
         .await??;
 

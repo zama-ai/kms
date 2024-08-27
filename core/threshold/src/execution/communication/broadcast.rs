@@ -32,13 +32,10 @@ pub async fn send_to_all<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHandles<R>>(
     session.network().increase_round_counter()?;
     for (other_role, other_identity) in session.role_assignments().iter() {
         let networking = Arc::clone(session.network());
-        let session_id = session.session_id();
         let msg = msg.clone();
         let other_id = other_identity.clone();
         if sender != other_role {
-            networking
-                .send(msg.to_network(), &other_id, &session_id)
-                .await?;
+            networking.send(msg.to_network(), &other_id).await?;
         }
     }
     Ok(())
@@ -81,10 +78,9 @@ where
                 .clone();
 
             let networking = Arc::clone(session.network());
-            let session_id = session.session_id();
             let identity = session.own_identity();
             let task = async move {
-                let stripped_message = networking.receive(&sender_id, &session_id).await;
+                let stripped_message = networking.receive(&sender_id).await;
                 let stripped_message = NetworkValue::<Z>::from_network(stripped_message)
                     .map_or_else(|e| Err(e), |x| match_network_value_fn(x, &identity));
                 (sender, stripped_message)
@@ -990,7 +986,6 @@ mod tests {
                 round1_data.insert(my_role, bcast_data[&my_role].clone());
                 for (other_role, other_identity) in session.role_assignments().iter() {
                     let networking = Arc::clone(session.network());
-                    let session_id = session.session_id();
                     let msg = NetworkValue::Send(vec_vi[other_role.zero_based()].clone());
                     tracing::debug!(
                         "As malicious sender {my_role}, sending {:?} to {other_role}",
@@ -998,9 +993,7 @@ mod tests {
                     );
                     let other_id = other_identity.clone();
                     if &my_role != other_role {
-                        networking
-                            .send(msg.to_network(), &other_id, &session_id)
-                            .await?;
+                        networking.send(msg.to_network(), &other_id).await?;
                     }
                 }
             }
@@ -1206,18 +1199,13 @@ mod tests {
                 round1_data.insert(my_role, bcast_data[&my_role].clone());
                 for (other_role, other_identity) in session.role_assignments().iter() {
                     let networking = Arc::clone(session.network());
-                    let session_id = session.session_id();
                     let other_id = other_identity.clone();
                     if &my_role != other_role && other_role.one_based() > 2 {
                         let msg = NetworkValue::Send(vec_vi[1].clone());
-                        networking
-                            .send(msg.to_network(), &other_id, &session_id)
-                            .await?;
+                        networking.send(msg.to_network(), &other_id).await?;
                     } else if other_role.one_based() == 2 {
                         let msg = NetworkValue::Send(vec_vi[0].clone());
-                        networking
-                            .send(msg.to_network(), &other_id, &session_id)
-                            .await?;
+                        networking.send(msg.to_network(), &other_id).await?;
                     }
                 }
             }
@@ -1248,18 +1236,13 @@ mod tests {
         let msg_to_others = round1_data;
         for (other_role, other_identity) in session.role_assignments().iter() {
             let networking = Arc::clone(session.network());
-            let session_id = session.session_id();
             let other_id = other_identity.clone();
             if &my_role != other_role && other_role.one_based() > 2 {
                 let msg = NetworkValue::EchoBatch(msg_to_others.clone());
-                networking
-                    .send(msg.to_network(), &other_id, &session_id)
-                    .await?;
+                networking.send(msg.to_network(), &other_id).await?;
             } else if other_role.one_based() == 2 {
                 let msg = NetworkValue::EchoBatch(msg_to_p2.clone());
-                networking
-                    .send(msg.to_network(), &other_id, &session_id)
-                    .await?;
+                networking.send(msg.to_network(), &other_id).await?;
             }
         }
         let msg = msg_to_others;

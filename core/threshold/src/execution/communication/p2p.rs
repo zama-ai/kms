@@ -94,11 +94,10 @@ async fn internal_send_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHan
         // Ensure the party we want to send to passes the check we specified
         if check_fn(cur_receiver, session)? {
             let networking = Arc::clone(session.network());
-            let session_id = session.session_id();
             let receiver_identity = session.identity_from(cur_receiver)?;
             let value_to_send = cur_value.clone();
             networking
-                .send(value_to_send.to_network(), &receiver_identity, &session_id)
+                .send(value_to_send.to_network(), &receiver_identity)
                 .await?;
         } else {
             tracing::info!(
@@ -121,13 +120,10 @@ pub async fn send_distinct_to_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessio
 ) -> anyhow::Result<()> {
     for (other_role, other_identity) in session.role_assignments().iter() {
         let networking = Arc::clone(session.network());
-        let session_id = session.session_id();
         let other_id = other_identity.clone();
         let msg = values_to_send[other_role].clone();
         if sender != other_role {
-            networking
-                .send(msg.to_network(), &other_id, &session_id)
-                .await?;
+            networking.send(msg.to_network(), &other_id).await?;
         }
     }
     Ok(())
@@ -185,21 +181,19 @@ fn internal_receive_from_parties<Z: Ring, R: Rng + CryptoRng, B: BaseSessionHand
         // Ensure we want to receive from that sender (e.g. not from ourself or a malicious party)
         if check_fn(cur_sender, session)? {
             let networking = Arc::clone(session.network());
-            let session_id = session.session_id();
             let sender_identity = session.identity_from(cur_sender)?;
             let role_to_receive_from = *cur_sender;
             let deadline = session.network().get_timeout_current_round()?;
 
             jobs.spawn(async move {
-                let received =
-                    timeout_at(deadline, networking.receive(&sender_identity, &session_id))
-                        .await
-                        .unwrap_or_else(|e| {
-                            Err(anyhow_error_and_log(format!(
-                                "Timed out with deadline {:?} from {:?} : {:?}",
-                                deadline, role_to_receive_from, e
-                            )))
-                        });
+                let received = timeout_at(deadline, networking.receive(&sender_identity))
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(anyhow_error_and_log(format!(
+                            "Timed out with deadline {:?} from {:?} : {:?}",
+                            deadline, role_to_receive_from, e
+                        )))
+                    });
                 match NetworkValue::<Z>::from_network(received) {
                     Ok(val) => (role_to_receive_from, val),
                     // We got an unexpected type of value from the network.

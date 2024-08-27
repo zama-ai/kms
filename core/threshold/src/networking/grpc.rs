@@ -194,6 +194,7 @@ impl GrpcNetworkingManager {
         };
         Arc::new(NetworkSession {
             owner: self.owner.clone(),
+            session_id,
             sending_channels: connection_channel,
             receiving_channels: message_store,
             round_counter: RwLock::new(0),

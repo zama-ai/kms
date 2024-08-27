@@ -6,7 +6,6 @@ use backoff::exponential::ExponentialBackoff;
 use backoff::future::retry_notify;
 use backoff::SystemClock;
 use conf_trace::telemetry::ContextPropagator;
-use dashmap::DashMap;
 use gen::gnetworking_client::GnetworkingClient;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
@@ -45,26 +44,25 @@ pub trait SendingService: Send + Sync {
         Self: std::marker::Sized;
 
     /// Adds one connection and outputs the mpsc Sender channel other processes will use to communicate to other
-    fn add_connection(
-        &self,
-        other: Identity,
-    ) -> anyhow::Result<Arc<UnboundedSender<SendValueRequest>>>;
+    fn add_connection(&self, other: Identity) -> anyhow::Result<UnboundedSender<SendValueRequest>>;
 
     ///Adds multiple connections at once
     fn add_connections(
         &self,
         others: Vec<Identity>,
-    ) -> anyhow::Result<HashMap<Identity, Arc<UnboundedSender<SendValueRequest>>>>;
+    ) -> anyhow::Result<HashMap<Identity, UnboundedSender<SendValueRequest>>>;
 }
 
+/// NOTE: This sending service spawns one channel per session per party,
+/// If we fear we may even exhaust the total number of ports available,
+/// this behaviour should be changed to spawning a fixed number of channels
+/// and load balance the sessions accross these.
 #[derive(Debug, Clone)]
 pub struct GrpcSendingService {
     /// Contains all the information needed by the sync network
     config: OptionConfigWrapper,
     /// Contains the certificate bundles
     certificate_bundle: Option<CertificatePaths>,
-    /// The communication channel used to communicate from MPC parties to the sending service
-    sending_channels: DashMap<Identity, Arc<UnboundedSender<SendValueRequest>>>,
 }
 
 impl GrpcSendingService {
@@ -144,33 +142,23 @@ impl GrpcSendingService {
 
 #[async_trait]
 impl SendingService for GrpcSendingService {
-    /// If we are not yet connected to other, communicates with the service thread to spin up a new connection
-    /// else, simply return the approriate channel to communicate with the thread that handles connection with other
+    /// Communicates with the service thread to spin up a new connection with `other`
     /// __NOTE__: This requires the service to be running already
-    fn add_connection(
-        &self,
-        other: Identity,
-    ) -> anyhow::Result<Arc<UnboundedSender<SendValueRequest>>> {
-        if let Some(channel) = self.sending_channels.get(&other) {
-            Ok(channel.value().clone())
-        } else {
-            let (sender, receiver) = unbounded_channel::<SendValueRequest>();
-            let network_channel = self.connect_to_party(other.clone())?;
-            let sender = Arc::new(sender);
-            self.sending_channels.insert(other.clone(), sender.clone());
-            let exponential_backoff = ExponentialBackoff::<SystemClock> {
-                max_elapsed_time: self.config.get_max_elapsed_time(),
-                max_interval: self.config.get_max_interval(),
-                multiplier: self.config.get_multiplier(),
-                ..Default::default()
-            };
-            tokio::spawn(Self::run_network_task(
-                receiver,
-                network_channel,
-                exponential_backoff,
-            ));
-            Ok(sender)
-        }
+    fn add_connection(&self, other: Identity) -> anyhow::Result<UnboundedSender<SendValueRequest>> {
+        let (sender, receiver) = unbounded_channel::<SendValueRequest>();
+        let network_channel = self.connect_to_party(other.clone())?;
+        let exponential_backoff = ExponentialBackoff::<SystemClock> {
+            max_elapsed_time: self.config.get_max_elapsed_time(),
+            max_interval: self.config.get_max_interval(),
+            multiplier: self.config.get_multiplier(),
+            ..Default::default()
+        };
+        tokio::spawn(Self::run_network_task(
+            receiver,
+            network_channel,
+            exponential_backoff,
+        ));
+        Ok(sender)
     }
 
     /// Does the same as [`SyncSendingService::add_connection`] but for multiple others
@@ -178,7 +166,7 @@ impl SendingService for GrpcSendingService {
     fn add_connections(
         &self,
         others: Vec<Identity>,
-    ) -> anyhow::Result<HashMap<Identity, Arc<UnboundedSender<SendValueRequest>>>> {
+    ) -> anyhow::Result<HashMap<Identity, UnboundedSender<SendValueRequest>>> {
         let mut map = HashMap::new();
         for other in others {
             let connection = self.add_connection(other.clone())?;
@@ -194,7 +182,6 @@ impl SendingService for GrpcSendingService {
         Self {
             config: OptionConfigWrapper { conf: config },
             certificate_bundle,
-            sending_channels: DashMap::new(),
         }
     }
 }
@@ -205,9 +192,11 @@ impl SendingService for GrpcSendingService {
 ///It also deals with the network round and timeouts
 pub struct NetworkSession {
     pub owner: Identity,
+    // Sessoin id of this Network session
+    pub session_id: SessionId,
     /// MPSC channels that are filled by parties and dealt with by the [`SendingService`]
-    /// Same for all sessions
-    pub sending_channels: HashMap<Identity, Arc<UnboundedSender<SendValueRequest>>>,
+    /// Sending channels for this session
+    pub sending_channels: HashMap<Identity, UnboundedSender<SendValueRequest>>,
     /// Channels which are filled by the grpc server receiving messages from the other parties
     pub receiving_channels: Arc<MessageQueueStore>,
     //Round counter for the current session, behind a lock to be able to update it without a mut ref to self
@@ -226,19 +215,14 @@ pub struct NetworkSession {
 impl Networking for NetworkSession {
     //Note this need not be async, so do we want to keep the trait definition async
     //if we want to add other implems which may require async ?
-    async fn send(
-        &self,
-        value: Vec<u8>,
-        receiver: &Identity,
-        session_id: &SessionId,
-    ) -> anyhow::Result<()> {
+    async fn send(&self, value: Vec<u8>, receiver: &Identity) -> anyhow::Result<()> {
         let round_counter = *self
             .round_counter
             .read()
             .map_err(|e| anyhow_error_and_log(format!("Locking error: {:?}", e)))?;
         let tagged_value = Tag {
             sender: self.owner.clone(),
-            session_id: *session_id,
+            session_id: self.session_id,
             round_counter,
         };
 
@@ -261,7 +245,7 @@ impl Networking for NetworkSession {
     }
 
     /// Receives messages from other parties, assuming the grpc server filled the [`MessageQueueStores`] correctly
-    async fn receive(&self, sender: &Identity, _session_id: &SessionId) -> anyhow::Result<Vec<u8>> {
+    async fn receive(&self, sender: &Identity) -> anyhow::Result<Vec<u8>> {
         let network_round = *self
             .round_counter
             .read()
@@ -459,17 +443,17 @@ mod tests {
                     tokio::spawn(async move {
                         let msg = vec![1u8; 10];
                         tracing::info!("Sending ONCE");
-                        network_stack.send(msg.clone(), &id_2, &sid).await.unwrap();
+                        network_stack.send(msg.clone(), &id_2).await.unwrap();
                         tokio::time::sleep(Duration::from_secs(4)).await;
                         tracing::info!("Sending TWICE");
-                        network_stack.send(msg.clone(), &id_2, &sid).await.unwrap();
+                        network_stack.send(msg.clone(), &id_2).await.unwrap();
                         send.send(msg).unwrap();
                     });
                     //Keep this std thread alive for a while
                     std::thread::sleep(Duration::from_secs(15));
                 } else {
                     tokio::spawn(async move {
-                        let msg = network_stack.receive(&id_1, &sid).await.unwrap();
+                        let msg = network_stack.receive(&id_1).await.unwrap();
                         tracing::info!("Received ONCE {:?}", msg);
                         send.send(msg).unwrap();
                     });
@@ -511,7 +495,7 @@ mod tests {
             let (send, recv) = tokio::sync::oneshot::channel();
             tokio::spawn(async move {
                 tracing::info!("Ready to receive");
-                let msg = network_stack.receive(&id_1, &sid).await.unwrap();
+                let msg = network_stack.receive(&id_1).await.unwrap();
                 tracing::info!("Received TWICE {:?}", msg);
                 send.send(msg).unwrap();
             });

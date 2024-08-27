@@ -142,19 +142,14 @@ type SimulatedPairwiseChannels = Arc<
 
 #[async_trait]
 impl Networking for LocalNetworking {
-    async fn send(
-        &self,
-        val: Vec<u8>,
-        receiver: &Identity,
-        _session_id: &SessionId,
-    ) -> anyhow::Result<(), anyhow::Error> {
+    async fn send(&self, val: Vec<u8>, receiver: &Identity) -> anyhow::Result<(), anyhow::Error> {
         let (tx, _) = self
             .pairwise_channels
             .get(&(self.owner.clone(), receiver.clone()))
             .ok_or_else(|| {
                 anyhow_error_and_log(format!(
-                "Could not retrieve pairwise channels in receive call, owner: {:?}, receiver: {:?}. Session {:?}",
-                self.owner, receiver, _session_id
+                "Could not retrieve pairwise channels in receive call, owner: {:?}, receiver: {:?}.",
+                self.owner, receiver
             ))
             })?
             .value()
@@ -195,7 +190,7 @@ impl Networking for LocalNetworking {
         tx.send(tagged_value).map_err(|e| e.into())
     }
 
-    async fn receive(&self, sender: &Identity, _session_id: &SessionId) -> anyhow::Result<Vec<u8>> {
+    async fn receive(&self, sender: &Identity) -> anyhow::Result<Vec<u8>> {
         let (_, rx) = self
             .pairwise_channels
             .get(&(sender.clone(), self.owner.clone()))
@@ -348,7 +343,7 @@ mod tests {
         let net_bob = net_producer.user_net("bob".into(), NetworkMode::Sync, None);
 
         let task1 = tokio::spawn(async move {
-            let recv = net_bob.receive(&"alice".into(), &123_u128.into()).await;
+            let recv = net_bob.receive(&"alice".into()).await;
             assert_eq!(
                 NetworkValue::from_network(recv).unwrap(),
                 NetworkValue::RingValue(Wrapping::<u64>(1234))
@@ -357,9 +352,7 @@ mod tests {
 
         let task2 = tokio::spawn(async move {
             let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
-            net_alice
-                .send(value.to_network(), &"bob".into(), &123_u128.into())
-                .await
+            net_alice.send(value.to_network(), &"bob".into()).await
         });
 
         let _ = tokio::try_join!(task1, task2).unwrap();
@@ -375,10 +368,8 @@ mod tests {
 
         let value = NetworkValue::RingValue(Wrapping::<u64>(1234));
         let _ = net_alice
-            .send(value.clone().to_network(), &"bob".into(), &123_u128.into())
+            .send(value.clone().to_network(), &"bob".into())
             .await;
-        let _ = net_alice
-            .send(value.to_network(), &"bob".into(), &123_u128.into())
-            .await;
+        let _ = net_alice.send(value.to_network(), &"bob".into()).await;
     }
 }

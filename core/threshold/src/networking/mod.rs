@@ -3,7 +3,6 @@
 use std::time::Duration;
 
 use crate::execution::runtime::party::Identity;
-use crate::session_id::SessionId;
 use async_trait::async_trait;
 use tokio::time::Instant;
 
@@ -22,14 +21,9 @@ pub enum NetworkMode {
 /// Requirements for networking interface.
 #[async_trait]
 pub trait Networking {
-    async fn send(
-        &self,
-        value: Vec<u8>,
-        receiver: &Identity,
-        session_id: &SessionId,
-    ) -> anyhow::Result<()>;
+    async fn send(&self, value: Vec<u8>, receiver: &Identity) -> anyhow::Result<()>;
 
-    async fn receive(&self, sender: &Identity, session_id: &SessionId) -> anyhow::Result<Vec<u8>>;
+    async fn receive(&self, sender: &Identity) -> anyhow::Result<Vec<u8>>;
 
     /// Increase the round counter
     ///

@@ -1,5 +1,6 @@
 use itertools::Itertools;
 use rand::{CryptoRng, Rng};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::{collections::HashMap, sync::Arc};
 use tokio::{task::JoinSet, time::error::Elapsed};
 use tracing::instrument;
@@ -9,6 +10,7 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::{generic_receive_from_all, send_to_all},
+        online::preprocessing::constants::BATCH_SIZE_BITS,
         runtime::{party::Role, session::BaseSessionHandles},
     },
     networking::value::NetworkValue,
@@ -77,7 +79,18 @@ async fn try_reconstruct_from_shares<
         }
         //Note: here we keep waiting on new shares until we have all of the values opened.
         let res: Option<Vec<_>> = sharings
-            .iter()
+            .par_iter()
+            // Here we want to use par_iter for opening the huge batches
+            // present in DKG, but we want to avoid using it for
+            // DKG preproc where we have lots of sessions in parallel
+            // dealing with small batches.
+            // Because for the case with lots of sessions and small batches,
+            // we don't want say P1 to highly parallelize session 1 first
+            // and P2 highly parallelize session 2 first.
+            // For DKG preproc, the prallelization happens through spawning lots of sessions,
+            // which are more likely to distribute workload similarly across the parties
+            // as network call acts as a sync points across parties
+            .with_min_len(BATCH_SIZE_BITS)
             .map(|sharing| {
                 if let Ok(r) =
                     reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
@@ -243,13 +256,11 @@ pub async fn multi_robust_opens_to<
             let receiver = session.identity_from(receiver_role)?;
 
             let networking = Arc::clone(session.network());
-            let session_id = session.session_id();
 
             networking
                 .send(
                     NetworkValue::VecRingValue(values.to_vec()).to_network(),
                     &receiver,
-                    &session_id,
                 )
                 .await?;
         }
