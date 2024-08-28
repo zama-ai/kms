@@ -34,7 +34,9 @@ use std::{fs, sync::Arc, thread};
 fn redis_tidy() {
     let redis_conf = RedisConf::default();
     let client = redis::Client::open(redis_conf.host).unwrap();
-    let mut con = client.get_connection().unwrap();
+    let mut con = client.get_connection().expect(
+        "Failed to connect to Redis. Please make sure Redis is installed and running locally",
+    );
     //delete everything from redis DB
     con.req_command(Cmd::new().arg("FLUSHALL")).unwrap();
 }

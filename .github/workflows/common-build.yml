@@ -91,7 +91,7 @@ jobs:
         run: RUSTFLAGS="-Aclippy::doc-lazy-continuation" cargo clippy --all-targets --all-features --package ${{inputs.package-name}} -- -D warnings
 
       - name: Run Tests
-        run: cargo test ${{ inputs.args-tests }} ${{ inputs.args-tests-fhe }} --release
+        run: cargo test ${{ inputs.args-tests }} ${{ inputs.args-tests-fhe }}
 
       - name: Build Documentation
         if: ${{ inputs.build-publish-docs }}

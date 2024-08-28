@@ -149,6 +149,9 @@ The following networks are simulated using `tc`:
 
 Note that ping RTT will be 2x the latency from the table, when the network config is set on all nodes.
 
+## Testing
+Integration tests are located in the `tests` folder and require a `Redis` server to be running locally. Make sure to install `Redis`and run `redis-server` in a separate terminal before running these tests.
+
 # IS THE SECTION BELOW DEPRECATED ?
 ## AWS Benchmarks
 

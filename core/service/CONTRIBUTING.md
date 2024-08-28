@@ -44,8 +44,9 @@ This is no different than other Rust projects.
 ```shell
 git clone https://github.com/zama-ai/kms
 cd kms
-cargo test
+cargo test --lib
 ```
+Use `cargo test --lib` instead to avoid running integration tests if needed.
 
 ### Useful Commands
 
@@ -67,7 +68,7 @@ cargo test
   cargo test --all-features --workspace
   ```
 
-- Check to see if there are code formatting issues
+- Check to see if there are code formatting issues. Be sure to have the latest stable version of rustc installed.
 
   ```shell
   cargo fmt --all -- --check

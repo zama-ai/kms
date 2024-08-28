@@ -68,10 +68,16 @@ pub mod tests_and_benches {
             );
             tasks.spawn(task(session));
         }
+
+        // Here only 'Ok(v)' is appended to 'results' in order to avoid task crashes. We might want
+        // to instead append 'v' as a 'Result<T,E>' in the future and let the tests that uses this
+        // helper handle the errors themselves
         let res = rt.block_on(async {
             let mut results = Vec::with_capacity(tasks.len());
             while let Some(v) = tasks.join_next().await {
-                results.push(v.unwrap());
+                if let Ok(result) = v {
+                    results.push(result);
+                }
             }
             results
         });

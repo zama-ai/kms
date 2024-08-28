@@ -242,6 +242,17 @@ where
             };
         }
 
+        // Check if there are enough honest parties to correct the errors
+        if session.num_parties() - session.corrupt_roles().len()
+            < 2 * session.threshold() as usize + 1
+        {
+            return Err(anyhow::anyhow!(
+                "BUG: Not enough honest parties to correct the errors: {} honest parties, threshold={}",
+                session.num_parties() - session.corrupt_roles().len(),
+                session.threshold()
+            ));
+        }
+
         //We know we may not be able to correct all errors, thus we set max_errors to maximum number of errors the code can correct,
         //and deal with failure with the cheater identification strategy
         let max_errors = (session.num_parties()
@@ -628,7 +639,7 @@ mod test {
     #[tracing_test::traced_test]
     #[test]
     fn test_wrong_type() {
-        let mut session = get_networkless_base_session_for_parties(2, 1, Role::indexed_by_one(1));
+        let mut session = get_networkless_base_session_for_parties(4, 1, Role::indexed_by_one(1));
         // Observe party 1 inputs a vector of size 1 and party 2 inputs a single element
         let d_recons = HashMap::from([
             (

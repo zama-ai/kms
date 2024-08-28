@@ -95,7 +95,10 @@ Testing can be done using
 ```
 cargo test
 ```
-Further details on required tools, installation can be found in the READMEs in each sub project.
+Some integration tests may require the use of additional tools. Further details can be found in the READMEs in each sub project. To avoid them and only run unit tests, run the following command instead: 
+```
+cargo test --lib
+```
 
 > **_NOTE:_** You might need to set the `rustc` version to use the nightly build to avoid issues with experimental features. To do so launch the following command.
 ```

@@ -60,7 +60,7 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings --no-deps
 
       - name: Run Tests
-        run: cargo test ${{ inputs.args_build }} --features tfhe/x86_64 --release
+        run: cargo test ${{ inputs.args_build }} --features tfhe/x86_64
       
       - name: Install wasm-pack
         run: wasm-pack --version > /dev/null 2>&1 || cargo install wasm-pack
