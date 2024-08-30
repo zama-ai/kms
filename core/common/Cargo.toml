@@ -6,4 +6,4 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.86"
 serde = { version = "1.0.203", features = ["derive", "rc"] }
-tfhe-versionable = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "27f3e6f0fc7253540f678e12d98f59bfd9d1f173" }
+tfhe-versionable = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-alpha.3" }

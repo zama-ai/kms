@@ -2323,7 +2323,7 @@ dependencies = [
 [[package]]
 name = "concrete-csprng"
 version = "0.4.1"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=27f3e6f0fc7253540f678e12d98f59bfd9d1f173#27f3e6f0fc7253540f678e12d98f59bfd9d1f173"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.3#3f318a2046f84248ea6200890bd3a0e9c348783b"
 dependencies = [
  "aes",
  "libc",
@@ -8628,8 +8628,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe"
-version = "0.8.0-alpha.2"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=27f3e6f0fc7253540f678e12d98f59bfd9d1f173#27f3e6f0fc7253540f678e12d98f59bfd9d1f173"
+version = "0.8.0-alpha.3"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.3#3f318a2046f84248ea6200890bd3a0e9c348783b"
 dependencies = [
  "aligned-vec",
  "bincode",
@@ -8718,8 +8718,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe-versionable"
-version = "0.2.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=27f3e6f0fc7253540f678e12d98f59bfd9d1f173#27f3e6f0fc7253540f678e12d98f59bfd9d1f173"
+version = "0.2.1"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.3#3f318a2046f84248ea6200890bd3a0e9c348783b"
 dependencies = [
  "aligned-vec",
  "num-complex",
@@ -8729,8 +8729,8 @@ dependencies = [
 
 [[package]]
 name = "tfhe-versionable-derive"
-version = "0.2.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=27f3e6f0fc7253540f678e12d98f59bfd9d1f173#27f3e6f0fc7253540f678e12d98f59bfd9d1f173"
+version = "0.2.1"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.3#3f318a2046f84248ea6200890bd3a0e9c348783b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -8740,7 +8740,7 @@ dependencies = [
 [[package]]
 name = "tfhe-zk-pok"
 version = "0.3.0-alpha.0"
-source = "git+https://github.com/zama-ai/tfhe-rs.git?rev=27f3e6f0fc7253540f678e12d98f59bfd9d1f173#27f3e6f0fc7253540f678e12d98f59bfd9d1f173"
+source = "git+https://github.com/zama-ai/tfhe-rs.git?tag=tfhe-rs-0.8.0-alpha.3#3f318a2046f84248ea6200890bd3a0e9c348783b"
 dependencies = [
  "ark-serialize 0.4.2",
  "rand",

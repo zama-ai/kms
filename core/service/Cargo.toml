@@ -72,8 +72,8 @@ sha3 = "0.10.8"
 signature = "2.2.0"
 strum = "0.26"
 strum_macros = "0.26"
-tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "27f3e6f0fc7253540f678e12d98f59bfd9d1f173", features = [ "boolean", "shortint", "integer", "zk-pok" ] } 
-tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "27f3e6f0fc7253540f678e12d98f59bfd9d1f173", optional = true } 
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-alpha.3", features = [ "boolean", "shortint", "integer", "zk-pok" ] } 
+tfhe-zk-pok = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-alpha.3", optional = true } 
 tokio = { workspace = true, features = ["macros","rt-multi-thread"], optional = true }
 tonic = { workspace = true, optional = true }
 tonic-health = { version = "0.11", optional = true }
@@ -89,10 +89,10 @@ console_error_panic_hook = { version = "0.1.7" }
 futures = "0.3.30"
 serde-wasm-bindgen = { version = "0.6.0" }
 wasm-bindgen = { version = "0.2.86", features = ["serde-serialize"] }
-tfhe-versionable = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "27f3e6f0fc7253540f678e12d98f59bfd9d1f173" }
+tfhe-versionable = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-alpha.3" }
 
 [target.'cfg(unix)'.dependencies]
-tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", rev = "27f3e6f0fc7253540f678e12d98f59bfd9d1f173", features = [
+tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-alpha.3", features = [
     "seeder_unix",
 ] } 
 
