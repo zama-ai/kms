@@ -152,13 +152,11 @@ pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     Ok((pp, crs_info))
 }
 
-#[derive(Clone)]
 pub struct BaseKmsStruct {
     pub(crate) sig_key: Arc<PrivateSigKey>,
     pub(crate) serialized_verf_key: Arc<Vec<u8>>,
     pub(crate) rng: Arc<Mutex<AesRng>>,
 }
-
 impl BaseKmsStruct {
     pub fn new(sig_key: PrivateSigKey) -> anyhow::Result<Self> {
         let serialized_verf_key = Arc::new(serialize(&PublicSigKey::new(
@@ -171,14 +169,23 @@ impl BaseKmsStruct {
         })
     }
 
-    pub async fn new_rng(&self) -> anyhow::Result<AesRng> {
+    /// Make a clone of this struct with a newly initialized RNG s.t. that both the new and old struct are safe to use.
+    pub async fn new_instance(&self) -> Self {
+        Self {
+            sig_key: self.sig_key.clone(),
+            serialized_verf_key: self.serialized_verf_key.clone(),
+            rng: Arc::new(Mutex::new(self.new_rng().await)),
+        }
+    }
+
+    pub async fn new_rng(&self) -> AesRng {
         let mut seed = [0u8; RND_SIZE];
         // Make a seperate scope for the rng so that it is dropped before the lock is released
         {
             let mut base_rng = self.rng.lock().await;
-            base_rng.try_fill_bytes(seed.as_mut())?;
+            base_rng.fill_bytes(seed.as_mut());
         }
-        Ok(AesRng::from_seed(seed))
+        AesRng::from_seed(seed)
     }
 }
 
@@ -1083,7 +1090,7 @@ pub(crate) mod tests {
             }
             keys
         };
-        let mut rng = kms.base_kms.new_rng().await.unwrap();
+        let mut rng = kms.base_kms.new_rng().await;
         let raw_cipher = SoftwareKms::<FileStorage, FileStorage>::reencrypt(
             &kms.fhe_keys
                 .read()

@@ -13,7 +13,7 @@ use aes_prng::AesRng;
 use async_trait::async_trait;
 use clap::ValueEnum;
 use derive_more::Display;
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, Rng, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -152,13 +152,13 @@ impl ParameterHandles for SessionParameters {
 
 pub type BaseSession = BaseSessionStruct<AesRng, SessionParameters>;
 
-#[derive(Clone)]
-pub struct BaseSessionStruct<R: Rng + CryptoRng + Send + Sync, P: ParameterHandles> {
+pub struct BaseSessionStruct<R: Rng + CryptoRng, P: ParameterHandles> {
     pub parameters: P,
     pub network: NetworkingImpl,
     pub rng: R,
     pub corrupt_roles: HashSet<Role>,
 }
+
 pub trait BaseSessionHandles<R: Rng + CryptoRng>: ParameterHandles {
     fn corrupt_roles(&self) -> &HashSet<Role>;
     fn add_corrupt(&mut self, role: Role) -> anyhow::Result<bool>;
@@ -181,7 +181,30 @@ impl BaseSession {
     }
 }
 
-impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
+impl<R: Rng + CryptoRng + SeedableRng + Clone, P: ParameterHandles> Clone
+    for BaseSessionStruct<R, P>
+{
+    // Cloning a session is not trivial since we cannot use the same RNG as before as this could lead to security issues.
+    // For this reason we need to seed a new RNG from the old one, which requires cloning the old one since `clone`
+    // does not give us mutable access to the underlying struct.
+    fn clone(&self) -> Self {
+        let rng = match R::from_rng(&mut self.rng.clone()) {
+            Ok(rng) => rng,
+            Err(_) => {
+                tracing::warn!("Could not clone RNG, using new RNG");
+                R::from_entropy()
+            }
+        };
+        Self {
+            parameters: self.parameters.clone(),
+            network: self.network.clone(),
+            rng,
+            corrupt_roles: self.corrupt_roles.clone(),
+        }
+    }
+}
+
+impl<R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
     for BaseSessionStruct<R, P>
 {
     fn my_role(&self) -> anyhow::Result<Role> {
@@ -221,8 +244,8 @@ impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHan
     }
 }
 
-impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
-    for BaseSessionStruct<R, P>
+impl<R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone, P: ParameterHandles>
+    BaseSessionHandles<R> for BaseSessionStruct<R, P>
 {
     fn rng(&mut self) -> &mut R {
         &mut self.rng
@@ -247,8 +270,8 @@ impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> BaseSessionH
     }
 }
 
-pub trait ToBaseSession<R: Rng + CryptoRng + Send + Sync, B: BaseSessionHandles<R>> {
-    fn to_base_session(&self) -> B;
+pub trait ToBaseSession<R: Rng + CryptoRng + SeedableRng, B: BaseSessionHandles<R>> {
+    fn to_base_session(&mut self) -> anyhow::Result<B>;
 }
 
 pub type SmallSession<Z> = SmallSessionStruct<Z, AesRng, SessionParameters>;
@@ -262,7 +285,7 @@ pub trait SmallSessionHandles<Z: Ring, R: Rng + CryptoRng>: BaseSessionHandles<R
 }
 
 #[derive(Clone)]
-pub struct SmallSessionStruct<Z: Ring, R: Rng + CryptoRng + Send + Sync, P: ParameterHandles> {
+pub struct SmallSessionStruct<Z: Ring, R: Rng + CryptoRng + SeedableRng, P: ParameterHandles> {
     pub base_session: BaseSessionStruct<R, P>,
     pub prss_state: PRSSState<Z>,
 }
@@ -292,8 +315,8 @@ where
     }
 }
 
-impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
-    for SmallSessionStruct<Z, R, P>
+impl<Z: Ring, R: Rng + CryptoRng + SeedableRng + Send + Sync + Clone, P: ParameterHandles>
+    ParameterHandles for SmallSessionStruct<Z, R, P>
 {
     fn my_role(&self) -> anyhow::Result<Role> {
         self.base_session.my_role()
@@ -331,8 +354,8 @@ impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> Par
     }
 }
 
-impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
-    for SmallSessionStruct<Z, R, P>
+impl<Z: Ring, R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone, P: ParameterHandles>
+    BaseSessionHandles<R> for SmallSessionStruct<Z, R, P>
 {
     fn rng(&mut self) -> &mut R {
         self.base_session.rng()
@@ -351,7 +374,7 @@ impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> Bas
     }
 }
 
-impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles>
+impl<Z: Ring, R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone, P: ParameterHandles>
     SmallSessionHandles<Z, R> for SmallSessionStruct<Z, R, P>
 {
     fn prss_as_mut(&mut self) -> &mut PRSSState<Z> {
@@ -363,11 +386,16 @@ impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles>
     }
 }
 
-impl<Z: Ring, R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles>
+impl<Z: Ring, R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone, P: ParameterHandles>
     ToBaseSession<R, BaseSessionStruct<R, P>> for SmallSessionStruct<Z, R, P>
 {
-    fn to_base_session(&self) -> BaseSessionStruct<R, P> {
-        self.base_session.clone()
+    fn to_base_session(&mut self) -> anyhow::Result<BaseSessionStruct<R, P>> {
+        Ok(BaseSessionStruct {
+            rng: R::from_rng(self.rng())?,
+            network: self.base_session.network().clone(),
+            corrupt_roles: self.base_session.corrupt_roles().clone(),
+            parameters: self.base_session.parameters.clone(),
+        })
     }
 }
 
@@ -386,7 +414,7 @@ pub trait LargeSessionHandles<R: Rng + CryptoRng>: BaseSessionHandles<R> {
     fn add_dispute(&mut self, party_a: &Role, party_b: &Role) -> anyhow::Result<()>;
 }
 #[derive(Clone)]
-pub struct LargeSessionStruct<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> {
+pub struct LargeSessionStruct<R: Rng + CryptoRng + SeedableRng, P: ParameterHandles> {
     pub base_session: BaseSessionStruct<R, P>,
     pub disputed_roles: DisputeSet,
 }
@@ -400,7 +428,7 @@ impl LargeSession {
         }
     }
 }
-impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
+impl<R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone, P: ParameterHandles> ParameterHandles
     for LargeSessionStruct<R, P>
 {
     fn my_role(&self) -> anyhow::Result<Role> {
@@ -439,8 +467,8 @@ impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> ParameterHan
         self.base_session.set_role_assignments(role_assignments);
     }
 }
-impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> BaseSessionHandles<R>
-    for LargeSessionStruct<R, P>
+impl<R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone, P: ParameterHandles>
+    BaseSessionHandles<R> for LargeSessionStruct<R, P>
 {
     fn rng(&mut self) -> &mut R {
         self.base_session.rng()
@@ -464,17 +492,24 @@ impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles> BaseSessionH
     }
 }
 
-impl<R: Rng + CryptoRng + Sync + Send + Clone, P: ParameterHandles>
+impl<R: Rng + CryptoRng + SeedableRng + Sync + Send + Clone, P: ParameterHandles>
     ToBaseSession<R, BaseSessionStruct<R, P>> for LargeSessionStruct<R, P>
 {
-    fn to_base_session(&self) -> BaseSessionStruct<R, P> {
-        self.base_session.clone()
+    fn to_base_session(&mut self) -> anyhow::Result<BaseSessionStruct<R, P>> {
+        Ok(BaseSessionStruct {
+            rng: R::from_rng(self.rng())?,
+            network: self.base_session.network().clone(),
+            corrupt_roles: self.base_session.corrupt_roles().clone(),
+            parameters: self.base_session.parameters.clone(),
+        })
     }
 }
 
 #[async_trait]
-impl<R: Rng + CryptoRng + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync>
-    LargeSessionHandles<R> for LargeSessionStruct<R, P>
+impl<
+        R: Rng + CryptoRng + SeedableRng + Send + Sync + Clone,
+        P: ParameterHandles + Clone + Send + Sync,
+    > LargeSessionHandles<R> for LargeSessionStruct<R, P>
 {
     fn disputed_roles(&self) -> &DisputeSet {
         &self.disputed_roles
@@ -495,8 +530,10 @@ impl<R: Rng + CryptoRng + Send + Sync + Clone, P: ParameterHandles + Clone + Sen
     }
 }
 
-impl<R: Rng + CryptoRng + Send + Sync + Clone, P: ParameterHandles + Clone + Send + Sync>
-    LargeSessionStruct<R, P>
+impl<
+        R: Rng + CryptoRng + SeedableRng + Send + Sync + Clone,
+        P: ParameterHandles + Clone + Send + Sync,
+    > LargeSessionStruct<R, P>
 {
     pub fn sync_dispute_corrupt(&mut self, role: &Role) -> anyhow::Result<()> {
         if self.disputed_roles.get(role)?.len() > self.threshold() as usize {

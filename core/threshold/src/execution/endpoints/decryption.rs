@@ -97,7 +97,7 @@ pub trait NoiseFloodPreparation {
     async fn init_prep_noiseflooding(
         &mut self,
         num_ctxt: usize,
-    ) -> Box<dyn NoiseFloodPreprocessing>;
+    ) -> anyhow::Result<Box<dyn NoiseFloodPreprocessing>>;
 }
 
 #[async_trait]
@@ -108,13 +108,11 @@ impl NoiseFloodPreparation for Small {
     async fn init_prep_noiseflooding(
         &mut self,
         num_ctxt: usize,
-    ) -> Box<dyn NoiseFloodPreprocessing> {
+    ) -> anyhow::Result<Box<dyn NoiseFloodPreprocessing>> {
         let session = self.session.get_mut();
         let mut sns_preprocessing = create_memory_factory().create_noise_flood_preprocessing();
-        sns_preprocessing
-            .fill_from_small_session(session, num_ctxt)
-            .unwrap();
-        sns_preprocessing
+        sns_preprocessing.fill_from_small_session(session, num_ctxt)?;
+        Ok(sns_preprocessing)
     }
 }
 
@@ -124,7 +122,7 @@ impl NoiseFloodPreparation for Large {
     async fn init_prep_noiseflooding(
         &mut self,
         num_ctxt: usize,
-    ) -> Box<dyn NoiseFloodPreprocessing> {
+    ) -> anyhow::Result<Box<dyn NoiseFloodPreprocessing>> {
         let session = self.session.get_mut();
         let num_preproc = 2 * num_ctxt * ((STATSEC + LOG_B_SWITCH_SQUASH) as usize + 2);
         let batch_size = BatchParams {
@@ -138,15 +136,17 @@ impl NoiseFloodPreparation for Large {
             TrueSingleSharing::default(),
             TrueDoubleSharing::default(),
         )
-        .await
-        .unwrap();
+        .await?;
 
         let mut sns_preprocessing = create_memory_factory().create_noise_flood_preprocessing();
         sns_preprocessing
-            .fill_from_base_preproc(&mut large_preproc, &mut session.to_base_session(), num_ctxt)
-            .await
-            .unwrap();
-        sns_preprocessing
+            .fill_from_base_preproc(
+                &mut large_preproc,
+                &mut session.to_base_session()?,
+                num_ctxt,
+            )
+            .await?;
+        Ok(sns_preprocessing)
     }
 }
 
@@ -199,12 +199,11 @@ where
     let ct_large = ck.to_large_ciphertext(&ct)?;
     let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
-    let mut preparation = protocol.init_prep_noiseflooding(len).await;
+    let mut preparation = protocol.init_prep_noiseflooding(len).await?;
     let preparation = preparation.as_mut();
     let outputs =
         run_decryption_noiseflood::<_, _, _, T>(session, preparation, secret_key_share, ct_large)
-            .await
-            .unwrap();
+            .await?;
 
     tracing::info!("Result in session {:?} is ready", session.session_id());
     results.insert(format!("{}", session.session_id()), outputs);
@@ -261,7 +260,7 @@ where
     let ct_large = ck.to_large_ciphertext(&ct)?;
     let mut results = HashMap::with_capacity(1);
     let len = ct_large.len();
-    let mut preparation = protocol.init_prep_noiseflooding(len).await;
+    let mut preparation = protocol.init_prep_noiseflooding(len).await?;
     let preparation = preparation.as_mut();
     let mut shared_masked_ptxts = Vec::with_capacity(ct_large.len());
     for current_ct_block in ct_large {
@@ -327,7 +326,7 @@ where
 pub async fn init_prep_bitdec_small(
     session: &mut SmallSession64,
     num_ctxts: usize,
-) -> Box<dyn BitDecPreprocessing> {
+) -> anyhow::Result<Box<dyn BitDecPreprocessing>> {
     let mut bitdec_preprocessing = create_memory_factory().create_bit_decryption_preprocessing();
     let bitdec_batch = BatchParams {
         triples: bitdec_preprocessing.num_required_triples(num_ctxts)
@@ -336,26 +335,23 @@ pub async fn init_prep_bitdec_small(
     };
 
     let mut small_preprocessing =
-        SmallPreprocessing::<ResiduePoly64, RealAgreeRandom>::init(session, bitdec_batch)
-            .await
-            .unwrap();
+        SmallPreprocessing::<ResiduePoly64, RealAgreeRandom>::init(session, bitdec_batch).await?;
 
     bitdec_preprocessing
         .fill_from_base_preproc(
             &mut small_preprocessing,
-            &mut session.to_base_session(),
+            &mut session.to_base_session()?,
             num_ctxts,
         )
-        .await
-        .unwrap();
+        .await?;
 
-    bitdec_preprocessing
+    Ok(bitdec_preprocessing)
 }
 
 pub async fn init_prep_bitdec_large(
     session: &mut LargeSession,
     num_ctxts: usize,
-) -> Box<dyn BitDecPreprocessing> {
+) -> anyhow::Result<Box<dyn BitDecPreprocessing>> {
     let mut bitdec_preprocessing = create_memory_factory().create_bit_decryption_preprocessing();
     let bitdec_batch = BatchParams {
         triples: bitdec_preprocessing.num_required_triples(num_ctxts)
@@ -373,19 +369,17 @@ pub async fn init_prep_bitdec_large(
         TrueSingleSharing::default(),
         TrueDoubleSharing::default(),
     )
-    .await
-    .unwrap();
+    .await?;
 
     bitdec_preprocessing
         .fill_from_base_preproc(
             &mut large_preprocessing,
-            &mut session.to_base_session(),
+            &mut session.to_base_session()?,
             num_ctxts,
         )
-        .await
-        .unwrap();
+        .await?;
 
-    bitdec_preprocessing
+    Ok(bitdec_preprocessing)
 }
 
 /// test the threshold decryption for a given 64-bit TFHE-rs ciphertext
@@ -450,7 +444,8 @@ pub fn threshold_decrypt64<Z: Ring>(
 
                     let mut noiseflood_preprocessing = Small::new(session.clone())
                         .init_prep_noiseflooding(ct.blocks().len())
-                        .await;
+                        .await
+                        .unwrap();
                     let out = run_decryption_noiseflood_64(
                         &mut session,
                         noiseflood_preprocessing.as_mut(),
@@ -469,7 +464,8 @@ pub fn threshold_decrypt64<Z: Ring>(
                     let mut session = LargeSession::new(base_session);
                     let mut noiseflood_preprocessing = Large::new(session.clone())
                         .init_prep_noiseflooding(ct.blocks().len())
-                        .await;
+                        .await
+                        .unwrap();
                     let out = run_decryption_noiseflood_64(
                         &mut session,
                         noiseflood_preprocessing.as_mut(),
@@ -486,7 +482,9 @@ pub fn threshold_decrypt64<Z: Ring>(
                 let ks_key = runtime.get_ks_key();
                 set.spawn(async move {
                     let mut session = LargeSession::new(base_session);
-                    let mut prep = init_prep_bitdec_large(&mut session, ct.blocks().len()).await;
+                    let mut prep = init_prep_bitdec_large(&mut session, ct.blocks().len())
+                        .await
+                        .unwrap();
                     let out = run_decryption_bitdec_64(
                         &mut session,
                         prep.as_mut(),
@@ -504,7 +502,9 @@ pub fn threshold_decrypt64<Z: Ring>(
                 let ks_key = runtime.get_ks_key();
                 set.spawn(async move {
                     let mut session = setup_small_session::<ResiduePoly64>(base_session).await;
-                    let mut prep = init_prep_bitdec_small(&mut session, ct.blocks().len()).await;
+                    let mut prep = init_prep_bitdec_small(&mut session, ct.blocks().len())
+                        .await
+                        .unwrap();
                     let out = run_decryption_bitdec_64(
                         &mut session,
                         prep.as_mut(),
@@ -660,9 +660,7 @@ where
         shared_ptxts.push(Share::new(own_role, partial_dec));
     }
 
-    let bits = bit_dec_batch::<Z64, P, _, _>(session, prep, shared_ptxts)
-        .await
-        .unwrap();
+    let bits = bit_dec_batch::<Z64, P, _, _>(session, prep, shared_ptxts).await?;
 
     let total_bits = keyshares.parameters.total_block_bits() as usize;
 

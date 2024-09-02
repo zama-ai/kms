@@ -291,10 +291,7 @@ impl<
         let meta_store = Arc::clone(&self.reenc_meta_map);
         let fhe_keys = Arc::clone(&self.fhe_keys);
         let sig_key = Arc::clone(&self.base_kms.sig_key);
-        let mut rng = tonic_handle_potential_err(
-            self.base_kms.new_rng().await,
-            "Could not get handle on RNG".to_string(),
-        )?;
+        let mut rng = self.base_kms.new_rng().await;
 
         // we do not need to hold the handle,
         // the result of the computation is tracked by the reenc_meta_store
@@ -536,10 +533,7 @@ impl<
         let private_storage = Arc::clone(&self.private_storage);
         let meta_store = Arc::clone(&self.crs_meta_map);
         let sk = Arc::clone(&self.base_kms.sig_key);
-        let rng = tonic_handle_potential_err(
-            self.base_kms.new_rng().await,
-            "Could not generate RNG for CRS generation".to_string(),
-        )?;
+        let rng = self.base_kms.new_rng().await;
 
         let _handle = tokio::spawn(async move {
             {

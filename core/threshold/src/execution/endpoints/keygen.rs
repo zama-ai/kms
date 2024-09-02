@@ -1166,7 +1166,11 @@ pub mod tests {
             let mut dkg_preproc = create_memory_factory().create_dkg_preprocessing_with_sns();
 
             dkg_preproc
-                .fill_from_base_preproc(params, &mut session.to_base_session(), &mut small_preproc)
+                .fill_from_base_preproc(
+                    params,
+                    &mut session.to_base_session().unwrap(),
+                    &mut small_preproc,
+                )
                 .await
                 .unwrap();
 

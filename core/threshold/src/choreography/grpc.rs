@@ -793,8 +793,16 @@ impl Choreography for GrpcChoreography {
                 let mut large_session = LargeSession::new(base_session);
                 let store = self.data.ddec_preproc_store_bd.clone();
                 let my_future = || async move {
-                    let preproc = init_prep_bitdec_large(&mut large_session, num_blocks).await;
-                    store.insert(session_id, preproc);
+                    match init_prep_bitdec_large(&mut large_session, num_blocks).await {
+                        Ok(preproc) => {
+                            store.insert(session_id, preproc);
+                        }
+                        Err(_e) => {
+                            tracing::error!(
+                                "Failed to init preprocessing of noise flooding material"
+                            );
+                        }
+                    };
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -818,8 +826,16 @@ impl Choreography for GrpcChoreography {
                     SmallSession::new_from_prss_state(base_session, prss_state).unwrap();
                 let store = self.data.ddec_preproc_store_bd.clone();
                 let my_future = || async move {
-                    let preproc = init_prep_bitdec_small(&mut small_session, num_blocks).await;
-                    store.insert(session_id, preproc);
+                    match init_prep_bitdec_small(&mut small_session, num_blocks).await {
+                        Ok(preproc) => {
+                            store.insert(session_id, preproc);
+                        }
+                        Err(_e) => {
+                            tracing::error!(
+                                "Failed to init preprocessing of noise flooding material"
+                            );
+                        }
+                    };
                 };
                 self.data.status_store.insert(
                     session_id,
@@ -844,7 +860,15 @@ impl Choreography for GrpcChoreography {
                 );
                 let store = self.data.ddec_preproc_store_nf.clone();
                 let my_future = || async move {
-                    let preproc = small_session.init_prep_noiseflooding(num_blocks).await;
+                    let preproc = match small_session.init_prep_noiseflooding(num_blocks).await {
+                        Ok(preproc) => preproc,
+                        Err(_e) => {
+                            tracing::error!(
+                                "Failed to init preprocessing of noise flooding material"
+                            );
+                            return;
+                        }
+                    };
                     store.insert(session_id, preproc);
                 };
                 self.data.status_store.insert(
@@ -856,8 +880,16 @@ impl Choreography for GrpcChoreography {
                 let mut large_session = Large::new(LargeSession::new(base_session));
                 let store = self.data.ddec_preproc_store_nf.clone();
                 let my_future = || async move {
-                    let preproc = large_session.init_prep_noiseflooding(num_blocks).await;
-                    store.insert(session_id, preproc);
+                    match large_session.init_prep_noiseflooding(num_blocks).await {
+                        Ok(preproc) => {
+                            store.insert(session_id, preproc);
+                        }
+                        Err(_e) => {
+                            tracing::error!(
+                                "Failed to init preprocessing of noise flooding material"
+                            );
+                        }
+                    };
                 };
                 self.data.status_store.insert(
                     session_id,

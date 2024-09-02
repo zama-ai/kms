@@ -465,7 +465,7 @@ where
     let reenc_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
 
     let session_preparer = SessionPreparer {
-        base_kms: base_kms.clone(),
+        base_kms: base_kms.new_instance().await,
         threshold,
         my_id,
         role_assignments: role_assignments.clone(),
@@ -476,7 +476,7 @@ where
     let initiator = RealInitiator {
         prss_setup: Arc::clone(&prss_setup),
         private_storage: Arc::clone(&private_storage),
-        session_preparer: session_preparer.clone(),
+        session_preparer: session_preparer.new_instance().await,
     };
     if run_prss {
         tracing::info!(
@@ -494,27 +494,27 @@ where
 
     let reencryptor = RealReencryptor {
         fhe_keys: Arc::clone(&fhe_keys),
-        base_kms: base_kms.clone(),
+        base_kms: base_kms.new_instance().await,
         reenc_meta_store,
-        session_preparer: session_preparer.clone(),
+        session_preparer: session_preparer.new_instance().await,
     };
 
     let decryptor = RealDecryptor {
         fhe_keys: Arc::clone(&fhe_keys),
-        base_kms: base_kms.clone(),
+        base_kms: base_kms.new_instance().await,
         dec_meta_store,
-        session_preparer: session_preparer.clone(),
+        session_preparer: session_preparer.new_instance().await,
     };
 
     let keygenerator = RealKeyGenerator {
         fhe_keys,
-        base_kms: base_kms.clone(),
+        base_kms: base_kms.new_instance().await,
         preproc_buckets: Arc::clone(&preproc_buckets),
         public_storage: Arc::clone(&public_storage),
         private_storage: Arc::clone(&private_storage),
         dkg_pubinfo_meta_store,
         param_file_map: Arc::clone(&param_file_map),
-        session_preparer: session_preparer.clone(),
+        session_preparer: session_preparer.new_instance().await,
     };
 
     let preprocessor = RealPreprocessor {
@@ -523,7 +523,7 @@ where
         preproc_factory,
         num_sessions_preproc,
         param_file_map: param_file_map.clone(),
-        session_preparer: session_preparer.clone(),
+        session_preparer: session_preparer.new_instance().await,
     };
 
     let crsgenerator = RealCrsGenerator {
@@ -551,7 +551,6 @@ where
 /// This is a shared type between all the modules,
 /// it's responsible for creating sessions and holds
 /// information on the network setting.
-#[derive(Clone)]
 struct SessionPreparer {
     base_kms: BaseKmsStruct,
     threshold: u8,
@@ -594,7 +593,7 @@ impl SessionPreparer {
             self.role_assignments.clone(),
         )?;
         let base_session =
-            BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng().await?)?;
+            BaseSessionStruct::new(parameters, networking, self.base_kms.new_rng().await)?;
         Ok(base_session)
     }
 
@@ -625,6 +624,18 @@ impl SessionPreparer {
             prss_state,
         };
         Ok(session)
+    }
+
+    /// Returns a copy of the `SessionPreparer` with a fresh randomness generator so it is safe to use.
+    async fn new_instance(&self) -> Self {
+        Self {
+            base_kms: self.base_kms.new_instance().await,
+            threshold: self.threshold,
+            my_id: self.my_id,
+            role_assignments: self.role_assignments.clone(),
+            networking_strategy: self.networking_strategy.clone(),
+            prss_setup: self.prss_setup.clone(),
+        }
     }
 }
 
@@ -828,10 +839,7 @@ impl Reencryptor for RealReencryptor {
         let mut protocol = Small::new(session.clone());
         let meta_store = Arc::clone(&self.reenc_meta_store);
         let fhe_keys = Arc::clone(&self.fhe_keys);
-        let mut rng = tonic_handle_potential_err(
-            self.base_kms.new_rng().await,
-            "Could not get a new RNG".to_string(),
-        )?;
+        let mut rng = self.base_kms.new_rng().await;
         let sig_key = Arc::clone(&self.base_kms.sig_key);
 
         // Below we write to the meta-store.

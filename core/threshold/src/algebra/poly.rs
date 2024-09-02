@@ -522,7 +522,7 @@ fn partial_xgcd<F: Field>(a: Poly<F>, b: Poly<F>, stop: usize) -> (Poly<F>, Poly
 /// - `points` holds the x-coordinates
 /// - `values` holds the y-coordinates
 /// - `k` such that we apply error correction to a polynomial of degree < k
-/// (usually degree = threshold in our scheme, but it can be 2*threshold in some cases)
+///   (usually degree = threshold in our scheme, but it can be 2*threshold in some cases)
 /// - `max_errs` is the maximum number of errors we try to correct for (most often threshold - len(corrupt_set), but can be less than this if degree is 2*threshold)
 ///
 /// __NOTE__ : We assume values already identified as errors have been excluded by the caller (i.e. values denoted Bot in NIST doc)

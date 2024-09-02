@@ -124,7 +124,9 @@ fn bit_dec_small_e2e_abort(c: &mut Criterion) {
                 b.iter(|| {
                     let mut computation = |mut session: SmallSession<ResiduePoly64>| async move {
                         let mut bitdec_prep =
-                            init_prep_bitdec_small(&mut session, config.batch_size).await;
+                            init_prep_bitdec_small(&mut session, config.batch_size)
+                                .await
+                                .unwrap();
 
                         let inputs: Vec<_> = (0..config.batch_size)
                             .map(|i| {
@@ -181,7 +183,9 @@ fn bit_dec_large_e2e(c: &mut Criterion) {
                 b.iter(|| {
                     let mut computation = |mut session: LargeSession| async move {
                         let mut bitdec_prep =
-                            init_prep_bitdec_large(&mut session, config.batch_size).await;
+                            init_prep_bitdec_large(&mut session, config.batch_size)
+                                .await
+                                .unwrap();
                         let inputs: Vec<_> = (0..config.batch_size)
                             .map(|i| {
                                 get_my_share(
