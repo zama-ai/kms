@@ -1775,7 +1775,7 @@ impl Client {
         )?;
         let degree = some_or_err(
             validated_resps.first(),
-            "No valid repsonses parsed".to_string(),
+            "No valid responses parsed".to_string(),
         )?
         .degree as usize;
         let sharings = self.recover_sharings(&validated_resps, fhe_type, client_keys)?;

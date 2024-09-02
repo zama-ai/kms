@@ -1964,7 +1964,7 @@ mod tests {
             assert!(handle.await.unwrap_err().is_cancelled());
         }
 
-        // check that PRSS was created (and not read form disk)
+        // check that PRSS was created (and not read from disk)
         assert!(!logs_contain(
             "Initializing threshold KMS server with PRSS Setup from disk"
         ));
@@ -1979,7 +1979,7 @@ mod tests {
         .await;
         assert_eq!(core_handles.len(), AMOUNT_PARTIES);
 
-        // check that PRSS was not created, but instead read form disk now
+        // check that PRSS was not created, but instead read from disk now
         assert!(logs_contain(
             "Initializing threshold KMS server with PRSS Setup from disk"
         ));

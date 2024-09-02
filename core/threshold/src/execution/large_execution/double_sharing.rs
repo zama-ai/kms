@@ -155,14 +155,14 @@ fn format_for_next<Z: Ring>(
 
 /// Extract randomness of degree t and 2t using the parties' contributions and the VDM matrix
 fn compute_next_batch<Z: Ring>(
-    formated_ldl: &mut Vec<DoubleArrayShares<Z>>,
+    formatted_ldl: &mut Vec<DoubleArrayShares<Z>>,
     vdm: &ArrayD<Z>,
 ) -> anyhow::Result<Vec<(Z, Z)>> {
-    let next_formated_ldl = formated_ldl
+    let next_formatted_ldl = formatted_ldl
         .pop()
-        .ok_or_else(|| anyhow_error_and_log("Can not acces pop empty formated_ldl vector"))?;
-    let res_t = next_formated_ldl.0.matmul(vdm)?.into_raw_vec();
-    let res_2t = next_formated_ldl.1.matmul(vdm)?.into_raw_vec();
+        .ok_or_else(|| anyhow_error_and_log("Can not access pop empty formatted_ldl vector"))?;
+    let res_t = next_formatted_ldl.0.matmul(vdm)?.into_raw_vec();
+    let res_2t = next_formatted_ldl.1.matmul(vdm)?.into_raw_vec();
     let res = res_t.into_iter().zip(res_2t).collect_vec();
     Ok(res)
 }

@@ -81,7 +81,7 @@ For the light client, we currently use CometBFT's [light](https://pkg.go.dev/git
 The light client package handles the logic of sequentially verifying block headers.
 
 ## Installation
-Docker images that a ready for use can be found [here](https://github.com/orgs/zama-ai/packages).
+Docker images that is ready for use can be found [here](https://github.com/orgs/zama-ai/packages).
 
 ## Getting started
 The project requires the use of Docker and Rust. Ensure that these are installed on your system.

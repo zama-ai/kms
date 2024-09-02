@@ -152,12 +152,12 @@ fn format_for_next<Z: Ring>(
 
 ///Extract randomness using the parties contributions and the VDM matrix
 fn compute_next_batch<Z: Ring>(
-    formated_lsl: &mut Vec<ArrayD<Z>>,
+    formatted_lsl: &mut Vec<ArrayD<Z>>,
     vdm: &ArrayD<Z>,
 ) -> anyhow::Result<Vec<Z>> {
-    let res = formated_lsl
+    let res = formatted_lsl
         .pop()
-        .ok_or_else(|| anyhow_error_and_log("Can not pop empty formated_lsl vector"))?
+        .ok_or_else(|| anyhow_error_and_log("Can not pop empty formatted_lsl vector"))?
         .matmul(vdm)?;
     Ok(res.into_raw_vec())
 }

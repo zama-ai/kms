@@ -163,7 +163,7 @@ impl PublicParameter {
         )
     }
 
-    /// Create new PublicParamter for given witness dimension containing the generators
+    /// Create new PublicParameter for given witness dimension containing the generators
     pub fn new(witness_dim: usize) -> Self {
         PublicParameter {
             round: 0,
