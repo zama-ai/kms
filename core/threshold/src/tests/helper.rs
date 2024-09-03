@@ -14,6 +14,7 @@ pub mod tests_and_benches {
     use futures::Future;
     use rand::SeedableRng;
     use tokio::task::JoinSet;
+    use tracing::warn;
 
     use crate::{
         execution::runtime::{
@@ -75,8 +76,11 @@ pub mod tests_and_benches {
         let res = rt.block_on(async {
             let mut results = Vec::with_capacity(tasks.len());
             while let Some(v) = tasks.join_next().await {
-                if let Ok(result) = v {
-                    results.push(result);
+                match v {
+                    Ok(result) => results.push(result),
+                    Err(e) => {
+                        warn!("FAILED {:?}", e);
+                    }
                 }
             }
             results

@@ -20,7 +20,6 @@ pub(crate) const INPUT_PARTY_ID: usize = 1;
 lazy_static! {
     pub static ref PLAINTEXT_MODULUS: NonZero<Limb> = NonZero::new(Limb(65537)).unwrap();
     /// Delta = (Q-1) / P. This will always be an integer as Q = 1 mod P. Data living at LevelEll is mod Q.
-    pub static ref DELTA: LevelEll = LevelEll {
-        value: GenericModulus(U768::from_be_hex("000000012229d6eb0d4661ce91439ae10feb70a8f335e557040f6772bfc1a63cf0474ff1b9c4436769a5dabf95a6a2f8192d445dfad29269ca2f85bcecc176ac08e41079869e1bb4a82a6ee109b72168faa3e44daafea645e6dfa743102e0000"))
+    pub static ref DELTA: LevelEll = LevelEll {value: GenericModulus(U768::from_be_hex("000043e7d82c161e10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"))
     };
 }

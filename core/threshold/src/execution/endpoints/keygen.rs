@@ -842,9 +842,10 @@ pub mod tests {
         random::{get_rng, seed_from_rng},
         tfhe_internals::{
             parameters::{
-                OLD_PARAMS_P32_REAL_WITH_SNS, PARAMS_P32_INTERNAL_FGLWE, PARAMS_P32_NO_SNS_FGLWE,
-                PARAMS_P32_NO_SNS_LWE, PARAMS_P32_SNS_FGLWE, PARAMS_P8_NO_SNS_FGLWE,
-                PARAMS_P8_NO_SNS_LWE, PARAMS_P8_SNS_FGLWE, PARAMS_TEST_BK_SNS,
+                NIST_PARAMS_P32_INTERNAL_FGLWE, NIST_PARAMS_P32_NO_SNS_FGLWE,
+                NIST_PARAMS_P32_NO_SNS_LWE, NIST_PARAMS_P32_SNS_FGLWE, NIST_PARAMS_P8_NO_SNS_FGLWE,
+                NIST_PARAMS_P8_NO_SNS_LWE, NIST_PARAMS_P8_SNS_FGLWE, OLD_PARAMS_P32_REAL_WITH_SNS,
+                PARAMS_TEST_BK_SNS,
             },
             switch_and_squash::SwitchAndSquashKey,
             test_feature::to_hl_client_key,
@@ -889,7 +890,7 @@ pub mod tests {
 
     #[test]
     fn pure_tfhers_test() {
-        let params = PARAMS_P32_INTERNAL_FGLWE;
+        let params = NIST_PARAMS_P32_INTERNAL_FGLWE;
         let classic_pbs = params.ciphertext_parameters;
         let dedicated_cpk_params = params.dedicated_compact_public_key_parameters.unwrap();
 
@@ -935,7 +936,7 @@ pub mod tests {
     #[test]
     #[ignore]
     fn keygen_params32_no_sns_fglwe() {
-        let params = PARAMS_P32_NO_SNS_FGLWE;
+        let params = NIST_PARAMS_P32_NO_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
@@ -962,7 +963,7 @@ pub mod tests {
     #[test]
     #[ignore]
     fn keygen_params8_no_sns_fglwe() {
-        let params = PARAMS_P8_NO_SNS_FGLWE;
+        let params = NIST_PARAMS_P8_NO_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
@@ -989,7 +990,7 @@ pub mod tests {
     #[test]
     #[ignore]
     fn keygen_params32_no_sns_lwe() {
-        let params = PARAMS_P32_NO_SNS_LWE;
+        let params = NIST_PARAMS_P32_NO_SNS_LWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
@@ -1016,7 +1017,7 @@ pub mod tests {
     #[test]
     #[ignore]
     fn keygen_params8_no_sns_lwe() {
-        let params = PARAMS_P8_NO_SNS_LWE;
+        let params = NIST_PARAMS_P8_NO_SNS_LWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
@@ -1085,7 +1086,7 @@ pub mod tests {
     #[test]
     #[ignore]
     fn keygen_params32_with_sns_fglwe() {
-        let params = PARAMS_P32_SNS_FGLWE;
+        let params = NIST_PARAMS_P32_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
@@ -1114,7 +1115,7 @@ pub mod tests {
     #[test]
     #[ignore]
     fn keygen_params8_with_sns_fglwe() {
-        let params = PARAMS_P8_SNS_FGLWE;
+        let params = NIST_PARAMS_P8_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 5;
         let threshold = 1;
@@ -1627,7 +1628,7 @@ pub mod tests {
     #[cfg(feature = "slow_tests")]
     #[test]
     fn keygen_params32_no_sns_fglwe_w_homprf() {
-        let params = PARAMS_P32_NO_SNS_FGLWE;
+        let params = NIST_PARAMS_P32_NO_SNS_FGLWE;
         let params_basics_handles = params.get_params_basics_handle();
         let num_parties = 2;
         let threshold = 0;

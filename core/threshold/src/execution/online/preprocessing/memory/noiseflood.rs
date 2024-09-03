@@ -26,12 +26,6 @@ pub struct InMemoryNoiseFloodPreprocessing {
     available_masks: Vec<ResiduePoly128>,
 }
 
-impl Drop for InMemoryNoiseFloodPreprocessing {
-    fn drop(&mut self) {
-        debug_assert_eq!(self.available_masks.len(), 0)
-    }
-}
-
 #[async_trait]
 impl NoiseFloodPreprocessing for InMemoryNoiseFloodPreprocessing {
     fn append_masks(&mut self, masks: Vec<ResiduePoly128>) {

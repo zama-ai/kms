@@ -1,3 +1,4 @@
+use tfhe::shortint::EncryptionKeyChoice;
 use tonic::async_trait;
 
 use crate::{
@@ -30,14 +31,6 @@ pub struct InMemoryDKGPreprocessing<Z: Ring> {
     available_noise_lwe_hat: Vec<Share<Z>>,
     available_noise_glwe: Vec<Share<Z>>,
     available_noise_oglwe: Vec<Share<Z>>,
-}
-
-impl<Z: Ring> Drop for InMemoryDKGPreprocessing<Z> {
-    fn drop(&mut self) {
-        debug_assert_eq!(self.available_noise_lwe.len(), 0);
-        debug_assert_eq!(self.available_noise_glwe.len(), 0);
-        debug_assert_eq!(self.available_noise_oglwe.len(), 0);
-    }
 }
 
 impl<Z: Ring> TriplePreprocessing<Z> for InMemoryDKGPreprocessing<Z> {
@@ -140,8 +133,9 @@ where
         session: &mut SmallSession<Z>,
         preprocessing: &mut dyn BasePreprocessing<Z>,
     ) -> anyhow::Result<()> {
-        //Need bits for lwe sk, glwe sk and maybe glwe sk sns
+        //Need bits for lwe sk, pk lwe sk, glwe sk and maybe glwe sk sns
         let num_bits_needed = params.get_params_basics_handle().lwe_dimension().0
+            + params.get_params_basics_handle().lwe_hat_dimension().0
             + params.get_params_basics_handle().glwe_sk_num_bits()
             + match params {
                 DKGParams::WithoutSnS(_) => 0,
@@ -192,25 +186,26 @@ where
 
         let params_basics_handles = params.get_params_basics_handle();
 
-        //Generate noise needed for the pk and the key switch key
+        //Depending on encryption type, pksk requires either LweNoise noise or GlweNoise
+        let (amount_pksk_lwe_noise, amount_pksk_glwe_noise) =
+            match params_basics_handles.encryption_key_choice() {
+                //type = LWE case
+                EncryptionKeyChoice::Small => (params_basics_handles.num_needed_noise_pksk(), 0),
+                //type = F-GLWE case
+                EncryptionKeyChoice::Big => (0, params_basics_handles.num_needed_noise_pksk()),
+            };
+
+        //Generate noise needed for the pksk (if needed) and the key switch key
         fill_noise(
             prss_state,
-            params_basics_handles.num_needed_noise_pk()
-                + params_basics_handles.num_needed_noise_ksk(),
+            amount_pksk_lwe_noise + params_basics_handles.num_needed_noise_ksk(),
             NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
         )?;
 
-        //Generate noise needed for the key switch key
+        //Generate noise needed for pksk (if needed) and the bootstrap key
         fill_noise(
             prss_state,
-            params_basics_handles.num_needed_noise_ksk(),
-            NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
-        )?;
-
-        //Generate noise needed for the bootstrap key
-        fill_noise(
-            prss_state,
-            params_basics_handles.num_needed_noise_bk(),
+            amount_pksk_glwe_noise + params_basics_handles.num_needed_noise_bk(),
             NoiseBounds::GlweNoise(params_basics_handles.glwe_tuniform_bound()),
         )?;
 
@@ -225,6 +220,13 @@ where
             }
             DKGParams::WithoutSnS(_) => (),
         }
+
+        //Generate noise needed for pk
+        fill_noise(
+            prss_state,
+            params_basics_handles.num_needed_noise_pk(),
+            NoiseBounds::LweHatNoise(params_basics_handles.lwe_hat_tuniform_bound()),
+        )?;
 
         //Fill in the required number of _raw_ bits
         let num_bits_needed = params_basics_handles.lwe_dimension().0
@@ -282,21 +284,28 @@ where
         preprocessing_bits: &mut dyn BitPreprocessing<Z>,
     ) -> anyhow::Result<()> {
         let params_basics_handles = params.get_params_basics_handle();
-        //Generate noise needed for pk and the key switch key
+        let (amount_pksk_lwe_noise, amount_pksk_glwe_noise) =
+            match params_basics_handles.encryption_key_choice() {
+                //type = LWE case
+                EncryptionKeyChoice::Small => (params_basics_handles.num_needed_noise_pksk(), 0),
+                //type = F-GLWE case
+                EncryptionKeyChoice::Big => (0, params_basics_handles.num_needed_noise_pksk()),
+            };
+
+        //Generate noise needed for pksk (if needed) and the key switch key
         self.append_noises(
             RealSecretDistributions::t_uniform(
-                params_basics_handles.num_needed_noise_pk()
-                    + params_basics_handles.num_needed_noise_ksk(),
+                params_basics_handles.num_needed_noise_ksk() + amount_pksk_lwe_noise,
                 params_basics_handles.lwe_tuniform_bound(),
                 preprocessing_bits,
             )?,
             NoiseBounds::LweNoise(params_basics_handles.lwe_tuniform_bound()),
         );
 
-        //Generate noise needed for the bootstrap key
+        //Generate noise needed for the pksk (if needed) and the bootstrap key
         self.append_noises(
             RealSecretDistributions::t_uniform(
-                params_basics_handles.num_needed_noise_bk(),
+                params_basics_handles.num_needed_noise_bk() + amount_pksk_glwe_noise,
                 params_basics_handles.glwe_tuniform_bound(),
                 preprocessing_bits,
             )?,
@@ -318,9 +327,20 @@ where
             DKGParams::WithoutSnS(_) => (),
         }
 
+        //Generate noise needed for the pk
+        self.append_noises(
+            RealSecretDistributions::t_uniform(
+                params_basics_handles.num_needed_noise_pk(),
+                params_basics_handles.lwe_hat_tuniform_bound(),
+                preprocessing_bits,
+            )?,
+            NoiseBounds::LweHatNoise(params_basics_handles.lwe_hat_tuniform_bound()),
+        );
+
         //Fill in the required number of _raw_ bits
         let num_bits_required = params_basics_handles.lwe_dimension().0
             + params_basics_handles.glwe_sk_num_bits()
+            + params_basics_handles.lwe_hat_dimension().0
             + match params {
                 DKGParams::WithSnS(sns_params) => sns_params.glwe_sk_num_bits_sns(),
                 DKGParams::WithoutSnS(_) => 0,

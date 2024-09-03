@@ -111,10 +111,6 @@ where
     pub available_randoms: Vec<Share<R>>,
 }
 
-impl<Z: Ring> Drop for InMemoryBasePreprocessing<Z> {
-    fn drop(&mut self) {}
-}
-
 impl<Z: Ring> TriplePreprocessing<Z> for InMemoryBasePreprocessing<Z> {
     fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<Z>>> {
         if self.available_triples.len() >= amount {

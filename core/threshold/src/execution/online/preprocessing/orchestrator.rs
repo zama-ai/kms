@@ -925,7 +925,7 @@ mod tests {
                 shamir::{RevealOp, ShamirSharings},
                 share::Share,
             },
-            tfhe_internals::parameters::PARAMS_P8_NO_SNS_FGLWE,
+            tfhe_internals::parameters::NIST_PARAMS_P8_NO_SNS_FGLWE,
         },
         networking::NetworkMode,
         session_id::SessionId,
@@ -1192,7 +1192,7 @@ mod tests {
                 let mut inmemory_factory = create_memory_factory();
 
                 //DKGParams just for being able to call new (no SNS for ResiduePoly64)
-                let params = PARAMS_P8_NO_SNS_FGLWE;
+                let params = NIST_PARAMS_P8_NO_SNS_FGLWE;
 
                 let orchestrator = PreprocessingOrchestrator::<ResiduePoly64>::new(
                     inmemory_factory.as_mut(),
@@ -1379,7 +1379,7 @@ mod tests {
                 let mut inmemory_factory = create_memory_factory();
 
                 //DKGParams just for being able to call new (no SNS for ResiduePoly64)
-                let params = PARAMS_P8_NO_SNS_FGLWE;
+                let params = NIST_PARAMS_P8_NO_SNS_FGLWE;
 
                 let orchestrator = PreprocessingOrchestrator::<ResiduePoly64>::new(
                     inmemory_factory.as_mut(),

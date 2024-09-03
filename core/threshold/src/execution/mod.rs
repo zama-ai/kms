@@ -83,6 +83,7 @@ pub mod tfhe_internals {
     pub mod parameters;
     #[cfg(feature = "non-wasm")]
     pub mod randomness;
+    mod raw_parameters;
     pub mod switch_and_squash;
     #[cfg(any(test, feature = "testing"))]
     pub mod test_feature;

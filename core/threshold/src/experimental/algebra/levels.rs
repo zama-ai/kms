@@ -747,13 +747,13 @@ impl LargestPrimeFactor for LevelKsw {
     /// - POW_2: corresponds to the S in the factorisation above
     /// - QUADRATIC_NON_RESIDUE_TO_ODD_DIV: corresponds to the quadratic non-residue above to the power Q
     fn largest_prime_factor_sqrt(v: &Self) -> Self {
-        const ODD_DIV : LevelR = LevelR { value : GenericModulus(U768::from_be_hex("000000020002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010001")) };
+        const ODD_DIV : LevelR = LevelR { value : GenericModulus(U768::from_be_hex("000020002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000350035")) };
 
-        const ODD_DIV_PLUS_ONE_DIV_TWO : LevelR = LevelR { value : GenericModulus(U768::from_be_hex("000000010001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008001")) };
+        const ODD_DIV_PLUS_ONE_DIV_TWO : LevelR = LevelR { value : GenericModulus(U768::from_be_hex("0000100010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001a801b")) };
 
-        const QUADRATIC_NON_RESIDUE_TO_ODD_DIV: LevelR = LevelR { value : GenericModulus(U768::from_be_hex("0014b7fee458dd7dd4e6ce7bce017db91e1bb0121d4d68efcce15f599f335bc0050cb567c13241e1b55e68a20fdc18a3eb9d578a2f887f3f5333504df8080474ee8e4224fcf3f1e367978651e086063d310aa6233b6ff38386484eade8340227")) };
+        const QUADRATIC_NON_RESIDUE_TO_ODD_DIV: LevelR = LevelR { value : GenericModulus(U768::from_be_hex("1e528ea4b55cf66ce0de709f70f3e39d945dd63087c4a634a3eff8c36be27d36f6a32908b3b188874659e63e73aa3adf09eb0ffc153e24896a03d728776026ead7aa4eeea3e068077628d5f704364d9466b6ac2a5e3db6d328b1d7c98e407877")) };
 
-        const POW_2: u128 = 20_u128;
+        const POW_2: u128 = 17_u128;
 
         let modulus_r: U1536 = LevelR::MODULUS.as_ref().into();
         let value_level_r = LevelR {
@@ -844,15 +844,15 @@ impl PRSSConversions for LevelOne {
 // Having such a root makes it easy to compute NTT over Q to support fast multiplication.
 
 //Represents the Ring for the top level ciphertext (Q = Prod(Q_i))
-impl_modulus!(Q, U768, "0001222af914e4316f14f3122c24aacc809463ded88ce9666b82273465fe9684403909b5fd2bad0d44657066389ebc255d8b3f308d3c5c994fec727e636d7f90195d9717a252c3df170b78982b201c0cdef18f4c51448d258e22b771102e0001");
+impl_modulus!(Q, U768, "43e81c13ee4a27181339e4c66eef29a987c3d4bc3e01375bb65ae36f3bbe918fde3394c1c80e4ce419d0054d71e806cdfdc9089d7c6869c697a6788e980158fb72f762e96f05bd232324d0a5e5c4fc022d5ddd32cc5318beb4be09940f3a0001");
 type ConstMontyFormQ = crypto_bigint::modular::ConstMontyForm<Q, { U768::LIMBS }>;
 impl_from_u128_big!(LevelEll, U768);
-impl_ring_level!(LevelEll, U768, ModulusSize768, Q, ConstMontyFormQ, "0001222af914e4316f14f3122c24aacc809463ded88ce9666b82273465fe9684403909b5fd2bad0d44657066389ebc255d8b3f308d3c5c994fec727e636d7f90195d9717a252c3df170b78982b201c0cdef18f4c51448d258e22b771102e0000");
+impl_ring_level!(LevelEll, U768, ModulusSize768, Q, ConstMontyFormQ, "43e81c13ee4a27181339e4c66eef29a987c3d4bc3e01375bb65ae36f3bbe918fde3394c1c80e4ce419d0054d71e806cdfdc9089d7c6869c697a6788e980158fb72f762e96f05bd232324d0a5e5c4fc022d5ddd32cc5318beb4be09940f3a0000");
 
-impl_modulus!(QR, U1536, "00000024458367fba8ca68cc44e3e6dade256c1c8e678d783e6a9d1256d1a65f905ad7a93de0dc35471e2e569975209e9883361397798d9d3ab590b84d5abd7c5fb31db60ea72d4cc63b5d51f4747708e59f5fcdc7bc121bcd436908b28b16a3b9def6b02d7b06a362826224e232f20047508314271614cf3eb1ef61d1d33574ae53ad451456f9c7d4b4bca7d3a887e22459dc8b55988346aeaaa257f24886e3b003fa3550fbbe19528feb67db06ffeae7ff75ee05c8e6620813ba61103e0001");
+impl_modulus!(QR, U1536, "10fa17ff029785588e947e0014ed66262c5b572004af5d573b6da67287cb73539bf0dcbd5734053c99ad07c75dcd5e2d8125c199a141798bc05b440d4423fc3f32fcb578347bcb0a3811fcf2ad9ab871ca5802a42a617944735f2fb0a46b422b4edd36c0143ad73abc6b13ffe63776b14a366d36ab9ce50c9f51e5e982ac2b284c5c41204ea32f1775f400ab5870ad41123a581413911fbf7340413b0a8de8125fffabd64cd0af12ab664d1d07895be85eceb691e1f9e6bcfa1058020fa40001");
 type ConstMontyFormQR = crypto_bigint::modular::ConstMontyForm<QR, { U1536::LIMBS }>;
 impl_from_u128_big!(LevelKsw, U1536);
-impl_ring_level!(LevelKsw, U1536, ModulusSize1536, QR, ConstMontyFormQR, "00000024458367fba8ca68cc44e3e6dade256c1c8e678d783e6a9d1256d1a65f905ad7a93de0dc35471e2e569975209e9883361397798d9d3ab590b84d5abd7c5fb31db60ea72d4cc63b5d51f4747708e59f5fcdc7bc121bcd436908b28b16a3b9def6b02d7b06a362826224e232f20047508314271614cf3eb1ef61d1d33574ae53ad451456f9c7d4b4bca7d3a887e22459dc8b55988346aeaaa257f24886e3b003fa3550fbbe19528feb67db06ffeae7ff75ee05c8e6620813ba61103e0000");
+impl_ring_level!(LevelKsw, U1536, ModulusSize1536, QR, ConstMontyFormQR, "10fa17ff029785588e947e0014ed66262c5b572004af5d573b6da67287cb73539bf0dcbd5734053c99ad07c75dcd5e2d8125c199a141798bc05b440d4423fc3f32fcb578347bcb0a3811fcf2ad9ab871ca5802a42a617944735f2fb0a46b422b4edd36c0143ad73abc6b13ffe63776b14a366d36ab9ce50c9f51e5e982ac2b284c5c41204ea32f1775f400ab5870ad41123a581413911fbf7340413b0a8de8125fffabd64cd0af12ab664d1d07895be85eceb691e1f9e6bcfa1058020fa40000");
 
 impl_modulus!(Q1, U128, "00000000400040000000001400140001");
 type ConstMontyFormQ1 = crypto_bigint::modular::ConstMontyForm<Q1, { U128::LIMBS }>;
@@ -866,7 +866,7 @@ impl_field_level!(
     "00000000400040000000001400140000"
 );
 
-impl_modulus!(Q2, U64, "0000802880280001");
+impl_modulus!(Q2, U64, "0001003500340001");
 type ConstMontyFormQ2 = crypto_bigint::modular::ConstMontyForm<Q2, { U64::LIMBS }>;
 impl_from_u128_small!(LevelTwo);
 impl_field_level!(
@@ -875,10 +875,10 @@ impl_field_level!(
     ModulusSize64,
     Q2,
     ConstMontyFormQ2,
-    "0000802880280000"
+    "0001003500340000"
 );
 
-impl_modulus!(Q3, U64, "0000802e802e0001");
+impl_modulus!(Q3, U64, "0001005900580001");
 type ConstMontyFormQ3 = crypto_bigint::modular::ConstMontyForm<Q3, { U64::LIMBS }>;
 impl_from_u128_small!(LevelThree);
 impl_field_level!(
@@ -887,10 +887,10 @@ impl_field_level!(
     ModulusSize64,
     Q3,
     ConstMontyFormQ3,
-    "0000802e802e0000"
+    "0001005900580000"
 );
 
-impl_modulus!(Q4, U64, "0000806080600001");
+impl_modulus!(Q4, U64, "0001008300820001");
 type ConstMontyFormQ4 = crypto_bigint::modular::ConstMontyForm<Q4, { U64::LIMBS }>;
 impl_from_u128_small!(LevelFour);
 impl_field_level!(
@@ -899,10 +899,10 @@ impl_field_level!(
     ModulusSize64,
     Q4,
     ConstMontyFormQ4,
-    "0000806080600000"
+    "0001008300820000"
 );
 
-impl_modulus!(Q5, U64, "000080b280b20001");
+impl_modulus!(Q5, U64, "0001009900980001");
 type ConstMontyFormQ5 = crypto_bigint::modular::ConstMontyForm<Q5, { U64::LIMBS }>;
 impl_from_u128_small!(LevelFive);
 impl_field_level!(
@@ -911,10 +911,10 @@ impl_field_level!(
     ModulusSize64,
     Q5,
     ConstMontyFormQ5,
-    "000080b280b20000"
+    "0001009900980000"
 );
 
-impl_modulus!(Q6, U64, "000080ca80ca0001");
+impl_modulus!(Q6, U64, "000100b700b60001");
 type ConstMontyFormQ6 = crypto_bigint::modular::ConstMontyForm<Q6, { U64::LIMBS }>;
 impl_from_u128_small!(LevelSix);
 impl_field_level!(
@@ -923,10 +923,10 @@ impl_field_level!(
     ModulusSize64,
     Q6,
     ConstMontyFormQ6,
-    "000080ca80ca0000"
+    "000100b700b60000"
 );
 
-impl_modulus!(Q7, U64, "000080d080d00001");
+impl_modulus!(Q7, U64, "0001010d010c0001");
 type ConstMontyFormQ7 = crypto_bigint::modular::ConstMontyForm<Q7, { U64::LIMBS }>;
 impl_from_u128_small!(LevelSeven);
 impl_field_level!(
@@ -935,10 +935,10 @@ impl_field_level!(
     ModulusSize64,
     Q7,
     ConstMontyFormQ7,
-    "000080d080d00000"
+    "0001010d010c0000"
 );
 
-impl_modulus!(Q8, U64, "0000811e811e0001");
+impl_modulus!(Q8, U64, "0001013501340001");
 type ConstMontyFormQ8 = crypto_bigint::modular::ConstMontyForm<Q8, { U64::LIMBS }>;
 impl_from_u128_small!(LevelEight);
 impl_field_level!(
@@ -947,10 +947,10 @@ impl_field_level!(
     ModulusSize64,
     Q8,
     ConstMontyFormQ8,
-    "0000811e811e0000"
+    "0001013501340000"
 );
 
-impl_modulus!(Q9, U64, "0000813281320001");
+impl_modulus!(Q9, U64, "0001014301420001");
 type ConstMontyFormQ9 = crypto_bigint::modular::ConstMontyForm<Q9, { U64::LIMBS }>;
 impl_from_u128_small!(LevelNine);
 impl_field_level!(
@@ -959,10 +959,10 @@ impl_field_level!(
     ModulusSize64,
     Q9,
     ConstMontyFormQ9,
-    "0000813281320000"
+    "0001014301420000"
 );
 
-impl_modulus!(Q10, U64, "0000815a815a0001");
+impl_modulus!(Q10, U64, "0001015301520001");
 type ConstMontyFormQ10 = crypto_bigint::modular::ConstMontyForm<Q10, { U64::LIMBS }>;
 impl_from_u128_small!(LevelTen);
 impl_field_level!(
@@ -971,10 +971,10 @@ impl_field_level!(
     ModulusSize64,
     Q10,
     ConstMontyFormQ10,
-    "0000815a815a0000"
+    "0001015301520000"
 );
 
-impl_modulus!(Q11, U64, "0000819881980001");
+impl_modulus!(Q11, U64, "0001016701660001");
 type ConstMontyFormQ11 = crypto_bigint::modular::ConstMontyForm<Q11, { U64::LIMBS }>;
 impl_from_u128_small!(LevelEleven);
 impl_field_level!(
@@ -983,10 +983,10 @@ impl_field_level!(
     ModulusSize64,
     Q11,
     ConstMontyFormQ11,
-    "0000819881980000"
+    "0001016701660000"
 );
 
-impl_modulus!(Q12, U64, "000081ae81ae0001");
+impl_modulus!(Q12, U64, "0001019101900001");
 type ConstMontyFormQ12 = crypto_bigint::modular::ConstMontyForm<Q12, { U64::LIMBS }>;
 impl_from_u128_small!(LevelTwelve);
 impl_field_level!(
@@ -995,10 +995,10 @@ impl_field_level!(
     ModulusSize64,
     Q12,
     ConstMontyFormQ12,
-    "000081ae81ae0000"
+    "0001019101900000"
 );
 
-impl_modulus!(Q13, U64, "000081fc81fc0001");
+impl_modulus!(Q13, U64, "0001019501940001");
 type ConstMontyFormQ13 = crypto_bigint::modular::ConstMontyForm<Q13, { U64::LIMBS }>;
 impl_from_u128_small!(LevelThirteen);
 impl_field_level!(
@@ -1007,10 +1007,10 @@ impl_field_level!(
     ModulusSize64,
     Q13,
     ConstMontyFormQ13,
-    "000081fc81fc0000"
+    "0001019501940000"
 );
 
-impl_modulus!(Q14, U64, "0000821082100001");
+impl_modulus!(Q14, U64, "000101b301b20001");
 type ConstMontyFormQ14 = crypto_bigint::modular::ConstMontyForm<Q14, { U64::LIMBS }>;
 impl_from_u128_small!(LevelFourteen);
 impl_field_level!(
@@ -1019,10 +1019,10 @@ impl_field_level!(
     ModulusSize64,
     Q14,
     ConstMontyFormQ14,
-    "0000821082100000"
+    "000101b301b20000"
 );
 
-impl_modulus!(Q15, U64, "0000821c821c0001");
+impl_modulus!(Q15, U64, "000101bb01ba0001");
 type ConstMontyFormQ15 = crypto_bigint::modular::ConstMontyForm<Q15, { U64::LIMBS }>;
 impl_from_u128_small!(LevelFifteen);
 impl_field_level!(
@@ -1031,13 +1031,13 @@ impl_field_level!(
     ModulusSize64,
     Q15,
     ConstMontyFormQ15,
-    "0000821c821c0000"
+    "000101bb01ba0000"
 );
 
-impl_modulus!(R, U768, "002000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000100001");
+impl_modulus!(R, U768, "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0001");
 type ConstMontyFormR = crypto_bigint::modular::ConstMontyForm<R, { U768::LIMBS }>;
 impl_from_u128_big!(LevelR, U768);
-impl_field_level!(LevelR, U768, ModulusSize768, R, ConstMontyFormR, "002000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000100000");
+impl_field_level!(LevelR, U768, ModulusSize768, R, ConstMontyFormR, "400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0000");
 
 /// Scaling factor is R from T = QR in the NIST document, but using the same underlying type as QR.
 pub trait ScalingFactor {
@@ -1045,7 +1045,7 @@ pub trait ScalingFactor {
 }
 
 impl ScalingFactor for LevelKsw {
-    const FACTOR: Self = Self{value : GenericModulus(U1536::from_be_hex("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000100000"))};
+    const FACTOR: Self = Self{value : GenericModulus(U1536::from_be_hex("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006a006a0000"))};
 }
 
 #[cfg(test)]

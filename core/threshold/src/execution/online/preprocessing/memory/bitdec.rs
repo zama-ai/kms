@@ -18,13 +18,6 @@ pub struct InMemoryBitDecPreprocessing {
     available_bits: Vec<Share<ResiduePoly64>>,
 }
 
-impl Drop for InMemoryBitDecPreprocessing {
-    fn drop(&mut self) {
-        debug_assert_eq!(self.available_bits.len(), 0);
-        debug_assert_eq!(self.available_triples.len(), 0);
-    }
-}
-
 impl TriplePreprocessing<ResiduePoly64> for InMemoryBitDecPreprocessing {
     fn next_triple_vec(&mut self, amount: usize) -> anyhow::Result<Vec<Triple<ResiduePoly64>>> {
         //Code is duplicate of BasePreprocessing
