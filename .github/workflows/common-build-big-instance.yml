@@ -34,6 +34,14 @@ on:
         type: string
         required: true
         default: ''
+      test-coverage:
+        type: boolean
+        required: false
+        default: false
+      test-minimum-coverage:
+        type: string
+        required: false
+        default: 0
     secrets:
       SLAB_ACTION_TOKEN:
         required: true
@@ -80,6 +88,7 @@ jobs:
       run-wasm: ${{ inputs.run-wasm }}
       package-name: ${{ inputs.package-name }}
       wasm-test-feature: ${{ inputs.wasm-test-feature }}
+      test-coverage: ${{ inputs.test-coverage }}
 
   stop-runner:
     name: Stops self-hosted EC2 runner
