@@ -161,8 +161,16 @@ fn compute_next_batch<Z: Ring>(
     let next_formatted_ldl = formatted_ldl
         .pop()
         .ok_or_else(|| anyhow_error_and_log("Can not access pop empty formatted_ldl vector"))?;
-    let res_t = next_formatted_ldl.0.matmul(vdm)?.into_raw_vec();
-    let res_2t = next_formatted_ldl.1.matmul(vdm)?.into_raw_vec();
+    let res_t = next_formatted_ldl
+        .0
+        .matmul(vdm)?
+        .into_raw_vec_and_offset()
+        .0;
+    let res_2t = next_formatted_ldl
+        .1
+        .matmul(vdm)?
+        .into_raw_vec_and_offset()
+        .0;
     let res = res_t.into_iter().zip(res_2t).collect_vec();
     Ok(res)
 }

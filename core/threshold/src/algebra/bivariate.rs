@@ -140,13 +140,13 @@ where
     fn partial_x_evaluation(&self, alpha: Z) -> Result<Poly<Z>> {
         let powers_array = Array::from(compute_powers(alpha, self.degree)).into_dyn();
         let res_vector = powers_array.matmul(&self.coefs)?;
-        Ok(Poly::from_coefs(res_vector.into_raw_vec()))
+        Ok(Poly::from_coefs(res_vector.into_raw_vec_and_offset().0))
     }
 
     fn partial_y_evaluation(&self, alpha: Z) -> Result<Poly<Z>> {
         let powers_array = Array::from(compute_powers(alpha, self.degree)).into_dyn();
         let res_vector = self.coefs.matmul(&powers_array)?;
-        Ok(Poly::from_coefs(res_vector.into_raw_vec()))
+        Ok(Poly::from_coefs(res_vector.into_raw_vec_and_offset().0))
     }
 
     fn full_evaluation(&self, alpha_x: Z, alpha_y: Z) -> Result<Z> {

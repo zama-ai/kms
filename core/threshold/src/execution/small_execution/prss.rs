@@ -668,7 +668,7 @@ where
             let vss_s = vss_res.iter().map(|s| s[i]).collect_vec();
             //Apply randomness extraction
             let random_val = m_inverse.matmul(&ArrayD::from_shape_vec(IxDyn(&[n]), vss_s)?)?;
-            to_open.append(&mut random_val.into_raw_vec());
+            to_open.append(&mut random_val.into_raw_vec_and_offset().0);
         }
 
         // create all the subsets A that contain the party id

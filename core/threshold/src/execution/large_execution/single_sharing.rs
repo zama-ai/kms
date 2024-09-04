@@ -159,7 +159,7 @@ fn compute_next_batch<Z: Ring>(
         .pop()
         .ok_or_else(|| anyhow_error_and_log("Can not pop empty formatted_lsl vector"))?
         .matmul(vdm)?;
-    Ok(res.into_raw_vec())
+    Ok(res.into_raw_vec_and_offset().0)
 }
 
 #[cfg(test)]
