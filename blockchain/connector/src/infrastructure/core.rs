@@ -270,13 +270,14 @@ where
         let version = self.decrypt.version();
         let key_id = self.decrypt.key_id().to_hex();
 
-        let ct_handles = self.decrypt.ciphertext_handles();
+        let kv_ct_handles = self.decrypt.ciphertext_handles();
         let fhe_types = self.decrypt.fhe_types();
+        let external_handles = self.decrypt.external_handles();
 
-        if ct_handles.0.len() != fhe_types.len() {
+        if kv_ct_handles.0.len() != fhe_types.len() {
             return Err(anyhow!(
                 "ct_handles and fhe_types must have the same length, but did not: #ct_handles={} - #fhe_types={}",
-                ct_handles.0.len(),
+                kv_ct_handles.0.len(),
                 fhe_types.len()
             ));
         }
@@ -285,19 +286,23 @@ where
         let mut ciphertexts = Vec::new();
 
         // iterate over ciphertext handles and get actual ciphertext values from storage
-        for (idx, ch) in ct_handles.0.iter().enumerate() {
-            let ct_handle = ch.0.clone();
+        for (idx, ch) in kv_ct_handles.0.iter().enumerate() {
+            let kv_ct_handle = ch.0.clone();
 
             let ciphertext = self
                 .operation_val
                 .kms_client
                 .storage
-                .get_ciphertext(ct_handle)
+                .get_ciphertext(kv_ct_handle)
                 .await?;
+
+            // add external handle if it exists
+            let external_handle = external_handles.as_ref().map(|ehs| ehs.0[idx].0.clone());
 
             ciphertexts.push(TypedCiphertext {
                 ciphertext,
                 fhe_type: fhe_types[idx] as i32,
+                external_handle,
             });
         }
 

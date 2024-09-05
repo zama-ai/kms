@@ -17,8 +17,8 @@ use crate::rpc::central_rpc::{
     convert_key_response, retrieve_parameters_sync, tonic_handle_potential_err, tonic_some_or_err,
     validate_decrypt_req, validate_reencrypt_req, validate_request_id,
 };
-use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::SignedPubDataHandleInternal;
+use crate::rpc::rpc_types::{compute_external_signature, PrivDataType};
 use crate::rpc::rpc_types::{
     BaseKms, Plaintext, PubDataType, SigncryptionPayload, CURRENT_FORMAT_VERSION,
 };
@@ -29,7 +29,6 @@ use crate::util::meta_store::{handle_res_mapping, HandlerStatus, MetaStore};
 use crate::{anyhow_error_and_log, get_exactly_one};
 use aes_prng::AesRng;
 use anyhow::anyhow;
-use bincode::serialize;
 use conf_trace::telemetry::{accept_trace, make_span, record_trace_id};
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
 use distributed_decryption::conf::party::CertificatePaths;
@@ -273,7 +272,7 @@ pub struct ThresholdFheKeys {
 }
 
 // Request digest, and resultant plaintext
-type DecMetaStore = (Vec<u8>, Vec<Plaintext>);
+type DecMetaStore = (Vec<u8>, Vec<(Plaintext, Option<Vec<u8>>)>);
 // Request digest, fhe type of encryption and resultant partial decryption
 type ReencMetaStore = (Vec<u8>, FheType, Vec<u8>);
 // Hashmap of `PubDataType` to the corresponding `SignedPubDataHandleInternal` information for all the different
@@ -779,19 +778,19 @@ impl RealReencryptor {
                 let partial_signcryption =
                     match partial_dec_map.get(&session.session_id().to_string()) {
                         Some(partial_dec) => {
-                            let partial_dec_serialized = serialize(&partial_dec)?;
+                            let partial_dec_serialized = bincode::serialize(&partial_dec)?;
                             let signcryption_msg = SigncryptionPayload {
                                 plaintext: Plaintext::from_bytes(partial_dec_serialized, fhe_type),
                                 link,
                             };
                             let enc_res = signcrypt(
                                 rng,
-                                &serialize(&signcryption_msg)?,
+                                &bincode::serialize(&signcryption_msg)?,
                                 client_enc_key,
                                 client_address,
                                 &sig_key,
                             )?;
-                            serialize(&enc_res)?
+                            bincode::serialize(&enc_res)?
                         }
                         None => {
                             return Err(anyhow!(
@@ -929,7 +928,7 @@ impl Reencryptor for RealReencryptor {
         };
 
         let sig_payload_vec = tonic_handle_potential_err(
-            serialize(&payload),
+            bincode::serialize(&payload),
             format!("Could not convert payload to bytes {:?}", payload),
         )?;
 
@@ -1076,6 +1075,7 @@ impl Decryptor for RealDecryptor {
                 };
 
                 let ciphertext = &ct.ciphertext;
+                let external_handle = ct.external_handle;
 
                 let fhe_keys_rlock = fhe_keys.read().await;
                 let res_plaintext = match fhe_type {
@@ -1142,7 +1142,7 @@ impl Decryptor for RealDecryptor {
                     .map(|x| Plaintext::new(x as u128, fhe_type)),
                 };
                 match res_plaintext {
-                    Ok(plaintext) => Ok((idx, plaintext)),
+                    Ok(plaintext) => Ok((idx, plaintext, external_handle)),
                     Result::Err(e) => Err(anyhow_error_and_log(format!(
                         "Threshold decryption failed:{}",
                         e
@@ -1157,8 +1157,8 @@ impl Decryptor for RealDecryptor {
             let mut decs = HashMap::new();
             while let Some(resp) = dec_tasks.join_next().await {
                 match resp {
-                    Ok(Ok((idx, plaintext))) => {
-                        decs.insert(idx, plaintext);
+                    Ok(Ok((idx, plaintext, external_handle))) => {
+                        decs.insert(idx, (plaintext, external_handle));
                     }
                     _ => {
                         let mut guarded_meta_store = meta_store.write().await;
@@ -1172,15 +1172,17 @@ impl Decryptor for RealDecryptor {
                 }
             }
 
-            let pts: Vec<_> = decs
+            let pts_and_handles: Vec<_> = decs
                 .keys()
                 .sorted()
                 .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
                 .collect();
 
             let mut guarded_meta_store = meta_store.write().await;
-            let _ =
-                guarded_meta_store.update(&req_id, HandlerStatus::Done((req_digest.clone(), pts)));
+            let _ = guarded_meta_store.update(
+                &req_id,
+                HandlerStatus::Done((req_digest.clone(), pts_and_handles)),
+            );
         });
 
         Ok(Response::new(Empty {}))
@@ -1210,10 +1212,14 @@ impl Decryptor for RealDecryptor {
             )?
         };
 
+        // sign the plaintexts and handles for external verification (in the fhevm)
+        let (pts, ext_handles_bytes): (Vec<_>, Vec<_>) = plaintexts.into_iter().collect();
+        let sigkey = Arc::clone(&self.base_kms.sig_key);
+        let external_sig = compute_external_signature(&sigkey, ext_handles_bytes, &pts);
+
         let pt_payload = tonic_handle_potential_err(
-            plaintexts
-                .into_iter()
-                .map(|pt| serialize(&pt))
+            pts.iter()
+                .map(bincode::serialize)
                 .collect::<Result<Vec<Vec<u8>>, _>>(),
             "Error serializing plaintexts in get_result()".to_string(),
         )?;
@@ -1224,10 +1230,11 @@ impl Decryptor for RealDecryptor {
             plaintexts: pt_payload,
             verification_key: server_verf_key,
             digest: req_digest,
+            external_signature: Some(external_sig),
         };
 
         let sig_payload_vec = tonic_handle_potential_err(
-            serialize(&sig_payload),
+            bincode::serialize(&sig_payload),
             format!("Could not convert payload to bytes {:?}", sig_payload),
         )?;
 

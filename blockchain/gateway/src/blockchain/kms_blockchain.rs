@@ -227,26 +227,30 @@ impl<'a> KmsBlockchainImpl {
 impl Blockchain for KmsBlockchainImpl {
     async fn decrypt(
         &self,
-        typed_cts: Vec<(Vec<u8>, FheType)>,
+        typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
     ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
-        let mut ct_handles = Vec::new();
-        let mut fhe_types = Vec::new();
+        let num_cts = typed_cts.len();
+        let mut kv_ct_handles = Vec::with_capacity(num_cts);
+        let mut fhe_types = Vec::with_capacity(num_cts);
+        let mut external_ct_handles = Vec::with_capacity(num_cts);
         let mut total_size = 0;
 
-        for (ct, fhe_type) in typed_cts {
+        for (ct, fhe_type, external_ct_handle) in typed_cts {
             let ctxt_handle = self.store_ciphertext(ct.clone()).await?;
             let data_size = footprint::extract_ciphertext_size(&ctxt_handle);
             total_size += data_size;
             fhe_types.push(fhe_type);
-            ct_handles.push(ctxt_handle);
+            kv_ct_handles.push(ctxt_handle);
+            external_ct_handles.push(external_ct_handle);
         }
 
         let operation = events::kms::OperationValue::Decrypt(
             DecryptValues::builder()
                 .version(CURRENT_FORMAT_VERSION)
                 .key_id(hex::decode(self.config.kms.key_id.as_str()).unwrap())
-                .ciphertext_handles(ct_handles.clone())
+                .ciphertext_handles(kv_ct_handles.clone())
                 .fhe_types(fhe_types.clone())
+                .external_handles(Some(external_ct_handles.into()))
                 .build(),
         );
 
@@ -287,7 +291,11 @@ impl Blockchain for KmsBlockchainImpl {
                     )
                     .unwrap();
 
-                    let sig = decrypt_response.signature().0.clone();
+                    // the KMS-internal signature, for verification of the response (currently not used)
+                    let _internal_sig = decrypt_response.signature().0.clone();
+
+                    // the signature to be verified externally (e.g. by the fhevm)
+                    let external_sig = payload.external_signature.unwrap_or_default();
 
                     tracing::info!(
                         "🍇🥐🍇🥐🍇🥐 Centralized Gateway decrypted {} plaintext(s).",
@@ -301,7 +309,8 @@ impl Blockchain for KmsBlockchainImpl {
                         .map(|pt| deserialize::<Plaintext>(pt))
                         .collect::<Result<Vec<_>, _>>()?;
 
-                    (ptxts, vec![sig])
+                    // 1 batch of plaintexts and a single signature for the batch from the centralized KMS
+                    (ptxts, vec![external_sig])
                 }
                 _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
             },
@@ -345,8 +354,13 @@ impl Blockchain for KmsBlockchainImpl {
                             );
                             ptxts.push(payload.plaintexts);
 
-                            let sig = decrypt_response.signature().0.clone();
-                            sigs.push(sig);
+                            // the KMS-internal signature, for verification of the response (currently not used)
+                            let _internal_sig = decrypt_response.signature().0.clone();
+
+                            // the signature to be verified externally (e.g. by the fhevm)
+                            let external_sig = payload.external_signature.unwrap_or_default();
+
+                            sigs.push(external_sig);
                         }
                         _ => {
                             return Err(anyhow::anyhow!(
@@ -368,6 +382,7 @@ impl Blockchain for KmsBlockchainImpl {
                         .iter()
                         .map(|pt| deserialize::<Plaintext>(pt))
                         .collect::<Result<Vec<_>, _>>()?;
+                    // return the majority plaintext batch and all signatures by the threshold KMS parties
                     (ptxts, sigs)
                 } else {
                     return Err(anyhow::anyhow!(
@@ -383,6 +398,7 @@ impl Blockchain for KmsBlockchainImpl {
 
         let mut tokens = Vec::new();
 
+        // turn Plaintexts into Tokens for the smart contract
         for (idx, ptxt) in ptxts.iter().enumerate() {
             tracing::info!("FheType: {:#?}", fhe_types[idx]);
             let res = match fhe_types[idx] {

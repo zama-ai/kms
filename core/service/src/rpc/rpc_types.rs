@@ -22,6 +22,10 @@ cfg_if::cfg_if! {
         use alloy_primitives::Bytes;
         use alloy_sol_types::SolStruct;
         use rand::{CryptoRng, RngCore};
+        use alloy::dyn_abi::DynSolValue;
+        use crate::cryptography::signcryption::DecryptionResult;
+        use alloy::signers::local::PrivateKeySigner;
+        use alloy::signers::SignerSync;
     }
 }
 
@@ -188,6 +192,112 @@ pub(crate) fn alloy_to_protobuf_domain(domain: &Eip712Domain) -> anyhow::Result<
         salt,
     };
     Ok(domain_msg)
+}
+
+#[cfg(feature = "non-wasm")]
+// take an ordered list of plaintexts and ABI encode them into Solidity Bytes
+fn abi_encode_plaintexts(ptxts: &[Plaintext]) -> Bytes {
+    // This is a hack to get the offsets right for Byte types.
+    // Every offset needs to be shifted by 32 bytes (256 bits), so we prepend a U256 and delete it at the and, after encoding.
+    let mut data = vec![DynSolValue::Uint(U256::from(0), 256)];
+
+    for ptxt in ptxts.iter() {
+        tracing::debug!("Encoding Plaintext with FheType: {:#?}", ptxt.fhe_type());
+        let res = match ptxt.fhe_type() {
+            FheType::Ebool => {
+                let val = if ptxt.as_bool() { 1_u8 } else { 0 };
+                DynSolValue::Uint(U256::from(val), 256)
+            }
+            FheType::Euint4 => DynSolValue::Uint(U256::from(ptxt.as_u4()), 256),
+            FheType::Euint8 => DynSolValue::Uint(U256::from(ptxt.as_u8()), 256),
+            FheType::Euint16 => DynSolValue::Uint(U256::from(ptxt.as_u16()), 256),
+            FheType::Euint32 => DynSolValue::Uint(U256::from(ptxt.as_u32()), 256),
+            FheType::Euint64 => DynSolValue::Uint(U256::from(ptxt.as_u64()), 256),
+            FheType::Euint128 => DynSolValue::Uint(U256::from(ptxt.as_u128()), 256),
+            FheType::Euint160 => {
+                let mut cake = vec![0u8; 32];
+                ptxt.as_u160().copy_to_be_byte_slice(cake.as_mut_slice());
+                DynSolValue::Uint(U256::from_be_slice(&cake), 256)
+            }
+            FheType::Euint256 => {
+                let mut cake = vec![0u8; 32];
+                ptxt.as_u256().copy_to_be_byte_slice(cake.as_mut_slice());
+                DynSolValue::Uint(U256::from_be_slice(&cake), 256)
+            }
+            FheType::Euint2048 => {
+                let mut cake = vec![0u8; 256];
+                ptxt.as_u2048().copy_to_be_byte_slice(cake.as_mut_slice());
+                DynSolValue::Bytes(cake)
+            }
+            FheType::Euint512 => {
+                todo!("Implement Euint512")
+            }
+            FheType::Euint1024 => {
+                todo!("Implement Euint1024")
+            }
+        };
+        data.push(res);
+    }
+
+    // wrap data in a Tuple, so we can encode it with position information
+    let encoded = DynSolValue::Tuple(data).abi_encode();
+
+    // strip off the extra U256 and Tuple definition (2x 32 Bytes) at the beginning
+    let encoded_bytes: Vec<u8> = encoded[64..].to_vec();
+
+    let hexbytes = hex::encode(encoded_bytes.clone());
+    tracing::debug!("Encoded plaintext ABI {:?}", hexbytes);
+
+    Bytes::from(encoded_bytes)
+}
+
+#[cfg(feature = "non-wasm")]
+/// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them
+pub(crate) fn compute_external_signature(
+    client_sk: &PrivateSigKey,
+    ext_handles_bytes: Vec<Option<Vec<u8>>>,
+    pts: &[Plaintext],
+) -> Vec<u8> {
+    // convert external_handles back to U256 to be signed
+    let external_handles: Vec<_> = ext_handles_bytes
+        .into_iter()
+        .flatten()
+        .map(|e| U256::from_be_slice(e.as_slice()))
+        .collect();
+
+    let pt_bytes = abi_encode_plaintexts(pts);
+
+    let message = DecryptionResult {
+        handlesList: external_handles,
+        decryptedResult: pt_bytes,
+    };
+
+    // TODO update domain to match fhevm values
+    let domain = alloy_sol_types::eip712_domain!(
+        name: "KMSVerifier",
+        version: "v0.1.0",
+        chain_id: 9000,
+        verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
+    );
+
+    let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
+    let signer_address = signer.address();
+
+    tracing::info!("Signer address: {:?}", signer_address);
+
+    let message_hash = message.eip712_signing_hash(&domain);
+    tracing::info!("Message hash: {:?}", message_hash);
+
+    // Sign the hash synchronously with the wallet.
+    let signature = signer
+        .sign_hash_sync(&message_hash)
+        .unwrap()
+        .as_bytes()
+        .to_vec();
+
+    tracing::info!("Signature: {:?}", hex::encode(signature.clone()));
+
+    signature
 }
 
 #[cfg(feature = "non-wasm")]
@@ -815,5 +925,73 @@ pub(crate) mod tests {
         let x: u128 = request_id.clone().try_into().unwrap();
         let req_id2 = RequestId::from(x);
         assert_eq!(request_id, req_id2);
+    }
+
+    #[test]
+    fn test_abi_encoding_fhevm() {
+        let u256_val = tfhe::integer::U256::from((1, 256));
+        let u2048_val = tfhe::integer::bigint::U2048::from(257_u64);
+
+        let pts: Vec<Plaintext> = vec![
+            Plaintext::from_u2048(u2048_val),
+            Plaintext::from_bool(true),
+            Plaintext::from_u4(4),
+            Plaintext::from_u4(5),
+            Plaintext::from_u2048(u2048_val),
+            Plaintext::from_u8(8),
+            Plaintext::from_u16(16),
+            Plaintext::from_u32(32),
+            Plaintext::from_u128(128),
+            Plaintext::from_u160_low_high((234, 255)),
+            Plaintext::from_u256(u256_val),
+            Plaintext::from_u2048(u2048_val),
+        ];
+
+        // encode plaintexts into a list of solidity bytes using `alloy`
+        let bytes = super::abi_encode_plaintexts(&pts);
+        let hexbytes = hex::encode(bytes);
+
+        // this is the encoding of the same list of plaintexts using the outdated `ethers` crate.
+        let reference = "00000000000000000000000000000000000000000000000000000000000001a0\
+                               0000000000000000000000000000000000000000000000000000000000000001\
+                               0000000000000000000000000000000000000000000000000000000000000004\
+                               0000000000000000000000000000000000000000000000000000000000000005\
+                               00000000000000000000000000000000000000000000000000000000000002c0\
+                               0000000000000000000000000000000000000000000000000000000000000008\
+                               0000000000000000000000000000000000000000000000000000000000000010\
+                               0000000000000000000000000000000000000000000000000000000000000020\
+                               0000000000000000000000000000000000000000000000000000000000000080\
+                               000000000000000000000000000000ff000000000000000000000000000000ea\
+                               0000000000000000000000000000010000000000000000000000000000000001\
+                               00000000000000000000000000000000000000000000000000000000000003e0\
+                               0000000000000000000000000000000000000000000000000000000000000100\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000101\
+                               0000000000000000000000000000000000000000000000000000000000000100\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000101\
+                               0000000000000000000000000000000000000000000000000000000000000100\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000000\
+                               0000000000000000000000000000000000000000000000000000000000000101";
+
+        assert_eq!(reference, hexbytes.as_str());
     }
 }

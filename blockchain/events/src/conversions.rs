@@ -107,3 +107,19 @@ impl From<Vec<Vec<u8>>> for RedactedHexVectorList {
         RedactedHexVectorList(hvs)
     }
 }
+
+#[derive(Eq, PartialEq, Default, Debug, Clone, JsonSchema, Deserialize, Serialize)]
+pub struct HexVectorList(pub Vec<HexVector>);
+
+impl From<Vec<HexVector>> for HexVectorList {
+    fn from(value: Vec<HexVector>) -> Self {
+        HexVectorList(value)
+    }
+}
+
+impl From<Vec<Vec<u8>>> for HexVectorList {
+    fn from(values: Vec<Vec<u8>>) -> Self {
+        let hvs = values.iter().map(|v| HexVector(v.clone())).collect();
+        HexVectorList(hvs)
+    }
+}

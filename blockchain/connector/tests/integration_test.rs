@@ -306,6 +306,7 @@ async fn send_decrypt_request(client: &RwLock<Client>) -> String {
             .key_id("kid".as_bytes().to_vec())
             .ciphertext_handles(vec![[0, 0, 0, 0, 0, 1, 1, 1, 1, 1].to_vec()])
             .fhe_types(vec![FheType::Euint8])
+            .external_handles(Some(vec![[1, 0, 0, 0, 0, 1, 1, 1, 1, 1].to_vec()].into()))
             .build(),
     );
 
@@ -337,6 +338,15 @@ const MOCK_CT_HANDLES: &[&[u8]] = &[
     &[3, 3, 3],
     &[4, 4, 4],
     &[5, 5, 5],
+];
+
+const MOCK_EXTERNAL_HANDLES: &[&[u8]] = &[
+    &[6, 6, 6],
+    &[7, 7, 7],
+    &[8, 8, 8],
+    &[9, 9, 9],
+    &[10, 10, 10],
+    &[11, 11, 11],
 ];
 
 async fn setup_threshold_keys() {
@@ -488,6 +498,13 @@ async fn ddec_centralized_sunshine() {
                 MOCK_CT_HANDLES[0].to_vec(),
                 MOCK_CT_HANDLES[1].to_vec(),
             ])
+            .external_handles(Some(
+                vec![
+                    MOCK_EXTERNAL_HANDLES[0].to_vec(),
+                    MOCK_EXTERNAL_HANDLES[1].to_vec(),
+                ]
+                .into(),
+            ))
             .build(),
     );
     let (result, txn_id) = generic_centralized_sunshine_test(vec![ct1, ct2], op).await;
@@ -683,6 +700,13 @@ async fn ddec_sunshine(slow: bool) {
                 MOCK_CT_HANDLES[0].to_vec(),
                 MOCK_CT_HANDLES[1].to_vec(),
             ])
+            .external_handles(Some(
+                vec![
+                    MOCK_EXTERNAL_HANDLES[0].to_vec(),
+                    MOCK_EXTERNAL_HANDLES[1].to_vec(),
+                ]
+                .into(),
+            ))
             .build(),
     );
     let (results, txn_id, _) = generic_sunshine_test(slow, vec![ct1, ct2], op).await;

@@ -57,7 +57,7 @@ use tfhe::{
 };
 use tokio::sync::{Mutex, RwLock};
 
-pub(crate) fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> anyhow::Result<T> {
+pub fn handle_potential_err<T, E>(resp: Result<T, E>, error: String) -> anyhow::Result<T> {
     resp.map_err(|_| {
         tracing::warn!(error);
         anyhow::Error::msg(format!("Invalid request: \"{}\"", error))
@@ -201,6 +201,7 @@ impl BaseKms for BaseKmsStruct {
         internal_verify_sig(&payload, signature, key)
     }
 
+    /// sign `msg` using the KMS' private signing key
     fn sign<T>(&self, msg: &T) -> anyhow::Result<super::internal_crypto_types::Signature>
     where
         T: Serialize + AsRef<[u8]>,
@@ -369,14 +370,17 @@ impl KmsFheKeyHandles {
     }
 }
 
+// Plaintext value and optional external handle
+type PlaintextAndHandle = (Plaintext, Option<Vec<u8>>);
+
 // Values that need to be stored temporarily as part of an async key generation call.
 #[cfg(feature = "non-wasm")]
 type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
 
 // Values that need to be stored temporarily as part of an async decryption call.
-// Represents the digest of the request and the result of the decryption.
+// Represents the digest of the request and the result of the decryption together with an optional external handle.
 #[cfg(feature = "non-wasm")]
-pub type DecCallValues = (Vec<u8>, Vec<Vec<u8>>);
+pub type DecCallValues = (Vec<u8>, Vec<PlaintextAndHandle>);
 
 // Values that need to be stored temporarily as part of an async reencryption call.
 // Represents the FHE type, the digest of the request and the partial decryption.
@@ -417,22 +421,19 @@ pub fn central_decrypt<
 >(
     client_key: &FhePrivateKey,
     cts: &Vec<TypedCiphertext>,
-) -> anyhow::Result<Vec<Vec<u8>>> {
+) -> anyhow::Result<Vec<PlaintextAndHandle>> {
     use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
     // run the decryption of each ct in the batch in parallel
     cts.par_iter()
         .map(|ct| {
-            let pt = &SoftwareKms::<PubS, PrivS>::decrypt(
+            let pt = SoftwareKms::<PubS, PrivS>::decrypt(
                 client_key,
                 &ct.ciphertext,
                 ct.fhe_type.try_into()?,
             )?;
 
-            handle_potential_err(
-                serialize(&pt),
-                "Could not serialize the decrypted ciphertext".to_string(),
-            )
+            Ok((pt, ct.external_handle.clone()))
         })
         .collect::<Result<Vec<_>, _>>()
 }

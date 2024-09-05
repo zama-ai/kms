@@ -1,5 +1,6 @@
 use super::rpc_types::{
-    BaseKms, PrivDataType, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
+    compute_external_signature, BaseKms, PrivDataType, SignedPubDataHandleInternal,
+    CURRENT_FORMAT_VERSION,
 };
 use crate::conf::centralized::CentralizedConfig;
 #[cfg(any(test, feature = "testing"))]
@@ -23,7 +24,6 @@ use crate::storage::{store_at_request_id, Storage};
 use crate::util::file_handling::read_as_json;
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
-use bincode::deserialize;
 use conf_trace::telemetry::accept_trace;
 use conf_trace::telemetry::make_span;
 use conf_trace::telemetry::record_trace_id;
@@ -451,7 +451,10 @@ impl<
                         &request_id,
                         HandlerStatus::Done((req_digest.clone(), raw_decryption)),
                     );
-                    tracing::info!("⏱️ Core Event Time elapsed: {:?}", start.elapsed());
+                    tracing::info!(
+                        "⏱️ Core Event Time for decryption computation: {:?}",
+                        start.elapsed()
+                    );
                 }
                 Err(e) => {
                     let mut guarded_meta_store = meta_store.write().await;
@@ -488,26 +491,44 @@ impl<
                 "Decryption",
             )?
         };
-        let server_verf_key = self.get_serialized_verf_key();
-        let sig_payload = DecryptionResponsePayload {
-            version: CURRENT_FORMAT_VERSION,
-            plaintexts,
-            verification_key: server_verf_key,
-            digest: req_digest,
-        };
 
-        let sig_payload_vec = tonic_handle_potential_err(
-            bincode::serialize(&sig_payload),
-            format!("Could not convert payload to bytes {:?}", sig_payload),
+        // sign the plaintexts and handles for external verification (in the fhevm)
+        let (pts, ext_handles_bytes): (Vec<_>, Vec<_>) = plaintexts.into_iter().collect();
+        let sigkey = Arc::clone(&self.base_kms.sig_key);
+        let external_sig = compute_external_signature(&sigkey, ext_handles_bytes, &pts);
+
+        // serialize plaintexts to return as payload
+        let pt_payload = tonic_handle_potential_err(
+            pts.iter()
+                .map(bincode::serialize)
+                .collect::<Result<Vec<Vec<u8>>, _>>(),
+            "Error serializing plaintexts in get_result()".to_string(),
         )?;
 
+        let server_verf_key = self.get_serialized_verf_key();
+
+        // the payload to be signed for verification inside the KMS
+        let kms_sig_payload = DecryptionResponsePayload {
+            version: CURRENT_FORMAT_VERSION,
+            plaintexts: pt_payload,
+            verification_key: server_verf_key,
+            digest: req_digest,
+            external_signature: Some(external_sig),
+        };
+
+        let kms_sig_payload_vec = tonic_handle_potential_err(
+            bincode::serialize(&kms_sig_payload),
+            format!("Could not convert payload to bytes {:?}", kms_sig_payload),
+        )?;
+
+        // sign the decryption result with the central KMS key
         let sig = tonic_handle_potential_err(
-            self.sign(&sig_payload_vec),
-            format!("Could not sign payload {:?}", sig_payload),
+            self.sign(&kms_sig_payload_vec),
+            format!("Could not sign payload {:?}", kms_sig_payload),
         )?;
         Ok(Response::new(DecryptionResponse {
             signature: sig.sig.to_vec(),
-            payload: Some(sig_payload),
+            payload: Some(kms_sig_payload),
         }))
     }
 
@@ -750,7 +771,7 @@ pub async fn validate_reencrypt_req(
         .ok_or_else(|| anyhow_error_and_log(format!("Missing ciphertext in request {:?}", req)))?;
     let fhe_type = payload.fhe_type();
     let link = req.compute_link_checked()?;
-    let client_enc_key: PublicEncKey = deserialize(&payload.enc_key)?;
+    let client_enc_key: PublicEncKey = bincode::deserialize(&payload.enc_key)?;
     let key_id = tonic_some_or_err(
         payload.key_id.clone(),
         format!("The request {:?} does not have a key_id", req),

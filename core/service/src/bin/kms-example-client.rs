@@ -111,6 +111,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
     let ct = vec![TypedCiphertext {
         ciphertext: ct,
         fhe_type: fhe_type.into(),
+        external_handle: Some(vec![99_u8; 32]),
     }];
 
     // DECRYPTION REQUEST
@@ -204,9 +205,11 @@ async fn do_threshold_decryption(
 
     let random_req_id = RequestId::from(rng.gen::<u128>());
 
+    // this is currently a batch of size 1
     let ct = vec![TypedCiphertext {
         ciphertext: ct,
         fhe_type: fhe_type.into(),
+        external_handle: Some(vec![88_u8; 32]),
     }];
 
     // DECRYPTION REQUEST

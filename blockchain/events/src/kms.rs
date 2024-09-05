@@ -273,6 +273,7 @@ pub struct DecryptValues {
     #[builder(setter(into))]
     ciphertext_handles: RedactedHexVectorList,
     fhe_types: Vec<FheType>,
+    external_handles: Option<HexVectorList>,
     version: u32,
 }
 
@@ -291,6 +292,10 @@ impl DecryptValues {
 
     pub fn ciphertext_handles(&self) -> &RedactedHexVectorList {
         &self.ciphertext_handles
+    }
+
+    pub fn external_handles(&self) -> &Option<HexVectorList> {
+        &self.external_handles
     }
 }
 
@@ -870,6 +875,12 @@ mod tests {
         }
     }
 
+    impl Arbitrary for HexVectorList {
+        fn arbitrary(g: &mut Gen) -> HexVectorList {
+            HexVectorList(Vec::<HexVector>::arbitrary(g))
+        }
+    }
+
     impl Arbitrary for DecryptValues {
         fn arbitrary(g: &mut Gen) -> DecryptValues {
             DecryptValues {
@@ -877,6 +888,7 @@ mod tests {
                 key_id: HexVector::arbitrary(g),
                 fhe_types: Vec::<FheType>::arbitrary(g),
                 ciphertext_handles: RedactedHexVectorList::arbitrary(g),
+                external_handles: Some(HexVectorList::arbitrary(g)),
             }
         }
     }
@@ -1000,6 +1012,7 @@ mod tests {
             .key_id("mykeyid".as_bytes().to_vec())
             .ciphertext_handles(vec![vec![1, 2, 3], vec![4, 4, 4]])
             .fhe_types(vec![FheType::Euint8, FheType::Euint16])
+            .external_handles(Some(vec![vec![9, 8, 7], vec![5, 4, 3]].into()))
             .build();
         let proof_values = Proof::default();
         let message: KmsMessageWithoutProof = KmsMessage::builder()
@@ -1014,6 +1027,7 @@ mod tests {
                     "version": 1,
                     "key_id": hex::encode("mykeyid".as_bytes()),
                     "fhe_types": ["euint8", "euint16"],
+                    "external_handles": [hex::encode([9,8,7]), hex::encode([5, 4, 3])],
                     "ciphertext_handles": [hex::encode([1, 2, 3]), hex::encode([4, 4, 4])],
                 },
                 "proof": {

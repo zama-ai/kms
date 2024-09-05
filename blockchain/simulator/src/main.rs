@@ -68,6 +68,7 @@ async fn execute_contract(
         DecryptValues::builder()
             .ciphertext_handles(vec![cipher.clone()])
             .fhe_types(vec![FheType::Euint8])
+            .external_handles(Some(vec![vec![5_u8; 32]].into()))
             .key_id(hex::decode(key_id).unwrap())
             .version(1)
             .build(),

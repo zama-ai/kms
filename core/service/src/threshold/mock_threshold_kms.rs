@@ -127,6 +127,7 @@ impl Decryptor for DummyDecryptor {
                 plaintexts: vec![
                     serialize(&Plaintext::new(42, crate::kms::FheType::Euint8)).unwrap()
                 ],
+                external_signature: Some(vec![23_u8; 65]),
             }),
         }))
     }

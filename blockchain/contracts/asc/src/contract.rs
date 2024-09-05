@@ -605,6 +605,7 @@ mod tests {
             .version(1)
             .ciphertext_handles(vec![ciphertext_handle; batch_size])
             .fhe_types(vec![FheType::Euint8; batch_size])
+            .external_handles(Some(vec![vec![23_u8; 32]].into()))
             .build();
 
         // test insufficient funds
@@ -756,6 +757,7 @@ mod tests {
             .version(1)
             .ciphertext_handles(vec![ciphertext_handle; batch_size])
             .fhe_types(vec![FheType::Euint8; batch_size])
+            .external_handles(Some(vec![vec![23_u8; 32]].into()))
             .build();
 
         // test insufficient funds
@@ -1154,6 +1156,7 @@ mod tests {
             .version(1)
             .ciphertext_handles(vec![ciphertext_handle; batch_size])
             .fhe_types(vec![FheType::Euint8; batch_size])
+            .external_handles(Some(vec![vec![23_u8; 32]].into()))
             .build();
         let response = contract
             .decrypt(decrypt.clone(), Proof::default())

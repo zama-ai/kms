@@ -62,6 +62,14 @@ alloy_sol_types::sol! {
     }
 }
 
+// Solidity struct for decryption result signature
+alloy_sol_types::sol! {
+    struct DecryptionResult {
+        uint256[] handlesList;
+        bytes decryptedResult;
+    }
+}
+
 /// Compute the signature on message based on the server's signing key for a given EIP712 domain.
 ///
 /// Returns the [Signature]. Concretely r || s.

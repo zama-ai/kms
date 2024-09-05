@@ -24,6 +24,7 @@ async fn main() {
             .fhe_types(vec![FheType::Euint8])
             .version(1)
             .key_id(vec![1, 2, 3])
+            .external_handles(None)
             .build(),
     );
 

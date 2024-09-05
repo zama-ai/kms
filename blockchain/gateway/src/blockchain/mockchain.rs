@@ -23,11 +23,11 @@ impl KmsEventSubscriber for MockchainImpl {
 impl Blockchain for MockchainImpl {
     async fn decrypt(
         &self,
-        typed_cts: Vec<(Vec<u8>, FheType)>,
+        typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
     ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
         let mut ptxts = Vec::new();
 
-        for (_ct, fhe_type) in typed_cts {
+        for (_ct, fhe_type, _external_ct_handle) in typed_cts {
             let res = match fhe_type {
                 FheType::Ebool => true.to_token(),
                 FheType::Euint4 => U4::new(3_u8).unwrap().to_token(),

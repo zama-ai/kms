@@ -3067,6 +3067,7 @@ pub(crate) mod tests {
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),
+                external_handle: None,
             };
             cts.push(ctt);
         }
@@ -3543,6 +3544,7 @@ pub(crate) mod tests {
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),
+                external_handle: None,
             };
             cts.push(ctt);
             bits += msg.bits() as u64;

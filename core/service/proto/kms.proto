@@ -29,7 +29,8 @@ service CoreServiceEndpoint {
   // This query fails if the result is not available yet.
   rpc GetDecryptResult(RequestId) returns (DecryptionResponse);
 
-  // Reencrypt a ciphertext under a user-specified key and return a signcrypted share of the dercrypted plaintext.
+  // Reencrypt a ciphertext under a user-specified key and return a signcrypted
+  // share of the dercrypted plaintext.
   rpc Reencrypt(ReencryptionRequest) returns (Empty);
 
   // Get the reencryption result.
@@ -52,16 +53,13 @@ message InitRequest {
 }
 
 // Placeholder response, when no content is needed
-message Empty {
+message Empty {}
 
-}
+// Simple response to return an ID, to be used to retrieve the computed result
+// later on.
+message RequestId { string request_id = 1; }
 
-// Simple response to return an ID, to be used to retrieve the computed result later on.
-message RequestId {
-  string request_id = 1;
-}
-
-//Status for Keygen Preproc
+// Status for Keygen Preproc
 enum KeyGenPreprocStatusEnum {
   Missing = 0;
   InProgress = 1;
@@ -92,11 +90,10 @@ message KeyGenPreprocRequest {
   RequestId request_id = 3;
 }
 
-message KeyGenPreprocStatus {
-  KeyGenPreprocStatusEnum result = 1;
-}
+message KeyGenPreprocStatus { KeyGenPreprocStatusEnum result = 1; }
 
-// Request for generating new keys under a certain handle and return a URI where they can be accessed.
+// Request for generating new keys under a certain handle and return a URI where
+// they can be accessed.
 message KeyGenRequest {
   Config config = 1;
   ParamChoice params = 2;
@@ -148,6 +145,8 @@ message TypedCiphertext {
   bytes ciphertext = 1;
   // The type of plaintext encrypted.
   FheType fhe_type = 2;
+  // The external handle of the ciphertext (the handle used in the fhevm).
+  optional bytes external_handle = 3;
 }
 
 message DecryptionRequest {
@@ -155,12 +154,16 @@ message DecryptionRequest {
   uint32 version = 1;
   // The one or many ciphertexts and corresponding types to decrypt
   repeated TypedCiphertext ciphertexts = 2;
-  // The key id to use for decryption, will be the request_id used for key generation
+  // The key id to use for decryption, will be the request_id used for key
+  // generation
   RequestId key_id = 3;
-  // The ID of the decryption request. Will be the hash digest the other fields of this message object.
+  // The ID of the decryption request. Will be the hash digest the other fields
+  // of this message object.
   RequestId request_id = 4;
 }
 
+// KMS-internal Decryption Response Payload, containing meta data, plaintexts
+// and external results
 message DecryptionResponsePayload {
   // Version of the response format.
   uint32 version = 1;
@@ -170,16 +173,23 @@ message DecryptionResponsePayload {
   // trusted keys.
   // TODO should be renamed to make it clear it is the server's key
   bytes verification_key = 2;
+
   // Digest of the request validated.
   // Needed to ensure that the response is for the expected request.
   bytes digest = 3;
-  // A list of plaintexts, as little endian byte arrays. One for each ciphertext.
+  // A list of plaintexts, as little endian byte arrays. One for each
+  // ciphertext.
   repeated bytes plaintexts = 4;
+  // the signature on external_decryption_result for the external recipient
+  // (e.g. the fhevm)
+  optional bytes external_signature = 6;
 }
 
+// KMS-internal Decryption Response
 message DecryptionResponse {
-  bytes signature = 1;
   // Signature of the serialization of [DecryptionResponsePayload].
+  bytes signature = 1;
+  // The payload that is signed
   DecryptionResponsePayload payload = 2;
 }
 
@@ -195,7 +205,8 @@ message ReencryptionRequestPayload {
   bytes enc_key = 3;
   // The type of plaintext encrypted.
   FheType fhe_type = 4;
-  // The key id to use for decryption. Will be the request_id used during key generation
+  // The key id to use for decryption. Will be the request_id used during key
+  // generation
   RequestId key_id = 5;
   // The actual ciphertext to decrypt, taken directly from the fhevm.
   // When creating the payload, this field may be empty,
@@ -207,7 +218,8 @@ message ReencryptionRequestPayload {
 }
 
 // https://eips.ethereum.org/EIPS/eip-712#definition-of-domainseparator
-// eventually chain_id, verifying_contract and salt will be parsed in to solidity types
+// eventually chain_id, verifying_contract and salt will be parsed in to
+// solidity types
 message Eip712DomainMsg {
   string name = 1;
   string version = 2;
@@ -249,7 +261,8 @@ message ReencryptionResponsePayload {
   // The signcrypted payload, using a hybrid encryption approach in
   // sign-then-encrypt.
   bytes signcrypted_ciphertext = 5;
-  // The ID of the MPC party doing the reencryption. Used for polynomial reconstruction.
+  // The ID of the MPC party doing the reencryption. Used for polynomial
+  // reconstruction.
   uint32 party_id = 6;
   // The degree of the sharing scheme used.
   uint32 degree = 7;

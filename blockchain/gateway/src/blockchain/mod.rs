@@ -50,7 +50,7 @@ pub(crate) trait KmsEventSubscriber: Send + Sync {
 pub(crate) trait Blockchain: KmsEventSubscriber {
     async fn decrypt(
         &self,
-        typed_cts: Vec<(Vec<u8>, FheType)>,
+        typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
     ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)>;
 
     async fn reencrypt(

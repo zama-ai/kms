@@ -113,24 +113,26 @@ pub(crate) async fn handle_event_decryption(
 async fn decrypt(
     client: &Arc<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>>,
     config: &GatewayConfig,
-    ct_handles: Vec<U256>,
+    external_ct_handles: Vec<U256>,
     block_number: u64,
 ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
     let mut typed_cts = Vec::new();
 
-    // get ct for every handle
-    for ct_handle in ct_handles {
-        let mut ct_handle_bytes = [0u8; 32];
-        ct_handle.to_big_endian(&mut ct_handle_bytes);
+    // get actual ct value from the external source (e.g. fhvem) for every external handle
+    for external_ct_handle in external_ct_handles {
+        let mut external_ct_handle_bytes = [0u8; 32];
+        external_ct_handle.to_big_endian(&mut external_ct_handle_bytes);
+        let external_handle_vec = external_ct_handle_bytes.to_vec();
+
         let (ct_bytes, fhe_type) =
             <EthereumConfig as Into<Box<dyn CiphertextProvider>>>::into(config.clone().ethereum)
                 .get_ciphertext(
                     client,
-                    ct_handle_bytes.to_vec(),
+                    external_handle_vec.clone(),
                     Some(BlockId::from(block_number)),
                 )
                 .await?;
-        typed_cts.push((ct_bytes, fhe_type));
+        typed_cts.push((ct_bytes, fhe_type, external_handle_vec));
     }
 
     blockchain_impl(config).await.decrypt(typed_cts).await
