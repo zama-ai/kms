@@ -3,6 +3,9 @@
 use std::time::Duration;
 
 use crate::execution::runtime::party::Identity;
+use crate::execution::runtime::party::RoleAssignment;
+use crate::execution::runtime::session::NetworkingImpl;
+use crate::session_id::SessionId;
 use async_trait::async_trait;
 use tokio::time::Instant;
 
@@ -11,6 +14,9 @@ pub mod grpc;
 pub mod local;
 pub mod sending_service;
 pub mod value;
+
+pub type NetworkingStrategy =
+    Box<dyn Fn(SessionId, RoleAssignment, NetworkMode) -> NetworkingImpl + Send + Sync>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NetworkMode {

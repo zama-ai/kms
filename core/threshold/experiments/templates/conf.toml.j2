@@ -1,7 +1,12 @@
-# Note: The outcommented lines are kept as an example of how to enable TLS on the mobygo side
-# cert_file = "test_certs/cert_p1.pem"
-# key_file = "test_certs/key_p1.pem"
-# ca_file = "test_certs/cert_combined.pem"
+# Note that when the choreographers
+# are running inside the docker compose they will have hostnames.
+# But mobygo is running outside of the docker compose and it will
+# not have access have those hostnames, this is why we set the
+# physical_address to localhost as usual.
+#
+# Additionally, there is no need for TLS on the connection between
+# moby (parties) and mobygo (choreographer) because these two components are only
+# used for benchmarking.
 
 [tracing]
 service_name = "choreographer"

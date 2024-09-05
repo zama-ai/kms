@@ -91,6 +91,7 @@ proptest = "1.5"
 pprof = { version = "0.13", features = ["flamegraph", "criterion"] }
 rstest = "0.21"
 serial_test = "3.0.0"
+tempfile = "3.10.1"
 test-log = { version = "0.2", features = ["trace"] }
 tracing-test = "0.2"
 
@@ -100,6 +101,7 @@ crate-type = ["lib", "cdylib"]
 [[bin]]
 name = "moby"
 path = "src/bin/moby/moby.rs"
+required-features = ["choreographer"]
 
 [[bin]]
 name = "mobygo"
@@ -171,7 +173,7 @@ default = ["non-wasm"]
 testing = []
 slow_tests = []
 sequential_sns = []
-experimental = ["dep:crypto-bigint"]
+experimental = ["dep:crypto-bigint", "choreographer"]
 templating = ["minijinja"]
 choreographer = []
 # put all the dependencies that does not work well with wasm

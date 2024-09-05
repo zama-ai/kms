@@ -64,6 +64,9 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
     let make_server = move |try_use_tls: bool| -> anyhow::Result<Server> {
         let server = match (try_use_tls, &settings.certpaths) {
             (true, Some(cert_bundle)) => {
+                tracing::info!(
+                    "attempting to build tls-enabled kms-core server with {cert_bundle:?}"
+                );
                 let identity = cert_bundle.get_identity()?;
                 let ca_cert = cert_bundle.get_flattened_ca_list()?;
                 let tls_config = ServerTlsConfig::new()
@@ -73,7 +76,10 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
                     .tls_config(tls_config)?
                     .timeout(*NETWORK_TIMEOUT_LONG)
             }
-            (_, _) => Server::builder().timeout(*NETWORK_TIMEOUT_LONG),
+            (_, _) => {
+                tracing::warn!("attempting to build an insecure kms-core server");
+                Server::builder().timeout(*NETWORK_TIMEOUT_LONG)
+            }
         };
         Ok(server)
     };
@@ -90,7 +96,7 @@ pub async fn run(settings: &PartyConf) -> Result<(), Box<dyn std::error::Error>>
         .map_request(accept_trace)
         .map_request(record_trace_id);
 
-    let choreo_router = make_server(settings.choreo_use_tls)?
+    let choreo_router = make_server(false)?
         .layer(choreo_grpc_layer)
         .add_service(choreo_health_service)
         .add_service(choreography);

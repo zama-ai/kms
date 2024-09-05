@@ -10,7 +10,7 @@ use crate::choreography::grpc::gen::{
     ThresholdDecryptResultResponse, ThresholdKeyGenRequest, ThresholdKeyGenResponse,
     ThresholdKeyGenResultRequest, ThresholdKeyGenResultResponse,
 };
-use crate::choreography::{requests::Status, NetworkingStrategy};
+use crate::choreography::requests::Status;
 use crate::execution::large_execution::vss::RealVss;
 use crate::execution::online::preprocessing::dummy::DummyPreprocessing;
 use crate::execution::online::preprocessing::PreprocessorFactory;
@@ -35,6 +35,7 @@ use crate::experimental::constants::INPUT_PARTY_ID;
 use crate::experimental::constants::PLAINTEXT_MODULUS;
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
 use crate::networking::NetworkMode;
+use crate::networking::NetworkingStrategy;
 use crate::session_id::SessionId;
 use aes_prng::AesRng;
 use async_trait::async_trait;

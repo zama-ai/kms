@@ -50,7 +50,7 @@ mod tests {
         let config: StorageConfigWith<ThresholdConfig> = init_conf("config/default_1").unwrap();
         assert_eq!(config.rest.listen_address_client, "0.0.0.0");
         assert_eq!(config.rest.listen_port_client, 50100);
-        assert_eq!(config.rest.listen_address_core, "127.0.0.1");
+        assert_eq!(config.rest.listen_address_core, "0.0.0.0");
         assert_eq!(config.rest.listen_port_core, 50001);
         assert_eq!(config.rest.threshold, 1);
         assert_eq!(config.rest.num_sessions_preproc, Some(2));
@@ -61,16 +61,16 @@ mod tests {
         );
 
         assert_eq!(config.rest.peer_confs.len(), 4);
-        assert_eq!(config.rest.peer_confs[0].address, "127.0.0.1");
+        assert_eq!(config.rest.peer_confs[0].address, "p1");
         assert_eq!(config.rest.peer_confs[0].port, 50001);
         assert_eq!(config.rest.peer_confs[0].party_id, 1);
-        assert_eq!(config.rest.peer_confs[1].address, "127.0.0.1");
+        assert_eq!(config.rest.peer_confs[1].address, "p2");
         assert_eq!(config.rest.peer_confs[1].port, 50002);
         assert_eq!(config.rest.peer_confs[1].party_id, 2);
-        assert_eq!(config.rest.peer_confs[2].address, "127.0.0.1");
+        assert_eq!(config.rest.peer_confs[2].address, "p3");
         assert_eq!(config.rest.peer_confs[2].port, 50003);
         assert_eq!(config.rest.peer_confs[2].party_id, 3);
-        assert_eq!(config.rest.peer_confs[3].address, "127.0.0.1");
+        assert_eq!(config.rest.peer_confs[3].address, "p4");
         assert_eq!(config.rest.peer_confs[3].port, 50004);
         assert_eq!(config.rest.peer_confs[3].party_id, 4);
 

@@ -10,7 +10,6 @@ use conf_trace::{
 use distributed_decryption::{
     choreography::choreographer::ChoreoRuntime,
     conf::choreo::ChoreoConf,
-    execution::runtime::party::RoleAssignment,
     experimental::{
         algebra::{
             levels::{LevelEll, LevelKsw},
@@ -24,7 +23,6 @@ use distributed_decryption::{
 };
 use itertools::Itertools;
 use rand::{random, RngCore, SeedableRng};
-use tonic::transport::ClientTlsConfig;
 
 #[derive(Args, Debug)]
 struct PrssInitArgs {
@@ -303,29 +301,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .init_conf()?;
 
-    //NOTE: Do we really care about choreographer using TLS to communicate with stairway cluster ?
-    // Also what's up with domain_name localhost ?
-    let tls_config = match (&conf.cert_file, &conf.key_file, &conf.ca_file) {
-        (Some(cert), Some(key), Some(ca)) => {
-            let client_cert = std::fs::read_to_string(cert)?;
-            let client_key = std::fs::read_to_string(key)?;
-            let client_identity = tonic::transport::Identity::from_pem(client_cert, client_key);
-
-            let server_root_ca_cert = std::fs::read_to_string(ca)?;
-            let server_root_ca_cert = tonic::transport::Certificate::from_pem(server_root_ca_cert);
-
-            // we use local host since the choreographer should always communicate
-            // to the ddec/core locally
-            Some(
-                ClientTlsConfig::new()
-                    .domain_name("localhost")
-                    .ca_certificate(server_root_ca_cert)
-                    .identity(client_identity),
-            )
-        }
-        _ => None,
-    };
-
     let tracing = conf
         .tracing
         .clone()
@@ -333,17 +308,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     init_tracing(tracing)?;
 
-    let topology = &conf.threshold_topology;
-
-    let role_assignments: RoleAssignment = topology.into();
-
-    // we need to set the protocol in URI correctly
-    // depending on whether the certificates are present
-    let host_channels =
-        topology.choreo_physical_topology_into_network_topology(tls_config.is_some())?;
-
-    let runtime =
-        ChoreoRuntime::new_with_net_topology(role_assignments, tls_config, host_channels)?;
+    let runtime = ChoreoRuntime::new_from_conf(&conf)?;
     match args.command {
         Commands::PrssInit(params) => {
             prss_init_command(&runtime, &conf, params).await?;

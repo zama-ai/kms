@@ -10,6 +10,7 @@ PARAMS="nist-params-p32-sns-fglwe"
 
 exec 2>&1
 set -x
+set -e
 #Init the PRSS
 $MOBYGO_EXEC -c $1 prss-init --ring residue-poly64 --sid $CURR_SID
 $MOBYGO_EXEC -c $1 status-check --sid $CURR_SID  --keep-retry true 

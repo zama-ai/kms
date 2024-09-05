@@ -22,7 +22,6 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use std::net::{Ipv4Addr, Ipv6Addr};
 use std::sync::RwLock;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -120,7 +119,6 @@ impl OptionConfigWrapper {
 pub struct GrpcNetworkingManager {
     pub message_queues: Arc<MessageQueueStores>,
     owner: Identity,
-    //cert_bundle: Arc<Option<CertificatePaths>>,
     conf: OptionConfigWrapper,
     sending_service: GrpcSendingService,
 }
@@ -147,7 +145,6 @@ impl GrpcNetworkingManager {
         GrpcNetworkingManager {
             message_queues: Default::default(),
             owner,
-            //cert_bundle: Arc::new(cert_bundle.clone()),
             conf: OptionConfigWrapper { conf },
             sending_service: GrpcSendingService::new(cert_bundle, conf),
         }
@@ -232,7 +229,6 @@ pub struct NetworkingImpl {
 
 #[async_trait]
 impl Gnetworking for NetworkingImpl {
-    ///NOTE: Are we really doing enough checks here ? Kinda wondering where this server checks the client's certificate (seems like there the client checks the server's TLS certificate in [`GrpcSendingService::connect_to_party`] but not here? )
     async fn send_value(
         &self,
         request: tonic::Request<SendValueRequest>,
@@ -240,18 +236,20 @@ impl Gnetworking for NetworkingImpl {
         // If TLS is enabled, A SAN may look like:
         // DNS:party1.com, IP Address:127.0.0.1, DNS:localhost, IP Address:192.168.0.1, IP Address:0:0:0:0:0:0:0:1
         // which is a collection of DNS names and IP addresses.
-        // One of these must match the "tag" that's in the request for identity verification
+        // The DNS component must match the "tag" that's in the request for identity verification,
+        // in this case it's party1.com.
+        // We also require party1.com to be the subject and the issuer CN too,
+        // since we're using self-signed certificates at the moment.
         let valid_tls_senders = extract_valid_sender_sans(&request)
-            .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e))?
-            .map(|x| x.into_iter().collect::<Vec<_>>());
-        tracing::info!("extract_valid_sender_sans returned {:?}", valid_tls_senders);
+            .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e))?;
+        tracing::debug!("extract_valid_sender_sans returned {:?}", valid_tls_senders);
 
         let request = request.into_inner();
         let tag = bincode::deserialize::<Tag>(&request.tag).map_err(|_e| {
             tonic::Status::new(tonic::Code::Aborted, "failed to parse value".to_string())
         })?;
 
-        if let Some(senders) = valid_tls_senders {
+        if let Some(sender) = valid_tls_senders {
             // tag.sender has the form hostname:port
             // we remove the port component since the tls_sender does not have it
             let host_and_port: Vec<_> = tag.sender.0.split(':').collect();
@@ -264,11 +262,11 @@ impl Gnetworking for NetworkingImpl {
                     ),
                 ));
             }
-            let host = host_and_port[0].to_string();
-            if !senders.contains(&host) {
+            let host = host_and_port[0];
+            if sender != host {
                 return Err(tonic::Status::new(
                     tonic::Code::Unauthenticated,
-                    format!("wrong sender: expected {:?} to be in {:?}", host, senders),
+                    format!("wrong sender: expected {:?} to be in {:?}", host, sender),
                 ));
             }
         }
@@ -307,9 +305,7 @@ impl Gnetworking for NetworkingImpl {
 }
 
 /// returns the list of accepted sender SANs that is contained in the request's client peer certificates
-fn extract_valid_sender_sans<T>(
-    request: &tonic::Request<T>,
-) -> Result<Option<Vec<String>>, String> {
+fn extract_valid_sender_sans<T>(request: &tonic::Request<T>) -> Result<Option<String>, String> {
     match request.peer_certs() {
         None => Ok(None),
         Some(certs) => {
@@ -319,11 +315,11 @@ fn extract_valid_sender_sans<T>(
     }
 }
 
-/// Extract all the SANs in the certificate from the request.
+/// Extract the party name from the certificate.
 ///
 /// Each party should have its own self-signed certificate.
 /// Each self-signed certificate is loaded into the trust store of all the parties.
-pub fn extract_san_from_certs(certs: &[Certificate], use_pem: bool) -> Result<Vec<String>, String> {
+pub fn extract_san_from_certs(certs: &[Certificate], use_pem: bool) -> Result<String, String> {
     if certs.len() != 1 {
         return Err(format!(
             "cannot extract identity from certificate chain of length {:?}",
@@ -355,25 +351,8 @@ pub fn extract_san_from_certs(certs: &[Certificate], use_pem: bool) -> Result<Ve
         .general_names
         .iter()
         .filter_map(|san| match san {
-            x509_parser::extensions::GeneralName::DNSName(s) => Some(s.to_string()),
-            x509_parser::extensions::GeneralName::IPAddress(s) => {
-                if s.len() == 16 {
-                    let mut buf = [0u8; 16];
-                    buf.copy_from_slice(s);
-                    Some(Ipv6Addr::from(buf).to_string())
-                } else if s.len() == 4 {
-                    let mut buf = [0u8; 4];
-                    buf.copy_from_slice(s);
-                    Some(Ipv4Addr::from(buf).to_string())
-                } else {
-                    tracing::warn!("Ignoring IP SAN in unsupported format {:?}", san);
-                    None
-                }
-            }
-            _ => {
-                tracing::warn!("Ignoring SAN in unsupported format {:?}", san);
-                None
-            }
+            x509_parser::extensions::GeneralName::DNSName(s) => Some(*s),
+            _ => None,
         })
         .collect();
 
@@ -381,7 +360,26 @@ pub fn extract_san_from_certs(certs: &[Certificate], use_pem: bool) -> Result<Ve
         return Err("No valid SAN found".to_string());
     }
 
-    Ok(san_strings)
+    // find the subject and issuer CN, check there's a matching name in SAN list
+    let Some(subject) = cert.subject().iter_common_name().next() else {
+        return Err("bad certificate, missing subject".to_owned());
+    };
+    let subject_str = subject.as_str().map_err(|e| e.to_string())?;
+
+    let Some(issuer) = cert.issuer().iter_common_name().next() else {
+        return Err("bad certificate, missing issuer".to_owned());
+    };
+    let issuer_str = issuer.as_str().map_err(|e| e.to_string())?;
+
+    if subject_str != issuer_str {
+        return Err("subject CN not match issuer CN".to_owned());
+    }
+
+    if !san_strings.contains(&subject_str) {
+        return Err("subject CN not found in SAN".to_owned());
+    }
+
+    Ok(subject_str.to_string())
 }
 
 #[derive(Serialize, Deserialize, Debug)]

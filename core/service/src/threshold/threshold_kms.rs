@@ -32,7 +32,6 @@ use anyhow::anyhow;
 use bincode::serialize;
 use conf_trace::telemetry::{accept_trace, make_span, record_trace_id};
 use distributed_decryption::algebra::residue_poly::ResiduePoly128;
-use distributed_decryption::choreography::NetworkingStrategy;
 use distributed_decryption::conf::party::CertificatePaths;
 use distributed_decryption::execution::endpoints::decryption::{
     decrypt_using_noiseflooding, partial_decrypt_using_noiseflooding, Small,
@@ -59,6 +58,7 @@ use distributed_decryption::execution::zk::ceremony::{
 };
 use distributed_decryption::networking::grpc::{CoreToCoreNetworkConfig, GrpcNetworkingManager};
 use distributed_decryption::networking::NetworkMode;
+use distributed_decryption::networking::NetworkingStrategy;
 use distributed_decryption::session_id::SessionId;
 use distributed_decryption::{algebra::base_ring::Z64, execution::endpoints::keygen::FhePubKeySet};
 use itertools::Itertools;

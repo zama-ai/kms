@@ -10,12 +10,12 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 #into production.
 [tasks.tfhe-docker-image]
 command = "docker"
-args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features testing", "-t", "tfhe-core", "../../"]
+args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features testing,choreographer", "-t", "tfhe-core", "../../"]
 
 #Build the image for BGV parties (with centralized DKG available)
 [tasks.bgv-docker-image]
 command = "docker"
-args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features experimental", "-t", "bgv-core", "../../"]
+args = ["build", "-f", "operations/docker/local.dockerfile", "--build-arg", "FEATURES=--features experimental,choreographer", "-t", "bgv-core", "../../"]
 
 #Generate the certificate for TLS communication of the parties
 [tasks.gen-test-certs]
@@ -126,20 +126,20 @@ args = ["test_scripts/bgv_test_script_fake_dkg.sh", "temp/${EXPERIMENT_NAME}.tom
 ##For TFHE we set NUM_PARTIES to 5 to be able to test both small and large sessions
 [tasks.tfhe-bench-fake-dkg]
 env = {"NUM_PARTIES" = "5", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-fake-dkg-bench"}
-run_task = { name = ["setup", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-fake-dkg"], fork = true, cleanup_task = "shutdown" }
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-fake-dkg"], fork = true, cleanup_task = "shutdown" }
 
 [tasks.tfhe-bench-real-dkg]
 env = {"NUM_PARTIES" = "5", THRESHOLD = "1", EXPERIMENT_NAME="tfhe-real-dkg-bench"}
-run_task = { name = ["setup", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-real-dkg"], fork = true, cleanup_task = "shutdown" }
+run_task = { name = ["setup", "gen-test-certs", "tfhe-gen-experiment", "experiment-name", "start-parties-healthy", "tfhe-test-real-dkg"], fork = true, cleanup_task = "shutdown" }
 
 ##For BGV we set NUM_PARTIES to 4 as we only need small sessions
 [tasks.bgv-bench-fake-dkg]
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv-fake-dkg-bench"}
-run_task = { name = ["setup", "bgv-gen-experiment", "experiment-name", "start-parties-healthy", "bgv-test-fake-dkg"], fork = true, cleanup_task = "shutdown" }
+run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experiment-name", "start-parties-healthy", "bgv-test-fake-dkg"], fork = true, cleanup_task = "shutdown" }
 
 [tasks.bgv-bench-real-dkg]
 env = {"NUM_PARTIES" = "4", THRESHOLD = "1", EXPERIMENT_NAME="bgv-real-dkg-bench"}
-run_task = { name = ["setup", "bgv-gen-experiment", "experiment-name", "start-parties-healthy", "bgv-test-real-dkg"], fork = true, cleanup_task = "shutdown" }
+run_task = { name = ["setup", "gen-test-certs", "bgv-gen-experiment", "experiment-name", "start-parties-healthy", "bgv-test-real-dkg"], fork = true, cleanup_task = "shutdown" }
 
 
 ###Commands used by the CI

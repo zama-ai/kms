@@ -8,6 +8,7 @@ NUM_CTXTS=10
 
 exec 2>&1
 set -x
+set -e
 
 #build stairwayctl
 cargo build --bin stairwayctl --features="choreographer,experimental,testing"

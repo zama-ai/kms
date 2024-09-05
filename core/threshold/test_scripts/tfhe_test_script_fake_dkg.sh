@@ -9,6 +9,7 @@ PARAMS="nist-params-p32-sns-fglwe"
 
 exec 2>&1
 set -x
+set -e
 
 #build mobygo
 cargo build --bin mobygo --features="choreographer"

@@ -3237,6 +3237,7 @@ dependencies = [
  "signature 2.2.0",
  "strum",
  "strum_macros",
+ "tempfile",
  "test-log",
  "tfhe",
  "tfhe-versionable",

@@ -1,4 +1,5 @@
 #[cfg(feature = "non-wasm")]
+#[cfg(feature = "choreographer")]
 pub mod choreography;
 pub mod commitment;
 pub mod execution;

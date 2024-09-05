@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::net::IpAddr;
+use std::str::FromStr;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
@@ -84,20 +86,41 @@ impl GrpcSendingService {
         })?;
         let channel = match self.certificate_bundle {
             Some(ref cert_bundle) => {
-                let host_port: Vec<_> = receiver.0.split(':').collect();
-                if host_port.len() != 2 {
-                    return Err(anyhow_error_and_log(format!(
-                        "wrong receiver format: {:?}",
-                        receiver
-                    )));
-                }
+                // If the host is an IP address then we abort
+                // domain names are needed for TLS.
+                //
+                // This is because we could run the parties with the
+                // same IP address for all parties but using different ports,
+                // but we cannot map the port number to certificates.
+                let domain_name = match endpoint.host() {
+                    Some(host) => {
+                        if !hostname_is_valid(host) {
+                            return Err(anyhow_error_and_log(format!(
+                                "{} is not a valid hostname",
+                                host
+                            )));
+                        }
+                        if IpAddr::from_str(host).is_ok() {
+                            return Err(anyhow_error_and_log(format!(
+                                "{} is an IP address, which is not supported for TLS",
+                                host
+                            )));
+                        }
+
+                        host
+                    }
+                    None => {
+                        return Err(anyhow_error_and_log("host is missing"));
+                    }
+                };
+
+                // We limit the ca_certificate to a single one
+                // so there's no risk of connecting to a wrong party.
                 let tls_config = ClientTlsConfig::new()
-                    // TODO when we run our network in production the correct
-                    // domain_name needs to be selected somehow
-                    // .domain_name(host_port[0])
-                    .domain_name("localhost")
-                    .ca_certificate(cert_bundle.get_flattened_ca_list()?)
+                    .domain_name(domain_name)
+                    .ca_certificate(cert_bundle.get_ca_by_name(domain_name)?)
                     .identity(cert_bundle.get_identity()?);
+                tracing::debug!("building TLS channel with {domain_name}");
                 Channel::builder(endpoint).tls_config(tls_config)?
             }
             None => Channel::builder(endpoint),
@@ -211,6 +234,7 @@ pub struct NetworkSession {
     pub next_network_timeout: RwLock<Duration>,
     pub max_elapsed_time: RwLock<Duration>,
 }
+
 #[async_trait]
 impl Networking for NetworkSession {
     //Note this need not be async, so do we want to keep the trait definition async
@@ -381,13 +405,35 @@ impl Networking for NetworkSession {
     }
 }
 
+/// A hostname is valid if the following condition are true:
+///
+/// - It does not start or end with `-` or `.`.
+/// - It does not contain any characters outside of the alphanumeric range, except for `-` and `.`.
+/// - It is not empty.
+/// - It is 253 or fewer characters.
+/// - Its labels (characters separated by `.`) are not empty.
+/// - Its labels are 63 or fewer characters.
+/// - Its labels do not start or end with '-' or '.'.
+fn hostname_is_valid(hostname: &str) -> bool {
+    fn is_valid_char(byte: u8) -> bool {
+        byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.'
+    }
+
+    !(hostname.bytes().any(|byte| !is_valid_char(byte))
+        || hostname.split('.').any(|label| {
+            label.is_empty() || label.len() > 63 || label.starts_with('-') || label.ends_with('-')
+        })
+        || hostname.is_empty()
+        || hostname.len() > 253)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
     use crate::{
         execution::runtime::party::{Identity, Role, RoleAssignment},
-        networking::{grpc::GrpcNetworkingManager, Networking},
+        networking::{grpc::GrpcNetworkingManager, sending_service::hostname_is_valid, Networking},
         session_id::SessionId,
     };
 
@@ -509,6 +555,44 @@ mod tests {
         let ref_res = res.first().unwrap();
         for res in res.iter() {
             assert_eq!(res, ref_res);
+        }
+    }
+
+    #[test]
+    fn valid_hostnames() {
+        for hostname in &[
+            "VaLiD-HoStNaMe",
+            "50-name",
+            "235235",
+            "example.com",
+            "VaLid.HoStNaMe",
+            "123.456",
+            "10.0.0.1",
+        ] {
+            assert!(hostname_is_valid(hostname), "{} is not valid", hostname);
+        }
+    }
+
+    #[test]
+    fn invalid_hostnames() {
+        for hostname in &[
+            "-invalid-name",
+            "also-invalid-",
+            "asdf@fasd",
+            "@asdfl",
+            "asd f@",
+            ".invalid",
+            "invalid.name.",
+            "foo.label-is-way-to-longgggggggggggggggggggggggggggggggggggggggggggg.org",
+            "invalid.-starting.char",
+            "invalid.ending-.char",
+            "empty..label",
+        ] {
+            assert!(
+                !hostname_is_valid(hostname),
+                "{} should not be valid",
+                hostname
+            );
         }
     }
 }

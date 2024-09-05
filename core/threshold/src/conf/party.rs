@@ -6,6 +6,7 @@ use crate::{
     execution::online::preprocessing::redis::RedisConf, networking::grpc::CoreToCoreNetworkConfig,
 };
 use conf_trace::conf::Tracing;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 /// Struct for storing protocol settings
@@ -36,10 +37,6 @@ pub struct PartyConf {
     /// If [certpaths] is Some(_), then TLS will be enabled
     /// for the core-to-core communication
     pub certpaths: Option<CertificatePaths>,
-    /// If [certpaths] is Some(_) and choreousetls is true,
-    /// TLS will be enabled for the choreographer-to-core
-    /// communication.
-    pub choreo_use_tls: bool,
     pub net_conf: Option<CoreToCoreNetworkConfig>,
 }
 
@@ -53,7 +50,11 @@ pub struct CertificatePaths {
     /// like "path/to/ca1.pem,path/to/ca2.pem,path/to/ca3.pem,"
     /// this is a consequence of using the config crate
     /// when the [calist] is populated using an environment
-    /// variable
+    /// variable, namely environment variables only support
+    /// the string type.
+    ///
+    /// Do not put an underscore in this name otherwise
+    /// it will confuse the config crate.
     pub calist: String,
 }
 
@@ -81,13 +82,62 @@ impl CertificatePaths {
         };
         Ok(tonic::transport::Certificate::from_pem(client_ca_cert_buf))
     }
+
+    /// Iterate over the certificates and find the one that contains
+    /// Issue and subject CN that match the parameter cn.
+    pub fn get_ca_by_name(&self, cn: &str) -> anyhow::Result<tonic::transport::Certificate> {
+        let list = self
+            .calist
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(std::fs::read_to_string)
+            .collect::<Result<Vec<_>, _>>()?;
+        for buf in list {
+            let (_rem, c) = x509_parser::pem::parse_x509_pem(buf.as_ref())?;
+            let x509 = c.parse_x509()?;
+
+            // check that one of the SAN is the cn
+            let Some(sans) = x509.subject_alternative_name()? else {
+                tracing::error!("SAN not specified");
+                continue;
+            };
+            if !sans
+                .value
+                .general_names
+                .iter()
+                .filter_map(|san| match san {
+                    x509_parser::extensions::GeneralName::DNSName(s) => Some(s),
+                    _ => None,
+                })
+                .contains(&cn)
+            {
+                continue;
+            }
+
+            let Some(subject) = x509.subject().iter_common_name().next() else {
+                tracing::error!("bad certificate, missing subject");
+                continue;
+            };
+            let Some(issuer) = x509.issuer().iter_common_name().next() else {
+                tracing::error!("bad certificate, missing issuer");
+                continue;
+            };
+
+            // then issuer and subject CN should match
+            if subject.as_str()? == cn && issuer.as_str()? == cn {
+                return Ok(tonic::transport::Certificate::from_pem(buf));
+            }
+
+            // continue otherwise
+        }
+
+        Err(anyhow::anyhow!("no name found matching {cn}"))
+    }
 }
 
 /// This is an example of the configuration file using `PartyConf` struct.
 ///
 /// ```toml
-/// choreo_use_tls = false
-///
 /// [protocol.host]
 /// address = "p1"
 /// port = 50000
@@ -144,6 +194,9 @@ impl PartyConf {
 #[cfg(test)]
 mod tests {
     use conf_trace::conf::Settings;
+    use std::env;
+    use std::process::Command;
+    use tempfile::tempdir;
 
     use super::*;
 
@@ -156,7 +209,6 @@ mod tests {
             .build()
             .init_conf()
             .unwrap();
-        assert!(party_conf.choreo_use_tls);
         let protocol = party_conf.protocol();
         let host = protocol.host();
         let peers = protocol.peers();
@@ -249,7 +301,6 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn test_party_conf_with_env() {
-        use std::env;
         env::set_var("DDEC__PROTOCOL__HOST__ADDRESS", "p3");
         env::set_var("DDEC__PROTOCOL__HOST__PORT", "50000");
         env::set_var("DDEC__PROTOCOL__HOST__ID", "3");
@@ -291,7 +342,6 @@ mod tests {
         assert_eq!(bundle.cert, "/path/to/cert");
         assert_eq!(bundle.key, "/path/to/key");
         assert_eq!(bundle.calist, "/path/one,/path/two");
-        assert!(party_conf.choreo_use_tls);
         assert_eq!(party_conf.tracing.unwrap().service_name(), "moby-p3");
 
         env::remove_var("DDEC__PROTOCOL__HOST__ADDRESS");
@@ -313,5 +363,57 @@ mod tests {
         env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK");
         env::remove_var("DDEC__NET_CONF__NETWORK_TIMEOUT_BK_SNS");
         env::remove_var("DDEC__NET_CONF__MAX_EN_DECODE_MESSAGE_SIZE");
+    }
+
+    #[test]
+    fn test_cert_paths() {
+        // make a temporary directory for the certificates
+        let temp_dir = tempdir().unwrap();
+
+        // NOTE: that this binary won't work if
+        // `core/threshold` is made independent from `core/service`.
+        Command::new("cargo")
+            .args([
+                "run",
+                "--manifest-path=../service/Cargo.toml",
+                "--bin=kms-gen-tls-certs",
+                "--",
+                "--ca-prefix=p",
+                "--ca-count=4",
+                "-o",
+                temp_dir.path().to_str().unwrap(),
+            ])
+            .output()
+            .expect("failed to execute process");
+
+        let cert_path = temp_dir.path().join("cert_p1.pem");
+        assert!(cert_path.exists());
+        let key_path = temp_dir.path().join("key_p1.pem");
+        assert!(key_path.exists());
+        let cert_paths = CertificatePaths {
+            cert: cert_path.to_str().unwrap().to_string(),
+            key: key_path.to_str().unwrap().to_string(),
+            calist: [
+                "cert_p1.pem,",
+                "cert_p2.pem,",
+                "cert_p3.pem,",
+                "cert_p4.pem",
+            ]
+            .map(|suffix| temp_dir.path().join(suffix).to_str().unwrap().to_string())
+            .concat(),
+        };
+
+        assert!(cert_paths.get_certificate().is_ok());
+        assert!(cert_paths.get_identity().is_ok());
+        assert!(cert_paths.get_flattened_ca_list().is_ok());
+        for i in 0..4 {
+            // note that party IDs start at 1
+            let pid = i + 1;
+            assert!(cert_paths.get_ca_by_name(&format!("p{pid}")).is_ok());
+        }
+        assert!(cert_paths.get_ca_by_name("p5").is_err());
+
+        // using localhost should fail too because it's not a part of the issuer
+        assert!(cert_paths.get_ca_by_name("localhost").is_err());
     }
 }

@@ -92,7 +92,6 @@ mod kms_init_binary_test {
 #[cfg(test)]
 mod kms_gen_keys_binary_test {
     use std::fs::read_dir;
-
     use tempfile::tempdir;
 
     use super::*;
@@ -248,6 +247,10 @@ mod kms_server_binary_test {
                 .assert()
                 .success();
 
+            // NOTE that we use the cert directory instead of
+            // a temporary directory because kms-server binary
+            // doesn't know about the temporary directory since
+            // its configuration is loaded from a file.
             Command::cargo_bin(KMS_GEN_TLS_CERTS)
                 .unwrap()
                 .arg("-o")

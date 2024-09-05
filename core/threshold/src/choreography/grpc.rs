@@ -18,12 +18,9 @@ use crate::algebra::base_ring::Z64;
 use crate::algebra::residue_poly::ResiduePoly128;
 use crate::algebra::residue_poly::ResiduePoly64;
 use crate::algebra::structure_traits::{ErrorCorrect, Invert, RingEmbed};
-use crate::choreography::{
-    requests::{
-        CrsGenParams, PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, SessionType,
-        Status, ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
-    },
-    NetworkingStrategy,
+use crate::choreography::requests::{
+    CrsGenParams, PreprocDecryptParams, PreprocKeyGenParams, PrssInitParams, SessionType, Status,
+    ThresholdDecryptParams, ThresholdKeyGenParams, ThresholdKeyGenResultParams,
 };
 use crate::execution::endpoints::decryption::{
     init_prep_bitdec_large, init_prep_bitdec_small, run_decryption_bitdec_64,
@@ -49,7 +46,7 @@ use crate::execution::tfhe_internals::parameters::DKGParams;
 use crate::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use crate::execution::zk::ceremony::{Ceremony, PublicParameter, RealCeremony};
 use crate::networking::constants::MAX_EN_DECODE_MESSAGE_SIZE;
-use crate::networking::NetworkMode;
+use crate::networking::{NetworkMode, NetworkingStrategy};
 use crate::{execution::small_execution::prss::PRSSSetup, session_id::SessionId};
 use aes_prng::AesRng;
 use async_trait::async_trait;

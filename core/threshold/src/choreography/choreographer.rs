@@ -1,9 +1,14 @@
+//! Choreographer is a GRPC client that communicates with
+//! the kms-core (with the moby binary) parties to do benchmarks.
+//! It is a trusted entity and should not be used with production kms-core.
 use crate::choreography::grpc::gen::{
     CrsGenRequest, CrsGenResultRequest, PreprocDecryptRequest, ThresholdDecryptRequest,
     ThresholdKeyGenResultRequest,
 };
 use crate::choreography::requests::CrsGenParams;
+use crate::conf::choreo::ChoreoConf;
 use crate::execution::endpoints::keygen::FhePubKeySet;
+use crate::execution::runtime::party::RoleAssignment;
 use crate::execution::runtime::session::DecryptionMode;
 use crate::execution::tfhe_internals::parameters::{Ciphertext64, DkgParamsAvailable};
 use crate::execution::zk::ceremony::compute_witness_dim;
@@ -22,7 +27,7 @@ use std::thread;
 use std::{collections::HashMap, time::Duration};
 use tokio::task::JoinSet;
 use tonic::service::interceptor::InterceptedService;
-use tonic::transport::{Channel, ClientTlsConfig, Uri};
+use tonic::transport::{Channel, Uri};
 use tracing::{instrument, Instrument};
 
 use super::grpc::gen::{
@@ -49,23 +54,20 @@ pub struct GrpcOutputs {
 pub type NetworkTopology = HashMap<Role, Uri>;
 
 impl ChoreoRuntime {
-    pub fn new(
-        role_assignments: HashMap<Role, Identity>,
-        tls_config: Option<ClientTlsConfig>,
-    ) -> Result<ChoreoRuntime, Box<dyn std::error::Error>> {
-        let network_topology: NetworkTopology = role_assignments
-            .iter()
-            .map(|(role, id)| {
-                let uri: Uri = id.to_string().parse()?;
-                Ok((*role, uri))
-            })
-            .collect::<Result<NetworkTopology, Box<dyn std::error::Error>>>()?;
-        Self::new_with_net_topology(role_assignments.clone(), tls_config, network_topology)
+    pub fn new_from_conf(conf: &ChoreoConf) -> Result<ChoreoRuntime, Box<dyn std::error::Error>> {
+        let topology = &conf.threshold_topology;
+
+        let role_assignments: RoleAssignment = topology.into();
+
+        // we need to set the protocol in URI correctly
+        // depending on whether the certificates are present
+        let host_channels = topology.choreo_physical_topology_into_network_topology()?;
+
+        ChoreoRuntime::new_with_net_topology(role_assignments, host_channels)
     }
 
-    pub fn new_with_net_topology(
+    fn new_with_net_topology(
         role_assignments: HashMap<Role, Identity>,
-        tls_config: Option<ClientTlsConfig>,
         network_topology: NetworkTopology,
     ) -> Result<ChoreoRuntime, Box<dyn std::error::Error>> {
         let channels = network_topology
@@ -73,11 +75,9 @@ impl ChoreoRuntime {
             .map(|(role, host)| {
                 let endpoint: &Uri = host;
                 tracing::debug!("connecting to endpoint: {:?}", endpoint);
-                let mut channel = Channel::builder(endpoint.clone());
-                if let Some(ref tls_config) = tls_config {
-                    channel = channel.tls_config(tls_config.clone())?;
-                };
-                let channel = channel.timeout(*NETWORK_TIMEOUT_LONG).connect_lazy();
+                let channel = Channel::builder(endpoint.clone())
+                    .timeout(*NETWORK_TIMEOUT_LONG)
+                    .connect_lazy();
                 Ok((*role, channel))
             })
             .collect::<Result<_, Box<dyn std::error::Error>>>()?;

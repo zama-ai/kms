@@ -4,7 +4,7 @@ listen_port_client = 50200
 
 # The address and port that tcp listener binds on to
 # communicate with the other cores.
-listen_address_core = "127.0.0.1"
+listen_address_core = "0.0.0.0"
 listen_port_core = 50002
 
 # maximum grpc message size in bytes
@@ -33,25 +33,25 @@ tls_key_path = "certs/key_p2.pem"
 # This list should be the same for all parties.
 [[peer_confs]]
 party_id = 1
-address = "127.0.0.1"
+address = "p1"
 port = 50001
 tls_cert_path = "certs/cert_p1.pem"
 
 [[peer_confs]]
 party_id = 2
-address = "127.0.0.1"
+address = "p2"
 port = 50002
 tls_cert_path = "certs/cert_p2.pem"
 
 [[peer_confs]]
 party_id = 3
-address = "127.0.0.1"
+address = "p3"
 port = 50003
 tls_cert_path = "certs/cert_p3.pem"
 
 [[peer_confs]]
 party_id = 4
-address = "127.0.0.1"
+address = "p4"
 port = 50004
 tls_cert_path = "certs/cert_p4.pem"
 

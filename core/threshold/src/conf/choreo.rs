@@ -43,11 +43,10 @@ impl ChoreoParty {
         Ok(uri)
     }
 
-    pub fn choreo_physical_addr_into_uri(&self, use_tls: bool) -> anyhow::Result<Uri> {
-        let proto = if use_tls { "https" } else { "http" };
+    pub fn choreo_physical_addr_into_uri(&self) -> anyhow::Result<Uri> {
         let uri: Uri = format!(
-            "{}://{}:{}",
-            proto, self.physical_address, self.choreo_physical_port
+            "http://{}:{}",
+            self.physical_address, self.choreo_physical_port
         )
         .parse()
         .map_err(|e| anyhow::anyhow!("Error on parsing uri {}", e))?;
@@ -84,12 +83,11 @@ impl ThresholdTopology {
 
     pub fn choreo_physical_topology_into_network_topology(
         &self,
-        use_tls: bool,
     ) -> anyhow::Result<NetworkTopology> {
         self.peers
             .iter()
             .map(|party| {
-                let uri: Uri = party.choreo_physical_addr_into_uri(use_tls)?;
+                let uri: Uri = party.choreo_physical_addr_into_uri()?;
                 Ok((party.into(), uri))
             })
             .collect()
