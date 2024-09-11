@@ -6,10 +6,13 @@ on:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
     inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
       working-directory:
         type: string
         required: true
-        default: './'
       docker-context:
           type: string
           required: false
@@ -17,7 +20,6 @@ on:
       image-name:
         type: string
         required: true
-        default: 'kms'
       push_image:
         type: boolean
         default: true
@@ -51,6 +53,8 @@ jobs:
     steps:
       - name: Checkout Project
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

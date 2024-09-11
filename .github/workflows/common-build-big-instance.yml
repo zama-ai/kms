@@ -13,7 +13,6 @@ on:
       working-directory:
         type: string
         required: true
-        default: ''
       build-publish-docs:
         type: boolean
         required: false
@@ -33,7 +32,6 @@ on:
       package-name:
         type: string
         required: true
-        default: ''
       test-coverage:
         type: boolean
         required: false

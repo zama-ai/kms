@@ -8,10 +8,13 @@ on:
       GRAVITON_BUILDER_SSH_PRIVATE_KEY:
         required: true
     inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
       working-directory:
         type: string
         required: true
-        default: './'
       docker-context:
         type: string
         required: false
@@ -19,7 +22,6 @@ on:
       image-name:
         type: string
         required: true
-        default: 'kms'
       image-dev:
         type: string
         required: false
@@ -95,6 +97,8 @@ jobs:
     steps:
       - name: Checkout Project
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Set up SSH
         if: inputs.arm-build
