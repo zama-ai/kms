@@ -1,8 +1,0 @@
-{
-  "decrypt": {
-    "version": 1,
-    "ciphertext": "010101",
-    "key_id": "04a1aa8ba5e95fb4dc42e06add00b0c2ce3ea424",
-    "fhe_type": "euint8"
-  }
-}

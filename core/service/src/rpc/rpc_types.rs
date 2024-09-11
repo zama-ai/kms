@@ -620,6 +620,7 @@ impl Plaintext {
     pub fn fhe_type(&self) -> FheType {
         self.fhe_type
     }
+    // TODO: Implement something that does something like `as_<fhe_type>`
 }
 
 impl From<Plaintext> for Vec<u8> {

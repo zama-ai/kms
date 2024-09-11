@@ -1,10 +1,31 @@
 use std::env;
+use std::fmt;
 use std::io::Write;
-use std::process::Command;
+use std::process::{Command, Output};
 
 #[derive(Clone)]
 pub struct DockerComposeCmd {
     file: String,
+}
+
+// Wrapper struct for Output
+pub struct OutputWrapper<'a>(&'a Output);
+
+impl<'a> fmt::Display for OutputWrapper<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let stdout = String::from_utf8_lossy(&self.0.stdout);
+        let stderr = String::from_utf8_lossy(&self.0.stderr);
+        write!(
+            f,
+            "Status: {}\nStdout: {}\nStderr: {}",
+            self.0.status, stdout, stderr
+        )
+    }
+}
+
+// Helper function to create the wrapper
+pub fn format_output(output: &Output) -> OutputWrapper {
+    OutputWrapper(output)
 }
 
 impl DockerComposeCmd {
@@ -31,6 +52,17 @@ impl DockerComposeCmd {
             .output()
             .expect("Failed to execute command");
         std::io::stdout().write_all(&output.stdout).unwrap();
+
+        assert!(
+            output.status.success(),
+            "Docker compose failed to start.\n{}",
+            format_output(&output)
+        );
+
+        println!(
+            "Docker compose successfuly started:\n{}",
+            format_output(&output)
+        );
     }
 
     pub fn down(&self) {

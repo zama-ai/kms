@@ -117,7 +117,7 @@ pub(crate) enum ExecutionEnvironment {
     Test,
 }
 
-#[derive(TypedBuilder)]
+#[derive(TypedBuilder, Debug)]
 pub struct Settings<'a> {
     #[builder(setter(strip_option), default = None)]
     path: Option<&'a str>,
@@ -138,7 +138,7 @@ impl<'a> Settings<'a> {
     /// # Errors
     ///
     /// Returns an error if the configuration cannot be created or deserialized.
-    pub fn init_conf<'de, T: Deserialize<'de>>(&self) -> Result<T, ConfigError> {
+    pub fn init_conf<'de, T: Deserialize<'de> + std::fmt::Debug>(&self) -> Result<T, ConfigError> {
         let mut env_conf = config::Environment::default()
             .prefix(self.env_prefix)
             .separator("__")
@@ -178,6 +178,8 @@ impl<'a> Settings<'a> {
         let s = s.add_source(env_conf).build()?;
 
         let settings: T = s.try_deserialize()?;
+
+        tracing::info!("DEBUG: SETTINGS: {:?}", settings);
 
         Ok(settings)
     }

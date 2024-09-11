@@ -11,6 +11,10 @@ use base64::{engine::general_purpose, Engine as _};
 use cosmos_proto::messages::cosmos::auth::v1beta1::{
     query_client::QueryClient, BaseAccount, QueryAccountRequest, QueryAccountResponse,
 };
+use std::error::Error as StdError;
+
+use cosmos_proto::messages::cosmos::bank::v1beta1::query_client::QueryClient as BankQueryClient;
+use cosmos_proto::messages::cosmos::bank::v1beta1::QueryBalanceRequest;
 use cosmos_proto::messages::cosmos::base::abci::v1beta1::TxResponse;
 use cosmos_proto::messages::cosmos::base::v1beta1::Coin;
 use cosmos_proto::messages::cosmos::tx::v1beta1::mode_info::{Single, Sum};
@@ -53,6 +57,8 @@ pub struct ExecuteContractRequest {
 #[derive(TypedBuilder)]
 pub struct ClientBuilder<'a> {
     grpc_addresses: Vec<&'a str>,
+    #[builder(setter(into), default = None)]
+    kv_store_address: Option<&'a str>,
     contract_address: &'a str,
     #[builder(default = None)]
     mnemonic_wallet: Option<&'a str>,
@@ -113,6 +119,9 @@ impl TryFrom<ClientBuilder<'_>> for Client {
 
         Ok(Client {
             client,
+            kv_store_address: value
+                .kv_store_address
+                .map(|kv_address| kv_address.to_string()),
             sender_key,
             chain_id,
             coin_denom,
@@ -125,6 +134,7 @@ impl TryFrom<ClientBuilder<'_>> for Client {
 /// A client for interacting with CosmWasm smart contracts via Cosmos SDK's Tendermint protocol.
 pub struct Client {
     client: Channel,
+    pub kv_store_address: Option<String>,
     sender_key: SigningKey,
     contract_address: AccountId,
     coin_denom: String,
@@ -137,8 +147,39 @@ impl Client {
         ClientBuilder::builder()
     }
 
+    pub async fn get_wallet_amount(
+        &self,
+        denom: Option<&str>,
+    ) -> Result<u64, Box<dyn StdError + 'static>> {
+        let denom = denom.unwrap_or(DENOM);
+        let mut bank_client = BankQueryClient::new(self.client.clone());
+        // Query the account
+        let address = self.get_account_address()?;
+
+        // Query the balance
+        let balance_request = QueryBalanceRequest {
+            address,
+            denom: denom.to_string(),
+        };
+        let balance_response = bank_client.balance(balance_request.clone()).await?;
+        Ok(balance_response
+            .into_inner()
+            .balance
+            .unwrap_or_default()
+            .amount
+            .parse::<u64>()?)
+    }
+
+    pub fn get_account_address(&self) -> Result<std::string::String, Error> {
+        Ok(self
+            .sender_key
+            .public_key()
+            .account_id(ACCOUNT_PREFIX)?
+            .to_string())
+    }
+
     /// Queries the blockchain for the account details of the sender.
-    async fn query_account(&self) -> Result<BaseAccount, Error> {
+    pub async fn query_account(&self) -> Result<BaseAccount, Error> {
         let mut query = QueryClient::new(self.client.clone());
         let query_req = QueryAccountRequest {
             address: self
@@ -165,7 +206,7 @@ impl Client {
     /// A `Result` containing either the transaction response from the blockchain or an error.
     #[tracing::instrument(skip(self, request))]
     pub async fn execute_contract(
-        &mut self,
+        &self,
         request: ExecuteContractRequest,
     ) -> Result<TxResponse, Error> {
         let account = self.query_account().await?;

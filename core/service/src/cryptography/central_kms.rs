@@ -283,9 +283,8 @@ pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<()>
     // type since our own type uses k256::ecdsa, which is not the same
     // as the one in alloy.
     let alloy_signature = alloy_primitives::Signature::try_from(signature_bytes.as_slice())
-        .map_err(|e| {
+        .inspect_err(|e| {
             tracing::error!("Failed to parse alloy signature with error: {e}");
-            e
         })?;
 
     check_normalized(&Signature {
@@ -424,6 +423,7 @@ pub fn central_decrypt<
 ) -> anyhow::Result<Vec<PlaintextAndHandle>> {
     use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
+    tracing::info!("Decrypting list of cipher-texts");
     // run the decryption of each ct in the batch in parallel
     cts.par_iter()
         .map(|ct| {
@@ -622,9 +622,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     ) -> anyhow::Result<Self> {
         let sks: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
             read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
-        let sk = PrivateSigKey::unversionize(get_exactly_one(sks).map_err(|e| {
-            tracing::error!("signing key hashmap is not exactly 1");
-            e
+        let sk = PrivateSigKey::unversionize(get_exactly_one(sks).inspect_err(|e| {
+            tracing::error!("signing key hashmap is not exactly 1, {}", e);
         })?)?;
         let key_info_versioned: HashMap<
             RequestId,

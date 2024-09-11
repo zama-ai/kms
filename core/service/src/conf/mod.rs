@@ -11,7 +11,7 @@ pub trait ConfigTracing {
 }
 
 /// Initialize the configuration from the given file.
-pub fn init_conf<'a, T: Deserialize<'a>>(config_file: &str) -> anyhow::Result<T> {
+pub fn init_conf<'a, T: Deserialize<'a> + std::fmt::Debug>(config_file: &str) -> anyhow::Result<T> {
     Settings::builder()
         .path(config_file)
         .env_prefix("KMS_CORE")
@@ -21,7 +21,7 @@ pub fn init_conf<'a, T: Deserialize<'a>>(config_file: &str) -> anyhow::Result<T>
 }
 
 /// Initialize the configuration from the given file and initialize tracing.
-pub fn init_conf_trace<'a, T: Deserialize<'a> + ConfigTracing>(
+pub fn init_conf_trace<'a, T: Deserialize<'a> + std::fmt::Debug + ConfigTracing>(
     config_file: &str,
 ) -> anyhow::Result<T> {
     let full_config: T = init_conf(config_file)?;

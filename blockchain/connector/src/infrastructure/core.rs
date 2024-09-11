@@ -295,6 +295,7 @@ where
                 .storage
                 .get_ciphertext(kv_ct_handle)
                 .await?;
+            tracing::info!("FHE Type: {:?}", fhe_types[idx]);
 
             // add external handle if it exists
             let external_handle = external_handles.as_ref().map(|ehs| ehs.0[idx].0.clone());
@@ -306,7 +307,7 @@ where
             });
         }
 
-        // decryption request for the kms core
+        // Decryption request for the kms core
         let req = DecryptionRequest {
             version,
             ciphertexts,
@@ -318,11 +319,14 @@ where
 
         let request = make_request(req.clone(), Some(request_id.clone()))?;
         // the response should be empty
-        let _resp = client.decrypt(request).await.map_err(|e| {
+        let _resp = client.decrypt(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
-            tracing::error!(err_msg);
+            tracing::error!(
+                "Error communicating decryption to core. Error message:\n{}\nRequest:\n{:?}",
+                err_msg,
+                req,
+            );
             metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-            e
         })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "Decrypt")]);
 
@@ -425,11 +429,14 @@ where
         let request = make_request(req.clone(), Some(request_id.clone()))?;
 
         // the response should be empty
-        let _resp = client.reencrypt(request).await.map_err(|e| {
+        let _resp = client.reencrypt(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
-            tracing::error!(err_msg);
+            tracing::error!(
+                "Error communicating decryption to core. Error message:\n{}\nRequest:\n{:?}",
+                err_msg,
+                req,
+            );
             metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-            e
         })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "Reencrypt")]);
 
@@ -513,11 +520,14 @@ where
         let request = make_request(req.clone(), Some(request_id.clone()))?;
 
         // the response should be empty
-        let _resp = client.key_gen_preproc(request).await.map_err(|e| {
+        let _resp = client.key_gen_preproc(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
-            tracing::error!(err_msg);
+            tracing::error!(
+                "Error communicating decryption to core. Error message:\n{}\nRequest:\n{:?}",
+                err_msg,
+                req,
+            );
             metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-            e
         })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "KeyGenPreproc")]);
 
@@ -604,11 +614,14 @@ where
         let request = make_request(req.clone(), Some(request_id.clone()))?;
 
         // the response should be empty
-        let _resp = client.key_gen(request).await.map_err(|e| {
+        let _resp = client.key_gen(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
-            tracing::error!(err_msg);
+            tracing::error!(
+                "Error communicating decryption to core. Error message:\n{}\nRequest:\n{:?}",
+                err_msg,
+                req,
+            );
             metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-            e
         })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "KeyGen")]);
 
@@ -695,11 +708,14 @@ where
         let request = make_request(req.clone(), Some(request_id.clone()))?;
 
         // the response should be empty
-        let _resp = client.crs_gen(request).await.map_err(|e| {
+        let _resp = client.crs_gen(request).await.inspect_err(|e| {
             let err_msg = e.to_string();
-            tracing::error!(err_msg);
+            tracing::error!(
+                "Error communicating decryption to core. Error message:\n{}\nRequest:\n{:?}",
+                err_msg,
+                req,
+            );
             metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
-            e
         })?;
         metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "CRS")]);
 

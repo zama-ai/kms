@@ -53,6 +53,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  DOCKER_BUILD_TEST_SIMULATOR: 1
 
 jobs:
   compile-rust-unit-tests:
@@ -70,6 +71,20 @@ jobs:
     steps:
       - name: Checkout Project
         uses: actions/checkout@v4
+
+      # Needed to be able to pull some docker images for the simulator test
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        if: ${{ inputs.package-name == 'simulator' }}
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
 
       - name: Setup Home
         if: ${{ inputs.runs-on != 'ubuntu-latest' }}

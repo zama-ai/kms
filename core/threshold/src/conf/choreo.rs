@@ -95,7 +95,7 @@ impl ThresholdTopology {
 }
 
 /// Struct for storing settings.
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct ChoreoConf {
     pub threshold_topology: ThresholdTopology,
     pub tracing: Option<Tracing>,

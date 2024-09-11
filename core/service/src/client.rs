@@ -853,18 +853,16 @@ impl Client {
         let client_pk_map: HashMap<RequestId, <PublicSigKey as VersionizeOwned>::VersionedOwned> =
             read_all_data(&client_storage, &ClientDataType::VerfKey.to_string()).await?;
         let client_pk =
-            PublicSigKey::unversionize(get_exactly_one(client_pk_map).map_err(|e| {
-                tracing::error!("client pk hashmap is not exactly 1");
-                e
+            PublicSigKey::unversionize(get_exactly_one(client_pk_map).inspect_err(|e| {
+                tracing::error!("client pk hashmap is not exactly 1: {}", e);
             })?)?;
         let client_address = alloy_primitives::Address::from_public_key(client_pk.pk());
 
         let client_sk_map: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
             read_all_data(&client_storage, &ClientDataType::SigningKey.to_string()).await?;
         let client_sk =
-            PrivateSigKey::unversionize(get_exactly_one(client_sk_map).map_err(|e| {
-                tracing::error!("client sk hashmap is not exactly 1");
-                e
+            PrivateSigKey::unversionize(get_exactly_one(client_sk_map).inspect_err(|e| {
+                tracing::error!("client sk hashmap is not exactly 1: {}", e);
             })?)?;
         let params: NoiseFloodParameters = read_as_json(param_path).await?;
 
@@ -1370,9 +1368,8 @@ impl Client {
             // verification key is in the set of permissible keys
             let cur_verf_key: PublicSigKey = deserialize(&cur_payload.verification_key)?;
             BaseKmsStruct::verify_sig(&bincode::serialize(&cur_payload)?, &sig, &cur_verf_key)
-                .map_err(|e| {
-                    tracing::warn!("Signature on received response is not valid!");
-                    e
+                .inspect_err(|e| {
+                    tracing::warn!("Signature on received response is not valid! {}", e);
                 })?;
         }
         let serialized_plaintexts = some_or_err(
@@ -1729,12 +1726,10 @@ impl Client {
         let sig = Signature {
             sig: k256::ecdsa::Signature::from_slice(&resp.signature)?,
         };
-        internal_verify_sig(&bincode::serialize(&payload)?, &sig, &self.server_pks[0]).map_err(
-            |e| {
-                tracing::warn!("Signature on received response is not valid!");
-                e
-            },
-        )?;
+        internal_verify_sig(&bincode::serialize(&payload)?, &sig, &self.server_pks[0])
+            .inspect_err(|e| {
+                tracing::warn!("Signature on received response is not valid! {}", e);
+            })?;
 
         decrypt_signcryption(
             &payload.signcrypted_ciphertext,
@@ -2125,10 +2120,14 @@ pub mod test_tools {
     use crate::rpc::central_rpc::{default_param_file_map, server_handle};
     use crate::storage::{FileStorage, RamStorage, Storage, StorageType, StorageVersion};
     use crate::threshold::threshold_kms::{threshold_server_init, threshold_server_start};
+    use crate::util::key_setup::test_tools::setup::ensure_testing_material_exists;
     use itertools::Itertools;
     use std::str::FromStr;
     use tokio::task::JoinHandle;
     use tonic::transport::{Channel, Uri};
+
+    #[cfg(feature = "slow_tests")]
+    use crate::util::key_setup::test_tools::setup::ensure_default_material_exists;
 
     fn default_peer_configs(n: usize) -> Vec<PeerConf> {
         (1..=n)
@@ -2150,6 +2149,10 @@ pub mod test_tools {
         priv_storage: Vec<PrivS>,
         run_prss: bool,
     ) -> HashMap<u32, JoinHandle<()>> {
+        ensure_testing_material_exists().await;
+        #[cfg(feature = "slow_tests")]
+        ensure_default_material_exists().await;
+
         let mut handles = Vec::new();
         tracing::info!("Spawning servers...");
         let amount = priv_storage.len();
@@ -2290,6 +2293,10 @@ pub mod test_tools {
         pub_storage: PubS,
         priv_storage: PrivS,
     ) -> JoinHandle<()> {
+        ensure_testing_material_exists().await;
+        #[cfg(feature = "slow_tests")]
+        ensure_default_material_exists().await;
+
         let server_handle = tokio::spawn(async move {
             let url = format!("{DEFAULT_PROT}://{DEFAULT_URL}:{}", BASE_PORT + 1);
             let config = CentralizedConfig {

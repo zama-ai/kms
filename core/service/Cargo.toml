@@ -106,7 +106,6 @@ tfhe = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-al
 ] }
 
 [dev-dependencies]
-ctor = "0.2.8"
 assert_cmd = "2.0.14"
 sysinfo = "0.31.4"
 tempfile = "3.10.1"

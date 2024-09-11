@@ -145,7 +145,7 @@ impl fmt::Display for StorageType {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct FileStorage {
     path: PathBuf,
 }

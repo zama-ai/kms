@@ -2,7 +2,7 @@ use crate::conf::{ConfigTracing, Tracing};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct StorageConfigWith<MoreConfig> {
     pub public_storage_url: Option<String>,
     pub private_storage_url: Option<String>,

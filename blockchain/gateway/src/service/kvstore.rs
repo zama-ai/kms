@@ -2,6 +2,7 @@ use actix_web::get;
 use actix_web::post;
 use actix_web::{web, HttpResponse, Responder};
 use byteorder::{BigEndian, ByteOrder};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,12 +13,25 @@ use tokio::time::Duration;
 
 pub type Storage = Arc<Mutex<HashMap<String, tokio::time::Instant>>>;
 
+#[get("/home")]
+pub async fn home() -> impl Responder {
+    HttpResponse::Ok().body("<h1>KV-Store</h1>")
+}
+
 #[post("/store")]
 pub async fn put(req_body: String, storage: web::Data<Storage>) -> impl Responder {
     tracing::debug!("📦 Received ciphertext: {}", req_body);
     let data = hex::decode(req_body).unwrap();
     let combined_identifier = store(data, storage).await;
     HttpResponse::Ok().body(combined_identifier)
+}
+
+#[derive(Serialize, Deserialize)]
+struct Status {}
+
+pub async fn status() -> impl Responder {
+    tracing::debug!("Status check");
+    HttpResponse::Ok().json(Status {})
 }
 
 async fn store(data: Vec<u8>, storage: web::Data<Storage>) -> String {
@@ -120,4 +134,17 @@ pub async fn initialize_storage(storage: Storage) {
             }
         }
     }
+}
+
+// Not sure how relevant having this is
+// It's useful for debugging but we might not want to list all cipher-texts
+// in a production environment
+#[get("/list")]
+pub async fn list(storage: web::Data<Storage>) -> impl Responder {
+    let result = storage
+        .lock()
+        .await
+        .iter()
+        .fold(String::new(), |a, b| format!("{}\n{:?}", a, b));
+    HttpResponse::Ok().body(result)
 }

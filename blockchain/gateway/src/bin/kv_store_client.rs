@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Data size: {}", data_size);
                 // Send a GET request to the Actix web service
                 let response = client
-                    .get(&format!("{}/store/{}", opt.url, identifier))
+                    .get(format!("{}/store/{}", opt.url, identifier))
                     .send()
                     .await?;
 

@@ -1,4 +1,4 @@
-name: "[core-service-PR] Pipeline Run"
+name: "[Core-Service-PR] Pipeline Run"
 
 on:
   pull_request:

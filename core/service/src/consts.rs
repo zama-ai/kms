@@ -4,11 +4,6 @@ pub const KEY_PATH_PREFIX: &str = "keys";
 pub const DEFAULT_PARAM_PATH: &str = "parameters/default_params.json";
 pub const TEST_PARAM_PATH: &str = "parameters/small_test_params.json";
 
-#[cfg(test)]
-pub const TMP_PATH_PREFIX: &str = "temp";
-#[cfg(test)]
-pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
-
 pub const SIG_SIZE: usize = 64; // a 32 byte r value and a 32 byte s value
 pub const RND_SIZE: usize = 128 / 8; // the amount of bytes used for sampling random values to stop brute-forcing or statistical attacks
 
@@ -35,6 +30,8 @@ cfg_if::cfg_if! {
         pub const BASE_PORT: u16 = 50050;
         pub const DEFAULT_URL: &str = "127.0.0.1";
         pub const DEFAULT_PROT: &str = "http";
+        pub const TMP_PATH_PREFIX: &str = "temp";
+        pub const DEFAULT_CENTRAL_KEYS_PATH: &str = "temp/default-central-keys.bin";
 
         lazy_static! {
             pub static ref TEST_CENTRAL_KEY_ID: RequestId =

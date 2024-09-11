@@ -33,7 +33,7 @@ impl Storage for KVStore {
         tracing::info!("Data size: {}", data_size);
         // Send a GET request to the Actix web service
         let response = client
-            .get(&format!("{}/store/{}", self.config.url, identifier))
+            .get(format!("{}/store/{}", self.config.url, identifier))
             .send()
             .await?;
 

@@ -234,6 +234,46 @@ pub enum FheType {
     Unknown,
 }
 
+impl FheType {
+    // We don't use it for now, but useful to have
+    #[allow(dead_code)]
+    fn as_str_name(&self) -> &'static str {
+        match self {
+            FheType::Ebool => "Ebool",
+            FheType::Euint4 => "Euint4",
+            FheType::Euint8 => "Euint8",
+            FheType::Euint16 => "Euint16",
+            FheType::Euint32 => "Euint32",
+            FheType::Euint64 => "Euint64",
+            FheType::Euint128 => "Euint128",
+            FheType::Euint160 => "Euint160",
+            FheType::Euint256 => "Euint256",
+            FheType::Euint512 => "Euint512",
+            FheType::Euint1024 => "Euint1024",
+            FheType::Euint2048 => "Euint2048",
+            FheType::Unknown => "Unknown",
+        }
+    }
+
+    pub fn from_str_name(value: &str) -> FheType {
+        match value {
+            "Ebool" => Self::Ebool,
+            "Euint4" => Self::Euint4,
+            "Euint8" => Self::Euint8,
+            "Euint16" => Self::Euint16,
+            "Euint32" => Self::Euint32,
+            "Euint64" => Self::Euint64,
+            "Euint128" => Self::Euint128,
+            "Euint160" => Self::Euint160,
+            "Euint256" => Self::Euint256,
+            "Euint512" => Self::Euint512,
+            "Euint1024" => Self::Euint1024,
+            "Euint2048" => Self::Euint2048,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 impl From<u8> for FheType {
     fn from(value: u8) -> Self {
         match value {

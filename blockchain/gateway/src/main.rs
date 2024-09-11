@@ -16,8 +16,11 @@ use tokio::sync::Mutex;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load gateway configuration
     let config: GatewayConfig = init_conf_gateway("config/gateway")?;
+    // Some starting logs
     intro(&config);
+
     let provider = get_provider(&config.ethereum).await.unwrap_or_else(|e| {
         tracing::error!("Failed to set up provider: {:?}", e);
         std::process::exit(1);

@@ -407,6 +407,12 @@ impl<
             format!("Invalid key in request {:?}", inner),
         )?;
 
+        tracing::info!(
+            "Decrypting {:?} ciphertexts using key: {:?}",
+            ciphertexts.len(),
+            key_id.request_id
+        );
+
         {
             let mut guarded_meta_store = self.dec_meta_store.write().await;
             tonic_handle_potential_err(
@@ -435,6 +441,11 @@ impl<
                     return;
                 }
             };
+            tracing::info!(
+                "Starting decryption using key_id {} for request ID {}",
+                &key_id,
+                &request_id
+            );
 
             // run the computation in a separate rayon thread to avoid blocking the tokio runtime
             let (send, recv) = tokio::sync::oneshot::channel();

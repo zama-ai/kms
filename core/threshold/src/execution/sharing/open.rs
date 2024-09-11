@@ -92,13 +92,8 @@ async fn try_reconstruct_from_shares<
             // as network call acts as a sync points across parties
             .with_min_len(BATCH_SIZE_BITS)
             .map(|sharing| {
-                if let Ok(r) =
-                    reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
-                {
-                    r
-                } else {
-                    None
-                }
+                reconstruct_fn(num_parties, degree, threshold as usize, num_bots, sharing)
+                    .unwrap_or_default()
             })
             .collect();
 

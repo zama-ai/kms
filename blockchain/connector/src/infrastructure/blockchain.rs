@@ -32,6 +32,7 @@ impl KmsBlockchain {
             .coin_denom(&config.fee.denom)
             .mnemonic_wallet(config.signkey.mnemonic.as_deref())
             .bip32_private_key(config.signkey.bip32.as_deref())
+            .kv_store_address(config.kv_store_address.as_deref())
             .build()
             .try_into()
             .map_err(|e| anyhow::anyhow!("Error creating blockchain client {:?}", e))?;
@@ -76,13 +77,12 @@ impl Blockchain for KmsBlockchain {
         tracing::info!("Sending result to contract: {:?}", request);
         self.call_execute_contract(&mut client, &request)
             .await
-            .map_err(|e| {
+            .inspect_err(|e| {
                 self.metrics.increment(
                     MetricType::BlockchainError,
                     1,
                     &[("error", &e.to_string())],
                 );
-                e
             })
     }
 

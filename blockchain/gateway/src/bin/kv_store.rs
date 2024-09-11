@@ -3,7 +3,7 @@ use gateway::config::{init_conf_with_trace_gateway, GatewayConfig};
 use gateway::service::kvstore::evictor;
 use gateway::service::kvstore::initialize_storage;
 use gateway::service::kvstore::Storage;
-use gateway::service::kvstore::{get, put};
+use gateway::service::kvstore::{get, home, list, put, status};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -35,6 +35,11 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::PayloadConfig::new(payload_limit))
             .app_data(storage_data.clone())
             .service(put)
+            .service(home)
+            .service(list)
+            .route("/status", web::get().to(status))
+            .route("/status", web::head().to(status)) // Need to allow HEAD for status
+            // check using --spider
             .service(get)
     })
     .bind("0.0.0.0:8088")?

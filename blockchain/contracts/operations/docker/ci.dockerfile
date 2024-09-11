@@ -1,4 +1,4 @@
-FROM rust:1.80 as compiler
+FROM rust:1.80 AS compiler
 
 WORKDIR /app
 COPY . .
@@ -12,7 +12,7 @@ RUN mkdir -p /app/optimized
 RUN wasm-opt -Os --signext-lowering "/app/target/wasm32-unknown-unknown/release/asc.wasm" -o "/app/optimized/asc.wasm"
 RUN wasm-opt -Os --signext-lowering "/app/target/wasm32-unknown-unknown/release/tendermint_ipsc.wasm" -o "/app/optimized/tendermint_ipsc.wasm"
 
-FROM ghcr.io/zama-ai/kms-blockchain-validator:v0.51.0 as runtime
+FROM ghcr.io/zama-ai/kms-blockchain-validator:v0.51.0 AS runtime
 
 WORKDIR /app
 RUN apk add jq

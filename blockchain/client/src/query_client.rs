@@ -94,6 +94,7 @@ impl QueryClient {
         request: QueryContractRequest,
     ) -> Result<T, Error> {
         let mut query = WasmQueryClient::new(self.client.clone());
+        tracing::info!("contract address: {}", request.contract_address);
         let request = QuerySmartContractStateRequest {
             address: request.contract_address,
             query_data: serde_json::json!(request.query)

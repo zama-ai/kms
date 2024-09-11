@@ -30,6 +30,7 @@ pub struct BlockchainConfig {
     pub contract: String,
     pub fee: ContractFee,
     pub signkey: SignKeyConfig,
+    pub kv_store_address: Option<String>,
 }
 
 /// Three timeouts that controls the polling logic

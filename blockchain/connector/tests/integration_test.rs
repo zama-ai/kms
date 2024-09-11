@@ -136,6 +136,7 @@ async fn test_blockchain_connector(_ctx: &mut DockerComposeContext) {
             .mnemonic_wallet(mnemonic.as_deref())
             .grpc_addresses(addresses.clone())
             .contract_address(&contract_address)
+            .kv_store_address(None)
             .build()
             .try_into()
             .unwrap(),
@@ -274,6 +275,7 @@ async fn start_sync_handler(
             mnemonic,
             bip32: None,
         },
+        kv_store_address: None,
     };
     let metrics = OpenTelemetryMetrics::new();
     let blockchain = KmsBlockchain::new(blockchain_config.clone(), metrics.clone())

@@ -1,10 +1,7 @@
-#[cfg(test)]
-use crate::consts::{KEY_PATH_PREFIX, TMP_PATH_PREFIX};
 use crate::kms::{FheType, RequestId};
 use crate::rpc::rpc_types::Plaintext;
 use crate::rpc::rpc_types::PubDataType;
-use crate::storage::StorageReader;
-use crate::storage::{FileStorage, StorageType};
+use crate::storage::{FileStorage, StorageReader, StorageType};
 use crate::util::key_setup::FhePublicKey;
 use crate::{consts::AMOUNT_PARTIES, storage::delete_all_at_request_id};
 use distributed_decryption::execution::tfhe_internals::utils::expanded_encrypt;
@@ -161,11 +158,20 @@ pub async fn compute_cipher_from_storage(
     let url = storage
         .compute_url(key_id, &PubDataType::PublicKey.to_string())
         .unwrap();
+    tracing::info!("🚧 Using key: {}", url);
+    println!("storage: {:?}", storage);
+    println!("url: {:?}", url);
     let pk = if storage.data_exists(&url).await.unwrap() {
-        FhePublicKey::unversionize(storage.read_data(&url).await.unwrap()).unwrap()
+        tracing::info!("Reading");
+        let content = storage.read_data(&url).await.unwrap();
+        tracing::info!("Unversionning");
+        FhePublicKey::unversionize(content).unwrap()
     } else {
         // Try with the threshold storage
+        tracing::info!("Fallback to threshold file storage");
         let storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
+        println!("storage: {:?}", storage);
+        tracing::info!("storage: {:?}", storage);
         let url = storage
             .compute_url(key_id, &PubDataType::PublicKey.to_string())
             .unwrap();
@@ -193,21 +199,18 @@ pub async fn purge(pub_path: Option<&Path>, priv_path: Option<&Path>, id: &str) 
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        consts::{
-            AMOUNT_PARTIES, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID, TEST_CENTRAL_KEY_ID,
-            TEST_CRS_ID, TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID,
-        },
-        util::key_setup::ensure_central_server_signing_keys_exist,
+#[cfg(any(test, feature = "testing"))]
+pub(crate) mod setup {
+    use crate::util::key_setup::{
+        ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
     };
     use crate::{
-        rpc::rpc_types::PrivDataType,
-        util::key_setup::{
-            ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
+        consts::{
+            AMOUNT_PARTIES, KEY_PATH_PREFIX, OTHER_CENTRAL_TEST_ID, SIGNING_KEY_ID,
+            TEST_CENTRAL_KEY_ID, TEST_CRS_ID, TEST_PARAM_PATH, TEST_THRESHOLD_KEY_ID,
+            TMP_PATH_PREFIX,
         },
+        util::key_setup::ensure_central_server_signing_keys_exist,
     };
     use crate::{
         storage::{FileStorage, StorageType},
@@ -216,8 +219,6 @@ mod tests {
             ensure_threshold_server_signing_keys_exist,
         },
     };
-    use itertools::Itertools;
-    use tokio::runtime::Runtime;
 
     pub async fn ensure_dir_exist() {
         tokio::fs::create_dir_all(TMP_PATH_PREFIX).await.unwrap();
@@ -294,10 +295,8 @@ mod tests {
         .await;
     }
 
-    #[ctor::ctor]
-    fn ensure_testing_material_exists() {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(testing_material());
+    pub(crate) async fn ensure_testing_material_exists() {
+        testing_material().await
     }
 
     #[cfg(feature = "slow_tests")]
@@ -373,64 +372,67 @@ mod tests {
         .await;
     }
 
-    #[tokio::test]
-    async fn test_purge() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let test_prefix = Some(temp_dir.path());
-        let mut central_pub_storage =
-            FileStorage::new_centralized(test_prefix, StorageType::PUB).unwrap();
-        let mut central_priv_storage =
-            FileStorage::new_centralized(test_prefix, StorageType::PRIV).unwrap();
-        // Check no keys exist
-        assert!(central_pub_storage
-            .all_urls(&PubDataType::VerfKey.to_string())
-            .await
-            .unwrap()
-            .is_empty());
-        assert!(central_priv_storage
-            .all_urls(&PrivDataType::SigningKey.to_string())
-            .await
-            .unwrap()
-            .is_empty());
-        // Create keys to be deleted
-        assert!(
-            ensure_central_server_signing_keys_exist(
-                &mut central_pub_storage,
-                &mut central_priv_storage,
-                &SIGNING_KEY_ID,
-                true,
-            )
-            .await
-        );
-        // Validate the keys were made
-        let pub_urls = central_pub_storage
-            .all_urls(&PubDataType::VerfKey.to_string())
-            .await
-            .unwrap();
-        assert_eq!(pub_urls.len(), 1);
-        let priv_urls = central_priv_storage
-            .all_urls(&PrivDataType::SigningKey.to_string())
-            .await
-            .unwrap();
-        assert_eq!(priv_urls.len(), 1);
-        purge(test_prefix, test_prefix, pub_urls.keys().collect_vec()[0]).await;
-        // Check the keys were deleted
-        assert!(central_pub_storage
-            .all_urls(&PubDataType::VerfKey.to_string())
-            .await
-            .unwrap()
-            .is_empty());
-        assert!(central_priv_storage
-            .all_urls(&PrivDataType::SigningKey.to_string())
-            .await
-            .unwrap()
-            .is_empty());
-    }
-
     #[cfg(feature = "slow_tests")]
-    #[ctor::ctor]
-    fn ensure_default_material_exists() {
-        let rt = Runtime::new().unwrap();
-        rt.block_on(default_material());
+    pub(crate) async fn ensure_default_material_exists() {
+        default_material().await
     }
+}
+
+// NOTE: this test stays out of the setup module
+// because we don't want it to have the "testing" feature
+#[tokio::test]
+async fn test_purge() {
+    use crate::rpc::rpc_types::PrivDataType;
+    use itertools::Itertools;
+
+    let temp_dir = tempfile::tempdir().unwrap();
+    let test_prefix = Some(temp_dir.path());
+    let mut central_pub_storage =
+        FileStorage::new_centralized(test_prefix, StorageType::PUB).unwrap();
+    let mut central_priv_storage =
+        FileStorage::new_centralized(test_prefix, StorageType::PRIV).unwrap();
+    // Check no keys exist
+    assert!(central_pub_storage
+        .all_urls(&PubDataType::VerfKey.to_string())
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(central_priv_storage
+        .all_urls(&PrivDataType::SigningKey.to_string())
+        .await
+        .unwrap()
+        .is_empty());
+    // Create keys to be deleted
+    assert!(
+        crate::util::key_setup::ensure_central_server_signing_keys_exist(
+            &mut central_pub_storage,
+            &mut central_priv_storage,
+            &crate::consts::SIGNING_KEY_ID,
+            true,
+        )
+        .await
+    );
+    // Validate the keys were made
+    let pub_urls = central_pub_storage
+        .all_urls(&PubDataType::VerfKey.to_string())
+        .await
+        .unwrap();
+    assert_eq!(pub_urls.len(), 1);
+    let priv_urls = central_priv_storage
+        .all_urls(&PrivDataType::SigningKey.to_string())
+        .await
+        .unwrap();
+    assert_eq!(priv_urls.len(), 1);
+    purge(test_prefix, test_prefix, pub_urls.keys().collect_vec()[0]).await;
+    // Check the keys were deleted
+    assert!(central_pub_storage
+        .all_urls(&PubDataType::VerfKey.to_string())
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(central_priv_storage
+        .all_urls(&PrivDataType::SigningKey.to_string())
+        .await
+        .unwrap()
+        .is_empty());
 }

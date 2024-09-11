@@ -94,6 +94,7 @@ impl<'a> KmsBlockchainImpl {
                     .mnemonic_wallet(mnemonic.as_deref())
                     .grpc_addresses(addresses.clone())
                     .contract_address(contract_address)
+                    .kv_store_address(Some(config.storage.url.as_str()))
                     .build()
                     .try_into()
                     .unwrap(),

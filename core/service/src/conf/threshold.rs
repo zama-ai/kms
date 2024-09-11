@@ -6,7 +6,7 @@ use distributed_decryption::networking::grpc::CoreToCoreNetworkConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ThresholdConfig {
     pub listen_address_client: String,
     pub listen_port_client: u16,
@@ -50,7 +50,7 @@ impl ThresholdConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PeerConf {
     pub party_id: usize,
     pub address: String,

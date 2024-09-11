@@ -64,7 +64,7 @@ use itertools::Itertools;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use tfhe::integer::ciphertext::BaseRadixCiphertext;
 use tfhe::integer::IntegerCiphertext;
@@ -168,7 +168,11 @@ pub async fn threshold_server_start<
         .set_serving::<CoreServiceEndpointServer<RealThresholdKms<PubS, PrivS>>>()
         .await;
 
-    let socket: std::net::SocketAddr = format!("{}:{}", listen_address, listen_port).parse()?;
+    let socket_addr = format!("{}:{}", listen_address, listen_port)
+        .to_socket_addrs()?
+        .next()
+        .unwrap();
+
     let trace_request = tower::ServiceBuilder::new()
         .layer(TraceLayer::new_for_grpc().make_span_with(make_span))
         .map_request(accept_trace)
@@ -183,9 +187,9 @@ pub async fn threshold_server_start<
                 .max_encoding_message_size(grpc_max_message_size),
         )
         .add_service(health_service)
-        .serve(socket);
+        .serve(socket_addr);
 
-    tracing::info!("Starting threshold KMS server on socket {socket}");
+    tracing::info!("Starting threshold KMS server on socket {socket_addr}");
     server.await?;
     Ok(())
 }
@@ -315,6 +319,19 @@ pub type RealThresholdKms<PubS, PrivS> = GenericKms<
     RealCrsGenerator<PubS, PrivS>,
 >;
 
+#[derive(Debug)]
+struct FileNotFoundError {
+    message: String,
+}
+
+impl std::error::Error for FileNotFoundError {}
+
+impl std::fmt::Display for FileNotFoundError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn new_real_threshold_kms<PubS, PrivS>(
     threshold: u8,
@@ -339,9 +356,8 @@ where
 {
     let sks: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
         read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
-    let sk = PrivateSigKey::unversionize(get_exactly_one(sks).map_err(|e| {
-        tracing::error!("signing key hashmap is not exactly 1");
-        e
+    let sk = PrivateSigKey::unversionize(get_exactly_one(sks).inspect_err(|e| {
+        tracing::error!("signing key hashmap is not exactly 1, {}", e);
     })?)?;
 
     let key_info_versioned: HashMap<
@@ -380,15 +396,23 @@ where
 
     let mut server = match &cert_paths {
         Some(cert_bundle) => {
-            tracing::info!("Creating server with TLS enabled.");
+            tracing::info!(
+                "Creating server with TLS enabled with certificate: {:?}.",
+                cert_bundle.cert
+            );
 
-            // check that own_identity matches to what's in our certificate
-            let certificate = cert_bundle.get_certificate()?;
+            let certificate = cert_bundle
+                .get_certificate()
+                .map_err(|e| FileNotFoundError {
+                    message: format!("Failed to open file '{}': {}", cert_bundle.cert, e),
+                })?;
+            tracing::info!("Certificate key loaded");
             let san_strings = distributed_decryption::networking::grpc::extract_san_from_certs(
                 &[certificate],
                 true,
             )
             .map_err(|e| anyhow!(e))?;
+            tracing::info!("San strings loaded");
             let host = own_identity
                 .0
                 .split(':')
@@ -404,10 +428,14 @@ where
 
             // now setup the TLS server
             let identity = cert_bundle.get_identity()?;
+            tracing::info!("Identity loaded");
+            tracing::info!("ca list: {:?}", cert_bundle.calist);
             let ca_cert = cert_bundle.get_flattened_ca_list()?;
+            tracing::info!("CA list loaded");
             let tls_config = ServerTlsConfig::new()
                 .identity(identity)
                 .client_ca_root(ca_cert);
+            tracing::info!("TLS config setup");
             Server::builder().tls_config(tls_config)?
         }
         _ => {
@@ -422,15 +450,18 @@ where
     let networking_server = networking_manager.new_server();
 
     let router = server.add_service(networking_server);
-    let addr: SocketAddr = format!("{listen_address}:{listen_port}").parse()?;
+    let socket_addr = format!("{}:{}", listen_address, listen_port)
+        .to_socket_addrs()?
+        .next()
+        .unwrap();
 
     tracing::info!(
         "Starting core-to-core server for identity {} on address {}.",
         own_identity,
-        addr
+        socket_addr
     );
     let ddec_handle = tokio::spawn(async move {
-        match router.serve(addr).await {
+        match router.serve(socket_addr).await {
             Ok(handle) => Ok(handle),
             Err(e) => {
                 let msg = format!("Failed to launch ddec server with error: {:?}", e);
@@ -661,9 +692,8 @@ impl<PrivS: Storage + Send + Sync + 'static> RealInitiator<PrivS> {
                 &PrivDataType::PrssSetup.to_string(),
             )
             .await
-            .map_err(|e| {
+            .inspect_err(|e| {
                 tracing::warn!("failed to read PRSS from file with error: {e}");
-                e
             })
             .ok()
         };

@@ -1,6 +1,6 @@
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.79-slim-bookworm as base
+FROM rust:1.79-slim-bookworm AS base
 
 ARG BLOCKCHAIN_ACTIONS_TOKEN
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
@@ -27,7 +27,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
 
 # Second stage builds the runtime image.
 # This stage will be the final image
-FROM --platform=$BUILDPLATFORM debian:stable-slim as go-runtime
+FROM --platform=$BUILDPLATFORM debian:stable-slim AS go-runtime
 WORKDIR /app/kms
 
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
@@ -46,8 +46,8 @@ ENV PATH="$PATH:/usr/local/go/bin:/root/go/bin"
 RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
 # Third stage: Copy the binaries from the base stage and the go-runtime stage
-FROM --platform=$BUILDPLATFORM debian:stable-slim as runtime
-RUN apt update && apt install -y libssl3 ca-certificates
+FROM --platform=$BUILDPLATFORM debian:stable-slim AS runtime
+RUN apt update && apt install -y libssl3 ca-certificates curl
 WORKDIR /app/kms/core/service
 
 RUN mkdir -p /app/kms/parameters
@@ -58,7 +58,10 @@ ENV PATH="$PATH:/app/kms/core/service/bin"
 COPY --from=base /app/kms/core/service/bin/ /app/kms/core/service/bin/
 COPY --from=go-runtime /root/go/bin/grpc-health-probe /app/kms/core/service/bin/
 COPY ./core/service/parameters/ /app/kms/core/service/parameters/
-COPY ./core/service/config/default_centralized.toml /app/kms/core/service/config/
+COPY ./core/service/config/ /app/kms/core/service/config/
+
+# For dev purposes
+COPY ./blockchain/scripts/pub_key_to_minio.sh /app/scripts/pub_key_to_minio.sh
 
 RUN /app/kms/core/service/bin/kms-gen-keys centralized --param-path /app/kms/core/service/parameters/default_params.json --overwrite --write-privkey
 

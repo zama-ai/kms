@@ -1,4 +1,4 @@
-name: "[core-service-Merge Main] Pipeline Run"
+name: "[Core-Service-Merge Main] Pipeline Run"
 
 on:
   push:

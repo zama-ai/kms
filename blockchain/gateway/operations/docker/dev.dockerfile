@@ -1,8 +1,8 @@
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.79-slim-bookworm as base
+FROM rust:1.79-slim-bookworm AS base
 
-RUN apt update && \
+RUN apt --allow-releaseinfo-change update && \
     apt install -y make protobuf-compiler ssh git gcc libssl-dev libprotobuf-dev pkg-config
 
 WORKDIR /app/gateway
@@ -19,9 +19,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry cargo install --path blo
 
 # Second stage builds the runtime image.
 # This stage will be the final image
-FROM debian:stable-slim as go-runtime
+FROM debian:stable-slim AS go-runtime
 
-RUN apt update && \
+RUN apt --allow-releaseinfo-change update && \
     apt install -y libssl-dev libprotobuf-dev curl netcat-openbsd
 WORKDIR /app/gateway
 RUN mkdir -p /app/gateway/config
@@ -30,8 +30,8 @@ RUN mkdir -p /app/gateway/config
 ENV PATH="$PATH:/app/gateway/bin"
 
 # Third stage: Copy the binaries from the base stage and the go-runtime stage
-FROM debian:stable-slim as runtime
-RUN apt update && apt install -y libssl3
+FROM debian:stable-slim AS runtime
+RUN apt --allow-releaseinfo-change update && apt install -y libssl3 wget
 WORKDIR /app/gateway
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="$PATH:/app/gateway/bin"

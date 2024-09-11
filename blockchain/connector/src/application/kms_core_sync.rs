@@ -34,10 +34,9 @@ where
             .blockchain
             .get_operation_value(&message.event)
             .await
-            .map_err(|e| {
+            .inspect_err(|e| {
                 self.observability
                     .increment(MetricType::TxError, 1, &[("error", &e.to_string())]);
-                e
             })?;
         tracing::info!("Running KMS operation with value: {:?}", operation_value);
         let config_contract = if operation_value.needs_kms_config() {
@@ -49,17 +48,15 @@ where
             .kms
             .run(message.event, operation_value, config_contract)
             .await
-            .map_err(|e| {
+            .inspect_err(|e| {
                 self.observability
                     .increment(MetricType::TxError, 1, &[("error", &e.to_string())]);
-                e
             })?;
         tracing::info!("Sending result to blockchain: {}", result.to_string());
         let tx_id = result.txn_id_hex();
-        self.blockchain.send_result(result).await.map_err(|e| {
+        self.blockchain.send_result(result).await.inspect_err(|e| {
             self.observability
                 .increment(MetricType::TxError, 1, &[("error", &e.to_string())]);
-            e
         })?;
         self.observability
             .increment(MetricType::TxProcessed, 1, &[("tx_id", tx_id.as_str())]);

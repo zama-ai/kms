@@ -1,6 +1,6 @@
 # Multistage build to reduce image size
 # First stage builds the binary
-FROM rust:1.79-slim-bookworm as base
+FROM rust:1.79-slim-bookworm AS base
 
 ARG BLOCKCHAIN_ACTIONS_TOKEN
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
@@ -27,7 +27,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/buildkit \
 
 # Second stage builds the runtime image.
 # This stage will be the final image
-FROM debian:stable-slim as go-runtime
+FROM debian:stable-slim AS go-runtime
 WORKDIR /app/kms
 
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt apt update && \
@@ -46,7 +46,7 @@ ENV PATH="$PATH:/usr/local/go/bin:/root/go/bin"
 RUN go install github.com/grpc-ecosystem/grpc-health-probe@latest
 
 # Third stage: Copy the binaries from the base stage and the go-runtime stage
-FROM debian:stable-slim as runtime
+FROM debian:stable-slim AS runtime
 RUN apt update && apt install -y libssl3 ca-certificates
 # Set the path to include the binaries and not just the default /usr/local/bin
 ENV PATH="$PATH:/app/kms/core/service/bin"
