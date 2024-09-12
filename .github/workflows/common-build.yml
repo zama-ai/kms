@@ -70,11 +70,11 @@ jobs:
 
     steps:
       - name: Checkout Project
-        uses: actions/checkout@v4
+        uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.6
 
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -82,7 +82,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: ${{ inputs.package-name == 'simulator' }}
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
         with:
           platforms: linux/amd64,linux/arm64
 
@@ -91,16 +91,16 @@ jobs:
         run: echo "HOME=/home/ubuntu" >> ${GITHUB_ENV}
 
       - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@1fbea72663f6d4c03efaab13560c8a24cfd2a7cc # v1.9.0
         with:
           toolchain: stable
           components: rustfmt, clippy, llvm-tools-preview
 
       - name: Setup Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
 
       - name: Install Protoc
-        uses: arduino/setup-protoc@v3
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
           version: "26.x"
 
@@ -134,14 +134,14 @@ jobs:
 
       - name: Report code coverage
         if: ${{ inputs.test-coverage }}
-        uses: romeovs/lcov-reporter-action@v0.4.0
+        uses: romeovs/lcov-reporter-action@87a815f34ec27a5826abba44ce09bbc688da58fd # v0.4.0
         with:
           lcov-file: lcov
           working-directory: ${{ inputs.working-directory }}/coverage
 
       - name: Check minimum coverage
         if: ${{ inputs.test-coverage }}
-        uses: VeryGoodOpenSource/very_good_coverage@v2
+        uses: VeryGoodOpenSource/very_good_coverage@3b475421464c564c0714d92ce02742bd81fa9eda # v2.2.0
         with:
           path: '${{inputs.working-directory}}/coverage/lcov'
           min_coverage: ${{ inputs.test-minimum-coverage }}
@@ -152,7 +152,7 @@ jobs:
 
       - name: Deploy to GitHub Pages
         if: ${{ inputs.build-publish-docs }}
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e # v4.0.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./target/doc
@@ -168,7 +168,7 @@ jobs:
 
       - name: Install node
         if: ${{ inputs.run-wasm }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
         with:
           node-version: 20
 

@@ -96,9 +96,7 @@ jobs:
       HOME: ${{ inputs.runs_on != 'ubuntu-latest' && '/root' || '/home/runner' }}
     steps:
       - name: Checkout Project
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
+        uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.6
 
       - name: Set up SSH
         if: inputs.arm-build
@@ -110,7 +108,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: inputs.arm-build
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@d70bba72b1f3fd22344832f00baa16ece964efeb # v3.3.0
         with:
           platforms: linux/amd64,linux/arm64
           append: |
@@ -118,7 +116,7 @@ jobs:
               platforms: linux/arm64
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -137,7 +135,7 @@ jobs:
           echo "DOCKER_TAG_IMAGE=${{  github.ref_name }}" >> $GITHUB_ENV
 
       - name: Docker Build and Push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
         with:
           context: ${{ inputs.docker-context }}
           build-args: |
@@ -152,7 +150,7 @@ jobs:
       - name: Extract Docker metadata
         if: ${{ inputs.generate-dev-image }}
         id: meta
-        uses: docker/metadata-action@v5.5.1
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v5.5.1
         with:
           annotations: |
             org.opencontainers.image.description="${{ inputs.image-dev-description }}"
@@ -165,7 +163,7 @@ jobs:
 
       - name: Docker Build and Push Dev Image
         if: ${{ inputs.generate-dev-image }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
         timeout-minutes: 360
         with:
           context: ${{ inputs.docker-context }}

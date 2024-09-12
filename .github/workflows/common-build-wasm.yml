@@ -36,28 +36,28 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout Project
-        uses: actions/checkout@v4
+        uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.6
 
       - name: Setup Home
         if: ${{ inputs.runs-on != 'ubuntu-latest' }}
         run: echo "HOME=/home/ubuntu" >> ${GITHUB_ENV}
 
       - name: Set up Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@1fbea72663f6d4c03efaab13560c8a24cfd2a7cc # v1.9.0
         with:
           toolchain: stable
           target: wasm32-unknown-unknown
           rustflags: '-C link-arg=-s'
 
       - name: Setup Rust Cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2.7.3
 
       - name: Build Wasm files
         run: |
           cargo build --target wasm32-unknown-unknown --release --lib --manifest-path ${{ inputs.cargo-manifest-path }}Cargo.toml
 
       - name: Optimize Wasm files
-        uses: NiklasEi/wasm-opt-action@v2
+        uses: NiklasEi/wasm-opt-action@c21a6d6a7c61df2b9dc3870c75ed9bf943e645df # v2.3.3
         with:
           file: ${{ inputs.working-directory }}${{ inputs.target-path }}target/wasm32-unknown-unknown/release/*.wasm
           optimize_all: true
