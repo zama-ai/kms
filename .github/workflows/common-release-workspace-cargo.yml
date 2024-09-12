@@ -36,8 +36,7 @@ jobs:
 
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "[ci skip] Apply new verion ${{ inputs.version }} to Cargo.toml files"
+          commit_message: "[ci skip] Apply new version ${{ inputs.version }} to Cargo.toml files"
           commit_user_name: zama-bot
           commit_user_email: kms-infra@zama.ai
           push_options: --force
-

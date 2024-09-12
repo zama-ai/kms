@@ -10,10 +10,10 @@ authors.workspace = true
 [dependencies]
 base64 = "0.22.1"
 bip32 = "0.5.1"
-cosmos-proto = { path = "../cosmos-proto" , version = "0.8.0" }
+cosmos-proto = { path = "../cosmos-proto", version = "0.8.0" }
 deep_space = "2.24.1"
 ecdsa = { version = "0.16.9", features = ["alloc"] }
-events = { path = "../events" , version = "0.8.0" }
+events = { path = "../events", version = "0.8.0" }
 hex = "0.4.3"
 hmac = "0.12.1"
 k256 = { version = "0.13.3" }
@@ -29,7 +29,7 @@ subtle-encoding = { version = "0.5.1" }
 tendermint = { workspace = true, features = ["secp256k1"] }
 thiserror = "1.0.59"
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-tonic = { workspace = true, features = ["transport","tls","tls-roots"] }
+tonic = { workspace = true, features = ["transport", "tls", "tls-roots"] }
 tracing = { workspace = true, features = ["log"] }
 typed-builder = { workspace = true }
 

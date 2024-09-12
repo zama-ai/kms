@@ -5,9 +5,9 @@ on:
     inputs:
       ref:
         type: string
-        description: 'Branch, tag or SHA to generate the release from. (Default main)'
+        description: "Branch, tag or SHA to generate the release from. (Default main)"
         required: false
-        default: 'main'
+        default: "main"
 
 permissions:
   contents: write
@@ -36,13 +36,10 @@ jobs:
     needs:
       - release
     permissions:
-      contents: 'write'
-      id-token: 'write'
-      packages: 'write'
+      contents: "write"
+      id-token: "write"
+      packages: "write"
     with:
       version: ${{ needs.release.outputs.version }}
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
-
-
-

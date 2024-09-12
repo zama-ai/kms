@@ -11,9 +11,7 @@ on:
         required: false
         default: 'main'
 
-
 jobs:
-
   docker-connector:
     uses: ./.github/workflows/common-docker.yml
     permissions:
@@ -63,7 +61,7 @@ jobs:
       id-token: 'write'
       packages: 'write'
     with:
-      working-directory: './blockchain/contracts/asc'
+      working-directory: './blockchain/contracts/'
       push_image: true
       image-name: 'kms-blockchain-asc'
       image-dev: 'kms-blockchain-asc-dev'
@@ -98,4 +96,3 @@ jobs:
       SLAB_ACTION_TOKEN: ${{ secrets.SLAB_ACTION_TOKEN }}
       SLAB_BASE_URL: ${{ secrets.SLAB_BASE_URL }}
       JOB_SECRET: ${{ secrets.JOB_SECRET }}
-

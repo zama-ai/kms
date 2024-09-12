@@ -1,0 +1,41 @@
+name: Manually Set Cargo Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        type: string
+        description: "Branch in which all Cargo.toml should be updated. (Default main)"
+        required: false
+        default: "main"
+      version:
+        # make sure that the version is a valid semver version
+        description: "Version number to update to (without the leading v)"
+        required: true
+        default: "0.1.0-rc2"
+
+permissions:
+  contents: "write"
+  id-token: "write"
+  packages: "write"
+
+jobs:
+  cargo-workspaces-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Project
+        uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Install semantic-release-cargo
+        uses: taiki-e/install-action@f2b65a3e67b2ba5ed3b4a631b5e460896e975708 # v2.42.3
+        with:
+          tool: semantic-release-cargo@2
+
+      - name: Prepare semantic-release for Rust
+        run: semantic-release-cargo prepare ${{ inputs.version }}
+
+      - uses: stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842 #v5.0.1
+        with:
+          commit_message: "[ci skip] Apply new version ${{ inputs.version }} to Cargo.toml files"
