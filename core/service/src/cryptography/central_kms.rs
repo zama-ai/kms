@@ -609,7 +609,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             sig_key,
         )?;
         let res = serialize(&enc_res)?;
-        tracing::info!("Completed reencyption of ciphertext");
+        tracing::info!("Completed reencryption of ciphertext");
         Ok(res)
     }
 }
