@@ -1,6 +1,6 @@
 [package]
 name = "kms-blockchain-connector"
-version = "0.8.0"
+version = "0.9.0-rc2"
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
@@ -12,13 +12,13 @@ async-trait.workspace = true
 bincode.workspace = true
 byteorder = "1.5.0"
 clap = { workspace = true, features = ["derive", "env"] }
-conf-trace = { path = "../../conf-trace" , version = "0.8.0" }
+conf-trace = { path = "../../conf-trace" , version = "0.9.0-rc2" }
 dashmap = "6"
 enum_dispatch = "0.3.12"
-events = { path = "../events", features = ["subscription"] , version = "0.8.0" }
+events = { path = "../events", features = ["subscription"] , version = "0.9.0-rc2" }
 hex = "0.4.3"
-kms = { path = "../../core/service", default-features = false, features = ["grpc-client"] , version = "0.8.0" }
-kms-blockchain-client = { path = "../client" , version = "0.8.0" }
+kms = { path = "../../core/service", default-features = false, features = ["grpc-client"] , version = "0.9.0-rc2" }
+kms-blockchain-client = { path = "../client" , version = "0.9.0-rc2" }
 opentelemetry = { version = "0.23", features = ["metrics"] }
 reqwest = "0.12.4"
 retrying = { version = "0.1.0", features = ["tokio"] }
@@ -34,7 +34,7 @@ typed-builder = { workspace = true }
 [dev-dependencies]
 alloy-primitives = "0.7.6"
 alloy-sol-types = "0.7.6"
-kms = { path = "../../core/service", features = ["testing"] , version = "0.8.0" }
+kms = { path = "../../core/service", features = ["testing"] , version = "0.9.0-rc2" }
 rand.workspace = true
 serial_test = "3.1.1"
 temp-env = "0.3"
