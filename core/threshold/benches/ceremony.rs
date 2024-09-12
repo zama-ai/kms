@@ -54,7 +54,7 @@ fn bench_ceremony(c: &mut Criterion) {
                         set.spawn(async move {
                             let real_ceremony = RealCeremony::default();
                             let out = real_ceremony
-                                .execute::<ResiduePoly64, _, _>(&mut session, dim)
+                                .execute::<ResiduePoly64, _, _>(&mut session, dim, None)
                                 .await
                                 .unwrap();
                             (session.my_role().unwrap(), out)

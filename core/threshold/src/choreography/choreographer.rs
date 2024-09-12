@@ -399,6 +399,7 @@ impl ChoreoRuntime {
                 .to_param()
                 .get_params_basics_handle()
                 .to_classic_pbs_parameters(),
+            None,
         )? as u128;
         let crs_gen_params = bincode::serialize(&CrsGenParams {
             session_id,
@@ -413,6 +414,7 @@ impl ChoreoRuntime {
                 role_assignment: role_assignment.to_vec(),
                 threshold,
                 params: crs_gen_params.to_vec(),
+                max_num_bits: None,
             };
 
             join_set.spawn(

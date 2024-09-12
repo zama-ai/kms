@@ -212,7 +212,7 @@ where
     let sk = get_signing_key(priv_storage).await;
     let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
     let mut rng = get_rng(deterministic, Some(0));
-    let (pp, crs_info) = gen_centralized_crs(&sk, &params, &mut rng).unwrap();
+    let (pp, crs_info) = gen_centralized_crs(&sk, &params, None, &mut rng).unwrap();
 
     store_at_request_id(
         priv_storage,
@@ -584,7 +584,8 @@ where
     let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
     let mut rng = get_rng(deterministic, Some(AMOUNT_PARTIES as u64));
 
-    let pp = make_centralized_public_parameters(&params, &mut rng).unwrap();
+    let pp =
+        make_centralized_public_parameters(&params.ciphertext_parameters, None, &mut rng).unwrap();
 
     for (cur_pub, (cur_priv, cur_sk)) in pub_storages
         .iter_mut()

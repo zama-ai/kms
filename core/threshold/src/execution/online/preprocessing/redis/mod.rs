@@ -132,12 +132,7 @@ fn store_correlated_randomness<S: Serialize>(
                 redis::RedisError::from((redis::ErrorKind::TypeError, "Could not serialize "))
             })?;
 
-    con.lpush::<std::string::String, Vec<Vec<u8>>, usize>(
-        compute_key(key_prefix, correlated_randomness),
-        serialized,
-    )?;
-
-    Ok(())
+    con.lpush(compute_key(key_prefix, correlated_randomness), serialized)
 }
 
 fn fetch_correlated_randomness<T: for<'de> Deserialize<'de>>(

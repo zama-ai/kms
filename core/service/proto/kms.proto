@@ -43,6 +43,13 @@ service CoreServiceEndpoint {
   // Get a reference to the CRS.
   // This query fails if the result is not available yet.
   rpc GetCrsGenResult(RequestId) returns (CrsGenResult);
+
+  // Start a zero-knowledge proof verification
+  // on a ProvenCompactCiphertextList.
+  rpc ZkVerify(ZkVerifyRequest) returns (Empty);
+
+  // Get the zero-knowledge verification result.
+  rpc GetZkVerifyResult(RequestId) returns (ZkVerifyResponse);
 }
 
 // Initialization request for bootstrapping the threshold KMS.
@@ -130,7 +137,11 @@ enum ParamChoice {
 message CrsGenRequest {
   Config config = 1;
   ParamChoice params = 2;
-  RequestId request_id = 3;
+  // This is the maximum number of bits that can be proven,
+  // e.g. 64 for a single FheUint64 or 8 x FheUint8 values.
+  // If this is not provided, then it defaults to ZK_DEFAULT_MAX_NUM_CLEARTEXT.
+  optional uint32 max_num_bits = 3;
+  RequestId request_id = 4;
 }
 
 message CrsGenResult {
@@ -266,4 +277,25 @@ message ReencryptionResponsePayload {
   uint32 party_id = 6;
   // The degree of the sharing scheme used.
   uint32 degree = 7;
+}
+
+message ZkVerifyRequest {
+  RequestId crs_handle = 1;
+  RequestId key_handle = 2;
+  string contract_address = 3;
+  string client_address = 4;
+  bytes ct_bytes = 5;
+  RequestId request_id = 6;
+}
+
+message ZkVerifyResponse {
+  ZkVerifyResponsePayload payload = 1;
+  bytes signature = 2;
+}
+
+message ZkVerifyResponsePayload {
+  RequestId request_id = 1;
+  string contract_address = 2;
+  string client_address = 3;
+  bytes ct_digest = 4;
 }

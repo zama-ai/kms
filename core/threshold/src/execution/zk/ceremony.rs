@@ -3,7 +3,6 @@ use crate::{
     error::error_handler::anyhow_error_and_log,
     execution::{
         communication::broadcast::broadcast_w_corruption, runtime::session::BaseSessionHandles,
-        tfhe_internals::parameters::NoiseFloodParameters,
     },
     networking::value::BroadcastValue,
 };
@@ -24,8 +23,8 @@ use tracing::instrument;
 use zeroize::Zeroize;
 
 use super::constants::{
-    ZK_DSEP_HASH_AGG_PADDED, ZK_DSEP_HASH_LMAP_PADDED, ZK_DSEP_HASH_PADDED, ZK_DSEP_HASH_T_PADDED,
-    ZK_DSEP_HASH_W_PADDED, ZK_DSEP_HASH_Z_PADDED,
+    ZK_DEFAULT_MAX_NUM_CLEARTEXT, ZK_DSEP_HASH_AGG_PADDED, ZK_DSEP_HASH_LMAP_PADDED,
+    ZK_DSEP_HASH_PADDED, ZK_DSEP_HASH_T_PADDED, ZK_DSEP_HASH_W_PADDED, ZK_DSEP_HASH_Z_PADDED,
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
@@ -44,9 +43,13 @@ struct MetaParameter {
     b_r: u64,
     q: u64,
     t: u64,
+    max_num_bits: u32,
 }
 
-fn compute_meta_parameter(params: &ClassicPBSParameters) -> anyhow::Result<MetaParameter> {
+fn compute_meta_parameter(
+    params: &ClassicPBSParameters,
+    max_num_bits: Option<u32>,
+) -> anyhow::Result<MetaParameter> {
     let params: tfhe::shortint::PBSParameters = (*params).into();
     let (size, noise_distribution) = match params.encryption_key_choice() {
         tfhe::shortint::EncryptionKeyChoice::Big => {
@@ -64,11 +67,10 @@ fn compute_meta_parameter(params: &ClassicPBSParameters) -> anyhow::Result<MetaP
     // Our plaintext modulus does not take into account the bit of padding
     plaintext_modulus *= 2;
 
-    // Our default parameter set will use 4 * 64
-    // in the future we may set this dynamically.
-    // For testing we just use 1, anything below lwe dimension 256 is
-    // not likely to be secure.
-    let max_num_cleartext = if size.0 >= 256 { 4 * 64 } else { 1 };
+    let max_num_cleartext = match max_num_bits {
+        Some(b) => b as usize,
+        None => ZK_DEFAULT_MAX_NUM_CLEARTEXT,
+    };
     let (d, k, b, q, t) = tfhe::zk::CompactPkeCrs::prepare_crs_parameters(
         size,
         max_num_cleartext,
@@ -87,11 +89,15 @@ fn compute_meta_parameter(params: &ClassicPBSParameters) -> anyhow::Result<MetaP
         b_r,
         q,
         t,
+        max_num_bits: max_num_cleartext as u32,
     })
 }
 
-pub fn compute_witness_dim(params: &ClassicPBSParameters) -> anyhow::Result<usize> {
-    Ok(compute_meta_parameter(params)?.n)
+pub fn compute_witness_dim(
+    params: &ClassicPBSParameters,
+    max_num_bits: Option<u32>,
+) -> anyhow::Result<usize> {
+    Ok(compute_meta_parameter(params, max_num_bits)?.n)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash, VersionsDispatch)]
@@ -103,6 +109,7 @@ pub enum PublicParameterVersioned {
 #[versionize(PublicParameterVersioned)]
 pub struct PublicParameter {
     round: usize,
+    max_num_bits: u32,
     inner: WrappedG1G2s,
 }
 
@@ -125,7 +132,8 @@ impl PublicParameter {
             b_r,
             q,
             t,
-        } = compute_meta_parameter(params)?;
+            max_num_bits: _,
+        } = compute_meta_parameter(params, Some(self.max_num_bits))?;
 
         let g_list = self
             .inner
@@ -164,9 +172,14 @@ impl PublicParameter {
     }
 
     /// Create new PublicParameter for given witness dimension containing the generators
-    pub fn new(witness_dim: usize) -> Self {
+    pub fn new(witness_dim: usize, max_num_bits: Option<u32>) -> Self {
+        let max_num_cleartext = match max_num_bits {
+            Some(b) => b,
+            None => ZK_DEFAULT_MAX_NUM_CLEARTEXT as u32,
+        };
         PublicParameter {
             round: 0,
+            max_num_bits: max_num_cleartext,
             inner: WrappedG1G2s(
                 vec![curve::G1::GENERATOR; witness_dim * 2],
                 vec![curve::G2::GENERATOR; witness_dim],
@@ -174,10 +187,16 @@ impl PublicParameter {
         }
     }
 
-    pub fn new_from_tfhe_param(params: &ClassicPBSParameters) -> anyhow::Result<Self> {
-        let witness_dim = compute_meta_parameter(params)?.n;
+    pub fn new_from_tfhe_param(
+        params: &ClassicPBSParameters,
+        max_num_bits: Option<u32>,
+    ) -> anyhow::Result<Self> {
+        let meta_param = compute_meta_parameter(params, max_num_bits)?;
+        let witness_dim = meta_param.n;
+        let max_num_bits = meta_param.max_num_bits;
         Ok(PublicParameter {
             round: 0,
+            max_num_bits,
             inner: WrappedG1G2s(
                 vec![curve::G1::GENERATOR; witness_dim * 2],
                 vec![curve::G2::GENERATOR; witness_dim],
@@ -247,6 +266,7 @@ fn make_partial_proof_deterministic(
     // with powers of tau is the most expensive step.
     let new_pp = PublicParameter {
         round,
+        max_num_bits: current_pp.max_num_bits,
         inner: WrappedG1G2s(
             current_pp
                 .inner
@@ -284,11 +304,11 @@ fn make_partial_proof_deterministic(
 }
 
 pub fn make_centralized_public_parameters<R: Rng + CryptoRng>(
-    params: &NoiseFloodParameters,
+    params: &ClassicPBSParameters,
+    max_num_bits: Option<u32>,
     rng: &mut R,
 ) -> anyhow::Result<PublicParameter> {
-    let witness_dim = compute_witness_dim(&params.ciphertext_parameters)?;
-    let pparam = PublicParameter::new(witness_dim);
+    let pparam = PublicParameter::new_from_tfhe_param(params, max_num_bits)?;
 
     let mut tau = curve::Zp::rand(rng);
     let mut r = curve::Zp::rand(rng);
@@ -468,6 +488,7 @@ pub trait Ceremony: Send + Sync + Clone + Default {
         &self,
         session: &mut S,
         witness_dim: usize,
+        max_num_pt_bits: Option<u32>,
     ) -> anyhow::Result<PublicParameter>;
 }
 
@@ -481,6 +502,7 @@ impl Ceremony for RealCeremony {
         &self,
         session: &mut S,
         witness_dim: usize,
+        max_num_pt_bits: Option<u32>,
     ) -> anyhow::Result<PublicParameter> {
         // the parties need to execute the protocol in a deterministic order
         // so we sort the roles to fix this order
@@ -489,7 +511,7 @@ impl Ceremony for RealCeremony {
         all_roles_sorted.sort();
         let my_role = session.my_role()?;
 
-        let mut pp = PublicParameter::new(witness_dim);
+        let mut pp = PublicParameter::new(witness_dim, max_num_pt_bits);
         tracing::info!(
             "Role {my_role} starting CRS ceremony in session {}",
             session.session_id()
@@ -613,9 +635,15 @@ mod tests {
             &self,
             session: &mut S,
             witness_dim: usize,
+            max_num_bits: Option<u32>,
         ) -> anyhow::Result<PublicParameter> {
+            let max_num_cleartext = match max_num_bits {
+                Some(b) => b,
+                None => ZK_DEFAULT_MAX_NUM_CLEARTEXT as u32,
+            };
             Ok(PublicParameter {
                 round: session.num_parties(),
+                max_num_bits: max_num_cleartext,
                 inner: WrappedG1G2s(
                     vec![curve::G1::GENERATOR; witness_dim * 2],
                     vec![curve::G2::GENERATOR; witness_dim],
@@ -658,7 +686,7 @@ mod tests {
             let ceremony = ceremony_f();
             set.spawn(async move {
                 let out = ceremony
-                    .execute::<ResiduePoly64, _, _>(&mut session, witness_dim)
+                    .execute::<ResiduePoly64, _, _>(&mut session, witness_dim, Some(1))
                     .await
                     .unwrap();
                 (session.my_role().unwrap(), out)
@@ -722,6 +750,7 @@ mod tests {
     fn make_degenerative_pp(n: usize) -> PublicParameter {
         PublicParameter {
             round: 0,
+            max_num_bits: 1,
             inner: WrappedG1G2s(vec![curve::G1::ZERO; 2 * n], vec![curve::G2::ZERO; n]),
         }
     }
@@ -735,9 +764,10 @@ mod tests {
             &self,
             session: &mut S,
             _crs_size: usize,
+            _max_num_bits: Option<u32>,
         ) -> anyhow::Result<PublicParameter> {
             // do nothing
-            Ok(PublicParameter::new(session.num_parties()))
+            Ok(PublicParameter::new(session.num_parties(), Some(1)))
         }
     }
 
@@ -750,12 +780,13 @@ mod tests {
             &self,
             session: &mut S,
             witness_dim: usize,
+            max_num_bits: Option<u32>,
         ) -> anyhow::Result<PublicParameter> {
             let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
             all_roles_sorted.sort();
             let my_role = session.my_role()?;
 
-            let mut pp = PublicParameter::new(witness_dim);
+            let mut pp = PublicParameter::new(witness_dim, max_num_bits);
 
             for (round, role) in all_roles_sorted.iter().enumerate() {
                 if role == &my_role {
@@ -795,6 +826,7 @@ mod tests {
             &self,
             session: &mut S,
             witness_dim: usize,
+            _max_num_bits: Option<u32>,
         ) -> anyhow::Result<PublicParameter> {
             let mut all_roles_sorted = session.role_assignments().keys().copied().collect_vec();
             all_roles_sorted.sort();
@@ -802,6 +834,7 @@ mod tests {
 
             let pp = PublicParameter {
                 round: 0,
+                max_num_bits: 1,
                 inner: WrappedG1G2s(
                     vec![curve::G1::GENERATOR; witness_dim * 2],
                     vec![curve::G2::GENERATOR; witness_dim],
@@ -835,7 +868,7 @@ mod tests {
             (
                 session.my_role().unwrap().zero_based(),
                 real_ceremony
-                    .execute::<Z, _, _>(&mut session, witness_dim)
+                    .execute::<Z, _, _>(&mut session, witness_dim, Some(1))
                     .await
                     .unwrap(),
                 session.corrupt_roles().clone(),
@@ -844,7 +877,7 @@ mod tests {
 
         let mut task_malicious = |mut session: LargeSession, malicious_party: C| async move {
             let _ = malicious_party
-                .execute::<Z, _, _>(&mut session, witness_dim)
+                .execute::<Z, _, _>(&mut session, witness_dim, Some(1))
                 .await;
             session.my_role().unwrap().zero_based()
         };
@@ -933,7 +966,7 @@ mod tests {
             )
         );
 
-        let pp = PublicParameter::new(2);
+        let pp = PublicParameter::new(2, Some(1));
         let proof = make_partial_proof_deterministic(&pp, tau, 0, r);
         assert_eq!(
             proof.new_pp.inner.0[3],
@@ -953,7 +986,7 @@ mod tests {
     fn test_intermediate_proof() {
         let n = 4usize;
         let mut rng = AesRng::seed_from_u64(42);
-        let pp1 = PublicParameter::new(n);
+        let pp1 = PublicParameter::new(n, Some(1));
         let tau1 = curve::Zp::rand(&mut rng);
         let r = curve::Zp::rand(&mut rng);
 
@@ -1088,6 +1121,7 @@ mod tests {
     fn test_versioning() {
         let ms = PublicParameter {
             round: 0,
+            max_num_bits: 1,
             inner: WrappedG1G2s(vec![], vec![]),
         };
 

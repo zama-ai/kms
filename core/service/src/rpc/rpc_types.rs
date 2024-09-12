@@ -13,12 +13,16 @@ use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use wasm_bindgen::prelude::wasm_bindgen;
 
+#[cfg(all(test, feature = "slow_tests"))]
+use crate::kms::{CrsGenRequest, ZkVerifyRequest};
+
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
         use crate::cryptography::internal_crypto_types::PrivateSigKey;
         use crate::cryptography::internal_crypto_types::{PublicEncKey, PublicSigKey, Signature};
         use crate::cryptography::signcryption::{hash_element, Reencrypt};
         use crate::util::key_setup::FhePrivateKey;
+        use distributed_decryption::execution::zk::ceremony::PublicParameter;
         use alloy_primitives::Bytes;
         use alloy_sol_types::SolStruct;
         use rand::{CryptoRng, RngCore};
@@ -837,6 +841,41 @@ impl From<u128> for RequestId {
         RequestId {
             request_id: "00000000".to_string() + hex_string.as_str(), // fill up to 160 bits / 40 bytes with 8 leading hex zeros
         }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash, VersionsDispatch)]
+#[cfg(feature = "non-wasm")]
+pub enum PublicParameterWithParamIDVersioned {
+    V0(PublicParameterWithParamID),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash, Versionize)]
+#[versionize(PublicParameterWithParamIDVersioned)]
+#[cfg(feature = "non-wasm")]
+pub struct PublicParameterWithParamID {
+    pub pp: PublicParameter,
+    // We simply use the i32 instead of ParamChoice because ParamChoice is
+    // a grpc type and cannot be versioned easily.
+    pub param_id: i32,
+}
+
+#[cfg(all(test, feature = "slow_tests"))]
+pub(crate) trait RequestIdGetter {
+    fn request_id(&self) -> Option<RequestId>;
+}
+
+#[cfg(all(test, feature = "slow_tests"))]
+impl RequestIdGetter for CrsGenRequest {
+    fn request_id(&self) -> Option<RequestId> {
+        self.request_id.clone()
+    }
+}
+
+#[cfg(all(test, feature = "slow_tests"))]
+impl RequestIdGetter for ZkVerifyRequest {
+    fn request_id(&self) -> Option<RequestId> {
+        self.request_id.clone()
     }
 }
 

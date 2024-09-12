@@ -101,6 +101,91 @@ fn accumulate_and_lift_bitwise_poly<Z: BaseRing>(
     }
 }
 
+fn shamir_error_correct<Z: BaseRing>(
+    sharing: &ShamirSharings<ResiduePoly<Z>>,
+    degree: usize,
+    max_errs: usize,
+    #[cfg(test)] err_indices: Option<&mut Vec<(usize, usize)>>,
+) -> anyhow::Result<Poly<ResiduePoly<Z>>>
+where
+    ResiduePoly<Z>: MemoizedExceptionals,
+    ResiduePoly<Z>: RingEmbed,
+{
+    // threshold is the degree of the shamir polynomial
+    let ring_size: usize = Z::BIT_LENGTH;
+
+    //Start with all values being valid (none of them are Bot)
+    let mut y = sharing
+        .shares
+        .iter()
+        .map(|x| (x.value(), true))
+        .collect_vec();
+
+    let initial_length = y.len();
+
+    let parties: Vec<_> = sharing
+        .shares
+        .iter()
+        .map(|x| x.owner().one_based())
+        .collect();
+
+    let ordered_powers: Vec<Vec<ResiduePoly<Z>>> = parties
+        .iter()
+        .map(|party_id| ResiduePoly::<Z>::exceptional_set(*party_id, degree))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let mut res = Poly::<ResiduePoly<Z>>::zero();
+
+    for bit_idx in 0..ring_size {
+        //Compute z = pi(y/2^i), where Bots are filtered out
+        let binary_shares: Vec<ShamirSharing<GF256>> = parties
+            .iter()
+            .zip(y.iter())
+            .filter_map(|(party_id, (sh, is_valid))| {
+                if *is_valid {
+                    Some(ShamirSharing::<GF256> {
+                        share: sh.bit_compose(bit_idx),
+                        party_id: *party_id as u8,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let num_new_bot = initial_length - binary_shares.len();
+        // apply error correction on z
+        // fi(X) = a0 + ... a_t * X^t where a0 is the secret bit corresponding to position i
+        let fi_mod2 = error_correction(&binary_shares, degree, max_errs - num_new_bot)?;
+        let bitwise = BitwisePoly::from(fi_mod2.clone());
+
+        // remove LSBs computed from error correction in GF(256)
+        for (j, (item, is_valid)) in y.iter_mut().enumerate() {
+            if *is_valid {
+                // compute fi(\gamma_1) ..., fi(\gamma_n) \in GR[Z = {2^64/2^128}]
+                let offset = bitwise.lazy_eval(&ordered_powers[j]) << bit_idx;
+                *item -= offset;
+
+                //Do the divisibility check of pi, only need to do it if the share is currently valid
+                *is_valid = item.multiple_pow2(bit_idx + 1);
+
+                //Log at most once, when share becomes invalid
+                if !*is_valid {
+                    #[cfg(test)]
+                    if let Some(&mut ref mut indices) = err_indices {
+                        indices.push((j, bit_idx));
+                    }
+                    tracing::warn!("Share at index {j} is invalid after iteration {bit_idx}");
+                }
+            }
+        }
+
+        accumulate_and_lift_bitwise_poly(&mut res, &fi_mod2, bit_idx);
+    }
+
+    Ok(res)
+}
+
 impl<Z: BaseRing> ErrorCorrect for ResiduePoly<Z>
 where
     ResiduePoly<Z>: MemoizedExceptionals,
@@ -119,75 +204,14 @@ where
         degree: usize,
         max_errs: usize,
     ) -> anyhow::Result<Poly<ResiduePoly<Z>>> {
-        // threshold is the degree of the shamir polynomial
-        let ring_size: usize = Z::BIT_LENGTH;
-
-        //Start with all values being valid (none of them are Bot)
-        let mut y = sharing
-            .shares
-            .iter()
-            .map(|x| (x.value(), true))
-            .collect_vec();
-
-        let initial_length = y.len();
-
-        let parties: Vec<_> = sharing
-            .shares
-            .iter()
-            .map(|x| x.owner().one_based())
-            .collect();
-
-        let ordered_powers: Vec<Vec<ResiduePoly<Z>>> = parties
-            .iter()
-            .map(|party_id| ResiduePoly::<Z>::exceptional_set(*party_id, degree))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-        let mut res = Poly::<ResiduePoly<Z>>::zero();
-
-        for bit_idx in 0..ring_size {
-            //Compute z = pi(y/2^i), where Bots are filtered out
-            let binary_shares: Vec<ShamirSharing<GF256>> = parties
-                .iter()
-                .zip(y.iter())
-                .filter_map(|(party_id, (sh, is_valid))| {
-                    if *is_valid {
-                        Some(ShamirSharing::<GF256> {
-                            share: sh.bit_compose(bit_idx),
-                            party_id: *party_id as u8,
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            let num_new_bot = initial_length - binary_shares.len();
-            // apply error correction on z
-            // fi(X) = a0 + ... a_t * X^t where a0 is the secret bit corresponding to position i
-            let fi_mod2 = error_correction(&binary_shares, degree, max_errs - num_new_bot)?;
-            let bitwise = BitwisePoly::from(fi_mod2.clone());
-
-            // remove LSBs computed from error correction in GF(256)
-            for (j, (item, is_valid)) in y.iter_mut().enumerate() {
-                if *is_valid {
-                    // compute fi(\gamma_1) ..., fi(\gamma_n) \in GR[Z = {2^64/2^128}]
-                    let offset = bitwise.lazy_eval(&ordered_powers[j]) << bit_idx;
-                    *item -= offset;
-
-                    //Do the divisibility check of pi, only need to do it if the share is currently valid
-                    *is_valid = item.multiple_pow2(bit_idx + 1);
-
-                    //Log at most once, when share becomes invalid
-                    if !*is_valid {
-                        tracing::warn!("Share at index {j} is invalid after iteration {bit_idx}");
-                    }
-                }
-            }
-
-            accumulate_and_lift_bitwise_poly(&mut res, &fi_mod2, bit_idx);
+        #[cfg(not(test))]
+        {
+            shamir_error_correct(sharing, degree, max_errs)
         }
-
-        Ok(res)
+        #[cfg(test)]
+        {
+            shamir_error_correct(sharing, degree, max_errs, None)
+        }
     }
 }
 
@@ -200,6 +224,7 @@ mod tests {
 
     use crate::{
         algebra::{
+            error_correction::shamir_error_correct,
             residue_poly::ResiduePoly64,
             structure_traits::{FromU128, One, ZConsts, Zero},
         },
@@ -209,9 +234,6 @@ mod tests {
         },
     };
 
-    use super::ErrorCorrect;
-
-    #[tracing_test::traced_test]
     #[test]
     fn test_divisibility_fail() {
         let num_parties = 4;
@@ -222,7 +244,7 @@ mod tests {
 
         assert_eq!(
             secret,
-            ErrorCorrect::error_correct(&sharing, threshold, threshold)
+            shamir_error_correct(&sharing, threshold, threshold, None)
                 .unwrap()
                 .eval(&ResiduePoly64::ZERO)
         );
@@ -231,25 +253,22 @@ mod tests {
         let modified_value = true_share.value() + ResiduePoly64::ONE;
         let modified_share = Share::new(true_share.owner(), modified_value);
         sharing.shares[0] = modified_share;
-        let _ = ErrorCorrect::error_correct(&sharing, threshold, threshold);
-        assert!(logs_contain(
-            "Share at index 0 is invalid after iteration 0"
-        ));
+        let mut err_indices = Vec::new();
+        let _ = shamir_error_correct(&sharing, threshold, threshold, Some(&mut err_indices));
+        assert_eq!(err_indices[0], (0, 0));
 
         let modified_value = true_share.value() + ResiduePoly64::TWO;
         let modified_share = Share::new(true_share.owner(), modified_value);
         sharing.shares[0] = modified_share;
-        let _ = ErrorCorrect::error_correct(&sharing, threshold, threshold);
-        assert!(logs_contain(
-            "Share at index 0 is invalid after iteration 1"
-        ));
+        let mut err_indices = Vec::new();
+        let _ = shamir_error_correct(&sharing, threshold, threshold, Some(&mut err_indices));
+        assert_eq!(err_indices[0], (0, 1));
 
         let modified_value = true_share.value() + (ResiduePoly64::from_u128(4));
         let modified_share = Share::new(true_share.owner(), modified_value);
         sharing.shares[0] = modified_share;
-        let _ = ErrorCorrect::error_correct(&sharing, threshold, threshold);
-        assert!(logs_contain(
-            "Share at index 0 is invalid after iteration 2"
-        ));
+        let mut err_indices = Vec::new();
+        let _ = shamir_error_correct(&sharing, threshold, threshold, Some(&mut err_indices));
+        assert_eq!(err_indices[0], (0, 2));
     }
 }

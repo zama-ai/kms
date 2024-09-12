@@ -3,7 +3,7 @@ use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceE
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, Empty, InitRequest,
     KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest, KeyGenResult, ReencryptionRequest,
-    ReencryptionResponse, RequestId,
+    ReencryptionResponse, RequestId, ZkVerifyRequest, ZkVerifyResponse,
 };
 use backoff::future::retry;
 use backoff::ExponentialBackoff;
@@ -151,6 +151,26 @@ impl CoreServiceEndpoint for KmsProxy {
     ) -> Result<Response<CrsGenResult>, Status> {
         let mut kms_client = self.kms_client.lock().await;
         let response = kms_client.get_crs_gen_result(request).await?;
+        Ok(response)
+    }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn zk_verify(
+        &self,
+        request: Request<ZkVerifyRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let mut kms_client = self.kms_client.lock().await;
+        let response = kms_client.zk_verify(request).await?;
+        Ok(response)
+    }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn get_zk_verify_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<ZkVerifyResponse>, Status> {
+        let mut kms_client = self.kms_client.lock().await;
+        let response = kms_client.get_zk_verify_result(request).await?;
         Ok(response)
     }
 }

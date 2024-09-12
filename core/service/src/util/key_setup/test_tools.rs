@@ -147,36 +147,35 @@ impl From<tfhe::integer::U256> for TypedPlaintext {
     }
 }
 
-/// This function should be used for testing only and it can panic.
-pub async fn compute_cipher_from_storage(
-    pub_path: Option<&Path>,
-    msg: TypedPlaintext,
-    key_id: &str,
-) -> (Vec<u8>, FheType) {
+pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FhePublicKey {
     // Try first with centralized storage
     let storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
     let url = storage
         .compute_url(key_id, &PubDataType::PublicKey.to_string())
         .unwrap();
     tracing::info!("🚧 Using key: {}", url);
-    println!("storage: {:?}", storage);
-    println!("url: {:?}", url);
-    let pk = if storage.data_exists(&url).await.unwrap() {
-        tracing::info!("Reading");
+    if storage.data_exists(&url).await.unwrap() {
+        tracing::info!("Trying centralized storage");
         let content = storage.read_data(&url).await.unwrap();
-        tracing::info!("Unversionning");
         FhePublicKey::unversionize(content).unwrap()
     } else {
         // Try with the threshold storage
         tracing::info!("Fallback to threshold file storage");
         let storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
-        println!("storage: {:?}", storage);
-        tracing::info!("storage: {:?}", storage);
         let url = storage
             .compute_url(key_id, &PubDataType::PublicKey.to_string())
             .unwrap();
         FhePublicKey::unversionize(storage.read_data(&url).await.unwrap()).unwrap()
-    };
+    }
+}
+
+/// This function should be used for testing only and it can panic.
+pub async fn compute_cipher_from_storage(
+    pub_path: Option<&Path>,
+    msg: TypedPlaintext,
+    key_id: &str,
+) -> (Vec<u8>, FheType) {
+    let pk = load_pk_from_storage(pub_path, key_id).await;
     compute_cipher(msg, &pk)
 }
 

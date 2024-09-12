@@ -701,6 +701,7 @@ where
             config: Some(Config {}),
             params: param_choice.into(),
             request_id: Some(req_id.clone()),
+            max_num_bits: None, // TODO: this will come in another PR
         };
 
         let metrics = self.operation_val.kms_client.metrics.clone();

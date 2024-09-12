@@ -8,8 +8,8 @@ use crate::cryptography::signcryption::Reencrypt;
 use crate::kms::ReencryptionRequest;
 #[cfg(feature = "non-wasm")]
 use crate::kms::RequestId;
-use crate::kms::TypedCiphertext;
 use crate::kms::{FheType, ParamChoice};
+use crate::kms::{TypedCiphertext, ZkVerifyResponsePayload};
 use crate::rpc::rpc_types::SignedPubDataHandleInternal;
 use crate::rpc::rpc_types::{
     BaseKms, Kms, Plaintext, PrivDataType, PubDataType, SigncryptionPayload,
@@ -91,11 +91,12 @@ pub async fn async_generate_crs(
     sk: &PrivateSigKey,
     rng: AesRng,
     params: NoiseFloodParameters,
+    max_num_bits: Option<u32>,
 ) -> anyhow::Result<(PublicParameter, SignedPubDataHandleInternal)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     rayon::spawn(move || {
-        let out = gen_centralized_crs(&sk_copy, &params, rng);
+        let out = gen_centralized_crs(&sk_copy, &params, max_num_bits, rng);
         let _ = send.send(out);
     });
     recv.await?
@@ -145,9 +146,11 @@ pub fn generate_client_fhe_key(params: NoiseFloodParameters, seed: Option<Seed>)
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
     params: &NoiseFloodParameters,
+    max_num_bits: Option<u32>,
     mut rng: R,
 ) -> anyhow::Result<(PublicParameter, SignedPubDataHandleInternal)> {
-    let pp = make_centralized_public_parameters(params, &mut rng)?;
+    let pp =
+        make_centralized_public_parameters(&params.ciphertext_parameters, max_num_bits, &mut rng)?;
     let crs_info = compute_info(sk, &pp)?;
     Ok((pp, crs_info))
 }
@@ -283,9 +286,7 @@ pub(crate) fn verify_eip712(request: &ReencryptionRequest) -> anyhow::Result<()>
     // type since our own type uses k256::ecdsa, which is not the same
     // as the one in alloy.
     let alloy_signature = alloy_primitives::Signature::try_from(signature_bytes.as_slice())
-        .inspect_err(|e| {
-            tracing::error!("Failed to parse alloy signature with error: {e}");
-        })?;
+        .inspect_err(|e| tracing::error!("Failed to parse alloy signature with error: {e}"))?;
 
     check_normalized(&Signature {
         sig: alloy_signature.inner().to_owned(),
@@ -408,6 +409,8 @@ pub struct SoftwareKms<PubS: Storage, PrivS: Storage> {
     pub(crate) reenc_meta_map: Arc<RwLock<MetaStore<ReencCallValues>>>,
     // Map storing ongoing CRS generation requests.
     pub(crate) crs_meta_map: Arc<RwLock<MetaStore<SignedPubDataHandleInternal>>>,
+    // Map storing the completed zero-knowledge verification tasks.
+    pub(crate) zk_payload_meta_map: Arc<RwLock<MetaStore<ZkVerifyResponsePayload>>>,
     // Map storing the identity of parameters and the parameter file paths
     pub(crate) param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>, // TODO this should be loaded once during boot
 }
@@ -622,8 +625,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
     ) -> anyhow::Result<Self> {
         let sks: HashMap<RequestId, <PrivateSigKey as VersionizeOwned>::VersionedOwned> =
             read_all_data(&private_storage, &PrivDataType::SigningKey.to_string()).await?;
-        let sk = PrivateSigKey::unversionize(get_exactly_one(sks).inspect_err(|e| {
-            tracing::error!("signing key hashmap is not exactly 1, {}", e);
+        let sk = PrivateSigKey::unversionize(get_exactly_one(sks).inspect_err(|_e| {
+            tracing::error!("signing key hashmap is not exactly 1");
         })?)?;
         let key_info_versioned: HashMap<
             RequestId,
@@ -676,6 +679,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             dec_meta_store: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
             reenc_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
             crs_meta_map: Arc::new(RwLock::new(MetaStore::new_from_map(cs_w_status))),
+            zk_payload_meta_map: Arc::new(RwLock::new(MetaStore::new(DEC_CAPACITY, MIN_DEC_CACHE))),
             param_file_map,
         })
     }

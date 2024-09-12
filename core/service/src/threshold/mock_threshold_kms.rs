@@ -13,7 +13,8 @@ use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
     KeyGenRequest, KeyGenResult, ReencryptionRequest, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId, SignedPubDataHandle,
+    ReencryptionResponsePayload, RequestId, SignedPubDataHandle, ZkVerifyRequest, ZkVerifyResponse,
+    ZkVerifyResponsePayload,
 };
 use crate::rpc::rpc_types::{Plaintext, PubDataType, CURRENT_FORMAT_VERSION};
 
@@ -46,6 +47,7 @@ type DummyThresholdKms = GenericKms<
     DummyKeyGenerator,
     DummyPreprocessor,
     DummyCrsGenerator,
+    DummyZkVerifier,
 >;
 
 fn new_dummy_threshold_kms() -> DummyThresholdKms {
@@ -57,6 +59,7 @@ fn new_dummy_threshold_kms() -> DummyThresholdKms {
         DummyKeyGenerator {},
         DummyPreprocessor {},
         DummyCrsGenerator {},
+        DummyZkVerifier {},
         handle.abort_handle(),
     )
 }
@@ -97,7 +100,7 @@ impl Reencryptor for DummyReencryptor {
             degree: self.degree,
         };
         Ok(Response::new(ReencryptionResponse {
-            signature: vec![],
+            signature: vec![1, 2],
             payload: Some(payload),
         }))
     }
@@ -119,7 +122,7 @@ impl Decryptor for DummyDecryptor {
         _request: Request<RequestId>,
     ) -> Result<Response<DecryptionResponse>, Status> {
         Ok(Response::new(DecryptionResponse {
-            signature: vec![],
+            signature: vec![1, 2],
             payload: Some(DecryptionResponsePayload {
                 version: CURRENT_FORMAT_VERSION,
                 verification_key: vec![],
@@ -147,7 +150,7 @@ impl KeyGenerator for DummyKeyGenerator {
     ) -> Result<Response<KeyGenResult>, Status> {
         let dummy_info = SignedPubDataHandle {
             key_handle: "12".to_string(),
-            signature: vec![3, 4],
+            signature: vec![1, 2],
         };
 
         let pk = PubDataType::PublicKey;
@@ -196,6 +199,32 @@ impl CrsGenerator for DummyCrsGenerator {
         Ok(Response::new(CrsGenResult {
             request_id: Some(request.into_inner()),
             crs_results: Some(SignedPubDataHandle::default()),
+        }))
+    }
+}
+
+struct DummyZkVerifier;
+
+#[tonic::async_trait]
+impl ZkVerifier for DummyZkVerifier {
+    async fn verify(&self, _request: Request<ZkVerifyRequest>) -> Result<Response<Empty>, Status> {
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<ZkVerifyResponse>, Status> {
+        let inner = request.into_inner();
+        let payload = Some(ZkVerifyResponsePayload {
+            request_id: Some(inner),
+            contract_address: "0xEe344eeDA74E25D746dd1853Bb65C800D1674264".to_string(),
+            client_address: "0x355d755538C0310D725b589eA45fB17F320f707B".to_string(),
+            ct_digest: "dummy digest".as_bytes().to_vec(),
+        });
+        Ok(Response::new(ZkVerifyResponse {
+            payload,
+            signature: vec![1, 2],
         }))
     }
 }

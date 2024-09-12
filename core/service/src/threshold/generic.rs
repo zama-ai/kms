@@ -61,17 +61,29 @@ pub trait CrsGenerator {
     ) -> Result<Response<CrsGenResult>, Status>;
 }
 
-pub struct GenericKms<IN, RE, DE, KG, PP, CG> {
+#[tonic::async_trait]
+pub trait ZkVerifier {
+    async fn verify(&self, request: Request<ZkVerifyRequest>) -> Result<Response<Empty>, Status>;
+
+    async fn get_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<ZkVerifyResponse>, Status>;
+}
+
+pub struct GenericKms<IN, RE, DE, KG, PP, CG, ZV> {
     initiator: IN,
     reencryptor: RE,
     decryptor: DE,
     key_generator: KG,
     keygen_preprocessor: PP,
     crs_generator: CG,
+    zk_verifier: ZV,
     abort_handle: AbortHandle,
 }
 
-impl<IN, RE, DE, KG, PP, CG> GenericKms<IN, RE, DE, KG, PP, CG> {
+impl<IN, RE, DE, KG, PP, CG, ZV> GenericKms<IN, RE, DE, KG, PP, CG, ZV> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         initiator: IN,
         reencryptor: RE,
@@ -79,6 +91,7 @@ impl<IN, RE, DE, KG, PP, CG> GenericKms<IN, RE, DE, KG, PP, CG> {
         key_generator: KG,
         keygen_preprocessor: PP,
         crs_generator: CG,
+        zk_verifier: ZV,
         abort_handle: AbortHandle,
     ) -> Self {
         Self {
@@ -88,6 +101,7 @@ impl<IN, RE, DE, KG, PP, CG> GenericKms<IN, RE, DE, KG, PP, CG> {
             key_generator,
             keygen_preprocessor,
             crs_generator,
+            zk_verifier,
             abort_handle,
         }
     }
@@ -105,7 +119,8 @@ impl<
         KG: KeyGenerator + Sync + Send + 'static,
         PP: KeyGenPreprocessor + Sync + Send + 'static,
         CG: CrsGenerator + Sync + Send + 'static,
-    > CoreServiceEndpoint for GenericKms<IN, RE, DE, KG, PP, CG>
+        ZV: ZkVerifier + Sync + Send + 'static,
+    > CoreServiceEndpoint for GenericKms<IN, RE, DE, KG, PP, CG, ZV>
 {
     async fn init(&self, request: Request<InitRequest>) -> Result<Response<Empty>, Status> {
         self.initiator.init(request).await
@@ -183,5 +198,20 @@ impl<
         request: Request<RequestId>,
     ) -> Result<Response<CrsGenResult>, Status> {
         self.crs_generator.get_result(request).await
+    }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn zk_verify(
+        &self,
+        request: Request<ZkVerifyRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        self.zk_verifier.verify(request).await
+    }
+
+    async fn get_zk_verify_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<ZkVerifyResponse>, Status> {
+        self.zk_verifier.get_result(request).await
     }
 }

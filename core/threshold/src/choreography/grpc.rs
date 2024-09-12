@@ -1183,7 +1183,11 @@ impl Choreography for GrpcChoreography {
         let my_future = || async move {
             let real_ceremony = RealCeremony::default();
             let pp = real_ceremony
-                .execute::<Z64, _, _>(&mut base_session, witness_dim as usize)
+                .execute::<Z64, _, _>(
+                    &mut base_session,
+                    witness_dim as usize,
+                    request.max_num_bits,
+                )
                 .await
                 .unwrap();
             crs_store.insert(session_id, pp);

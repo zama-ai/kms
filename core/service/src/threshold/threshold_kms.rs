@@ -1,5 +1,6 @@
 use super::generic::{
     CrsGenerator, Decryptor, GenericKms, Initiator, KeyGenPreprocessor, KeyGenerator, Reencryptor,
+    ZkVerifier,
 };
 use crate::conf::threshold::{PeerConf, ThresholdConfig};
 use crate::consts::{MINIMUM_SESSIONS_PREPROC, PRSS_EPOCH_ID, SEC_PAR};
@@ -11,16 +12,18 @@ use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus,
     KeyGenPreprocStatusEnum, KeyGenRequest, KeyGenResult, ParamChoice, ReencryptionRequest,
-    ReencryptionResponse, ReencryptionResponsePayload, RequestId,
+    ReencryptionResponse, ReencryptionResponsePayload, RequestId, ZkVerifyRequest,
+    ZkVerifyResponse, ZkVerifyResponsePayload,
 };
 use crate::rpc::central_rpc::{
-    convert_key_response, retrieve_parameters_sync, tonic_handle_potential_err, tonic_some_or_err,
-    validate_decrypt_req, validate_reencrypt_req, validate_request_id,
+    convert_key_response, get_zk_verify_result, non_blocking_zk_verify, retrieve_parameters_sync,
+    tonic_handle_potential_err, tonic_some_or_err, validate_decrypt_req, validate_reencrypt_req,
+    validate_request_id,
 };
-use crate::rpc::rpc_types::SignedPubDataHandleInternal;
-use crate::rpc::rpc_types::{compute_external_signature, PrivDataType};
 use crate::rpc::rpc_types::{
-    BaseKms, Plaintext, PubDataType, SigncryptionPayload, CURRENT_FORMAT_VERSION,
+    compute_external_signature, BaseKms, Plaintext, PrivDataType, PubDataType,
+    PublicParameterWithParamID, SigncryptionPayload, SignedPubDataHandleInternal,
+    CURRENT_FORMAT_VERSION,
 };
 use crate::storage::{
     delete_at_request_id, read_all_data, read_at_request_id, store_at_request_id, Storage,
@@ -317,6 +320,7 @@ pub type RealThresholdKms<PubS, PrivS> = GenericKms<
     RealKeyGenerator<PubS, PrivS>,
     RealPreprocessor,
     RealCrsGenerator<PubS, PrivS>,
+    RealZkVerifier<PubS>,
 >;
 
 #[derive(Debug)]
@@ -493,6 +497,7 @@ where
     let dkg_pubinfo_meta_store = Arc::new(RwLock::new(MetaStore::new_from_map(key_info_w_status)));
     let dec_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
     let reenc_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
+    let zk_payload_meta_store = Arc::new(RwLock::new(MetaStore::new(dec_capacity, min_dec_cache)));
 
     let session_preparer = SessionPreparer {
         base_kms: base_kms.new_instance().await,
@@ -557,12 +562,19 @@ where
     };
 
     let crsgenerator = RealCrsGenerator {
-        base_kms,
-        public_storage,
+        base_kms: base_kms.new_instance().await,
+        public_storage: Arc::clone(&public_storage),
         private_storage,
         crs_meta_store,
-        param_file_map,
+        param_file_map: Arc::clone(&param_file_map),
         session_preparer,
+    };
+
+    let zkverifier = RealZkVerifier {
+        base_kms,
+        param_file_map,
+        zk_payload_meta_store,
+        public_storage,
     };
 
     let kms = GenericKms::new(
@@ -572,6 +584,7 @@ where
         keygenerator,
         preprocessor,
         crsgenerator,
+        zkverifier,
         ddec_handle.abort_handle(),
     );
 
@@ -1544,7 +1557,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         }
 
         //Retrieve kg params and preproc_id
-        let params = tonic_handle_potential_err(
+        let (params, _) = tonic_handle_potential_err(
             retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
             "Parameter choice is not recognized".to_string(),
         )?;
@@ -1704,7 +1717,7 @@ impl KeyGenPreprocessor for RealPreprocessor {
         }
 
         //Retrieve the DKG parameters
-        let params = tonic_handle_potential_err(
+        let (params, _) = tonic_handle_potential_err(
             retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
             "Parameter choice is not recognized".to_string(),
         )?;
@@ -1789,7 +1802,13 @@ pub struct RealCrsGenerator<
 impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'static>
     RealCrsGenerator<PubS, PrivS>
 {
-    async fn inner_crs_gen(&self, req_id: &RequestId, witness_dim: usize) -> anyhow::Result<()> {
+    async fn inner_crs_gen(
+        &self,
+        req_id: &RequestId,
+        witness_dim: usize,
+        max_num_bits: Option<u32>,
+        param_choice: ParamChoice,
+    ) -> anyhow::Result<()> {
         {
             let mut guarded_meta_store = self.crs_meta_store.write().await;
             guarded_meta_store.insert(req_id).map_err(|e| {
@@ -1819,7 +1838,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             let crs_start_timer = Instant::now();
             let real_ceremony = RealCeremony::default();
             let res_pp = real_ceremony
-                .execute::<Z64, _, _>(&mut session, witness_dim)
+                .execute::<Z64, _, _>(&mut session, witness_dim, max_num_bits)
                 .await;
             let res_info_pp =
                 res_pp.and_then(|pp| compute_info(&sig_key, &pp).map(|info| (info, pp)));
@@ -1830,7 +1849,13 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 let mut priv_storage = private_storage.lock().await;
 
                 let (meta_data, pp) = match res_info_pp {
-                    Ok(tuple) => tuple,
+                    Ok((meta, pp)) => (
+                        meta,
+                        PublicParameterWithParamID {
+                            pp,
+                            param_id: param_choice as i32,
+                        },
+                    ),
                     Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         // We cannot do much if updating the storage fails at this point...
@@ -1916,7 +1941,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             req_inner.request_id
         );
 
-        let fhe_params = crate::rpc::central_rpc::retrieve_parameters_sync(
+        let (noiseflood_params, param_choice) = crate::rpc::central_rpc::retrieve_parameters_sync(
             req_inner.params,
             self.param_file_map.clone(),
         )
@@ -1926,10 +1951,10 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 tonic::Code::NotFound,
                 format!("Can not retrieve fhe parameters with error {e}"),
             )
-        })?
-        .ciphertext_parameters;
+        })?;
+        let fhe_params = noiseflood_params.ciphertext_parameters;
         let witness_dim = tonic_handle_potential_err(
-            compute_witness_dim(&fhe_params),
+            compute_witness_dim(&fhe_params, req_inner.max_num_bits),
             "witness dimension computation failed".to_string(),
         )?;
 
@@ -1939,7 +1964,8 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                 "missing request ID in CRS generation",
             )
         })?;
-        self.inner_crs_gen(&req_id, witness_dim)
+
+        self.inner_crs_gen(&req_id, witness_dim, req_inner.max_num_bits, param_choice)
             .await
             .map_err(|e| tonic::Status::new(tonic::Code::Aborted, e.to_string()))?;
         Ok(Response::new(Empty {}))
@@ -1960,6 +1986,62 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
             request_id: Some(request_id),
             crs_results: Some(crs_data.into()),
         }))
+    }
+}
+
+pub struct RealZkVerifier<PubS: Storage + Sync + Send + 'static> {
+    base_kms: BaseKmsStruct,
+    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
+    zk_payload_meta_store: Arc<RwLock<MetaStore<ZkVerifyResponsePayload>>>,
+    public_storage: Arc<Mutex<PubS>>,
+}
+
+#[tonic::async_trait]
+impl<PubS: Storage + Sync + Send + 'static> ZkVerifier for RealZkVerifier<PubS> {
+    async fn verify(&self, request: Request<ZkVerifyRequest>) -> Result<Response<Empty>, Status> {
+        let meta_store = Arc::clone(&self.zk_payload_meta_store);
+
+        // Check well-formedness of the request and return an error early if there's an error
+        let request_id = request
+            .get_ref()
+            .request_id
+            .as_ref()
+            .ok_or_else(|| {
+                tonic::Status::new(
+                    tonic::Code::InvalidArgument,
+                    "missing request ID".to_string(),
+                )
+            })?
+            .clone();
+        validate_request_id(&request_id)?;
+
+        let public_storage = Arc::clone(&self.public_storage);
+        let param_file_map = Arc::clone(&self.param_file_map);
+
+        non_blocking_zk_verify(
+            meta_store,
+            public_storage,
+            param_file_map,
+            request_id.clone(),
+            request.into_inner(),
+        )
+        .await
+        .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                format!("non_blocking_zk_verify failed for request_id {request_id} ({e})"),
+            )
+        })?;
+
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<ZkVerifyResponse>, Status> {
+        let meta_store = Arc::clone(&self.zk_payload_meta_store);
+        get_zk_verify_result(&self.base_kms, meta_store, request).await
     }
 }
 

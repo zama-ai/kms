@@ -1,5 +1,7 @@
 use lazy_static::lazy_static;
 
+pub const ZK_DEFAULT_MAX_NUM_CLEARTEXT: usize = 256;
+
 //Need to be careful that one DSEP isn't the prefix of another
 pub const ZK_DSEP_HASH: [u8; 12] = *b"ZK_DSEP_HASH";
 pub const ZK_DSEP_HASH_T: [u8; 9] = *b"ZK_DSEP_T";

@@ -1,6 +1,6 @@
 use super::rpc_types::{
-    compute_external_signature, BaseKms, PrivDataType, SignedPubDataHandleInternal,
-    CURRENT_FORMAT_VERSION,
+    compute_external_signature, BaseKms, PrivDataType, PublicParameterWithParamID,
+    SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
 };
 use crate::conf::centralized::CentralizedConfig;
 #[cfg(any(test, feature = "testing"))]
@@ -11,15 +11,17 @@ use crate::cryptography::central_kms::{
     SoftwareKms,
 };
 use crate::cryptography::internal_crypto_types::PublicEncKey;
+use crate::cryptography::signcryption::serialize_hash_element;
 use crate::kms::core_service_endpoint_server::{CoreServiceEndpoint, CoreServiceEndpointServer};
 use crate::kms::{
     CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse, DecryptionResponsePayload,
     Empty, FheType, InitRequest, KeyGenPreprocRequest, KeyGenPreprocStatus, KeyGenRequest,
     KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionResponse,
-    ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedCiphertext,
+    ReencryptionResponsePayload, RequestId, SignedPubDataHandle, TypedCiphertext, ZkVerifyRequest,
+    ZkVerifyResponse, ZkVerifyResponsePayload,
 };
 use crate::rpc::rpc_types::PubDataType;
-use crate::storage::delete_at_request_id;
+use crate::storage::{delete_at_request_id, read_at_request_id};
 use crate::storage::{store_at_request_id, Storage};
 use crate::util::file_handling::read_as_json;
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
@@ -31,8 +33,13 @@ use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodPar
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
-use tfhe::Versionize;
-use tokio::sync::RwLock;
+use tfhe::zk::CompactPkePublicParams;
+use tfhe::{
+    set_server_key, CompactPublicKey, ProvenCompactCiphertextList, ServerKey, Unversionize,
+    Versionize,
+};
+use tfhe_versionable::VersionizeOwned;
+use tokio::sync::{Mutex, RwLock};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 use tower_http::trace::TraceLayer;
@@ -115,7 +122,7 @@ impl<
             "No request ID present in request".to_string(),
         )?;
         validate_request_id(&request_id)?;
-        let params = tonic_handle_potential_err(
+        let (params, _) = tonic_handle_potential_err(
             retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
             "Parameter choice is not recognized".to_string(),
         )?;
@@ -549,7 +556,7 @@ impl<
         let inner = request.into_inner();
         let request_id = tonic_some_or_err(inner.request_id, "Request ID is not set".to_string())?;
         validate_request_id(&request_id)?;
-        let params = tonic_handle_potential_err(
+        let (params, param_choice) = tonic_handle_potential_err(
             retrieve_parameters_sync(inner.params, self.param_file_map.clone()).await,
             "Parameter choice is not recognized".to_string(),
         )?;
@@ -569,18 +576,23 @@ impl<
 
         let _handle = tokio::spawn(async move {
             {
-                let (pp, crs_info) = match async_generate_crs(&sk, rng, params).await {
-                    Ok((pp, crs_info)) => (pp, crs_info),
-                    Err(_) => {
-                        let mut guarded_meta_store = meta_store.write().await;
-                        let _ = guarded_meta_store.update(
-                            &request_id,
-                            HandlerStatus::Error(format!(
-                                "Failed CRS generation for CRS with ID {request_id}!"
-                            )),
-                        );
-                        return;
-                    }
+                let (pp, crs_info) =
+                    match async_generate_crs(&sk, rng, params, inner.max_num_bits).await {
+                        Ok((pp, crs_info)) => (pp, crs_info),
+                        Err(_) => {
+                            let mut guarded_meta_store = meta_store.write().await;
+                            let _ = guarded_meta_store.update(
+                                &request_id,
+                                HandlerStatus::Error(format!(
+                                    "Failed CRS generation for CRS with ID {request_id}!"
+                                )),
+                            );
+                            return;
+                        }
+                    };
+                let pp = PublicParameterWithParamID {
+                    pp,
+                    param_id: param_choice as i32,
                 };
                 let mut pub_storage = public_storage.lock().await;
                 let mut priv_storage = private_storage.lock().await;
@@ -660,6 +672,261 @@ impl<
             crs_results: Some(crs_info.into()),
         }))
     }
+
+    #[tracing::instrument(skip(self, request))]
+    async fn zk_verify(
+        &self,
+        request: Request<ZkVerifyRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let meta_store = Arc::clone(&self.zk_payload_meta_map);
+
+        // Check well-formedness of the request and return an error early if there's an error
+        let request_id = request
+            .get_ref()
+            .request_id
+            .as_ref()
+            .ok_or_else(|| {
+                tonic::Status::new(
+                    tonic::Code::InvalidArgument,
+                    "missing request ID".to_string(),
+                )
+            })?
+            .clone();
+        validate_request_id(&request_id)?;
+
+        let public_storage = Arc::clone(&self.public_storage);
+        let param_file_map = Arc::clone(&self.param_file_map);
+
+        non_blocking_zk_verify(
+            meta_store,
+            public_storage,
+            param_file_map,
+            request_id.clone(),
+            request.into_inner(),
+        )
+        .await
+        .map_err(|e| {
+            tonic::Status::new(
+                tonic::Code::Internal,
+                format!("non_blocking_zk_verify failed for request_id {request_id} ({e})"),
+            )
+        })?;
+
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn get_zk_verify_result(
+        &self,
+        request: Request<RequestId>,
+    ) -> Result<Response<ZkVerifyResponse>, Status> {
+        let meta_store = Arc::clone(&self.zk_payload_meta_map);
+        get_zk_verify_result(self, meta_store, request).await
+    }
+}
+
+pub(crate) async fn non_blocking_zk_verify<PubS>(
+    meta_store: Arc<RwLock<crate::util::meta_store::MetaStore<ZkVerifyResponsePayload>>>,
+    public_storage: Arc<Mutex<PubS>>,
+    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
+    request_id: RequestId,
+    request: ZkVerifyRequest,
+) -> anyhow::Result<()>
+where
+    PubS: Storage + Sync + Send + 'static,
+{
+    {
+        let mut guarded_meta_store = meta_store.write().await;
+        guarded_meta_store.insert(&request_id)?;
+    }
+    let _handle = tokio::spawn(async move {
+        let res = zk_verify(request, public_storage, param_file_map).await;
+
+        let mut guarded_meta_store = meta_store.write().await;
+        match res {
+            Ok(inner_res) => {
+                tracing::debug!("storing zk result for request_id {}", request_id);
+                let _ = guarded_meta_store.update(&request_id, HandlerStatus::Done(inner_res));
+            }
+            Err(e) => {
+                let _ = guarded_meta_store.update(
+                    &request_id,
+                    HandlerStatus::Error(format!(
+                        "Zk verification failed for ID {} with error {e}",
+                        request_id
+                    )),
+                );
+            }
+        }
+    });
+    Ok(())
+}
+
+pub(crate) async fn get_zk_verify_result<KMS>(
+    base_kms: &KMS,
+    meta_store: Arc<RwLock<crate::util::meta_store::MetaStore<ZkVerifyResponsePayload>>>,
+    request: Request<RequestId>,
+) -> Result<Response<ZkVerifyResponse>, Status>
+where
+    KMS: BaseKms,
+{
+    let request_id = request.into_inner();
+    validate_request_id(&request_id)?;
+    let payload = {
+        let guarded_meta_store = meta_store.read().await;
+        handle_res_mapping(
+            guarded_meta_store.retrieve(&request_id).cloned(),
+            &request_id,
+            "ZK",
+        )?
+    };
+    let sig_payload_vec = tonic_handle_potential_err(
+        bincode::serialize(&payload),
+        format!("Could not convert payload to bytes {:?}", payload),
+    )?;
+
+    let sig = tonic_handle_potential_err(
+        base_kms.sign(&sig_payload_vec),
+        format!("Could not sign payload {:?}", payload),
+    )?;
+
+    Ok(Response::new(ZkVerifyResponse {
+        payload: Some(payload),
+        signature: sig.sig.to_vec(),
+    }))
+}
+
+// NOTE: this does not have the signature
+async fn zk_verify<PubS>(
+    inner: ZkVerifyRequest,
+    public_storage: Arc<Mutex<PubS>>,
+    param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
+) -> anyhow::Result<ZkVerifyResponsePayload>
+where
+    PubS: Storage + Sync + Send + 'static,
+{
+    let crs_handle = tonic_some_or_err(inner.crs_handle, "CRS handle is not set".to_string())?;
+    validate_request_id(&crs_handle)?;
+
+    let key_handle = tonic_some_or_err(inner.key_handle, "Key handle is not set".to_string())?;
+    validate_request_id(&key_handle)?;
+
+    let request_id = tonic_some_or_err(inner.request_id, "Key handle is not set".to_string())?;
+    validate_request_id(&request_id)?;
+
+    tracing::info!("starting proof verification for request {}", request_id);
+    let proven_ct: ProvenCompactCiphertextList = bincode::deserialize(&inner.ct_bytes)
+        .inspect_err(|e| {
+            tracing::error!("could not deserialize the ciphertext list ({e})");
+        })?;
+
+    let pub_storage = public_storage.lock().await;
+    let pp_with_id = PublicParameterWithParamID::unversionize(
+        read_at_request_id::<_, <PublicParameterWithParamID as VersionizeOwned>::VersionedOwned>(
+            &(*pub_storage),
+            &crs_handle,
+            &PubDataType::CRS.to_string(),
+        )
+        .await
+        .inspect_err(|e| {
+            tracing::error!("No CRS with the handle {} ({e})", crs_handle);
+        })?,
+    )
+    .inspect_err(|e| {
+        tracing::error!("unversionize failed for CRS handle {} ({e})", crs_handle);
+    })?;
+
+    let public_key = CompactPublicKey::unversionize(
+        read_at_request_id(
+            &(*pub_storage),
+            &key_handle,
+            &PubDataType::PublicKey.to_string(),
+        )
+        .await
+        .inspect_err(|e| {
+            tracing::error!("No public key with the handle {} ({e})", key_handle);
+        })?,
+    )
+    .inspect_err(|e| {
+        tracing::error!("unversionize failed for key handle {} ({e})", key_handle);
+    })?;
+
+    let (params, _) = retrieve_parameters_sync(pp_with_id.param_id, param_file_map.clone())
+        .await
+        .inspect_err(|e| {
+            tracing::error!(
+                "Parameter {} choice is not recognized ({e})",
+                pp_with_id.param_id
+            );
+        })?;
+
+    let pp = pp_with_id
+        .pp
+        .try_into_tfhe_zk_pok_pp(&params.ciphertext_parameters)
+        .inspect_err(|e| {
+            tracing::error!("could not cast pp for handle {} ({e})", crs_handle);
+        })?;
+
+    // load the ServerKey, needed for verification
+    let server_key = ServerKey::unversionize(
+        read_at_request_id(
+            &(*pub_storage),
+            &key_handle,
+            &PubDataType::ServerKey.to_string(),
+        )
+        .await
+        .inspect_err(|e| {
+            tracing::error!("No server key with the handle {} ({e})", key_handle);
+        })?,
+    )
+    .inspect_err(|e| {
+        tracing::error!(
+            "server key unversionize failed for key handle {} ({e})",
+            key_handle
+        );
+    })?;
+
+    let (send, recv) = tokio::sync::oneshot::channel();
+    rayon::spawn(move || {
+        // server_key needs to be moved into this thread because
+        // it needs to be loaded on the same thread as the actual verification
+        set_server_key(server_key);
+        let out = verify_and_hash(&proven_ct, &pp, &public_key);
+        let _ = send.send(out);
+    });
+    let res = recv.await.inspect_err(|e| {
+        tracing::error!("channel error for key handle {} ({e})", key_handle);
+    })?;
+
+    match res {
+        Ok(ct_digest) => {
+            tracing::info!("finishing proof verification for request {}", request_id);
+            let payload = ZkVerifyResponsePayload {
+                request_id: Some(request_id),
+                contract_address: inner.contract_address,
+                client_address: inner.client_address,
+                ct_digest,
+            };
+
+            Ok(payload)
+        }
+        Err(e) => {
+            tracing::error!(
+                "zk verification failed for ciphertext request: {} ({e})",
+                request_id
+            );
+            Err(e)
+        }
+    }
+}
+
+fn verify_and_hash(
+    proven_ct: &ProvenCompactCiphertextList,
+    pp: &CompactPkePublicParams,
+    pk: &CompactPublicKey,
+) -> anyhow::Result<Vec<u8>> {
+    // NOTE: there's no function to just verify (without expand) at the moment
+    let _ = proven_ct.verify_and_expand(pp, pk)?;
+    serialize_hash_element(proven_ct)
 }
 
 /// Validates a request ID and returns an appropriate tonic error if it is invalid.
@@ -709,19 +976,19 @@ pub(crate) fn default_param_file_map() -> HashMap<String, String> {
 pub(crate) async fn retrieve_parameters(
     param_choice: i32,
     param_file_map: &HashMap<ParamChoice, String>,
-) -> anyhow::Result<NoiseFloodParameters> {
+) -> anyhow::Result<(NoiseFloodParameters, ParamChoice)> {
     let param_choice = ParamChoice::try_from(param_choice)?;
     let param_path = param_file_map
         .get(&param_choice)
         .ok_or_else(|| anyhow::anyhow!("parameter does not exist"))?;
     let params: NoiseFloodParameters = read_as_json(param_path).await?;
-    Ok(params)
+    Ok((params, param_choice))
 }
 
 pub(crate) async fn retrieve_parameters_sync(
     param_choice: i32,
     param_file_map: Arc<RwLock<HashMap<ParamChoice, String>>>,
-) -> anyhow::Result<NoiseFloodParameters> {
+) -> anyhow::Result<(NoiseFloodParameters, ParamChoice)> {
     let guarded_map = param_file_map.read().await;
     retrieve_parameters(param_choice, &guarded_map).await
 }

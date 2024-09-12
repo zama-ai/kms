@@ -124,7 +124,7 @@ impl<T> MetaStore<T> {
     ) -> anyhow::Result<()> {
         if !self.exists(request_id) {
             return Err(anyhow_error_and_log(format!(
-                "The element with ID {request_id} does not exist"
+                "The element with ID {request_id} does not exist, update is not allowed"
             )));
         }
         if let HandlerStatus::Started = status {
@@ -173,12 +173,12 @@ impl<T> MetaStore<T> {
 pub(crate) fn handle_res_mapping<T>(
     handle: Option<HandlerStatus<T>>,
     req_id: &RequestId,
-    request_type: &str,
+    request_type_info: &str,
 ) -> Result<T, Status> {
     match handle {
         None => {
             let msg = format!(
-                "Could not retrieve {request_type} with request ID {}. It does not exist",
+                "Could not retrieve {request_type_info} with request ID {}. It does not exist",
                 req_id
             );
             tracing::warn!(msg);
@@ -186,7 +186,7 @@ pub(crate) fn handle_res_mapping<T>(
         }
         Some(HandlerStatus::Started) => {
             let msg = format!(
-                    "Could not retrieve {request_type} with request ID {} since it is not completed yet",
+                    "Could not retrieve {request_type_info} with request ID {} since it is not completed yet",
                     req_id
                 );
             tracing::warn!(msg);
@@ -194,7 +194,7 @@ pub(crate) fn handle_res_mapping<T>(
         }
         Some(HandlerStatus::Error(e)) => {
             let msg = format!(
-                    "Could not retrieve {request_type} with request ID {} since it finished with an error: {}",
+                    "Could not retrieve {request_type_info} with request ID {} since it finished with an error: {}",
                     req_id, e
                 );
             tracing::warn!(msg);

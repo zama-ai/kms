@@ -25,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("SignedPubDataHandle", EXTENDED_DERIVES)
         .type_attribute("CrsGenRequest", DERIVES)
         .type_attribute("CrsGenResult", DERIVES)
+        .type_attribute("ZkVerifyResponsePayload", DERIVES)
         .type_attribute("FheType", "#[wasm_bindgen::prelude::wasm_bindgen]")
         .type_attribute(
             "RequestId",
@@ -73,6 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .type_attribute("SignedPubDataHandle", EXTENDED_DERIVES)
         .type_attribute("CrsGenRequest", DERIVES)
         .type_attribute("CrsGenResult", DERIVES)
+        .type_attribute("ZkVerifyResponsePayload", DERIVES)
         .compile(&["proto/kms.proto"], &["proto"])?;
     Ok(())
 }

@@ -91,6 +91,7 @@ message CrsGenRequest {
     bytes role_assignment = 1;
     uint32 threshold = 2;
     bytes params = 3;
+    optional uint32 max_num_bits = 4;
 }
 
 message CrsGenResponse {
