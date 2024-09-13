@@ -1,6 +1,6 @@
 [package]
 name = "gateway"
-version = "0.9.0-rc2"
+version = "0.9.0-rc3"
 edition.workspace = true
 publish.workspace = true
 authors.workspace = true
@@ -16,21 +16,21 @@ anyhow.workspace = true
 async-trait.workspace = true
 bincode.workspace = true
 byteorder = "1.5.0"
-conf-trace = { path = "../../conf-trace" , version = "0.9.0-rc2" }
-cosmos-proto = { path = "../cosmos-proto" , version = "0.9.0-rc2" }
+conf-trace = { path = "../../conf-trace" , version = "0.9.0-rc3" }
+cosmos-proto = { path = "../cosmos-proto" , version = "0.9.0-rc3" }
 cosmwasm-std = { version = "2.0.2" }
 dashmap = "6.0.1"
 deep_space = "2.24.1"
 ethers = { version = "2.0.14", features = ["abigen", "rustls", "ws", "ethers-solc", "legacy"] }
-events = { path = "../events", features = ["subscription"] , version = "0.9.0-rc2" }
+events = { path = "../events", features = ["subscription"] , version = "0.9.0-rc3" }
 eyre = "0.6.12"
 futures = "0.3"
 hex = "0.4.3"
 hmac = "0.12.1"
 k256 = "0.13.3"
-kms = { path = "../../core/service", default-features = false, features = ["grpc-client"] , version = "0.9.0-rc2" }
-kms-blockchain-client = { path = "../client" , version = "0.9.0-rc2" }
-kms-blockchain-connector = { path = "../connector" , version = "0.9.0-rc2" }
+kms = { path = "../../core/service", default-features = false, features = ["grpc-client"] , version = "0.9.0-rc3" }
+kms-blockchain-client = { path = "../client" , version = "0.9.0-rc3" }
+kms-blockchain-connector = { path = "../connector" , version = "0.9.0-rc3" }
 prost.workspace = true
 rand.workspace = true
 reqwest = { version = "0.12.4", features = ["json"] }
