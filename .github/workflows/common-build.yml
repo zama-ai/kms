@@ -214,6 +214,7 @@ jobs:
           rm -rf pkg
           wasm-pack build --target nodejs . --no-default-features
           sed -i 's/"kms"/"node-tkms"/g' pkg/package.json
+          echo "# node-tkms" > pkg/README.md
 
       - name: NPM publish Node package dry-run
         if: ${{ inputs.npm-release || inputs.npm-release-dry-run }}
@@ -242,6 +243,7 @@ jobs:
           rm -rf pkg
           wasm-pack build --target web . --no-default-features
           sed -i 's/"kms"/"tkms"/g' pkg/package.json
+          echo "# tkms" > pkg/README.md
 
       - name: NPM publish web package dry-run
         if: ${{ inputs.npm-release || inputs.npm-release-dry-run }}
