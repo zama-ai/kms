@@ -40,6 +40,18 @@ on:
         type: string
         required: false
         default: 0
+      npm-release:
+        type: boolean
+        required: false
+        default: false
+      npm-release-dry-run:
+        type: boolean
+        required: false
+        default: false
+      npm-release-tag-latest:
+        type: boolean
+        required: false
+        default: false
     secrets:
       SLAB_ACTION_TOKEN:
         required: true
@@ -49,6 +61,8 @@ on:
         required: true
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
+      NPM_TOKEN:
+        required: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -76,6 +90,7 @@ jobs:
     uses: ./.github/workflows/common-build.yml
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN: ${{ secrets.BLOCKCHAIN_ACTIONS_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     with:
       runs-on: ${{ needs.start-runner.outputs.label }}
       build-publish-docs: ${{ inputs.build-publish-docs }}
@@ -87,6 +102,9 @@ jobs:
       package-name: ${{ inputs.package-name }}
       wasm-test-feature: ${{ inputs.wasm-test-feature }}
       test-coverage: ${{ inputs.test-coverage }}
+      npm-release: ${{ inputs.npm-release }}
+      npm-release-dry-run: ${{ inputs.npm-release-dry-run }}
+      npm-release-tag-latest: ${{ inputs.npm-release-tag-latest }}
 
   stop-runner:
     name: Stops self-hosted EC2 runner

@@ -47,13 +47,28 @@ on:
         type: string
         required: false
         default: 0
+      npm-release:
+        type: boolean
+        required: false
+        default: false
+      npm-release-dry-run:
+        type: boolean
+        required: false
+        default: false
+      npm-release-tag-latest:
+        type: boolean
+        required: false
+        default: false
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
+      NPM_TOKEN:
+        required: false
 
 env:
   CARGO_TERM_COLOR: always
   DOCKER_BUILD_TEST_SIMULATOR: 1
+  NPM_TAG: ""
 
 jobs:
   compile-rust-unit-tests:
@@ -181,3 +196,69 @@ jobs:
       - name: Test wasm
         if: ${{ inputs.run-wasm }}
         run: node --test tests/js
+
+      - name: Set NPM version tag to latest
+        if: ${{ inputs.npm-release-tag-latest }}
+        run: |
+          echo "NPM_TAG=latest" >> "${GITHUB_ENV}"
+
+      - name: Set NPM version tag to prerelease
+        if: ${{ ! inputs.npm-release-tag-latest }}
+        run: |
+          echo "NPM_TAG=prerelease" >> "${GITHUB_ENV}"
+
+      - name: NPM build node package
+        if: ${{ inputs.npm-release || inputs.npm-release-dry-run }}
+        working-directory: ./core/service
+        run: |
+          rm -rf pkg
+          wasm-pack build --target nodejs . --no-default-features
+          sed -i 's/"kms"/"node-tkms"/g' pkg/package.json
+
+      - name: NPM publish Node package dry-run
+        if: ${{ inputs.npm-release || inputs.npm-release-dry-run }}
+        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          package: ./core/service/pkg/package.json
+          dry-run: true
+          provenance: true
+          tag: ${{ env.NPM_TAG }}
+
+      - name: NPM publish Node package
+        if: ${{ inputs.npm-release }}
+        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          package: ./core/service/pkg/package.json
+          dry-run: false
+          provenance: true
+          tag: ${{ env.NPM_TAG }}
+
+      - name: NPM build web package
+        if: ${{ inputs.npm-release || inputs.npm-release-dry-run }}
+        working-directory: ./core/service
+        run: |
+          rm -rf pkg
+          wasm-pack build --target web . --no-default-features
+          sed -i 's/"kms"/"tkms"/g' pkg/package.json
+
+      - name: NPM publish web package dry-run
+        if: ${{ inputs.npm-release || inputs.npm-release-dry-run }}
+        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          package: ./core/service/pkg/package.json
+          dry-run: true
+          provenance: true
+          tag: ${{ env.NPM_TAG }}
+
+      - name: NPM publish web package
+        if: ${{ inputs.npm-release }}
+        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          package: ./core/service/pkg/package.json
+          dry-run: false
+          provenance: true
+          tag: ${{ env.NPM_TAG }}
