@@ -101,7 +101,8 @@ pub enum PubDataType {
     ServerKey,
     SnsKey,
     CRS,
-    VerfKey, // Type for the servers verification keys
+    VerfKey,     // Type for the servers verification keys
+    VerfAddress, // The address of the KMS core, needed for verification
 }
 
 impl fmt::Display for PubDataType {
@@ -112,6 +113,7 @@ impl fmt::Display for PubDataType {
             PubDataType::SnsKey => write!(f, "SnsKey"),
             PubDataType::CRS => write!(f, "CRS"),
             PubDataType::VerfKey => write!(f, "VerfKey"),
+            PubDataType::VerfAddress => write!(f, "VerfAddress"),
         }
     }
 }
@@ -205,6 +207,9 @@ fn abi_encode_plaintexts(ptxts: &[Plaintext]) -> Bytes {
     // Every offset needs to be shifted by 32 bytes (256 bits), so we prepend a U256 and delete it at the and, after encoding.
     let mut data = vec![DynSolValue::Uint(U256::from(0), 256)];
 
+    // This is another hack to handle Euint2048 Bytes properly (alloy adds another all-zero 256 bytes to the beginning of the encoded bytes)
+    let mut offset_mul = 1;
+
     for ptxt in ptxts.iter() {
         tracing::debug!("Encoding Plaintext with FheType: {:#?}", ptxt.fhe_type());
         let res = match ptxt.fhe_type() {
@@ -229,6 +234,8 @@ fn abi_encode_plaintexts(ptxts: &[Plaintext]) -> Bytes {
                 DynSolValue::Uint(U256::from_be_slice(&cake), 256)
             }
             FheType::Euint2048 => {
+                // if we have at least 1 Euint2048, we need to throw away 256 more bytes at the beginning of the encoding below, thus set offset_mul to 2
+                offset_mul = 2;
                 let mut cake = vec![0u8; 256];
                 ptxt.as_u2048().copy_to_be_byte_slice(cake.as_mut_slice());
                 DynSolValue::Bytes(cake)
@@ -246,8 +253,8 @@ fn abi_encode_plaintexts(ptxts: &[Plaintext]) -> Bytes {
     // wrap data in a Tuple, so we can encode it with position information
     let encoded = DynSolValue::Tuple(data).abi_encode();
 
-    // strip off the extra U256 and Tuple definition (2x 32 Bytes) at the beginning
-    let encoded_bytes: Vec<u8> = encoded[64..].to_vec();
+    // strip off the extra U256 at the beginning, and possibly also 256 bytes more zero bytes, when we encode one or more Euint2048s
+    let encoded_bytes: Vec<u8> = encoded[offset_mul * 32..].to_vec();
 
     let hexbytes = hex::encode(encoded_bytes.clone());
     tracing::debug!("Encoded plaintext ABI {:?}", hexbytes);
@@ -767,7 +774,7 @@ impl fmt::Display for RequestId {
 }
 
 impl RequestId {
-    /// Method for deterministically deriving a request ID from an abitrary string.
+    /// Method for deterministically deriving a request ID from an arbitrary string.
     /// Is currently only used for testing purposes, since deriving is the responsibility of the smart contract.
     #[cfg(any(test, feature = "testing"))]
     pub fn derive(name: &str) -> anyhow::Result<Self> {
@@ -972,7 +979,8 @@ pub(crate) mod tests {
         let u256_val = tfhe::integer::U256::from((1, 256));
         let u2048_val = tfhe::integer::bigint::U2048::from(257_u64);
 
-        let pts: Vec<Plaintext> = vec![
+        // a batch of multiple plaintexts of different types
+        let pts_2048: Vec<Plaintext> = vec![
             Plaintext::from_u2048(u2048_val),
             Plaintext::from_bool(true),
             Plaintext::from_u4(4),
@@ -988,11 +996,11 @@ pub(crate) mod tests {
         ];
 
         // encode plaintexts into a list of solidity bytes using `alloy`
-        let bytes = super::abi_encode_plaintexts(&pts);
-        let hexbytes = hex::encode(bytes);
+        let bytes_2048 = super::abi_encode_plaintexts(&pts_2048);
+        let hexbytes_2048 = hex::encode(bytes_2048);
 
-        // this is the encoding of the same list of plaintexts using the outdated `ethers` crate.
-        let reference = "00000000000000000000000000000000000000000000000000000000000001a0\
+        // this is the encoding of the same list of plaintexts (pts_2048) using the outdated `ethers` crate.
+        let reference_2048 = "00000000000000000000000000000000000000000000000000000000000001a0\
                                0000000000000000000000000000000000000000000000000000000000000001\
                                0000000000000000000000000000000000000000000000000000000000000004\
                                0000000000000000000000000000000000000000000000000000000000000005\
@@ -1032,6 +1040,31 @@ pub(crate) mod tests {
                                0000000000000000000000000000000000000000000000000000000000000000\
                                0000000000000000000000000000000000000000000000000000000000000101";
 
-        assert_eq!(reference, hexbytes.as_str());
+        assert_eq!(reference_2048, hexbytes_2048.as_str());
+
+        // a batch of a single plaintext
+        let pts_16: Vec<Plaintext> = vec![Plaintext::from_u16(16)];
+
+        // encode plaintexts into a list of solidity bytes using `alloy`
+        let bytes_16 = super::abi_encode_plaintexts(&pts_16);
+        let hexbytes_16 = hex::encode(bytes_16);
+
+        // this is the encoding of the same list of plaintexts (pts_16) using the outdated `ethers` crate.
+        let reference_16 = "0000000000000000000000000000000000000000000000000000000000000010";
+
+        assert_eq!(reference_16, hexbytes_16.as_str());
+
+        // a batch of a two plaintext that are not of type Euint2048
+        let pts_16_2: Vec<Plaintext> = vec![Plaintext::from_u16(16), Plaintext::from_u16(16)];
+
+        // encode plaintexts into a list of solidity bytes using `alloy`
+        let bytes_16_2 = super::abi_encode_plaintexts(&pts_16_2);
+        let hexbytes_16_2 = hex::encode(bytes_16_2);
+
+        // this is the encoding of the same list of plaintexts (pts_16_2) using the outdated `ethers` crate.
+        let reference_16_2 = "0000000000000000000000000000000000000000000000000000000000000010\
+                                    0000000000000000000000000000000000000000000000000000000000000010";
+
+        assert_eq!(reference_16_2, hexbytes_16_2.as_str());
     }
 }

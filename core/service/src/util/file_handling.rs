@@ -35,6 +35,16 @@ pub async fn write_element<T: Serialize>(file_path: &str, element: &T) -> anyhow
     tokio::fs::write(path, serialized_data.as_slice()).await?;
     Ok(())
 }
+
+pub async fn write_text(file_path: &str, text: &str) -> anyhow::Result<()> {
+    let path = Path::new(&file_path);
+    // Create the parent directories of the file path if they don't exist
+    if let Some(p) = path.parent() {
+        tokio::fs::create_dir_all(p).await?
+    };
+    tokio::fs::write(path, text).await?;
+    Ok(())
+}
 /// Write bytes to a filepath.
 /// The function will create the necessary directories in the path in order to write the [bytes].
 /// If the file already exists then it will be COMPLETELY OVERWRITTEN without warning.

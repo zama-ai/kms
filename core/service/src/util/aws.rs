@@ -66,7 +66,7 @@ impl S3Storage {
         }
     }
 
-    /// Make the path on the bucket neeeded for centralized S3 storage to store elements of a certain type.
+    /// Make the path on the bucket needed for centralized S3 storage to store elements of a certain type.
     fn centralized_path(optional_path: Option<String>, storage_type: StorageType) -> String {
         match optional_path {
             Some(path) => format!(
@@ -78,7 +78,7 @@ impl S3Storage {
         }
     }
 
-    /// Make the path on the bucket neeeded for threshold S3 storage to store elements of a certain type and for a certain party.
+    /// Make the path on the bucket needed for threshold S3 storage to store elements of a certain type and for a certain party.
     fn threshold_path(
         optional_path: Option<String>,
         storage_type: StorageType,
@@ -205,6 +205,14 @@ impl Storage for S3Storage {
         tracing::info!("Storing object in bucket {} under key {}", bucket, key);
 
         s3_put_blob(&self.s3_client, &bucket, &key, data).await
+    }
+
+    async fn store_text(&mut self, data: &str, url: &Url) -> anyhow::Result<()> {
+        let (bucket, key) = S3Storage::parse_url(url)?;
+
+        tracing::info!("Storing text in bucket {} under key {}", bucket, key);
+
+        s3_put_blob_bytes(&self.s3_client, &bucket, &key, data.as_bytes().to_vec()).await
     }
 
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
@@ -338,6 +346,18 @@ impl Storage for EnclaveS3Storage {
         data: &T,
         url: &Url,
     ) -> anyhow::Result<()> {
+        let encrypted_data = nitro_enclave_encrypt_app_key(
+            &self.aws_kms_client,
+            &self.enclave_keys,
+            &self.root_key_id,
+            data,
+        )
+        .await?;
+
+        self.s3_storage.store_data(&encrypted_data, url).await
+    }
+
+    async fn store_text(&mut self, data: &str, url: &Url) -> anyhow::Result<()> {
         let encrypted_data = nitro_enclave_encrypt_app_key(
             &self.aws_kms_client,
             &self.enclave_keys,

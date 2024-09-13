@@ -332,7 +332,6 @@ async fn handle_central_cmd<'a, S: Storage>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn handle_threshold_cmd<'a, S: Storage>(
     args: &mut ThresholdCmdArgs<'a, S>,
     cmd: ConstructCommand,

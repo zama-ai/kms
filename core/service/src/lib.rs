@@ -194,6 +194,15 @@ impl Storage for StorageProxy {
         }
     }
 
+    async fn store_text(&mut self, data: &str, url: &Url) -> anyhow::Result<()> {
+        match &mut self {
+            StorageProxy::File(s) => s.store_data(data, url).await,
+            StorageProxy::Ram(s) => s.store_data(data, url).await,
+            StorageProxy::S3(s) => s.store_data(data, url).await,
+            StorageProxy::EnclaveS3(s) => s.store_data(data, url).await,
+        }
+    }
+
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
         match &mut self {
             StorageProxy::File(s) => s.delete_data(url).await,

@@ -9,9 +9,9 @@ use crate::cryptography::internal_crypto_types::PrivateSigKeyVersioned;
 use crate::kms::RequestId;
 use crate::rpc::rpc_types::PrivDataType;
 use crate::rpc::rpc_types::PubDataType;
-use crate::storage::read_all_data;
 use crate::storage::Storage;
 use crate::storage::StorageReader;
+use crate::storage::{read_all_data, store_text_at_request_id};
 use crate::storage::{store_at_request_id, FileStorage, StorageType};
 use crate::threshold::threshold_kms::{compute_all_info, ThresholdFheKeys};
 use crate::util::file_handling::read_as_json;
@@ -97,7 +97,7 @@ pub async fn ensure_client_keys_exist(
     .await
     .unwrap();
     tracing::info!(
-        "Successfully stored private client key under the handle {} with storage {}",
+        "Successfully stored private client key under the handle {} in storage {}",
         req_id,
         client_storage.info()
     );
@@ -110,7 +110,7 @@ pub async fn ensure_client_keys_exist(
     .await
     .unwrap();
     tracing::info!(
-        "Successfully stored public client key under the handle {} with storage {}",
+        "Successfully stored public client key under the handle {} in storage {}",
         compute_handle(&client_pk).unwrap(),
         client_storage.info()
     );
@@ -143,6 +143,8 @@ where
     }
     let mut rng = get_rng(deterministic, Some(0));
     let (pk, sk) = gen_sig_keys(&mut rng);
+
+    // store public verification key
     store_at_request_id(
         pub_storage,
         req_id,
@@ -152,10 +154,30 @@ where
     .await
     .unwrap();
     tracing::info!(
-        "Successfully stored public server signing key under the handle {} with storage \"{}\"",
+        "Successfully stored public server signing key under the handle {} in storage \"{}\"",
         req_id,
         pub_storage.info()
     );
+
+    let address = alloy_signer::utils::public_key_to_address(pk.pk());
+
+    // store public verification address (derived from public key)
+    store_text_at_request_id(
+        pub_storage,
+        req_id,
+        &address.to_string(),
+        &PubDataType::VerfAddress.to_string(),
+    )
+    .await
+    .unwrap();
+    tracing::info!(
+        "Successfully stored address {} under the handle {} in storage \"{}\"",
+        address,
+        req_id,
+        pub_storage.info()
+    );
+
+    // store private signing key
     store_at_request_id(
         priv_storage,
         req_id,
@@ -165,7 +187,7 @@ where
     .await
     .unwrap();
     tracing::info!(
-        "Successfully stored public server signing key under the handle {} with storage \"{}\"",
+        "Successfully stored public server signing key under the handle {} in storage \"{}\"",
         req_id,
         priv_storage.info()
     );
@@ -223,7 +245,7 @@ where
     .await
     .unwrap();
     tracing::info!(
-        "Successfully stored private CRS data under the handle {} with storage {}",
+        "Successfully stored private CRS data under the handle {} in storage {}",
         crs_handle,
         priv_storage.info()
     );
@@ -236,7 +258,7 @@ where
     .await
     .unwrap();
     tracing::info!(
-        "Successfully stored public CRS data under the handle {} with storage {}",
+        "Successfully stored public CRS data under the handle {} in storage {}",
         crs_handle,
         pub_storage.info()
     );
@@ -311,7 +333,7 @@ where
         .await
         .unwrap();
         tracing::info!(
-            "Successfully stored private key data under the handle {} with storage {}",
+            "Successfully stored private key data under the handle {} in storage {}",
             req_id,
             priv_storage.info()
         );
@@ -326,7 +348,7 @@ where
             .await
             .unwrap();
             tracing::info!(
-                "Successfully stored individual private key under the handle {} with storage {}",
+                "Successfully stored individual private key under the handle {} in storage {}",
                 req_id,
                 priv_storage.info()
             );
@@ -342,7 +364,7 @@ where
         .await
         .unwrap();
         tracing::info!(
-            "Successfully stored public key under the handle {} with storage {}",
+            "Successfully stored public key under the handle {} in storage {}",
             req_id,
             pub_storage.info()
         );
@@ -355,7 +377,7 @@ where
         .await
         .unwrap();
         tracing::info!(
-            "Successfully stored public server key under the handle {} with storage {}",
+            "Successfully stored public server key under the handle {} in storage {}",
             req_id,
             pub_storage.info()
         );
@@ -392,6 +414,8 @@ where
             return false;
         }
         let (pk, sk) = gen_sig_keys(&mut rng);
+
+        // store public verification key
         store_at_request_id(
             &mut pub_storages[i - 1],
             request_id,
@@ -401,10 +425,30 @@ where
         .await
         .unwrap();
         tracing::info!(
-            "Successfully stored public threshold server signing key under the handle {} with storage {}",
+            "Successfully stored public threshold server signing key under the handle {} in storage {}",
             request_id,
             pub_storages[i - 1].info()
         );
+
+        let address = alloy_signer::utils::public_key_to_address(pk.pk());
+
+        // store public verification address (derived from public key)
+        store_text_at_request_id(
+            &mut pub_storages[i - 1],
+            request_id,
+            &address.to_string(),
+            &PubDataType::VerfAddress.to_string(),
+        )
+        .await
+        .unwrap();
+        tracing::info!(
+            "Successfully stored address {} under the handle {} in storage \"{}\"",
+            address,
+            request_id,
+            pub_storages[i - 1].info()
+        );
+
+        // store private signing key
         store_at_request_id(
             &mut priv_storages[i - 1],
             request_id,
@@ -414,7 +458,7 @@ where
         .await
         .unwrap();
         tracing::info!(
-            "Successfully stored private threshold server signing key under the handle {} with storage {}",
+            "Successfully stored private threshold server signing key under the handle {} in storage {}",
             request_id,
             priv_storages[i - 1].info()
         );
@@ -505,7 +549,7 @@ where
         .await
         .unwrap();
         tracing::info!(
-            "Successfully stored public threshold key data under the handle {} with storage {}",
+            "Successfully stored public threshold key data under the handle {} in storage {}",
             key_id,
             pub_storages[i - 1].info()
         );
@@ -518,7 +562,7 @@ where
         .await
         .unwrap();
         tracing::info!(
-            "Successfully stored public threshold server key data under the handle {} with storage {}",
+            "Successfully stored public threshold server key data under the handle {} in storage {}",
             key_id,
             pub_storages[i-1].info()
         );
@@ -531,7 +575,7 @@ where
         .await
         .unwrap();
         tracing::info!(
-            "Successfully stored private threshold key data under the handle {} with storage {}",
+            "Successfully stored private threshold key data under the handle {} in storage {}",
             key_id,
             priv_storages[i - 1].info()
         );
@@ -602,7 +646,7 @@ where
         .await
         .unwrap();
         println!(
-            "Successfully stored private threshold CRS data under the handle {} with storage {}",
+            "Successfully stored private threshold CRS data under the handle {} in storage {}",
             crs_handle,
             cur_priv.info()
         );
@@ -615,7 +659,7 @@ where
         .await
         .unwrap();
         println!(
-            "Successfully stored public threshold CRS data under the handle {} with storage {}",
+            "Successfully stored public threshold CRS data under the handle {} in storage {}",
             crs_handle,
             cur_pub.info()
         );

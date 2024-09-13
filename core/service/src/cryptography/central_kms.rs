@@ -628,6 +628,14 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let sk = PrivateSigKey::unversionize(get_exactly_one(sks).inspect_err(|_e| {
             tracing::error!("signing key hashmap is not exactly 1");
         })?)?;
+
+        // compute corresponding public key from private sig key
+        let pk = SigningKey::verifying_key(sk.sk());
+        tracing::info!(
+            "Public address is {}",
+            alloy_signer::utils::public_key_to_address(pk)
+        );
+
         let key_info_versioned: HashMap<
             RequestId,
             <KmsFheKeyHandles as VersionizeOwned>::VersionedOwned,

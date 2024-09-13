@@ -1,7 +1,7 @@
 use crate::cryptography::central_kms::{compute_handle, SoftwareKmsKeys};
 use crate::kms::RequestId;
 use crate::rpc::rpc_types::PrivDataType;
-use crate::util::file_handling::{read_element, write_element};
+use crate::util::file_handling::{read_element, write_element, write_text};
 use crate::{anyhow_error_and_log, some_or_err};
 use crate::{consts::KEY_PATH_PREFIX, rpc::rpc_types::PubDataType};
 use anyhow::anyhow;
@@ -46,11 +46,16 @@ pub trait StorageReader {
 // Warning: There is no compiler validation that the data being stored are of a versioned type!
 #[tonic::async_trait]
 pub trait Storage: StorageReader {
+    /// store the given `data`` serialized at the given `url`
     async fn store_data<Ser: Serialize + Send + Sync + ?Sized>(
         &mut self,
         data: &Ser,
         url: &Url,
     ) -> anyhow::Result<()>;
+
+    /// store the given `text`` at the given `url`
+    async fn store_text(&mut self, data: &str, url: &Url) -> anyhow::Result<()>;
+
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()>;
 }
 
@@ -64,6 +69,23 @@ pub async fn store_at_request_id<S: Storage, Ser: Serialize + Send + Sync + ?Siz
 ) -> anyhow::Result<()> {
     let url = storage.compute_url(&request_id.to_string(), data_type)?;
     storage.store_data(data, &url).await.map_err(|e| {
+        anyhow_error_and_log(format!(
+            "Could not store data with ID {} and type {}: {}",
+            request_id, data_type, e
+        ))
+    })
+}
+
+// Helper method for storing text under a request ID.
+// An error will be returned if the data already exists.
+pub async fn store_text_at_request_id<S: Storage>(
+    storage: &mut S,
+    request_id: &RequestId,
+    data: &str,
+    data_type: &str,
+) -> anyhow::Result<()> {
+    let url = storage.compute_url(&request_id.to_string(), data_type)?;
+    storage.store_text(data, &url).await.map_err(|e| {
         anyhow_error_and_log(format!(
             "Could not store data with ID {} and type {}: {}",
             request_id, data_type, e
@@ -311,15 +333,9 @@ impl StorageReader for FileStorage {
     }
 }
 
-#[tonic::async_trait]
-impl Storage for FileStorage {
-    /// Store data with a specific [url], giving a warning if the data already exists and exits _without_ writing
-    async fn store_data<T: Serialize + Send + Sync + ?Sized>(
-        &mut self,
-        data: &T,
-        url: &Url,
-    ) -> anyhow::Result<()> {
-        let url_path = url_to_pathbuf(url);
+impl FileStorage {
+    // Check if a path already exists and create it if not.
+    async fn setup_dirs(&self, url_path: &Path) -> anyhow::Result<()> {
         if url_path.try_exists().is_ok_and(|res| res) {
             // If the path exists, then trace a warning
             tracing::warn!(
@@ -330,6 +346,7 @@ impl Storage for FileStorage {
             );
             return Ok(());
         }
+        // Create the directory
         tokio::fs::create_dir_all(self.root_dir())
             .await
             .map_err(|e| {
@@ -340,11 +357,48 @@ impl Storage for FileStorage {
                 );
                 e
             })?;
+
+        Ok(())
+    }
+}
+
+#[tonic::async_trait]
+impl Storage for FileStorage {
+    /// Store data with a specific [url], giving a warning if the data already exists and exits _without_ writing
+    async fn store_data<T: Serialize + Send + Sync + ?Sized>(
+        &mut self,
+        data: &T,
+        url: &Url,
+    ) -> anyhow::Result<()> {
+        let url_path = url_to_pathbuf(url);
+
+        self.setup_dirs(&url_path).await?;
+
         write_element(
             url_path
                 .to_str()
                 .ok_or(anyhow!("Could not convert path to string"))?,
             &data,
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!("Could not write to URL {}: {}", url, e);
+            e
+        })?;
+        Ok(())
+    }
+
+    /// Store text with a specific [url], giving a warning if the data already exists and exits _without_ writing
+    async fn store_text(&mut self, data: &str, url: &Url) -> anyhow::Result<()> {
+        let url_path = url_to_pathbuf(url);
+
+        self.setup_dirs(&url_path).await?;
+
+        write_text(
+            url_path
+                .to_str()
+                .ok_or(anyhow!("Could not convert path to string"))?,
+            data,
         )
         .await
         .map_err(|e| {
@@ -373,7 +427,7 @@ pub struct RamStorage {
 }
 
 impl RamStorage {
-    // Aggregate with devstorage to make an objevt that loads from files but don't store
+    // Aggregate with devstorage to make an object that loads from files but don't store
     pub fn new(storage_type: StorageType) -> Self {
         Self {
             extra_prefix: storage_type.to_string(),
@@ -473,6 +527,23 @@ impl Storage for RamStorage {
             .ok_or_else(|| anyhow_error_and_log("URL does not contain data type"))?
             .to_string();
         let serialized = bincode::serialize(&data)?;
+        self.internal_storage
+            .insert(url.to_owned(), (data_id, data_type, serialized));
+        Ok(())
+    }
+
+    async fn store_text(&mut self, data: &str, url: &Url) -> anyhow::Result<()> {
+        let url_string = url.to_owned().to_string();
+        let components: Vec<&str> = url_string.split('/').collect();
+        let data_type = components
+            .get(components.len() - 2)
+            .ok_or_else(|| anyhow_error_and_log("URL does not contain data id"))?
+            .to_string();
+        let data_id = components
+            .last()
+            .ok_or_else(|| anyhow_error_and_log("URL does not contain data type"))?
+            .to_string();
+        let serialized = data.as_bytes().to_vec();
         self.internal_storage
             .insert(url.to_owned(), (data_id, data_type, serialized));
         Ok(())
