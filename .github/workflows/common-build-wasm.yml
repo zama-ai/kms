@@ -6,7 +6,6 @@ on:
       working-directory:
         type: string
         required: true
-        default: './'
       cargo-manifest-path:
         type: string
         required: false
@@ -25,7 +24,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  WASM_FILES: ${{ inputs.wasm-files }}
 
 jobs:
   optimize-wasm-files:
@@ -40,7 +38,7 @@ jobs:
 
       - name: Setup Home
         if: ${{ inputs.runs-on != 'ubuntu-latest' }}
-        run: echo "HOME=/home/ubuntu" >> ${GITHUB_ENV}
+        run: echo "HOME=/home/ubuntu" >> "${GITHUB_ENV}"
 
       - name: Set up Rust
         uses: actions-rust-lang/setup-rust-toolchain@1fbea72663f6d4c03efaab13560c8a24cfd2a7cc # v1.9.0

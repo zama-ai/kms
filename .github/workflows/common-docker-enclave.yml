@@ -74,11 +74,11 @@ jobs:
       - name: Current branch sha
         if: github.event_name != 'release'
         run: |
-          echo "DOCKER_TAG_IMAGE=$(git rev-parse --short "$GITHUB_SHA")" >> $GITHUB_ENV
+          echo "DOCKER_TAG_IMAGE=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_ENV"
       - name: Current Tag
         if: github.event_name == 'release'
         run: |
-          echo "DOCKER_TAG_IMAGE=${{  github.ref_name }}" >> $GITHUB_ENV
+          echo "DOCKER_TAG_IMAGE=${{  github.ref_name }}" >> "$GITHUB_ENV"
 
       - name: Docker Build and Push
         uses: docker/build-push-action@5cd11c3a4ced054e52742c5fd54dca954e0edd85 # v6.7.0
@@ -96,7 +96,7 @@ jobs:
 
       - name: Get Docker sock path
         if: ${{ inputs.push_image }}
-        run: echo "DOCKER_SOCK_PATH=$(docker context inspect | jq -r '.[0].Endpoints.docker.Host' | sed "s^unix://^^")" >> $GITHUB_ENV
+        run: echo "DOCKER_SOCK_PATH=$(docker context inspect | jq -r '.[0].Endpoints.docker.Host' | sed "s^unix://^^")" >> "$GITHUB_ENV"
 
       - name: Set EIF output dir
         if: ${{ inputs.push_image }}
@@ -123,7 +123,7 @@ jobs:
         run: |
           echo "eif_file_path=${{ env.EIF_OUTPUT_DIR }}/enclave.eif" >> "$GITHUB_OUTPUT"
           echo "eif_info_path=${{ env.EIF_OUTPUT_DIR }}/eif-info.txt" >> "$GITHUB_OUTPUT"
-          EIF_MEASUREMENT_PCR0=$(cat ${{ env.EIF_OUTPUT_DIR }}/eif-info.txt | jq '.Measurements.PCR0')
+          EIF_MEASUREMENT_PCR0=$(jq '.Measurements.PCR0' ${{ env.EIF_OUTPUT_DIR }}/eif-info.txt)
           echo "eif_pcr0=${EIF_MEASUREMENT_PCR0}" >> "$GITHUB_OUTPUT"
 
       - name: Setup oras
@@ -141,8 +141,8 @@ jobs:
         id: push-file
         shell: bash
         env:
-          EIF_FILE_PATH: ${{ steps.run-build-script.outputs.eif-file-path }}
-          EIF_INFO_PATH: ${{ steps.run-build-script.outputs.eif-info-path }}
+          EIF_FILE_PATH: ${{ steps.eif.outputs.eif_file_path }}
+          EIF_INFO_PATH: ${{ steps.eif.outputs.eif_info_path }}
         run: |
           WORKDIR="${{ github.workspace }}/${{ inputs.working-directory}}/artifact-push/"
 
@@ -172,7 +172,7 @@ jobs:
         env:
           ARTIFACT_PATH: ${{ steps.push-file.outputs.image-eif }}
         run: |
-          RESPONSE=$(cosign sign --yes ${ARTIFACT_PATH} 2>&1)
+          RESPONSE=$(cosign sign --yes "${ARTIFACT_PATH}" 2>&1)
           echo "${RESPONSE}"
           LOG_INDEX=$(echo "${RESPONSE}" | grep "tlog entry created with index: " | cut -d ":" -f 2 | tr -d " ")
           echo "log_index=${LOG_INDEX}" >> "${GITHUB_OUTPUT}"

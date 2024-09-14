@@ -1,0 +1,22 @@
+# Lint and check CI
+name: "[CI Lint and Checks]"
+
+on:
+  pull_request:
+
+env:
+  ACTIONLINT_VERSION: 1.6.27
+
+jobs:
+  lint-check:
+    name: Lint and checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+
+      - name: actionlint
+        uses: raven-actions/actionlint@01fce4f43a270a612932cb1c64d40505a029f821 # v2.0.0
+
+      - name: Ensure SHA pinned actions
+        uses: zgosalvez/github-actions-ensure-sha-pinned-actions@0901cf7b71c7ea6261ec69a3dc2bd3f9264f893e # v3.0.12

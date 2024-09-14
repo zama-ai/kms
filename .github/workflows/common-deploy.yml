@@ -5,7 +5,6 @@ on:
       working-directory:
         type: string
         required: true
-        default: './'
       image_name:
         type: string
         required: false
@@ -48,17 +47,17 @@ jobs:
       - name: Check namespace if set
         if: inputs.namespace != ''
         run: |
-          echo "NAMESPACE=${{ inputs.namespace }}" >> $GITHUB_ENV
+          echo "NAMESPACE=${{ inputs.namespace }}" >> "$GITHUB_ENV"
 
       - name: Current branch sha
         if: inputs.namespace == '' && github.event_name != 'release'
         run: |
-          echo "NAMESPACE=dev" >> $GITHUB_ENV
-      
+          echo "NAMESPACE=dev" >> "$GITHUB_ENV"
+
       - name: Current Tag
         if: inputs.namespace == '' && github.event_name == 'release'
         run: |
-          echo "NAMESPACE=prod" >> $GITHUB_ENV
+          echo "NAMESPACE=prod" >> "$GITHUB_ENV"
 
       - name: Initialize terraform
         run: terraform -chdir=operations/terraform/environments/${{env.NAMESPACE}} init

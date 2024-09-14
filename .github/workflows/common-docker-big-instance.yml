@@ -9,7 +9,6 @@ on:
       working-directory:
         type: string
         required: true
-        default: './'
       docker-context:
           type: string
           required: false
@@ -21,7 +20,6 @@ on:
       image-name:
         type: string
         required: true
-        default: 'kms'
       image-dev:
         type: string
         required: false
