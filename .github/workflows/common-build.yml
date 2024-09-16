@@ -221,7 +221,7 @@ jobs:
           token: ${{ secrets.NPM_TOKEN }}
           package: ./core/service/pkg/package.json
           dry-run: true
-          provenance: true
+          provenance: false # change to true when repo is public (see #1048)
           tag: ${{ env.NPM_TAG }}
 
       - name: NPM publish Node package
@@ -231,7 +231,7 @@ jobs:
           token: ${{ secrets.NPM_TOKEN }}
           package: ./core/service/pkg/package.json
           dry-run: false
-          provenance: true
+          provenance: false # change to true when repo is public (see #1048)
           tag: ${{ env.NPM_TAG }}
 
       - name: NPM build web package
@@ -250,7 +250,7 @@ jobs:
           token: ${{ secrets.NPM_TOKEN }}
           package: ./core/service/pkg/package.json
           dry-run: true
-          provenance: true
+          provenance: false # change to true when repo is public (see #1048)
           tag: ${{ env.NPM_TAG }}
 
       - name: NPM publish web package
@@ -260,5 +260,5 @@ jobs:
           token: ${{ secrets.NPM_TOKEN }}
           package: ./core/service/pkg/package.json
           dry-run: false
-          provenance: true
+          provenance: false # change to true when repo is public (see #1048)
           tag: ${{ env.NPM_TAG }}
