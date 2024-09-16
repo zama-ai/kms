@@ -21,6 +21,7 @@ members = [
 authors = ["Zama"]
 publish = true
 edition = "2021"
+license = "BSD-3-Clause-Clear"
 
 [workspace.dependencies]
 anyhow = "1.0.86"

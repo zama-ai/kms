@@ -1,20 +1,8 @@
 name: Publish npm release
 
 on:
-  workflow_dispatch:
-    inputs:
-      npm-release:
-        type: boolean
-        required: false
-        default: false
-      npm-release-dry-run:
-        type: boolean
-        required: false
-        default: true
-      npm-release-tag-latest:
-        type: boolean
-        required: false
-        default: false
+  release:
+    types: [published]
 
 jobs:
   start-runner:
@@ -24,9 +12,7 @@ jobs:
       args-tests: '--lib'
       run-wasm: true
       package-name: 'kms'
-      npm-release: ${{ inputs.npm-release }}
-      npm-release-dry-run: ${{ inputs.npm-release-dry-run }}
-      npm-release-tag-latest: ${{ inputs.npm-release-tag-latest }}
+      npm-release: true
     permissions:
       contents: 'read'
       id-token: 'write'

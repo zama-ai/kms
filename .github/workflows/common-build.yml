@@ -49,14 +49,6 @@ on:
         type: boolean
         required: false
         default: false
-      npm-release-dry-run:
-        type: boolean
-        required: false
-        default: false
-      npm-release-tag-latest:
-        type: boolean
-        required: false
-        default: false
     secrets:
       BLOCKCHAIN_ACTIONS_TOKEN:
         required: true
@@ -196,33 +188,23 @@ jobs:
         run: node --test tests/js
 
       - name: Set NPM version tag to latest
-        if: ${{ inputs.npm-release-tag-latest }}
+        if: ${{ !github.event.release.prerelease }}
         run: |
           echo "NPM_TAG=latest" >> "${GITHUB_ENV}"
 
       - name: Set NPM version tag to prerelease
-        if: ${{ ! inputs.npm-release-tag-latest }}
+        if: ${{ github.event.release.prerelease }}
         run: |
           echo "NPM_TAG=prerelease" >> "${GITHUB_ENV}"
 
       - name: NPM build node package
-        if: ${{ inputs.npm-release || inputs.npm-release-dry-run }}
+        if: ${{ inputs.npm-release  }}
         working-directory: ./core/service
         run: |
           rm -rf pkg
           wasm-pack build --target nodejs . --no-default-features
           sed -i 's/"kms"/"node-tkms"/g' pkg/package.json
           echo "# node-tkms" > pkg/README.md
-
-      - name: NPM publish Node package dry-run
-        if: ${{ inputs.npm-release || inputs.npm-release-dry-run }}
-        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
-        with:
-          token: ${{ secrets.NPM_TOKEN }}
-          package: ./core/service/pkg/package.json
-          dry-run: true
-          provenance: false # change to true when repo is public (see #1048)
-          tag: ${{ env.NPM_TAG }}
 
       - name: NPM publish Node package
         if: ${{ inputs.npm-release }}
@@ -235,23 +217,13 @@ jobs:
           tag: ${{ env.NPM_TAG }}
 
       - name: NPM build web package
-        if: ${{ inputs.npm-release || inputs.npm-release-dry-run }}
+        if: ${{ inputs.npm-release }}
         working-directory: ./core/service
         run: |
           rm -rf pkg
           wasm-pack build --target web . --no-default-features
           sed -i 's/"kms"/"tkms"/g' pkg/package.json
           echo "# tkms" > pkg/README.md
-
-      - name: NPM publish web package dry-run
-        if: ${{ inputs.npm-release || inputs.npm-release-dry-run }}
-        uses: JS-DevTools/npm-publish@19c28f1ef146469e409470805ea4279d47c3d35c # v3.1.1
-        with:
-          token: ${{ secrets.NPM_TOKEN }}
-          package: ./core/service/pkg/package.json
-          dry-run: true
-          provenance: false # change to true when repo is public (see #1048)
-          tag: ${{ env.NPM_TAG }}
 
       - name: NPM publish web package
         if: ${{ inputs.npm-release }}

@@ -44,14 +44,6 @@ on:
         type: boolean
         required: false
         default: false
-      npm-release-dry-run:
-        type: boolean
-        required: false
-        default: false
-      npm-release-tag-latest:
-        type: boolean
-        required: false
-        default: false
     secrets:
       SLAB_ACTION_TOKEN:
         required: true
@@ -103,8 +95,6 @@ jobs:
       wasm-test-feature: ${{ inputs.wasm-test-feature }}
       test-coverage: ${{ inputs.test-coverage }}
       npm-release: ${{ inputs.npm-release }}
-      npm-release-dry-run: ${{ inputs.npm-release-dry-run }}
-      npm-release-tag-latest: ${{ inputs.npm-release-tag-latest }}
 
   stop-runner:
     name: Stops self-hosted EC2 runner
