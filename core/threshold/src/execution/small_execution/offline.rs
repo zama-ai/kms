@@ -464,7 +464,7 @@ mod test {
         },
         networking::value::BroadcastValue,
         tests::helper::{
-            tests::get_networkless_base_session_for_parties,
+            testing::get_networkless_base_session_for_parties,
             tests_and_benches::execute_protocol_small,
         },
     };

@@ -481,7 +481,8 @@ mod tests {
             structure_traits::Zero,
         },
         networking::NetworkMode,
-        tests::helper::tests::{get_base_session, get_networkless_base_session_for_parties},
+        tests::helper::testing::get_networkless_base_session_for_parties,
+        tests::helper::tests::get_base_session,
     };
     use aes_prng::AesRng;
     use paste::paste;

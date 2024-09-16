@@ -599,7 +599,7 @@ mod tests {
     };
     use crate::{
         execution::runtime::session::ParameterHandles,
-        tests::helper::tests::get_dummy_parameters_for_parties,
+        tests::helper::testing::get_dummy_parameters_for_parties,
     };
 
     #[test]

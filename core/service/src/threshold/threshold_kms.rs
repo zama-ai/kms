@@ -289,7 +289,7 @@ type DkgMetaStore = HashMap<PubDataType, SignedPubDataHandleInternal>;
 type BucketMetaStore = Box<dyn DKGPreprocessing<ResiduePoly128>>;
 
 /// Compute all the info of a [FhePubKeySet] and return the result as as [DkgMetaStore]
-pub(crate) fn compute_all_info(
+pub fn compute_all_info(
     sig_key: &PrivateSigKey,
     fhe_key_set: &FhePubKeySet,
 ) -> anyhow::Result<DkgMetaStore> {

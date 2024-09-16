@@ -785,7 +785,7 @@ mod tests {
         },
         file_handling::read_element,
         tests::{
-            helper::tests::get_networkless_base_session_for_parties,
+            helper::testing::get_networkless_base_session_for_parties,
             helper::tests_and_benches::execute_protocol_small,
         },
     };

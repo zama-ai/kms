@@ -164,8 +164,84 @@ pub mod tests_and_benches {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
+    use crate::{
+        algebra::structure_traits::{Invert, Ring, RingEmbed},
+        execution::{
+            runtime::{
+                party::{Identity, Role},
+                session::{BaseSessionStruct, SessionParameters},
+            },
+            small_execution::{agree_random::DummyAgreeRandom, prss::PRSSSetup},
+        },
+        networking::{local::LocalNetworkingProducer, NetworkMode},
+        session_id::SessionId,
+    };
+    use aes_prng::AesRng;
+    use rand::SeedableRng;
+    use serde::Serialize;
+    use std::{
+        collections::{HashMap, HashSet},
+        sync::Arc,
+    };
+    use tokio::runtime::Runtime;
+
+    /// Generates dummy parameters for unit tests with session ID = 1
+    pub fn get_dummy_parameters_for_parties(
+        amount: usize,
+        threshold: u8,
+        role: Role,
+    ) -> SessionParameters {
+        assert!(amount > 0);
+        let mut role_assignment = HashMap::new();
+        for i in 0..amount {
+            role_assignment.insert(
+                Role::indexed_by_zero(i),
+                Identity(format!("localhost:{}", 5000 + i)),
+            );
+        }
+        SessionParameters {
+            threshold,
+            session_id: SessionId(1),
+            own_identity: role_assignment.get(&role).unwrap().clone(),
+            role_assignments: role_assignment,
+        }
+    }
+
+    /// Returns a base session to be used with multiple parties
+    pub fn get_networkless_base_session_for_parties(
+        amount: usize,
+        threshold: u8,
+        role: Role,
+    ) -> BaseSessionStruct<AesRng, SessionParameters> {
+        let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
+        let id = parameters.own_identity.clone();
+        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
+        BaseSessionStruct {
+            parameters,
+            network: Arc::new(net_producer.user_net(id, NetworkMode::Sync, None)),
+            rng: AesRng::seed_from_u64(role.zero_based() as u64),
+            corrupt_roles: HashSet::new(),
+        }
+    }
+
+    pub fn get_dummy_prss_setup<Z: Default + Clone + Serialize + Ring + RingEmbed + Invert>(
+        mut session: BaseSessionStruct<AesRng, SessionParameters>,
+    ) -> PRSSSetup<Z> {
+        let rt = Runtime::new().unwrap();
+
+        rt.block_on(async {
+            PRSSSetup::init_with_abort::<DummyAgreeRandom, AesRng, _>(&mut session)
+                .await
+                .unwrap()
+        })
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
+    use super::testing::get_networkless_base_session_for_parties;
     use crate::{
         algebra::structure_traits::Ring,
         execution::{
@@ -356,28 +432,6 @@ pub mod tests {
         }
     }
 
-    /// Generates dummy parameters for unit tests with session ID = 1
-    pub fn get_dummy_parameters_for_parties(
-        amount: usize,
-        threshold: u8,
-        role: Role,
-    ) -> SessionParameters {
-        assert!(amount > 0);
-        let mut role_assignment = HashMap::new();
-        for i in 0..amount {
-            role_assignment.insert(
-                Role::indexed_by_zero(i),
-                Identity(format!("localhost:{}", 5000 + i)),
-            );
-        }
-        SessionParameters {
-            threshold,
-            session_id: SessionId(1),
-            own_identity: role_assignment.get(&role).unwrap().clone(),
-            role_assignments: role_assignment,
-        }
-    }
-
     /// Returns a base session to be used with a single party, with role 1, suitable for testing with dummy constructs
     pub fn get_base_session(
         network_mode: NetworkMode,
@@ -389,23 +443,6 @@ pub mod tests {
             parameters,
             network: Arc::new(net_producer.user_net(id, network_mode, None)),
             rng: AesRng::seed_from_u64(42),
-            corrupt_roles: HashSet::new(),
-        }
-    }
-
-    /// Returns a base session to be used with multiple parties
-    pub fn get_networkless_base_session_for_parties(
-        amount: usize,
-        threshold: u8,
-        role: Role,
-    ) -> BaseSessionStruct<AesRng, SessionParameters> {
-        let parameters = get_dummy_parameters_for_parties(amount, threshold, role);
-        let id = parameters.own_identity.clone();
-        let net_producer = LocalNetworkingProducer::from_ids(&[parameters.own_identity.clone()]);
-        BaseSessionStruct {
-            parameters,
-            network: Arc::new(net_producer.user_net(id, NetworkMode::Sync, None)),
-            rng: AesRng::seed_from_u64(role.zero_based() as u64),
             corrupt_roles: HashSet::new(),
         }
     }
