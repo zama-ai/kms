@@ -207,12 +207,12 @@ impl Storage for S3Storage {
         s3_put_blob(&self.s3_client, &bucket, &key, data).await
     }
 
-    async fn store_text(&mut self, data: &str, url: &Url) -> anyhow::Result<()> {
+    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
         let (bucket, key) = S3Storage::parse_url(url)?;
 
         tracing::info!("Storing text in bucket {} under key {}", bucket, key);
 
-        s3_put_blob_bytes(&self.s3_client, &bucket, &key, data.as_bytes().to_vec()).await
+        s3_put_blob_bytes(&self.s3_client, &bucket, &key, text.as_bytes().to_vec()).await
     }
 
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()> {
@@ -357,12 +357,12 @@ impl Storage for EnclaveS3Storage {
         self.s3_storage.store_data(&encrypted_data, url).await
     }
 
-    async fn store_text(&mut self, data: &str, url: &Url) -> anyhow::Result<()> {
+    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
         let encrypted_data = nitro_enclave_encrypt_app_key(
             &self.aws_kms_client,
             &self.enclave_keys,
             &self.root_key_id,
-            data,
+            text,
         )
         .await?;
 

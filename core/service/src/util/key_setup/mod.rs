@@ -159,20 +159,20 @@ where
         pub_storage.info()
     );
 
-    let address = alloy_signer::utils::public_key_to_address(pk.pk());
+    let ethereum_address = alloy_signer::utils::public_key_to_address(pk.pk());
 
-    // store public verification address (derived from public key)
+    // store ethereum address (derived from public key), needed for KMS signature verification
     store_text_at_request_id(
         pub_storage,
         req_id,
-        &address.to_string(),
+        &ethereum_address.to_string(),
         &PubDataType::VerfAddress.to_string(),
     )
     .await
     .unwrap();
     tracing::info!(
-        "Successfully stored address {} under the handle {} in storage \"{}\"",
-        address,
+        "Successfully stored ethereum address {} under the handle {} in storage \"{}\"",
+        ethereum_address,
         req_id,
         pub_storage.info()
     );
@@ -187,7 +187,7 @@ where
     .await
     .unwrap();
     tracing::info!(
-        "Successfully stored public server signing key under the handle {} in storage \"{}\"",
+        "Successfully stored private central server signing key under the handle {} in storage \"{}\"",
         req_id,
         priv_storage.info()
     );
@@ -430,20 +430,20 @@ where
             pub_storages[i - 1].info()
         );
 
-        let address = alloy_signer::utils::public_key_to_address(pk.pk());
+        let ethereum_address = alloy_signer::utils::public_key_to_address(pk.pk());
 
-        // store public verification address (derived from public key)
+        // store ethereum address (derived from public key), needed for KMS signature verification
         store_text_at_request_id(
             &mut pub_storages[i - 1],
             request_id,
-            &address.to_string(),
+            &ethereum_address.to_string(),
             &PubDataType::VerfAddress.to_string(),
         )
         .await
         .unwrap();
         tracing::info!(
-            "Successfully stored address {} under the handle {} in storage \"{}\"",
-            address,
+            "Successfully stored ethereum address {} under the handle {} in storage \"{}\"",
+            ethereum_address,
             request_id,
             pub_storages[i - 1].info()
         );

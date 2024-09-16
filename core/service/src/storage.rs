@@ -54,7 +54,7 @@ pub trait Storage: StorageReader {
     ) -> anyhow::Result<()>;
 
     /// store the given `text`` at the given `url`
-    async fn store_text(&mut self, data: &str, url: &Url) -> anyhow::Result<()>;
+    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()>;
 
     async fn delete_data(&mut self, url: &Url) -> anyhow::Result<()>;
 }
@@ -389,7 +389,7 @@ impl Storage for FileStorage {
     }
 
     /// Store text with a specific [url], giving a warning if the data already exists and exits _without_ writing
-    async fn store_text(&mut self, data: &str, url: &Url) -> anyhow::Result<()> {
+    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
         let url_path = url_to_pathbuf(url);
 
         self.setup_dirs(&url_path).await?;
@@ -398,7 +398,7 @@ impl Storage for FileStorage {
             url_path
                 .to_str()
                 .ok_or(anyhow!("Could not convert path to string"))?,
-            data,
+            text,
         )
         .await
         .map_err(|e| {
@@ -532,7 +532,7 @@ impl Storage for RamStorage {
         Ok(())
     }
 
-    async fn store_text(&mut self, data: &str, url: &Url) -> anyhow::Result<()> {
+    async fn store_text(&mut self, text: &str, url: &Url) -> anyhow::Result<()> {
         let url_string = url.to_owned().to_string();
         let components: Vec<&str> = url_string.split('/').collect();
         let data_type = components
@@ -543,7 +543,7 @@ impl Storage for RamStorage {
             .last()
             .ok_or_else(|| anyhow_error_and_log("URL does not contain data type"))?
             .to_string();
-        let serialized = data.as_bytes().to_vec();
+        let serialized = text.as_bytes().to_vec();
         self.internal_storage
             .insert(url.to_owned(), (data_id, data_type, serialized));
         Ok(())

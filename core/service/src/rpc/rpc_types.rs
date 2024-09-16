@@ -101,8 +101,8 @@ pub enum PubDataType {
     ServerKey,
     SnsKey,
     CRS,
-    VerfKey,     // Type for the servers verification keys
-    VerfAddress, // The address of the KMS core, needed for verification
+    VerfKey,     // Type for the servers public verification keys
+    VerfAddress, // The ethereum address of the KMS core, needed for KMS signature verification
 }
 
 impl fmt::Display for PubDataType {

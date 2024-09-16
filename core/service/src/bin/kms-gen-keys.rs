@@ -260,7 +260,7 @@ async fn handle_central_cmd<'a, S: Storage>(
             panic!("\"All\" command must be handled in an outer call");
         }
         ConstructCommand::SigningKeys => {
-            process_signing_cmds(
+            process_signing_key_cmds(
                 args.pub_storage,
                 args.priv_storage,
                 &SIGNING_KEY_ID,
@@ -344,7 +344,7 @@ async fn handle_threshold_cmd<'a, S: Storage>(
                 .iter_mut()
                 .zip(args.priv_storages.iter_mut())
             {
-                process_signing_cmds(
+                process_signing_key_cmds(
                     pub_storage,
                     priv_storage,
                     &SIGNING_KEY_ID,
@@ -484,7 +484,7 @@ async fn process_fhe_cmds<S: Storage>(
     .await;
 }
 
-async fn process_signing_cmds<S: Storage>(
+async fn process_signing_key_cmds<S: Storage>(
     pub_storage: &mut S,
     priv_storage: &mut S,
     req_id: &RequestId,
@@ -494,6 +494,14 @@ async fn process_signing_cmds<S: Storage>(
     process_cmd(
         pub_storage,
         vec![&PubDataType::VerfKey],
+        req_id,
+        show_existing,
+        overwrite,
+    )
+    .await;
+    process_cmd(
+        pub_storage,
+        vec![&PubDataType::VerfAddress],
         req_id,
         show_existing,
         overwrite,

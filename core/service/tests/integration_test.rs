@@ -190,6 +190,8 @@ mod kms_gen_keys_binary_test {
 
 #[cfg(test)]
 mod kms_server_binary_test {
+    use tempfile::tempdir;
+
     use super::*;
 
     fn kill_kms_server() {
@@ -344,6 +346,43 @@ mod kms_server_binary_test {
         assert!(new_output.status.success());
         let new_log = String::from_utf8_lossy(&new_output.stdout);
         assert!(new_log.contains("Signing keys already exist, skipping generation"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn central_signing_address_format() {
+        let temp_dir_priv = tempdir().unwrap();
+        let temp_dir_pub = tempdir().unwrap();
+        let output = Command::cargo_bin(KMS_GEN_KEYS)
+            .unwrap()
+            .arg("centralized")
+            .arg("--param-path")
+            .arg("parameters/small_test_params.json")
+            .arg("--priv-url")
+            .arg(format!("file://{}", temp_dir_priv.path().display()))
+            .arg("--pub-url")
+            .arg(format!("file://{}", temp_dir_pub.path().display()))
+            .arg("--cmd=signing-keys")
+            .output()
+            .unwrap();
+
+        let log = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success());
+        assert!(log.contains("Successfully stored ethereum address 0x"));
+        assert!(
+            log.contains("under the handle e164d9de0bec6656928726433cc56bef6ee8417a in storage")
+        );
+
+        let mut adress_path = temp_dir_pub.path().to_path_buf();
+        adress_path.push("PUB/VerfAddress/e164d9de0bec6656928726433cc56bef6ee8417a");
+
+        // read address from file
+        let address = fs::read_to_string(adress_path).expect("Unable to read Verification Address");
+
+        // make sure its well-formed (starts with 0x and has 40 hex digits)
+        assert!(address.starts_with("0x"));
+        assert_eq!(address.len(), 42);
+        hex::decode(address[2..].to_lowercase()).unwrap();
     }
 
     #[cfg(feature = "s3_tests")]
