@@ -13,15 +13,15 @@ on:
       runs-on:
         type: string
         required: false
-        default: 'ubuntu-latest'
+        default: "ubuntu-latest"
       args-tests:
         type: string
         required: false
-        default: ''
+        default: ""
       args-tests-fhe:
         type: string
         required: false
-        default: '-F tfhe/seeder_unix -F tfhe/x86_64'
+        default: "-F tfhe/seeder_unix -F tfhe/x86_64"
       run-redis:
         type: boolean
         required: false
@@ -33,7 +33,7 @@ on:
       wasm-test-feature:
         type: string
         required: false
-        default: '-F wasm_tests'
+        default: "-F wasm_tests"
       package-name:
         type: string
         required: true
@@ -128,7 +128,7 @@ jobs:
 
       - name: Run Tests
         if: ${{ ! inputs.test-coverage }}
-        run: cargo test ${{ inputs.args-tests }} ${{ inputs.args-tests-fhe }} --release
+        run: cargo test ${{ inputs.args-tests }} ${{ inputs.args-tests-fhe }}
 
       - name: Run Tests with Coverage
         if: ${{ inputs.test-coverage }}
@@ -156,7 +156,7 @@ jobs:
         if: ${{ inputs.test-coverage }}
         uses: VeryGoodOpenSource/very_good_coverage@3b475421464c564c0714d92ce02742bd81fa9eda # v2.2.0
         with:
-          path: '${{inputs.working-directory}}/coverage/lcov'
+          path: "${{inputs.working-directory}}/coverage/lcov"
           min_coverage: ${{ inputs.test-minimum-coverage }}
 
       - name: Build Documentation
@@ -188,8 +188,8 @@ jobs:
       - name: Generate wasm test files
         if: ${{ inputs.run-wasm }}
         run: |
-          cargo test test_reencryption_threshold_and_write_transcript -F tfhe/seeder_unix -F tfhe/x86_64 ${{ inputs.wasm-test-feature }} --release
-          cargo test test_reencryption_centralized_and_write_transcript -F tfhe/seeder_unix -F tfhe/x86_64 ${{ inputs.wasm-test-feature }} --release
+          cargo test test_reencryption_threshold_and_write_transcript -F tfhe/seeder_unix -F tfhe/x86_64 ${{ inputs.wasm-test-feature }}
+          cargo test test_reencryption_centralized_and_write_transcript -F tfhe/seeder_unix -F tfhe/x86_64 ${{ inputs.wasm-test-feature }}
 
       - name: Test wasm
         if: ${{ inputs.run-wasm }}
