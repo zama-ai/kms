@@ -27,7 +27,7 @@ jobs:
           git merge origin/main
 
       - name: Install semantic-release-cargo
-        uses: taiki-e/install-action@f2b65a3e67b2ba5ed3b4a631b5e460896e975708 # v2.42.37
+        uses: taiki-e/install-action@ae888b48c8777229768754549e5463ba726cb1b3 # v2.44.1
         with:
           tool: semantic-release-cargo@2
 
