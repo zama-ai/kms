@@ -42,7 +42,7 @@ fn bench_switch_and_squash(c: &mut Criterion) {
     // benchmark s&s for a single ct block
     group.bench_function(BenchmarkId::new("s+s", "single_block"), |b| {
         b.iter(|| {
-            let (raw_ct, _id) = ct8.clone().into_raw_parts();
+            let (raw_ct, _id, _tag) = ct8.clone().into_raw_parts();
             let _ = keyset
                 .public_keys
                 .sns_key
@@ -55,7 +55,7 @@ fn bench_switch_and_squash(c: &mut Criterion) {
     // benchmark s&s for the blocks that make up a u8 sequentially
     group.bench_function(BenchmarkId::new("s+s", "u8_sequential"), |b| {
         b.iter(|| {
-            let (raw_ct, _id) = ct8.clone().into_raw_parts();
+            let (raw_ct, _id, _tag) = ct8.clone().into_raw_parts();
             let _ = keyset
                 .public_keys
                 .sns_key
@@ -68,7 +68,7 @@ fn bench_switch_and_squash(c: &mut Criterion) {
     // benchmark s&s for the blocks that make up a u16 sequentially
     group.bench_function(BenchmarkId::new("s+s", "u16_sequential"), |b| {
         b.iter(|| {
-            let (raw_ct, _id) = ct16.clone().into_raw_parts();
+            let (raw_ct, _id, _tag) = ct16.clone().into_raw_parts();
             let _ = keyset
                 .public_keys
                 .sns_key

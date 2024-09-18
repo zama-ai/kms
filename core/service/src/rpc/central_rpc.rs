@@ -34,10 +34,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use tfhe::zk::CompactPkePublicParams;
-use tfhe::{
-    set_server_key, CompactPublicKey, ProvenCompactCiphertextList, ServerKey, Unversionize,
-    Versionize,
-};
+use tfhe::{CompactPublicKey, ProvenCompactCiphertextList, Unversionize, Versionize};
 use tfhe_versionable::VersionizeOwned;
 use tokio::sync::{Mutex, RwLock};
 use tonic::transport::Server;
@@ -866,30 +863,8 @@ where
             tracing::error!("could not cast pp for handle {} ({e})", crs_handle);
         })?;
 
-    // load the ServerKey, needed for verification
-    let server_key = ServerKey::unversionize(
-        read_at_request_id(
-            &(*pub_storage),
-            &key_handle,
-            &PubDataType::ServerKey.to_string(),
-        )
-        .await
-        .inspect_err(|e| {
-            tracing::error!("No server key with the handle {} ({e})", key_handle);
-        })?,
-    )
-    .inspect_err(|e| {
-        tracing::error!(
-            "server key unversionize failed for key handle {} ({e})",
-            key_handle
-        );
-    })?;
-
     let (send, recv) = tokio::sync::oneshot::channel();
     rayon::spawn(move || {
-        // server_key needs to be moved into this thread because
-        // it needs to be loaded on the same thread as the actual verification
-        set_server_key(server_key);
         let out = verify_and_hash(&proven_ct, &pp, &public_key);
         let _ = send.send(out);
     });
@@ -924,9 +899,11 @@ fn verify_and_hash(
     pp: &CompactPkePublicParams,
     pk: &CompactPublicKey,
 ) -> anyhow::Result<Vec<u8>> {
-    // NOTE: there's no function to just verify (without expand) at the moment
-    let _ = proven_ct.verify_and_expand(pp, pk)?;
-    serialize_hash_element(proven_ct)
+    if let tfhe::zk::ZkVerificationOutCome::Invalid = proven_ct.verify(pp, pk, &[]) {
+        Err(anyhow::anyhow!("zk verification failed"))
+    } else {
+        serialize_hash_element(proven_ct)
+    }
 }
 
 /// Validates a request ID and returns an appropriate tonic error if it is invalid.

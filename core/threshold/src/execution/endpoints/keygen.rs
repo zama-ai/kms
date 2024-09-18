@@ -168,9 +168,15 @@ impl RawPubKeySet {
                 );
 
             //TODO: Once we have (de)compression keys, need to set them there.
-            tfhe::ServerKey::from_raw_parts(integer_key, Some(integer_pksk), None, None)
+            tfhe::ServerKey::from_raw_parts(
+                integer_key,
+                Some(integer_pksk),
+                None,
+                None,
+                tfhe::Tag::default(),
+            )
         } else {
-            tfhe::ServerKey::from_raw_parts(integer_key, None, None, None)
+            tfhe::ServerKey::from_raw_parts(integer_key, None, None, None, tfhe::Tag::default())
         }
     }
 
@@ -1415,7 +1421,7 @@ pub mod tests {
         let ck_bis = SwitchAndSquashKey::new(fbsk_out, ck.ksk.clone());
 
         let small_ct: FheUint64 = expanded_encrypt(&ddec_pk, message as u64, 64);
-        let (raw_ct, _id) = small_ct.clone().into_raw_parts();
+        let (raw_ct, _id, _tag) = small_ct.clone().into_raw_parts();
         let large_ct = ck.to_large_ciphertext(&raw_ct).unwrap();
         let large_ct_bis = ck_bis.to_large_ciphertext(&raw_ct).unwrap();
 
@@ -1448,7 +1454,12 @@ pub mod tests {
         }
 
         if with_compact {
-            let tfhe_sk = tfhe::ClientKey::from_raw_parts(shortint_sk.into(), None, None);
+            let tfhe_sk = tfhe::ClientKey::from_raw_parts(
+                shortint_sk.into(),
+                None,
+                None,
+                tfhe::Tag::default(),
+            );
             let pub_key_set = pk.to_pubkeyset(params);
             try_tfhe_pk_compactlist_computation(
                 &tfhe_sk,
@@ -1476,7 +1487,8 @@ pub mod tests {
             try_tfhe_shortint_computation(&shortint_sk, &shortint_pk);
         }
 
-        let tfhe_sk = tfhe::ClientKey::from_raw_parts(shortint_sk.into(), None, None);
+        let tfhe_sk =
+            tfhe::ClientKey::from_raw_parts(shortint_sk.into(), None, None, tfhe::Tag::default());
         let pub_key_set = pk.to_pubkeyset(params);
 
         try_tfhe_fheuint_computation(&tfhe_sk, &pub_key_set.server_key);

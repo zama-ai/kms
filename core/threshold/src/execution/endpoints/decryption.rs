@@ -823,7 +823,7 @@ mod tests {
             threshold,
         )
         .unwrap();
-        let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
+        let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
@@ -868,7 +868,7 @@ mod tests {
             threshold,
         )
         .unwrap();
-        let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
+        let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
@@ -913,7 +913,7 @@ mod tests {
             threshold,
         )
         .unwrap();
-        let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
+        let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task
@@ -967,7 +967,7 @@ mod tests {
             threshold,
         )
         .unwrap();
-        let (ct, _id) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
+        let (ct, _id, _tag) = FheUint8::encrypt(msg, &keyset.client_key).into_raw_parts();
 
         let identities = generate_fixed_identities(num_parties);
         //Assumes Sync because preprocessing is part of the task

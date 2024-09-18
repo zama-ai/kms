@@ -348,7 +348,7 @@ mod tests {
         let expanded_list = compact_list.expand().unwrap();
         for index in 0..8 {
             let small_ct: FheUint8 = expanded_list.get(index).unwrap().unwrap();
-            let (raw_ct, _id) = small_ct.clone().into_raw_parts();
+            let (raw_ct, _id, _tag) = small_ct.clone().into_raw_parts();
             let small_res: u8 = small_ct.decrypt(&keys.client_key);
             assert_eq!(index as u8, small_res);
             let large_ct = keys

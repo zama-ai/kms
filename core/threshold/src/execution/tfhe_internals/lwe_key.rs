@@ -133,7 +133,7 @@ pub(crate) fn to_tfhe_hl_api_compact_public_key(
 ) -> tfhe::CompactPublicKey {
     let ipk = shortint::CompactPublicKey::from_raw_parts(compact_lwe_pk, params);
     let cpk = tfhe::integer::public_key::CompactPublicKey::from_raw_parts(ipk);
-    tfhe::CompactPublicKey::from_raw_parts(cpk)
+    tfhe::CompactPublicKey::from_raw_parts(cpk, tfhe::Tag::default())
 }
 
 impl<Z: BaseRing> LweSecretKeyShare<Z> {
@@ -379,7 +379,7 @@ mod tests {
         let config = ConfigBuilder::default().build();
         let (client_key, _server_key) = tfhe::generate_keys(config);
         let pk = tfhe::CompactPublicKey::new(&client_key);
-        let raw_pk = pk.clone().into_raw_parts().into_raw_parts();
+        let raw_pk = pk.clone().into_raw_parts().0.into_raw_parts();
         let (lcpk, params) = raw_pk.into_raw_parts();
 
         let hl_client_key = to_tfhe_hl_api_compact_public_key(lcpk, params);

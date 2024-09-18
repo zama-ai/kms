@@ -597,6 +597,7 @@ mod tests {
             )),
             None,
             None,
+            tfhe::Tag::default(),
         );
         keyset.client_key = ck;
     }

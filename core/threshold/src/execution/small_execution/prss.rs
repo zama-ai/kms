@@ -986,7 +986,7 @@ mod tests {
         .unwrap();
 
         let ct: FheUint8 = expanded_encrypt(&keys.public_keys.public_key, msg, 8);
-        let (raw_ct, _id) = ct.into_raw_parts();
+        let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         //Could probably be run Async, but NIST doc says all offline is Sync
         let mut runtime =

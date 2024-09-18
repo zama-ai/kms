@@ -2836,7 +2836,7 @@ pub(crate) mod tests {
 
         let mut ctr = 0;
         let mut zk_response = kms_client.get_zk_verify_result(zk_request_id.clone()).await;
-        while zk_response.is_err() && ctr < 200 {
+        while zk_response.is_err() && ctr < 1000 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             zk_response = kms_client
                 .get_zk_verify_result(tonic::Request::new(zk_request_id.clone()))
@@ -2883,14 +2883,15 @@ pub(crate) mod tests {
             .encrypt_and_prove_slice(
                 &msgs,
                 &pp,
+                &[],
                 tfhe::zk::ZkComputeLoad::Proof,
                 (pk.parameters.message_modulus.0 * pk.parameters.message_modulus.0) as u64,
             )
             .unwrap();
-        assert!(proven_ct.verify(&pp, &pk).is_valid());
+        assert!(proven_ct.verify(&pp, &pk, &[]).is_valid());
 
         let expanded = proven_ct
-            .verify_and_expand(&pp, &pk, CompactCiphertextListCastingMode::NoCasting)
+            .verify_and_expand(&pp, &pk, &[], CompactCiphertextListCastingMode::NoCasting)
             .unwrap();
         let decrypted = expanded
             .iter()
@@ -2911,7 +2912,7 @@ pub(crate) mod tests {
         let mut compact_list_builder = ProvenCompactCiphertextList::builder(&pk);
         compact_list_builder.push_with_num_bits(msg, 8).unwrap();
         compact_list_builder
-            .build_with_proof_packed(pp, tfhe::zk::ZkComputeLoad::Proof)
+            .build_with_proof_packed(pp, &[], tfhe::zk::ZkComputeLoad::Proof)
             .unwrap()
     }
 

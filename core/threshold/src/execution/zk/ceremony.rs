@@ -18,6 +18,7 @@ use tfhe_versionable::{Versionize, VersionsDispatch};
 use tfhe_zk_pok::{
     curve_api::{bls12_446 as curve, CurveGroupOps},
     proofs::pke,
+    CanonicalDeserialize, CanonicalSerialize,
 };
 use tracing::instrument;
 use zeroize::Zeroize;
@@ -115,8 +116,43 @@ pub struct PublicParameter {
 
 // NOTE: we need to ensure `curve::G1`, `curve::G2` is stable.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
-struct WrappedG1G2s(Vec<curve::G1>, Vec<curve::G2>);
+// struct WrappedG1G2s(Vec<curve::G1>, Vec<curve::G2>);
+struct WrappedG1G2s {
+    #[serde(serialize_with = "ark_se", deserialize_with = "ark_de_no_validation")]
+    g1s: Vec<curve::G1>,
+    #[serde(serialize_with = "ark_se", deserialize_with = "ark_de_no_validation")]
+    g2s: Vec<curve::G2>,
+}
 impl_generic_versionize!(WrappedG1G2s);
+
+impl WrappedG1G2s {
+    fn new(g1s: Vec<curve::G1>, g2s: Vec<curve::G2>) -> Self {
+        Self { g1s, g2s }
+    }
+}
+
+fn ark_se<S, A: CanonicalSerialize>(a: &A, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let mut bytes = vec![];
+    a.serialize_with_mode(&mut bytes, tfhe_zk_pok::Compress::Yes)
+        .map_err(serde::ser::Error::custom)?;
+    s.serialize_bytes(&bytes)
+}
+
+fn ark_de_no_validation<'de, D, A: CanonicalDeserialize>(data: D) -> Result<A, D::Error>
+where
+    D: serde::de::Deserializer<'de>,
+{
+    let s: Vec<u8> = serde::de::Deserialize::deserialize(data)?;
+    let a = A::deserialize_with_mode(
+        s.as_slice(),
+        tfhe_zk_pok::Compress::Yes,
+        tfhe_zk_pok::Validate::No,
+    );
+    a.map_err(serde::de::Error::custom)
+}
 
 impl PublicParameter {
     pub fn try_into_tfhe_zk_pok_pp(
@@ -137,14 +173,14 @@ impl PublicParameter {
 
         let g_list = self
             .inner
-            .0
+            .g1s
             .clone()
             .into_iter()
             .map(|x| x.normalize())
             .collect_vec();
         let g_hat_list = self
             .inner
-            .1
+            .g2s
             .clone()
             .into_iter()
             .map(|x| x.normalize())
@@ -180,7 +216,7 @@ impl PublicParameter {
         PublicParameter {
             round: 0,
             max_num_bits: max_num_cleartext,
-            inner: WrappedG1G2s(
+            inner: WrappedG1G2s::new(
                 vec![curve::G1::GENERATOR; witness_dim * 2],
                 vec![curve::G2::GENERATOR; witness_dim],
             ),
@@ -197,7 +233,7 @@ impl PublicParameter {
         Ok(PublicParameter {
             round: 0,
             max_num_bits,
-            inner: WrappedG1G2s(
+            inner: WrappedG1G2s::new(
                 vec![curve::G1::GENERATOR; witness_dim * 2],
                 vec![curve::G2::GENERATOR; witness_dim],
             ),
@@ -205,32 +241,32 @@ impl PublicParameter {
     }
 
     pub fn witness_dim(&self) -> usize {
-        self.inner.1.len()
+        self.inner.g2s.len()
     }
 
     fn hash_to_scalars(&self, n: usize) -> Vec<curve::Zp> {
         // 8 bytes for round
-        // 8 bytes for inner.0 length
+        // 8 bytes for inner.g1s length
         // 2*b1 * G1 point length
-        // 8 bytes for inner.1 length
+        // 8 bytes for inner.g2s length
         // b1 * G2 point length
         let capacity = 8
             + 8
-            + self.inner.0.len() * curve::G1::BYTE_SIZE
+            + self.inner.g1s.len() * curve::G1::BYTE_SIZE
             + 8
-            + self.inner.1.len() * curve::G2::BYTE_SIZE;
+            + self.inner.g2s.len() * curve::G2::BYTE_SIZE;
 
         // NOTE: all the usize types need to be 8 bytes
         // independent of the architecture, so we convert them to u64
         // before serialization
         let mut buf = Vec::with_capacity(capacity);
         buf.extend((self.round as u64).to_le_bytes());
-        buf.extend((self.inner.0.len() as u64).to_le_bytes());
-        for elem in &self.inner.0 {
+        buf.extend((self.inner.g1s.len() as u64).to_le_bytes());
+        for elem in &self.inner.g1s {
             buf.extend(elem.to_bytes());
         }
-        buf.extend((self.inner.1.len() as u64).to_le_bytes());
-        for elem in &self.inner.1 {
+        buf.extend((self.inner.g2s.len() as u64).to_le_bytes());
+        for elem in &self.inner.g2s {
             buf.extend(elem.to_bytes());
         }
         debug_assert_eq!(buf.len(), capacity);
@@ -267,17 +303,17 @@ fn make_partial_proof_deterministic(
     let new_pp = PublicParameter {
         round,
         max_num_bits: current_pp.max_num_bits,
-        inner: WrappedG1G2s(
+        inner: WrappedG1G2s::new(
             current_pp
                 .inner
-                .0
+                .g1s
                 .par_iter()
                 .zip(&tau_powers)
                 .map(|(g, t)| g.mul_scalar(*t))
                 .collect(),
             current_pp
                 .inner
-                .1
+                .g2s
                 .par_iter()
                 .zip(&tau_powers)
                 .map(|(g, t)| g.mul_scalar(*t))
@@ -285,9 +321,9 @@ fn make_partial_proof_deterministic(
         ),
     };
 
-    let g1_jm1 = current_pp.inner.0[0]; // g_{1,j-1}
+    let g1_jm1 = current_pp.inner.g1s[0]; // g_{1,j-1}
     let r_pok = g1_jm1.mul_scalar(r); // R_{pok, j}
-    let g1_j = new_pp.inner.0[0]; // g_{1, j}
+    let g1_j = new_pp.inner.g1s[0]; // g_{1, j}
     let mut h_pok = vec![curve::Zp::ZERO; 1];
     curve::Zp::hash(
         &mut h_pok,
@@ -333,8 +369,8 @@ fn verify_proof(
     }
 
     let new_pp = partial_proof.new_pp.clone();
-    let g1_jm1 = current_pp.inner.0[0]; // g_{1,j-1}
-    let g1_j = new_pp.inner.0[0]; // g_{1, j}
+    let g1_jm1 = current_pp.inner.g1s[0]; // g_{1,j-1}
+    let g1_j = new_pp.inner.g1s[0]; // g_{1, j}
 
     // verify the discrete log proof
     // this proof ensures that the prover
@@ -351,7 +387,7 @@ fn verify_proof(
     // I (caller) need to make sure the lengths are correct
     // the point of refernce is the current_pp
     let witness_dim = current_pp.witness_dim();
-    if new_pp.inner.0.len() != witness_dim * 2 {
+    if new_pp.inner.g1s.len() != witness_dim * 2 {
         return Err(anyhow_error_and_log(
             "crs length check failed (g)".to_string(),
         ));
@@ -398,12 +434,12 @@ fn verify_wellformedness(new_pp: &PublicParameter) -> anyhow::Result<()> {
     // verify the other parts of the new CRS
     let rhos = new_pp.hash_to_scalars(2);
     let b1 = new_pp.witness_dim();
-    debug_assert_eq!(new_pp.inner.0.len(), b1 * 2);
+    debug_assert_eq!(new_pp.inner.g1s.len(), b1 * 2);
 
     // e(\tau_j^{B1+2} [G1], [G2]) = e(\tau_j^{B1} [G1], \tau_j^2 [G2])
     let e = curve::Gt::pairing;
-    if e(new_pp.inner.0[b1 + 1], curve::G2::GENERATOR)
-        != e(new_pp.inner.0[b1 - 1], new_pp.inner.1[1])
+    if e(new_pp.inner.g1s[b1 + 1], curve::G2::GENERATOR)
+        != e(new_pp.inner.g1s[b1 - 1], new_pp.inner.g2s[1])
     {
         return Err(anyhow_error_and_log(
             "well-formedness check failed (1)".to_string(),
@@ -426,7 +462,7 @@ fn verify_wellformedness(new_pp: &PublicParameter) -> anyhow::Result<()> {
 
     let lhs0 = new_pp
         .inner
-        .0
+        .g1s
         .par_iter()
         .enumerate()
         .filter_map(|(i, g)| {
@@ -440,7 +476,7 @@ fn verify_wellformedness(new_pp: &PublicParameter) -> anyhow::Result<()> {
 
     let lhs1 = new_pp
         .inner
-        .1
+        .g2s
         .par_iter()
         .take(b1 - 1)
         .enumerate()
@@ -448,10 +484,10 @@ fn verify_wellformedness(new_pp: &PublicParameter) -> anyhow::Result<()> {
         .sum::<curve::G2>()
         .add(curve::G2::GENERATOR);
 
-    debug_assert_eq!(new_pp.inner.0.len(), b1 * 2);
+    debug_assert_eq!(new_pp.inner.g1s.len(), b1 * 2);
     let rhs0 = new_pp
         .inner
-        .0
+        .g1s
         .par_iter()
         .take(b1 * 2 - 1)
         .enumerate()
@@ -467,7 +503,7 @@ fn verify_wellformedness(new_pp: &PublicParameter) -> anyhow::Result<()> {
 
     let rhs1 = new_pp
         .inner
-        .1
+        .g2s
         .par_iter()
         .enumerate()
         .map(|(l, g_hat)| g_hat.mul_scalar(rho1_powers[l]))
@@ -644,7 +680,7 @@ mod tests {
             Ok(PublicParameter {
                 round: session.num_parties(),
                 max_num_bits: max_num_cleartext,
-                inner: WrappedG1G2s(
+                inner: WrappedG1G2s::new(
                     vec![curve::G1::GENERATOR; witness_dim * 2],
                     vec![curve::G2::GENERATOR; witness_dim],
                 ),
@@ -715,7 +751,7 @@ mod tests {
         let mut rng = AesRng::from_entropy();
         let g_list = pp
             .inner
-            .0
+            .g1s
             .clone()
             .into_iter()
             .map(|x| x.normalize())
@@ -723,7 +759,7 @@ mod tests {
 
         let g_hat_list = pp
             .inner
-            .1
+            .g2s
             .clone()
             .into_iter()
             .map(|x| x.normalize())
@@ -751,7 +787,7 @@ mod tests {
         PublicParameter {
             round: 0,
             max_num_bits: 1,
-            inner: WrappedG1G2s(vec![curve::G1::ZERO; 2 * n], vec![curve::G2::ZERO; n]),
+            inner: WrappedG1G2s::new(vec![curve::G1::ZERO; 2 * n], vec![curve::G2::ZERO; n]),
         }
     }
 
@@ -835,7 +871,7 @@ mod tests {
             let pp = PublicParameter {
                 round: 0,
                 max_num_bits: 1,
-                inner: WrappedG1G2s(
+                inner: WrappedG1G2s::new(
                     vec![curve::G1::GENERATOR; witness_dim * 2],
                     vec![curve::G2::GENERATOR; witness_dim],
                 ),
@@ -898,8 +934,8 @@ mod tests {
         let honest_pp = results_honest.iter().map(|(_, pp, _)| pp).collect_vec();
         let pp = honest_pp[0].clone();
         // make sure we're not using the initial pp
-        assert_ne!(pp.inner.0[0], pp.inner.0[1]);
-        assert_ne!(pp.inner.1[0], pp.inner.1[1]);
+        assert_ne!(pp.inner.g1s[0], pp.inner.g1s[1]);
+        assert_ne!(pp.inner.g2s[0], pp.inner.g2s[1]);
         for other in honest_pp {
             assert_eq!(&pp, other);
         }
@@ -969,15 +1005,15 @@ mod tests {
         let pp = PublicParameter::new(2, Some(1));
         let proof = make_partial_proof_deterministic(&pp, tau, 0, r);
         assert_eq!(
-            proof.new_pp.inner.0[3],
+            proof.new_pp.inner.g1s[3],
             curve::G1::GENERATOR.mul_scalar(tau_powers[3])
         );
         assert_eq!(
-            proof.new_pp.inner.0[1],
+            proof.new_pp.inner.g1s[1],
             curve::G1::GENERATOR.mul_scalar(tau_powers[1])
         );
         assert_eq!(
-            proof.new_pp.inner.1[1],
+            proof.new_pp.inner.g2s[1],
             curve::G2::GENERATOR.mul_scalar(tau_powers[1])
         );
     }
@@ -990,8 +1026,8 @@ mod tests {
         let tau1 = curve::Zp::rand(&mut rng);
         let r = curve::Zp::rand(&mut rng);
 
-        assert_eq!(pp1.inner.0.len(), n * 2);
-        assert_eq!(pp1.inner.1.len(), n);
+        assert_eq!(pp1.inner.g1s.len(), n * 2);
+        assert_eq!(pp1.inner.g2s.len(), n);
 
         {
             // first round
@@ -1045,7 +1081,7 @@ mod tests {
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.0.push(curve::G1::GENERATOR);
+            proof.new_pp.inner.g1s.push(curve::G1::GENERATOR);
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
@@ -1053,7 +1089,7 @@ mod tests {
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.1.push(curve::G2::GENERATOR);
+            proof.new_pp.inner.g2s.push(curve::G2::GENERATOR);
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
@@ -1061,7 +1097,7 @@ mod tests {
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.0[n + 1] += curve::G1::GENERATOR;
+            proof.new_pp.inner.g1s[n + 1] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
@@ -1069,7 +1105,7 @@ mod tests {
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.0[n - 1] += curve::G1::GENERATOR;
+            proof.new_pp.inner.g1s[n - 1] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
@@ -1077,7 +1113,7 @@ mod tests {
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.1[1] += curve::G2::GENERATOR;
+            proof.new_pp.inner.g2s[1] += curve::G2::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
@@ -1085,7 +1121,7 @@ mod tests {
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.0[2] += curve::G1::GENERATOR;
+            proof.new_pp.inner.g1s[2] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
@@ -1093,7 +1129,7 @@ mod tests {
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.0[2 * n - 1] += curve::G1::GENERATOR;
+            proof.new_pp.inner.g1s[2 * n - 1] += curve::G1::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
@@ -1101,7 +1137,7 @@ mod tests {
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.1[2] += curve::G2::GENERATOR;
+            proof.new_pp.inner.g2s[2] += curve::G2::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
@@ -1109,7 +1145,7 @@ mod tests {
         }
         {
             let mut proof = make_partial_proof_deterministic(&pp1, tau1, 1, r);
-            proof.new_pp.inner.1[n - 1] += curve::G2::GENERATOR;
+            proof.new_pp.inner.g2s[n - 1] += curve::G2::GENERATOR;
             assert!(verify_proof(&pp1, &proof)
                 .unwrap_err()
                 .to_string()
@@ -1122,7 +1158,7 @@ mod tests {
         let ms = PublicParameter {
             round: 0,
             max_num_bits: 1,
-            inner: WrappedG1G2s(vec![], vec![]),
+            inner: WrappedG1G2s::new(vec![], vec![]),
         };
 
         let versioned: <PublicParameter as VersionizeOwned>::VersionedOwned = ms.versionize_owned();

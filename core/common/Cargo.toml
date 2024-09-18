@@ -9,4 +9,4 @@ license.workspace = true
 [dependencies]
 anyhow = "1.0.86"
 serde = { version = "1.0.203", features = ["derive", "rc"] }
-tfhe-versionable = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-alpha.3" }
+tfhe-versionable = { git = "https://github.com/zama-ai/tfhe-rs.git", tag = "tfhe-rs-0.8.0-alpha.7" }

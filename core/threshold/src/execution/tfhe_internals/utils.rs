@@ -5,6 +5,7 @@ use itertools::{EitherOrBoth, Itertools};
 use tfhe::{
     core_crypto::prelude::Numeric,
     integer::ciphertext::{Compactable, Expandable},
+    prelude::Tagged,
     CompactCiphertextList, CompactPublicKey,
 };
 
@@ -158,7 +159,7 @@ pub fn slice_wrapping_scalar_mul_assign<Z: BaseRing>(lhs: &mut [ResiduePoly<Z>],
     lhs.iter_mut().for_each(|lhs| *lhs = *lhs * rhs);
 }
 
-pub fn expanded_encrypt<M: Compactable + Numeric, T: Expandable>(
+pub fn expanded_encrypt<M: Compactable + Numeric, T: Expandable + Tagged>(
     pk: &CompactPublicKey,
     msg: M,
     num_bits: usize,

@@ -211,42 +211,42 @@ impl FheType {
             }
             FheType::Euint4 => {
                 let hl_ct: FheUint4 = bincode::deserialize(serialized_high_level)?;
-                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint8 => {
                 let hl_ct: FheUint8 = bincode::deserialize(serialized_high_level)?;
-                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint16 => {
                 let hl_ct: FheUint16 = bincode::deserialize(serialized_high_level)?;
-                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint32 => {
                 let hl_ct: FheUint32 = bincode::deserialize(serialized_high_level)?;
-                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint64 => {
                 let hl_ct: FheUint64 = bincode::deserialize(serialized_high_level)?;
-                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint128 => {
                 let hl_ct: FheUint128 = bincode::deserialize(serialized_high_level)?;
-                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint160 => {
                 let hl_ct: FheUint160 = bincode::deserialize(serialized_high_level)?;
-                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint256 => {
                 let hl_ct: FheUint256 = bincode::deserialize(serialized_high_level)?;
-                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
             FheType::Euint512 => {
@@ -257,7 +257,7 @@ impl FheType {
             }
             FheType::Euint2048 => {
                 let hl_ct: FheUint2048 = bincode::deserialize(serialized_high_level)?;
-                let (radix_ct, _id) = hl_ct.into_raw_parts();
+                let (radix_ct, _id, _tag) = hl_ct.into_raw_parts();
                 radix_ct
             }
         };

@@ -76,7 +76,7 @@ fn ddec_nsmall(c: &mut Criterion) {
         )
         .unwrap();
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8);
-        let (raw_ct, _id) = ct.into_raw_parts();
+        let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
         //Using Sync because threshold_decrypt64 encompasses both online and offline
@@ -141,7 +141,7 @@ fn ddec_bitdec_nsmall(c: &mut Criterion) {
         )
         .unwrap();
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8);
-        let (raw_ct, _id) = ct.into_raw_parts();
+        let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
         let ctc = Arc::new(raw_ct);
@@ -206,7 +206,7 @@ fn ddec_nlarge(c: &mut Criterion) {
         .unwrap();
 
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8);
-        let (raw_ct, _id) = ct.into_raw_parts();
+        let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
         //Using Sync because threshold_decrypt64 encompasses both online and offline
@@ -272,7 +272,7 @@ fn ddec_bitdec_nlarge(c: &mut Criterion) {
         .unwrap();
 
         let ct: FheUint8 = expanded_encrypt(&keyset.public_keys.public_key, message, 8);
-        let (raw_ct, _id) = ct.into_raw_parts();
+        let (raw_ct, _id, _tag) = ct.into_raw_parts();
 
         let identities = generate_fixed_identities(config.n);
         let ctc = Arc::new(raw_ct);

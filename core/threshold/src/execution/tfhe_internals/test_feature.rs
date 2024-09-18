@@ -63,13 +63,13 @@ pub struct KeySet {
 }
 impl KeySet {
     pub fn get_raw_lwe_client_key(&self) -> LweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _) = self.client_key.clone().into_raw_parts();
+        let (inner_client_key, _, _, _) = self.client_key.clone().into_raw_parts();
         let short_client_key = inner_client_key.into_raw_parts();
         let (_glwe_secret_key, lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
         lwe_secret_key
     }
     pub fn get_raw_glwe_client_key(&self) -> GlweSecretKey<Vec<u64>> {
-        let (inner_client_key, _, _) = self.client_key.clone().into_raw_parts();
+        let (inner_client_key, _, _, _) = self.client_key.clone().into_raw_parts();
         let short_client_key = inner_client_key.into_raw_parts();
         let (glwe_secret_key, _lwe_secret_key, _shortint_param) = short_client_key.into_raw_parts();
         glwe_secret_key
@@ -133,7 +133,7 @@ pub fn to_hl_client_key(
 ) -> tfhe::ClientKey {
     let sps = ShortintParameterSet::new_pbs_param_set(tfhe::shortint::PBSParameters::PBS(params));
     let sck = shortint::ClientKey::from_raw_parts(glwe_secret_key, lwe_secret_key, sps);
-    ClientKey::from_raw_parts(sck.into(), None, None)
+    ClientKey::from_raw_parts(sck.into(), None, None, tfhe::Tag::default())
 }
 
 //TODO(PKSK): Need to change this to account for difference between encryption and compute key,
@@ -356,7 +356,7 @@ pub fn generate_large_keys<R: Rng + CryptoRng>(
     let client_output_key = SnsClientKey::new(input_param, output_lwe_secret_key_out);
 
     // Generate conversion key
-    let (short_sk, _compact_privkey, _compression_privkey) = input_sk.into_raw_parts();
+    let (short_sk, _compact_privkey, _compression_privkey, _tag) = input_sk.into_raw_parts();
     let (_raw_input_glwe_secret_key, raw_input_lwe_secret_key, _short_param) =
         short_sk.into_raw_parts().into_raw_parts();
     let mut input_lwe_secret_key_out =
@@ -507,12 +507,14 @@ impl PartialEq for FhePubKeySet {
         self.public_key
             .clone()
             .into_raw_parts()
+            .0
             .into_raw_parts()
             .into_raw_parts()
             == other
                 .clone()
                 .public_key
                 .into_raw_parts()
+                .0
                 .into_raw_parts()
                 .into_raw_parts()
             && raw_parts_server_key.0.into_raw_parts().into_raw_parts()
@@ -563,7 +565,8 @@ mod tests {
     fn hl_sk_key_conversion() {
         let config = ConfigBuilder::default().build();
         let (client_key, _server_key) = generate_keys(config);
-        let (raw_sk, _compact_privkey, _compression_privkey) = client_key.clone().into_raw_parts();
+        let (raw_sk, _compact_privkey, _compression_privkey, _tag) =
+            client_key.clone().into_raw_parts();
         let (glwe_key, lwe_key, params) = raw_sk.into_raw_parts().into_raw_parts();
 
         let input_param = match params.pbs_parameters() {

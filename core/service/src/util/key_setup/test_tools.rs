@@ -9,6 +9,7 @@ use serde::Serialize;
 use std::path::Path;
 use tfhe::core_crypto::prelude::Numeric;
 use tfhe::integer::ciphertext::{Compactable, Expandable};
+use tfhe::prelude::Tagged;
 use tfhe::{
     FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32, FheUint64,
     FheUint8, Unversionize,
@@ -20,7 +21,7 @@ use tfhe::{
 //as it is not Numeric
 //TODO(PKSK): If we have an encryption key different from the compute key, then call to expand() requires
 //that the ServerKey (which contains the PKSK) is set, otherwise the unwrap will panic
-fn serialize_ctxt<M: Compactable + Numeric, T: Expandable + Serialize>(
+fn serialize_ctxt<M: Compactable + Numeric, T: Expandable + Tagged + Serialize>(
     msg: M,
     pk: &FhePublicKey,
     num_bits: usize,
