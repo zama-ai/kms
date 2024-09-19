@@ -7,9 +7,13 @@ use crate::config::init_conf_with_trace_connector;
 use crate::config::GatewayConfig;
 use crate::events::manager::k256::ecdsa::SigningKey;
 use crate::util::height::AtomicBlockHeight;
+use actix_cors::Cors;
+use actix_web::http::Method;
+use actix_web::middleware::Logger;
 use actix_web::App;
 use actix_web::HttpServer;
-use actix_web::{post, web, HttpResponse};
+use actix_web::Responder;
+use actix_web::{web, HttpResponse};
 use async_trait::async_trait;
 use ethers::prelude::*;
 use ethers::providers::{Provider, Ws};
@@ -229,11 +233,32 @@ impl Publisher<ReencryptionEvent> for ReencryptionEventPublisher {
         let publisher = Arc::new(self.clone());
         let api_url = self.config.api_url.clone();
         let payload_limit = 10 * 1024 * 1024; // 10 MB
+
         let _handle = HttpServer::new(move || {
+            let cors = Cors::default()
+                .allow_any_origin()
+                .allowed_methods(vec!["GET", "POST", "OPTIONS"])
+                .allowed_headers(vec!["Content-Type"])
+                .max_age(3600);
+
             App::new()
+                .wrap(Logger::default())
+                .wrap(cors)
                 .app_data(web::PayloadConfig::new(payload_limit))
                 .app_data(web::Data::new(publisher.clone()))
-                .service(reencrypt_payload)
+                .route("/reencrypt", web::post().to(reencrypt_payload))
+                .route(
+                    "/reencrypt",
+                    web::method(Method::OPTIONS).to(|| async {
+                        HttpResponse::Ok()
+                            .append_header(("Allow", "OPTIONS, POST"))
+                            .append_header(("Access-Control-Allow-Origin", "*"))
+                            .append_header(("Access-Control-Allow-Methods", "POST, OPTIONS"))
+                            .append_header(("Access-Control-Allow-Headers", "Content-Type"))
+                            .finish()
+                    }),
+                )
+                .route("/health", web::get().to(health_check)) // Add health check endpoint
         })
         .workers(20)
         .bind(api_url)
@@ -245,11 +270,14 @@ impl Publisher<ReencryptionEvent> for ReencryptionEventPublisher {
     }
 }
 
-#[post("/reencrypt")]
+async fn health_check() -> impl Responder {
+    HttpResponse::Ok().body("Gateway is listening for reencryption requests")
+}
+
 async fn reencrypt_payload(
     payload: web::Json<ApiReencryptValues>,
     publisher: web::Data<Arc<ReencryptionEventPublisher>>,
-) -> HttpResponse {
+) -> impl Responder {
     info!("🍓🍓🍓 => Received reencryption request");
 
     let (sender, receiver) = oneshot::channel();

@@ -178,7 +178,10 @@ async fn http_provider(
 ) -> anyhow::Result<SignerMiddleware<Provider<Http>, Wallet<SigningKey>>> {
     let wallet = WalletManager::default().wallet;
     let provider = Provider::<Http>::connect(&config.ethereum.http_url).await;
-    let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
+    let provider = SignerMiddleware::new(
+        provider.clone(),
+        wallet.with_chain_id(config.ethereum.chain_id),
+    );
     Ok(provider)
 }
 
@@ -189,7 +192,10 @@ async fn _ws_provider(
     let provider = Provider::<Ws>::connect(&config.ethereum.wss_url)
         .await
         .context("Failed to connect to WSS")?;
-    let provider = SignerMiddleware::new(provider.clone(), wallet.with_chain_id(9000_u64));
+    let provider = SignerMiddleware::new(
+        provider.clone(),
+        wallet.with_chain_id(config.ethereum.chain_id),
+    );
     Ok(provider)
 }
 

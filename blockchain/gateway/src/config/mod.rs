@@ -42,6 +42,7 @@ pub enum BaseGasPrice {
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
 pub struct EthereumConfig {
+    pub chain_id: u64,
     pub listener_type: ListenerType,
     pub wss_url: String,
     pub http_url: String,
@@ -111,9 +112,10 @@ mod tests {
 
     #[test]
     fn test_gateway_config() {
-        let env_conf: [(&str, Option<&str>); 18] = [
+        let env_conf: [(&str, Option<&str>); 19] = [
             ("GATEWAY__DEBUG", None),
             ("GATEWAY__MODE", None),
+            ("GATEWAY__ETHEREUM__CHAIN_ID", None),
             ("GATEWAY__ETHEREUM__LISTENER_TYPE", None),
             ("GATEWAY__ETHEREUM__WSS_URL", None),
             ("GATEWAY__ETHEREUM__HTTP_URL", None),
@@ -135,6 +137,7 @@ mod tests {
             let gateway_config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
             assert!(!gateway_config.debug);
             assert_eq!(gateway_config.mode, KmsMode::Centralized);
+            assert_eq!(gateway_config.ethereum.chain_id, 9000);
             assert_eq!(
                 gateway_config.ethereum.listener_type,
                 ListenerType::Fhevm1_1
@@ -185,6 +188,7 @@ mod tests {
         let env_conf = [
             ("GATEWAY__DEBUG", Some("true")),
             ("GATEWAY__MODE", Some("threshold")),
+            ("GATEWAY__ETHEREUM__CHAIN_ID", Some("42")),
             ("GATEWAY__ETHEREUM__LISTENER_TYPE", Some("FHEVM_V1")),
             (
                 "GATEWAY__ETHEREUM__WSS_URL",
@@ -239,6 +243,7 @@ mod tests {
             let gateway_config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
             assert!(gateway_config.debug);
             assert_eq!(gateway_config.mode, KmsMode::Threshold);
+            assert_eq!(gateway_config.ethereum.chain_id, 42);
             assert_eq!(gateway_config.ethereum.listener_type, ListenerType::Fhevm1);
             assert_eq!(gateway_config.ethereum.wss_url, "ws://test_with_var:8546");
             assert_eq!(

@@ -7,6 +7,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+actix-cors = "0.7.0"
 actix-web = "4.6.0"
 aes-prng = "0.2.1"
 alloy-primitives = "0.7.6"

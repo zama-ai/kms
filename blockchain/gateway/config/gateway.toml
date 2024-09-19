@@ -12,6 +12,10 @@ api_url = "0.0.0.0:7077"
 # Ethereum Settings
 # Configuration settings related to the Ethereum network and smart contract event interactions.
 [ethereum]
+
+# chain id
+chain_id = 9000
+
 # Listener type, one of FHEVM_V1, FHEVM_V1_1, or COPROCESSOR.
 # Specifies the type of listener to be used for processing Ethereum events.
 # - FHEVM_V1: Use the FHEVM version 1 listener.
