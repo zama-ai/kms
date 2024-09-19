@@ -270,7 +270,7 @@ pub enum ThresholdFheKeysVersioned {
     V0(ThresholdFheKeys),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Versionize, PartialEq)]
 #[versionize(ThresholdFheKeysVersioned)]
 pub struct ThresholdFheKeys {
     pub private_keys: PrivateKeySet,

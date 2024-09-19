@@ -336,7 +336,7 @@ pub enum KmsFheKeyHandlesVersioned {
 }
 
 #[cfg(feature = "non-wasm")]
-#[derive(Clone, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Serialize, Deserialize, Versionize, Debug)]
 #[versionize(KmsFheKeyHandlesVersioned)]
 pub struct KmsFheKeyHandles {
     pub client_key: FhePrivateKey,

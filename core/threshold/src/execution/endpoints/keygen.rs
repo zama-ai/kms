@@ -213,7 +213,7 @@ pub enum PrivateKeySetVersioned {
     V0(PrivateKeySet),
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
 #[versionize(PrivateKeySetVersioned)]
 pub struct PrivateKeySet {
     //The two Lwe keys are the same if there's no dedicated pk parameters

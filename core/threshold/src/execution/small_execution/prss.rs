@@ -49,7 +49,7 @@ pub enum PrssSetVersioned<Z> {
 }
 
 /// structure for holding values for each subset of n-t parties
-#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(PrssSetVersioned)]
 pub struct PrssSet<Z> {
     parties: PartySet,
@@ -76,7 +76,7 @@ pub enum PRSSSetupVersioned<Z: Default + Clone + Serialize> {
     V0(PRSSSetup<Z>),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Versionize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Versionize)]
 #[versionize(PRSSSetupVersioned)]
 pub struct PRSSSetup<Z: Default + Clone + Serialize> {
     // all possible subsets of n-t parties (A) that contain Pi and their shared PRF keys
@@ -86,7 +86,7 @@ pub struct PRSSSetup<Z: Default + Clone + Serialize> {
 
 // TODO that this type has a non-versioned implementation.
 // see issue: https://github.com/zama-ai/kms-core/issues/934
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct AlphaPowers<Z: Default + Clone>(Vec<Vec<Z>>);
 
 impl<Z: Default + Clone + Serialize> tfhe_versionable::Versionize for AlphaPowers<Z> {

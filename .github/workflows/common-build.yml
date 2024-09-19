@@ -77,6 +77,14 @@ jobs:
       - name: Checkout Project
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
+      # LFS files are needed for backward compatibility tests    
+      # Install git LFS before checkout does not seem possible on our self-hosted runners, so we 
+      # need to do it right after and then manually pull LFS files
+      - name: Install git-lfs
+        run: |
+          sudo apt update && sudo apt -y install git-lfs
+          git lfs pull
+
       # Needed to be able to pull some docker images for the simulator test
       - name: Login to GitHub Container Registry
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0

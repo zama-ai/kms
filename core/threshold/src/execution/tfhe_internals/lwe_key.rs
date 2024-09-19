@@ -41,7 +41,7 @@ pub enum LweSecretKeyShareVersioned<Z: Clone> {
 
 ///Structure that holds a share of the LWE key
 /// - data contains shares of the key components
-#[derive(Clone, Debug, Serialize, Deserialize, Versionize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Versionize, PartialEq)]
 #[versionize(LweSecretKeyShareVersioned)]
 pub struct LweSecretKeyShare<Z: Clone> {
     pub data: Vec<Share<ResiduePoly<Z>>>,

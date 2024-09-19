@@ -385,7 +385,7 @@ fn verify_proof(
     }
 
     // I (caller) need to make sure the lengths are correct
-    // the point of refernce is the current_pp
+    // the point of reference is the current_pp
     let witness_dim = current_pp.witness_dim();
     if new_pp.inner.g1s.len() != witness_dim * 2 {
         return Err(anyhow_error_and_log(
@@ -621,7 +621,7 @@ impl Ceremony for RealCeremony {
                             } else {
                                 // ignore the messages from other parties but warn
                                 tracing::warn!(
-                                    "unexpected sender in crs ceremony, expecte {role} got {sender}"
+                                    "unexpected sender in crs ceremony, expect {role} got {sender}"
                                 );
                             }
                         }
@@ -658,7 +658,6 @@ mod tests {
     use rand::SeedableRng;
     use rstest::rstest;
     use std::collections::HashMap;
-    use tfhe_versionable::{Unversionize, VersionizeOwned};
     use tfhe_zk_pok::{curve_api::Bls12_446, proofs};
     use tokio::task::JoinSet;
 
@@ -769,7 +768,7 @@ mod tests {
             g_list,
             g_hat_list,
             *ZK_DSEP_HASH_PADDED,
-            *ZK_DSEP_HASH_Z_PADDED, //Using DSEP HASH_Z instead of HASH_S as we dont have defined the latter
+            *ZK_DSEP_HASH_Z_PADDED, //Using DSEP HASH_Z instead of HASH_S as we don't have defined the latter
             *ZK_DSEP_HASH_T_PADDED,
             *ZK_DSEP_HASH_AGG_PADDED,
         );
@@ -1151,20 +1150,5 @@ mod tests {
                 .to_string()
                 .contains("well-formedness check failed (2)"));
         }
-    }
-
-    #[test]
-    fn test_versioning() {
-        let ms = PublicParameter {
-            round: 0,
-            max_num_bits: 1,
-            inner: WrappedG1G2s::new(vec![], vec![]),
-        };
-
-        let versioned: <PublicParameter as VersionizeOwned>::VersionedOwned = ms.versionize_owned();
-        let serialized = bincode::serialize(&versioned).unwrap();
-
-        let _unserialized =
-            PublicParameter::unversionize(bincode::deserialize(&serialized).unwrap());
     }
 }

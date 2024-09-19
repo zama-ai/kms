@@ -1,0 +1,33 @@
+[
+    (
+        kms_core_version_min: "0.9",
+        kms_core_module: "distributed_decryption",
+        metadata: PublicParameter((
+            test_filename: "public_parameter",
+            witness_dim: 2,
+            max_num_bits: Some(1),
+        )),
+    ),
+    (
+        kms_core_version_min: "0.9",
+        kms_core_module: "distributed_decryption",
+        metadata: PRSSSetup((
+            test_filename: "prss_setup_rpoly_64",
+            amount: 10,
+            threshold: 3,
+            role_i: 1,
+            residue_poly_size: 64,
+        )),
+    ),
+    (
+        kms_core_version_min: "0.9",
+        kms_core_module: "distributed_decryption",
+        metadata: PRSSSetup((
+            test_filename: "prss_setup_rpoly_128",
+            amount: 10,
+            threshold: 3,
+            role_i: 1,
+            residue_poly_size: 128,
+        )),
+    ),
+]
