@@ -11,6 +11,7 @@ use ethers::prelude::*;
 use events::kms::FheType;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
+use events::kms::ZkpResponseValues;
 use kms_lib::kms::Eip712DomainMsg;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
@@ -65,4 +66,13 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         eip712_verifying_contract: String,
         chain_id: U256,
     ) -> anyhow::Result<Vec<ReencryptResponseValues>>;
+
+    async fn zkp(
+        &self,
+        client_address: String,
+        caller_address: String,
+        ct_proof: Vec<u8>,
+        max_num_bits: u32,
+        chain_id: U256,
+    ) -> anyhow::Result<Vec<ZkpResponseValues>>;
 }

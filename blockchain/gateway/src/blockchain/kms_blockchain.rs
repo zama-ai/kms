@@ -19,6 +19,8 @@ use events::kms::OperationValue;
 use events::kms::ReencryptResponseValues;
 use events::kms::ReencryptValues;
 use events::kms::TransactionId;
+use events::kms::ZkpResponseValues;
+use events::kms::ZkpValues;
 use events::kms::{FheType, KmsMessage};
 use events::HexVector;
 use kms_blockchain_client::client::Client;
@@ -30,12 +32,11 @@ use kms_blockchain_client::query_client::OperationQuery;
 use kms_blockchain_client::query_client::QueryClient;
 use kms_blockchain_client::query_client::QueryClientBuilder;
 use kms_blockchain_client::query_client::QueryContractRequest;
+use kms_lib::cryptography::signcryption::hash_element;
 use kms_lib::kms::DecryptionResponsePayload;
 use kms_lib::kms::Eip712DomainMsg;
 use kms_lib::rpc::rpc_types::Plaintext;
 use kms_lib::rpc::rpc_types::CURRENT_FORMAT_VERSION;
-use sha3::Digest;
-use sha3::Sha3_256;
 use std::collections::HashMap;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
@@ -166,7 +167,7 @@ impl<'a> KmsBlockchainImpl {
         &self,
         data_size: u32,
         operation: OperationValue,
-        _proof: Vec<u8>,
+        _proof: Option<Vec<u8>>,
     ) -> anyhow::Result<Vec<KmsEvent>> {
         let request = ExecuteContractRequest::builder()
             .message(KmsMessage::builder().value(operation).build())
@@ -279,7 +280,7 @@ impl Blockchain for KmsBlockchainImpl {
         tracing::info!("🍊 Decrypting ciphertexts of total size: {:?}", total_size);
 
         let evs = self
-            .make_req_to_kms_blockchain(total_size, operation, proof)
+            .make_req_to_kms_blockchain(total_size, operation, Some(proof))
             .await?;
 
         // TODO what if we have multiple events?
@@ -316,7 +317,7 @@ impl Blockchain for KmsBlockchainImpl {
                     let external_sig = payload.external_signature.unwrap_or_default();
 
                     tracing::info!(
-                        "🍇🥐🍇🥐🍇🥐 Centralized Gateway decrypted {} plaintext(s).",
+                        "🍇🥐🍇🥐🍇🥐 Centralized KMS decrypted {} plaintext(s).",
                         payload.plaintexts.len()
                     );
 
@@ -484,10 +485,7 @@ impl Blockchain for KmsBlockchainImpl {
         );
 
         let ctxt_handle = self.store_ciphertext(ciphertext.clone()).await?;
-        let mut hasher = Sha3_256::new();
-        hasher.update(&ciphertext);
-        let digest = hasher.finalize().to_vec();
-        let ctxt_digest = digest.to_vec();
+        let ctxt_digest = hash_element(&ciphertext);
 
         let key_id = HexVector::from_hex(self.config.kms.key_id.as_str())?;
         tracing::info!(
@@ -513,7 +511,7 @@ impl Blockchain for KmsBlockchainImpl {
             ));
         }
 
-        // NOTE: the ciphertext digest must be the real SHA3 digest
+        // NOTE: the ciphertext digest must be the real digest
         let reencrypt_values = ReencryptValues::builder()
             .signature(signature)
             .version(CURRENT_FORMAT_VERSION)
@@ -547,7 +545,7 @@ impl Blockchain for KmsBlockchainImpl {
         let data_size = footprint::extract_ciphertext_size(&ctxt_handle);
         tracing::info!("🍊 Reencrypting ciphertext of size: {:?}", data_size);
         let evs = self
-            .make_req_to_kms_blockchain(data_size, operation, proof)
+            .make_req_to_kms_blockchain(data_size, operation, Some(proof))
             .await?;
 
         // TODO what if we have multiple events?
@@ -574,7 +572,7 @@ impl Blockchain for KmsBlockchainImpl {
             KmsMode::Centralized => match results.first().unwrap() {
                 OperationValue::ReencryptResponse(reencrypt_response) => {
                     tracing::debug!(
-                        "🍇🥐🍇🥐🍇🥐 Centralized Gateway signature: {:?}",
+                        "🍇🥐🍇🥐🍇🥐 Centralized KMS signature: {:?}",
                         reencrypt_response.signature().to_hex()
                     );
 
@@ -606,6 +604,128 @@ impl Blockchain for KmsBlockchainImpl {
                 // so that we can perform reconstruction.
                 // The ordering can be determined using the verification key,
                 // which the client holds.
+                Ok(out)
+            }
+        }
+    }
+
+    async fn zkp(
+        &self,
+        client_address: String,
+        contract_address: String,
+        ct_proof: Vec<u8>,
+        max_num_bits: u32,
+        chain_id: U256,
+    ) -> anyhow::Result<Vec<ZkpResponseValues>> {
+        tracing::info!(
+            "🔒 ZKP ciphertext with client_address: {:?}, contract_address: {:?}, max_num_bits: {:?}, chain_id: {:?}",
+            hex::encode(&client_address),
+            hex::encode(&contract_address),
+            max_num_bits,
+            chain_id
+        );
+
+        let ct_proof_handle = self.store_ciphertext(ct_proof.clone()).await?;
+
+        let key_id = HexVector::from_hex(self.config.kms.key_id.as_str())?;
+        let crs_id = match self.config.kms.crs_ids.get(&max_num_bits) {
+            Some(crs_id) => HexVector::from_hex(crs_id.as_str())?,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "CRS max number of bits {} not found in config",
+                    max_num_bits
+                ))
+            }
+        };
+        tracing::info!(
+            "🔒 ZKP using key_id={:?}, crs_id={:?}, ct_proof_handle={}",
+            key_id.to_hex(),
+            crs_id.to_hex(),
+            hex::encode(&ct_proof_handle),
+        );
+
+        // chain ID is 32 bytes
+        let mut chain_id_bytes = vec![0u8; 32];
+        chain_id.to_little_endian(&mut chain_id_bytes);
+
+        // convert user_address to verification_key
+        if client_address.len() != 20 {
+            return Err(anyhow::anyhow!(
+                "user_address {} bytes but 20 bytes is expected",
+                client_address.len()
+            ));
+        }
+
+        let zkp_values = ZkpValues::builder()
+            .ct_proof_handle(ct_proof_handle.clone())
+            .client_address(client_address)
+            .contract_address(contract_address)
+            .key_id(key_id)
+            .crs_id(crs_id)
+            .build();
+
+        let operation = events::kms::OperationValue::Zkp(zkp_values);
+
+        // send coins 1:1 with the ciphertext size
+        let data_size = footprint::extract_ciphertext_size(&ct_proof_handle);
+        tracing::info!("🍊 Zkp ciphertext of size: {:?}", data_size);
+        // TODO how do we handle payment of ZKP validation?
+        let evs = self
+            .make_req_to_kms_blockchain(data_size, operation, None)
+            .await?;
+
+        // TODO what if we have multiple events?
+        let ev = evs[0].clone();
+
+        tracing::info!("✉️ TxId: {:?}", ev.txn_id().to_hex(),);
+
+        tracing::info!(
+            "🍊 Waiting for callback from KMS, txn_id: {:?}",
+            ev.txn_id().to_hex()
+        );
+        let event = self.wait_for_transaction(ev.txn_id()).await?;
+        tracing::info!("🍊 Received callback from KMS: {:?}", event.txn_id());
+        let request = QueryContractRequest::builder()
+            .contract_address(self.config.kms.contract_address.to_string())
+            .query(ContractQuery::GetOperationsValue(
+                OperationQuery::builder().event(event.clone()).build(),
+            ))
+            .build();
+
+        let results: Vec<OperationValue> = self.query_client.query_contract(request).await?;
+
+        match self.config.mode {
+            KmsMode::Centralized => match results.first().unwrap() {
+                OperationValue::ZkpResponse(zkp_response) => {
+                    tracing::debug!(
+                        "🍇🥐🍇🥐🍇🥐 Centralized KMS signature: {:?}",
+                        zkp_response.signature().to_hex()
+                    );
+
+                    // the output needs to have type Vec<ZkpResponse>
+                    // in the centralized case there is only 1 element
+                    let out = vec![zkp_response.clone()];
+                    Ok(out)
+                }
+                _ => return Err(anyhow::anyhow!("Invalid operation for request {:?}", event)),
+            },
+            KmsMode::Threshold => {
+                let mut out = vec![];
+                for value in results.iter() {
+                    match value {
+                        OperationValue::ZkpResponse(zkp_response) => {
+                            // the output needs to have type Vec<ZkpResponse>
+                            // in the centralized case there is only 1 element
+                            out.push(zkp_response.clone());
+                        }
+                        _ => {
+                            return Err(anyhow::anyhow!(
+                                "Invalid operation for request {:?}",
+                                event
+                            ));
+                        }
+                    }
+                }
                 Ok(out)
             }
         }

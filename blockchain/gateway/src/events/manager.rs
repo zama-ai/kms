@@ -1,6 +1,7 @@
 use crate::blockchain::blockchain_impl;
 use crate::blockchain::handlers::handle_event_decryption;
 use crate::blockchain::handlers::handle_reencryption_event;
+use crate::blockchain::handlers::handle_zkp_event;
 use crate::blockchain::Blockchain;
 use crate::common::provider::EventDecryptionFilter;
 use crate::config::init_conf_with_trace_connector;
@@ -20,6 +21,7 @@ use ethers::providers::{Provider, Ws};
 use ethers::types::U256;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
+use events::kms::ZkpResponseValues;
 use events::HexVector;
 use kms_blockchain_connector::application::oracle_sync::OracleSyncHandler;
 use kms_blockchain_connector::application::SyncHandler;
@@ -64,10 +66,27 @@ pub struct ReencryptionEvent {
     pub(crate) sender: oneshot::Sender<Vec<ReencryptResponseValues>>,
 }
 
+// Note that `client_address` and `eip712_verifying_contract`
+// are encoded using EIP-55.
+#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq)]
+pub(crate) struct ApiZkpValues {
+    pub(crate) client_address: String,
+    pub(crate) caller_address: String,
+    pub(crate) ct_proof: HexVector,
+    pub(crate) max_num_bits: u32,
+}
+
+#[derive(Debug)]
+pub struct ZkpEvent {
+    pub(crate) values: ApiZkpValues,
+    pub(crate) sender: oneshot::Sender<Vec<ZkpResponseValues>>,
+}
+
 // Define different event types
 pub enum GatewayEvent {
     Decryption(DecryptionEvent),
     Reencryption(ReencryptionEvent),
+    Zkp(ZkpEvent),
     KmsEvent(KmsEvent),
 }
 
@@ -301,6 +320,91 @@ async fn reencrypt_payload(
     }
 }
 
+#[derive(Clone)]
+pub struct ZkpEventPublisher {
+    sender: mpsc::Sender<GatewayEvent>,
+    config: GatewayConfig,
+}
+
+impl ZkpEventPublisher {
+    pub async fn new(sender: mpsc::Sender<GatewayEvent>, config: GatewayConfig) -> Self {
+        Self { sender, config }
+    }
+}
+
+#[async_trait]
+impl Publisher<ZkpEvent> for ZkpEventPublisher {
+    fn publish(&self, event: ZkpEvent) {
+        self.sender.try_send(GatewayEvent::Zkp(event)).unwrap();
+    }
+
+    async fn run(&self) -> anyhow::Result<()> {
+        let publisher = Arc::new(self.clone());
+        let api_url = self.config.api_url.clone();
+        let payload_limit = 10 * 1024 * 1024; // 10 MB
+        let _handle = HttpServer::new(move || {
+            let cors = Cors::default()
+                .allow_any_origin()
+                .allowed_methods(vec!["GET", "POST", "OPTIONS"])
+                .allowed_headers(vec!["Content-Type"])
+                .max_age(3600);
+
+            App::new()
+                .wrap(Logger::default())
+                .wrap(cors)
+                .app_data(web::PayloadConfig::new(payload_limit))
+                .app_data(web::Data::new(publisher.clone()))
+                .route("/zkp", web::post().to(zkp_payload))
+                .route(
+                    "/zkp",
+                    web::method(Method::OPTIONS).to(|| async {
+                        HttpResponse::Ok()
+                            .append_header(("Allow", "OPTIONS, POST"))
+                            .append_header(("Access-Control-Allow-Origin", "*"))
+                            .append_header(("Access-Control-Allow-Methods", "POST, OPTIONS"))
+                            .append_header(("Access-Control-Allow-Headers", "Content-Type"))
+                            .finish()
+                    }),
+                )
+                .route("/health", web::get().to(health_check)) // Add health check endpoint
+        })
+        .workers(20)
+        .bind(api_url)
+        .unwrap()
+        .run()
+        .await;
+
+        Ok(())
+    }
+}
+
+async fn zkp_payload(
+    payload: web::Json<ApiZkpValues>,
+    publisher: web::Data<Arc<ZkpEventPublisher>>,
+) -> HttpResponse {
+    info!("🍓🍓🍓 => Received ZKP request");
+
+    let (sender, receiver) = oneshot::channel();
+
+    publisher.publish(ZkpEvent {
+        values: payload.into_inner(),
+        sender,
+    });
+    info!("🍓🍓🍓 Published ZKP request");
+
+    match receiver.await {
+        Ok(reencryption_response) => {
+            info!("🍓🍓🍓 <= Received ZKP response");
+            HttpResponse::Ok()
+                .json(json!({ "status": "success", "response": reencryption_response }))
+        }
+        Err(e) => {
+            error!("Error receiving ZKP response: {:?}", e);
+            HttpResponse::InternalServerError().json(json!({ "status": "failure" }))
+        }
+    }
+}
+
 // Subscriber
 pub struct GatewaySubscriber {
     config: GatewayConfig,
@@ -350,6 +454,12 @@ impl GatewaySubscriber {
                                     .await
                                     .unwrap();
                             let _ = reencrypt_event.sender.send(reencrypt_response);
+                        }
+                        GatewayEvent::Zkp(zkp_event) => {
+                            debug!("🫐🫐🫐 Received Zkp Event");
+                            let zkp_response =
+                                handle_zkp_event(&zkp_event.values, &config).await.unwrap();
+                            let _ = zkp_event.sender.send(zkp_response);
                         }
                         GatewayEvent::KmsEvent(kms_event) => {
                             debug!("🫐🫐🫐 Received KmsEvent: {:?}", kms_event);

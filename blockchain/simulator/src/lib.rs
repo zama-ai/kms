@@ -21,7 +21,7 @@ use kms_blockchain_client::query_client::{
 };
 use kms_lib::kms::DecryptionResponsePayload;
 use kms_lib::rpc::rpc_types::Plaintext;
-use kms_lib::util::key_setup::test_tools::{compute_cipher_from_storage, TypedPlaintext};
+use kms_lib::util::key_setup::test_tools::{compute_cipher_from_stored_key, TypedPlaintext};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -376,7 +376,7 @@ pub async fn encrypt(
     );
 
     let (cipher, _) =
-        compute_cipher_from_storage(Some(keys_folder), typed_to_encrypt, key_id).await;
+        compute_cipher_from_stored_key(Some(keys_folder), typed_to_encrypt, key_id).await;
     Ok(cipher)
 }
 

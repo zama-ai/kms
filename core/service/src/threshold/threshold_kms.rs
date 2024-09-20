@@ -1846,25 +1846,23 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
         let _handle = tokio::spawn(async move {
             let crs_start_timer = Instant::now();
             let real_ceremony = RealCeremony::default();
-            let res_pp = real_ceremony
+            let pp = real_ceremony
                 .execute::<Z64, _, _>(&mut session, witness_dim, max_num_bits)
                 .await;
+            let pp_id = pp.map(|pp| PublicParameterWithParamID {
+                pp,
+                param_id: param_choice.into(),
+            });
             let res_info_pp =
-                res_pp.and_then(|pp| compute_info(&sig_key, &pp).map(|info| (info, pp)));
+                pp_id.and_then(|pp_id| compute_info(&sig_key, &pp_id).map(|info| (info, pp_id)));
             let f = || async {
                 // we take these two locks at the same time in case there are races
                 // on return, the two locks should be dropped in the correct order also
                 let mut pub_storage = public_storage.lock().await;
                 let mut priv_storage = private_storage.lock().await;
 
-                let (meta_data, pp) = match res_info_pp {
-                    Ok((meta, pp)) => (
-                        meta,
-                        PublicParameterWithParamID {
-                            pp,
-                            param_id: param_choice as i32,
-                        },
-                    ),
+                let (meta_data, pp_id) = match res_info_pp {
+                    Ok((meta, pp_id)) => (meta, pp_id),
                     Err(e) => {
                         let mut guarded_meta_store = meta_store.write().await;
                         // We cannot do much if updating the storage fails at this point...
@@ -1886,7 +1884,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
                     && store_at_request_id(
                         &mut (*pub_storage),
                         &owned_req_id,
-                        &pp.versionize(),
+                        &pp_id.versionize(),
                         &PubDataType::CRS.to_string(),
                     )
                     .await

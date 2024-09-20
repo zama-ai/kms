@@ -10,6 +10,7 @@ use crate::kms::ReencryptionRequest;
 use crate::kms::RequestId;
 use crate::kms::{FheType, ParamChoice};
 use crate::kms::{TypedCiphertext, ZkVerifyResponsePayload};
+use crate::rpc::rpc_types::PublicParameterWithParamID;
 use crate::rpc::rpc_types::SignedPubDataHandleInternal;
 use crate::rpc::rpc_types::{
     BaseKms, Kms, Plaintext, PrivDataType, PubDataType, SigncryptionPayload,
@@ -35,7 +36,6 @@ use distributed_decryption::execution::endpoints::keygen::FhePubKeySet;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 #[cfg(feature = "non-wasm")]
 use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
-use distributed_decryption::execution::zk::ceremony::PublicParameter;
 use k256::ecdsa::SigningKey;
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
@@ -90,13 +90,14 @@ pub async fn async_generate_fhe_keys(
 pub async fn async_generate_crs(
     sk: &PrivateSigKey,
     rng: AesRng,
+    param_choice: ParamChoice,
     params: NoiseFloodParameters,
     max_num_bits: Option<u32>,
-) -> anyhow::Result<(PublicParameter, SignedPubDataHandleInternal)> {
+) -> anyhow::Result<(PublicParameterWithParamID, SignedPubDataHandleInternal)> {
     let (send, recv) = tokio::sync::oneshot::channel();
     let sk_copy = sk.to_owned();
     rayon::spawn(move || {
-        let out = gen_centralized_crs(&sk_copy, &params, max_num_bits, rng);
+        let out = gen_centralized_crs(&sk_copy, param_choice, &params, max_num_bits, rng);
         let _ = send.send(out);
     });
     recv.await?
@@ -145,14 +146,19 @@ pub fn generate_client_fhe_key(params: NoiseFloodParameters, seed: Option<Seed>)
 #[cfg(feature = "non-wasm")]
 pub(crate) fn gen_centralized_crs<R: Rng + CryptoRng>(
     sk: &PrivateSigKey,
+    param_choice: ParamChoice,
     params: &NoiseFloodParameters,
     max_num_bits: Option<u32>,
     mut rng: R,
-) -> anyhow::Result<(PublicParameter, SignedPubDataHandleInternal)> {
+) -> anyhow::Result<(PublicParameterWithParamID, SignedPubDataHandleInternal)> {
     let pp =
         make_centralized_public_parameters(&params.ciphertext_parameters, max_num_bits, &mut rng)?;
-    let crs_info = compute_info(sk, &pp)?;
-    Ok((pp, crs_info))
+    let pp_id = PublicParameterWithParamID {
+        pp,
+        param_id: param_choice.into(),
+    };
+    let crs_info = compute_info(sk, &pp_id)?;
+    Ok((pp_id, crs_info))
 }
 
 pub struct BaseKmsStruct {
@@ -691,6 +697,7 @@ pub fn compute_info<S: Serialize>(
     sk: &PrivateSigKey,
     element: &S,
 ) -> anyhow::Result<SignedPubDataHandleInternal> {
+    // TODO not needed to serialize here
     let ser = serialize(element)?;
     let handle = compute_handle(&ser)?;
     let signature = sign(&handle, sk)?;

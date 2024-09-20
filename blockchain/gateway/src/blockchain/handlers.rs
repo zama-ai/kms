@@ -6,6 +6,7 @@ use crate::config::BaseGasPrice;
 use crate::config::EthereumConfig;
 use crate::config::GatewayConfig;
 use crate::events::manager::ApiReencryptValues;
+use crate::events::manager::ApiZkpValues;
 use crate::events::manager::DecryptionEvent;
 use crate::util::wallet::WalletManager;
 use anyhow::Context;
@@ -13,6 +14,7 @@ use ethers::abi::encode;
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::ReencryptResponseValues;
+use events::kms::ZkpResponseValues;
 use kms_lib::kms::Eip712DomainMsg;
 use std::ops::Mul;
 use std::sync::Arc;
@@ -32,7 +34,10 @@ pub(crate) async fn handle_event_decryption(
         .await
         .unwrap();
 
-    tracing::info!("⏱️ KMS Response Time elapsed: {:?}", start.elapsed());
+    tracing::info!(
+        "⏱️ KMS Response Time elapsed for decryption: {:?}",
+        start.elapsed()
+    );
 
     // Signatures into Bytes type
     let signatures = sigs.iter().map(|s| Bytes::from(s.clone())).collect();
@@ -189,7 +194,37 @@ pub(crate) async fn handle_reencryption_event(
         )
         .await;
     let duration = start.elapsed();
-    tracing::info!("⏱️ KMS Response Time elapsed: {:?}", duration);
+    tracing::info!(
+        "⏱️ KMS Response Time elapsed for reencryption: {:?}",
+        duration
+    );
+    response
+}
+
+pub(crate) async fn handle_zkp_event(
+    event: &ApiZkpValues,
+    config: &GatewayConfig,
+) -> anyhow::Result<Vec<ZkpResponseValues>> {
+    let client = Arc::new(http_provider(config).await?);
+    let start = std::time::Instant::now();
+    let chain_id = client.provider().get_chainid().await?;
+
+    // check the format EIP-55
+    _ = alloy_primitives::Address::parse_checksummed(&event.client_address, None)?;
+    _ = alloy_primitives::Address::parse_checksummed(&event.caller_address, None)?;
+
+    let response = blockchain_impl(config)
+        .await
+        .zkp(
+            event.client_address.clone(),
+            event.caller_address.clone(),
+            event.ct_proof.0.clone(),
+            event.max_num_bits,
+            chain_id,
+        )
+        .await;
+    let duration = start.elapsed();
+    tracing::info!("⏱️ KMS Response Time elapsed for ZKP: {:?}", duration);
     response
 }
 

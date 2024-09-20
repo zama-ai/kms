@@ -2,6 +2,7 @@ use super::metrics::OpenTelemetryMetrics;
 use crate::conf::TimeoutConfig;
 use crate::domain::blockchain::{
     BlockchainOperationVal, DecryptResponseVal, KmsOperationResponse, ReencryptResponseVal,
+    ZkpResponseVal,
 };
 use crate::domain::kms::Kms;
 use crate::domain::storage::Storage;
@@ -13,7 +14,7 @@ use enum_dispatch::enum_dispatch;
 use events::kms::{
     DecryptResponseValues, DecryptValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
     KeyGenValues, KmsCoreConf, KmsEvent, OperationValue, ReencryptResponseValues, ReencryptValues,
-    TransactionId,
+    TransactionId, ZkpResponseValues, ZkpValues,
 };
 use events::HexVector;
 use kms_lib::kms::core_service_endpoint_client::CoreServiceEndpointClient;
@@ -21,7 +22,8 @@ use kms_lib::kms::{
     Config, CrsGenRequest, CrsGenResult, DecryptionRequest, DecryptionResponse,
     DecryptionResponsePayload, Eip712DomainMsg, KeyGenPreprocStatus, KeyGenPreprocStatusEnum,
     KeyGenResult, ParamChoice, ReencryptionRequest, ReencryptionRequestPayload,
-    ReencryptionResponse, ReencryptionResponsePayload, TypedCiphertext,
+    ReencryptionResponse, ReencryptionResponsePayload, TypedCiphertext, ZkVerifyRequest,
+    ZkVerifyResponse, ZkVerifyResponsePayload,
 };
 use kms_lib::kms::{KeyGenPreprocRequest, KeyGenRequest, RequestId};
 use kms_lib::rpc::rpc_types::{PubDataType, CURRENT_FORMAT_VERSION};
@@ -48,6 +50,11 @@ pub struct ReencryptVal<S> {
     pub operation_val: KmsOperationVal<S>,
 }
 
+pub struct ZkpVal<S> {
+    pub zkp: ZkpValues,
+    pub operation_val: KmsOperationVal<S>,
+}
+
 pub struct KeyGenPreprocVal<S> {
     pub operation_val: KmsOperationVal<S>,
 }
@@ -62,8 +69,9 @@ pub struct CrsGenVal<S> {
 }
 
 pub enum KmsOperationRequest<S> {
-    Reencrypt(ReencryptVal<S>),
     Decrypt(DecryptVal<S>),
+    Reencrypt(ReencryptVal<S>),
+    Zkp(ZkpVal<S>),
     KeyGen(KeyGenVal<S>),
     KeyGenPreproc(KeyGenPreprocVal<S>),
     CrsGen(CrsGenVal<S>),
@@ -79,10 +87,11 @@ where
         config_contract: Option<KmsCoreConf>,
     ) -> anyhow::Result<KmsOperationResponse> {
         match self {
+            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_operation(config_contract).await,
             KmsOperationRequest::Reencrypt(reencrypt) => {
                 reencrypt.run_operation(config_contract).await
             }
-            KmsOperationRequest::Decrypt(decrypt) => decrypt.run_operation(config_contract).await,
+            KmsOperationRequest::Zkp(zkp) => zkp.run_operation(config_contract).await,
             KmsOperationRequest::KeyGenPreproc(keygen_preproc) => {
                 keygen_preproc.run_operation(config_contract).await
             }
@@ -171,6 +180,7 @@ where
                 reencrypt,
                 operation_val,
             }),
+            OperationValue::Zkp(zkp) => KmsOperationRequest::Zkp(ZkpVal { zkp, operation_val }),
             OperationValue::Decrypt(decrypt) => KmsOperationRequest::Decrypt(DecryptVal {
                 decrypt,
                 operation_val,
@@ -388,9 +398,9 @@ where
         let chan = &self.operation_val.kms_client.channel;
         let mut client = CoreServiceEndpointClient::new(chan.clone());
 
-        let request_id = self.operation_val.tx_id.to_hex();
+        let tx_id = self.operation_val.tx_id.to_hex();
 
-        let req_id: RequestId = request_id.clone().try_into()?;
+        let req_id: RequestId = tx_id.clone().try_into()?;
 
         if CURRENT_FORMAT_VERSION != self.reencrypt.version() {
             return Err(anyhow!(
@@ -433,7 +443,7 @@ where
 
         let metrics = self.operation_val.kms_client.metrics.clone();
 
-        let request = make_request(req.clone(), Some(request_id.clone()))?;
+        let request = make_request(req.clone(), Some(tx_id.clone()))?;
 
         // the response should be empty
         let _resp = client.reencrypt(request).await.inspect_err(|e| {
@@ -481,10 +491,94 @@ where
 
         // loop to get response
         poller!(
-            client.get_reencrypt_result(make_request(req_id.clone(), Some(request_id.clone()))?),
+            client.get_reencrypt_result(make_request(req_id.clone(), Some(tx_id.clone()))?),
             g,
             timeout_triple,
             "(Reencrypt)",
+            metrics
+        );
+    }
+}
+
+#[async_trait]
+impl<S> KmsEventHandler for ZkpVal<S>
+where
+    S: Storage + Clone + Send + Sync + 'static,
+{
+    async fn run_operation(
+        &self,
+        _config_contract: Option<KmsCoreConf>,
+    ) -> anyhow::Result<KmsOperationResponse> {
+        let chan = &self.operation_val.kms_client.channel;
+        let mut client = CoreServiceEndpointClient::new(chan.clone());
+
+        let tx_id = self.operation_val.tx_id.to_hex();
+        let req_id: RequestId = tx_id.clone().try_into()?;
+        let zkp = &self.zkp;
+        let ct_proof_handle: Vec<u8> = zkp.ct_proof_handle().deref().into();
+        let ct_proof = self
+            .operation_val
+            .kms_client
+            .storage
+            .get_ciphertext(ct_proof_handle)
+            .await?;
+        let req = ZkVerifyRequest {
+            request_id: Some(req_id.clone()),
+            key_handle: Some(RequestId {
+                request_id: zkp.key_id().to_hex(),
+            }),
+            crs_handle: Some(RequestId {
+                request_id: zkp.crs_id().to_hex(),
+            }),
+            client_address: zkp.client_address().to_string(),
+            contract_address: zkp.contract_address().to_string(),
+            ct_bytes: ct_proof,
+        };
+
+        let metrics = self.operation_val.kms_client.metrics.clone();
+
+        let request = make_request(req.clone(), Some(tx_id.clone()))?;
+        // Response is just empty
+        let _resp = client.zk_verify(request).await.inspect_err(|e| {
+            let err_msg = e.to_string();
+            tracing::error!("Error in ZKP verification: {}", err_msg);
+            metrics.increment(MetricType::CoreError, 1, &[("error", &err_msg)]);
+        })?;
+        metrics.increment(MetricType::CoreSuccess, 1, &[("ok", "Zkp")]);
+
+        let g =
+            |res: Result<Response<ZkVerifyResponse>, Status>| -> anyhow::Result<PollerStatus<_>, anyhow::Error> {
+            match res {
+                Ok(res) => {
+                    let inner = res.into_inner();
+                    let payload: ZkVerifyResponsePayload = inner.payload.ok_or_else(||anyhow!("empty decryption payload"))?;
+                    Ok(PollerStatus::Done(KmsOperationResponse::ZkpResponse(
+                        ZkpResponseVal {
+                            zkp_response: ZkpResponseValues::builder()
+                                .signature(inner.signature)
+                                .payload(bincode::serialize(&payload)?)
+                                .build(),
+                            operation_val: BlockchainOperationVal {
+                                tx_id: self.operation_val.tx_id.clone(),
+                            },
+                        },
+                    )))
+                }
+                Err(_) => {
+                    Ok(PollerStatus::Poll)
+                }
+            }
+        };
+
+        // we wait for a bit before even trying
+        let timeout_triple = self.operation_val.kms_client.timeout_config.zkp.clone();
+
+        // loop to get response
+        poller!(
+            client.get_zk_verify_result(make_request(req_id.clone(), Some(tx_id.clone()))?),
+            g,
+            timeout_triple,
+            "(Zkp)",
             metrics
         );
     }

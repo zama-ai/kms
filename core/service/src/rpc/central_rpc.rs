@@ -36,7 +36,6 @@ use std::fmt;
 use std::sync::Arc;
 use tfhe::zk::CompactPkePublicParams;
 use tfhe::{CompactPublicKey, ProvenCompactCiphertextList, Unversionize, Versionize};
-use tfhe_versionable::VersionizeOwned;
 use tokio::sync::{Mutex, RwLock};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
@@ -587,7 +586,9 @@ impl<
         let _handle = tokio::spawn(async move {
             {
                 let (pp, crs_info) =
-                    match async_generate_crs(&sk, rng, params, inner.max_num_bits).await {
+                    match async_generate_crs(&sk, rng, param_choice, params, inner.max_num_bits)
+                        .await
+                    {
                         Ok((pp, crs_info)) => (pp, crs_info),
                         Err(_) => {
                             let mut guarded_meta_store = meta_store.write().await;
@@ -600,10 +601,6 @@ impl<
                             return;
                         }
                     };
-                let pp = PublicParameterWithParamID {
-                    pp,
-                    param_id: param_choice as i32,
-                };
                 let mut pub_storage = public_storage.lock().await;
                 let mut priv_storage = private_storage.lock().await;
                 //Try to store the new data
@@ -781,7 +778,7 @@ where
 {
     let request_id = request.into_inner();
     validate_request_id(&request_id)?;
-    let payload = {
+    let payload: ZkVerifyResponsePayload = {
         let guarded_meta_store = meta_store.read().await;
         handle_res_mapping(
             guarded_meta_store.retrieve(&request_id).cloned(),
@@ -789,6 +786,7 @@ where
             "ZK",
         )?
     };
+
     let sig_payload_vec = tonic_handle_potential_err(
         bincode::serialize(&payload),
         format!("Could not convert payload to bytes {:?}", payload),
@@ -831,20 +829,15 @@ where
 
     let pub_storage = public_storage.lock().await;
     let pp_with_id = PublicParameterWithParamID::unversionize(
-        read_at_request_id::<_, <PublicParameterWithParamID as VersionizeOwned>::VersionedOwned>(
-            &(*pub_storage),
-            &crs_handle,
-            &PubDataType::CRS.to_string(),
-        )
-        .await
-        .inspect_err(|e| {
-            tracing::error!("No CRS with the handle {} ({e})", crs_handle);
-        })?,
+        read_at_request_id(&(*pub_storage), &crs_handle, &PubDataType::CRS.to_string())
+            .await
+            .inspect_err(|e| {
+                tracing::error!("No CRS with the handle {} ({e})", crs_handle);
+            })?,
     )
     .inspect_err(|e| {
         tracing::error!("unversionize failed for CRS handle {} ({e})", crs_handle);
     })?;
-
     let public_key = CompactPublicKey::unversionize(
         read_at_request_id(
             &(*pub_storage),
@@ -859,7 +852,6 @@ where
     .inspect_err(|e| {
         tracing::error!("unversionize failed for key handle {} ({e})", key_handle);
     })?;
-
     let (params, _) = retrieve_parameters_sync(pp_with_id.param_id, param_file_map.clone())
         .await
         .inspect_err(|e| {
@@ -868,14 +860,12 @@ where
                 pp_with_id.param_id
             );
         })?;
-
     let pp = pp_with_id
         .pp
         .try_into_tfhe_zk_pok_pp(&params.ciphertext_parameters)
         .inspect_err(|e| {
             tracing::error!("could not cast pp for handle {} ({e})", crs_handle);
         })?;
-
     let (send, recv) = tokio::sync::oneshot::channel();
     rayon::spawn(move || {
         let out = verify_and_hash(&proven_ct, &pp, &public_key);

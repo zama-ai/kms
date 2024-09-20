@@ -2,7 +2,7 @@ use conf_trace::conf::Tracing;
 use conf_trace::telemetry::init_tracing;
 use events::kms::{
     CrsGenValues, FheParameter, KeyGenPreprocValues, KmsCoreConf, KmsCoreParty,
-    KmsCoreThresholdConf, KmsEvent, TransactionId,
+    KmsCoreThresholdConf, KmsEvent, TransactionId, ZkpValues,
 };
 use events::kms::{DecryptResponseValues, DecryptValues, FheType, KmsMessage, Proof, Transaction};
 use events::kms::{KmsOperation, OperationValue};
@@ -29,6 +29,10 @@ use kms_blockchain_connector::domain::storage::Storage;
 use kms_blockchain_connector::infrastructure::blockchain::KmsBlockchain;
 use kms_blockchain_connector::infrastructure::core::{KmsCore, KmsEventHandler};
 use kms_blockchain_connector::infrastructure::metrics::OpenTelemetryMetrics;
+use kms_lib::consts::TEST_CRS_ID;
+use kms_lib::kms::{ZkVerifyResponse, ZkVerifyResponsePayload};
+use kms_lib::util::key_setup::test_tools::compute_zkp_from_stored_key;
+use kms_lib::util::key_setup::{ensure_central_crs_exists, ensure_threshold_crs_exists};
 use kms_lib::{
     client::{test_tools, ParsedReencryptionRequest},
     consts::{
@@ -45,7 +49,7 @@ use kms_lib::{
         ensure_central_keys_exist, ensure_central_server_signing_keys_exist,
         ensure_client_keys_exist, ensure_threshold_keys_exist,
         ensure_threshold_server_signing_keys_exist,
-        test_tools::{compute_cipher_from_storage, purge},
+        test_tools::{compute_cipher_from_stored_key, purge},
     },
 };
 use rand::RngCore;
@@ -384,6 +388,15 @@ async fn setup_threshold_keys() {
         true,
     )
     .await;
+    ensure_threshold_crs_exists(
+        &mut threshold_pub_storages,
+        &mut threshold_priv_storages,
+        kms_lib::kms::ParamChoice::Test,
+        TEST_PARAM_PATH,
+        &TEST_CRS_ID,
+        true,
+    )
+    .await;
 }
 
 async fn setup_central_keys() {
@@ -406,6 +419,15 @@ async fn setup_central_keys() {
         &OTHER_CENTRAL_TEST_ID,
         true,
         false,
+    )
+    .await;
+    ensure_central_crs_exists(
+        &mut central_pub_storage,
+        &mut central_priv_storage,
+        kms_lib::kms::ParamChoice::Test,
+        TEST_PARAM_PATH,
+        &TEST_CRS_ID,
+        true,
     )
     .await;
 }
@@ -490,9 +512,9 @@ async fn ddec_centralized_sunshine() {
     let msg2 = 222u16;
     setup_central_keys().await;
     let (ct1, fhe_type1): (Vec<u8>, kms_lib::kms::FheType) =
-        compute_cipher_from_storage(None, msg1.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
+        compute_cipher_from_stored_key(None, msg1.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
     let (ct2, fhe_type2): (Vec<u8>, kms_lib::kms::FheType) =
-        compute_cipher_from_storage(None, msg2.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
+        compute_cipher_from_stored_key(None, msg2.into(), &TEST_CENTRAL_KEY_ID.to_string()).await;
     let op = OperationValue::Decrypt(
         DecryptValues::builder()
             .version(CURRENT_FORMAT_VERSION)
@@ -697,9 +719,9 @@ async fn ddec_sunshine(slow: bool) {
     let msg1 = 121u8;
     let msg2 = 321u16;
     let (ct1, fhe_type1): (Vec<u8>, kms_lib::kms::FheType) =
-        compute_cipher_from_storage(None, msg1.into(), &TEST_THRESHOLD_KEY_ID.to_string()).await;
+        compute_cipher_from_stored_key(None, msg1.into(), &TEST_THRESHOLD_KEY_ID.to_string()).await;
     let (ct2, fhe_type2): (Vec<u8>, kms_lib::kms::FheType) =
-        compute_cipher_from_storage(None, msg2.into(), &TEST_THRESHOLD_KEY_ID.to_string()).await;
+        compute_cipher_from_stored_key(None, msg2.into(), &TEST_THRESHOLD_KEY_ID.to_string()).await;
     let op = OperationValue::Decrypt(
         DecryptValues::builder()
             .version(CURRENT_FORMAT_VERSION)
@@ -764,10 +786,8 @@ async fn reenc_sunshine(slow: bool) {
     setup_threshold_keys().await;
     let msg = 111u8;
     let (ct, fhe_type): (Vec<u8>, kms_lib::kms::FheType) =
-        compute_cipher_from_storage(None, msg.into(), &TEST_THRESHOLD_KEY_ID.to_string()).await;
+        compute_cipher_from_stored_key(None, msg.into(), &TEST_THRESHOLD_KEY_ID.to_string()).await;
 
-    // we need a KMS client to simply the boilerplate
-    // for setting up the request correctly
     let mut pub_storage = Vec::with_capacity(AMOUNT_PARTIES);
     for i in 1..=AMOUNT_PARTIES {
         pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
@@ -856,6 +876,103 @@ async fn reenc_sunshine(slow: bool) {
                         bincode::deserialize(resp_value.payload().as_slice()).unwrap();
                     assert_eq!(payload.version, CURRENT_FORMAT_VERSION);
                     assert_eq!(payload.digest, "dummy digest".as_bytes().to_vec());
+                }
+                _ => {
+                    panic!("invalid response");
+                }
+            }
+        }
+    }
+}
+
+async fn zkp_sunshine(slow: bool) {
+    setup_threshold_keys().await;
+
+    let dummy_contract_address =
+        alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
+    println!("test CRS {:?}", TEST_CRS_ID.to_string());
+    let msg = vec![42u32.into(), 111u8.into()];
+    let ct_proof = compute_zkp_from_stored_key(
+        None,
+        msg,
+        &TEST_THRESHOLD_KEY_ID.to_string(),
+        &TEST_CRS_ID.to_string(),
+    )
+    .await;
+
+    let mut pub_storage = Vec::with_capacity(AMOUNT_PARTIES);
+    for i in 1..=AMOUNT_PARTIES {
+        pub_storage.push(FileStorage::new_threshold(None, StorageType::PUB, i).unwrap());
+    }
+    let client_storage = FileStorage::new_centralized(None, StorageType::CLIENT).unwrap();
+    let kms_client =
+        kms_lib::client::Client::new_client(client_storage, pub_storage, TEST_PARAM_PATH)
+            .await
+            .unwrap();
+
+    let request_id = RequestId {
+        request_id: "2222000000000000000000000000000000001111".to_string(),
+    };
+    let key_id = &TEST_THRESHOLD_KEY_ID;
+    let crs_id = &TEST_CRS_ID;
+    let kms_req = kms_client
+        .zk_verify_request(
+            crs_id,
+            key_id,
+            dummy_contract_address,
+            &ct_proof,
+            &request_id,
+        )
+        .unwrap();
+    let op = OperationValue::Zkp(
+        ZkpValues::builder()
+            .contract_address(kms_req.contract_address)
+            .client_address(kms_req.client_address)
+            .key_id(HexVector::from_hex(kms_req.key_handle.unwrap().request_id.as_str()).unwrap())
+            .crs_id(HexVector::from_hex(kms_req.crs_handle.unwrap().request_id.as_str()).unwrap())
+            .ct_proof_handle(MOCK_CT_HANDLES[0].to_vec())
+            .build(),
+    );
+    let (results, txn_id, _) =
+        generic_sunshine_test(slow, vec![bincode::serialize(&ct_proof).unwrap()], op).await;
+    assert_eq!(results.len(), AMOUNT_PARTIES);
+
+    if slow {
+        // process the result using the kms client when we're running in the slow mode
+        // i.e., it is an integration test
+        let agg_resp: Vec<ZkVerifyResponse> = results
+            .into_iter()
+            .map(|r| {
+                let r = match r {
+                    KmsOperationResponse::ZkpResponse(resp) => resp,
+                    _ => panic!("invalid response"),
+                }
+                .zkp_response;
+
+                let payload: ZkVerifyResponsePayload = bincode::deserialize(
+                    <&HexVector as Into<Vec<u8>>>::into(r.payload()).as_slice(),
+                )
+                .unwrap();
+                ZkVerifyResponse {
+                    signature: r.signature().to_vec(),
+                    payload: Some(payload),
+                }
+            })
+            .collect();
+        // Try to check that enough signatures agree
+        let _ = kms_client
+            .process_zk_verify_resp(&agg_resp, AMOUNT_PARTIES as u32)
+            .unwrap();
+    } else {
+        // otherwise just check that we're getting dummy values back
+        for result in results {
+            match result {
+                KmsOperationResponse::ZkpResponse(resp) => {
+                    let resp_value = &resp.zkp_response;
+                    assert_eq!(resp.operation_val.tx_id, txn_id);
+                    let payload: ZkVerifyResponsePayload =
+                        bincode::deserialize(resp_value.payload().as_slice()).unwrap();
+                    assert_eq!(payload.ct_digest, "dummy digest".as_bytes().to_vec());
                 }
                 _ => {
                     panic!("invalid response");
@@ -970,6 +1087,12 @@ async fn reenc_sunshine_mocked_core() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn zkp_sunshine_mocked_core() {
+    zkp_sunshine(false).await
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn keygen_sunshine_mocked_core() {
     keygen_sunshine(false).await
 }
@@ -999,6 +1122,13 @@ async fn ddec_sunshine_slow() {
 #[serial_test::serial]
 async fn reenc_sunshine_slow() {
     reenc_sunshine(true).await
+}
+
+#[cfg(feature = "slow_tests")]
+#[tokio::test]
+#[serial_test::serial]
+async fn zkp_sunshine_slow() {
+    zkp_sunshine(true).await
 }
 
 #[cfg(feature = "slow_tests")]

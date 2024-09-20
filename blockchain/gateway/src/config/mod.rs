@@ -3,6 +3,7 @@ use conf_trace::telemetry::init_tracing;
 use ethers::types::H160;
 use kms_blockchain_connector::conf::ConnectorConfig;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use strum_macros::{Display, EnumString};
 use typed_builder::TypedBuilder;
 
@@ -66,6 +67,7 @@ pub struct KmsConfig {
     pub mnemonic: String,
     pub address: String,
     pub key_id: String,
+    pub crs_ids: HashMap<u32, String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
@@ -115,7 +117,7 @@ mod tests {
 
     #[test]
     fn test_gateway_config() {
-        let env_conf: [(&str, Option<&str>); 22] = [
+        let env_conf: [(&str, Option<&str>); 23] = [
             ("GATEWAY__DEBUG", None),
             ("GATEWAY__MODE", None),
             ("GATEWAY__ETHEREUM__CHAIN_ID", None),
@@ -138,6 +140,7 @@ mod tests {
             ("GATEWAY__KMS__MNEMONIC", None),
             ("GATEWAY__KMS__ADDRESS", None),
             ("GATEWAY__KMS__KEY_ID", None),
+            ("GATEWAY__KMS__CRS_IDS", None),
         ];
         temp_env::with_vars(env_conf, || {
             let gateway_config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
@@ -184,14 +187,17 @@ mod tests {
                 "wasm14hj2tavq8fpesdwxxcu44rty3hh90vhujrvcmstl4zr3txmfvw9s0phg4d"
             );
             assert_eq!(
-            gateway_config.kms.mnemonic,
-            "bachelor similar spirit copper rely carbon web hobby conduct wrap conduct wire shine parrot erosion divert crucial balance lock reason price ignore educate open"
-        );
+                gateway_config.kms.mnemonic,
+                "bachelor similar spirit copper rely carbon web hobby conduct wrap conduct wire shine parrot erosion divert crucial balance lock reason price ignore educate open"
+            );
             assert_eq!(gateway_config.kms.address, "http://localhost:9090");
             assert_eq!(
                 gateway_config.kms.key_id,
                 "408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
             );
+            let crs_ids =
+                HashMap::from([(256, "d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906".to_string())]);
+            assert_eq!(gateway_config.kms.crs_ids, crs_ids);
         });
     }
 
@@ -304,6 +310,9 @@ mod tests {
                 gateway_config.kms.key_id,
                 "408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
             );
+            let crs_ids =
+                HashMap::from([(256, "d8d94eb3a23d22d3eb6b5e7b694e8afcd571d906".to_string())]);
+            assert_eq!(gateway_config.kms.crs_ids, crs_ids);
             assert_eq!(
                 gateway_config.ethereum.kmsverifier_vc_address,
                 H160::from_str("66f9664f97F2b50F62D13eA064982f936dE76657").unwrap()

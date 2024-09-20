@@ -6,9 +6,9 @@ use crate::cryptography::central_kms::{
 };
 use crate::cryptography::internal_crypto_types::PrivateSigKey;
 use crate::cryptography::internal_crypto_types::PrivateSigKeyVersioned;
-use crate::kms::RequestId;
-use crate::rpc::rpc_types::PrivDataType;
+use crate::kms::{ParamChoice, RequestId};
 use crate::rpc::rpc_types::PubDataType;
+use crate::rpc::rpc_types::{PrivDataType, PublicParameterWithParamID};
 use crate::storage::Storage;
 use crate::storage::StorageReader;
 use crate::storage::{read_all_data, store_text_at_request_id};
@@ -20,13 +20,11 @@ use crate::{
     consts::{AMOUNT_PARTIES, THRESHOLD},
 };
 use aes_prng::AesRng;
-use distributed_decryption::execution::{
-    tfhe_internals::{
-        parameters::NoiseFloodParameters,
-        test_feature::{gen_key_set, keygen_all_party_shares},
-    },
-    zk::ceremony::make_centralized_public_parameters,
+use distributed_decryption::execution::tfhe_internals::{
+    parameters::NoiseFloodParameters,
+    test_feature::{gen_key_set, keygen_all_party_shares},
 };
+use distributed_decryption::execution::zk::ceremony::make_centralized_public_parameters;
 use rand::SeedableRng;
 use std::collections::HashMap;
 use std::path::Path;
@@ -201,6 +199,7 @@ where
 pub async fn ensure_central_crs_exists<S>(
     pub_storage: &mut S,
     priv_storage: &mut S,
+    param_choice: ParamChoice,
     param_path: &str,
     crs_handle: &RequestId,
     deterministic: bool,
@@ -234,7 +233,7 @@ where
     let sk = get_signing_key(priv_storage).await;
     let params: NoiseFloodParameters = read_as_json(param_path).await.unwrap();
     let mut rng = get_rng(deterministic, Some(0));
-    let (pp, crs_info) = gen_centralized_crs(&sk, &params, None, &mut rng).unwrap();
+    let (pp, crs_info) = gen_centralized_crs(&sk, param_choice, &params, None, &mut rng).unwrap();
 
     store_at_request_id(
         priv_storage,
@@ -492,10 +491,7 @@ where
         && priv_storages[0]
             .data_exists(
                 &priv_storages[0]
-                    .compute_url(
-                        &key_id.to_string(),
-                        &PrivDataType::FhePrivateKey.to_string(),
-                    )
+                    .compute_url(&key_id.to_string(), &PrivDataType::FheKeyInfo.to_string())
                     .unwrap(),
             )
             .await
@@ -590,6 +586,7 @@ where
 pub async fn ensure_threshold_crs_exists<S>(
     pub_storages: &mut [S],
     priv_storages: &mut [S],
+    param_choice: ParamChoice,
     param_path: &str,
     crs_handle: &RequestId,
     deterministic: bool,
@@ -630,12 +627,15 @@ where
 
     let pp =
         make_centralized_public_parameters(&params.ciphertext_parameters, None, &mut rng).unwrap();
-
+    let pp_id = PublicParameterWithParamID {
+        pp,
+        param_id: param_choice.into(),
+    };
     for (cur_pub, (cur_priv, cur_sk)) in pub_storages
         .iter_mut()
         .zip(priv_storages.iter_mut().zip(signing_keys.iter()))
     {
-        let crs_info = compute_info(cur_sk, &pp).unwrap();
+        let crs_info = compute_info(cur_sk, &pp_id).unwrap();
 
         store_at_request_id(
             cur_priv,
@@ -653,7 +653,7 @@ where
         store_at_request_id(
             cur_pub,
             crs_handle,
-            &pp.versionize(),
+            &pp_id.versionize(),
             &PubDataType::CRS.to_string(),
         )
         .await

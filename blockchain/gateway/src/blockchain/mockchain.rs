@@ -8,6 +8,7 @@ use ethers::prelude::*;
 use events::kms::FheType;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
+use events::kms::ZkpResponseValues;
 use kms_lib::kms::Eip712DomainMsg;
 
 pub(crate) struct MockchainImpl;
@@ -72,6 +73,24 @@ impl Blockchain for MockchainImpl {
             "🐛 eip712_verifying_contract: {:?}",
             eip712_verifying_contract
         );
+        tracing::debug!("🐛 chain_id: {:?}", chain_id);
+
+        Ok(vec![])
+    }
+
+    async fn zkp(
+        &self,
+        client_address: String,
+        caller_address: String,
+        ct_proof: Vec<u8>,
+        max_num_bits: u32,
+        chain_id: U256,
+    ) -> anyhow::Result<Vec<ZkpResponseValues>> {
+        tracing::debug!("🐛 Mockchain zkp");
+        tracing::debug!("🐛 client_address: {:?}", client_address);
+        tracing::debug!("🐛 caller_address: {:?}", caller_address);
+        tracing::debug!("🐛 ct_proof: {:?}", ct_proof);
+        tracing::debug!("🐛 max_num_bits: {:?}", max_num_bits);
         tracing::debug!("🐛 chain_id: {:?}", chain_id);
 
         Ok(vec![])

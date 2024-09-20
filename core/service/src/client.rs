@@ -38,6 +38,8 @@ use wasm_bindgen::prelude::*;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "non-wasm")] {
+        use crate::rpc::rpc_types::PublicParameterWithParamID;
+        use tfhe::zk::CompactPkePublicParams;
         use crate::cryptography::central_kms::{compute_handle, BaseKmsStruct};
         use crate::get_exactly_one;
         use crate::kms::DecryptionResponse;
@@ -53,7 +55,6 @@ cfg_if::cfg_if! {
         use crate::util::file_handling::read_as_json;
         use crate::{storage::StorageReader, util::key_setup::FhePublicKey};
         use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
-        use distributed_decryption::execution::zk::ceremony::PublicParameter;
         use serde::de::DeserializeOwned;
         use std::collections::HashMap;
         use std::fmt;
@@ -1009,9 +1010,7 @@ impl Client {
         results: Vec<CrsGenResult>,
         storage_readers: &[S],
         min_agree_count: u32,
-    ) -> anyhow::Result<PublicParameter> {
-        use crate::rpc::rpc_types::PublicParameterWithParamID;
-
+    ) -> anyhow::Result<PublicParameterWithParamID> {
         let mut verifying_pks = std::collections::HashSet::new();
         // counter of digest (digest -> usize)
         let mut hash_counter_map = HashMap::new();
@@ -1047,7 +1046,7 @@ impl Client {
             }
 
             // check the digest
-            let ser = bincode::serialize(&pp.pp)?;
+            let ser = bincode::serialize(&pp)?;
             let hex_digest = compute_handle(&ser)?;
             if info.key_handle != hex_digest {
                 tracing::warn!("crs_handle does not match the computed digest; discarding the CRS");
@@ -1073,7 +1072,7 @@ impl Client {
                     hash_counter_map.insert(hex_digest.clone(), 1usize);
                 }
             }
-            pp_map.insert(hex_digest, pp.pp);
+            pp_map.insert(hex_digest, pp);
         }
 
         // find the digest that has the most votes
@@ -1212,11 +1211,10 @@ impl Client {
         resp: &KeyGenResult,
         storage: &R,
     ) -> anyhow::Result<(FhePublicKey, ServerKey)> {
-        let pk: FhePublicKey = some_or_err(
-            self.retrieve_key(resp, PubDataType::PublicKey, storage)
-                .await?,
-            "Could not validate public key".to_string(),
-        )?;
+        let pk: FhePublicKey = self
+            .retrieve_key(resp, PubDataType::PublicKey, storage)
+            .await?
+            .unwrap();
         let server_key: ServerKey = match self
             .retrieve_key(resp, PubDataType::ServerKey, storage)
             .await?
@@ -1234,7 +1232,10 @@ impl Client {
     /// but will return None in case the signature is invalid or does not match the actual key
     /// handle.
     #[cfg(feature = "non-wasm")]
-    pub async fn retrieve_key<S: serde::Serialize + DeserializeOwned + Send, R: StorageReader>(
+    pub async fn retrieve_key<
+        S: serde::Serialize + DeserializeOwned + Send + Unversionize,
+        R: StorageReader,
+    >(
         &self,
         key_gen_result: &KeyGenResult,
         key_type: PubDataType,
@@ -1248,8 +1249,7 @@ impl Client {
             key_gen_result.request_id.clone(),
             "No request id".to_string(),
         )?;
-        let url = storage.compute_url(&request_id.to_string(), &key_type.to_string())?;
-        let key: S = storage.read_data(&url).await?;
+        let key: S = self.get_key(&request_id, key_type, storage).await?;
         let serialized_key = bincode::serialize(&key)?;
         let key_handle = compute_handle(&serialized_key)?;
         if key_handle != pki.key_handle {
@@ -1273,34 +1273,34 @@ impl Client {
         Ok(Some(key))
     }
 
+    /// Get a public key from a public storage
+    #[cfg(feature = "non-wasm")]
+    pub async fn get_key<
+        S: serde::Serialize + DeserializeOwned + Send + Unversionize,
+        R: StorageReader,
+    >(
+        &self,
+        key_id: &RequestId,
+        key_type: PubDataType,
+        storage: &R,
+    ) -> anyhow::Result<S> {
+        let url = storage.compute_url(&key_id.to_string(), &key_type.to_string())?;
+        storage.read_data(&url).await
+    }
+
+    /// Retrieve and validate a CRS based on the result from a server.
+    /// The method will return the CRS if retrieval and validation is successful,
+    /// but will return None in case the signature is invalid or does not match the actual CRS
+    /// handle.
     // NOTE: we're not checking it against the request
     // since this part of the client is only used for testing
     // see https://github.com/zama-ai/kms-core/issues/911
     #[cfg(feature = "non-wasm")]
     pub async fn process_get_crs_resp<R: StorageReader>(
         &self,
-        resp: &CrsGenResult,
-        storage: &R,
-    ) -> anyhow::Result<PublicParameter> {
-        let crs: PublicParameter = some_or_err(
-            self.retrieve_crs(resp, storage).await?,
-            "Could not validate CRS".to_string(),
-        )?;
-        Ok(crs)
-    }
-
-    /// Retrieve and validate a public key based on the result from a server.
-    /// The method will return the key if retrieval and validation is successful,
-    /// but will return None in case the signature is invalid or does not match the actual key
-    /// handle.
-    #[cfg(feature = "non-wasm")]
-    pub async fn retrieve_crs<R: StorageReader>(
-        &self,
         crs_gen_result: &CrsGenResult,
         storage: &R,
-    ) -> anyhow::Result<Option<PublicParameter>> {
-        use crate::rpc::rpc_types::PublicParameterWithParamID;
-
+    ) -> anyhow::Result<Option<(PublicParameterWithParamID, CompactPkePublicParams)>> {
         let crs_info = some_or_err(
             crs_gen_result.crs_results.clone(),
             "Could not find CRS info".to_string(),
@@ -1309,10 +1309,8 @@ impl Client {
             crs_gen_result.request_id.clone(),
             "No request id".to_string(),
         )?;
-        let url = storage.compute_url(&request_id.to_string(), &PubDataType::CRS.to_string())?;
-        let crs_versioned = storage.read_data(&url).await?;
-        let crs = PublicParameterWithParamID::unversionize(crs_versioned)?;
-        let serialized_crs = bincode::serialize(&crs.pp)?;
+        let (crs, pp) = self.get_crs(&request_id, storage).await?;
+        let serialized_crs = bincode::serialize(&crs)?;
         let crs_handle = compute_handle(&serialized_crs)?;
         if crs_handle != crs_info.key_handle {
             tracing::warn!(
@@ -1332,7 +1330,21 @@ impl Client {
             );
             return Ok(None);
         }
-        Ok(Some(crs.pp))
+        Ok(Some((crs, pp)))
+    }
+
+    /// Get a CRS from a public storage
+    #[cfg(feature = "non-wasm")]
+    pub async fn get_crs<R: StorageReader>(
+        &self,
+        crs_id: &RequestId,
+        storage: &R,
+    ) -> anyhow::Result<(PublicParameterWithParamID, CompactPkePublicParams)> {
+        let url = storage.compute_url(&crs_id.to_string(), &PubDataType::CRS.to_string())?;
+        let crs_versioned = storage.read_data(&url).await?;
+        let crs = PublicParameterWithParamID::unversionize(crs_versioned)?;
+        let pp = crs.pp.try_into_tfhe_zk_pok_pp(&self.params)?;
+        Ok((crs, pp))
     }
 
     /// Validates the aggregated decryption response `agg_resp` against the
@@ -2049,22 +2061,22 @@ impl Client {
     /// Make a verification request for the given `proven_ct` with some metadata.
     /// NOTE: eventually we want to integrate the metadata into the zk proof.
     #[cfg(feature = "non-wasm")]
-    pub fn make_zk_verify_request(
+    pub fn zk_verify_request(
         &self,
-        crs_handle: RequestId,
-        key_handle: RequestId,
+        crs_handle: &RequestId,
+        key_handle: &RequestId,
         contract_address: alloy_primitives::Address,
         proven_ct: &ProvenCompactCiphertextList,
-        request_id: RequestId,
+        request_id: &RequestId,
     ) -> anyhow::Result<ZkVerifyRequest> {
         let ct_buf = bincode::serialize(proven_ct)?;
         Ok(ZkVerifyRequest {
-            crs_handle: Some(crs_handle),
-            key_handle: Some(key_handle),
+            crs_handle: Some(crs_handle.to_owned()),
+            key_handle: Some(key_handle.to_owned()),
             contract_address: contract_address.to_string(),
             client_address: self.client_address.to_string(),
             ct_bytes: ct_buf,
-            request_id: Some(request_id),
+            request_id: Some(request_id.to_owned()),
         })
     }
 
@@ -2072,7 +2084,7 @@ impl Client {
     /// by attempting to find a one-to-one match between the signature and the server public key.
     /// The output is the set of verified signatures along with their corresponding public key.
     #[cfg(feature = "non-wasm")]
-    pub fn process_zk_verify_response(
+    pub fn process_zk_verify_resp(
         &self,
         responses: &[ZkVerifyResponse],
         min_agree_count: u32,
@@ -2085,6 +2097,7 @@ impl Client {
                 .payload
                 .as_ref()
                 .ok_or_else(|| anyhow_error_and_log("empty zk verify response payload"))?;
+
             let payload_serialized = bincode::serialize(payload)?;
 
             let zk_sig = Signature {
@@ -2106,7 +2119,6 @@ impl Client {
                 }
                 None
             })();
-
             if let Some(i) = to_remove {
                 out.push((zk_sig, self.server_pks[i].clone()));
                 remaining_pk_idx.remove(&i);
@@ -2466,7 +2478,6 @@ pub(crate) mod tests {
     use crate::kms::CrsGenResult;
     use crate::kms::{FheType, ParamChoice, TypedCiphertext};
     use crate::rpc::central_rpc::default_param_file_map;
-    #[cfg(feature = "slow_tests")]
     use crate::rpc::rpc_types::RequestIdGetter;
     use crate::rpc::rpc_types::{
         protobuf_to_alloy_domain, BaseKms, PubDataType, PublicParameterWithParamID,
@@ -2477,7 +2488,7 @@ pub(crate) mod tests {
     #[cfg(feature = "wasm_tests")]
     use crate::util::file_handling::write_element;
     use crate::util::key_setup::test_tools::{
-        compute_cipher_from_storage, load_pk_from_storage, purge, TypedPlaintext,
+        compute_cipher_from_stored_key, load_pk_from_storage, purge, TypedPlaintext,
     };
     use crate::util::key_setup::FhePublicKey;
     use crate::{
@@ -2494,7 +2505,6 @@ pub(crate) mod tests {
     use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::SolStruct;
     use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
-    use distributed_decryption::execution::zk::ceremony::PublicParameter;
     use distributed_decryption::execution::zk::constants::ZK_DEFAULT_MAX_NUM_CLEARTEXT;
     use rand::SeedableRng;
     use serial_test::serial;
@@ -2641,7 +2651,6 @@ pub(crate) mod tests {
                 .await;
         }
         let inner_resp = response.unwrap().into_inner();
-
         let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
         let pk: Option<FhePublicKey> = internal_client
             .retrieve_key(&inner_resp, PubDataType::PublicKey, &pub_storage)
@@ -2657,38 +2666,13 @@ pub(crate) mod tests {
         assert!(kms_server.await.unwrap_err().is_cancelled());
     }
 
-    #[cfg(feature = "slow_tests")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    async fn default_crs_gen_centralized() {
-        let request_id = RequestId::derive("default_crs_gen_centralized").unwrap();
+    async fn test_crs_gen_manual() {
+        let crs_req_id = RequestId::derive("test_crs_gen_manual").unwrap();
         // Delete potentially old data
-        purge(None, None, &request_id.to_string()).await;
-        crs_gen_zk_verify_centralized_client(
-            DEFAULT_PARAM_PATH,
-            &request_id,
-            Some(ParamChoice::Default),
-            &DEFAULT_CENTRAL_KEY_ID.to_string(),
-        )
-        .await;
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
-    #[serial]
-    async fn test_crs_gen_centralized() {
-        let request_id = RequestId::derive("test_crs_gen_centralized").unwrap();
-        // Delete potentially old data
-        purge(None, None, &request_id.to_string()).await;
-        crs_gen_centralized_manual(TEST_PARAM_PATH, &request_id, Some(ParamChoice::Test)).await;
-
-        purge(None, None, &request_id.to_string()).await;
-        crs_gen_zk_verify_centralized_client(
-            TEST_PARAM_PATH,
-            &request_id,
-            Some(ParamChoice::Test),
-            &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
-        )
-        .await;
+        purge(None, None, &crs_req_id.to_string()).await;
+        crs_gen_centralized_manual(TEST_PARAM_PATH, &crs_req_id, Some(ParamChoice::Test)).await;
     }
 
     /// test centralized crs generation and do all the reading, processing and verification manually
@@ -2749,7 +2733,7 @@ pub(crate) mod tests {
         // check that CRS signature is verified correctly for the current version
         let crs_raw = read_element(&crs_path).await.unwrap();
         let crs_unversioned = PublicParameterWithParamID::unversionize(crs_raw).unwrap();
-        let crs_serialized = bincode::serialize(&crs_unversioned.pp).unwrap();
+        let crs_serialized = bincode::serialize(&crs_unversioned).unwrap();
         let client_handle = compute_handle(&crs_serialized).unwrap();
         assert_eq!(&client_handle, &crs_info.key_handle);
 
@@ -2768,12 +2752,30 @@ pub(crate) mod tests {
         assert!(kms_server.await.unwrap_err().is_cancelled());
     }
 
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_crs_gen_centralized() {
+        let crs_req_id = RequestId::derive("default_crs_gen_centralized").unwrap();
+        // Delete potentially old data
+        purge(None, None, &crs_req_id.to_string()).await;
+        crs_gen_centralized(DEFAULT_PARAM_PATH, &crs_req_id, Some(ParamChoice::Default)).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn test_crs_gen_centralized() {
+        let crs_req_id = RequestId::derive("test_crs_gen_centralized").unwrap();
+        // Delete potentially old data
+        purge(None, None, &crs_req_id.to_string()).await;
+        crs_gen_centralized(TEST_PARAM_PATH, &crs_req_id, Some(ParamChoice::Test)).await;
+    }
+
     /// test centralized crs generation via client interface
-    async fn crs_gen_zk_verify_centralized_client(
+    async fn crs_gen_centralized(
         param_path: &str,
-        request_id: &RequestId,
+        crs_req_id: &RequestId,
         params: Option<ParamChoice>,
-        key_handle: &str,
     ) {
         let (kms_server, mut kms_client, internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
@@ -2784,7 +2786,7 @@ pub(crate) mod tests {
             None
         };
         let gen_req = internal_client
-            .crs_gen_request(request_id, max_num_bits, params)
+            .crs_gen_request(crs_req_id, max_num_bits, params)
             .unwrap();
 
         // response is currently empty
@@ -2795,24 +2797,69 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(gen_response.into_inner(), Empty {});
 
-        let mut response = kms_client.get_crs_gen_result(request_id.clone()).await;
-        while response.is_err() {
+        let mut response = kms_client.get_crs_gen_result(crs_req_id.clone()).await;
+        let mut ctr = 0;
+        while response.is_err() && ctr < 200 {
             // Sleep to give the server some time to complete CRS generation
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             response = kms_client
-                .get_crs_gen_result(tonic::Request::new(request_id.clone()))
+                .get_crs_gen_result(tonic::Request::new(crs_req_id.clone()))
                 .await;
+            ctr += 1;
         }
         let inner_resp = response.unwrap().into_inner();
         let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
-        let crs = internal_client
-            .retrieve_crs(&inner_resp, &pub_storage)
+        let (crs, pp) = internal_client
+            .process_get_crs_resp(&inner_resp, &pub_storage)
             .await
+            .unwrap()
             .unwrap();
-        assert!(crs.is_some());
 
-        // try to make a proof and check that it works
-        let pp = verify_pp(params, crs).await;
+        // Validate the CRS as a sanity check
+        let pp_recovered = verify_pp(Some(crs)).await;
+        assert_eq!(format!("{:?}", pp_recovered), format!("{:?}", pp));
+
+        kms_server.abort();
+        assert!(kms_server.await.unwrap_err().is_cancelled());
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_zk_verify_centralized() {
+        let zkp_req_id = RequestId::derive("default_zk_verify_centralized").unwrap();
+        zk_verify_centralized(
+            DEFAULT_PARAM_PATH,
+            &zkp_req_id,
+            &crate::consts::DEFAULT_CRS_ID,
+            &DEFAULT_CENTRAL_KEY_ID.to_string(),
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn test_zk_verify_centralized() {
+        let zkp_req_id = RequestId::derive("test_zk_verify_centralized").unwrap();
+        zk_verify_centralized(
+            TEST_PARAM_PATH,
+            &zkp_req_id,
+            &crate::consts::TEST_CRS_ID,
+            &crate::consts::TEST_CENTRAL_KEY_ID.to_string(),
+        )
+        .await;
+    }
+
+    /// test centralized ZK probing via client interface
+    async fn zk_verify_centralized(
+        param_path: &str,
+        zkp_req_id: &RequestId,
+        crs_req_id: &RequestId,
+        key_handle: &str,
+    ) {
+        let message = 32;
+        let (kms_server, mut kms_client, internal_client) =
+            super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
 
         // next use the verify endpoint to check the proof
         // for this we need to read the key
@@ -2820,17 +2867,27 @@ pub(crate) mod tests {
         let key_id = RequestId {
             request_id: key_handle.to_owned(),
         };
-        let zk_request_id = RequestId::derive("zk_verify_request_id").unwrap();
+        let pub_storage = FileStorage::new_centralized(None, StorageType::PUB).unwrap();
+        let (_crs, pp) = internal_client
+            .get_crs(crs_req_id, &pub_storage)
+            .await
+            .unwrap();
+
+        // try to make a proof and check that it works
         let dummy_contract_address =
             alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-        let proven_ct = encrypt_and_prove(32, &pp, key_handle).await;
+        let proven_ct = encrypt_and_prove(message, &pp, key_handle).await;
+        // Sanity check that the proof is valid
+        let pk = load_pk_from_storage(None, key_handle).await;
+        assert!(tfhe::zk::ZkVerificationOutCome::Valid == proven_ct.verify(&pp, &pk, &[]));
+
         let zk_req = internal_client
-            .make_zk_verify_request(
-                request_id.clone(),
-                key_id.clone(),
+            .zk_verify_request(
+                crs_req_id,
+                &key_id,
                 dummy_contract_address,
                 &proven_ct,
-                zk_request_id.clone(),
+                zkp_req_id,
             )
             .unwrap();
 
@@ -2840,42 +2897,45 @@ pub(crate) mod tests {
             .unwrap();
 
         let mut ctr = 0;
-        let mut zk_response = kms_client.get_zk_verify_result(zk_request_id.clone()).await;
+        let mut zk_response = kms_client.get_zk_verify_result(zkp_req_id.clone()).await;
         while zk_response.is_err() && ctr < 1000 {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             zk_response = kms_client
-                .get_zk_verify_result(tonic::Request::new(zk_request_id.clone()))
+                .get_zk_verify_result(tonic::Request::new(zkp_req_id.clone()))
                 .await;
             ctr += 1;
         }
-        kms_server.abort();
-        assert!(kms_server.await.unwrap_err().is_cancelled());
 
         let zk_response_inner = zk_response.unwrap().into_inner();
-        let _ = internal_client
-            .process_zk_verify_response(&[zk_response_inner], 1)
+        let sigs = internal_client
+            .process_zk_verify_resp(&[zk_response_inner], 1)
             .unwrap();
+        assert_eq!(sigs.len(), 1);
+
+        kms_server.abort();
+        assert!(kms_server.await.unwrap_err().is_cancelled());
     }
 
-    async fn verify_pp(
-        params: Option<ParamChoice>,
-        crs: Option<PublicParameter>,
-    ) -> CompactPkePublicParams {
+    async fn verify_pp(crs: Option<PublicParameterWithParamID>) -> CompactPkePublicParams {
         let param_file_map = HashMap::from_iter(
             default_param_file_map()
                 .into_iter()
                 .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
         );
+        let unwrapped_crs = crs.unwrap();
         let (noiseflood_params, _) =
-            crate::rpc::central_rpc::retrieve_parameters(params.unwrap().into(), &param_file_map)
+            crate::rpc::central_rpc::retrieve_parameters(unwrapped_crs.param_id, &param_file_map)
                 .await
                 .unwrap();
         let fhe_params = noiseflood_params.ciphertext_parameters;
-        let pp = crs.unwrap().try_into_tfhe_zk_pok_pp(&fhe_params).unwrap();
+        let pp = unwrapped_crs
+            .pp
+            .try_into_tfhe_zk_pok_pp(&fhe_params)
+            .unwrap();
         let cks = tfhe::shortint::ClientKey::new(fhe_params);
         let pk = tfhe::shortint::CompactPublicKey::new(&cks);
 
-        let max_msg_len = if params.unwrap() == ParamChoice::Test {
+        let max_msg_len = if unwrapped_crs.param_id == ParamChoice::Test as i32 {
             1
         } else {
             ZK_DEFAULT_MAX_NUM_CLEARTEXT
@@ -2930,7 +2990,7 @@ pub(crate) mod tests {
     async fn test_crs_gen_threshold(#[case] parallelism: usize) {
         // NOTE: the test parameter has 300 witness size
         // so we set this as a slow test
-        crs_gen_zk_verify_threshold(parallelism, &TEST_THRESHOLD_KEY_ID.to_string()).await
+        crs_gen_threshold(parallelism, TEST_PARAM_PATH).await
     }
 
     #[cfg(feature = "slow_tests")]
@@ -2963,10 +3023,9 @@ pub(crate) mod tests {
     // Poll the client method function `f_to_poll` until there is a result
     // or error out until some timeout.
     // The requests from the `reqs` argument need to implement `RequestIdGetter`.
-    #[cfg(feature = "slow_tests")]
     macro_rules! par_poll_responses {
         ($parallelism:expr,$kms_clients:expr,$reqs:expr,$f_to_poll:ident) => {{
-            const TRIES: usize = 60;
+            const TRIES: usize = 10;
             let mut joined_responses = vec![];
             for count in 0..TRIES {
                 joined_responses = vec![];
@@ -3010,10 +3069,10 @@ pub(crate) mod tests {
     }
 
     #[cfg(feature = "slow_tests")]
-    async fn crs_gen_zk_verify_threshold(parallelism: usize, key_handle: &str) {
+    async fn crs_gen_threshold(parallelism: usize, param_path: &str) {
         assert!(parallelism > 0);
         let req_ids: Vec<RequestId> = (0..parallelism)
-            .map(|j| RequestId::derive(&format!("test_crs_gen_threshold_{j}")).unwrap())
+            .map(|j| RequestId::derive(&format!("crs_gen_threshold{j}")).unwrap())
             .collect();
 
         // Ensure the test is idempotent
@@ -3024,13 +3083,13 @@ pub(crate) mod tests {
         // The threshold handle should only be started after the storage is purged
         // since the threshold parties will load the CRS from private storage
         let (kms_servers, kms_clients, internal_client) =
-            threshold_handles(StorageVersion::Dev, TEST_PARAM_PATH).await;
+            threshold_handles(StorageVersion::Dev, param_path).await;
 
         let param_choice = ParamChoice::Test;
         let max_num_bits = 1;
         let reqs: Vec<_> = (0..parallelism)
             .map(|j| {
-                let request_id = RequestId::derive(&format!("test_crs_gen_threshold_{j}")).unwrap();
+                let request_id = RequestId::derive(&format!("crs_gen_threshold{j}")).unwrap();
                 internal_client
                     .crs_gen_request(&request_id, Some(max_num_bits), Some(param_choice))
                     .unwrap()
@@ -3100,7 +3159,7 @@ pub(crate) mod tests {
                 .await
                 .unwrap();
             if tfhe_pp.is_none() {
-                tfhe_pp = Some(verify_pp(Some(param_choice), Some(pp)).await);
+                tfhe_pp = Some(verify_pp(Some(pp)).await);
             }
 
             // if there are [THRESHOLD] result missing, we can still recover the result
@@ -3206,51 +3265,138 @@ pub(crate) mod tests {
                 .await
                 .is_err());
         }
-
-        // now try to make a proof and verify using the kms
-        let pp = tfhe_pp.unwrap();
-        let key_id = RequestId {
-            request_id: key_handle.to_owned(),
-        };
-        let zk_request_id = RequestId::derive("zk_verify_request_id").unwrap();
-        let dummy_contract_address =
-            alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
-        let proven_ct = encrypt_and_prove(32, &pp, key_handle).await;
-        let request_id = RequestId::derive("test_crs_gen_threshold_0").unwrap();
-        let zk_req = internal_client
-            .make_zk_verify_request(
-                request_id.clone(),
-                key_id.clone(),
-                dummy_contract_address,
-                &proven_ct,
-                zk_request_id.clone(),
-            )
-            .unwrap();
-
-        for i in 1..=AMOUNT_PARTIES as u32 {
-            let mut kms_client = kms_clients.get(&i).unwrap().clone();
-            let _ = kms_client
-                .zk_verify(tonic::Request::new(zk_req.clone()))
-                .await
-                .unwrap();
-        }
-
-        let reqs = vec![zk_req.clone()];
-        let zk_responses = par_poll_responses!(1, kms_clients, reqs, get_zk_verify_result)
-            .into_iter()
-            .map(|(_, _, x)| x)
-            .collect::<Vec<_>>();
-
         for handle in kms_servers.values() {
             handle.abort()
         }
         for (_, handle) in kms_servers {
             assert!(handle.await.unwrap_err().is_cancelled());
         }
+    }
 
-        let _ = internal_client
-            .process_zk_verify_response(&zk_responses, AMOUNT_PARTIES as u32)
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn test_zk_threshold() {
+        zk_verify_threshold(
+            1,
+            &crate::consts::TEST_CRS_ID,
+            &crate::consts::TEST_THRESHOLD_KEY_ID,
+            TEST_PARAM_PATH,
+        )
+        .await
+    }
+
+    #[cfg(feature = "slow_tests")]
+    #[rstest::rstest]
+    #[case(1)]
+    #[case(4)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+    #[serial]
+    async fn default_zk_threshold(#[case] parallelism: usize) {
+        zk_verify_threshold(
+            parallelism,
+            &crate::consts::DEFAULT_CRS_ID,
+            &crate::consts::DEFAULT_THRESHOLD_KEY_ID,
+            DEFAULT_PARAM_PATH,
+        )
+        .await
+    }
+
+    async fn zk_verify_threshold(
+        parallelism: usize,
+        crs_handle: &RequestId,
+        key_handle: &RequestId,
+        param_path: &str,
+    ) {
+        assert!(parallelism > 0);
+
+        // The threshold handle should only be started after the storage is purged
+        // since the threshold parties will load the CRS from private storage
+        let (kms_servers, kms_clients, internal_client) =
+            threshold_handles(StorageVersion::Dev, param_path).await;
+
+        let pub_storage = FileStorage::new_threshold(None, StorageType::PUB, 1).unwrap();
+        let (crs, pp) = internal_client
+            .get_crs(crs_handle, &pub_storage)
+            .await
             .unwrap();
+        // Sanity check the pp
+        let pp_recovered = verify_pp(Some(crs)).await;
+        assert_eq!(format!("{:?}", pp_recovered), format!("{:?}", pp));
+
+        let message = 42;
+        let dummy_contract_address =
+            alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045");
+        let proven_ct = encrypt_and_prove(message, &pp, &key_handle.to_string()).await;
+        // Sanity check that the proof is valid
+        let pk = load_pk_from_storage(None, &key_handle.to_string()).await;
+        assert!(tfhe::zk::ZkVerificationOutCome::Valid == proven_ct.verify(&pp, &pk, &[]));
+
+        let reqs: Vec<_> = (0..parallelism)
+            .map(|j| {
+                let request_id = RequestId::derive(&format!("zk_verify_threshold_{j}")).unwrap();
+                internal_client
+                    .zk_verify_request(
+                        crs_handle,
+                        key_handle,
+                        dummy_contract_address,
+                        &proven_ct,
+                        &request_id,
+                    )
+                    .unwrap()
+            })
+            .collect();
+
+        let mut tasks_gen = JoinSet::new();
+        for req in &reqs {
+            for i in 1..=AMOUNT_PARTIES as u32 {
+                let mut cur_client = kms_clients.get(&i).unwrap().clone();
+                let req_clone = req.clone();
+                tasks_gen.spawn(async move {
+                    cur_client.zk_verify(tonic::Request::new(req_clone)).await
+                });
+            }
+        }
+        let mut responses_gen = Vec::new();
+        while let Some(inner) = tasks_gen.join_next().await {
+            let resp = inner.unwrap().unwrap();
+            responses_gen.push(resp.into_inner());
+        }
+        assert_eq!(responses_gen.len(), AMOUNT_PARTIES * parallelism);
+
+        // wait a bit for the zk validation to finish
+        let joined_responses =
+            par_poll_responses!(parallelism, kms_clients, reqs, get_zk_verify_result);
+
+        for req in reqs {
+            let req_id = req.request_id.unwrap();
+            let joined_responses: Vec<_> = joined_responses
+                .iter()
+                .cloned()
+                .filter_map(
+                    |(_i, rid, resp)| {
+                        if rid == req_id {
+                            Some(resp)
+                        } else {
+                            None
+                        }
+                    },
+                )
+                .collect();
+
+            let min_count_agree = (THRESHOLD + 1) as u32;
+
+            let zk_sigs = internal_client
+                .process_zk_verify_resp(&joined_responses, min_count_agree)
+                .unwrap();
+
+            assert_eq!(zk_sigs.len(), AMOUNT_PARTIES);
+        }
+        for handle in kms_servers.values() {
+            handle.abort()
+        }
+        for (_, handle) in kms_servers {
+            assert!(handle.await.unwrap_err().is_cancelled());
+        }
     }
 
     #[tokio::test]
@@ -3315,7 +3461,7 @@ pub(crate) mod tests {
 
         let mut cts = Vec::new();
         for msg in msgs.clone() {
-            let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
+            let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),
@@ -3550,7 +3696,7 @@ pub(crate) mod tests {
         assert!(parallelism > 0);
         let (kms_server, kms_client, mut internal_client) =
             super::test_tools::centralized_handles(StorageVersion::Dev, param_path).await;
-        let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
+        let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
         let req_key_id = key_id.to_owned().try_into().unwrap();
 
         // The following lines are used to generate integration test-code with javascript for test `new client` in test.js
@@ -3735,7 +3881,6 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    #[tracing_test::traced_test]
     async fn test_decryption_threshold() {
         decryption_threshold(
             TEST_PARAM_PATH,
@@ -3764,7 +3909,6 @@ pub(crate) mod tests {
     // #[case(vec![TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32]))], 1)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    #[tracing_test::traced_test]
     async fn default_decryption_threshold(
         #[case] msg: Vec<TypedPlaintext>,
         #[case] parallelism: usize,
@@ -3792,7 +3936,7 @@ pub(crate) mod tests {
         let mut cts = Vec::new();
         let mut bits = 0;
         for msg in msgs.clone() {
-            let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
+            let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
             let ctt = TypedCiphertext {
                 ciphertext: ct,
                 fhe_type: fhe_type.into(),
@@ -3993,7 +4137,6 @@ pub(crate) mod tests {
     // #[case(TypedPlaintext::U2048(tfhe::integer::bigint::U2048::from([u64::MAX; 32])), 1)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     #[serial]
-    #[tracing_test::traced_test]
     async fn default_reencryption_threshold(
         #[case] msg: TypedPlaintext,
         #[case] parallelism: usize,
@@ -4023,7 +4166,7 @@ pub(crate) mod tests {
 
         let (kms_servers, kms_clients, mut internal_client) =
             threshold_handles(StorageVersion::Dev, param_path).await;
-        let (ct, fhe_type) = compute_cipher_from_storage(None, msg, key_id).await;
+        let (ct, fhe_type) = compute_cipher_from_stored_key(None, msg, key_id).await;
 
         // make requests
         let reqs: Vec<_> = (0..parallelism)

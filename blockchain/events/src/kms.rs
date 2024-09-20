@@ -101,6 +101,12 @@ pub enum OperationValue {
     #[strum(serialize = "reencrypt_response")]
     #[serde(rename = "reencrypt_response")]
     ReencryptResponse(ReencryptResponseValues),
+    #[strum(serialize = "zkp")]
+    #[serde(rename = "zkp")]
+    Zkp(ZkpValues),
+    #[strum(serialize = "zkp_response")]
+    #[serde(rename = "zkp_response")]
+    ZkpResponse(ZkpResponseValues),
     #[strum(serialize = "keygen")]
     #[serde(rename = "keygen")]
     KeyGen(KeyGenValues),
@@ -150,6 +156,8 @@ impl From<OperationValue> for KmsOperation {
             OperationValue::DecryptResponse(_) => KmsOperation::DecryptResponse,
             OperationValue::Reencrypt(_) => KmsOperation::Reencrypt,
             OperationValue::ReencryptResponse(_) => KmsOperation::ReencryptResponse,
+            OperationValue::Zkp(_) => KmsOperation::Zkp,
+            OperationValue::ZkpResponse(_) => KmsOperation::Zkp,
             OperationValue::KeyGen(_) => KmsOperation::KeyGen,
             OperationValue::KeyGenResponse(_) => KmsOperation::KeyGenResponse,
             OperationValue::KeyGenPreproc(_) => KmsOperation::KeyGenPreproc,
@@ -464,6 +472,48 @@ impl From<ReencryptValues> for OperationValue {
 }
 
 #[cw_serde]
+#[derive(Eq, TypedBuilder, Default)]
+pub struct ZkpValues {
+    #[builder(setter(into))]
+    crs_id: HexVector,
+    #[builder(setter(into))]
+    key_id: HexVector,
+    #[builder(setter(into))]
+    contract_address: String,
+    #[builder(setter(into))]
+    client_address: String,
+    #[builder(setter(into))]
+    ct_proof_handle: RedactedHexVector,
+}
+
+impl ZkpValues {
+    pub fn key_id(&self) -> &HexVector {
+        &self.key_id
+    }
+
+    pub fn crs_id(&self) -> &HexVector {
+        &self.crs_id
+    }
+
+    pub fn contract_address(&self) -> &str {
+        &self.contract_address
+    }
+
+    pub fn client_address(&self) -> &str {
+        &self.client_address
+    }
+
+    pub fn ct_proof_handle(&self) -> &RedactedHexVector {
+        &self.ct_proof_handle
+    }
+}
+
+impl From<ZkpValues> for OperationValue {
+    fn from(value: ZkpValues) -> Self {
+        OperationValue::Zkp(value)
+    }
+}
+#[cw_serde]
 #[derive(Default, Eq, TypedBuilder)]
 pub struct DecryptResponseValues {
     #[builder(setter(into))]
@@ -576,6 +626,34 @@ impl From<ReencryptResponseValues> for OperationValue {
 
 #[cw_serde]
 #[derive(Default, Eq, TypedBuilder)]
+pub struct ZkpResponseValues {
+    #[builder(setter(into))]
+    signature: HexVector,
+    /// This is the response payload,
+    /// we keep it in the serialized form because
+    /// we need to use it to verify the signature.
+    #[builder(setter(into))]
+    payload: HexVector,
+}
+
+impl ZkpResponseValues {
+    pub fn signature(&self) -> &HexVector {
+        &self.signature
+    }
+
+    pub fn payload(&self) -> &HexVector {
+        &self.payload
+    }
+}
+
+impl From<ZkpResponseValues> for OperationValue {
+    fn from(value: ZkpResponseValues) -> Self {
+        OperationValue::ZkpResponse(value)
+    }
+}
+
+#[cw_serde]
+#[derive(Default, Eq, TypedBuilder)]
 pub struct CrsGenResponseValues {
     /// The request ID of the CRS generation.
     request_id: String,
@@ -658,6 +736,10 @@ pub enum KmsOperation {
     Reencrypt,
     #[strum(serialize = "reencrypt_response", props(response = "true"))]
     ReencryptResponse,
+    #[strum(serialize = "zkp", props(request = "true"))]
+    Zkp,
+    #[strum(serialize = "zkp_response", props(response = "true"))]
+    ZkpResponse,
     #[strum(serialize = "keygen_preproc", props(request = "true"))]
     #[serde(rename = "keygen_preproc")]
     KeyGenPreproc,
@@ -987,6 +1069,18 @@ mod tests {
         }
     }
 
+    impl Arbitrary for ZkpValues {
+        fn arbitrary(g: &mut Gen) -> ZkpValues {
+            ZkpValues {
+                crs_id: HexVector::arbitrary(g),
+                key_id: HexVector::arbitrary(g),
+                contract_address: String::arbitrary(g),
+                client_address: String::arbitrary(g),
+                ct_proof_handle: HexVector::arbitrary(g).into(),
+            }
+        }
+    }
+
     impl Arbitrary for DecryptResponseValues {
         fn arbitrary(g: &mut Gen) -> DecryptResponseValues {
             DecryptResponseValues {
@@ -1017,6 +1111,15 @@ mod tests {
         }
     }
 
+    impl Arbitrary for ZkpResponseValues {
+        fn arbitrary(g: &mut Gen) -> ZkpResponseValues {
+            ZkpResponseValues {
+                signature: HexVector::arbitrary(g),
+                payload: HexVector::arbitrary(g),
+            }
+        }
+    }
+
     impl Arbitrary for CrsGenResponseValues {
         fn arbitrary(g: &mut Gen) -> CrsGenResponseValues {
             // TODO consider constraining the arbitrary domain
@@ -1036,9 +1139,10 @@ mod tests {
                 1 => KmsOperation::DecryptResponse,
                 2 => KmsOperation::Reencrypt,
                 3 => KmsOperation::ReencryptResponse,
-                4 => KmsOperation::KeyGen,
-                5 => KmsOperation::KeyGenResponse,
-                6 => KmsOperation::CrsGen,
+                4 => KmsOperation::Zkp,
+                5 => KmsOperation::KeyGen,
+                6 => KmsOperation::KeyGenResponse,
+                7 => KmsOperation::CrsGen,
                 _ => KmsOperation::CrsGenResponse,
             }
         }
@@ -1211,6 +1315,55 @@ mod tests {
         let json_str = serde_json::json!({
             "reencrypt_response": {
                 "reencrypt_response": {
+                    "signature": hex::encode([1]),
+                    "payload": hex::encode([2]),
+                },
+                "txn_id": hex::encode(vec![1])
+            }
+        });
+        assert_eq!(json, json_str);
+    }
+
+    #[test]
+    fn test_zkp_event_to_json() {
+        let zkp_values = ZkpValues::builder()
+            .client_address("0x1234".to_string())
+            .contract_address("0x4321".to_string())
+            .crs_id("cid".as_bytes().to_vec())
+            .key_id("kid".as_bytes().to_vec())
+            .ct_proof_handle(vec![5])
+            .build();
+        let message: KmsMessageWithoutProof = KmsMessage::builder().value(zkp_values).build();
+
+        let json = message.to_json().unwrap();
+        let json_str = serde_json::json!({
+            "zkp": {
+                "zkp": {
+                    "client_address": "0x1234",
+                    "contract_address": "0x4321",
+                    "crs_id": hex::encode("cid".as_bytes()),
+                    "key_id": hex::encode("kid".as_bytes()),
+                    "ct_proof_handle": hex::encode(vec![5]),
+                },
+            }
+        });
+        assert_eq!(json, json_str);
+    }
+
+    #[test]
+    fn test_zkp_response_event_to_json() {
+        let zkp_response_values = ZkpResponseValues::builder()
+            .signature(vec![1])
+            .payload(vec![2])
+            .build();
+        let message: KmsMessageWithoutProof = KmsMessage::builder()
+            .txn_id(Some(vec![1].into()))
+            .value(zkp_response_values)
+            .build();
+        let json = message.to_json().unwrap();
+        let json_str = serde_json::json!({
+            "zkp_response": {
+                "zkp_response": {
                     "signature": hex::encode([1]),
                     "payload": hex::encode([2]),
                 },

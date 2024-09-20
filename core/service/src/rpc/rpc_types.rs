@@ -13,7 +13,7 @@ use tfhe::Versionize;
 use tfhe_versionable::VersionsDispatch;
 use wasm_bindgen::prelude::wasm_bindgen;
 
-#[cfg(all(test, feature = "slow_tests"))]
+#[cfg(test)]
 use crate::kms::{CrsGenRequest, ZkVerifyRequest};
 
 cfg_if::cfg_if! {
@@ -861,19 +861,19 @@ pub struct PublicParameterWithParamID {
     pub param_id: i32,
 }
 
-#[cfg(all(test, feature = "slow_tests"))]
+#[cfg(test)]
 pub(crate) trait RequestIdGetter {
     fn request_id(&self) -> Option<RequestId>;
 }
 
-#[cfg(all(test, feature = "slow_tests"))]
+#[cfg(test)]
 impl RequestIdGetter for CrsGenRequest {
     fn request_id(&self) -> Option<RequestId> {
         self.request_id.clone()
     }
 }
 
-#[cfg(all(test, feature = "slow_tests"))]
+#[cfg(test)]
 impl RequestIdGetter for ZkVerifyRequest {
     fn request_id(&self) -> Option<RequestId> {
         self.request_id.clone()

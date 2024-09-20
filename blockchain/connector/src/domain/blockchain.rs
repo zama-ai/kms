@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use events::kms::{
     CrsGenResponseValues, DecryptResponseValues, KeyGenPreprocResponseValues, KeyGenResponseValues,
     KmsCoreConf, KmsEvent, KmsMessage, OperationValue, ReencryptResponseValues, TransactionId,
+    ZkpResponseValues,
 };
 use strum_macros::{Display, EnumString};
 
@@ -19,6 +20,12 @@ pub struct DecryptResponseVal {
 #[derive(Default, PartialEq, Eq)]
 pub struct ReencryptResponseVal {
     pub reencrypt_response: ReencryptResponseValues,
+    pub operation_val: BlockchainOperationVal,
+}
+
+#[derive(Default, PartialEq, Eq)]
+pub struct ZkpResponseVal {
+    pub zkp_response: ZkpResponseValues,
     pub operation_val: BlockchainOperationVal,
 }
 
@@ -44,6 +51,7 @@ pub struct CrsGenResponseVal {
 pub enum KmsOperationResponse {
     DecryptResponse(DecryptResponseVal),
     ReencryptResponse(ReencryptResponseVal),
+    ZkpResponse(ZkpResponseVal),
     KeyGenPreprocResponse(KeyGenPreprocResponseVal),
     KeyGenResponse(KeyGenResponseVal),
     CrsGenResponse(CrsGenResponseVal),
@@ -54,6 +62,7 @@ impl KmsOperationResponse {
         match self {
             KmsOperationResponse::DecryptResponse(val) => &val.operation_val.tx_id,
             KmsOperationResponse::ReencryptResponse(val) => &val.operation_val.tx_id,
+            KmsOperationResponse::ZkpResponse(val) => &val.operation_val.tx_id,
             KmsOperationResponse::KeyGenPreprocResponse(val) => &val.operation_val.tx_id,
             KmsOperationResponse::KeyGenResponse(val) => &val.operation_val.tx_id,
             KmsOperationResponse::CrsGenResponse(val) => &val.operation_val.tx_id,
@@ -74,6 +83,10 @@ impl From<KmsOperationResponse> for KmsMessage {
                 .build(),
             KmsOperationResponse::ReencryptResponse(val) => KmsMessage::builder()
                 .value(val.reencrypt_response)
+                .txn_id(val.operation_val.tx_id)
+                .build(),
+            KmsOperationResponse::ZkpResponse(val) => KmsMessage::builder()
+                .value(val.zkp_response)
                 .txn_id(val.operation_val.tx_id)
                 .build(),
             KmsOperationResponse::KeyGenPreprocResponse(val) => KmsMessage::builder()

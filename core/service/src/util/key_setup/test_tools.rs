@@ -1,18 +1,20 @@
-use crate::kms::{FheType, RequestId};
-use crate::rpc::rpc_types::Plaintext;
+use crate::kms::{FheType, ParamChoice, RequestId};
+use crate::rpc::central_rpc::{default_param_file_map, retrieve_parameters};
 use crate::rpc::rpc_types::PubDataType;
+use crate::rpc::rpc_types::{Plaintext, PublicParameterWithParamID};
 use crate::storage::{FileStorage, StorageReader, StorageType};
 use crate::util::key_setup::FhePublicKey;
 use crate::{consts::AMOUNT_PARTIES, storage::delete_all_at_request_id};
 use distributed_decryption::execution::tfhe_internals::utils::expanded_encrypt;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::Path;
 use tfhe::core_crypto::prelude::Numeric;
 use tfhe::integer::ciphertext::{Compactable, Expandable};
 use tfhe::prelude::Tagged;
 use tfhe::{
     FheBool, FheUint128, FheUint16, FheUint160, FheUint2048, FheUint256, FheUint32, FheUint64,
-    FheUint8, Unversionize,
+    FheUint8, ProvenCompactCiphertextList, Unversionize,
 };
 
 // TODD The code here should be split s.t. that generation code stays in production and everything else goes to the test package
@@ -154,10 +156,10 @@ pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FheP
     let url = storage
         .compute_url(key_id, &PubDataType::PublicKey.to_string())
         .unwrap();
-    tracing::info!("🚧 Using key: {}", url);
     if storage.data_exists(&url).await.unwrap() {
         tracing::info!("Trying centralized storage");
         let content = storage.read_data(&url).await.unwrap();
+        tracing::info!("🚧 Using key: {}", url);
         FhePublicKey::unversionize(content).unwrap()
     } else {
         // Try with the threshold storage
@@ -166,12 +168,103 @@ pub async fn load_pk_from_storage(pub_path: Option<&Path>, key_id: &str) -> FheP
         let url = storage
             .compute_url(key_id, &PubDataType::PublicKey.to_string())
             .unwrap();
-        FhePublicKey::unversionize(storage.read_data(&url).await.unwrap()).unwrap()
+        let content = storage.read_data(&url).await.unwrap();
+        tracing::info!("🚧 Using key: {}", url);
+        FhePublicKey::unversionize(content).unwrap()
     }
 }
 
 /// This function should be used for testing only and it can panic.
-pub async fn compute_cipher_from_storage(
+pub async fn compute_zkp_from_stored_key(
+    pub_path: Option<&Path>,
+    msgs: Vec<TypedPlaintext>,
+    key_id: &str,
+    crs_id: &str,
+) -> ProvenCompactCiphertextList {
+    // Try first with centralized storage
+    let storage = FileStorage::new_centralized(pub_path, StorageType::PUB).unwrap();
+    let key_url = storage
+        .compute_url(key_id, &PubDataType::PublicKey.to_string())
+        .unwrap();
+    let crs_url = storage
+        .compute_url(crs_id, &PubDataType::CRS.to_string())
+        .unwrap();
+    let (pk, crs) = if storage.data_exists(&key_url).await.unwrap() {
+        let pk = FhePublicKey::unversionize(storage.read_data(&key_url).await.unwrap()).unwrap();
+        let crs =
+            PublicParameterWithParamID::unversionize(storage.read_data(&crs_url).await.unwrap())
+                .unwrap();
+        (pk, crs)
+    } else {
+        // Try with the threshold storage
+        let storage = FileStorage::new_threshold(pub_path, StorageType::PUB, 1).unwrap();
+        let key_url = storage
+            .compute_url(key_id, &PubDataType::PublicKey.to_string())
+            .unwrap();
+        let crs_url = storage
+            .compute_url(crs_id, &PubDataType::CRS.to_string())
+            .unwrap();
+        let pk = FhePublicKey::unversionize(storage.read_data(&key_url).await.unwrap()).unwrap();
+        let crs =
+            PublicParameterWithParamID::unversionize(storage.read_data(&crs_url).await.unwrap())
+                .unwrap();
+        (pk, crs)
+    };
+
+    let mut compact_list_builder = ProvenCompactCiphertextList::builder(&pk);
+    for msg in msgs {
+        match msg.to_fhe_type() {
+            FheType::Ebool => compact_list_builder
+                .push_with_num_bits(msg.to_plaintext().as_u8(), msg.bits())
+                .unwrap(),
+            FheType::Euint4 => compact_list_builder
+                .push_with_num_bits(msg.to_plaintext().as_u4(), msg.bits())
+                .unwrap(),
+            FheType::Euint8 => compact_list_builder
+                .push_with_num_bits(msg.to_plaintext().as_u8(), msg.bits())
+                .unwrap(),
+            FheType::Euint16 => compact_list_builder
+                .push_with_num_bits(msg.to_plaintext().as_u16(), msg.bits())
+                .unwrap(),
+            FheType::Euint32 => compact_list_builder
+                .push_with_num_bits(msg.to_plaintext().as_u32(), msg.bits())
+                .unwrap(),
+            FheType::Euint64 => compact_list_builder
+                .push_with_num_bits(msg.to_plaintext().as_u64(), msg.bits())
+                .unwrap(),
+            FheType::Euint128 => compact_list_builder
+                .push_with_num_bits(msg.to_plaintext().as_u128(), msg.bits())
+                .unwrap(),
+            FheType::Euint160 => compact_list_builder
+                .push_with_num_bits(msg.to_plaintext().as_u160(), msg.bits())
+                .unwrap(),
+            FheType::Euint256 => compact_list_builder
+                .push_with_num_bits(msg.to_plaintext().as_u256(), msg.bits())
+                .unwrap(),
+            FheType::Euint512 => panic!("Not implemented"),
+            FheType::Euint1024 => panic!("Not implemented"),
+            FheType::Euint2048 => compact_list_builder
+                .push_with_num_bits(msg.to_plaintext().as_u2048(), msg.bits())
+                .unwrap(),
+        };
+    }
+    let param_file_map = HashMap::from_iter(
+        default_param_file_map()
+            .into_iter()
+            .filter_map(|(k, v)| ParamChoice::from_str_name(&k).map(|x| (x, v))),
+    );
+    let (noiseflood_params, _) = retrieve_parameters(crs.param_id, &param_file_map)
+        .await
+        .unwrap();
+    let fhe_params = noiseflood_params.ciphertext_parameters;
+    let pp = crs.pp.try_into_tfhe_zk_pok_pp(&fhe_params).unwrap();
+    compact_list_builder
+        .build_with_proof_packed(&pp, &[], tfhe::zk::ZkComputeLoad::Proof)
+        .unwrap()
+}
+
+/// This function should be used for testing only and it can panic.
+pub async fn compute_cipher_from_stored_key(
     pub_path: Option<&Path>,
     msg: TypedPlaintext,
     key_id: &str,
@@ -201,6 +294,7 @@ pub async fn purge(pub_path: Option<&Path>, priv_path: Option<&Path>, id: &str) 
 
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod setup {
+    use crate::kms::ParamChoice;
     use crate::util::key_setup::{
         ensure_central_crs_exists, ensure_central_keys_exist, ensure_client_keys_exist,
     };
@@ -264,6 +358,7 @@ pub(crate) mod setup {
         ensure_central_crs_exists(
             &mut central_pub_storage,
             &mut central_priv_storage,
+            crate::kms::ParamChoice::Test,
             TEST_PARAM_PATH,
             &TEST_CRS_ID,
             true,
@@ -288,6 +383,7 @@ pub(crate) mod setup {
         ensure_threshold_crs_exists(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
+            ParamChoice::Test,
             TEST_PARAM_PATH,
             &TEST_CRS_ID,
             true,
@@ -341,6 +437,7 @@ pub(crate) mod setup {
         ensure_central_crs_exists(
             &mut central_pub_storage,
             &mut central_priv_storage,
+            crate::kms::ParamChoice::Default,
             DEFAULT_PARAM_PATH,
             &DEFAULT_CRS_ID,
             true,
@@ -365,6 +462,7 @@ pub(crate) mod setup {
         ensure_threshold_crs_exists(
             &mut threshold_pub_storages,
             &mut threshold_priv_storages,
+            crate::kms::ParamChoice::Default,
             DEFAULT_PARAM_PATH,
             &DEFAULT_CRS_ID,
             true,

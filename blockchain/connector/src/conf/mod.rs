@@ -64,6 +64,7 @@ pub struct TimeoutConfig {
     pub preproc: TimeoutTriple,
     pub decryption: TimeoutTriple,
     pub reencryption: TimeoutTriple,
+    pub zkp: TimeoutTriple,
 }
 
 impl Default for TimeoutConfig {
@@ -80,6 +81,8 @@ impl Default for TimeoutConfig {
             decryption: TimeoutTriple::new(10, 5, 24),
             // 2 minutes
             reencryption: TimeoutTriple::new(10, 5, 24),
+            // 2 minutes
+            zkp: TimeoutTriple::new(10, 5, 24),
         }
     }
 }
@@ -94,6 +97,7 @@ impl TimeoutConfig {
             preproc: TimeoutTriple::new(1, 5, 50),
             decryption: TimeoutTriple::new(1, 5, 50),
             reencryption: TimeoutTriple::new(1, 5, 50),
+            zkp: TimeoutTriple::new(1, 5, 50),
         }
     }
 
@@ -106,6 +110,7 @@ impl TimeoutConfig {
             preproc: TimeoutTriple::new(1, 1, 10),
             decryption: TimeoutTriple::new(1, 1, 10),
             reencryption: TimeoutTriple::new(1, 1, 10),
+            zkp: TimeoutTriple::new(1, 1, 10),
         }
     }
 }

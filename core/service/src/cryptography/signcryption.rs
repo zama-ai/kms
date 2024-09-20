@@ -287,7 +287,7 @@ pub(crate) fn check_normalized(sig: &Signature) -> anyhow::Result<()> {
 }
 
 /// Compute the SHA3-256 has of an element. Returns the hash as a vector of bytes.
-pub(crate) fn hash_element<T>(element: &T) -> Vec<u8>
+pub fn hash_element<T>(element: &T) -> Vec<u8>
 where
     T: ?Sized + AsRef<[u8]>,
 {
