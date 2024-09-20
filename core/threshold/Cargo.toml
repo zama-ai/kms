@@ -174,7 +174,7 @@ opt-level = 3
 default = ["non-wasm"]
 # Some utilities used in the `testing` feature require the `non-wasm` feature to be enabled
 testing = ["dep:tokio", "non-wasm"]
-slow_tests = []
+slow_tests = ["testing"]
 sequential_sns = []
 experimental = ["dep:crypto-bigint", "choreographer"]
 templating = ["minijinja"]
