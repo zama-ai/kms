@@ -315,6 +315,15 @@ pub struct DecryptValues {
     fhe_types: Vec<FheType>,
     external_handles: Option<HexVectorList>,
     version: u32,
+
+    // eip712
+    eip712_name: String,
+    eip712_version: String,
+    #[builder(setter(into))]
+    eip712_chain_id: HexVector,
+    eip712_verifying_contract: String,
+    #[builder(setter(into))]
+    eip712_salt: HexVector,
 }
 
 impl DecryptValues {
@@ -336,6 +345,26 @@ impl DecryptValues {
 
     pub fn external_handles(&self) -> &Option<HexVectorList> {
         &self.external_handles
+    }
+
+    pub fn eip712_name(&self) -> &str {
+        &self.eip712_name
+    }
+
+    pub fn eip712_version(&self) -> &str {
+        &self.eip712_version
+    }
+
+    pub fn eip712_chain_id(&self) -> &HexVector {
+        &self.eip712_chain_id
+    }
+
+    pub fn eip712_verifying_contract(&self) -> &str {
+        &self.eip712_verifying_contract
+    }
+
+    pub fn eip712_salt(&self) -> &HexVector {
+        &self.eip712_salt
     }
 }
 
@@ -929,6 +958,11 @@ mod tests {
                 fhe_types: Vec::<FheType>::arbitrary(g),
                 ciphertext_handles: RedactedHexVectorList::arbitrary(g),
                 external_handles: Some(HexVectorList::arbitrary(g)),
+                eip712_name: String::arbitrary(g),
+                eip712_version: String::arbitrary(g),
+                eip712_chain_id: HexVector::arbitrary(g),
+                eip712_verifying_contract: String::arbitrary(g),
+                eip712_salt: HexVector::arbitrary(g),
             }
         }
     }
@@ -1053,6 +1087,11 @@ mod tests {
             .ciphertext_handles(vec![vec![1, 2, 3], vec![4, 4, 4]])
             .fhe_types(vec![FheType::Euint8, FheType::Euint16])
             .external_handles(Some(vec![vec![9, 8, 7], vec![5, 4, 3]].into()))
+            .eip712_name("eip712name".to_string())
+            .eip712_version("version".to_string())
+            .eip712_chain_id(vec![6])
+            .eip712_verifying_contract("contract".to_string())
+            .eip712_salt(vec![7])
             .build();
         let proof_values = Proof::default();
         let message: KmsMessageWithoutProof = KmsMessage::builder()
@@ -1069,6 +1108,11 @@ mod tests {
                     "fhe_types": ["euint8", "euint16"],
                     "external_handles": [hex::encode([9,8,7]), hex::encode([5, 4, 3])],
                     "ciphertext_handles": [hex::encode([1, 2, 3]), hex::encode([4, 4, 4])],
+                    "eip712_name": "eip712name",
+                    "eip712_version": "version",
+                    "eip712_chain_id": hex::encode([6]),
+                    "eip712_verifying_contract": "contract",
+                    "eip712_salt": hex::encode([7]),
                 },
                 "proof": {
                     "proof": [110,117,108,108],
@@ -1114,7 +1158,7 @@ mod tests {
             .key_id("kid".as_bytes().to_vec())
             .ciphertext_handle(vec![5])
             .ciphertext_digest(vec![8])
-            .eip712_name("name".to_string())
+            .eip712_name("eip712name".to_string())
             .eip712_version("version".to_string())
             .eip712_chain_id(vec![6])
             .eip712_verifying_contract("contract".to_string())
@@ -1138,11 +1182,11 @@ mod tests {
                     "key_id": hex::encode("kid".as_bytes()),
                     "ciphertext_handle": hex::encode(vec![5]),
                     "ciphertext_digest": hex::encode(vec![8]),
-                    "eip712_name": "name",
+                    "eip712_name": "eip712name",
                     "eip712_version": "version",
                     "eip712_chain_id": hex::encode([6]),
                     "eip712_verifying_contract": "contract",
-                    "eip712_salt": hex::encode([7]),
+        "eip712_salt": hex::encode([7]),
                 },
                 "proof": {
                     "proof": [110,117,108,108],

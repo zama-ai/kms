@@ -168,9 +168,10 @@ message DecryptionRequest {
   // The key id to use for decryption, will be the request_id used for key
   // generation
   RequestId key_id = 3;
+  Eip712DomainMsg domain = 4;
   // The ID of the decryption request. Will be the hash digest the other fields
   // of this message object.
-  RequestId request_id = 4;
+  RequestId request_id = 5;
 }
 
 // KMS-internal Decryption Response Payload, containing meta data, plaintexts

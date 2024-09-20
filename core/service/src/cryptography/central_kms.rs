@@ -370,17 +370,14 @@ impl KmsFheKeyHandles {
     }
 }
 
-// Plaintext value and optional external handle
-type PlaintextAndHandle = (Plaintext, Option<Vec<u8>>);
-
 // Values that need to be stored temporarily as part of an async key generation call.
 #[cfg(feature = "non-wasm")]
 type KeyGenCallValues = HashMap<PubDataType, SignedPubDataHandleInternal>;
 
 // Values that need to be stored temporarily as part of an async decryption call.
-// Represents the digest of the request and the result of the decryption together with an optional external handle.
+// Represents the digest of the request and the result of the decryption (a batch of plaintests), as well as an external signature on the batch.
 #[cfg(feature = "non-wasm")]
-pub type DecCallValues = (Vec<u8>, Vec<PlaintextAndHandle>);
+pub type DecCallValues = (Vec<u8>, Vec<Plaintext>, Vec<u8>);
 
 // Values that need to be stored temporarily as part of an async reencryption call.
 // Represents the FHE type, the digest of the request and the partial decryption.
@@ -423,20 +420,14 @@ pub fn central_decrypt<
 >(
     client_key: &FhePrivateKey,
     cts: &Vec<TypedCiphertext>,
-) -> anyhow::Result<Vec<PlaintextAndHandle>> {
+) -> anyhow::Result<Vec<Plaintext>> {
     use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
     tracing::info!("Decrypting list of cipher-texts");
     // run the decryption of each ct in the batch in parallel
     cts.par_iter()
         .map(|ct| {
-            let pt = SoftwareKms::<PubS, PrivS>::decrypt(
-                client_key,
-                &ct.ciphertext,
-                ct.fhe_type.try_into()?,
-            )?;
-
-            Ok((pt, ct.external_handle.clone()))
+            SoftwareKms::<PubS, PrivS>::decrypt(client_key, &ct.ciphertext, ct.fhe_type.try_into()?)
         })
         .collect::<Result<Vec<_>, _>>()
 }

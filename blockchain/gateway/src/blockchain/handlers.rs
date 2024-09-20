@@ -13,6 +13,7 @@ use ethers::abi::encode;
 use ethers::abi::Token;
 use ethers::prelude::*;
 use events::kms::ReencryptResponseValues;
+use kms_lib::kms::Eip712DomainMsg;
 use std::ops::Mul;
 use std::sync::Arc;
 
@@ -135,7 +136,26 @@ async fn decrypt(
         typed_cts.push((ct_bytes, fhe_type, external_handle_vec));
     }
 
-    blockchain_impl(config).await.decrypt(typed_cts).await
+    // Get chain-id and verifying contract for EIP-712 signature
+    let client = Arc::new(http_provider(config).await?);
+    let chain_id = client.provider().get_chainid().await?;
+    let mut chain_id_bytes = vec![0u8; 32];
+    chain_id.to_big_endian(&mut chain_id_bytes);
+
+    let vc_hex = hex::encode(config.ethereum.kmsverifier_vc_address);
+
+    let domain = Eip712DomainMsg {
+        name: config.ethereum.kmsverifier_name.clone(),
+        version: config.ethereum.kmsverifier_version.clone(),
+        chain_id: chain_id_bytes,
+        verifying_contract: vc_hex,
+        salt: vec![],
+    };
+
+    blockchain_impl(config)
+        .await
+        .decrypt(typed_cts, domain)
+        .await
 }
 
 pub(crate) async fn handle_reencryption_event(
@@ -201,10 +221,10 @@ async fn _ws_provider(
 
 #[cfg(test)]
 mod tests {
-
     use ethers::abi::encode;
     use ethers::abi::Token;
     use ethers::prelude::*;
+    use std::str::FromStr;
 
     // test encoding
     #[tokio::test]
@@ -220,5 +240,19 @@ mod tests {
         let encoded_bytes: Bytes = encode(&tok).into();
         let encoded_bytes = encoded_bytes.as_ref()[32..].to_vec();
         println!("Encoded bytes: {:?}", hex::encode(encoded_bytes.clone()));
+    }
+
+    #[test]
+    fn encode_h160() {
+        let add1 =
+            ethers::types::H160::from_str("000000000000000000000000000000000000005d").unwrap();
+        let add2 =
+            ethers::types::H160::from_str("ffe0000000000000022200000000000000000151").unwrap();
+
+        let str1 = hex::encode(add1);
+        let str2 = hex::encode(add2);
+
+        assert_eq!(str1, "000000000000000000000000000000000000005d");
+        assert_eq!(str2, "ffe0000000000000022200000000000000000151");
     }
 }

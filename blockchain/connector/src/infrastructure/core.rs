@@ -313,6 +313,13 @@ where
             ciphertexts,
             key_id: Some(RequestId { request_id: key_id }),
             request_id: Some(req_id.clone()),
+            domain: Some(Eip712DomainMsg {
+                name: self.decrypt.eip712_name().to_string(),
+                version: self.decrypt.eip712_version().to_string(),
+                chain_id: self.decrypt.eip712_chain_id().into(),
+                verifying_contract: self.decrypt.eip712_verifying_contract().to_string(),
+                salt: self.decrypt.eip712_salt().into(),
+            }),
         };
 
         let metrics = self.operation_val.kms_client.metrics.clone();

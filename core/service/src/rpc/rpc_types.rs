@@ -268,6 +268,7 @@ pub(crate) fn compute_external_signature(
     client_sk: &PrivateSigKey,
     ext_handles_bytes: Vec<Option<Vec<u8>>>,
     pts: &[Plaintext],
+    eip712_domain: Eip712Domain,
 ) -> Vec<u8> {
     // convert external_handles back to U256 to be signed
     let external_handles: Vec<_> = ext_handles_bytes
@@ -278,25 +279,18 @@ pub(crate) fn compute_external_signature(
 
     let pt_bytes = abi_encode_plaintexts(pts);
 
+    // the solidity structure to sign
     let message = DecryptionResult {
         handlesList: external_handles,
         decryptedResult: pt_bytes,
     };
-
-    // TODO update domain to match fhevm values
-    let domain = alloy_sol_types::eip712_domain!(
-        name: "KMSVerifier",
-        version: "v0.1.0",
-        chain_id: 9000,
-        verifying_contract: alloy_primitives::address!("66f9664f97F2b50F62D13eA064982f936dE76657"),
-    );
 
     let signer = PrivateKeySigner::from_signing_key(client_sk.sk().clone());
     let signer_address = signer.address();
 
     tracing::info!("Signer address: {:?}", signer_address);
 
-    let message_hash = message.eip712_signing_hash(&domain);
+    let message_hash = message.eip712_signing_hash(&eip712_domain);
     tracing::info!("Message hash: {:?}", message_hash);
 
     // Sign the hash synchronously with the wallet.

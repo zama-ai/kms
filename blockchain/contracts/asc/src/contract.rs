@@ -606,6 +606,11 @@ mod tests {
             .ciphertext_handles(vec![ciphertext_handle; batch_size])
             .fhe_types(vec![FheType::Euint8; batch_size])
             .external_handles(Some(vec![vec![23_u8; 32]].into()))
+            .eip712_name("eip712name".to_string())
+            .eip712_version("version".to_string())
+            .eip712_chain_id(vec![6])
+            .eip712_verifying_contract("contract".to_string())
+            .eip712_salt(vec![])
             .build();
 
         // test insufficient funds
@@ -758,6 +763,11 @@ mod tests {
             .ciphertext_handles(vec![ciphertext_handle; batch_size])
             .fhe_types(vec![FheType::Euint8; batch_size])
             .external_handles(Some(vec![vec![23_u8; 32]].into()))
+            .eip712_name("eip712name".to_string())
+            .eip712_version("version".to_string())
+            .eip712_chain_id(vec![6])
+            .eip712_verifying_contract("contract".to_string())
+            .eip712_salt(vec![])
             .build();
 
         // test insufficient funds
@@ -980,7 +990,7 @@ mod tests {
             .key_id(vec![5])
             .ciphertext_handle(ciphertext_handle.clone())
             .ciphertext_digest(vec![9])
-            .eip712_name("name".to_string())
+            .eip712_name("eip712name".to_string())
             .eip712_version("version".to_string())
             .eip712_chain_id(vec![7])
             .eip712_verifying_contract("contract".to_string())
@@ -1157,6 +1167,11 @@ mod tests {
             .ciphertext_handles(vec![ciphertext_handle; batch_size])
             .fhe_types(vec![FheType::Euint8; batch_size])
             .external_handles(Some(vec![vec![23_u8; 32]].into()))
+            .eip712_name("eip712name".to_string())
+            .eip712_version("version".to_string())
+            .eip712_chain_id(vec![6])
+            .eip712_verifying_contract("contract".to_string())
+            .eip712_salt(vec![8])
             .build();
         let response = contract
             .decrypt(decrypt.clone(), Proof::default())

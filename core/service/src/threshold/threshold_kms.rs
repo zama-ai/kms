@@ -279,7 +279,7 @@ pub struct ThresholdFheKeys {
 }
 
 // Request digest, and resultant plaintext
-type DecMetaStore = (Vec<u8>, Vec<(Plaintext, Option<Vec<u8>>)>);
+type DecMetaStore = (Vec<u8>, Vec<Plaintext>, Vec<u8>);
 // Request digest, fhe type of encryption and resultant partial decryption
 type ReencMetaStore = (Vec<u8>, FheType, Vec<u8>);
 // Hashmap of `PubDataType` to the corresponding `SignedPubDataHandleInternal` information for all the different
@@ -1064,7 +1064,7 @@ impl Decryptor for RealDecryptor {
             self.session_preparer.own_identity(),
             inner.request_id
         );
-        let (ciphertexts, req_digest, key_id, req_id) = tonic_handle_potential_err(
+        let (ciphertexts, req_digest, key_id, req_id, eip712_domain) = tonic_handle_potential_err(
             validate_decrypt_req(&inner),
             format!("Invalid key in request {:?}", inner),
         )?;
@@ -1087,6 +1087,11 @@ impl Decryptor for RealDecryptor {
                 "Could not insert decryption into meta store".to_string(),
             )?;
         }
+
+        let ext_handles_bytes = ciphertexts
+            .iter()
+            .map(|c| c.external_handle.to_owned())
+            .collect::<Vec<_>>();
 
         let mut dec_tasks = JoinSet::new();
 
@@ -1118,7 +1123,6 @@ impl Decryptor for RealDecryptor {
                 };
 
                 let ciphertext = &ct.ciphertext;
-                let external_handle = ct.external_handle;
 
                 let fhe_keys_rlock = fhe_keys.read().await;
                 let res_plaintext = match fhe_type {
@@ -1185,7 +1189,7 @@ impl Decryptor for RealDecryptor {
                     .map(|x| Plaintext::new(x as u128, fhe_type)),
                 };
                 match res_plaintext {
-                    Ok(plaintext) => Ok((idx, plaintext, external_handle)),
+                    Ok(plaintext) => Ok((idx, plaintext)),
                     Result::Err(e) => Err(anyhow_error_and_log(format!(
                         "Threshold decryption failed:{}",
                         e
@@ -1196,12 +1200,13 @@ impl Decryptor for RealDecryptor {
 
         // collect decryption results in async mgmt task so we can return from this call without waiting for the decryption(s) to finish
         let meta_store = Arc::clone(&self.dec_meta_store);
+        let sigkey = Arc::clone(&self.base_kms.sig_key);
         let _handle = tokio::spawn(async move {
             let mut decs = HashMap::new();
             while let Some(resp) = dec_tasks.join_next().await {
                 match resp {
-                    Ok(Ok((idx, plaintext, external_handle))) => {
-                        decs.insert(idx, (plaintext, external_handle));
+                    Ok(Ok((idx, plaintext))) => {
+                        decs.insert(idx, plaintext);
                     }
                     _ => {
                         let mut guarded_meta_store = meta_store.write().await;
@@ -1215,16 +1220,24 @@ impl Decryptor for RealDecryptor {
                 }
             }
 
-            let pts_and_handles: Vec<_> = decs
+            let pts: Vec<_> = decs
                 .keys()
                 .sorted()
                 .map(|idx| decs.get(idx).unwrap().clone()) // unwrap is fine here, since we iterate over all keys.
                 .collect();
 
+            // sign the plaintexts and handles for external verification (in the fhevm)
+            let external_sig = match eip712_domain {
+                Some(domain) => {
+                    compute_external_signature(&sigkey, ext_handles_bytes, &pts, domain)
+                }
+                _ => vec![],
+            };
+
             let mut guarded_meta_store = meta_store.write().await;
             let _ = guarded_meta_store.update(
                 &req_id,
-                HandlerStatus::Done((req_digest.clone(), pts_and_handles)),
+                HandlerStatus::Done((req_digest.clone(), pts, external_sig)),
             );
         });
 
@@ -1246,7 +1259,7 @@ impl Decryptor for RealDecryptor {
                 format!("The value {} is not a valid request ID!", request_id),
             ));
         }
-        let (req_digest, plaintexts) = {
+        let (req_digest, plaintexts, external_signature) = {
             let guarded_meta_store = self.dec_meta_store.read().await;
             handle_res_mapping(
                 guarded_meta_store.retrieve(&request_id).cloned(),
@@ -1255,13 +1268,9 @@ impl Decryptor for RealDecryptor {
             )?
         };
 
-        // sign the plaintexts and handles for external verification (in the fhevm)
-        let (pts, ext_handles_bytes): (Vec<_>, Vec<_>) = plaintexts.into_iter().collect();
-        let sigkey = Arc::clone(&self.base_kms.sig_key);
-        let external_sig = compute_external_signature(&sigkey, ext_handles_bytes, &pts);
-
         let pt_payload = tonic_handle_potential_err(
-            pts.iter()
+            plaintexts
+                .iter()
                 .map(bincode::serialize)
                 .collect::<Result<Vec<Vec<u8>>, _>>(),
             "Error serializing plaintexts in get_result()".to_string(),
@@ -1273,7 +1282,7 @@ impl Decryptor for RealDecryptor {
             plaintexts: pt_payload,
             verification_key: server_verf_key,
             digest: req_digest,
-            external_signature: Some(external_sig),
+            external_signature: Some(external_signature),
         };
 
         let sig_payload_vec = tonic_handle_potential_err(

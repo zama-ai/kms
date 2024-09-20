@@ -1,6 +1,6 @@
 use super::rpc_types::{
-    compute_external_signature, BaseKms, PrivDataType, PublicParameterWithParamID,
-    SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
+    compute_external_signature, protobuf_to_alloy_domain, BaseKms, PrivDataType,
+    PublicParameterWithParamID, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
 };
 use crate::conf::centralized::CentralizedConfig;
 #[cfg(any(test, feature = "testing"))]
@@ -26,6 +26,7 @@ use crate::storage::{store_at_request_id, Storage};
 use crate::util::file_handling::read_as_json;
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
+use alloy_sol_types::Eip712Domain;
 use conf_trace::telemetry::accept_trace;
 use conf_trace::telemetry::make_span;
 use conf_trace::telemetry::record_trace_id;
@@ -406,10 +407,11 @@ impl<
         tracing::info!("Request ID: {:?}", inner.request_id);
         tracing::debug!("#CTs: {}", inner.ciphertexts.len());
 
-        let (ciphertexts, req_digest, key_id, request_id) = tonic_handle_potential_err(
-            validate_decrypt_req(&inner),
-            format!("Invalid key in request {:?}", inner),
-        )?;
+        let (ciphertexts, req_digest, key_id, request_id, eip712_domain) =
+            tonic_handle_potential_err(
+                validate_decrypt_req(&inner),
+                format!("Invalid key in request {:?}", inner),
+            )?;
 
         tracing::info!(
             "Decrypting {:?} ciphertexts using key: {:?}",
@@ -427,6 +429,7 @@ impl<
 
         let meta_store = Arc::clone(&self.dec_meta_store);
         let fhe_keys = Arc::clone(&self.fhe_keys);
+        let sigkey = Arc::clone(&self.base_kms.sig_key);
 
         // we do not need to hold the handle,
         // the result of the computation is tracked by the dec_meta_store
@@ -451,6 +454,11 @@ impl<
                 &request_id
             );
 
+            let ext_handles_bytes = ciphertexts
+                .iter()
+                .map(|c| c.external_handle.to_owned())
+                .collect::<Vec<_>>();
+
             // run the computation in a separate rayon thread to avoid blocking the tokio runtime
             let (send, recv) = tokio::sync::oneshot::channel();
             rayon::spawn(move || {
@@ -460,11 +468,19 @@ impl<
             let decryptions = recv.await;
 
             match decryptions {
-                Ok(Ok(raw_decryption)) => {
+                Ok(Ok(pts)) => {
+                    // sign the plaintexts and handles for external verification (in the fhevm)
+                    let external_sig = match eip712_domain {
+                        Some(domain) => {
+                            compute_external_signature(&sigkey, ext_handles_bytes, &pts, domain)
+                        }
+                        _ => vec![],
+                    };
+
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
                         &request_id,
-                        HandlerStatus::Done((req_digest.clone(), raw_decryption)),
+                        HandlerStatus::Done((req_digest.clone(), pts, external_sig)),
                     );
                     tracing::info!(
                         "⏱️ Core Event Time for decryption computation: {:?}",
@@ -498,7 +514,8 @@ impl<
     ) -> Result<Response<DecryptionResponse>, Status> {
         let request_id = request.into_inner();
         validate_request_id(&request_id)?;
-        let (req_digest, plaintexts) = {
+
+        let (req_digest, plaintexts, external_signature) = {
             let guarded_meta_store = self.dec_meta_store.read().await;
             handle_res_mapping(
                 guarded_meta_store.retrieve(&request_id).cloned(),
@@ -507,14 +524,10 @@ impl<
             )?
         };
 
-        // sign the plaintexts and handles for external verification (in the fhevm)
-        let (pts, ext_handles_bytes): (Vec<_>, Vec<_>) = plaintexts.into_iter().collect();
-        let sigkey = Arc::clone(&self.base_kms.sig_key);
-        let external_sig = compute_external_signature(&sigkey, ext_handles_bytes, &pts);
-
         // serialize plaintexts to return as payload
         let pt_payload = tonic_handle_potential_err(
-            pts.iter()
+            plaintexts
+                .iter()
                 .map(bincode::serialize)
                 .collect::<Result<Vec<Vec<u8>>, _>>(),
             "Error serializing plaintexts in get_result()".to_string(),
@@ -528,7 +541,7 @@ impl<
             plaintexts: pt_payload,
             verification_key: server_verf_key,
             digest: req_digest,
-            external_signature: Some(external_sig),
+            external_signature: Some(external_signature),
         };
 
         let kms_sig_payload_vec = tonic_handle_potential_err(
@@ -1051,7 +1064,13 @@ pub async fn validate_reencrypt_req(
 #[allow(clippy::type_complexity)]
 pub(crate) fn validate_decrypt_req(
     req: &DecryptionRequest,
-) -> anyhow::Result<(Vec<TypedCiphertext>, Vec<u8>, RequestId, RequestId)> {
+) -> anyhow::Result<(
+    Vec<TypedCiphertext>,
+    Vec<u8>,
+    RequestId,
+    RequestId,
+    Option<Eip712Domain>,
+)> {
     let key_id = tonic_some_or_err(
         req.key_id.clone(),
         format!("The request {:?} does not have a key_id", req),
@@ -1078,7 +1097,20 @@ pub(crate) fn validate_decrypt_req(
             request_id
         )));
     }
-    Ok((req.ciphertexts.clone(), req_digest, key_id, request_id))
+
+    let eip712_domain = if let Some(domain) = req.domain.as_ref() {
+        protobuf_to_alloy_domain(domain).ok()
+    } else {
+        None
+    };
+
+    Ok((
+        req.ciphertexts.clone(),
+        req_digest,
+        key_id,
+        request_id,
+        eip712_domain,
+    ))
 }
 
 pub fn process_response<T: fmt::Debug>(resp: anyhow::Result<Option<T>>) -> Result<T, Status> {

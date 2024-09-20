@@ -11,6 +11,7 @@ use ethers::prelude::*;
 use events::kms::FheType;
 use events::kms::KmsEvent;
 use events::kms::ReencryptResponseValues;
+use kms_lib::kms::Eip712DomainMsg;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
@@ -51,6 +52,7 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
     async fn decrypt(
         &self,
         typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
+        eip712_domain: Eip712DomainMsg,
     ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)>;
 
     async fn reencrypt(

@@ -41,6 +41,15 @@ oracle_predeploy_address = "c8c9303Cd7F337fab769686B593B87DC3403E0ce"
 # Test Address used for testing asynchronous decryption on the Ethereum blockchain.
 test_async_decrypt_address = "99F460504563579922352932A42172B3c04a1420"
 
+# Verifying contract address for KMSVerifier EIP712
+kmsverifier_vc_address = "66f9664f97F2b50F62D13eA064982f936dE76657"
+
+# Version for KMSVerifier EIP712
+kmsverifier_version = "1"
+
+# Name for KMSVerifier EIP712
+kmsverifier_name = "KMSVerifier"
+
 # Address of the coprocessor to query for ciphertexts
 coprocessor_url = "http://127.0.0.1:8745/"
 

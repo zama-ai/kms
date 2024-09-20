@@ -26,6 +26,11 @@ async fn main() {
             .version(1)
             .key_id(vec![1, 2, 3])
             .external_handles(None)
+            .eip712_name("eip712name".to_string())
+            .eip712_version("1".to_string())
+            .eip712_chain_id(vec![1])
+            .eip712_verifying_contract("contract".to_string())
+            .eip712_salt(vec![])
             .build(),
     );
 

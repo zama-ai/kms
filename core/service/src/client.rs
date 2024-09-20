@@ -1111,6 +1111,7 @@ impl Client {
     pub fn decryption_request(
         &mut self,
         ciphertexts: Vec<TypedCiphertext>,
+        domain: &Eip712Domain,
         request_id: &RequestId,
         key_id: &RequestId,
     ) -> anyhow::Result<DecryptionRequest> {
@@ -1119,10 +1120,14 @@ impl Client {
                 "The request id format is not valid {request_id}"
             )));
         }
+
+        let domain_msg = alloy_to_protobuf_domain(domain)?;
+
         let serialized_req = DecryptionRequest {
             version: CURRENT_FORMAT_VERSION,
             ciphertexts,
             key_id: Some(key_id.clone()),
+            domain: Some(domain_msg),
             request_id: Some(request_id.clone()),
         };
         Ok(serialized_req)
@@ -3325,7 +3330,7 @@ pub(crate) mod tests {
                 let request_id = RequestId::derive(&format!("TEST_DEC_ID_{j}")).unwrap();
 
                 internal_client
-                    .decryption_request(cts.clone(), &request_id, &req_key_id)
+                    .decryption_request(cts.clone(), &dummy_domain(), &request_id, &req_key_id)
                     .unwrap()
             })
             .collect();
@@ -3804,7 +3809,7 @@ pub(crate) mod tests {
                 let request_id = RequestId::derive(&format!("TEST_DEC_ID_{j}")).unwrap();
 
                 internal_client
-                    .decryption_request(cts.clone(), &request_id, &key_id_req)
+                    .decryption_request(cts.clone(), &dummy_domain(), &request_id, &key_id_req)
                     .unwrap()
             })
             .collect();

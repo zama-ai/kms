@@ -55,6 +55,9 @@ pub struct EthereumConfig {
     pub gas_limit: Option<u64>,
     pub base_gas: BaseGasPrice,
     pub gas_escalator_increase: u64,
+    pub kmsverifier_name: String,
+    pub kmsverifier_version: String,
+    pub kmsverifier_vc_address: H160,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
@@ -112,7 +115,7 @@ mod tests {
 
     #[test]
     fn test_gateway_config() {
-        let env_conf: [(&str, Option<&str>); 19] = [
+        let env_conf: [(&str, Option<&str>); 22] = [
             ("GATEWAY__DEBUG", None),
             ("GATEWAY__MODE", None),
             ("GATEWAY__ETHEREUM__CHAIN_ID", None),
@@ -128,6 +131,9 @@ mod tests {
             ("GATEWAY__ETHEREUM__GAS_LIMIT", None),
             ("GATEWAY__ETHEREUM__BASE_GAS", None),
             ("GATEWAY__ETHEREUM__GAS_ESCALATOR_INCREASE", None),
+            ("GATEWAY__ETHEREUM__KMSVERIFIER_NAME", None),
+            ("GATEWAY__ETHEREUM__KMSVERIFIER_VERSION", None),
+            ("GATEWAY__ETHEREUM__KMSVERIFIER_VC_ADDRESS", None),
             ("GATEWAY__KMS__CONTRACT_ADDRESS", None),
             ("GATEWAY__KMS__MNEMONIC", None),
             ("GATEWAY__KMS__ADDRESS", None),
@@ -138,6 +144,12 @@ mod tests {
             assert!(!gateway_config.debug);
             assert_eq!(gateway_config.mode, KmsMode::Centralized);
             assert_eq!(gateway_config.ethereum.chain_id, 9000);
+            assert_eq!(
+                gateway_config.ethereum.kmsverifier_vc_address,
+                H160::from_str("66f9664f97F2b50F62D13eA064982f936dE76657").unwrap()
+            );
+            assert_eq!(gateway_config.ethereum.kmsverifier_name, "KMSVerifier");
+            assert_eq!(gateway_config.ethereum.kmsverifier_version, "1");
             assert_eq!(
                 gateway_config.ethereum.listener_type,
                 ListenerType::Fhevm1_1
@@ -238,6 +250,12 @@ mod tests {
                 "GATEWAY__KMS__KEY_ID",
                 Some("408d8cbaa51dece7f782fe04ba0b1c1d017b1088"),
             ),
+            ("GATEWAY__ETHEREUM__KMSVERIFIER_NAME", Some("name")),
+            ("GATEWAY__ETHEREUM__KMSVERIFIER_VERSION", Some("1")),
+            (
+                "GATEWAY__ETHEREUM__KMSVERIFIER_VC_ADDRESS",
+                Some("66f9664f97F2b50F62D13eA064982f936dE76657"),
+            ),
         ];
         temp_env::with_vars(env_conf, || {
             let gateway_config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
@@ -286,6 +304,12 @@ mod tests {
                 gateway_config.kms.key_id,
                 "408d8cbaa51dece7f782fe04ba0b1c1d017b1088"
             );
+            assert_eq!(
+                gateway_config.ethereum.kmsverifier_vc_address,
+                H160::from_str("66f9664f97F2b50F62D13eA064982f936dE76657").unwrap()
+            );
+            assert_eq!(gateway_config.ethereum.kmsverifier_name, "name");
+            assert_eq!(gateway_config.ethereum.kmsverifier_version, "1");
         });
     }
 }

@@ -116,8 +116,12 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
 
     // DECRYPTION REQUEST
     let random_req_id = RequestId::from(rng.gen::<u128>());
-    let req =
-        internal_client.decryption_request(ct.clone(), &random_req_id, &DEFAULT_CENTRAL_KEY_ID)?;
+    let req = internal_client.decryption_request(
+        ct.clone(),
+        &dummy_domain(),
+        &random_req_id,
+        &DEFAULT_CENTRAL_KEY_ID,
+    )?;
     let response = kms_client.decrypt(tonic::Request::new(req.clone())).await?;
     tracing::debug!("DECRYPT RESPONSE={:?}", response);
     // Wait for the servers to complete the decryption
@@ -213,8 +217,12 @@ async fn do_threshold_decryption(
     }];
 
     // DECRYPTION REQUEST
-    let dec_req =
-        internal_client.decryption_request(ct, &random_req_id, &DEFAULT_THRESHOLD_KEY_ID)?;
+    let dec_req = internal_client.decryption_request(
+        ct,
+        &dummy_domain(),
+        &random_req_id,
+        &DEFAULT_THRESHOLD_KEY_ID,
+    )?;
 
     // make parallel requests by calling [decrypt] in a thread
     let mut req_tasks = JoinSet::new();
