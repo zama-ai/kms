@@ -332,6 +332,8 @@ pub struct DecryptValues {
     eip712_verifying_contract: String,
     #[builder(setter(into))]
     eip712_salt: HexVector,
+
+    acl_address: String,
 }
 
 impl DecryptValues {
@@ -373,6 +375,10 @@ impl DecryptValues {
 
     pub fn eip712_salt(&self) -> &HexVector {
         &self.eip712_salt
+    }
+
+    pub fn acl_address(&self) -> &str {
+        &self.acl_address
     }
 }
 
@@ -1045,6 +1051,7 @@ mod tests {
                 eip712_chain_id: HexVector::arbitrary(g),
                 eip712_verifying_contract: String::arbitrary(g),
                 eip712_salt: HexVector::arbitrary(g),
+                acl_address: String::arbitrary(g),
             }
         }
     }
@@ -1196,6 +1203,7 @@ mod tests {
             .eip712_chain_id(vec![6])
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![7])
+            .acl_address("acl_address".to_string())
             .build();
         let proof_values = Proof::default();
         let message: KmsMessageWithoutProof = KmsMessage::builder()
@@ -1217,6 +1225,7 @@ mod tests {
                     "eip712_chain_id": hex::encode([6]),
                     "eip712_verifying_contract": "contract",
                     "eip712_salt": hex::encode([7]),
+                    "acl_address": "acl_address",
                 },
                 "proof": {
                     "proof": [110,117,108,108],
@@ -1290,7 +1299,7 @@ mod tests {
                     "eip712_version": "version",
                     "eip712_chain_id": hex::encode([6]),
                     "eip712_verifying_contract": "contract",
-        "eip712_salt": hex::encode([7]),
+                    "eip712_salt": hex::encode([7]),
                 },
                 "proof": {
                     "proof": [110,117,108,108],

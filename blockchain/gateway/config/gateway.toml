@@ -50,6 +50,9 @@ kmsverifier_version = "1"
 # Name for KMSVerifier EIP712
 kmsverifier_name = "KMSVerifier"
 
+# address of the ACL contract
+acl_address = "66f9664f97F2b50F62D13eA064982f936dE76657"
+
 # Address of the coprocessor to query for ciphertexts
 coprocessor_url = "http://127.0.0.1:8745/"
 

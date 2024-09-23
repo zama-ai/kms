@@ -330,6 +330,7 @@ where
                 verifying_contract: self.decrypt.eip712_verifying_contract().to_string(),
                 salt: self.decrypt.eip712_salt().into(),
             }),
+            acl_address: Some(self.decrypt.acl_address().to_string()),
         };
 
         let metrics = self.operation_val.kms_client.metrics.clone();

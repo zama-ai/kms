@@ -59,6 +59,7 @@ pub struct EthereumConfig {
     pub kmsverifier_name: String,
     pub kmsverifier_version: String,
     pub kmsverifier_vc_address: H160,
+    pub acl_address: H160,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq, TypedBuilder)]
@@ -136,6 +137,7 @@ mod tests {
             ("GATEWAY__ETHEREUM__KMSVERIFIER_NAME", None),
             ("GATEWAY__ETHEREUM__KMSVERIFIER_VERSION", None),
             ("GATEWAY__ETHEREUM__KMSVERIFIER_VC_ADDRESS", None),
+            ("GATEWAY__ETHEREUM__ACL_ADDRESS", None),
             ("GATEWAY__KMS__CONTRACT_ADDRESS", None),
             ("GATEWAY__KMS__MNEMONIC", None),
             ("GATEWAY__KMS__ADDRESS", None),
@@ -153,6 +155,10 @@ mod tests {
             );
             assert_eq!(gateway_config.ethereum.kmsverifier_name, "KMSVerifier");
             assert_eq!(gateway_config.ethereum.kmsverifier_version, "1");
+            assert_eq!(
+                gateway_config.ethereum.acl_address,
+                H160::from_str("66f9664f97F2b50F62D13eA064982f936dE76657").unwrap()
+            );
             assert_eq!(
                 gateway_config.ethereum.listener_type,
                 ListenerType::Fhevm1_1
@@ -262,6 +268,10 @@ mod tests {
                 "GATEWAY__ETHEREUM__KMSVERIFIER_VC_ADDRESS",
                 Some("66f9664f97F2b50F62D13eA064982f936dE76657"),
             ),
+            (
+                "GATEWAY__ETHEREUM__ACL_ADDRESS",
+                Some("66f9664f97F2b50F62D13eA064982f936dE76657"),
+            ),
         ];
         temp_env::with_vars(env_conf, || {
             let gateway_config: GatewayConfig = init_conf_gateway("config/gateway").unwrap();
@@ -319,6 +329,10 @@ mod tests {
             );
             assert_eq!(gateway_config.ethereum.kmsverifier_name, "name");
             assert_eq!(gateway_config.ethereum.kmsverifier_version, "1");
+            assert_eq!(
+                gateway_config.ethereum.acl_address,
+                H160::from_str("66f9664f97F2b50F62D13eA064982f936dE76657").unwrap()
+            );
         });
     }
 }

@@ -142,13 +142,12 @@ async fn decrypt(
     }
 
     // Get chain-id and verifying contract for EIP-712 signature
-    let client = Arc::new(http_provider(config).await?);
-    let chain_id = client.provider().get_chainid().await?;
+    let chain_id_le = config.ethereum.chain_id.to_le_bytes();
     let mut chain_id_bytes = vec![0u8; 32];
-    chain_id.to_big_endian(&mut chain_id_bytes);
+    chain_id_bytes[..8].copy_from_slice(&chain_id_le);
 
     let vc_hex = hex::encode(config.ethereum.kmsverifier_vc_address);
-
+    let acl_address = hex::encode(config.ethereum.acl_address);
     let domain = Eip712DomainMsg {
         name: config.ethereum.kmsverifier_name.clone(),
         version: config.ethereum.kmsverifier_version.clone(),
@@ -159,7 +158,7 @@ async fn decrypt(
 
     blockchain_impl(config)
         .await
-        .decrypt(typed_cts, domain)
+        .decrypt(typed_cts, domain, acl_address)
         .await
 }
 

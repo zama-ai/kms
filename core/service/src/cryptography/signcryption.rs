@@ -65,6 +65,7 @@ alloy_sol_types::sol! {
 // Solidity struct for decryption result signature
 alloy_sol_types::sol! {
     struct DecryptionResult {
+        address aclAddress;
         uint256[] handlesList;
         bytes decryptedResult;
     }

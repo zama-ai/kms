@@ -54,6 +54,7 @@ pub(crate) trait Blockchain: KmsEventSubscriber {
         &self,
         typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
         eip712_domain: Eip712DomainMsg,
+        acl_address: String,
     ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)>;
 
     async fn reencrypt(

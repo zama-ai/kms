@@ -169,9 +169,10 @@ message DecryptionRequest {
   // generation
   RequestId key_id = 3;
   Eip712DomainMsg domain = 4;
+  optional string acl_address = 5;
   // The ID of the decryption request. Will be the hash digest the other fields
   // of this message object.
-  RequestId request_id = 5;
+  RequestId request_id = 6;
 }
 
 // KMS-internal Decryption Response Payload, containing meta data, plaintexts

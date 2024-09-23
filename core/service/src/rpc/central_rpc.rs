@@ -1,5 +1,5 @@
 use super::rpc_types::{
-    compute_external_signature, protobuf_to_alloy_domain, BaseKms, PrivDataType,
+    compute_external_pt_signature, protobuf_to_alloy_domain, BaseKms, PrivDataType,
     PublicParameterWithParamID, SignedPubDataHandleInternal, CURRENT_FORMAT_VERSION,
 };
 use crate::conf::centralized::CentralizedConfig;
@@ -26,6 +26,7 @@ use crate::storage::{store_at_request_id, Storage};
 use crate::util::file_handling::read_as_json;
 use crate::util::meta_store::{handle_res_mapping, HandlerStatus};
 use crate::{anyhow_error_and_log, anyhow_error_and_warn_log, top_n_chars};
+use alloy_primitives::Address;
 use alloy_sol_types::Eip712Domain;
 use conf_trace::telemetry::accept_trace;
 use conf_trace::telemetry::make_span;
@@ -33,6 +34,7 @@ use conf_trace::telemetry::record_trace_id;
 use distributed_decryption::execution::tfhe_internals::parameters::NoiseFloodParameters;
 use std::collections::HashMap;
 use std::fmt;
+use std::str::FromStr;
 use std::sync::Arc;
 use tfhe::zk::CompactPkePublicParams;
 use tfhe::{CompactPublicKey, ProvenCompactCiphertextList, Unversionize, Versionize};
@@ -406,7 +408,7 @@ impl<
         tracing::info!("Request ID: {:?}", inner.request_id);
         tracing::debug!("#CTs: {}", inner.ciphertexts.len());
 
-        let (ciphertexts, req_digest, key_id, request_id, eip712_domain) =
+        let (ciphertexts, req_digest, key_id, request_id, eip712_domain, acl_address) =
             tonic_handle_potential_err(
                 validate_decrypt_req(&inner),
                 format!("Invalid key in request {:?}", inner),
@@ -469,12 +471,18 @@ impl<
             match decryptions {
                 Ok(Ok(pts)) => {
                     // sign the plaintexts and handles for external verification (in the fhevm)
-                    let external_sig = match eip712_domain {
-                        Some(domain) => {
-                            compute_external_signature(&sigkey, ext_handles_bytes, &pts, domain)
-                        }
-                        _ => vec![],
-                    };
+                    let external_sig =
+                        if let (Some(domain), Some(acl_address)) = (eip712_domain, acl_address) {
+                            compute_external_pt_signature(
+                                &sigkey,
+                                ext_handles_bytes,
+                                &pts,
+                                domain,
+                                acl_address,
+                            )
+                        } else {
+                            vec![]
+                        };
 
                     let mut guarded_meta_store = meta_store.write().await;
                     let _ = guarded_meta_store.update(
@@ -1060,6 +1068,7 @@ pub(crate) fn validate_decrypt_req(
     RequestId,
     RequestId,
     Option<Eip712Domain>,
+    Option<Address>,
 )> {
     let key_id = tonic_some_or_err(
         req.key_id.clone(),
@@ -1094,12 +1103,19 @@ pub(crate) fn validate_decrypt_req(
         None
     };
 
+    let acl_address = if let Some(address) = req.acl_address.as_ref() {
+        Address::from_str(address).ok()
+    } else {
+        None
+    };
+
     Ok((
         req.ciphertexts.clone(),
         req_digest,
         key_id,
         request_id,
         eip712_domain,
+        acl_address,
     ))
 }
 

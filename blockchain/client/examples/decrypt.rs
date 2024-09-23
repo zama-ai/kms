@@ -31,6 +31,7 @@ async fn main() {
             .eip712_chain_id(vec![1])
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![])
+            .acl_address("acl_address".to_string())
             .build(),
     );
 

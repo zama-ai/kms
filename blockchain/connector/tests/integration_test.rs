@@ -318,6 +318,7 @@ async fn send_decrypt_request(client: &RwLock<Client>) -> String {
             .eip712_chain_id(vec![101])
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![])
+            .acl_address("acl_address".to_string())
             .build(),
     );
 
@@ -539,6 +540,7 @@ async fn ddec_centralized_sunshine() {
             .eip712_chain_id(vec![6])
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![])
+            .acl_address("acl_address".to_string())
             .build(),
     );
     let (result, txn_id) = generic_centralized_sunshine_test(vec![ct1, ct2], op).await;
@@ -746,6 +748,7 @@ async fn ddec_sunshine(slow: bool) {
             .eip712_chain_id(vec![6])
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![])
+            .acl_address("acl_address".to_string())
             .build(),
     );
     let (results, txn_id, _) = generic_sunshine_test(slow, vec![ct1, ct2], op).await;

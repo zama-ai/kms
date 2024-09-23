@@ -433,6 +433,7 @@ pub async fn execute_decryption_contract(
             .eip712_chain_id(vec![6])
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![])
+            .acl_address("acl_address".to_string())
             .build(),
     );
 

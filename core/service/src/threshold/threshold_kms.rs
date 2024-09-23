@@ -21,7 +21,7 @@ use crate::rpc::central_rpc::{
     validate_request_id,
 };
 use crate::rpc::rpc_types::{
-    compute_external_signature, BaseKms, Plaintext, PrivDataType, PubDataType,
+    compute_external_pt_signature, BaseKms, Plaintext, PrivDataType, PubDataType,
     PublicParameterWithParamID, SigncryptionPayload, SignedPubDataHandleInternal,
     CURRENT_FORMAT_VERSION,
 };
@@ -1064,10 +1064,11 @@ impl Decryptor for RealDecryptor {
             self.session_preparer.own_identity(),
             inner.request_id
         );
-        let (ciphertexts, req_digest, key_id, req_id, eip712_domain) = tonic_handle_potential_err(
-            validate_decrypt_req(&inner),
-            format!("Invalid key in request {:?}", inner),
-        )?;
+        let (ciphertexts, req_digest, key_id, req_id, eip712_domain, acl_address) =
+            tonic_handle_potential_err(
+                validate_decrypt_req(&inner),
+                format!("Invalid key in request {:?}", inner),
+            )?;
 
         // the session id that is used between the threshold engines to identify the decryption session, derived from the request id
         let internal_sid = tonic_handle_potential_err(
@@ -1227,11 +1228,12 @@ impl Decryptor for RealDecryptor {
                 .collect();
 
             // sign the plaintexts and handles for external verification (in the fhevm)
-            let external_sig = match eip712_domain {
-                Some(domain) => {
-                    compute_external_signature(&sigkey, ext_handles_bytes, &pts, domain)
-                }
-                _ => vec![],
+            let external_sig = if let (Some(domain), Some(acl_address)) =
+                (eip712_domain, acl_address)
+            {
+                compute_external_pt_signature(&sigkey, ext_handles_bytes, &pts, domain, acl_address)
+            } else {
+                vec![]
             };
 
             let mut guarded_meta_store = meta_store.write().await;

@@ -232,6 +232,7 @@ impl Blockchain for KmsBlockchainImpl {
         &self,
         typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
         eip712_domain: Eip712DomainMsg,
+        acl_address: String,
     ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
         let num_cts = typed_cts.len();
         let mut kv_ct_handles = Vec::with_capacity(num_cts);
@@ -259,16 +260,18 @@ impl Blockchain for KmsBlockchainImpl {
             .eip712_chain_id(eip712_domain.chain_id)
             .eip712_verifying_contract(eip712_domain.verifying_contract)
             .eip712_salt(eip712_domain.salt)
+            .acl_address(acl_address)
             .build();
 
         tracing::info!(
             "Decryption EIP712 info: name={}, version={}, \
-            chain_id={} (HEX), verifying_contract={}, salt={} (HEX)",
+            chain_id={} (HEX), verifying_contract={}, salt={} (HEX), ACL address={}",
             decrypt_values.eip712_name(),
             decrypt_values.eip712_version(),
             decrypt_values.eip712_chain_id().to_hex(),
             decrypt_values.eip712_verifying_contract(),
             decrypt_values.eip712_salt().to_hex(),
+            decrypt_values.acl_address()
         );
 
         let operation = events::kms::OperationValue::Decrypt(decrypt_values);

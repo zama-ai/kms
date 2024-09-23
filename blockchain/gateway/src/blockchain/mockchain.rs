@@ -27,6 +27,7 @@ impl Blockchain for MockchainImpl {
         &self,
         typed_cts: Vec<(Vec<u8>, FheType, Vec<u8>)>,
         _eip712_domain: Eip712DomainMsg,
+        _acl_address: String,
     ) -> anyhow::Result<(Vec<Token>, Vec<Vec<u8>>)> {
         let mut ptxts = Vec::new();
 

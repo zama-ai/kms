@@ -264,11 +264,12 @@ fn abi_encode_plaintexts(ptxts: &[Plaintext]) -> Bytes {
 
 #[cfg(feature = "non-wasm")]
 /// take external handles and plaintext in the form of bytes, convert them to the required solidity types and sign them
-pub(crate) fn compute_external_signature(
+pub(crate) fn compute_external_pt_signature(
     client_sk: &PrivateSigKey,
     ext_handles_bytes: Vec<Option<Vec<u8>>>,
     pts: &[Plaintext],
     eip712_domain: Eip712Domain,
+    acl_address: Address,
 ) -> Vec<u8> {
     // convert external_handles back to U256 to be signed
     let external_handles: Vec<_> = ext_handles_bytes
@@ -279,8 +280,9 @@ pub(crate) fn compute_external_signature(
 
     let pt_bytes = abi_encode_plaintexts(pts);
 
-    // the solidity structure to sign
+    // the solidity structure to sign with EIP-712
     let message = DecryptionResult {
+        aclAddress: acl_address,
         handlesList: external_handles,
         decryptedResult: pt_bytes,
     };

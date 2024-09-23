@@ -120,6 +120,7 @@ async fn central_requests(address: String) -> anyhow::Result<()> {
         ct.clone(),
         &dummy_domain(),
         &random_req_id,
+        &alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045"),
         &DEFAULT_CENTRAL_KEY_ID,
     )?;
     let response = kms_client.decrypt(tonic::Request::new(req.clone())).await?;
@@ -222,6 +223,7 @@ async fn do_threshold_decryption(
         ct,
         &dummy_domain(),
         &random_req_id,
+        &alloy_primitives::address!("d8da6bf26964af9d7eed9e03e53415d37aa96045"),
         &DEFAULT_THRESHOLD_KEY_ID,
     )?;
 

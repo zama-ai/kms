@@ -611,6 +611,7 @@ mod tests {
             .eip712_chain_id(vec![6])
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![])
+            .acl_address("acl_address".to_string())
             .build();
 
         // test insufficient funds
@@ -768,6 +769,7 @@ mod tests {
             .eip712_chain_id(vec![6])
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![])
+            .acl_address("acl_address".to_string())
             .build();
 
         // test insufficient funds
@@ -1172,6 +1174,7 @@ mod tests {
             .eip712_chain_id(vec![6])
             .eip712_verifying_contract("contract".to_string())
             .eip712_salt(vec![8])
+            .acl_address("acl_address".to_string())
             .build();
         let response = contract
             .decrypt(decrypt.clone(), Proof::default())
