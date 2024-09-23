@@ -23,9 +23,8 @@ use distributed_decryption_0_9::{
 
 use kms_0_9::util::key_setup::FhePublicKey;
 use kms_0_9::{
-    cryptography::central_kms::{
-        compute_info, gen_sig_keys, generate_client_fhe_key, KmsFheKeyHandles,
-    },
+    cryptography::central_kms::{gen_sig_keys, generate_client_fhe_key, KmsFheKeyHandles},
+    rpc::rpc_types::SignedPubDataHandleInternal,
     threshold::threshold_kms::{compute_all_info, ThresholdFheKeys},
 };
 
@@ -171,7 +170,8 @@ const SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST: SignedPubDataHandleInternalTest =
     SignedPubDataHandleInternalTest {
         test_filename: Cow::Borrowed("signed_pub_data_handle_internal"),
         state: 100,
-        element: Cow::Borrowed("element"),
+        key_handle: Cow::Borrowed("key_handle"),
+        signature: [1, 2, 3],
     };
 
 // KMS test
@@ -232,14 +232,10 @@ impl KMSCoreVersion for V0_9 {
         store_versioned_test!(&public_sig_key, &dir, &PUBLIC_SIG_KEY_TEST.test_filename);
 
         // SignedPubDataHandleInternal
-        let mut rng = AesRng::seed_from_u64(SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST.state);
-        let (_, private_sig_key) = gen_sig_keys(&mut rng);
-
-        let signed_pub_data_handle_internal = compute_info(
-            &private_sig_key,
-            &SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST.element,
-        )
-        .unwrap();
+        let signed_pub_data_handle_internal = SignedPubDataHandleInternal::new(
+            SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST.key_handle.to_string(),
+            SIGNED_PUB_DATA_HANDLE_INTERNAL_TEST.signature.to_vec(),
+        );
 
         store_versioned_test!(
             &signed_pub_data_handle_internal,

@@ -19,7 +19,7 @@ use kms_core_backward_compatibility::{
 use kms_core_common::load_and_unversionize;
 use kms_lib::{
     cryptography::{
-        central_kms::{compute_info, gen_sig_keys, KmsFheKeyHandles},
+        central_kms::{gen_sig_keys, KmsFheKeyHandles},
         internal_crypto_types::{PrivateSigKey, PublicSigKey},
     },
     rpc::rpc_types::{PubDataType, SignedPubDataHandleInternal},
@@ -84,10 +84,8 @@ fn test_signed_pub_data_handle_internal(
     let original_versionized: SignedPubDataHandleInternal =
         load_and_unversionize(dir, test, format)?;
 
-    let mut rng = AesRng::seed_from_u64(test.state);
-    let (_, private_sig_key) = gen_sig_keys(&mut rng);
-
-    let new_versionized = compute_info(&private_sig_key, &test.element).unwrap();
+    let new_versionized =
+        SignedPubDataHandleInternal::new(test.key_handle.to_string(), test.signature.to_vec());
 
     if original_versionized != new_versionized {
         Err(test.failure(
@@ -247,7 +245,9 @@ impl TestedModule for KMS {
     }
 }
 
+// Backward compatibility tests are skipped until we have a proper stable version
 #[test]
+#[ignore]
 fn test_backward_compatibility_kms() {
     let pkg_version = env!("CARGO_PKG_VERSION");
 

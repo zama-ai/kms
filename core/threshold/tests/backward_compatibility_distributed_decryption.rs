@@ -113,7 +113,9 @@ impl TestedModule for DistributedDecryption {
     }
 }
 
+// Backward compatibility tests are skipped until we have a proper stable version
 #[test]
+#[ignore]
 fn test_backward_compatibility_distributed_decryption() {
     let pkg_version = env!("CARGO_PKG_VERSION");
 

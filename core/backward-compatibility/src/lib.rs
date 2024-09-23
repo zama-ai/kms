@@ -126,7 +126,8 @@ impl TestType for PublicSigKeyTest {
 pub struct SignedPubDataHandleInternalTest {
     pub test_filename: Cow<'static, str>,
     pub state: u64,
-    pub element: Cow<'static, str>,
+    pub key_handle: Cow<'static, str>,
+    pub signature: [u8; 3],
 }
 
 impl TestType for SignedPubDataHandleInternalTest {

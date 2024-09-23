@@ -21,7 +21,8 @@
         metadata: SignedPubDataHandleInternal((
             test_filename: "signed_pub_data_handle_internal",
             state: 100,
-            element: "element",
+            key_handle: "key_handle",
+            signature: (1, 2, 3),
         )),
     ),
     (

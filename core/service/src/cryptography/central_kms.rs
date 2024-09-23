@@ -693,7 +693,7 @@ impl<PubS: Storage + Sync + Send + 'static, PrivS: Storage + Sync + Send + 'stat
 /// Computes the public into on a serializable `element`.
 /// More specifically, computes the unique handle of the `element` and signs this handle using the
 /// `kms`.
-pub fn compute_info<S: Serialize>(
+pub(crate) fn compute_info<S: Serialize>(
     sk: &PrivateSigKey,
     element: &S,
 ) -> anyhow::Result<SignedPubDataHandleInternal> {
